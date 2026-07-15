@@ -16,7 +16,6 @@
   - [Demo](#demo)
   - [Docker](#docker)
   - [Horizontal scaling](#horizontal-scaling)
-  - [Future directions](#future-directions)
   - [Limitations](#limitations)
 
 Reference and guides live under [`docs/`](docs/): [Getting started](docs/getting-started.md),
@@ -114,20 +113,6 @@ failover: if the consolidating instance dies, promote a replica by restarting it
 `mysql` driver — SQLite is a single embedded file and cannot be shared between processes, so
 `consolidation.enabled: false` there simply yields an instance that never consolidates (a startup
 warning says so).
-
-## Future directions
-
-Delivered since this list was first written: a pluggable storage layer with SQLite, PostgreSQL, and
-MySQL drivers; an optional OpenSearch secondary content-search index; and RS256/JWKS token
-verification against an external identity provider (`auth.method: idp`). Still open:
-
-- Per-client credential management — issuance, rotation, and revocation. Token issuance today is
-  CLI-only from a single shared secret (`hmac`), or delegated to an identity provider (`idp`); there
-  is no built-in per-client registry or revocation.
-- An S3-backed *primary* store (the transfer/archive surface already covers export/import to S3).
-- Dynamic leader election with automatic failover for the shared-database
-  [horizontal-scaling](#horizontal-scaling) mode. Today the consolidating instance is assigned
-  statically (`consolidation.enabled`); promoting a replica after a failure is a manual restart.
 
 ## Limitations
 
