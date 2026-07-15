@@ -170,9 +170,26 @@ OpenTelemetry tracing and metrics are optional and exported over OTLP/gRPC (see
   `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
 - `hippocampus.memories_evicted` / `hippocampus.events_evicted` — eviction volume per cycle.
 - The `hippocampus.memories.count` / `hippocampus.events.count` gauges — store growth.
+- `hippocampus.panics_recovered` (by `transport`) — a gRPC or gateway handler panicked and was
+  recovered (the request got `Internal`/`500` and the process survived); any non-zero value is a
+  bug worth investigating.
 
-Health surfaces are unauthenticated and always reachable: the gRPC `grpc.health.v1.Health` service,
-and the gateway's `GET /healthz`. Point liveness/readiness probes at these.
+Health surfaces are unauthenticated and always reachable: the gRPC `grpc.health.v1.Health` service
+and the gateway's `GET /healthz` (**liveness** — process up, never touches the database) and
+`GET /readyz` (**readiness** — also pings the store, `503` when it is unreachable, and mirrored by
+the gRPC serving status). Point a restart/liveness probe at `/healthz` and a load-balancer/readiness
+probe at `/readyz` — see [Health and readiness](configuration.md#health-and-readiness). On the server
+drivers, also set `storage.queryTimeoutSeconds` (see below) so a hung database fails operations
+promptly instead of tying up request goroutines and pooled connections.
+
+### Bounding query time on the server drivers
+
+`storage.queryTimeoutSeconds` (0 = off) bounds every statement and transaction. Leave it off for
+embedded SQLite (a local file rarely hangs); set it on Postgres/MySQL, where a network partition,
+storage stall, or lock pileup can otherwise block a request goroutine — and its pooled connection —
+indefinitely, eventually wedging the instance. Size it **above** the longest legitimate operation:
+the full-store consolidation scan is the tallest pole, so time a sleep cycle on a
+representative store and leave generous headroom, or a cycle may be aborted mid-scan.
 
 ## Security
 

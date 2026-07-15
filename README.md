@@ -40,7 +40,7 @@ Where long-term retention of data is desired but infinite storage is either not 
 
 ## Current state
 
-This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), but token issuance is still a CLI-only, single-shared-secret mechanism with no per-client revocation or rotation — real multi-tenant credential management is still future work. Enable TLS for anything exposed beyond localhost, and review the [Security](docs/operations.md#security) guidance (signing-secret strength, the browser console, and body-size limits on an exposed gateway). There are also [Limitations](#limitations) which should be considered before using in a production environment.
+This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), and has been through a dedicated security review — a stored-XSS fix in the embedded web console, HS256 secret-strength warnings, a pinned TLS 1.2 floor, and size caps on JWKS fetches and gateway request bodies (see [Security](docs/operations.md#security)) — on top of two earlier correctness/race-condition sweeps. Token issuance is still a CLI-only, single-shared-secret mechanism with no per-client revocation or rotation — real multi-tenant credential management is still future work. Enable TLS for anything exposed beyond localhost. There are also [Limitations](#limitations) which should be considered before using in a production environment.
 
 ## Documentation
 

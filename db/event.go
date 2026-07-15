@@ -163,7 +163,10 @@ func (d *DB) EventExists(id string) (bool, error) {
 
 	var exists bool
 
-	if err := d.queryRow(`SELECT EXISTS(SELECT 1 FROM events WHERE id = ?)`, id).Scan(&exists); err != nil {
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	if err := d.queryRow(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE id = ?)`, id).Scan(&exists); err != nil {
 		return false, err
 	}
 
@@ -231,7 +234,10 @@ func (d *DB) DeleteEventIfEmpty(id string) (bool, error) {
 func (d *DB) GetEvent(id string) (*types.Event, error) {
 	log.Trace("func() db.GetEvent")
 
-	rows, err := d.query(`SELECT `+eventColumns+` FROM events WHERE id = ?`, id)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	rows, err := d.query(ctx, `SELECT `+eventColumns+` FROM events WHERE id = ?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +322,10 @@ func (d *DB) CountEventsFiltered(filter EventFilter) (int, error) {
 
 	var count int
 
-	if err := d.queryRow(`SELECT COUNT(*) FROM events`+where, args...).Scan(&count); err != nil {
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM events`+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 
@@ -346,7 +355,10 @@ func (d *DB) GetEvents(filter EventFilter) (*[]types.Event, error) {
 		}
 	}
 
-	rows, err := d.query(query, args...)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	rows, err := d.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +388,11 @@ func (d *DB) GetEvents(filter EventFilter) (*[]types.Event, error) {
 func (d *DB) ConsolidateEvents(s Server) (int, error) {
 	log.Trace("func() db.ConsolidateEvents")
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	rows, err := d.query(
+		ctx,
 		`SELECT id, time_start, time_end, significance, relationship_significance
 		FROM events
 		WHERE id NOT IN (SELECT DISTINCT event_id FROM memories WHERE event_id != '')`,
@@ -443,7 +459,10 @@ func (d *DB) CountEvents() int {
 
 	var count int
 
-	if err := d.queryRow(`SELECT COUNT(*) FROM events`).Scan(&count); err != nil {
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM events`).Scan(&count); err != nil {
 		log.Errorf("failed to count events: %s", err.Error())
 
 		return -1
@@ -455,7 +474,10 @@ func (d *DB) CountEvents() int {
 func (d *DB) CalculateSignificancePercentile(percent float64) (float64, error) {
 	log.Trace("func() db.CalculateSignificancePercentile")
 
-	rows, err := d.query(`SELECT significance FROM events`)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	rows, err := d.query(ctx, `SELECT significance FROM events`)
 	if err != nil {
 		return 0.0, err
 	}

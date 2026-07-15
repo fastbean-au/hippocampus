@@ -76,6 +76,37 @@ type DB struct {
 	// before releasing lockConn, so the keepalive never races Close over lockConn.
 	stopKeepalive    chan struct{}
 	keepaliveStopped chan struct{}
+
+	// queryTimeout bounds how long any single statement or transaction may run, applied inside the
+	// exec/query/queryRow helpers and the transaction begins via a context deadline. Zero (the
+	// default) disables it, preserving the previous unbounded behaviour. It exists so a hung or
+	// unreachable database (network partition, storage stall, lock pileup) fails each operation
+	// after a bounded time rather than blocking the calling goroutine — and its pooled connection —
+	// indefinitely. Set once at startup via SetQueryTimeout, before serving, so it needs no lock.
+	queryTimeout time.Duration
+}
+
+// SetQueryTimeout sets the per-operation timeout (see the queryTimeout field). Called once at
+// startup from main before the server begins serving; a non-positive duration leaves it disabled.
+func (d *DB) SetQueryTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+
+	d.queryTimeout = timeout
+}
+
+// opContext derives the context bounding a single operation. When no timeout is configured it
+// returns a background context and a no-op cancel, so callers can unconditionally
+// `ctx, cancel := d.opContext(); defer cancel()`. The caller owns the context's lifetime: for the
+// row-returning helpers the deferred cancel must outlive iteration, which it does because the read
+// methods consume their rows before returning (the consolidation scans already collect-then-close).
+func (d *DB) opContext() (context.Context, context.CancelFunc) {
+	if d.queryTimeout <= 0 {
+		return context.Background(), func() {}
+	}
+
+	return context.WithTimeout(context.Background(), d.queryTimeout)
 }
 
 // startLockKeepalive launches the goroutine that keeps the instance lock alive and healthy for a
@@ -185,18 +216,44 @@ func (d *DB) rebind(query string) string {
 }
 
 // exec, query, and queryRow wrap the underlying database handle, rebinding placeholders for the
-// active dialect. All SQL in the package goes through these (or rebinds explicitly when running
-// inside a transaction).
+// active dialect and bounding each call by queryTimeout. All SQL in the package goes through these
+// (or rebinds explicitly when running inside a transaction, which BeginTx bounds instead).
+//
+// exec owns its context fully: the statement completes before it returns, so the timeout context
+// is created and cancelled here. query and queryRow return rows consumed by the caller after they
+// return, so the caller must supply a context whose lifetime spans that consumption — every caller
+// derives one with `ctx, cancel := d.opContext(); defer cancel()`.
 func (d *DB) exec(query string, args ...any) (sql.Result, error) {
-	return d.sql.Exec(d.rebind(query), args...)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	return d.sql.ExecContext(ctx, d.rebind(query), args...)
 }
 
-func (d *DB) query(query string, args ...any) (*sql.Rows, error) {
-	return d.sql.Query(d.rebind(query), args...)
+// beginTx opens a transaction bounded by queryTimeout. The returned cancel must be deferred by the
+// caller: database/sql watches the context for the transaction's whole life and rolls it back if
+// the context is cancelled, so cancelling on return both releases the timer and guarantees an
+// abandoned transaction is not left open. When no timeout is configured the context is a plain
+// background context and cancel is a no-op.
+func (d *DB) beginTx() (*sql.Tx, context.CancelFunc, error) {
+	ctx, cancel := d.opContext()
+
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		cancel()
+
+		return nil, nil, err
+	}
+
+	return tx, cancel, nil
 }
 
-func (d *DB) queryRow(query string, args ...any) *sql.Row {
-	return d.sql.QueryRow(d.rebind(query), args...)
+func (d *DB) query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return d.sql.QueryContext(ctx, d.rebind(query), args...)
+}
+
+func (d *DB) queryRow(ctx context.Context, query string, args ...any) *sql.Row {
+	return d.sql.QueryRowContext(ctx, d.rebind(query), args...)
 }
 
 // MemoryConsolidationCandidate carries everything the consolidation decision needs to know about
@@ -319,6 +376,7 @@ type Store interface {
 	WALBytes() (int64, error)
 	Preserve() error
 	Purge() error
+	Ping(ctx context.Context) error
 	Close() error
 }
 
@@ -663,6 +721,14 @@ func (d *DB) Preserve() error {
 	return nil
 }
 
+// Ping checks that the database is reachable and responsive, bounded by the caller's context. It
+// backs the readiness probe (HTTP /readyz and the gRPC health status) so a dead or unreachable
+// database is reported as not-ready rather than the instance looking healthy while every RPC
+// fails. It is deliberately cheap - a driver-level round trip, not a query.
+func (d *DB) Ping(ctx context.Context) error {
+	return d.sql.PingContext(ctx)
+}
+
 // Close checkpoints and closes the database. For the server drivers it also releases the
 // instance lock by closing the session that holds it.
 func (d *DB) Close() error {
@@ -697,12 +763,13 @@ func (d *DB) Close() error {
 func (d *DB) Purge() error {
 	log.Info("func() db.Purge()")
 
-	tx, err := d.sql.Begin()
+	tx, cancel, err := d.beginTx()
 	if err != nil {
 		log.Errorf("failed to purge - beginning transaction: %s", err.Error())
 
 		return err
 	}
+	defer cancel()
 
 	if _, err := tx.Exec(`DELETE FROM memories`); err != nil {
 		log.Errorf("failed to purge - deleting memories: %s", err.Error())

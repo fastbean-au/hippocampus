@@ -108,9 +108,34 @@ a JSON body:
 
 `ReplaceMemoriesWithSummary`'s body maps directly to its `summary` field (a `Memory`), rather
 than the whole request, so a client posts a plain memory object to
-`/v1/events/{event_id}/summary` without a wrapper. `/healthz` is always reachable without
-authentication, for liveness/readiness probes; every other path, including
+`/v1/events/{event_id}/summary` without a wrapper. `/healthz` and `/readyz` are always reachable
+without authentication, for liveness/readiness probes (see [Health and readiness](#health-and-readiness)); every other path, including
 `/v1/openapi.json`, is subject to [Authentication](#authentication) when it is enabled.
+
+### Health and readiness
+
+The gateway exposes two probe endpoints, both always open (no token) so orchestrators can reach
+them:
+
+- `/healthz` — **liveness**: the process is up. It never touches the database, so a slow or
+  unreachable store does not make it fail; point a probe that *restarts* the container here, so a
+  transient dependency outage does not trigger a restart loop that cannot fix it.
+- `/readyz` — **readiness**: the process is up *and* the database answers a ping. Returns `200`
+  when the store is reachable, `503` otherwise. Point load-balancer / service readiness probes
+  here so an instance whose database has become unreachable is drained rather than kept in
+  rotation while every RPC fails. The gRPC health service (`grpc.health.v1.Health`) reflects the
+  same signal, flipping between `SERVING` and `NOT_SERVING`.
+
+```json
+"readiness": {
+    "pingTimeoutSeconds": 0,
+    "cacheSeconds": 0
+}
+```
+
+`readiness.pingTimeoutSeconds` bounds each database ping and `readiness.cacheSeconds` caches the
+result so a burst of probes collapses to at most one ping per window; both fall back to internal
+defaults (2 s and 3 s) when left at 0. The Docker image's `HEALTHCHECK` targets `/readyz`.
 
 ### Authentication
 
@@ -206,6 +231,7 @@ and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver fo
 "storage": {
     "driver": "sqlite",
     "directory": "./data",
+    "queryTimeoutSeconds": 0,
     "postgres": {
         "dsn": ""
     },
@@ -214,6 +240,12 @@ and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver fo
     }
 }
 ```
+
+`storage.queryTimeoutSeconds` bounds how long any single statement or transaction may run (0, the
+default, leaves them unbounded). Set it on the server drivers so a hung or unreachable database
+fails an operation after a bounded time instead of blocking the request goroutine — and its pooled
+connection — indefinitely; the value must exceed the longest legitimate operation, notably a full
+consolidation scan on a large store, or a sleep cycle could be aborted mid-scan.
 
 MySQL support requires MySQL 8.0.20 or later (the upserts use the `ON DUPLICATE KEY UPDATE` row
 alias). One MySQL-specific bound: ids are `VARCHAR(255)` there (MySQL cannot index an unbounded

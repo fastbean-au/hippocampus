@@ -5,7 +5,8 @@
     },
     "port": 50051,
     "gateway": {
-        "port": 0
+        "port": 0,
+        "maxRequestBytes": 0
     },
     "auth": {
         "method": "none",
@@ -37,12 +38,17 @@
     "storage": {
         "driver": "sqlite",
         "directory": "./data",
+        "queryTimeoutSeconds": 0,
         "postgres": {
             "dsn": ""
         },
         "mysql": {
             "dsn": ""
         }
+    },
+    "readiness": {
+        "pingTimeoutSeconds": 0,
+        "cacheSeconds": 0
     },
     "opensearch": {
         "enabled": false,

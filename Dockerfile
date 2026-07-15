@@ -32,7 +32,9 @@ EXPOSE 50051 8080
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["wget", "-q", "--spider", "http://localhost:8080/healthz"]
+    CMD ["wget", "-q", "--spider", "http://localhost:8080/readyz"]
+# /readyz is database-aware (returns 503 if the store is unreachable); /healthz is pure process
+# liveness for orchestrators that must not restart on a transient dependency outage.
 
 ENTRYPOINT ["hippocampus"]
 CMD ["-c", "/etc/hippocampus/config.json"]

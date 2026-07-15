@@ -214,6 +214,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to open database: %s", err.Error())
 	}
+
+	// Bound how long any single statement or transaction may run, so a hung or unreachable database
+	// fails an operation after a bounded time rather than blocking the RPC goroutine and its pooled
+	// connection indefinitely. 0 (the default) disables it; when set it must exceed the longest
+	// legitimate operation (notably a full consolidation scan), or a cycle could be aborted mid-scan.
+	database.SetQueryTimeout(time.Duration(viper.GetInt("storage.queryTimeoutSeconds")) * time.Second)
+
 	log.Debug("database initialised")
 
 	// initialise the optional secondary content-search index. Disabled by default: the no-op
@@ -349,9 +356,11 @@ func main() {
 
 	hipo := hippocampus.New(database, searchIndex, objects)
 
-	// Auth runs first in the chain so an unauthenticated request is rejected before any other
-	// interceptor (or the purge-in-progress check) does any work on it.
-	interceptors := []grpc.UnaryServerInterceptor{}
+	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
+	// interceptor and returns codes.Internal rather than letting it crash the process. Auth runs
+	// next, so an unauthenticated request is still rejected before the purge check or the handler
+	// does any work on it.
+	interceptors := []grpc.UnaryServerInterceptor{InterceptorRecoverPanic}
 
 	if authEnabled {
 		interceptors = append(interceptors, auth.UnaryServerInterceptor(verifier))
@@ -402,6 +411,20 @@ func main() {
 
 	hs.SetServingStatus("hippocampus", healthgrpc.HealthCheckResponse_SERVING)
 
+	// Readiness is database-aware: unlike /healthz (pure process liveness) and the SERVING status
+	// set above, it pings the store so an instance whose database has become unreachable is reported
+	// not-ready instead of looking healthy while every RPC fails. The same probe drives the HTTP
+	// /readyz endpoint (registered on the gateway below) and, via updateHealth, the gRPC serving
+	// status. Timeout/cache windows fall back to internal defaults when unset.
+	readiness := newReadinessProbe(
+		database,
+		time.Duration(viper.GetInt("readiness.pingTimeoutSeconds"))*time.Second,
+		time.Duration(viper.GetInt("readiness.cacheSeconds"))*time.Second,
+	)
+
+	stopReadiness := make(chan struct{})
+	readinessDone := readiness.updateHealth(hs, stopReadiness)
+
 	// initialise the HTTP/JSON gateway. It calls straight into hipo rather than dialing back to
 	// the gRPC listener, so there is no extra network hop or serialisation round trip. A
 	// non-positive gateway.port disables it.
@@ -419,6 +442,7 @@ func main() {
 		httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
+		httpMux.HandleFunc("/readyz", readiness.handler())
 		httpMux.HandleFunc("/v1/openapi.json", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(contract.SwaggerJSON)
@@ -428,16 +452,16 @@ func main() {
 
 		// The gateway calls hipo directly, bypassing the gRPC interceptor chain, so the purge gate
 		// must be re-applied here or /v1/... requests would run during a purge.
-		// It is applied unconditionally (independent of auth); /healthz and the static OpenAPI doc
-		// stay reachable while a purge runs.
-		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, []string{"/healthz", "/v1/openapi.json", "/ui"})
+		// It is applied unconditionally (independent of auth); /healthz, /readyz, and the static
+		// OpenAPI doc stay reachable while a purge runs.
+		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, []string{"/healthz", "/readyz", "/v1/openapi.json", "/ui"})
 
-		// /healthz stays open for liveness/readiness probes; everything else, including
+		// /healthz and /readyz stay open for liveness/readiness probes; everything else, including
 		// /v1/openapi.json, requires a token when auth is enabled. Auth wraps the purge gate so an
 		// unauthenticated request is rejected before any other check, mirroring the gRPC chain
 		// order.
 		if authEnabled {
-			handler = auth.HTTPMiddleware(verifier, handler, []string{"/healthz", "/ui"})
+			handler = auth.HTTPMiddleware(verifier, handler, []string{"/healthz", "/readyz", "/ui"})
 		}
 
 		// Cap the request body the gateway will read when configured (0, the default, leaves it
@@ -447,6 +471,10 @@ func main() {
 		if maxRequestBytes := viper.GetInt64("gateway.maxRequestBytes"); maxRequestBytes > 0 {
 			handler = maxRequestBytesMiddleware(handler, maxRequestBytes)
 		}
+
+		// Panic recovery wraps everything (outermost) so a panic in any handler or middleware
+		// becomes a clean 500 rather than a dropped connection.
+		handler = recoverMiddleware(handler)
 
 		gwServer = newGatewayServer(gatewayPort, handler)
 
@@ -476,6 +504,13 @@ func main() {
 	<-exit
 
 	log.Info("shutdown signal received - shutting down.")
+
+	// Mark not-serving before closing any listener, so load balancers and orchestrators drain this
+	// instance ahead of the shutdown rather than racing an in-flight request into a closing server.
+	// Stop the readiness updater first so it cannot flip the status back to SERVING.
+	close(stopReadiness)
+	<-readinessDone
+	hs.SetServingStatus("hippocampus", healthgrpc.HealthCheckResponse_NOT_SERVING)
 
 	if gwServer != nil {
 		gwCtx, gwCancel := context.WithTimeout(context.Background(), 10*time.Second)

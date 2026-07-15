@@ -121,7 +121,10 @@ func (d *DB) UpdateMemory(memory types.Memory) (bool, error) {
 func (d *DB) memoryExists(id string) (bool, error) {
 	var exists bool
 
-	if err := d.queryRow(`SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?)`, id).Scan(&exists); err != nil {
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	if err := d.queryRow(ctx, `SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?)`, id).Scan(&exists); err != nil {
 		return false, err
 	}
 
@@ -151,7 +154,10 @@ func (d *DB) updatedRowExisted(res sql.Result, table string, id string) (bool, e
 
 	var exists bool
 
-	if err := d.queryRow(`SELECT EXISTS(SELECT 1 FROM `+table+` WHERE id = ?)`, id).Scan(&exists); err != nil {
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	if err := d.queryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+table+` WHERE id = ?)`, id).Scan(&exists); err != nil {
 		return false, err
 	}
 
@@ -183,10 +189,11 @@ func (d *DB) deleteMemoriesByIds(ids []string) (int, error) {
 		return 0, nil
 	}
 
-	tx, err := d.sql.Begin()
+	tx, cancel, err := d.beginTx()
 	if err != nil {
 		return 0, err
 	}
+	defer cancel()
 
 	for start := 0; start < len(ids); start += deleteChunkSize {
 		end := start + deleteChunkSize
@@ -252,10 +259,11 @@ func (d *DB) deleteMemoriesIfUnrecalled(items []memoryRecallSnapshot) ([]string,
 		return nil, nil
 	}
 
-	tx, err := d.sql.Begin()
+	tx, cancel, err := d.beginTx()
 	if err != nil {
 		return nil, err
 	}
+	defer cancel()
 
 	deletedIds := make([]string, 0, len(items))
 
@@ -487,7 +495,11 @@ func (d *DB) recallMemoriesReturning(ids []string, now int64) (*[]types.Memory, 
 		args = append(args, id)
 	}
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	rows, err := d.query(
+		ctx,
 		`UPDATE memories SET time_recalled = ?, recall_count = recall_count + 1
 		WHERE id IN (`+placeholders(len(ids))+`)
 		RETURNING `+memoryColumns,
@@ -541,10 +553,11 @@ func (d *DB) recallMemoriesMySQL(ids []string, now int64) (*[]types.Memory, erro
 
 	var memories []types.Memory
 
-	tx, err := d.sql.Begin()
+	tx, cancel, err := d.beginTx()
 	if err != nil {
 		return nil, err
 	}
+	defer cancel()
 
 	updateArgs := make([]any, 0, len(ids)+1)
 	updateArgs = append(updateArgs, now)
@@ -617,6 +630,9 @@ func (d *DB) GetMemoriesByIds(ids []string) (*[]types.Memory, error) {
 		return &memories, nil
 	}
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	// Chunked like deleteMemoriesByIds to stay well inside bound-parameter limits.
 	for start := 0; start < len(ids); start += deleteChunkSize {
 		end := min(start+deleteChunkSize, len(ids))
@@ -628,7 +644,7 @@ func (d *DB) GetMemoriesByIds(ids []string) (*[]types.Memory, error) {
 			args[i] = v
 		}
 
-		rows, err := d.query(`SELECT `+memoryColumns+` FROM memories WHERE id IN (`+placeholders(len(chunk))+`)`, args...)
+		rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE id IN (`+placeholders(len(chunk))+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +681,11 @@ func (d *DB) GetMemoriesByIds(ids []string) (*[]types.Memory, error) {
 func (d *DB) GetIndexableMemoriesPage(afterId string, limit int) ([]types.Memory, error) {
 	log.Trace("func() db.GetIndexableMemoriesPage")
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	rows, err := d.query(
+		ctx,
 		`SELECT `+memoryColumns+` FROM memories WHERE id > ? AND NOT is_binary ORDER BY id LIMIT ?`,
 		afterId,
 		limit,
@@ -711,7 +731,10 @@ func (d *DB) GetMemoriesByEventIds(eventIds []string) (*[]types.Memory, error) {
 		args[i] = id
 	}
 
-	rows, err := d.query(`SELECT `+memoryColumns+` FROM memories WHERE event_id IN (`+placeholders(len(eventIds))+`)`, args...)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE event_id IN (`+placeholders(len(eventIds))+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -736,7 +759,10 @@ func (d *DB) GetMemoriesByEventIds(eventIds []string) (*[]types.Memory, error) {
 func (d *DB) GetMemoriesByEventId(eventId string) (*[]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesByEventId")
 
-	rows, err := d.query(`SELECT `+memoryColumns+` FROM memories WHERE event_id = ?`, eventId)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE event_id = ?`, eventId)
 	if err != nil {
 		return nil, err
 	}
@@ -774,10 +800,11 @@ func (d *DB) MergeEventMemories(toEventId string, fromEventId string) error {
 func (d *DB) ReplaceMemoriesWithSummary(eventId string, summary types.Memory) (int, error) {
 	log.Trace("func() db.ReplaceMemoriesWithSummary")
 
-	tx, err := d.sql.Begin()
+	tx, cancel, err := d.beginTx()
 	if err != nil {
 		return 0, err
 	}
+	defer cancel()
 
 	res, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE event_id = ?`), eventId)
 	if err != nil {
@@ -848,7 +875,10 @@ func (d *DB) FindSummarizationCandidates(minMemories int, maxTimestamp int64, li
 		args = append(args, limit)
 	}
 
-	rows, err := d.query(query, args...)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	rows, err := d.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -926,7 +956,10 @@ func (d *DB) CountMemoriesFiltered(filter MemoryFilter) (int, error) {
 
 	var count int
 
-	if err := d.queryRow(`SELECT COUNT(*) FROM memories`+where, args...).Scan(&count); err != nil {
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM memories`+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 
@@ -956,7 +989,10 @@ func (d *DB) GetMemories(filter MemoryFilter) (*[]types.Memory, error) {
 		}
 	}
 
-	rows, err := d.query(query, args...)
+	ctx, cancel := d.opContext()
+	defer cancel()
+
+	rows, err := d.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -987,9 +1023,13 @@ func (d *DB) CountMemories() (int, int) {
 
 	var with, without int
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	// COUNT over a CASE with no ELSE counts the rows where the condition holds — the portable
 	// spelling of COUNT(*) FILTER (WHERE ...), which MySQL does not support.
 	err := d.queryRow(
+		ctx,
 		`SELECT
 			COUNT(CASE WHEN event_id != '' THEN 1 END),
 			COUNT(CASE WHEN event_id = '' THEN 1 END)
@@ -1010,7 +1050,11 @@ func (d *DB) CountMemories() (int, int) {
 func (d *DB) ConsolidateMemories(s Server) (int, error) {
 	log.Trace("func() db.ConsolidateMemories")
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	rows, err := d.query(
+		ctx,
 		`SELECT id, timestamp, significance, time_recalled, recall_count
 		FROM memories WHERE event_id = ''`,
 	)
@@ -1085,9 +1129,13 @@ func (d *DB) EvictMemories(s Server, freeBytes int64) (int, int, int64, error) {
 		recallCount  int32
 	}
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	// The memories_consolidated fallback is bound rather than a literal: the column is INTEGER
 	// on SQLite but BOOLEAN on Postgres, and a bound false coalesces cleanly against both.
 	rows, err := d.query(
+		ctx,
 		`SELECT m.id, m.timestamp, m.significance, m.time_recalled, m.recall_count, m.event_id,
 			COALESCE(e.significance, 0), COALESCE(e.relationship_significance, 0),
 			COALESCE(e.memories_consolidated, ?), length(m.body)
@@ -1263,12 +1311,16 @@ func (d *DB) ConsolidateEventMemories(s Server) (int, int, int, error) {
 	eventDeletions := make(map[string]EventDeletion)
 	var memoryDeletions []memoryRecallSnapshot
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	// LEFT JOIN, not INNER: an INNER JOIN silently drops memories whose event no longer exists, so
 	// they are never evaluated by any pass and can never decay. The COALESCE defaults (mirroring
 	// EvictMemories) let such a memory be scored as event-less; the bound false covers the
 	// INTEGER-on-SQLite / BOOLEAN-on-Postgres memories_consolidated column. e.id is selected purely
 	// to tell a real event (non-null) from a dangling reference (null).
 	rows, err := d.query(
+		ctx,
 		`SELECT m.id, m.timestamp, m.significance, m.time_recalled, m.recall_count, m.event_id,
 			COALESCE(e.significance, 0), COALESCE(e.relationship_significance, 0),
 			COALESCE(e.memories_consolidated, ?), e.id

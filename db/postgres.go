@@ -150,7 +150,11 @@ func (d *DB) usedBytesLiveRows() (int64, error) {
 
 	var used int64
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	if err := d.queryRow(
+		ctx,
 		`SELECT
 			(SELECT COUNT(*) * ? + COALESCE(SUM(octet_length(body)), 0) FROM memories)
 			+ (SELECT COUNT(*) * ? + COALESCE(SUM(

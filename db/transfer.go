@@ -26,7 +26,11 @@ type MemoryRecallSnapshot struct {
 func (d *DB) GetMemoriesPage(afterId string, limit int) ([]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesPage")
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	rows, err := d.query(
+		ctx,
 		`SELECT `+memoryColumns+` FROM memories WHERE id > ? ORDER BY id LIMIT ?`,
 		afterId,
 		limit,
@@ -59,7 +63,11 @@ func (d *DB) GetMemoriesPage(afterId string, limit int) ([]types.Memory, error) 
 func (d *DB) GetEventsPage(afterId string, limit int) ([]types.Event, error) {
 	log.Trace("func() db.GetEventsPage")
 
+	ctx, cancel := d.opContext()
+	defer cancel()
+
 	rows, err := d.query(
+		ctx,
 		`SELECT `+eventColumns+` FROM events WHERE id > ? ORDER BY id LIMIT ?`,
 		afterId,
 		limit,
@@ -128,10 +136,11 @@ func (d *DB) ImportMemories(memories []types.Memory) (int, error) {
 			group_name    = new.group_name`
 	}
 
-	tx, err := d.sql.Begin()
+	tx, cancel, err := d.beginTx()
 	if err != nil {
 		return 0, err
 	}
+	defer cancel()
 
 	for _, memory := range memories {
 		if _, err := tx.Exec(
@@ -196,10 +205,11 @@ func (d *DB) ImportEvents(events []types.Event) (int, error) {
 			group_name                = new.group_name`
 	}
 
-	tx, err := d.sql.Begin()
+	tx, cancel, err := d.beginTx()
 	if err != nil {
 		return 0, err
 	}
+	defer cancel()
 
 	for _, event := range events {
 		event.RelationshipSignificance = event.CalculateRelationshipSignificance()
