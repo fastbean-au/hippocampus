@@ -486,6 +486,62 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Row actions are wired through data-* attributes and a single delegated listener, never inline
+// onclick handlers with an interpolated id/name/body. An inline handler is a JS-string-inside-an-
+// HTML-attribute context, and esc() does NOT make it safe there: the browser HTML-decodes the
+// attribute value before parsing it as JS, so an esc()'d quote (&#39;) decodes back to a real one
+// and breaks out of the string — turning any memory body, id, or event name (all attacker-supplied,
+// possibly ingested from untrusted content) into executable script, i.e. stored XSS that could
+// exfiltrate the bearer token held in localStorage. A data-* attribute is a plain attribute-value
+// context where esc() is correct, and the listener looks the full object up by id in these
+// registries rather than embedding it in the page.
+const memRegistry = new Map();
+const evRegistry = new Map();
+
+document.addEventListener("click", (ev) => {
+  const el = ev.target.closest("[data-act]");
+
+  if (!el) return;
+
+  switch (el.dataset.act) {
+
+    case "open-event":
+      ev.preventDefault();
+      openEvent(el.dataset.event);
+      break;
+
+    case "edit-memory": {
+      const m = memRegistry.get(el.dataset.id);
+
+      if (m) editMemory(m);
+      break;
+    }
+
+    case "recall-memory":
+      recallMemory(el.dataset.id);
+      break;
+
+    case "delete-memory":
+      deleteMemory(el.dataset.id);
+      break;
+
+    case "edit-event": {
+      const e = evRegistry.get(el.dataset.id);
+
+      if (e) editEvent(e);
+      break;
+    }
+
+    case "end-event":
+      endEvent(el.dataset.id);
+      break;
+
+    case "delete-event":
+      deleteEvent(el.dataset.id);
+      break;
+  }
+});
+
 // The gateway (de)serialises proto int64 fields as JSON strings. UnixNano <-> local datetime.
 function nanoToLocal(nanoStr) {
   if (!nanoStr || nanoStr === "0") return "";
@@ -610,7 +666,7 @@ function memoryRow(m) {
 
   // The event id is a link: clicking it opens the event and all of its memories (openEvent).
   const eventCell = m.eventId
-    ? `<a class="evlink" onclick="openEvent('${esc(m.eventId)}'); return false;">${esc(m.eventId)}</a>`
+    ? `<a class="evlink" data-act="open-event" data-event="${esc(m.eventId)}">${esc(m.eventId)}</a>`
     : "—";
 
   return `<tr>
@@ -623,9 +679,9 @@ function memoryRow(m) {
     <td class="id">${esc(m.id)}</td>
     <td>
       <div class="actions">
-        <button class="btn small ghost" onclick='editMemory(${JSON.stringify(JSON.stringify(m))})'>Edit</button>
-        <button class="btn small ghost" onclick="recallMemory('${esc(m.id)}')">Recall</button>
-        <button class="btn small danger" onclick="deleteMemory('${esc(m.id)}')">Delete</button>
+        <button class="btn small ghost" data-act="edit-memory" data-id="${esc(m.id)}">Edit</button>
+        <button class="btn small ghost" data-act="recall-memory" data-id="${esc(m.id)}">Recall</button>
+        <button class="btn small danger" data-act="delete-memory" data-id="${esc(m.id)}">Delete</button>
       </div>
     </td>
   </tr>`;
@@ -639,6 +695,10 @@ function renderMemories(target, memories, opts) {
 
     return;
   }
+
+  // Register the displayed rows so the delegated edit handler can resolve the full object by id
+  // instead of it being embedded in the markup.
+  memories.forEach((m) => memRegistry.set(m.id, m));
 
   const rows = memories.map(memoryRow).join("");
   $(target).innerHTML = `<table>
@@ -749,8 +809,7 @@ async function saveMemory() {
   }
 }
 
-function editMemory(json) {
-  const m = JSON.parse(json);
+function editMemory(m) {
   $("mem-id").value = m.id;
   $("mem-body").value = m.body || "";
   $("mem-sig").value = m.significance ?? "";
@@ -798,7 +857,7 @@ function eventRow(e) {
 
   // The name is a link: clicking it opens the event and lists all of its memories (openEvent).
   const nameCell = e.id
-    ? `<a class="evlink" onclick="openEvent('${esc(e.id)}'); return false;">${esc(e.name || "(unnamed)")}</a>`
+    ? `<a class="evlink" data-act="open-event" data-event="${esc(e.id)}">${esc(e.name || "(unnamed)")}</a>`
     : esc(e.name || "—");
 
   return `<tr>
@@ -812,9 +871,9 @@ function eventRow(e) {
     <td class="id">${esc(e.id)}</td>
     <td>
       <div class="actions">
-        <button class="btn small ghost" onclick='editEvent(${JSON.stringify(JSON.stringify(e))})'>Edit</button>
-        <button class="btn small ghost" onclick="endEvent('${esc(e.id)}')">End</button>
-        <button class="btn small danger" onclick="deleteEvent('${esc(e.id)}')">Delete</button>
+        <button class="btn small ghost" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
+        <button class="btn small ghost" data-act="end-event" data-id="${esc(e.id)}">End</button>
+        <button class="btn small danger" data-act="delete-event" data-id="${esc(e.id)}">Delete</button>
       </div>
     </td>
   </tr>`;
@@ -826,6 +885,10 @@ function renderEvents(events) {
 
     return;
   }
+
+  // Register the displayed rows so the delegated edit handler can resolve the full object by id
+  // instead of it being embedded in the markup.
+  events.forEach((e) => evRegistry.set(e.id, e));
 
   const rows = events.map(eventRow).join("");
   $("events-list").innerHTML = `<table>
@@ -957,8 +1020,7 @@ async function saveEvent() {
   }
 }
 
-function editEvent(json) {
-  const e = JSON.parse(json);
+function editEvent(e) {
   $("ev-id").value = e.id;
   $("ev-name").value = e.name || "";
   $("ev-desc").value = e.description || "";

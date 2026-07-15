@@ -1,8 +1,22 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"io"
+	"math/big"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -31,6 +45,111 @@ func TestNewGatewayServer_HardeningTimeouts(t *testing.T) {
 
 	if s.Handler == nil {
 		t.Error("gateway server must carry the provided handler")
+	}
+}
+
+// writeSelfSignedCert writes a throwaway self-signed certificate/key pair to two files in a temp
+// directory and returns their paths, so loadServerTLS can be exercised without a real certificate.
+func writeSelfSignedCert(t *testing.T) (string, string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %s", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "hippocampus-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %s", err)
+	}
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "cert.pem")
+	keyPath := filepath.Join(dir, "key.pem")
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write cert: %s", err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("MarshalECPrivateKey: %s", err)
+	}
+
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("write key: %s", err)
+	}
+
+	return certPath, keyPath
+}
+
+// TestLoadServerTLS_PinsMinVersion is a regression test: the shared TLS config must pin a TLS 1.2
+// floor (so a future change to Go's default can't quietly admit a weaker protocol) and carry the
+// loaded certificate.
+func TestLoadServerTLS_PinsMinVersion(t *testing.T) {
+	certPath, keyPath := writeSelfSignedCert(t)
+
+	cfg, err := loadServerTLS(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("loadServerTLS: %s", err)
+	}
+
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Errorf("expected MinVersion TLS 1.2 (%d), got %d", tls.VersionTLS12, cfg.MinVersion)
+	}
+
+	if len(cfg.Certificates) != 1 {
+		t.Errorf("expected the loaded certificate to be present, got %d certificates", len(cfg.Certificates))
+	}
+}
+
+// TestLoadServerTLS_BadPairFails confirms a missing or unreadable certificate/key pair fails fast
+// rather than returning a usable-looking config.
+func TestLoadServerTLS_BadPairFails(t *testing.T) {
+	if _, err := loadServerTLS("/nonexistent/cert.pem", "/nonexistent/key.pem"); err == nil {
+		t.Error("expected loadServerTLS to fail on a missing certificate/key pair")
+	}
+}
+
+// TestMaxRequestBytesMiddleware verifies the gateway body cap: a body within the limit reaches the
+// handler intact, while a body over the limit makes the handler's read fail (the transport-level
+// protection against an oversized body being buffered whole).
+func TestMaxRequestBytesMiddleware(t *testing.T) {
+	const limit = 16
+
+	var readErr error
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, readErr = io.ReadAll(r.Body)
+	})
+
+	handler := maxRequestBytesMiddleware(next, limit)
+
+	// Within the limit: the read succeeds.
+	readErr = nil
+	req := httptest.NewRequest(http.MethodPost, "/v1/memories", strings.NewReader(strings.Repeat("a", limit)))
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if readErr != nil {
+		t.Errorf("expected a body within the limit to read cleanly, got: %s", readErr)
+	}
+
+	// Over the limit: the read fails.
+	readErr = nil
+	req = httptest.NewRequest(http.MethodPost, "/v1/memories", strings.NewReader(strings.Repeat("a", limit+1)))
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if readErr == nil {
+		t.Error("expected a body over the limit to fail the handler's read")
 	}
 }
 

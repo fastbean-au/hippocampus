@@ -19,14 +19,25 @@ type HMACVerifier struct {
 	secret []byte
 }
 
+// minHMACSecretBytes is the shortest secret NewHMACVerifier accepts without warning. HS256 keys
+// its HMAC with the raw secret, so a secret shorter than the 256-bit hash output is the weakest
+// link and is realistically brute-forceable; 32 bytes matches the algorithm's security level.
+const minHMACSecretBytes = 32
+
 // NewHMACVerifier builds an HMACVerifier from a shared secret. An empty secret is rejected here
 // rather than left to fail on the first Verify call, since a verifier constructed with an empty
-// secret would otherwise accept unsigned or trivially-forged tokens.
+// secret would otherwise accept unsigned or trivially-forged tokens. A short-but-non-empty secret
+// is accepted (so an existing deployment keeps working) but warned about, since a weak HS256 secret
+// undermines the whole token scheme.
 func NewHMACVerifier(secret string) (*HMACVerifier, error) {
 	log.Trace("func() auth.NewHMACVerifier")
 
 	if secret == "" {
 		return nil, fmt.Errorf("auth: signing secret must not be empty")
+	}
+
+	if len(secret) < minHMACSecretBytes {
+		log.Warnf("auth: signing secret is only %d bytes - use at least %d for HS256 to resist brute-force", len(secret), minHMACSecretBytes)
 	}
 
 	return &HMACVerifier{secret: []byte(secret)}, nil

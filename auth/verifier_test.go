@@ -15,6 +15,20 @@ func TestNewHMACVerifier_EmptySecret(t *testing.T) {
 	}
 }
 
+// TestNewHMACVerifier_ShortSecretStillConstructs verifies that a short-but-non-empty secret is
+// accepted (only warned about, not rejected), so an existing deployment configured with one keeps
+// working after the length hardening was added.
+func TestNewHMACVerifier_ShortSecretStillConstructs(t *testing.T) {
+	v, err := NewHMACVerifier("short")
+	if err != nil {
+		t.Fatalf("expected a short secret to construct with only a warning, got error: %s", err)
+	}
+
+	if v == nil {
+		t.Fatal("expected a non-nil verifier for a short secret")
+	}
+}
+
 // TestHMACVerifier_ExpiredToken verifies that a token whose exp claim has already passed is
 // rejected.
 func TestHMACVerifier_ExpiredToken(t *testing.T) {

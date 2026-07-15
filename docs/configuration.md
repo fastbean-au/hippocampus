@@ -58,9 +58,17 @@ served at `/v1/openapi.json`.
 
 ```json
 "gateway": {
-    "port": 8080
+    "port": 8080,
+    "maxRequestBytes": 0
 }
 ```
+
+`gateway.maxRequestBytes` caps the size of a request body the gateway will read (0, the default,
+leaves it unbounded). It is off by default because a legitimate `ImportBatch`/`Transfer` body can be
+large; set a ceiling when the gateway is reachable by untrusted callers, so an oversized body is
+rejected by the transport (with `413`) before a handler buffers it. The native gRPC transport
+already bounds a request at its 4 MiB default. TLS pins a **TLS 1.2 floor** on both listeners (see
+[TLS](#tls)).
 
 The gRPC server port is `port` (default **50051**). Both ports can be set on the command line —
 `--port` and `--gateway-port` — which takes precedence over the config file:
@@ -111,7 +119,9 @@ token. `auth.method` selects the scheme:
 
 - `none` (the default) — no authentication, preserving the previous no-auth behaviour.
 - `hmac` — tokens are signed and verified with a single shared HS256 secret
-  (`auth.signingSecret`), minted by the service binary itself via `--mint-token`.
+  (`auth.signingSecret`), minted by the service binary itself via `--mint-token`. HS256 is keyed
+  directly with the raw secret, so use a long, random value — at least 32 bytes (256 bits, matching
+  the hash output); a shorter secret is brute-forceable and logs a startup warning.
 - `idp` — tokens are issued by an external identity provider and verified as RS256 against the
   provider's published JWKS. `auth.jwksUrl` names the key-set endpoint directly, or `auth.issuer`
   alone resolves it via OIDC discovery (`<issuer>/.well-known/openid-configuration`). When
@@ -168,7 +178,8 @@ implementations, and the interceptor/middleware call sites are identical for bot
 ### TLS
 
 `tls.enabled` (`false` by default) turns on TLS for both the gRPC service and the HTTP gateway,
-sharing one certificate/key pair:
+sharing one certificate/key pair and enforcing a **TLS 1.2 minimum** on both listeners (weaker
+legacy protocol versions are refused):
 
 ```json
 "tls": {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -289,6 +290,20 @@ func main() {
 
 	tlsEnabled := viper.GetBool("tls.enabled")
 
+	// Built once and shared by both listeners (below) so the gRPC service and the HTTP gateway
+	// present the same certificate and enforce the same TLS floor. Loaded here so a bad
+	// certificate/key pair fails fast, before either listener starts.
+	var tlsConf *tls.Config
+
+	if tlsEnabled {
+		cfg, err := loadServerTLS(viper.GetString("tls.certFile"), viper.GetString("tls.keyFile"))
+		if err != nil {
+			log.Fatalf("failed to load TLS credentials: %s", err.Error())
+		}
+
+		tlsConf = cfg
+	}
+
 	var verifier auth.Verifier
 
 	switch authMethod {
@@ -358,13 +373,8 @@ func main() {
 		serverOpts = append(serverOpts, grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	}
 
-	if tlsEnabled {
-		creds, err := credentials.NewServerTLSFromFile(viper.GetString("tls.certFile"), viper.GetString("tls.keyFile"))
-		if err != nil {
-			log.Fatalf("failed to load TLS credentials: %s", err.Error())
-		}
-
-		serverOpts = append(serverOpts, grpc.Creds(creds))
+	if tlsConf != nil {
+		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(tlsConf)))
 	}
 
 	s := grpc.NewServer(serverOpts...)
@@ -430,13 +440,23 @@ func main() {
 			handler = auth.HTTPMiddleware(verifier, handler, []string{"/healthz", "/ui"})
 		}
 
+		// Cap the request body the gateway will read when configured (0, the default, leaves it
+		// unbounded). Outermost so an oversized body is rejected before auth or any handler buffers
+		// it. Off by default because a legitimate ImportBatch/Transfer body can be large; operators
+		// exposing the gateway to untrusted callers should set a ceiling.
+		if maxRequestBytes := viper.GetInt64("gateway.maxRequestBytes"); maxRequestBytes > 0 {
+			handler = maxRequestBytesMiddleware(handler, maxRequestBytes)
+		}
+
 		gwServer = newGatewayServer(gatewayPort, handler)
 
 		go func() {
 			var err error
 
 			if tlsEnabled {
-				err = gwServer.ListenAndServeTLS(viper.GetString("tls.certFile"), viper.GetString("tls.keyFile"))
+				gwServer.TLSConfig = tlsConf
+
+				err = gwServer.ListenAndServeTLS("", "")
 			} else {
 				err = gwServer.ListenAndServe()
 			}
@@ -527,6 +547,36 @@ func newGatewayServer(port int, handler http.Handler) *http.Server {
 		ReadHeaderTimeout: gatewayReadHeaderTimeout,
 		IdleTimeout:       gatewayIdleTimeout,
 	}
+}
+
+// loadServerTLS builds the TLS configuration shared by the gRPC listener and the HTTP gateway from
+// the configured certificate/key pair, pinning a TLS 1.2 minimum. Go's current default server
+// minimum is already TLS 1.2, but pinning it makes the floor explicit and immune to a future
+// default change, keeping weak legacy protocol versions off both listeners.
+func loadServerTLS(certFile string, keyFile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}, nil
+}
+
+// maxRequestBytesMiddleware caps the request body the gateway will read, so an oversized (or
+// deliberately huge) body is rejected by the transport before a handler buffers it into memory. A
+// body that exceeds maxBytes fails the handler's read with a 413. GET requests (health, list) carry
+// no body and are unaffected.
+func maxRequestBytesMiddleware(next http.Handler, maxBytes int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // validateConfig rejects consolidation settings that would make the service behave destructively.

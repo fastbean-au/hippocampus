@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -14,6 +15,13 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	log "github.com/sirupsen/logrus"
 )
+
+// maxJWKSBytes caps how much of a JWKS or OIDC-discovery response is read before decoding. Both
+// documents are small (a handful of keys, or one URL), so a response larger than this is either
+// misconfiguration or a hostile/compromised endpoint trying to exhaust memory while a request waits
+// on the fetch - either way it must not be read unbounded. It is a var, not a const, only so tests
+// can shrink it. 1 MiB is far above any legitimate document.
+var maxJWKSBytes = int64(1 << 20)
 
 // discoveryPath is where OpenID Connect Discovery 1.0 places the provider metadata document,
 // relative to the issuer URL.
@@ -235,7 +243,7 @@ func (v *JWKSVerifier) fetchKeys() (map[string]*rsa.PublicKey, error) {
 		} `json:"keys"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJWKSBytes)).Decode(&doc); err != nil {
 		return nil, fmt.Errorf("auth: failed to parse JWKS document: %s", err.Error())
 	}
 
@@ -306,7 +314,7 @@ func (v *JWKSVerifier) discoverJWKSURL() (string, error) {
 		JWKSURI string `json:"jwks_uri"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJWKSBytes)).Decode(&doc); err != nil {
 		return "", fmt.Errorf("auth: failed to parse OIDC discovery document: %s", err.Error())
 	}
 

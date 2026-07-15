@@ -40,7 +40,7 @@ Where long-term retention of data is desired but infinite storage is either not 
 
 ## Current state
 
-This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), but token issuance is still a CLI-only, single-shared-secret mechanism with no per-client revocation or rotation — real multi-tenant credential management is still future work (see [Future directions](#future-directions)). There are also [Limitations](#limitations) which should be considered before using in a production environment.
+This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), but token issuance is still a CLI-only, single-shared-secret mechanism with no per-client revocation or rotation — real multi-tenant credential management is still future work. Enable TLS for anything exposed beyond localhost, and review the [Security](docs/operations.md#security) guidance (signing-secret strength, the browser console, and body-size limits on an exposed gateway). There are also [Limitations](#limitations) which should be considered before using in a production environment.
 
 ## Documentation
 
@@ -69,7 +69,9 @@ To see the service under sustained, realistic load, run `./demo/run.sh`. It buil
 `Dockerfile` builds a small Alpine-based image (all three storage drivers are pure Go, so the binary
 is statically compiled with CGO disabled). The image bakes in `docker/config.sqlite.json`, runs
 as a non-root user, exposes 50051 (gRPC) and 8080 (HTTP gateway), and health-checks itself against
-the gateway's `/healthz`.
+the gateway's `/healthz`. The gateway also serves an embedded browser console at `/ui`; it is a
+trusted-operator tool (the bearer token is held in the browser), so serve it over TLS and keep it
+behind your ingress' access controls — see [Security](docs/operations.md#security).
 
 One compose file per storage driver:
 
@@ -125,5 +127,5 @@ warning says so).
   [Operations guide](docs/operations.md).
 - **No visibility into memory content.** Memory bodies are opaque to the service, so it cannot
   generate summaries itself — a client supplies the summary text for `ReplaceMemoriesWithSummary`.
-- **Credential management is basic.** See Future directions above — no per-client revocation or
-  rotation under `hmac`; use `idp` for provider-managed rotation.
+- **Credential management is basic.** No per-client revocation or rotation under `hmac`; use `idp`
+  for provider-managed rotation. See [Security](docs/operations.md#security).

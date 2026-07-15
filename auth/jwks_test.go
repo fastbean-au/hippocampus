@@ -132,6 +132,28 @@ func TestNewJWKSVerifier_UnreachableProvider(t *testing.T) {
 	}
 }
 
+// TestNewJWKSVerifier_OversizedResponseRejected verifies that a JWKS response larger than
+// maxJWKSBytes is not read unbounded: with the cap shrunk below the document size, the truncated
+// read fails to decode and construction fails, rather than the whole (potentially hostile) body
+// being buffered into memory.
+func TestNewJWKSVerifier_OversizedResponseRejected(t *testing.T) {
+	original := maxJWKSBytes
+	maxJWKSBytes = 8
+	defer func() { maxJWKSBytes = original }()
+
+	key := testRSAKey(t)
+
+	keySet := &testKeySet{}
+	keySet.set(testJWK("key-1", &key.PublicKey))
+
+	srv := httptest.NewServer(http.HandlerFunc(keySet.serve))
+	defer srv.Close()
+
+	if _, err := NewJWKSVerifier(JWKSConfig{JWKSURL: srv.URL, RefreshInterval: time.Minute}); err == nil {
+		t.Error("expected construction to fail when the JWKS response exceeds the read cap")
+	}
+}
+
 // TestJWKSVerifier_ValidToken verifies the happy path: an RS256 token signed by a key the JWKS
 // endpoint publishes is accepted and its claims returned.
 func TestJWKSVerifier_ValidToken(t *testing.T) {

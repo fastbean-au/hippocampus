@@ -183,4 +183,18 @@ and the gateway's `GET /healthz`. Point liveness/readiness probes at these.
   per-client revocation or rotation** yet. With `idp` (RS256/JWKS against an identity provider),
   rotation is handled by the provider.
 - If auth is enabled without TLS the service only warns — it assumes TLS is terminated upstream (a
-  proxy or service mesh). Never send bearer tokens in plaintext.
+  proxy or service mesh). Never send bearer tokens in plaintext. When `tls.enabled`, both listeners
+  share one certificate and enforce a TLS 1.2 minimum.
+- Under `hmac`, use a long random `auth.signingSecret` — at least 32 bytes; a shorter secret is
+  brute-forceable and the service warns at startup.
+- **Web console (`/ui`).** The HTTP gateway serves an embedded single-page console at `/ui`. The
+  static page loads without a token (it carries none — the operator pastes the bearer token into it,
+  which is then kept in the browser's `localStorage` and sent with each `/v1` call), but every action
+  it performs still goes through auth and the purge gate like any other request. Because the token
+  lives in the browser, serve `/ui` only over TLS and treat it as a trusted-operator tool, not a
+  public endpoint; put it behind your ingress' access controls if the gateway is internet-facing.
+- **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left
+  unset there is no cap. The native gRPC transport bounds a whole request at its 4 MiB default, but
+  the HTTP gateway does not by default — set `gateway.maxRequestBytes` to a transport-level ceiling
+  (and/or `memory.limit.sizeBytes`) when the gateway is reachable by untrusted callers. Keep the
+  ceiling above your largest legitimate `ImportBatch`/`Transfer` body.
