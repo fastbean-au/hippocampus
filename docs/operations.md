@@ -1,0 +1,186 @@
+# Operations & deployment guide
+
+![Hippocampus](go-hippocampus.png)
+
+This guide covers running Hippocampus in production: the deployment model, choosing and sizing a
+storage backend, capacity tuning, backup and migration, shutdown, observability, and security. For
+the exhaustive list of configuration keys see [Configurability](configuration.md#configurability) in the
+README; for a first run see [Getting started](getting-started.md).
+
+## Deployment model: one consolidating instance per store
+
+Exactly one running process may run **consolidation** against a given store at a time, because
+decay, capacity pressure, and eviction are global dynamics over the whole store. The primary scaling
+model is therefore **one instance per store** (per tenant, per subsystem, per device) — not multiple
+instances over one database. On the server drivers, that store can instead be shared by one
+consolidating instance plus read/write replicas; see
+[Horizontal scaling with replicas](#horizontal-scaling-with-replicas) below.
+
+Single ownership is enforced at startup, and a second *consolidating* instance pointed at the same
+store fails fast:
+
+| Driver | Store | Exclusion mechanism |
+| --- | --- | --- |
+| `sqlite` | one database file in `storage.directory` | single connection; the file is owned by the process |
+| `postgres` | the database named in the DSN | a session-scoped `pg_advisory_lock` held for the process lifetime |
+| `mysql` | the schema named in the DSN | a session-scoped `GET_LOCK` held for the process lifetime |
+
+### Horizontal scaling with replicas
+
+When a single store is too large for one instance, a `postgres`/`mysql` database can be shared:
+start exactly one instance with `consolidation.enabled: true` (the default — it takes the lock above
+and runs every sleep cycle) and any number of additional instances with `consolidation.enabled:
+false`. A replica opens the shared database **without** the lock, serves the full read/write RPC and
+HTTP surface, and never consolidates (the manual `Sleep` RPC returns `FailedPrecondition`). Because
+only the one consolidating instance forgets, replicas cannot race it over the global decay/eviction
+state.
+
+Operational notes:
+
+- Start the consolidating instance first so it owns schema creation and any in-place migration; the
+  replicas assume the schema already exists.
+- Put a load balancer in front of all instances and route reads and writes to any of them.
+- The assignment is static, not dynamic leader election. If the consolidating instance dies,
+  **promote** a replica by restarting it with `consolidation.enabled: true` — it takes the now-free
+  lock. Run every instance under a supervisor so a fail-stop is followed by a restart.
+- SQLite cannot be shared, so `consolidation.enabled: false` there is not a scaling replica — it just
+  yields an instance that never consolidates. Startup logs a warning to that effect.
+
+### The instance-lock keepalive (server drivers)
+
+The Postgres/MySQL lock lives on a dedicated pinned connection. Because both lock kinds are
+session-scoped, anything that kills that session (a failover, a network reset, a connection-pooler
+idle policy, MySQL's `wait_timeout`) would silently release the lock while the service kept running —
+inviting a second instance to start and corrupt shared data. To prevent that, the service runs a
+**keepalive**: every 60 seconds it pings the lock connection. The ping doubles as activity that keeps
+the session from being reaped in the first place; if the session has died anyway, the service
+attempts exactly one reacquisition and, if it cannot retake the lock, **exits immediately**
+(`log.Fatal`) rather than run without it.
+
+**Operational implication:** if a Postgres/MySQL-backed instance exits with a log line like
+*"lost the single-instance lock and could not reacquire it"*, that is the safety mechanism working —
+another instance holds the lock, or the database is unreachable. Investigate why the lock session
+died (failover, network, an idle-timeout that outpaced the keepalive) and restart once the cause is
+resolved. Run under a supervisor (systemd, Kubernetes, Docker restart policy) so a fail-stop is
+followed by a clean restart.
+
+## Choosing a storage driver
+
+Set `storage.driver` to `sqlite` (default), `postgres`, or `mysql`. All three are pure Go, so the
+binary is statically linked with CGO disabled.
+
+| | SQLite | Postgres | MySQL (8.0.20+) |
+| --- | --- | --- | --- |
+| Best for | embedded / edge / single-node | centralised, server-managed | centralised, server-managed |
+| Dependencies | none (one file) | a Postgres server | a MySQL server |
+| Durability | WAL mode, immediate | server-managed | server-managed |
+| `consolidation.capacityBytes` | yes | yes | yes |
+| `consolidation.walTriggerBytes` | yes | rejected at startup | rejected at startup |
+| On-disk footprint for large bodies | uncompressed | **TOAST-compressed** (smallest) | uncompressed (largest) |
+
+`walTriggerBytes` is SQLite-only — it measures SQLite's on-disk WAL file, which the server drivers
+have no equivalent of; they reject the setting at startup rather than silently ignore it.
+
+## Sizing and capacity tuning
+
+### `capacityBytes` is measured on *uncompressed logical* bytes
+
+The byte-capacity target (`consolidation.capacityBytes`, with hysteresis floor
+`consolidation.capacityBytesFloor` — see [Capacity target](consolidation.md#capacity-target)) is
+compared against the store's **live logical size**, not the physical file size:
+
+- **SQLite** — database pages excluding the freelist (the size the file would have after a full
+  vacuum).
+- **Postgres / MySQL** — an estimate summed from the live rows themselves: each row's payload
+  (`octet_length`) plus a fixed per-row overhead. This is deliberately *not* a file-size measure:
+  neither server returns space to the filesystem after `DELETE` (they reuse it internally), so a
+  file-size reading would plateau at its high-water mark and make eviction chase a figure that can
+  never drop.
+
+Two consequences for sizing:
+
+1. `octet_length` counts **uncompressed** bytes. Postgres TOAST-compresses large values on disk, so
+   its **physical** file can be much smaller than the logical figure eviction targets; MySQL/InnoDB
+   stores bodies uncompressed, so its physical footprint is roughly the logical figure. For the same
+   data, expect the MySQL on-disk footprint to be **several times** the Postgres one.
+2. Budget disk and memory against the **physical** footprint of your chosen driver, but tune
+   `capacityBytes` against the logical size.
+
+### MySQL: size the InnoDB buffer pool to the working set
+
+This is the single most important MySQL tuning knob for Hippocampus. In a soak test, the default
+`innodb_buffer_pool_size` of **128 MB** against a ~**300 MB** on-disk dataset drove ~24 % of page
+reads to disk and pushed read-query p95 latency from ~20 ms to ~500 ms — while writes stayed fast.
+Raising the buffer pool to hold the working set restored read p95 to ~60 ms (in line with SQLite and
+Postgres).
+
+**Size `innodb_buffer_pool_size` at or above the physical dataset size.** Because InnoDB does not
+compress, that physical size is close to the uncompressed logical size — so budget the buffer pool
+against `capacityBytes` (plus index and overhead headroom), not against a Postgres-sized footprint.
+It can be resized online (`SET GLOBAL innodb_buffer_pool_size = …`) without a restart.
+
+### Postgres
+
+Postgres needed no special tuning in the same soak: autovacuum kept pace with heavy delete churn, so
+the physical database stayed bounded while eviction held the logical size at the target. Ensure
+autovacuum is enabled (the default) and not throttled below the delete rate.
+
+### Sleep cadence vs. write rate
+
+`sleep.periodSeconds` sets how often consolidation and eviction run. Growth *between* cycles is
+unbounded, so under a high sustained write rate the store can overshoot `capacityBytes` before the
+next cycle. Options: shorten `sleep.periodSeconds`, or (SQLite only) set
+`consolidation.walTriggerBytes` to force an out-of-cycle checkpoint when the WAL outgrows a bound.
+A non-positive `sleep.periodSeconds` disables timed cycles entirely — a supported mode for an
+import-only or manually-driven instance.
+
+## Backup, restore, and migration
+
+Two complementary approaches:
+
+- **Standard backups.** For SQLite, the database file in `storage.directory` is the store — copy it
+  (ideally with the service stopped, or via SQLite's online backup). For Postgres/MySQL, use the
+  server's normal backup tooling (`pg_dump`, `mysqldump`, snapshots).
+- **The transfer/archive RPCs** (see the RPC mapping in the README): `Export` writes a gzip
+  length-delimited-proto archive to S3; `Import` reads one back; `Transfer` streams the whole store
+  directly into another instance's `ImportBatch`; `Clear` deletes exactly what a prior
+  `Export`/`Transfer` captured. These preserve full state (timestamps, recall history, groups,
+  summary flags, relationships) and are idempotent by id.
+
+**Driver migration** (e.g. SQLite → Postgres) uses the same path: `Export` from the source, `Import`
+into a fresh target. Record ids compare byte-for-byte across all three drivers, so identity is
+preserved across the move.
+
+## Graceful shutdown
+
+On `SIGINT`/`SIGTERM` the service shuts down in order: stop the HTTP gateway, drain in-flight gRPC
+calls (`GracefulStop`, bounded to 10 s so a stuck call cannot hang shutdown — e.g. a long
+`Export`/`Transfer` gets to finish), stop the background sleep loop and stats ticker (waiting for any
+in-flight sleep cycle to drain), flush observability, then close the database — which releases the
+Postgres/MySQL instance lock. A supervised restart can then start a fresh instance immediately.
+
+## Observability
+
+OpenTelemetry tracing and metrics are optional and exported over OTLP/gRPC (see
+[Observability](configuration.md#observability)). Metrics worth alerting on in production:
+
+- `hippocampus.capacity_pressure` and `hippocampus.used_bytes` — how full the store is; sustained
+  high pressure means eviction is doing heavy work and the store is at its bound.
+- `hippocampus.sleeps` (with the `success` attribute) and `hippocampus.sleep_duration` — a run of
+  `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
+- `hippocampus.memories_evicted` / `hippocampus.events_evicted` — eviction volume per cycle.
+- The `hippocampus.memories.count` / `hippocampus.events.count` gauges — store growth.
+
+Health surfaces are unauthenticated and always reachable: the gRPC `grpc.health.v1.Health` service,
+and the gateway's `GET /healthz`. Point liveness/readiness probes at these.
+
+## Security
+
+- **Authentication** (`auth.method`: `none` / `hmac` / `idp`) and **TLS** (`tls.enabled`) are both
+  optional and off by default — see [Authentication](configuration.md#authentication) and
+  [TLS](configuration.md#tls). Enable both for any deployment exposed beyond localhost.
+- With `hmac`, tokens are minted by the `--mint-token` CLI from a single shared secret; there is **no
+  per-client revocation or rotation** yet. With `idp` (RS256/JWKS against an identity provider),
+  rotation is handled by the provider.
+- If auth is enabled without TLS the service only warns — it assumes TLS is terminated upstream (a
+  proxy or service mesh). Never send bearer tokens in plaintext.

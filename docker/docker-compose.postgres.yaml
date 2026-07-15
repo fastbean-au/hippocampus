@@ -1,0 +1,38 @@
+# Hippocampus backed by PostgreSQL. The postgres-driver config is mounted over the image's
+# default SQLite config; persistence lives in the postgres volume, so the hippocampus container
+# itself is stateless and needs no data volume.
+#
+#   docker compose -f docker/docker-compose.postgres.yaml up --build
+#
+# Note consolidation.walTriggerBytes is not supported with the Postgres driver (it measures
+# SQLite's on-disk WAL file, which has no Postgres counterpart) — the service refuses to start
+# with it set. Both capacity axes (consolidation.capacityMemories / capacityBytes) work as usual.
+
+services:
+  hippocampus:
+    build: ..
+    ports:
+      - "50051:50051" # gRPC
+      - "8080:8080" # HTTP/JSON gateway (+ /healthz)
+    volumes:
+      - ./config.postgres.json:/etc/hippocampus/config.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: hippocampus
+      POSTGRES_PASSWORD: hippocampus
+      POSTGRES_DB: hippocampus
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hippocampus -d hippocampus"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres-data:

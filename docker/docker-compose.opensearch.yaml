@@ -1,0 +1,40 @@
+# Hippocampus with the embedded SQLite storage plus the optional OpenSearch content-search
+# index. The opensearch-enabled config is mounted over the image's default; memories become
+# findable by body content via POST /v1/memories/search.
+#
+#   docker compose -f docker/docker-compose.opensearch.yaml up --build
+#
+# The OpenSearch security plugin is disabled here for demo simplicity only - do not expose this
+# stack as-is. The index is a rebuildable secondary: losing the opensearch volume loses nothing
+# but search availability until memories are re-stored.
+
+services:
+  hippocampus:
+    build: ..
+    ports:
+      - "50051:50051" # gRPC
+      - "8080:8080" # HTTP/JSON gateway (+ /healthz)
+    volumes:
+      - hippocampus-data:/data
+      - ./config.opensearch.json:/etc/hippocampus/config.json:ro
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  opensearch:
+    image: opensearchproject/opensearch:3.1.0
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+
+volumes:
+  hippocampus-data:
+  opensearch-data:

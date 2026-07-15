@@ -1,0 +1,360 @@
+# Configurability
+
+The exhaustive reference for every configuration key. All settings come from the JSON config
+file (see [`config.json`](../config.json) for a complete example) loaded via viper. For a
+guided first configuration, start with [Getting started](getting-started.md); for tuning in
+production, see the [Operations guide](operations.md).
+
+## Operational
+
+### Observability
+
+OpenTelemetry tracing and metrics are optional and independently enabled through the
+`observability` section of the configuration file. Both export over OTLP/gRPC.
+
+```json
+"observability": {
+    "tracing": {
+        "enabled": false,
+        "samplingRatio": 1.0
+    },
+    "metrics": {
+        "enabled": false,
+        "exportIntervalSeconds": 60
+    },
+    "otlp": {
+        "endpoint": "localhost:4317",
+        "insecure": true
+    }
+}
+```
+
+- `tracing.samplingRatio` — the fraction of traces to sample (0.0–1.0). The sampler is
+  parent-based, so sampling decisions propagated by callers are honoured; the ratio applies to
+  traces started locally (each RPC without an incoming trace context, and each sleep cycle).
+- `metrics.exportIntervalSeconds` — how often metrics are exported; 0 uses the SDK default.
+- `otlp.endpoint` — the OTLP/gRPC collector endpoint. When empty, the standard
+  `OTEL_EXPORTER_OTLP_*` environment variables apply, falling back to `localhost:4317`.
+- `otlp.insecure` — use plaintext instead of TLS when connecting to the collector.
+
+Every RPC is traced (via the `otelgrpc` stats handler, which also records the standard
+low-cardinality RPC metrics), and each sleep cycle produces its own trace with span events
+marking the consolidation passes. Domain metrics cover stored/rejected/recalled/deleted
+counts for memories and events, consolidation deletions, capacity evictions, sleep cycle count
+and duration, capacity pressure, the store's used bytes, gauges of the current event and
+memory counts, the number of summarization candidates found by the most recent sleep cycle, and
+memories/summaries created via `ReplaceMemoriesWithSummary`. All metric attributes are bounded
+(booleans or small enumerations) to keep cardinality low.
+
+### HTTP gateway
+
+Every RPC is also reachable as a JSON/HTTP endpoint, for clients that would rather not speak
+gRPC. The gateway is **off by default**; set `gateway.port` to a port to enable an in-process
+[grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway) reverse proxy (0, the default,
+disables it). **8080** is the conventional port, and the Docker configurations use it. The gateway
+calls straight into the same server instance gRPC uses, so there is no extra network hop, dial, or
+serialization round trip between the two. An OpenAPI/Swagger description of the mapping below is
+served at `/v1/openapi.json`.
+
+```json
+"gateway": {
+    "port": 8080
+}
+```
+
+The gRPC server port is `port` (default **50051**). Both ports can be set on the command line —
+`--port` and `--gateway-port` — which takes precedence over the config file:
+
+```sh
+hippocampus -c config.json --gateway-port 8080   # enable the gateway on the conventional port
+hippocampus -c config.json --port 40000          # gRPC on a custom port; gateway stays off
+```
+
+Each RPC maps onto a REST-ish path under `/v1`; path segments in `{braces}` come from the URL,
+`GET`/`DELETE` take their remaining fields as query parameters, and `POST`/`PATCH` take them as
+a JSON body:
+
+| RPC | Method | Path |
+| --- | ------ | ---- |
+| `StoreEvent` | POST | `/v1/events` |
+| `GetEvents` | GET | `/v1/events` |
+| `GetEventById` | GET | `/v1/events/{id}` |
+| `DeleteEvent` | DELETE | `/v1/events/{id}` |
+| `EndEvent` | POST | `/v1/events/{id}/end` |
+| `UpdateEventSignificance` | PATCH | `/v1/events/{id}/significance` |
+| `MergeEvents` | POST | `/v1/events/merge` |
+| `ReplaceMemoriesWithSummary` | POST | `/v1/events/{event_id}/summary` |
+| `StoreMemory` | POST | `/v1/memories` |
+| `UpdateMemory` | PATCH | `/v1/memories/{id}` |
+| `GetMemories` | GET | `/v1/memories` |
+| `DeleteMemories` | POST | `/v1/memories/delete` |
+| `RecallMemories` | POST | `/v1/memories/recall` |
+| `GetSummarizationCandidates` | GET | `/v1/summarization/candidates` |
+| `Export` | POST | `/v1/export` |
+| `Import` | POST | `/v1/import` |
+| `ImportBatch` | POST | `/v1/import/batch` |
+| `Transfer` | POST | `/v1/transfer` |
+| `Clear` | POST | `/v1/clear` |
+| `Sleep` | POST | `/v1/sleep` |
+| `Purge` | POST | `/v1/purge` |
+
+`ReplaceMemoriesWithSummary`'s body maps directly to its `summary` field (a `Memory`), rather
+than the whole request, so a client posts a plain memory object to
+`/v1/events/{event_id}/summary` without a wrapper. `/healthz` is always reachable without
+authentication, for liveness/readiness probes; every other path, including
+`/v1/openapi.json`, is subject to [Authentication](#authentication) when it is enabled.
+
+### Authentication
+
+Every RPC — on both the native gRPC service and the HTTP gateway — can require a signed bearer
+token. `auth.method` selects the scheme:
+
+- `none` (the default) — no authentication, preserving the previous no-auth behaviour.
+- `hmac` — tokens are signed and verified with a single shared HS256 secret
+  (`auth.signingSecret`), minted by the service binary itself via `--mint-token`.
+- `idp` — tokens are issued by an external identity provider and verified as RS256 against the
+  provider's published JWKS. `auth.jwksUrl` names the key-set endpoint directly, or `auth.issuer`
+  alone resolves it via OIDC discovery (`<issuer>/.well-known/openid-configuration`). When
+  `auth.issuer` is set it is also enforced against every token's `iss` claim, and
+  `auth.audience`, when set, against `aud`. Keys are cached by `kid` and re-fetched every
+  `auth.jwksRefreshIntervalSeconds` (300 by default); a token presenting an unknown `kid` forces
+  one rate-limited early re-fetch, so a provider-side key rotation is picked up on first sight
+  without restarting the service. The provider must be reachable at startup (the initial key
+  fetch failing fails startup), but a later outage only stops key refreshes — cached keys keep
+  verifying requests.
+
+```json
+"auth": {
+    "method": "none",
+    "signingSecret": "",
+    "jwksUrl": "",
+    "issuer": "",
+    "audience": "",
+    "jwksRefreshIntervalSeconds": 300
+}
+```
+
+The boolean `auth.enabled` from earlier releases remains as a deprecated alias: when
+`auth.method` is unset, `auth.enabled: true` selects `hmac` (with a startup warning) and
+`auth.enabled: false` selects `none`, so existing configs keep working unchanged.
+
+Whichever method is active, present the token as `Authorization: Bearer <token>` over HTTP, or
+as an `authorization: Bearer <token>` metadata entry over gRPC — the same header value works
+either way. A missing or invalid token gets `codes.Unauthenticated` from gRPC, or `401` (with a
+`WWW-Authenticate: Bearer` header) from the HTTP gateway. The gRPC health service and the
+gateway's `/healthz` are always reachable without a token, regardless of method, so orchestrator
+liveness/readiness probes are never blocked. Both verifiers pin their signing algorithm
+(`jwt.WithValidMethods` — HS256 for `hmac`, RS256 for `idp`), so a token can never select its
+own verification algorithm.
+
+Under `hmac` there is no client registry or admin RPC — issuing a token is a CLI operation on
+the service binary itself:
+
+```sh
+hippocampus --mint-token --client-id my-client --ttl 24h -c config.json
+```
+
+This prints a signed token to stdout and exits without starting the server (or touching the
+database). `--ttl` accepts any Go duration (`1h`, `24h`, `720h`, ...); `--signing-secret` can
+override `auth.signingSecret` from the config file, for minting on a host that only has the
+secret and not the full deployed config. Revocation, for now, means either waiting out a token's
+TTL or rotating `auth.signingSecret` (which invalidates every outstanding token at once). Under
+`idp` the identity provider owns issuance, expiry, and revocation, and `--mint-token` refuses to
+run.
+
+Verification is written behind an interface (`auth.Verifier`) — `hmac` and `idp` are its two
+implementations, and the interceptor/middleware call sites are identical for both.
+
+### TLS
+
+`tls.enabled` (`false` by default) turns on TLS for both the gRPC service and the HTTP gateway,
+sharing one certificate/key pair:
+
+```json
+"tls": {
+    "enabled": false,
+    "certFile": "",
+    "keyFile": ""
+}
+```
+
+Enabling authentication without `tls.enabled` logs a startup warning rather than refusing to
+start — bearer tokens sent over plaintext are sniffable in transit, but some deployments
+terminate TLS upstream (a reverse proxy or service mesh) rather than in the service itself, which
+is a legitimate topology this doesn't try to prevent.
+
+### Storage
+
+`storage.driver` selects the storage backend. The default, `sqlite`, is the embedded,
+zero-dependency database every prior release used, stored in `storage.directory`. Setting it to
+`postgres` stores everything in the PostgreSQL database named by `storage.postgres.dsn` instead,
+and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver format, e.g.
+`user:password@tcp(host:3306)/dbname`; the DSN must name a database schema):
+
+```json
+"storage": {
+    "driver": "sqlite",
+    "directory": "./data",
+    "postgres": {
+        "dsn": ""
+    },
+    "mysql": {
+        "dsn": ""
+    }
+}
+```
+
+MySQL support requires MySQL 8.0.20 or later (the upserts use the `ON DUPLICATE KEY UPDATE` row
+alias). One MySQL-specific bound: ids are `VARCHAR(255)` there (MySQL cannot index an unbounded
+`TEXT` column), so client-supplied event and memory ids longer than 255 characters are rejected
+by that driver; generated UUID ids are unaffected.
+
+Exactly one instance may run consolidation against a given store. With SQLite that is one instance
+full stop — the embedded database cannot be shared between processes. With PostgreSQL or MySQL the
+*consolidating* instance takes a session-scoped advisory lock at startup (MySQL: a `GET_LOCK` lock
+scoped to the schema name); a second instance that also has `consolidation.enabled: true` refuses
+to start, rather than silently running concurrent consolidation cycles against shared data.
+Additional instances with `consolidation.enabled: false` skip the lock and run alongside it as
+read/write replicas — see [Horizontal scaling](../README.md#horizontal-scaling).
+
+Both capacity axes (`consolidation.capacityMemories` and `consolidation.capacityBytes`) work
+with every driver, but the byte measure differs. SQLite reads the database's pages excluding
+the freelist; the server drivers estimate the live rows directly (payload bytes plus the same
+fixed per-row allowance eviction uses when estimating freed bytes), because no server file-size
+measure ever shrinks after deletes — Postgres's autovacuum and InnoDB's purge make freed space
+internally reusable without returning it to the filesystem, so a `pg_database_size()`-style
+reading would sit at its high-water mark and keep eviction firing against a figure that cannot
+drop. The estimate costs one scan of the two tables per sleep cycle, and only when a byte
+capacity is configured. `consolidation.walTriggerBytes` remains SQLite-only (it measures the
+on-disk WAL file, which has no server-driver counterpart) and is rejected at startup. There is
+also no `Preserve` compaction step on the server drivers — their background reclamation already
+handles dead rows continuously.
+
+### Content search (OpenSearch)
+
+Recall is normally by id, event, or time/significance range — memory bodies are opaque to the
+service. Enabling the optional OpenSearch integration adds one more read path: `SearchMemories`
+(`POST /v1/memories/search`) finds memories whose body matches a query, most relevant first,
+optionally restricted to one event and/or one `group` label.
+
+```json
+"opensearch": {
+    "enabled": false,
+    "addresses": ["http://localhost:9200"],
+    "username": "",
+    "password": "",
+    "index": "hippocampus-memories",
+    "queueSize": 1024
+}
+```
+
+```sh
+curl -X POST http://localhost:8080/v1/memories/search \
+    -H 'Content-Type: application/json' \
+    -d '{"query": "quarterly forecast", "limit": 5, "reinforce": true}'
+```
+
+OpenSearch is strictly a **secondary index** — the primary store remains the system of record
+for every existence, consolidation, and recall decision:
+
+- Writes and deletes (including the sleep cycle's consolidation and eviction, purges, event
+  merges, and summarization) propagate to the index asynchronously and best-effort: an
+  unreachable or lagging cluster never fails or slows a primary operation. A full propagation
+  queue (`opensearch.queueSize`) drops operations with a warning rather than blocking.
+- Search results are always re-read from the primary store; ids the index returns that the
+  primary no longer holds are silently dropped. A stale index can therefore miss recent writes
+  (indexing is asynchronous on top of OpenSearch's ~1s near-real-time refresh) or carry leftover
+  documents, but it can never fabricate a result.
+- By default finding a memory does not reinforce it — exploratory search must not distort the
+  decay model. Setting `reinforce` on the request routes the matches through recall instead,
+  resetting their decay clocks and raising their effective significance, exactly as
+  `RecallMemories` does.
+- Binary memories (`is_binary`) are never indexed; their bodies are opaque.
+- With `opensearch.enabled` false (the default) the service behaves exactly as before, and
+  `SearchMemories` fails with `FAILED_PRECONDITION`.
+
+The index is fully rebuildable from the primary store (re-storing memories re-indexes them), so
+losing it costs search availability, nothing more.
+Try it with `docker compose -f docker/docker-compose.opensearch.yaml up --build` (security disabled —
+demo only). Integration tests run against any disposable cluster via
+`HIPPOCAMPUS_TEST_OPENSEARCH_URL=http://localhost:9200 go test ./search`.
+
+#### Backfill and reindex
+
+Because propagation is best-effort, a dropped operation, a cluster outage, or enabling
+`opensearch.enabled` on an existing database leaves the index missing documents until the
+affected memories happen to be re-stored. The backfill CLI mode closes that gap:
+
+```sh
+hippocampus --backfill-search -c config.json            # index every non-binary memory
+hippocampus --backfill-search --reindex -c config.json  # delete and recreate the index first
+```
+
+Like `--mint-token`, this runs and exits without starting the server. It streams every non-binary
+memory from the primary store in id-keyed batches (`--backfill-batch-size`, default 500) and
+indexes each one synchronously, keyed by id — runs are idempotent (each write overwrites the same
+document) and abort on the first error, so a failed run is simply rerun. `--reindex` deletes and
+recreates the index before backfilling, which also removes stale documents for memories the
+primary store no longer holds; without it, existing documents are left in place and overwritten.
+
+The tool may run alongside a live service instance: SQLite's WAL admits cross-process readers,
+and the Postgres open skips the single-instance advisory lock (it only reads). The one caveat to
+a live run is that a memory deleted by the service mid-backfill can be re-indexed after its
+deletion propagated, leaving a stale document — harmless for reads (results are re-verified
+against the primary store) and cleared by the next `--reindex` run.
+
+### Transfer and archive
+
+An embedded (e.g. IoT) instance can periodically move its whole store to a centralised
+instance, either directly over gRPC or through S3 when the two are never connected at the same
+time. Both paths preserve full state — original timestamps, recall history, significance,
+groups, summary flags, event links and relationships — so the centralised store's decay sees
+true ages: this is a data migration, not a re-store. Both are move-semantics by manifest: each
+run captures a point-in-time snapshot and records exactly what it captured (ids plus recall
+state); the paired **clear** then deletes precisely those records, re-verified live, so a memory
+written or recalled mid-run survives to the next run. No watermark state is kept — the store
+itself is the watermark.
+
+- `Export` (`POST /v1/export`) streams every event and memory into a gzip-compressed archive
+  object in S3 and returns a `manifest_id` and the `object_key`; `{"clear": true}` deletes the
+  captured records in the same call once the upload has succeeded.
+- `Import` (`POST /v1/import`, body `{"object_key": "..."}`) streams an archive from S3 into the
+  store, upserting by id — re-importing the same archive is idempotent. Imported non-binary
+  memories are indexed into the optional content-search index.
+- `Transfer` (`POST /v1/transfer`) sends the same records directly to the centralised instance's
+  `ImportBatch` RPC (`transfer.targetAddress`), with the same `clear` flag and manifest.
+- `Clear` (`POST /v1/clear`, body `{"manifest_id": "..."}`) is the deferred second half of a
+  two-phase move: export/transfer first, verify at the receiving end, then clear. Manifests are
+  held in memory only (the last 8) — after a restart the records are simply recaptured by the
+  next run.
+
+```json
+"s3": {
+    "bucket": "my-archive-bucket",
+    "region": "ap-southeast-2",
+    "endpoint": "",
+    "usePathStyle": false,
+    "keyPrefix": "hippocampus/"
+},
+"transfer": {
+    "targetAddress": "central.example.com:50051",
+    "token": "",
+    "tls": false,
+    "batchSize": 500
+}
+```
+
+S3 credentials come from the standard AWS chain (environment variables, shared config, instance
+roles); `s3.endpoint` and `s3.usePathStyle` support S3-compatible stores such as MinIO. With no
+`s3.bucket` configured, `Export`/`Import` fail with `FAILED_PRECONDITION`; with no
+`transfer.targetAddress`, so does `Transfer`. `transfer.token` is sent as the bearer token to
+the centralised instance when its [authentication](#authentication) is enabled, and
+`transfer.tls` dials it over TLS. `transfer.batchSize` sets both the pagination page size and
+the archive/ImportBatch batch size.
+
+The sleep cycle keeps running during a capture: a record consolidated mid-export simply doesn't
+matter (its clear becomes a no-op), and one consolidated at the centralised end after import is
+the destination's own decay policy at work.
+
+## Functional
+

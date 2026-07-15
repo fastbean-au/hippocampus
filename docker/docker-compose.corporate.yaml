@@ -1,0 +1,64 @@
+# Corporate / centralised Hippocampus: PostgreSQL primary store + OpenSearch content-search
+# index (a centralised deployment shape). The postgres-driver, opensearch-enabled
+# config is mounted over the image default; the hippocampus container is stateless (all state
+# lives in postgres and opensearch).
+#
+#   podman-compose -f docker/docker-compose.corporate.yaml up --build -d
+#   (or: docker compose -f docker/docker-compose.corporate.yaml up --build -d)
+#
+# Ports published for local tooling:
+#   50051 gRPC, 8080 HTTP/JSON gateway (+ /healthz, + /ui console),
+#   9200 OpenSearch, 5432 PostgreSQL.
+#
+# Security note: the OpenSearch security plugin is disabled and postgres uses a trivial password
+# for demo convenience only - do not expose this stack as-is.
+
+services:
+  hippocampus:
+    build: ..
+    ports:
+      - "50051:50051"
+      - "8080:8080"
+    volumes:
+      - ./config.corporate.json:/etc/hippocampus/config.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: hippocampus
+      POSTGRES_PASSWORD: hippocampus
+      POSTGRES_DB: hippocampus
+    ports:
+      - "5432:5432"
+    volumes:
+      - corporate-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hippocampus -d hippocampus"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  opensearch:
+    image: opensearchproject/opensearch:3.1.0
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - corporate-opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+
+volumes:
+  corporate-postgres-data:
+  corporate-opensearch-data:

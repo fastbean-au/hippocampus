@@ -1,0 +1,60 @@
+# Demo
+
+A long-running exerciser for the hippocampus service: a load generator that stores, queries,
+recalls, mutates, and deletes events and memories against a live instance, capped at 1 GiB of
+on-disk data.
+
+## Running
+
+```sh
+./demo/run.sh
+```
+
+The script builds the service and the generator, starts the service with `demo/config.json`
+(port 8300, database under `demo/data`), waits for it to listen, then starts the generator.
+Ctrl-C stops both. The database persists between runs; delete `demo/data` to start fresh.
+`MAX_BYTES=<bytes>` overrides the generator's pause cap, and any arguments passed to the script
+are forwarded to the generator (e.g. `./demo/run.sh --bursty_workers 8`).
+
+## What the generator does
+
+| Worker (count)  | Behaviour                                                                     |
+| --------------- | ----------------------------------------------------------------------------- |
+| bursty (3)      | Creates a backdated event, then floods it with 20-200 memories in seconds     |
+| slow (4)        | Creates a live event and trickles memories into it for 1-5 minutes            |
+| loose (2)       | Stores backdated, low-significance memories with no event                     |
+| query (3)       | Range queries over events/memories, lookups by id, and reinforcing recalls    |
+| mutator (1)     | Significance updates, ending/merging/deleting events and memories, manual sleeps |
+
+The demo config compresses time: `consolidation.unitsOfAgeInDays` is 0.002, making one age unit
+roughly three minutes, so decay that would take days in production plays out within a session.
+Bursty and loose data is backdated by up to 30 minutes (~10 age units) to spread the initial
+ages, the two-minute sleep cycle forgets the less significant material as it decays, and
+recalled memories have their decay clock reset — the recall workers visibly keep a slice of
+older data alive. The service's own byte capacity target (`consolidation.capacityBytes`,
+200 MB in the demo config) evicts the least valuable memories each sleep cycle once the store
+exceeds it — reclaiming down to the 180 MB floor (`consolidation.capacityBytesFloor`) so
+evictions are spaced out rather than trimming a sliver every cycle — and the store oscillates
+around that bound while the generator's 1 GiB pause acts only as a backstop.
+
+Memory bodies are mostly small text, with occasional blobs up to ~512 KiB (some stored as
+base64 "binary" bodies). A watcher checks the database size (including the WAL) every five
+seconds and pauses all writers at 1 GiB; querying and recalling continue, and writing resumes
+once consolidation shrinks the database below 90% of the cap.
+
+Every RPC the generator issues is timed, and each 30-second statistics tick logs per-class
+latency lines (`rpc latency`: write/read/recall/sleep, with p50/p95/p99/max covering just that
+interval). The interval scoping is the point: the service's single database connection means a
+long consolidation scan queues RPCs behind it, so a sleep cycle at scale shows up as a spike in
+that tick's percentiles — the `sleep` class itself is the manual `Sleep` RPC, whose latency is
+the cycle's duration.
+
+## Tuning
+
+Generator flags (see `demo/generator/main.go`): `--address`, `--data_dir`, `--max_bytes`,
+`--seed` (0 seeds from the clock; set it for a reproducible run), `--log_level`, and per-type
+worker counts (`--bursty_workers`, `--slow_workers`, `--loose_workers`, `--query_workers`,
+`--mutator_workers`).
+
+Service behaviour is tuned in `demo/config.json` — notably `sleep.periodSeconds` (how often
+consolidation runs) and the `consolidation` block (how aggressively it forgets).

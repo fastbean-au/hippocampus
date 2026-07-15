@@ -1,0 +1,1377 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "hippocampus.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "Hippocampus"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/clear": {
+      "post": {
+        "operationId": "Hippocampus_Clear",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoClearResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "Clear deletes exactly the records captured by the Export/Transfer run that produced the\nmanifest: memories are deleted only if neither created nor recalled since the snapshot, and\nevents only once they have no memories left. Manifests are held in memory - a restart discards\nthem.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoClearRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/events": {
+      "get": {
+        "operationId": "Hippocampus_GetEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGetEventsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "timeStartMin",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "timeStartMax",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "timeEndMin",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "timeEndMax",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "significanceMin",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "significanceMax",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "memories",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "group",
+            "description": "optional: restrict to events carrying this group label",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "orderBy",
+            "description": "\"significance\" (significance desc, then time desc) or \"timestamp\" (time desc); defaults to significance",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "page size; 0 selects the server default (25), values above the server cap are clamped",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "offset",
+            "description": "rows to skip for pagination",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      },
+      "post": {
+        "summary": "Events",
+        "operationId": "Hippocampus_StoreEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoStoreEventResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoEvent"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/events/merge": {
+      "post": {
+        "operationId": "Hippocampus_MergeEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoMergeEventsRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/events/{eventId}/summary": {
+      "post": {
+        "summary": "Summarization",
+        "operationId": "Hippocampus_ReplaceMemoriesWithSummary",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoReplaceMemoriesWithSummaryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "summary",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoMemory"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/events/{id}": {
+      "get": {
+        "operationId": "Hippocampus_GetEventById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGetEventResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "memories",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      },
+      "delete": {
+        "operationId": "Hippocampus_DeleteEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "memories",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/events/{id}/end": {
+      "post": {
+        "operationId": "Hippocampus_EndEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusEndEventBody"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/events/{id}/significance": {
+      "patch": {
+        "operationId": "Hippocampus_UpdateEventSignificance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusUpdateEventSignificanceBody"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/export": {
+      "post": {
+        "summary": "Transfer and archive (embedded -\u003e centralised)",
+        "operationId": "Hippocampus_Export",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoExportResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "Export snapshots every event and memory into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted after a successful\nupload (writes and recalls landing mid-run survive, exactly as Clear does).",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoExportRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/import": {
+      "post": {
+        "operationId": "Hippocampus_Import",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoImportResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoImportRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/import/batch": {
+      "post": {
+        "operationId": "Hippocampus_ImportBatch",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoImportBatchResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "ImportBatchRequest carries full-state rows (original timestamps, recall state, significance,\ngroup, event links) to be upserted by id into the store as-is - a data migration, not a fresh\nwrite. It is the ingest half of Transfer and is re-sendable: re-importing the same rows is\nidempotent.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoImportBatchRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/memories": {
+      "get": {
+        "operationId": "Hippocampus_GetMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGetMemoriesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "timestampMin",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "timestampMax",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "significanceMin",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "significanceMax",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "group",
+            "description": "optional: restrict to memories carrying this group label",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "orderBy",
+            "description": "\"significance\" (significance desc, then time desc) or \"timestamp\" (time desc); defaults to significance",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "page size; 0 selects the server default (25), values above the server cap are clamped",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "offset",
+            "description": "rows to skip for pagination",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      },
+      "post": {
+        "summary": "Memories",
+        "operationId": "Hippocampus_StoreMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoStoreMemoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoMemory"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/memories/delete": {
+      "post": {
+        "operationId": "Hippocampus_DeleteMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoDeleteMemoriesRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/memories/recall": {
+      "post": {
+        "operationId": "Hippocampus_RecallMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGetMemoriesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoRecallMemoriesRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/memories/search": {
+      "post": {
+        "operationId": "Hippocampus_SearchMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGetMemoriesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "SearchMemoriesRequest queries the optional secondary content-search index (opensearch.enabled)\nfor memories whose body matches the query. Results are always re-read from the primary store,\nwhich remains authoritative; ids the index returns that the primary store no longer holds are\nsilently dropped. When reinforce is true the matched memories are recalled - resetting their\ndecay clocks and raising their effective significance - rather than merely fetched.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoSearchMemoriesRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/memories/{id}": {
+      "patch": {
+        "summary": "UpdateMemory applies a partial update to an existing memory: only the fields carrying a value\n(significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and\nis_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary\n- so any updated content must stay consistent with the memory's existing is_binary/is_summary:\na non-binary memory is re-indexed for content search, so its new body must remain valid text,\nand a summary memory should keep summary-appropriate content. An unknown id returns NotFound\n(no memory is created).",
+        "operationId": "Hippocampus_UpdateMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusUpdateMemoryBody"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/purge": {
+      "post": {
+        "operationId": "Hippocampus_Purge",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/sleep": {
+      "post": {
+        "operationId": "Hippocampus_Sleep",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/summarization/candidates": {
+      "get": {
+        "operationId": "Hippocampus_GetSummarizationCandidates",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoGetSummarizationCandidatesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/transfer": {
+      "post": {
+        "operationId": "Hippocampus_Transfer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoTransferResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "Transfer streams every event and memory directly to a centralised instance's ImportBatch RPC\n(address from transfer.targetAddress); like Export it records a manifest, and with clear set\ndeletes the captured records once the target has accepted them all.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoTransferRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "HippocampusEndEventBody": {
+      "type": "object",
+      "properties": {
+        "timeEnd": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "HippocampusUpdateEventSignificanceBody": {
+      "type": "object",
+      "properties": {
+        "significance": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "HippocampusUpdateMemoryBody": {
+      "type": "object",
+      "properties": {
+        "timeStamp": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; defaults to the current time when unset (0) on create"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "isBinary": {
+          "$ref": "#/definitions/protoBool"
+        },
+        "timeRecalled": {
+          "type": "string",
+          "format": "int64"
+        },
+        "recallCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "isSummary": {
+          "type": "boolean"
+        },
+        "group": {
+          "type": "string",
+          "title": "optional freeform grouping/context label (system, subsystem, owner, ...)"
+        }
+      }
+    },
+    "protoBool": {
+      "type": "string",
+      "enum": [
+        "UNSPECIFIED",
+        "FALSE",
+        "TRUE"
+      ],
+      "default": "UNSPECIFIED"
+    },
+    "protoClearRequest": {
+      "type": "object",
+      "properties": {
+        "manifestId": {
+          "type": "string"
+        }
+      },
+      "description": "Clear deletes exactly the records captured by the Export/Transfer run that produced the\nmanifest: memories are deleted only if neither created nor recalled since the snapshot, and\nevents only once they have no memories left. Manifests are held in memory - a restart discards\nthem."
+    },
+    "protoClearResponse": {
+      "type": "object",
+      "properties": {
+        "memoriesCleared": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventsCleared": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "protoDeleteMemoriesRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "protoEvent": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "timeStart": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; defaults to the current time when unset (0) on create"
+        },
+        "timeEnd": {
+          "type": "string",
+          "format": "int64"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "memoriesConsolidated": {
+          "type": "boolean"
+        },
+        "relationshipSignificance": {
+          "type": "string",
+          "format": "int64"
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoRelationship"
+          }
+        },
+        "memories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoMemory"
+          }
+        },
+        "group": {
+          "type": "string",
+          "title": "optional freeform grouping/context label (system, subsystem, owner, ...)"
+        }
+      }
+    },
+    "protoExportRequest": {
+      "type": "object",
+      "properties": {
+        "clear": {
+          "type": "boolean"
+        }
+      },
+      "description": "Export snapshots every event and memory into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted after a successful\nupload (writes and recalls landing mid-run survive, exactly as Clear does)."
+    },
+    "protoExportResponse": {
+      "type": "object",
+      "properties": {
+        "manifestId": {
+          "type": "string"
+        },
+        "objectKey": {
+          "type": "string"
+        },
+        "eventsExported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoriesExported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoriesCleared": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventsCleared": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "protoGeneralResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      }
+    },
+    "protoGetEventResponse": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/definitions/protoEvent"
+        }
+      }
+    },
+    "protoGetEventsResponse": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoEvent"
+          }
+        },
+        "totalCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "events matching the filter, ignoring limit/offset — for pagination"
+        }
+      }
+    },
+    "protoGetMemoriesResponse": {
+      "type": "object",
+      "properties": {
+        "memories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoMemory"
+          }
+        },
+        "totalCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories matching the filter, ignoring limit/offset — for pagination"
+        }
+      }
+    },
+    "protoGetSummarizationCandidatesResponse": {
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoSummarizationCandidate"
+          }
+        }
+      }
+    },
+    "protoImportBatchRequest": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoEvent"
+          }
+        },
+        "memories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoMemory"
+          }
+        }
+      },
+      "description": "ImportBatchRequest carries full-state rows (original timestamps, recall state, significance,\ngroup, event links) to be upserted by id into the store as-is - a data migration, not a fresh\nwrite. It is the ingest half of Transfer and is re-sendable: re-importing the same rows is\nidempotent."
+    },
+    "protoImportBatchResponse": {
+      "type": "object",
+      "properties": {
+        "eventsImported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoriesImported": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "protoImportRequest": {
+      "type": "object",
+      "properties": {
+        "objectKey": {
+          "type": "string"
+        }
+      }
+    },
+    "protoImportResponse": {
+      "type": "object",
+      "properties": {
+        "eventsImported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoriesImported": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "protoMemory": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "timeStamp": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; defaults to the current time when unset (0) on create"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "isBinary": {
+          "$ref": "#/definitions/protoBool"
+        },
+        "timeRecalled": {
+          "type": "string",
+          "format": "int64"
+        },
+        "recallCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "isSummary": {
+          "type": "boolean"
+        },
+        "group": {
+          "type": "string",
+          "title": "optional freeform grouping/context label (system, subsystem, owner, ...)"
+        }
+      }
+    },
+    "protoMergeEventsRequest": {
+      "type": "object",
+      "properties": {
+        "mergeTo": {
+          "type": "string"
+        },
+        "mergeFrom": {
+          "type": "string"
+        }
+      }
+    },
+    "protoRecallMemoriesRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "protoRelationship": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "protoReplaceMemoriesWithSummaryResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "memoriesReplaced": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "protoSearchMemoriesRequest": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "format": "int32",
+          "title": "maximum results; a value \u003c= 0 selects the default (10)"
+        },
+        "eventId": {
+          "type": "string",
+          "title": "optional: restrict matches to a single event"
+        },
+        "reinforce": {
+          "type": "boolean",
+          "title": "route matches through recall, reinforcing them"
+        },
+        "group": {
+          "type": "string",
+          "title": "optional: restrict matches to memories carrying this group label"
+        }
+      },
+      "description": "SearchMemoriesRequest queries the optional secondary content-search index (opensearch.enabled)\nfor memories whose body matches the query. Results are always re-read from the primary store,\nwhich remains authoritative; ids the index returns that the primary store no longer holds are\nsilently dropped. When reinforce is true the matched memories are recalled - resetting their\ndecay clocks and raising their effective significance - rather than merely fetched."
+    },
+    "protoStoreEventResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "the stored event's id; empty when the event was not retained"
+        },
+        "memoryCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "nested memories stored (those below memory.minimumSignificance are dropped)"
+        },
+        "rejected": {
+          "type": "boolean",
+          "title": "true when the event was dropped for significance below event.minimumSignificance"
+        }
+      },
+      "description": "StoreEventResponse carries the stored event's id and how many of its nested memories were\nretained. An event whose significance is below event.minimumSignificance is quietly forgotten,\nlike a brain that simply does not retain the insignificant: no error is returned, id is empty,\nmemory_count is 0 (its nested memories are not stored either), and rejected is true."
+    },
+    "protoStoreMemoryResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "the stored memory's id; empty when the memory was not retained"
+        },
+        "rejected": {
+          "type": "boolean",
+          "title": "true when the memory was dropped for significance below memory.minimumSignificance"
+        }
+      },
+      "description": "StoreMemoryResponse carries the stored memory's id. A memory whose significance is below\nmemory.minimumSignificance is quietly forgotten, like a brain that simply does not retain the\ninsignificant: no error is returned, id is empty, and rejected is true."
+    },
+    "protoSummarizationCandidate": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "eventName": {
+          "type": "string"
+        },
+        "memoryCount": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "SummarizationCandidate identifies an event whose memories have accumulated enough, and gone\nquiet for long enough, to be worth condensing into a single summary memory via\nReplaceMemoriesWithSummary."
+    },
+    "protoTransferRequest": {
+      "type": "object",
+      "properties": {
+        "clear": {
+          "type": "boolean"
+        }
+      },
+      "description": "Transfer streams every event and memory directly to a centralised instance's ImportBatch RPC\n(address from transfer.targetAddress); like Export it records a manifest, and with clear set\ndeletes the captured records once the target has accepted them all."
+    },
+    "protoTransferResponse": {
+      "type": "object",
+      "properties": {
+        "manifestId": {
+          "type": "string"
+        },
+        "eventsTransferred": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoriesTransferred": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoriesCleared": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventsCleared": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    }
+  }
+}

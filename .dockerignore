@@ -1,0 +1,15 @@
+# Keep the build context to what `go build .` needs plus the docker/ configs.
+.git
+.trunk
+.vscode
+.claude
+.DS_Store
+data
+demo
+soak-notes.md
+*.md
+docker-compose*.yaml
+docker/docker-compose*.yaml
+Dockerfile
+.dockerignore
+config.json

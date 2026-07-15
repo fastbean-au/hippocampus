@@ -1,0 +1,39 @@
+# Hippocampus backed by MySQL. The mysql-driver config is mounted over the image's default
+# SQLite config; persistence lives in the mysql volume, so the hippocampus container itself is
+# stateless and needs no data volume.
+#
+#   docker compose -f docker/docker-compose.mysql.yaml up --build
+#
+# Note consolidation.walTriggerBytes is not supported with the MySQL driver (it measures
+# SQLite's on-disk WAL file, which has no MySQL counterpart) — the service refuses to start with
+# it set. Both capacity axes (consolidation.capacityMemories / capacityBytes) work as usual.
+
+services:
+  hippocampus:
+    build: ..
+    ports:
+      - "50051:50051" # gRPC
+      - "8080:8080" # HTTP/JSON gateway (+ /healthz)
+    volumes:
+      - ./config.mysql.json:/etc/hippocampus/config.json:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_USER: hippocampus
+      MYSQL_PASSWORD: hippocampus
+      MYSQL_DATABASE: hippocampus
+      MYSQL_ROOT_PASSWORD: hippocampus
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uhippocampus -phippocampus"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+volumes:
+  mysql-data:

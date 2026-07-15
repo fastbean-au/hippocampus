@@ -1,0 +1,52 @@
+{
+    "logging": {
+        "level": "info",
+        "json": false
+    },
+    "port": 8300,
+    "gateway": { "port": 0 },
+    "observability": {
+        "tracing": {
+            "enabled": false,
+            "samplingRatio": 1.0
+        },
+        "metrics": {
+            "enabled": false,
+            "exportIntervalSeconds": 60
+        },
+        "otlp": {
+            "endpoint": "localhost:4317",
+            "insecure": true
+        }
+    },
+    "storage": {
+        "directory": "./demo/data"
+    },
+    "memory": {
+        "limit": {
+            "sizeBytes": 1048576
+        },
+        "minimumSignificance": 0
+    },
+    "event": {
+       "minimumSignificance": 0
+    },
+    "sleep": {
+        "periodSeconds": 120
+    },
+    "consolidation": {
+        "defaultEventSignificanceValue": 0,
+        "defaultEventSignificancePercentile": 25,
+        "minimumAgeInDays": 0,
+        "aggressiveness": 1.0,
+        "deletionThreshold": 5,
+        "method": 1,
+        "unitsOfAgeInDays": 0.002,
+        "relationshipSignificanceWeight": 1.0,
+        "recallSignificanceWeight": 1.0,
+        "capacityMemories": 20000,
+        "capacityPressureExponent": 4.0,
+        "capacityBytes": 200000000,
+        "capacityBytesFloor": 180000000
+    }
+}

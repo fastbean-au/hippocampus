@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Build, vet, format check, and the full test suite. The postgres and mysql service containers
+  # make the db/postgres_test.go and db/mysql_test.go integration tests run rather than skip -
+  # they catch dialect bugs the SQLite tests structurally cannot (e.g. ON CONFLICT
+  # column-reference ambiguity), so they must run on every push, not only when someone remembers
+  # to run them locally.
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hippocampus
+          POSTGRES_PASSWORD: hippocampus
+          POSTGRES_DB: hippocampus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hippocampus -d hippocampus_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_USER: hippocampus
+          MYSQL_PASSWORD: hippocampus
+          MYSQL_DATABASE: hippocampus_test
+          MYSQL_ROOT_PASSWORD: hippocampus
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uhippocampus -phippocampus"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+
+      opensearch:
+        image: opensearchproject/opensearch:3.1.0
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 24
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Format
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Test (including postgres, mysql, and opensearch integration tests)
+        env:
+          HIPPOCAMPUS_TEST_POSTGRES_DSN: postgres://hippocampus:hippocampus@localhost:5432/hippocampus_test?sslmode=disable
+          HIPPOCAMPUS_TEST_MYSQL_DSN: hippocampus:hippocampus@tcp(localhost:3306)/hippocampus_test
+          HIPPOCAMPUS_TEST_OPENSEARCH_URL: http://localhost:9200
+        run: go test ./...
+
+  # Build the image and smoke both compose stacks the same way the containerization work was
+  # validated by hand: /healthz serves, a memory stores and reads back through the gateway, and
+  # in the postgres stack the write demonstrably lands in the postgres service.
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compose config check
+        run: |
+          docker compose config -q
+          docker compose -f docker-compose.postgres.yaml config -q
+          docker compose -f docker-compose.mysql.yaml config -q
+          docker compose -f docker-compose.opensearch.yaml config -q
+
+      - name: SQLite stack smoke test
+        run: |
+          docker compose up --build -d
+          timeout 60 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
+          id=$(curl -sf -X POST http://localhost:8080/v1/memories \
+            -H 'Content-Type: application/json' \
+            -d '{"body":"ci sqlite","significance":5}' | jq -r .id)
+          curl -sf http://localhost:8080/v1/memories | jq -e --arg id "$id" '.memories[] | select(.id == $id)'
+          docker compose down
+
+      - name: Postgres stack smoke test
+        run: |
+          docker compose -f docker-compose.postgres.yaml up --build -d
+          timeout 60 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
+          id=$(curl -sf -X POST http://localhost:8080/v1/memories \
+            -H 'Content-Type: application/json' \
+            -d '{"body":"ci postgres","significance":5}' | jq -r .id)
+          docker compose -f docker-compose.postgres.yaml exec -T postgres \
+            psql -U hippocampus -d hippocampus -t -c "SELECT id FROM memories" | grep -q "$id"
+          docker compose -f docker-compose.postgres.yaml down
+
+      - name: MySQL stack smoke test
+        run: |
+          docker compose -f docker-compose.mysql.yaml up --build -d
+          timeout 120 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
+          id=$(curl -sf -X POST http://localhost:8080/v1/memories \
+            -H 'Content-Type: application/json' \
+            -d '{"body":"ci mysql","significance":5}' | jq -r .id)
+          docker compose -f docker-compose.mysql.yaml exec -T mysql \
+            mysql -uhippocampus -phippocampus hippocampus -N -e "SELECT id FROM memories" | grep -q "$id"
+          docker compose -f docker-compose.mysql.yaml down
+
+      # Write-through indexing is asynchronous and OpenSearch refreshes are near-real-time, so
+      # the search assertion polls rather than expecting the memory immediately.
+      - name: OpenSearch stack smoke test
+        run: |
+          docker compose -f docker-compose.opensearch.yaml up --build -d
+          timeout 60 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
+          id=$(curl -sf -X POST http://localhost:8080/v1/memories \
+            -H 'Content-Type: application/json' \
+            -d '{"body":"the quick brown fox","significance":5}' | jq -r .id)
+          timeout 60 sh -c 'until curl -sf -X POST http://localhost:8080/v1/memories/search \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"fox\"}" | jq -e ".memories[] | select(.id == \"'"$id"'\")" > /dev/null; do sleep 2; done'
+          docker compose -f docker-compose.opensearch.yaml down

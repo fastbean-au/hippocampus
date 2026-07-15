@@ -1,0 +1,102 @@
+{
+    "logging": {
+        "level": "info",
+        "json": false
+    },
+    "port": 50051,
+    "gateway": {
+        "port": 0
+    },
+    "auth": {
+        "method": "none",
+        "signingSecret": "",
+        "jwksUrl": "",
+        "issuer": "",
+        "audience": "",
+        "jwksRefreshIntervalSeconds": 300
+    },
+    "tls": {
+        "enabled": false,
+        "certFile": "",
+        "keyFile": ""
+    },
+    "observability": {
+        "tracing": {
+            "enabled": false,
+            "samplingRatio": 1.0
+        },
+        "metrics": {
+            "enabled": false,
+            "exportIntervalSeconds": 60
+        },
+        "otlp": {
+            "endpoint": "localhost:4317",
+            "insecure": true
+        }
+    },
+    "storage": {
+        "driver": "sqlite",
+        "directory": "./data",
+        "postgres": {
+            "dsn": ""
+        },
+        "mysql": {
+            "dsn": ""
+        }
+    },
+    "opensearch": {
+        "enabled": false,
+        "addresses": [
+            "http://localhost:9200"
+        ],
+        "username": "",
+        "password": "",
+        "index": "hippocampus-memories",
+        "queueSize": 1024
+    },
+    "s3": {
+        "bucket": "",
+        "region": "",
+        "endpoint": "",
+        "usePathStyle": false,
+        "keyPrefix": "hippocampus/"
+    },
+    "transfer": {
+        "targetAddress": "",
+        "token": "",
+        "tls": false,
+        "batchSize": 500
+    },
+    "memory": {
+        "limit": {
+            "sizeBytes": 1048576
+        },
+        "minimumSignificance": 0
+    },
+    "event": {
+        "minimumSignificance": 0
+    },
+    "sleep": {
+        "periodSeconds": 3600
+    },
+    "consolidation": {
+        "enabled": true,
+        "defaultEventSignificanceValue": 0,
+        "defaultEventSignificancePercentile": 0,
+        "minimumAgeInDays": 14,
+        "aggressiveness": 1.0,
+        "deletionThreshold": 10,
+        "method": 1,
+        "unitsOfAgeInDays": 1.0,
+        "relationshipSignificanceWeight": 1.0,
+        "recallSignificanceWeight": 1.0,
+        "capacityMemories": 100000,
+        "capacityPressureExponent": 4.0,
+        "capacityBytes": 0,
+        "capacityBytesFloor": 0,
+        "walTriggerBytes": 0,
+        "summarizationMinMemories": 0,
+        "summarizationMinAgeInDays": 30,
+        "summarizationMaxCandidates": 100
+    }
+}

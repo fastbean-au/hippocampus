@@ -1,0 +1,16 @@
+# Hippocampus with the default embedded SQLite storage. The database file lives in a named
+# volume so it survives container replacement.
+#
+#   docker compose up --build
+
+services:
+  hippocampus:
+    build: .
+    ports:
+      - "50051:50051" # gRPC
+      - "8080:8080" # HTTP/JSON gateway (+ /healthz)
+    volumes:
+      - hippocampus-data:/data
+
+volumes:
+  hippocampus-data:
