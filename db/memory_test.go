@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func (s *decisionServer) MemoryValue(candidate MemoryConsolidationCandidate) flo
 func getMemory(t *testing.T, db *DB, id string) *types.Memory {
 	t.Helper()
 
-	memories, err := db.GetMemories(MemoryFilter{})
+	memories, err := db.GetMemories(context.Background(), MemoryFilter{})
 	if err != nil {
 		t.Fatalf("GetMemories: %s", err)
 	}
@@ -74,13 +75,13 @@ func TestRecallMemories(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := db.CreateMemory(m); err != nil {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
 
 	// First recall.
-	got, err := db.RecallMemories([]string{"m1"})
+	got, err := db.RecallMemories(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
@@ -102,7 +103,7 @@ func TestRecallMemories(t *testing.T) {
 	}
 
 	// Second recall increments again.
-	got, err = db.RecallMemories([]string{"m1"})
+	got, err = db.RecallMemories(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
@@ -112,7 +113,7 @@ func TestRecallMemories(t *testing.T) {
 	}
 
 	// The other memory is untouched.
-	all, err := db.GetMemories(MemoryFilter{})
+	all, err := db.GetMemories(context.Background(), MemoryFilter{})
 	if err != nil {
 		t.Fatalf("GetMemories: %s", err)
 	}
@@ -144,7 +145,7 @@ func TestConsolidateEventMemories(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
@@ -158,7 +159,7 @@ func TestConsolidateEventMemories(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := db.CreateMemory(m); err != nil {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
@@ -171,7 +172,7 @@ func TestConsolidateEventMemories(t *testing.T) {
 		},
 	}
 
-	deletedMemories, eventsSeen, deletedEvents, err := db.ConsolidateEventMemories(server)
+	deletedMemories, eventsSeen, deletedEvents, err := db.ConsolidateEventMemories(context.Background(), server)
 	if err != nil {
 		t.Fatalf("ConsolidateEventMemories: %s", err)
 	}
@@ -189,11 +190,11 @@ func TestConsolidateEventMemories(t *testing.T) {
 		t.Errorf("expected 1 event deleted, got %d", deletedEvents)
 	}
 
-	if _, err := db.GetEvent("gone"); err == nil {
+	if _, err := db.GetEvent(context.Background(), "gone"); err == nil {
 		t.Error("event 'gone' should be deleted when its last memory is consolidated")
 	}
 
-	partial, err := db.GetEvent("partial")
+	partial, err := db.GetEvent(context.Background(), "partial")
 	if err != nil {
 		t.Fatalf("GetEvent(partial): %s", err)
 	}
@@ -218,14 +219,14 @@ func TestConsolidateEventMemories(t *testing.T) {
 func TestConsolidateEventMemories_DanglingSurvivesWhenSignificant(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateMemory(types.Memory{Id: "d1", TimeStamp: 100, Significance: 50, EventId: "ghost", Body: "x"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "d1", TimeStamp: 100, Significance: 50, EventId: "ghost", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
 	// Never consolidate: the dangling memory must be seen (evaluated) yet kept.
 	server := &decisionServer{memory: func(MemoryConsolidationCandidate) bool { return false }}
 
-	deletedMemories, eventsSeen, deletedEvents, err := db.ConsolidateEventMemories(server)
+	deletedMemories, eventsSeen, deletedEvents, err := db.ConsolidateEventMemories(context.Background(), server)
 	if err != nil {
 		t.Fatalf("ConsolidateEventMemories: %s", err)
 	}
@@ -239,7 +240,7 @@ func TestConsolidateEventMemories_DanglingSurvivesWhenSignificant(t *testing.T) 
 	}
 
 	// No event row should have been conjured for the phantom event id.
-	if db.CountEvents() != 0 {
+	if db.CountEvents(context.Background()) != 0 {
 		t.Error("consolidating a dangling memory must not create an event row")
 	}
 }
@@ -260,7 +261,7 @@ func TestDeleteMemoriesIfUnrecalled(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := db.CreateMemory(m); err != nil {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
@@ -272,11 +273,11 @@ func TestDeleteMemoriesIfUnrecalled(t *testing.T) {
 	}
 
 	// A recall lands on "recalled" after the snapshot was taken but before the delete runs.
-	if _, err := db.RecallMemories([]string{"recalled"}); err != nil {
+	if _, err := db.RecallMemories(context.Background(), []string{"recalled"}); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := db.deleteMemoriesIfUnrecalled(snapshot)
+	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
@@ -302,7 +303,7 @@ func TestRecallMemories_LargeBatchChunks(t *testing.T) {
 
 	realIds := []string{"r0", "r1", "r2", "r3", "r4"}
 	for _, id := range realIds {
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -314,7 +315,7 @@ func TestRecallMemories_LargeBatchChunks(t *testing.T) {
 		ids = append(ids, fmt.Sprintf("missing-%05d", i))
 	}
 
-	got, err := db.RecallMemories(ids)
+	got, err := db.RecallMemories(context.Background(), ids)
 	if err != nil {
 		t.Fatalf("RecallMemories on a large batch should chunk, not fail: %s", err)
 	}
@@ -336,7 +337,7 @@ func TestRecallMemories_LargeBatchChunks(t *testing.T) {
 func TestRecallMemories_DuplicateIdsReinforcedOnce(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateMemory(types.Memory{Id: "dup", TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "dup", TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -348,7 +349,7 @@ func TestRecallMemories_DuplicateIdsReinforcedOnce(t *testing.T) {
 	}
 	ids = append(ids, "dup")
 
-	got, err := db.RecallMemories(ids)
+	got, err := db.RecallMemories(context.Background(), ids)
 	if err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
@@ -377,7 +378,7 @@ func TestDeleteMemoriesIfUnrecalled_ChunkBoundary(t *testing.T) {
 	for i := 0; i < total; i++ {
 		id := fmt.Sprintf("m%05d", i)
 
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 
@@ -387,11 +388,11 @@ func TestDeleteMemoriesIfUnrecalled_ChunkBoundary(t *testing.T) {
 	// Reinforce three memories placed in different chunks after the snapshot, so their recall state
 	// no longer matches and the guard must protect them.
 	protected := []string{"m00003", fmt.Sprintf("m%05d", deleteChunkSize+1), fmt.Sprintf("m%05d", deleteChunkSize*2+5)}
-	if _, err := db.RecallMemories(protected); err != nil {
+	if _, err := db.RecallMemories(context.Background(), protected); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := db.deleteMemoriesIfUnrecalled(snapshot)
+	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
@@ -406,7 +407,7 @@ func TestDeleteMemoriesIfUnrecalled_ChunkBoundary(t *testing.T) {
 		}
 	}
 
-	with, without := db.CountMemories()
+	with, without := db.CountMemories(context.Background())
 	if with+without != len(protected) {
 		t.Errorf("expected only the %d protected memories to remain, got %d", len(protected), with+without)
 	}
@@ -419,12 +420,12 @@ func TestDeleteMemoriesIfUnrecalled_ChunkBoundary(t *testing.T) {
 func TestUpdateMemory_NoOpValueStillReportsExists(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
 	// Same significance it already has - a no-op value update.
-	ok, err := db.UpdateMemory(types.Memory{Id: "m1", Significance: 5})
+	ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "m1", Significance: 5})
 	if err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	}
@@ -440,15 +441,15 @@ func TestUpdateMemory_NoOpValueStillReportsExists(t *testing.T) {
 func TestUpdateMemory_NoFieldsProbesExistence(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	if ok, err := db.UpdateMemory(types.Memory{Id: "m1"}); err != nil || !ok {
+	if ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "m1"}); err != nil || !ok {
 		t.Errorf("no-field update of an existing memory = (%v, %v), want (true, nil)", ok, err)
 	}
 
-	if ok, err := db.UpdateMemory(types.Memory{Id: "ghost"}); err != nil || ok {
+	if ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "ghost"}); err != nil || ok {
 		t.Errorf("no-field update of a missing memory = (%v, %v), want (false, nil)", ok, err)
 	}
 }
@@ -458,12 +459,12 @@ func TestUpdateMemory_NoFieldsProbesExistence(t *testing.T) {
 func TestUpdateMemory_PartialUpdate(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "original"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "original"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
 	// Update only the body: every other field must be preserved.
-	if ok, err := db.UpdateMemory(types.Memory{Id: "m1", Body: "changed"}); err != nil {
+	if ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "m1", Body: "changed"}); err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateMemory reported the existing memory as missing")
@@ -483,7 +484,7 @@ func TestUpdateMemory_PartialUpdate(t *testing.T) {
 	}
 
 	// Update only the significance: the new body must be preserved.
-	if ok, err := db.UpdateMemory(types.Memory{Id: "m1", Significance: 9}); err != nil {
+	if ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "m1", Significance: 9}); err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateMemory reported the existing memory as missing")
@@ -505,7 +506,7 @@ func TestUpdateMemory_PartialUpdate(t *testing.T) {
 func TestUpdateMemory_DoesNotInsertMissing(t *testing.T) {
 	db := newTestDB(t)
 
-	ok, err := db.UpdateMemory(types.Memory{Id: "new", TimeStamp: 50, Significance: 3, Body: "b"})
+	ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "new", TimeStamp: 50, Significance: 3, Body: "b"})
 	if err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	}
@@ -526,7 +527,7 @@ func TestCreateMemory_BinaryBodyRoundTrip(t *testing.T) {
 
 	body := string([]byte{0x00, 0xff, 0xfe, 0x01, 0x80, 0x7f})
 
-	if _, err := db.CreateMemory(types.Memory{Id: "bin", TimeStamp: 100, Significance: 1, Body: body, IsBinary: true}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "bin", TimeStamp: 100, Significance: 1, Body: body, IsBinary: true}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -544,7 +545,7 @@ func TestCreateMemory_BinaryBodyRoundTrip(t *testing.T) {
 	}
 
 	// The recall path returns the body through a different query; it must round-trip too.
-	recalled, err := db.RecallMemories([]string{"bin"})
+	recalled, err := db.RecallMemories(context.Background(), []string{"bin"})
 	if err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
@@ -565,7 +566,7 @@ func TestDeleteMemories_Chunked(t *testing.T) {
 	for i := 0; i < total; i++ {
 		id := fmt.Sprintf("m%04d", i)
 
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 
@@ -576,7 +577,7 @@ func TestDeleteMemories_Chunked(t *testing.T) {
 
 	deletions = append(deletions, "does-not-exist")
 
-	cnt, err := db.DeleteMemories(deletions)
+	cnt, err := db.DeleteMemories(context.Background(), deletions)
 	if err != nil {
 		t.Fatalf("DeleteMemories: %s", err)
 	}
@@ -585,7 +586,7 @@ func TestDeleteMemories_Chunked(t *testing.T) {
 		t.Errorf("expected 1101 memories deleted, got %d", cnt)
 	}
 
-	if _, without := db.CountMemories(); without != total-1101 {
+	if _, without := db.CountMemories(context.Background()); without != total-1101 {
 		t.Errorf("expected %d remaining memories, got %d", total-1101, without)
 	}
 }
@@ -596,11 +597,11 @@ func TestDeleteMemories_Chunked(t *testing.T) {
 func TestReplaceMemoriesWithSummary(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateEvent(types.Event{Id: "e1", Name: "summarized", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "summarized", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent(e1): %s", err)
 	}
 
-	if _, err := db.CreateEvent(types.Event{Id: "e2", Name: "untouched", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := db.CreateEvent(context.Background(), types.Event{Id: "e2", Name: "untouched", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent(e2): %s", err)
 	}
 
@@ -611,14 +612,14 @@ func TestReplaceMemoriesWithSummary(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := db.CreateMemory(m); err != nil {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
 
 	summary := types.Memory{Id: "s1", TimeStamp: 200, Significance: 5, EventId: "e1", Body: "the gist", IsSummary: true}
 
-	replaced, err := db.ReplaceMemoriesWithSummary("e1", summary)
+	replaced, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", summary)
 	if err != nil {
 		t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
 	}
@@ -659,7 +660,7 @@ func TestFindSummarizationCandidates(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
@@ -690,12 +691,12 @@ func TestFindSummarizationCandidates(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := db.CreateMemory(m); err != nil {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
 
-	candidates, err := db.FindSummarizationCandidates(3, threshold, 0)
+	candidates, err := db.FindSummarizationCandidates(context.Background(), 3, threshold, 0)
 	if err != nil {
 		t.Fatalf("FindSummarizationCandidates: %s", err)
 	}
@@ -710,11 +711,11 @@ func TestFindSummarizationCandidates(t *testing.T) {
 
 	// A recall on one of "quiet"'s memories touches its decay timestamp and disqualifies the
 	// event until it goes quiet again.
-	if _, err := db.RecallMemories([]string{"q1"}); err != nil {
+	if _, err := db.RecallMemories(context.Background(), []string{"q1"}); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	candidates, err = db.FindSummarizationCandidates(3, threshold, 0)
+	candidates, err = db.FindSummarizationCandidates(context.Background(), 3, threshold, 0)
 	if err != nil {
 		t.Fatalf("FindSummarizationCandidates after recall: %s", err)
 	}
@@ -730,7 +731,7 @@ func TestFindSummarizationCandidates_Limit(t *testing.T) {
 	db := newTestDB(t)
 
 	for _, id := range []string{"e1", "e2"} {
-		if _, err := db.CreateEvent(types.Event{Id: id, Name: id, TimeStart: 100, Significance: 1}); err != nil {
+		if _, err := db.CreateEvent(context.Background(), types.Event{Id: id, Name: id, TimeStart: 100, Significance: 1}); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", id, err)
 		}
 	}
@@ -738,19 +739,19 @@ func TestFindSummarizationCandidates_Limit(t *testing.T) {
 	// e1 has more memories than e2, so it must be the one kept under a limit of 1.
 	for i := 0; i < 5; i++ {
 		id := fmt.Sprintf("e1-m%d", i)
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
 
 	for i := 0; i < 3; i++ {
 		id := fmt.Sprintf("e2-m%d", i)
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e2", Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e2", Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
 
-	candidates, err := db.FindSummarizationCandidates(3, 1_000_000, 1)
+	candidates, err := db.FindSummarizationCandidates(context.Background(), 3, 1_000_000, 1)
 	if err != nil {
 		t.Fatalf("FindSummarizationCandidates: %s", err)
 	}
@@ -803,7 +804,7 @@ func TestGetMemories_Filters(t *testing.T) {
 			Body:         "x",
 		}
 
-		if _, err := db.CreateMemory(memory); err != nil {
+		if _, err := db.CreateMemory(context.Background(), memory); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", memory.Id, err)
 		}
 	}
@@ -823,7 +824,7 @@ func TestGetMemories_Filters(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		got, err := db.GetMemories(c.filter)
+		got, err := db.GetMemories(context.Background(), c.filter)
 		if err != nil {
 			t.Fatalf("%s: GetMemories: %s", c.name, err)
 		}
@@ -840,12 +841,12 @@ func TestGetMemoriesByIds(t *testing.T) {
 	db := newTestDB(t)
 
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
 
-	got, err := db.GetMemoriesByIds([]string{"m1", "missing", "m3"})
+	got, err := db.GetMemoriesByIds(context.Background(), []string{"m1", "missing", "m3"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -860,7 +861,7 @@ func TestGetMemoriesByIds(t *testing.T) {
 		}
 	}
 
-	empty, err := db.GetMemoriesByIds(nil)
+	empty, err := db.GetMemoriesByIds(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds(nil): %s", err)
 	}
@@ -877,12 +878,12 @@ func TestGetIndexableMemoriesPage(t *testing.T) {
 	db := newTestDB(t)
 
 	for _, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "body of " + id}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "body of " + id}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m2b", TimeStamp: 100, Significance: 1, Body: "\x00\x01", IsBinary: true}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m2b", TimeStamp: 100, Significance: 1, Body: "\x00\x01", IsBinary: true}); err != nil {
 		t.Fatalf("CreateMemory(m2b): %s", err)
 	}
 
@@ -890,7 +891,7 @@ func TestGetIndexableMemoriesPage(t *testing.T) {
 	afterId := ""
 
 	for {
-		page, err := db.GetIndexableMemoriesPage(afterId, 2)
+		page, err := db.GetIndexableMemoriesPage(context.Background(), afterId, 2)
 		if err != nil {
 			t.Fatalf("GetIndexableMemoriesPage(%q, 2): %s", afterId, err)
 		}
@@ -928,7 +929,7 @@ func TestMemoryDeleteObserver(t *testing.T) {
 	db := newTestDB(t)
 
 	for _, id := range []string{"m1", "m2"} {
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -940,11 +941,11 @@ func TestMemoryDeleteObserver(t *testing.T) {
 
 	// Recall m2 after the scan snapshot would have been taken: simulate by deleting with stale
 	// snapshots directly - m1's snapshot matches, m2's does not.
-	if _, err := db.RecallMemories([]string{"m2"}); err != nil {
+	if _, err := db.RecallMemories(context.Background(), []string{"m2"}); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := db.deleteMemoriesIfUnrecalled([]memoryRecallSnapshot{
+	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), []memoryRecallSnapshot{
 		{id: "m1", timeRecalled: 0, recallCount: 0},
 		{id: "m2", timeRecalled: 0, recallCount: 0}, // stale: m2 was recalled since
 	})
@@ -966,7 +967,7 @@ func TestMemoryDeleteObserver(t *testing.T) {
 	// An all-stale batch deletes nothing and must not invoke the observer at all.
 	observed = nil
 
-	if _, err := db.deleteMemoriesIfUnrecalled([]memoryRecallSnapshot{
+	if _, err := db.deleteMemoriesIfUnrecalled(context.Background(), []memoryRecallSnapshot{
 		{id: "m2", timeRecalled: 0, recallCount: 0},
 	}); err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
@@ -989,7 +990,7 @@ func TestMemoryGroup(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := db.CreateMemory(m); err != nil {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
@@ -1002,7 +1003,7 @@ func TestMemoryGroup(t *testing.T) {
 		t.Errorf("expected m3 to carry no group, got %+v", m)
 	}
 
-	got, err := db.GetMemories(MemoryFilter{Group: "billing"})
+	got, err := db.GetMemories(context.Background(), MemoryFilter{Group: "billing"})
 	if err != nil {
 		t.Fatalf("GetMemories: %s", err)
 	}
@@ -1012,7 +1013,7 @@ func TestMemoryGroup(t *testing.T) {
 	}
 
 	// An update without a group must leave the stored group untouched.
-	if ok, err := db.UpdateMemory(types.Memory{Id: "m1", Significance: 2}); err != nil {
+	if ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "m1", Significance: 2}); err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateMemory reported the existing memory as missing")
@@ -1023,7 +1024,7 @@ func TestMemoryGroup(t *testing.T) {
 	}
 
 	// An update carrying a group overwrites it.
-	if ok, err := db.UpdateMemory(types.Memory{Id: "m1", Group: "ops"}); err != nil {
+	if ok, err := db.UpdateMemory(context.Background(), types.Memory{Id: "m1", Group: "ops"}); err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateMemory reported the existing memory as missing")
@@ -1058,13 +1059,13 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := db.CreateMemory(m); err != nil {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
 
 	// significance: sig desc, then time desc, then id asc — c and b tie on 50 so newer (c) wins.
-	bySig, err := db.GetMemories(MemoryFilter{OrderBy: "significance"})
+	bySig, err := db.GetMemories(context.Background(), MemoryFilter{OrderBy: "significance"})
 	if err != nil {
 		t.Fatalf("GetMemories(significance): %s", err)
 	}
@@ -1074,7 +1075,7 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 	}
 
 	// timestamp: time desc only.
-	byTime, err := db.GetMemories(MemoryFilter{OrderBy: "timestamp"})
+	byTime, err := db.GetMemories(context.Background(), MemoryFilter{OrderBy: "timestamp"})
 	if err != nil {
 		t.Fatalf("GetMemories(timestamp): %s", err)
 	}
@@ -1084,7 +1085,7 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 	}
 
 	// an empty/unknown order_by falls back to significance.
-	byDefault, err := db.GetMemories(MemoryFilter{})
+	byDefault, err := db.GetMemories(context.Background(), MemoryFilter{})
 	if err != nil {
 		t.Fatalf("GetMemories(default): %s", err)
 	}
@@ -1094,7 +1095,7 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 	}
 
 	// paging over the significance order: page 1 and page 2 partition the list with no overlap.
-	page1, err := db.GetMemories(MemoryFilter{OrderBy: "significance", Limit: 2, Offset: 0})
+	page1, err := db.GetMemories(context.Background(), MemoryFilter{OrderBy: "significance", Limit: 2, Offset: 0})
 	if err != nil {
 		t.Fatalf("GetMemories(page1): %s", err)
 	}
@@ -1103,7 +1104,7 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 		t.Errorf("page1 = %v, want %v", memIds(page1), want)
 	}
 
-	page2, err := db.GetMemories(MemoryFilter{OrderBy: "significance", Limit: 2, Offset: 2})
+	page2, err := db.GetMemories(context.Background(), MemoryFilter{OrderBy: "significance", Limit: 2, Offset: 2})
 	if err != nil {
 		t.Fatalf("GetMemories(page2): %s", err)
 	}
@@ -1113,7 +1114,7 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 	}
 
 	// CountMemoriesFiltered ignores Limit/Offset and reflects the filter.
-	total, err := db.CountMemoriesFiltered(MemoryFilter{Limit: 1, Offset: 3})
+	total, err := db.CountMemoriesFiltered(context.Background(), MemoryFilter{Limit: 1, Offset: 3})
 	if err != nil {
 		t.Fatalf("CountMemoriesFiltered(all): %s", err)
 	}
@@ -1122,7 +1123,7 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 		t.Errorf("total count = %d, want 4", total)
 	}
 
-	g2, err := db.CountMemoriesFiltered(MemoryFilter{Group: "g2"})
+	g2, err := db.CountMemoriesFiltered(context.Background(), MemoryFilter{Group: "g2"})
 	if err != nil {
 		t.Fatalf("CountMemoriesFiltered(g2): %s", err)
 	}
@@ -1131,7 +1132,7 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 		t.Errorf("group g2 count = %d, want 2", g2)
 	}
 
-	sig, err := db.CountMemoriesFiltered(MemoryFilter{SignificanceMin: 50})
+	sig, err := db.CountMemoriesFiltered(context.Background(), MemoryFilter{SignificanceMin: 50})
 	if err != nil {
 		t.Fatalf("CountMemoriesFiltered(sig>=50): %s", err)
 	}

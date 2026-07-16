@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -11,7 +12,7 @@ import (
 func TestOpContext_DeadlineOnlyWhenConfigured(t *testing.T) {
 	d := newTestDB(t)
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(context.Background())
 	defer cancel()
 
 	if _, ok := ctx.Deadline(); ok {
@@ -20,7 +21,7 @@ func TestOpContext_DeadlineOnlyWhenConfigured(t *testing.T) {
 
 	d.SetQueryTimeout(time.Second)
 
-	ctx, cancel = d.opContext()
+	ctx, cancel = d.opContext(context.Background())
 	defer cancel()
 
 	if _, ok := ctx.Deadline(); !ok {
@@ -36,7 +37,7 @@ func TestSetQueryTimeout_NonPositiveDisables(t *testing.T) {
 	d.SetQueryTimeout(0)
 	d.SetQueryTimeout(-time.Second)
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(context.Background())
 	defer cancel()
 
 	if _, ok := ctx.Deadline(); ok {
@@ -50,19 +51,19 @@ func TestSetQueryTimeout_NonPositiveDisables(t *testing.T) {
 func TestQueryTimeout_ExpiredBoundFailsRead(t *testing.T) {
 	d := newTestDB(t)
 
-	if _, err := d.GetMemories(MemoryFilter{}); err != nil {
+	if _, err := d.GetMemories(context.Background(), MemoryFilter{}); err != nil {
 		t.Fatalf("read against an unbounded DB should succeed, got: %s", err)
 	}
 
 	d.SetQueryTimeout(time.Nanosecond)
 
-	if _, err := d.GetMemories(MemoryFilter{}); err == nil {
+	if _, err := d.GetMemories(context.Background(), MemoryFilter{}); err == nil {
 		t.Error("expected a read to fail under an already-expired query timeout")
 	}
 
 	// The transaction path is bounded too: beginTx opens with the same expired context, so a
 	// delete cannot begin its transaction.
-	if _, err := d.DeleteMemories([]string{"some-id"}); err == nil {
+	if _, err := d.DeleteMemories(context.Background(), []string{"some-id"}); err == nil {
 		t.Error("expected a transactional write to fail under an already-expired query timeout")
 	}
 }

@@ -106,7 +106,7 @@ func TestSearchMemories_DropsStaleIdsAndKeepsRelevanceOrder(t *testing.T) {
 	s := newSearchTestServer(t, idx)
 
 	for _, id := range []string{"m1", "m2"} {
-		if _, err := s.db.CreateMemory(testMemory(id, 5)); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), testMemory(id, 5)); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -131,7 +131,7 @@ func TestSearchMemories_ReinforceRecalls(t *testing.T) {
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 	s := newSearchTestServer(t, idx)
 
-	if _, err := s.db.CreateMemory(testMemory("m1", 5)); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), testMemory("m1", 5)); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -195,14 +195,14 @@ func TestSearchHooks_SummaryDeleteThenIndex(t *testing.T) {
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 
-	if _, err := s.db.CreateEvent(testEvent("e1")); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), testEvent("e1")); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
 	m := testMemory("m1", 5)
 	m.EventId = "e1"
 
-	if _, err := s.db.CreateMemory(m); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -232,11 +232,11 @@ func TestUpdateMemory_ReindexesNonBinary(t *testing.T) {
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "text"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "text"}); err != nil {
 		t.Fatalf("CreateMemory(m1): %s", err)
 	}
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "b1", TimeStamp: 100, Significance: 5, Body: "raw", IsBinary: true}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "b1", TimeStamp: 100, Significance: 5, Body: "raw", IsBinary: true}); err != nil {
 		t.Fatalf("CreateMemory(b1): %s", err)
 	}
 

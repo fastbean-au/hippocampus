@@ -118,17 +118,19 @@ func (d *DB) SetPoolLimits(maxOpenConns int, maxIdleConns int) {
 	d.sql.SetMaxIdleConns(maxIdleConns)
 }
 
-// opContext derives the context bounding a single operation. When no timeout is configured it
-// returns a background context and a no-op cancel, so callers can unconditionally
-// `ctx, cancel := d.opContext(); defer cancel()`. The caller owns the context's lifetime: for the
-// row-returning helpers the deferred cancel must outlive iteration, which it does because the read
-// methods consume their rows before returning (the consolidation scans already collect-then-close).
-func (d *DB) opContext() (context.Context, context.CancelFunc) {
+// opContext derives the context bounding a single operation from the caller's context, so both the
+// caller's own deadline/cancellation (an RPC's ctx) and the server-side queryTimeout apply -
+// whichever fires first. When no timeout is configured it returns the parent unchanged with a no-op
+// cancel, so callers can unconditionally `ctx, cancel := d.opContext(ctx); defer cancel()`. The
+// caller owns the context's lifetime: for the row-returning helpers the deferred cancel must
+// outlive iteration, which it does because the read methods consume their rows before returning
+// (the consolidation scans already collect-then-close).
+func (d *DB) opContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if d.queryTimeout <= 0 {
-		return context.Background(), func() {}
+		return ctx, func() {}
 	}
 
-	return context.WithTimeout(context.Background(), d.queryTimeout)
+	return context.WithTimeout(ctx, d.queryTimeout)
 }
 
 // startLockKeepalive launches the goroutine that keeps the instance lock alive and healthy for a
@@ -244,9 +246,9 @@ func (d *DB) rebind(query string) string {
 // exec owns its context fully: the statement completes before it returns, so the timeout context
 // is created and cancelled here. query and queryRow return rows consumed by the caller after they
 // return, so the caller must supply a context whose lifetime spans that consumption — every caller
-// derives one with `ctx, cancel := d.opContext(); defer cancel()`.
-func (d *DB) exec(query string, args ...any) (sql.Result, error) {
-	ctx, cancel := d.opContext()
+// derives one with `ctx, cancel := d.opContext(ctx); defer cancel()`.
+func (d *DB) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	return d.sql.ExecContext(ctx, d.rebind(query), args...)
@@ -257,8 +259,8 @@ func (d *DB) exec(query string, args ...any) (sql.Result, error) {
 // the context is cancelled, so cancelling on return both releases the timer and guarantees an
 // abandoned transaction is not left open. When no timeout is configured the context is a plain
 // background context and cancel is a no-op.
-func (d *DB) beginTx() (*sql.Tx, context.CancelFunc, error) {
-	ctx, cancel := d.opContext()
+func (d *DB) beginTx(ctx context.Context) (*sql.Tx, context.CancelFunc, error) {
+	ctx, cancel := d.opContext(ctx)
 
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
@@ -353,51 +355,55 @@ type Server interface {
 // different mechanics as long as UsedBytes/Preserve keep meaning "logical bytes used"/"compact",
 // and WALBytes returns 0 where there is no comparable on-disk WAL to measure (as it already does
 // for the in-memory database used by tests).
+// Every method that performs database work takes a context.Context as its first parameter, so an
+// RPC's own deadline or cancellation reaches the driver and aborts server-side work (bounded
+// further by storage.queryTimeout inside the db layer). WALBytes (a filesystem stat) and Close (a
+// lifecycle call) take none because neither issues a query.
 type Store interface {
-	CreateMemory(memory types.Memory) (string, error)
-	UpdateMemory(memory types.Memory) (bool, error)
-	DeleteMemories(ids []string) (int, error)
-	RecallMemories(ids []string) (*[]types.Memory, error)
-	ReplaceMemoriesWithSummary(eventId string, summary types.Memory) (int, error)
-	GetMemories(filter MemoryFilter) (*[]types.Memory, error)
-	GetMemoriesByEventId(eventId string) (*[]types.Memory, error)
-	GetMemoriesByEventIds(eventIds []string) (*[]types.Memory, error)
-	GetMemoriesByIds(ids []string) (*[]types.Memory, error)
-	CountMemories() (int, int)
-	CountMemoriesFiltered(filter MemoryFilter) (int, error)
+	CreateMemory(ctx context.Context, memory types.Memory) (string, error)
+	UpdateMemory(ctx context.Context, memory types.Memory) (bool, error)
+	DeleteMemories(ctx context.Context, ids []string) (int, error)
+	RecallMemories(ctx context.Context, ids []string) (*[]types.Memory, error)
+	ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error)
+	GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Memory, error)
+	GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error)
+	GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]types.Memory, error)
+	GetMemoriesByIds(ctx context.Context, ids []string) (*[]types.Memory, error)
+	CountMemories(ctx context.Context) (int, int)
+	CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (int, error)
 
-	CreateEvent(event types.Event) (string, error)
-	UpdateEvent(event types.Event) (bool, error)
-	DeleteEvent(id string) (bool, error)
-	EventExists(id string) (bool, error)
-	GetEvent(id string) (*types.Event, error)
-	GetEvents(filter EventFilter) (*[]types.Event, error)
-	CountEvents() int
-	CountEventsFiltered(filter EventFilter) (int, error)
-	MergeEventMemories(toEventId string, fromEventId string) error
-	DeleteEventMemories(eventId string) (int, error)
-	UnsetMemoriesEventId(eventId string) (int, error)
-	CalculateSignificancePercentile(percent float64) (float64, error)
+	CreateEvent(ctx context.Context, event types.Event) (string, error)
+	UpdateEvent(ctx context.Context, event types.Event) (bool, error)
+	DeleteEvent(ctx context.Context, id string) (bool, error)
+	EventExists(ctx context.Context, id string) (bool, error)
+	GetEvent(ctx context.Context, id string) (*types.Event, error)
+	GetEvents(ctx context.Context, filter EventFilter) (*[]types.Event, error)
+	CountEvents(ctx context.Context) int
+	CountEventsFiltered(ctx context.Context, filter EventFilter) (int, error)
+	MergeEventMemories(ctx context.Context, toEventId string, fromEventId string) error
+	DeleteEventMemories(ctx context.Context, eventId string) (int, error)
+	UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error)
+	CalculateSignificancePercentile(ctx context.Context, percent float64) (float64, error)
 
-	ConsolidateMemories(s Server) (int, error)
-	ConsolidateEventMemories(s Server) (int, int, int, error)
-	ConsolidateEvents(s Server) (int, error)
-	EvictMemories(s Server, freeBytes int64) (int, int, int64, error)
-	FindSummarizationCandidates(minMemories int, maxTimestamp int64, limit int) ([]SummarizationCandidate, error)
+	ConsolidateMemories(ctx context.Context, s Server) (int, error)
+	ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error)
+	ConsolidateEvents(ctx context.Context, s Server) (int, error)
+	EvictMemories(ctx context.Context, s Server, freeBytes int64) (int, int, int64, error)
+	FindSummarizationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarizationCandidate, error)
 
 	// Export/transfer surface (see transfer.go): keyset pagination over the whole store,
 	// full-state import upserts, and the manifest-scoped clear primitives.
-	GetMemoriesPage(afterId string, limit int) ([]types.Memory, error)
-	GetEventsPage(afterId string, limit int) ([]types.Event, error)
-	ImportMemories(memories []types.Memory) (int, error)
-	ImportEvents(events []types.Event) (int, error)
-	ClearMemories(snapshots []MemoryRecallSnapshot) (int, error)
-	DeleteEventIfEmpty(id string) (bool, error)
+	GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error)
+	GetEventsPage(ctx context.Context, afterId string, limit int) ([]types.Event, error)
+	ImportMemories(ctx context.Context, memories []types.Memory) (int, error)
+	ImportEvents(ctx context.Context, events []types.Event) (int, error)
+	ClearMemories(ctx context.Context, snapshots []MemoryRecallSnapshot) (int, error)
+	DeleteEventIfEmpty(ctx context.Context, id string) (bool, error)
 
-	UsedBytes() (int64, error)
+	UsedBytes(ctx context.Context) (int64, error)
 	WALBytes() (int64, error)
-	Preserve() error
-	Purge() error
+	Preserve(ctx context.Context) error
+	Purge(ctx context.Context) error
 	Ping(ctx context.Context) error
 	Close() error
 }
@@ -660,28 +666,31 @@ func (d *DB) addColumnIfMissing(table string, column string, definition string) 
 // would have after a full compaction); for the server drivers it is estimated from the live rows
 // themselves (see usedBytesLiveRows), since no file-size measure on either server ever shrinks
 // after deletes.
-func (d *DB) UsedBytes() (int64, error) {
+func (d *DB) UsedBytes(ctx context.Context) (int64, error) {
 	log.Trace("func() db.UsedBytes")
 
 	if d.driver != driverSQLite {
-		return d.usedBytesLiveRows()
+		return d.usedBytesLiveRows(ctx)
 	}
+
+	ctx, cancel := d.opContext(ctx)
+	defer cancel()
 
 	var pageCount, freelistCount, pageSize int64
 
-	if err := d.sql.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+	if err := d.queryRow(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
 		log.Errorf("failed to read page_count: %s", err.Error())
 
 		return 0, err
 	}
 
-	if err := d.sql.QueryRow(`PRAGMA freelist_count`).Scan(&freelistCount); err != nil {
+	if err := d.queryRow(ctx, `PRAGMA freelist_count`).Scan(&freelistCount); err != nil {
 		log.Errorf("failed to read freelist_count: %s", err.Error())
 
 		return 0, err
 	}
 
-	if err := d.sql.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+	if err := d.queryRow(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
 		log.Errorf("failed to read page_size: %s", err.Error())
 
 		return 0, err
@@ -721,20 +730,20 @@ func (d *DB) WALBytes() (int64, error) {
 // Postgres's autovacuum and InnoDB's background purge already reclaim dead rows continuously,
 // and imitating SQLite's app-driven compaction (VACUUM FULL, OPTIMIZE TABLE) would take an
 // exclusive table lock for no benefit.
-func (d *DB) Preserve() error {
+func (d *DB) Preserve(ctx context.Context) error {
 	log.Trace("func() db.Preserve")
 
 	if d.driver != driverSQLite || d.readOnly {
 		return nil
 	}
 
-	if _, err := d.sql.Exec(`PRAGMA incremental_vacuum`); err != nil {
+	if _, err := d.exec(ctx, `PRAGMA incremental_vacuum`); err != nil {
 		log.Errorf("failed to run incremental vacuum: %s", err.Error())
 
 		return err
 	}
 
-	if _, err := d.sql.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+	if _, err := d.exec(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		log.Errorf("failed to checkpoint WAL: %s", err.Error())
 
 		return err
@@ -756,7 +765,7 @@ func (d *DB) Ping(ctx context.Context) error {
 func (d *DB) Close() error {
 	log.Trace("func() db.Close")
 
-	if err := d.Preserve(); err != nil {
+	if err := d.Preserve(context.Background()); err != nil {
 		log.Errorf("failed to preserve database before closing: %s", err.Error())
 	}
 
@@ -782,10 +791,10 @@ func (d *DB) Close() error {
 }
 
 // Purge deletes all events and memories in a single transaction, then compacts the database.
-func (d *DB) Purge() error {
+func (d *DB) Purge(ctx context.Context) error {
 	log.Info("func() db.Purge()")
 
-	tx, cancel, err := d.beginTx()
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		log.Errorf("failed to purge - beginning transaction: %s", err.Error())
 
@@ -813,7 +822,7 @@ func (d *DB) Purge() error {
 		return err
 	}
 
-	if err := d.Preserve(); err != nil {
+	if err := d.Preserve(ctx); err != nil {
 		log.Errorf("failed to purge - compacting database: %s", err.Error())
 
 		return err

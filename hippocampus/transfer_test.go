@@ -90,7 +90,7 @@ func seedTransferFixture(t *testing.T, s *Server) {
 	}
 
 	for _, e := range events {
-		if _, err := s.db.CreateEvent(e); err != nil {
+		if _, err := s.db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
@@ -102,13 +102,13 @@ func seedTransferFixture(t *testing.T, s *Server) {
 	}
 
 	for _, m := range memories {
-		if _, err := s.db.CreateMemory(m); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
 
 	// Give m1 recall history that must survive the round trip.
-	if _, err := s.db.RecallMemories([]string{"m1"}); err != nil {
+	if _, err := s.db.RecallMemories(context.Background(), []string{"m1"}); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 }
@@ -135,7 +135,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 
 	// The export must not have deleted anything (clear was not requested).
-	if with, without := source.db.CountMemories(); with+without != 3 {
+	if with, without := source.db.CountMemories(context.Background()); with+without != 3 {
 		t.Errorf("export without clear must leave the store untouched, got %d memories", with+without)
 	}
 
@@ -152,7 +152,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		}
 	}
 
-	event, err := target.db.GetEvent("e1")
+	event, err := target.db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent(e1): %s", err)
 	}
@@ -161,7 +161,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Errorf("event state not preserved through the archive: %+v", event)
 	}
 
-	memories, err := target.db.GetMemoriesByIds([]string{"m1", "m2", "m3"})
+	memories, err := target.db.GetMemoriesByIds(context.Background(), []string{"m1", "m2", "m3"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -206,7 +206,7 @@ func TestClearRespectsActivitySinceCapture(t *testing.T) {
 	}
 
 	// m2 is recalled between the capture and the clear; it and its event must survive.
-	if _, err := s.db.RecallMemories([]string{"m2"}); err != nil {
+	if _, err := s.db.RecallMemories(context.Background(), []string{"m2"}); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
@@ -223,11 +223,11 @@ func TestClearRespectsActivitySinceCapture(t *testing.T) {
 		t.Errorf("expected only e2 cleared (e1 still owns m2), got %v", cleared)
 	}
 
-	if _, err := s.db.GetEvent("e1"); err != nil {
+	if _, err := s.db.GetEvent(context.Background(), "e1"); err != nil {
 		t.Error("e1 still owns the recalled m2 and must survive the clear")
 	}
 
-	if _, err := s.db.GetEvent("e2"); err == nil {
+	if _, err := s.db.GetEvent(context.Background(), "e2"); err == nil {
 		t.Error("e2 was captured and empty, it should have been cleared")
 	}
 
@@ -254,7 +254,7 @@ func TestExportWithClearFlag(t *testing.T) {
 		t.Errorf("expected the whole fixture cleared, got %v", exported)
 	}
 
-	if with, without := s.db.CountMemories(); with+without != 0 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 0 {
 		t.Errorf("expected an empty store after export with clear, got %d memories", with+without)
 	}
 }
@@ -295,7 +295,7 @@ type failClearStore struct {
 	err error
 }
 
-func (f failClearStore) ClearMemories(snapshots []db.MemoryRecallSnapshot) (int, error) {
+func (f failClearStore) ClearMemories(ctx context.Context, snapshots []db.MemoryRecallSnapshot) (int, error) {
 	return 0, f.err
 }
 
@@ -336,7 +336,7 @@ func TestExportWithClearFailure_CachesManifestForRetry(t *testing.T) {
 	}
 
 	// Nothing should have been cleared.
-	if with, without := s.db.CountMemories(); with+without != 3 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 3 {
 		t.Errorf("expected the store untouched after a failed clear, got %d memories", with+without)
 	}
 }
@@ -409,7 +409,7 @@ func TestClearFailureCachesManifestForRetry(t *testing.T) {
 	}
 
 	// Nothing should have been cleared, and the store must be untouched.
-	if with, without := real.CountMemories(); with+without != 3 {
+	if with, without := real.CountMemories(context.Background()); with+without != 3 {
 		t.Errorf("expected the store untouched after a failed clear, got %d memories", with+without)
 	}
 
@@ -426,7 +426,7 @@ func TestClearFailureCachesManifestForRetry(t *testing.T) {
 		t.Errorf("expected the retry to clear the captured records (3 memories, 2 events), got %v", retry)
 	}
 
-	if with, without := real.CountMemories(); with+without != 0 {
+	if with, without := real.CountMemories(context.Background()); with+without != 0 {
 		t.Errorf("expected the store cleared after the retry, got %d memories", with+without)
 	}
 }
@@ -464,12 +464,12 @@ func TestTransferDirect(t *testing.T) {
 		t.Errorf("expected the source cleared, got %v", transferred)
 	}
 
-	if with, without := source.db.CountMemories(); with+without != 0 {
+	if with, without := source.db.CountMemories(context.Background()); with+without != 0 {
 		t.Errorf("expected an empty source store, got %d memories", with+without)
 	}
 
 	memory := func(id string) *types.Memory {
-		memories, err := target.db.GetMemoriesByIds([]string{id})
+		memories, err := target.db.GetMemoriesByIds(context.Background(), []string{id})
 		if err != nil || len(*memories) != 1 {
 			return nil
 		}
@@ -481,7 +481,7 @@ func TestTransferDirect(t *testing.T) {
 		t.Errorf("m1 did not arrive in the target with its state, got %+v", m)
 	}
 
-	if event, err := target.db.GetEvent("e1"); err != nil || event.Group != "billing" || event.RelationshipSignificance != 3 {
+	if event, err := target.db.GetEvent(context.Background(), "e1"); err != nil || event.Group != "billing" || event.RelationshipSignificance != 3 {
 		t.Errorf("e1 did not arrive in the target with its state, got %+v (%v)", event, err)
 	}
 }

@@ -80,7 +80,7 @@ func backfillSearch(cfg backfillConfig) {
 	afterId := ""
 
 	for {
-		memories, err := database.GetIndexableMemoriesPage(afterId, cfg.BatchSize)
+		memories, err := database.GetIndexableMemoriesPage(ctx, afterId, cfg.BatchSize)
 		if err != nil {
 			log.Fatalf("failed to read memories after id '%s': %s", afterId, err.Error())
 		}

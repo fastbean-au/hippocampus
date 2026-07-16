@@ -49,7 +49,7 @@ func TestEndEvent_EmptyIdRejected(t *testing.T) {
 		t.Error("EndEvent reported success for an empty id")
 	}
 
-	if n := s.db.CountEvents(); n != 0 {
+	if n := s.db.CountEvents(context.Background()); n != 0 {
 		t.Fatalf("EndEvent with an empty id created %d event(s); expected none", n)
 	}
 }
@@ -72,7 +72,7 @@ func TestEndEvent_UnknownIdNotFound(t *testing.T) {
 		t.Error("EndEvent reported success for an unknown id")
 	}
 
-	if n := s.db.CountEvents(); n != 0 {
+	if n := s.db.CountEvents(context.Background()); n != 0 {
 		t.Fatalf("EndEvent with an unknown id created %d event(s); expected none", n)
 	}
 }
@@ -81,7 +81,7 @@ func TestEndEvent_UnknownIdNotFound(t *testing.T) {
 func TestEndEvent_Success(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
@@ -94,7 +94,7 @@ func TestEndEvent_Success(t *testing.T) {
 		t.Error("EndEvent did not report Ok for a successful end")
 	}
 
-	got, err := s.db.GetEvent("e1")
+	got, err := s.db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -122,7 +122,7 @@ func TestUpdateEventSignificance_EmptyIdRejected(t *testing.T) {
 		t.Error("UpdateEventSignificance reported success for an empty id")
 	}
 
-	if n := s.db.CountEvents(); n != 0 {
+	if n := s.db.CountEvents(context.Background()); n != 0 {
 		t.Fatalf("UpdateEventSignificance with an empty id created %d event(s); expected none", n)
 	}
 }
@@ -145,7 +145,7 @@ func TestUpdateEventSignificance_UnknownIdNotFound(t *testing.T) {
 		t.Error("UpdateEventSignificance reported success for an unknown id")
 	}
 
-	if n := s.db.CountEvents(); n != 0 {
+	if n := s.db.CountEvents(context.Background()); n != 0 {
 		t.Fatalf("UpdateEventSignificance with an unknown id created %d event(s); expected none", n)
 	}
 }
@@ -155,7 +155,7 @@ func TestUpdateEventSignificance_UnknownIdNotFound(t *testing.T) {
 func TestUpdateEventSignificance_Success(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
@@ -168,7 +168,7 @@ func TestUpdateEventSignificance_Success(t *testing.T) {
 		t.Error("UpdateEventSignificance did not report Ok for a successful update")
 	}
 
-	got, err := s.db.GetEvent("e1")
+	got, err := s.db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -185,7 +185,7 @@ type failUnsetStore struct {
 	err error
 }
 
-func (f failUnsetStore) UnsetMemoriesEventId(eventId string) (int, error) {
+func (f failUnsetStore) UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error) {
 	return 0, f.err
 }
 
@@ -195,11 +195,11 @@ func (f failUnsetStore) UnsetMemoriesEventId(eventId string) (int, error) {
 func TestDeleteEvent_DetachSuccess(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "x"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -212,11 +212,11 @@ func TestDeleteEvent_DetachSuccess(t *testing.T) {
 		t.Error("DeleteEvent did not report Ok for a successful detach")
 	}
 
-	if _, err := s.db.GetEvent("e1"); err == nil {
+	if _, err := s.db.GetEvent(context.Background(), "e1"); err == nil {
 		t.Error("expected event e1 to be deleted")
 	}
 
-	with, without := s.db.CountMemories()
+	with, without := s.db.CountMemories(context.Background())
 	if with != 0 || without != 1 {
 		t.Errorf("expected the memory detached (0 with event, 1 without), got %d with / %d without", with, without)
 	}
@@ -227,11 +227,11 @@ func TestDeleteEvent_DetachSuccess(t *testing.T) {
 func TestDeleteEvent_WithMemoriesSuccess(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "x"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -244,7 +244,7 @@ func TestDeleteEvent_WithMemoriesSuccess(t *testing.T) {
 		t.Error("DeleteEvent did not report Ok for a successful delete-with-memories")
 	}
 
-	if with, without := s.db.CountMemories(); with != 0 || without != 0 {
+	if with, without := s.db.CountMemories(context.Background()); with != 0 || without != 0 {
 		t.Errorf("expected the memory deleted, got %d with / %d without", with, without)
 	}
 }
@@ -255,7 +255,7 @@ func TestDeleteEvent_WithMemoriesSuccess(t *testing.T) {
 func TestDeleteEvent_UnsetErrorPropagates(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
@@ -284,7 +284,7 @@ func TestDeleteEvent_EmptyIdRejected(t *testing.T) {
 	s := newEventTestServer(t)
 
 	// An event-less memory (event_id = '') - exactly what the empty-id delete would have swept away.
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "keep me"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "keep me"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -301,7 +301,7 @@ func TestDeleteEvent_EmptyIdRejected(t *testing.T) {
 		t.Error("DeleteEvent reported success for an empty id")
 	}
 
-	if with, without := s.db.CountMemories(); with != 0 || without != 1 {
+	if with, without := s.db.CountMemories(context.Background()); with != 0 || without != 1 {
 		t.Fatalf("empty-id DeleteEvent deleted event-less memories: got %d with / %d without, expected 0 / 1", with, without)
 	}
 }
@@ -332,11 +332,11 @@ func TestDeleteEvent_UnknownIdNotFound(t *testing.T) {
 func TestMergeEvents_NonexistentTargetRejected(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "from", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "from", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "from", Body: "x"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "from", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -354,7 +354,7 @@ func TestMergeEvents_NonexistentTargetRejected(t *testing.T) {
 	}
 
 	// The memory must still belong to its original event, not the phantom target.
-	got, err := s.db.GetMemoriesByIds([]string{"m1"})
+	got, err := s.db.GetMemoriesByIds(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -383,16 +383,16 @@ func TestMergeEvents_EmptyIdsRejected(t *testing.T) {
 func TestMergeEvents_Success(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent(src): %s", err)
 	}
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "dst", Name: "dest", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "dst", Name: "dest", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent(dst): %s", err)
 	}
 
 	for _, id := range []string{"m1", "m2"} {
-		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 5, EventId: "src", Body: "x"}); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 5, EventId: "src", Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -406,7 +406,7 @@ func TestMergeEvents_Success(t *testing.T) {
 		t.Error("expected Ok for a successful merge")
 	}
 
-	moved, err := s.db.GetMemoriesByEventId("dst")
+	moved, err := s.db.GetMemoriesByEventId(context.Background(), "dst")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId(dst): %s", err)
 	}
@@ -423,11 +423,11 @@ func TestMergeEvents_Success(t *testing.T) {
 func TestMergeEvents_SetsOkOnSuccess(t *testing.T) {
 	s := newEventTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent(src): %s", err)
 	}
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "dst", Name: "dest", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "dst", Name: "dest", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent(dst): %s", err)
 	}
 
@@ -463,7 +463,7 @@ func TestStoreEvent_StoresNestedMemories(t *testing.T) {
 		t.Fatalf("expected 2 nested memories stored, got %d", res.GetMemoryCount())
 	}
 
-	attached, err := s.db.GetMemoriesByEventId(res.GetId())
+	attached, err := s.db.GetMemoriesByEventId(context.Background(), res.GetId())
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId: %s", err)
 	}
@@ -482,7 +482,7 @@ func TestStoreEvent_InvalidRejected(t *testing.T) {
 		t.Fatal("expected a validation error for an event with no name")
 	}
 
-	if s.db.CountEvents() != 0 {
+	if s.db.CountEvents(context.Background()) != 0 {
 		t.Error("expected no event stored after a validation failure")
 	}
 }
@@ -497,7 +497,7 @@ func TestGetEvents_BatchesMemoriesCorrectly(t *testing.T) {
 		{Id: "e1", Name: "one", TimeStart: 100, Significance: 5},
 		{Id: "e2", Name: "two", TimeStart: 100, Significance: 5},
 	} {
-		if _, err := s.db.CreateEvent(e); err != nil {
+		if _, err := s.db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
@@ -508,7 +508,7 @@ func TestGetEvents_BatchesMemoriesCorrectly(t *testing.T) {
 		{Id: "m3", TimeStamp: 100, Significance: 5, EventId: "e2", Body: "c"},
 		{Id: "loose", TimeStamp: 100, Significance: 5, Body: "d"},
 	} {
-		if _, err := s.db.CreateMemory(m); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}
@@ -568,11 +568,11 @@ func TestStoreEvent_InsignificantRejected(t *testing.T) {
 		t.Errorf("expected no nested memories stored for a rejected event, got %d", res.GetMemoryCount())
 	}
 
-	if s.db.CountEvents() != 0 {
+	if s.db.CountEvents(context.Background()) != 0 {
 		t.Error("expected no event stored")
 	}
 
-	if with, without := s.db.CountMemories(); with+without != 0 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 0 {
 		t.Errorf("expected no memories stored, got %d", with+without)
 	}
 }
@@ -612,7 +612,7 @@ func TestStoreEvent_DefaultsTimeStart(t *testing.T) {
 		t.Fatal("expected an id for a stored event")
 	}
 
-	got, err := s.db.GetEvent(res.GetId())
+	got, err := s.db.GetEvent(context.Background(), res.GetId())
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}

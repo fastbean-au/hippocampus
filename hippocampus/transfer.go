@@ -70,6 +70,7 @@ type transferManifest struct {
 // transfer.batchSize pages, building the manifest of what was seen. Writes landing behind the
 // pagination cursor are simply not captured; they belong to the next run.
 func (s *Server) walkStore(
+	ctx context.Context,
 	onEvents func([]types.Event) error,
 	onMemories func([]types.Memory) error,
 ) (*transferManifest, int, int, error) {
@@ -88,9 +89,9 @@ func (s *Server) walkStore(
 	// this is only the early exit. Skipped when a count errors (negative) — the in-walk guard covers
 	// it. maxRows <= 0 (the default) leaves the manifest unbounded, preserving prior behaviour.
 	if maxRows > 0 {
-		with, without := s.db.CountMemories()
+		with, without := s.db.CountMemories(ctx)
 
-		if events := s.db.CountEvents(); events >= 0 && with >= 0 && without >= 0 {
+		if events := s.db.CountEvents(ctx); events >= 0 && with >= 0 && without >= 0 {
 			if total := events + with + without; total > maxRows {
 				return nil, 0, 0, manifestTooLargeError(total, maxRows)
 			}
@@ -104,7 +105,7 @@ func (s *Server) walkStore(
 	afterId := ""
 
 	for {
-		page, err := s.db.GetEventsPage(afterId, batchSize)
+		page, err := s.db.GetEventsPage(ctx, afterId, batchSize)
 		if err != nil {
 			return nil, 0, 0, err
 		}
@@ -132,7 +133,7 @@ func (s *Server) walkStore(
 	afterId = ""
 
 	for {
-		page, err := s.db.GetMemoriesPage(afterId, batchSize)
+		page, err := s.db.GetMemoriesPage(ctx, afterId, batchSize)
 		if err != nil {
 			return nil, 0, 0, err
 		}
@@ -210,7 +211,7 @@ func (s *Server) takeManifest(id string) *transferManifest {
 func (s *Server) clearManifest(ctx context.Context, manifest *transferManifest) (int, int, error) {
 	log.Trace("func() clearManifest")
 
-	memoriesCleared, err := s.db.ClearMemories(manifest.memories)
+	memoriesCleared, err := s.db.ClearMemories(ctx, manifest.memories)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -218,7 +219,7 @@ func (s *Server) clearManifest(ctx context.Context, manifest *transferManifest) 
 	eventsCleared := 0
 
 	for _, id := range manifest.eventIds {
-		deleted, err := s.db.DeleteEventIfEmpty(id)
+		deleted, err := s.db.DeleteEventIfEmpty(ctx, id)
 		if err != nil {
 			log.Errorf("failed to delete event '%s' during clear: %s", id, err.Error())
 
@@ -253,12 +254,12 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 
 	// The header's counts are informational — they are read before the walk and the store can
 	// move underneath; the response carries the exact figures.
-	memoriesWith, memoriesWithout := s.db.CountMemories()
+	memoriesWith, memoriesWithout := s.db.CountMemories(ctx)
 
 	header := &contract.ArchiveHeader{
 		Version:     archive.Version,
 		ExportedAt:  time.Now().UnixNano(),
-		EventCount:  int32(max(s.db.CountEvents(), 0)),
+		EventCount:  int32(max(s.db.CountEvents(ctx), 0)),
 		MemoryCount: int32(max(memoriesWith+memoriesWithout, 0)),
 	}
 
@@ -281,6 +282,7 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 			}
 
 			return s.walkStore(
+				ctx,
 				func(events []types.Event) error {
 					for _, event := range events {
 						if err := w.WriteEvent(event.ToProto()); err != nil {
@@ -527,7 +529,7 @@ func (s *Server) ingestEvents(ctx context.Context, protos []*contract.Event) (in
 		events[i] = event
 	}
 
-	count, err := s.db.ImportEvents(events)
+	count, err := s.db.ImportEvents(ctx, events)
 	if err != nil {
 		return 0, err
 	}
@@ -554,7 +556,7 @@ func (s *Server) ingestMemories(ctx context.Context, protos []*contract.Memory) 
 		memories[i] = types.MemoryFromProto(in)
 	}
 
-	count, err := s.db.ImportMemories(memories)
+	count, err := s.db.ImportMemories(ctx, memories)
 	if err != nil {
 		return 0, err
 	}
@@ -646,6 +648,7 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 	}
 
 	manifest, events, memories, err := s.walkStore(
+		ctx,
 		func(events []types.Event) error {
 			batch := make([]*contract.Event, len(events))
 			for i, event := range events {

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 
 	log "github.com/sirupsen/logrus"
@@ -23,10 +24,10 @@ type MemoryRecallSnapshot struct {
 // order — keyset pagination for export and transfer, so no long-running query is held across the
 // whole table (the SQLite pool has a single connection). Unlike GetIndexableMemoriesPage this
 // returns every memory, binary included: an archive must carry the whole store.
-func (d *DB) GetMemoriesPage(afterId string, limit int) ([]types.Memory, error) {
+func (d *DB) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesPage")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(
@@ -60,10 +61,10 @@ func (d *DB) GetMemoriesPage(afterId string, limit int) ([]types.Memory, error) 
 
 // GetEventsPage returns up to limit events whose id sorts after afterId, in ascending id order —
 // the event half of the export/transfer pagination.
-func (d *DB) GetEventsPage(afterId string, limit int) ([]types.Event, error) {
+func (d *DB) GetEventsPage(ctx context.Context, afterId string, limit int) ([]types.Event, error) {
 	log.Trace("func() db.GetEventsPage")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(
@@ -99,7 +100,7 @@ func (d *DB) GetEventsPage(afterId string, limit int) ([]types.Event, error) {
 // full-state data migration, unlike UpdateMemory's only-non-zero-values-overwrite rule — inside
 // a single transaction. Re-importing the same rows is idempotent. Returns the number of rows
 // written.
-func (d *DB) ImportMemories(memories []types.Memory) (int, error) {
+func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, error) {
 	log.Trace("func() db.ImportMemories")
 
 	if len(memories) == 0 {
@@ -136,7 +137,7 @@ func (d *DB) ImportMemories(memories []types.Memory) (int, error) {
 			group_name    = new.group_name`
 	}
 
-	tx, cancel, err := d.beginTx()
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -172,7 +173,7 @@ func (d *DB) ImportMemories(memories []types.Memory) (int, error) {
 // ImportEvents upserts the given events by id with every column taken from the input, inside a
 // single transaction — the event half of ImportMemories. The relationship significance is
 // recomputed from the relationships, matching CreateEvent. Returns the number of rows written.
-func (d *DB) ImportEvents(events []types.Event) (int, error) {
+func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error) {
 	log.Trace("func() db.ImportEvents")
 
 	if len(events) == 0 {
@@ -205,7 +206,7 @@ func (d *DB) ImportEvents(events []types.Event) (int, error) {
 			group_name                = new.group_name`
 	}
 
-	tx, cancel, err := d.beginTx()
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -251,7 +252,7 @@ func (d *DB) ImportEvents(events []types.Event) (int, error) {
 // snapshot the export/transfer took, funnelling through the same atomic check-and-delete the
 // consolidation and eviction scans use — including its post-commit search-index delete
 // propagation. Returns the number of rows actually deleted.
-func (d *DB) ClearMemories(snapshots []MemoryRecallSnapshot) (int, error) {
+func (d *DB) ClearMemories(ctx context.Context, snapshots []MemoryRecallSnapshot) (int, error) {
 	log.Trace("func() db.ClearMemories")
 
 	items := make([]memoryRecallSnapshot, len(snapshots))
@@ -263,7 +264,7 @@ func (d *DB) ClearMemories(snapshots []MemoryRecallSnapshot) (int, error) {
 		}
 	}
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(items)
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, items)
 
 	return len(deletedIds), err
 }

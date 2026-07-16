@@ -183,7 +183,7 @@ func TestCheckWALTrigger_RunsSleepWhenOverThreshold(t *testing.T) {
 	s, database := walTestServer(t, 1)
 
 	body := make([]byte, 256*1024)
-	if _, err := database.CreateMemory(types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -214,7 +214,7 @@ func TestCheckWALTrigger_NoOpBelowThreshold(t *testing.T) {
 	s, database := walTestServer(t, 1<<30)
 
 	body := make([]byte, 256*1024)
-	if _, err := database.CreateMemory(types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -246,13 +246,13 @@ type recordingStore struct {
 	lastCall time.Time
 }
 
-func (r *recordingStore) CountMemories() (int, int) {
+func (r *recordingStore) CountMemories(ctx context.Context) (int, int) {
 	r.mu.Lock()
 	r.calls++
 	r.lastCall = time.Now()
 	r.mu.Unlock()
 
-	return r.Store.CountMemories()
+	return r.Store.CountMemories(ctx)
 }
 
 func (r *recordingStore) snapshot() (int, time.Time) {

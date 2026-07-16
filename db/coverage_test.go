@@ -60,12 +60,12 @@ func TestReplaceMemoriesWithSummary_RollsBackOnInsertConflict(t *testing.T) {
 	// leaves it in place and the insert violates the primary key.
 	summary := types.Memory{Id: "keep", TimeStamp: 200, Significance: 5, EventId: "e1", Body: "gist", IsSummary: true}
 
-	if _, err := db.ReplaceMemoriesWithSummary("e1", summary); err == nil {
+	if _, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", summary); err == nil {
 		t.Fatal("expected a primary-key conflict on the summary insert")
 	}
 
 	// The transaction must have rolled back: e1's original memories survive intact.
-	survivors, err := db.GetMemoriesByEventId("e1")
+	survivors, err := db.GetMemoriesByEventId(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId(e1): %s", err)
 	}
@@ -91,12 +91,12 @@ func TestPurge_RollsBackWhenEventsDeleteFails(t *testing.T) {
 		t.Fatalf("DROP TABLE events: %s", err)
 	}
 
-	if err := db.Purge(); err == nil {
+	if err := db.Purge(context.Background()); err == nil {
 		t.Fatal("expected Purge to fail once the events delete errors")
 	}
 
 	// The memories delete must have rolled back: both rows survive.
-	if with, without := db.CountMemories(); with+without != 2 {
+	if with, without := db.CountMemories(context.Background()); with+without != 2 {
 		t.Fatalf("expected the memories delete to roll back leaving 2 rows, got %d", with+without)
 	}
 }
@@ -110,15 +110,15 @@ func TestMutations_ErrorOnClosedDB(t *testing.T) {
 		t.Fatalf("Close: %s", err)
 	}
 
-	if err := db.Purge(); err == nil {
+	if err := db.Purge(context.Background()); err == nil {
 		t.Error("expected Purge to error on a closed database")
 	}
 
-	if _, err := db.DeleteMemories([]string{"m1"}); err == nil {
+	if _, err := db.DeleteMemories(context.Background(), []string{"m1"}); err == nil {
 		t.Error("expected DeleteMemories to error on a closed database")
 	}
 
-	if _, err := db.ReplaceMemoriesWithSummary("e1", types.Memory{Id: "s1", TimeStamp: 1, Significance: 1, Body: "x"}); err == nil {
+	if _, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "s1", TimeStamp: 1, Significance: 1, Body: "x"}); err == nil {
 		t.Error("expected ReplaceMemoriesWithSummary to error on a closed database")
 	}
 }
@@ -128,7 +128,7 @@ func TestMutations_ErrorOnClosedDB(t *testing.T) {
 func TestUpdateMemory_MissingReportsNotExisting(t *testing.T) {
 	db := newTestDB(t)
 
-	existed, err := db.UpdateMemory(types.Memory{Id: "ghost", Significance: 9})
+	existed, err := db.UpdateMemory(context.Background(), types.Memory{Id: "ghost", Significance: 9})
 	if err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	}

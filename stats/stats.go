@@ -58,8 +58,13 @@ func (c *countCache) get() counts {
 		return c.cached
 	}
 
-	events := c.store.CountEvents()
-	with, without := c.store.CountMemories()
+	// The count cache is driven by an internal ticker and the metric-export callbacks, neither of
+	// which carries a request context; a background context still gets the db layer's own
+	// storage.queryTimeout bound applied inside each method.
+	ctx := context.Background()
+
+	events := c.store.CountEvents(ctx)
+	with, without := c.store.CountMemories(ctx)
 
 	c.cached = counts{events: events, memoriesWith: with, memoriesWithout: without}
 	c.fetched = time.Now()

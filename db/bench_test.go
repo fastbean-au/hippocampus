@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -130,7 +131,7 @@ func BenchmarkConsolidateMemories(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				_, _ = d.ConsolidateMemories(server)
+				_, _ = d.ConsolidateMemories(context.Background(), server)
 			}
 		})
 	}
@@ -147,7 +148,7 @@ func BenchmarkConsolidateEventMemories(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				_, _, _, _ = d.ConsolidateEventMemories(server)
+				_, _, _, _ = d.ConsolidateEventMemories(context.Background(), server)
 			}
 		})
 	}
@@ -164,7 +165,7 @@ func BenchmarkConsolidateEvents(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				_, _ = d.ConsolidateEvents(server)
+				_, _ = d.ConsolidateEvents(context.Background(), server)
 			}
 		})
 	}
@@ -183,7 +184,7 @@ func BenchmarkEvictMemories(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				_, _, _, _ = d.EvictMemories(server, 1)
+				_, _, _, _ = d.EvictMemories(context.Background(), server, 1)
 			}
 		})
 	}
@@ -244,7 +245,7 @@ func BenchmarkDeleteMemoriesIfUnrecalled(b *testing.B) {
 				snapshots := seedDeletableMemories(b, d, size)
 				b.StartTimer()
 
-				if _, err := d.deleteMemoriesIfUnrecalled(snapshots); err != nil {
+				if _, err := d.deleteMemoriesIfUnrecalled(context.Background(), snapshots); err != nil {
 					b.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 				}
 			}
@@ -263,7 +264,7 @@ func BenchmarkUsedBytesSQLite(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				if _, err := d.UsedBytes(); err != nil {
+				if _, err := d.UsedBytes(context.Background()); err != nil {
 					b.Fatalf("UsedBytes: %s", err)
 				}
 			}
@@ -305,11 +306,11 @@ func benchmarkUsedBytesServer(b *testing.B, open func() (*DB, error)) {
 			}
 
 			b.Cleanup(func() {
-				_ = d.Purge()
+				_ = d.Purge(context.Background())
 				_ = d.Close()
 			})
 
-			if err := d.Purge(); err != nil {
+			if err := d.Purge(context.Background()); err != nil {
 				b.Fatalf("Purge: %s", err)
 			}
 
@@ -319,7 +320,7 @@ func benchmarkUsedBytesServer(b *testing.B, open func() (*DB, error)) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				if _, err := d.UsedBytes(); err != nil {
+				if _, err := d.UsedBytes(context.Background()); err != nil {
 					b.Fatalf("UsedBytes: %s", err)
 				}
 			}

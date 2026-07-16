@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -44,7 +45,7 @@ func scanEvent(scan func(dest ...any) error) (types.Event, error) {
 }
 
 // CreateEvent creates an event record, returning the id and an error
-func (d *DB) CreateEvent(event types.Event) (string, error) {
+func (d *DB) CreateEvent(ctx context.Context, event types.Event) (string, error) {
 	log.Trace("func() db.CreateEvent")
 
 	// Defaults first, then validate: SetDefaults fills a zero time_start with the current time, so
@@ -63,7 +64,7 @@ func (d *DB) CreateEvent(event types.Event) (string, error) {
 		return "", err
 	}
 
-	_, err = d.exec(
+	_, err = d.exec(ctx,
 		`INSERT INTO events (id, time_start, time_end, significance, name, description, relationship_significance, relationships, group_name)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.Id,
@@ -85,7 +86,7 @@ func (d *DB) CreateEvent(event types.Event) (string, error) {
 // returns (false, nil) so callers can surface NotFound rather than silently inserting a phantom
 // row (an empty-id or unknown-id upsert used to poison eviction's LEFT JOIN and the event scans).
 // Returns whether a matching event existed.
-func (d *DB) UpdateEvent(event types.Event) (bool, error) {
+func (d *DB) UpdateEvent(ctx context.Context, event types.Event) (bool, error) {
 	log.Trace("func() db.UpdateEvent")
 
 	// Build the SET list from only the fields carrying a value, mirroring the previous
@@ -140,30 +141,30 @@ func (d *DB) UpdateEvent(event types.Event) (bool, error) {
 
 	// Nothing to change: there is no UPDATE to learn existence from, so probe for it directly.
 	if len(sets) == 0 {
-		return d.EventExists(event.Id)
+		return d.EventExists(ctx, event.Id)
 	}
 
 	args = append(args, event.Id)
 
-	res, err := d.exec(`UPDATE events SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+	res, err := d.exec(ctx, `UPDATE events SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return false, err
 	}
 
 	// Existence from the UPDATE itself (RowsAffected), so a concurrent delete can't slip between a
 	// separate probe and the UPDATE - see updatedRowExisted for the MySQL changed-vs-matched caveat.
-	return d.updatedRowExisted(res, "events", event.Id)
+	return d.updatedRowExisted(ctx, res, "events", event.Id)
 }
 
 // EventExists reports whether an event with the given id exists. It backs the write-path guards
 // that reject a memory or a merge referencing a nonexistent event, so a dangling event_id is never
 // created in the first place.
-func (d *DB) EventExists(id string) (bool, error) {
+func (d *DB) EventExists(ctx context.Context, id string) (bool, error) {
 	log.Trace("func() db.EventExists")
 
 	var exists bool
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE id = ?)`, id).Scan(&exists); err != nil {
@@ -173,12 +174,12 @@ func (d *DB) EventExists(id string) (bool, error) {
 	return exists, nil
 }
 
-func (d *DB) setEventConsolidated(id string) error {
+func (d *DB) setEventConsolidated(ctx context.Context, id string) error {
 	log.Trace("func() db.setEventConsolidated")
 
 	// The value is bound rather than a literal 1: the column is INTEGER on SQLite but BOOLEAN on
 	// Postgres, and a bound true converts cleanly for both.
-	_, err := d.exec(`UPDATE events SET memories_consolidated = ? WHERE id = ?`, true, id)
+	_, err := d.exec(ctx, `UPDATE events SET memories_consolidated = ? WHERE id = ?`, true, id)
 
 	return err
 }
@@ -187,12 +188,12 @@ func (d *DB) setEventConsolidated(id string) error {
 // the caller can surface NotFound for an unknown id rather than reporting success unconditionally.
 // DELETE reports RowsAffected reliably on all three dialects (the MySQL "0 rows affected on a
 // value-unchanged UPDATE" quirk does not apply to DELETE).
-func (d *DB) DeleteEvent(id string) (bool, error) {
+func (d *DB) DeleteEvent(ctx context.Context, id string) (bool, error) {
 	log.Trace("func() db.DeleteEvent")
 
 	// TODO: get relationships, and remove foreign components
 
-	res, err := d.exec(`DELETE FROM events WHERE id = ?`, id)
+	res, err := d.exec(ctx, `DELETE FROM events WHERE id = ?`, id)
 	if err != nil {
 		return false, err
 	}
@@ -211,10 +212,10 @@ func (d *DB) DeleteEvent(id string) (bool, error) {
 // emptiness in the same statement as the delete closes that window, so a memory written mid-scan
 // keeps its parent event instead of being left with a dangling event_id. Returns whether the
 // event was deleted.
-func (d *DB) DeleteEventIfEmpty(id string) (bool, error) {
+func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
 	log.Trace("func() db.DeleteEventIfEmpty")
 
-	res, err := d.exec(
+	res, err := d.exec(ctx,
 		`DELETE FROM events WHERE id = ? AND NOT EXISTS (SELECT 1 FROM memories WHERE event_id = ?)`,
 		id,
 		id,
@@ -231,10 +232,10 @@ func (d *DB) DeleteEventIfEmpty(id string) (bool, error) {
 	return n > 0, nil
 }
 
-func (d *DB) GetEvent(id string) (*types.Event, error) {
+func (d *DB) GetEvent(ctx context.Context, id string) (*types.Event, error) {
 	log.Trace("func() db.GetEvent")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(ctx, `SELECT `+eventColumns+` FROM events WHERE id = ?`, id)
@@ -315,14 +316,14 @@ func eventFilterConditions(filter EventFilter) (string, []any) {
 
 // CountEventsFiltered returns the number of events matching the filter, ignoring Limit/Offset so
 // the caller can size pagination.
-func (d *DB) CountEventsFiltered(filter EventFilter) (int, error) {
+func (d *DB) CountEventsFiltered(ctx context.Context, filter EventFilter) (int, error) {
 	log.Trace("func() db.CountEventsFiltered")
 
 	where, args := eventFilterConditions(filter)
 
 	var count int
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM events`+where, args...).Scan(&count); err != nil {
@@ -332,7 +333,7 @@ func (d *DB) CountEventsFiltered(filter EventFilter) (int, error) {
 	return count, nil
 }
 
-func (d *DB) GetEvents(filter EventFilter) (*[]types.Event, error) {
+func (d *DB) GetEvents(ctx context.Context, filter EventFilter) (*[]types.Event, error) {
 	log.Trace("func() db.GetEvents")
 
 	where, args := eventFilterConditions(filter)
@@ -355,7 +356,7 @@ func (d *DB) GetEvents(filter EventFilter) (*[]types.Event, error) {
 		}
 	}
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(ctx, query, args...)
@@ -385,10 +386,10 @@ func (d *DB) GetEvents(filter EventFilter) (*[]types.Event, error) {
 // ConsolidateEvents deletes events that have no associated memories and whose own value has
 // decayed below the deletion threshold. Events with memories are handled by
 // ConsolidateEventMemories, which deletes an event when its last memory is consolidated.
-func (d *DB) ConsolidateEvents(s Server) (int, error) {
+func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 	log.Trace("func() db.ConsolidateEvents")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(
@@ -435,7 +436,7 @@ func (d *DB) ConsolidateEvents(s Server) (int, error) {
 	var retErr error
 
 	for _, id := range deletions {
-		deleted, err := d.DeleteEventIfEmpty(id)
+		deleted, err := d.DeleteEventIfEmpty(ctx, id)
 		if err != nil {
 			log.Errorf("failed to delete event '%s' for event consolidation: %s", id, err.Error())
 
@@ -454,12 +455,12 @@ func (d *DB) ConsolidateEvents(s Server) (int, error) {
 	return count, retErr
 }
 
-func (d *DB) CountEvents() int {
+func (d *DB) CountEvents(ctx context.Context) int {
 	log.Trace("func() db.Count")
 
 	var count int
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM events`).Scan(&count); err != nil {
@@ -471,10 +472,10 @@ func (d *DB) CountEvents() int {
 	return count
 }
 
-func (d *DB) CalculateSignificancePercentile(percent float64) (float64, error) {
+func (d *DB) CalculateSignificancePercentile(ctx context.Context, percent float64) (float64, error) {
 	log.Trace("func() db.CalculateSignificancePercentile")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(ctx, `SELECT significance FROM events`)

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 
 	"github.com/fastbean-au/hippocampus/types"
@@ -14,7 +15,7 @@ func evictionTestDB(t *testing.T) (*DB, *decisionServer) {
 
 	db := newTestDB(t)
 
-	if _, err := db.CreateEvent(types.Event{Id: "e1", Name: "an event", TimeStart: 100, Significance: 50}); err != nil {
+	if _, err := db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "an event", TimeStart: 100, Significance: 50}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
@@ -26,7 +27,7 @@ func evictionTestDB(t *testing.T) (*DB, *decisionServer) {
 	}
 
 	for _, memory := range memories {
-		if _, err := db.CreateMemory(memory); err != nil {
+		if _, err := db.CreateMemory(context.Background(), memory); err != nil {
 			t.Fatalf("CreateMemory %s: %s", memory.Id, err)
 		}
 	}
@@ -47,7 +48,7 @@ func TestEvictMemories_LowestValueFirst(t *testing.T) {
 	db, server := evictionTestDB(t)
 
 	// One row's footprint satisfies a 1-byte request, so only the least valuable memory goes.
-	deletedMemories, deletedEvents, freed, err := db.EvictMemories(server, 1)
+	deletedMemories, deletedEvents, freed, err := db.EvictMemories(context.Background(), server, 1)
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
@@ -70,7 +71,7 @@ func TestEvictMemories_LowestValueFirst(t *testing.T) {
 		}
 	}
 
-	event, err := db.GetEvent("e1")
+	event, err := db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -85,7 +86,7 @@ func TestEvictMemories_LowestValueFirst(t *testing.T) {
 func TestEvictMemories_DeletesEmptiedEvent(t *testing.T) {
 	db, server := evictionTestDB(t)
 
-	deletedMemories, deletedEvents, _, err := db.EvictMemories(server, 1<<30)
+	deletedMemories, deletedEvents, _, err := db.EvictMemories(context.Background(), server, 1<<30)
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
@@ -94,11 +95,11 @@ func TestEvictMemories_DeletesEmptiedEvent(t *testing.T) {
 		t.Fatalf("expected 4 memories and 1 event deleted, got %d and %d", deletedMemories, deletedEvents)
 	}
 
-	if db.CountEvents() != 0 {
-		t.Errorf("expected 0 events after full eviction, got %d", db.CountEvents())
+	if db.CountEvents(context.Background()) != 0 {
+		t.Errorf("expected 0 events after full eviction, got %d", db.CountEvents(context.Background()))
 	}
 
-	with, without := db.CountMemories()
+	with, without := db.CountMemories(context.Background())
 	if with != 0 || without != 0 {
 		t.Errorf("expected 0 memories after full eviction, got %d with events, %d without", with, without)
 	}
@@ -119,16 +120,16 @@ func TestDeleteEventIfEmpty(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "occupied", Body: "x"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "occupied", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	deleted, err := db.DeleteEventIfEmpty("empty")
+	deleted, err := db.DeleteEventIfEmpty(context.Background(), "empty")
 	if err != nil {
 		t.Fatalf("DeleteEventIfEmpty(empty): %s", err)
 	}
@@ -137,11 +138,11 @@ func TestDeleteEventIfEmpty(t *testing.T) {
 		t.Error("expected the memory-less event to be deleted")
 	}
 
-	if _, err := db.GetEvent("empty"); err == nil {
+	if _, err := db.GetEvent(context.Background(), "empty"); err == nil {
 		t.Error("expected 'empty' to be gone")
 	}
 
-	deleted, err = db.DeleteEventIfEmpty("occupied")
+	deleted, err = db.DeleteEventIfEmpty(context.Background(), "occupied")
 	if err != nil {
 		t.Fatalf("DeleteEventIfEmpty(occupied): %s", err)
 	}
@@ -150,7 +151,7 @@ func TestDeleteEventIfEmpty(t *testing.T) {
 		t.Error("expected the occupied event to survive")
 	}
 
-	if _, err := db.GetEvent("occupied"); err != nil {
+	if _, err := db.GetEvent(context.Background(), "occupied"); err != nil {
 		t.Errorf("expected 'occupied' to survive: %s", err)
 	}
 }
@@ -159,7 +160,7 @@ func TestDeleteEventIfEmpty(t *testing.T) {
 func TestEvictMemories_NoOpWhenNothingToFree(t *testing.T) {
 	db, server := evictionTestDB(t)
 
-	deletedMemories, deletedEvents, freed, err := db.EvictMemories(server, 0)
+	deletedMemories, deletedEvents, freed, err := db.EvictMemories(context.Background(), server, 0)
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
@@ -174,7 +175,7 @@ func TestEvictMemories_NoOpWhenNothingToFree(t *testing.T) {
 func TestUsedBytes(t *testing.T) {
 	db := newTestDB(t)
 
-	before, err := db.UsedBytes()
+	before, err := db.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes: %s", err)
 	}
@@ -185,11 +186,11 @@ func TestUsedBytes(t *testing.T) {
 
 	// A memory with a body spanning multiple pages must grow the measure.
 	body := make([]byte, 64*1024)
-	if _, err := db.CreateMemory(types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	grown, err := db.UsedBytes()
+	grown, err := db.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes: %s", err)
 	}
@@ -199,11 +200,11 @@ func TestUsedBytes(t *testing.T) {
 	}
 
 	// Deleting the memory returns its pages to the freelist, which the measure must exclude.
-	if err := db.DeleteMemory("big"); err != nil {
+	if err := db.DeleteMemory(context.Background(), "big"); err != nil {
 		t.Fatalf("DeleteMemory: %s", err)
 	}
 
-	shrunk, err := db.UsedBytes()
+	shrunk, err := db.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes: %s", err)
 	}

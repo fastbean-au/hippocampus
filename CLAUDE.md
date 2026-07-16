@@ -156,7 +156,12 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   shared, with a `driver` field branching the genuinely divergent pieces (DDL, `?`-vs-`$N`
   placeholders via `rebind()`, `MAX(a,b)` vs `GREATEST`, upserts, and the
   compaction/size-accounting methods). The `db.Store` interface (in `db.go`) is what
-  `hippocampus.Server` and `stats` depend on — the seam for future non-SQL backends. SQLite
+  `hippocampus.Server` and `stats` depend on — the seam for future non-SQL backends. Every
+  `db.Store` method that issues a query takes a leading `ctx context.Context` (all but `WALBytes`,
+  a filesystem stat, and `Close`), so an RPC's deadline/cancellation reaches the driver; the db
+  layer wraps that ctx with the optional server-owned `storage.queryTimeoutSeconds` bound in
+  `opContext`, so whichever fires first ends the operation. The sleep cycle passes its own
+  (tracing-span) context and stays server-owned, not tied to the `Sleep` RPC's deadline. SQLite
   (`modernc.org/sqlite`, pure Go): one database file (`hippocampus.db` in `storage.directory`)
   holding the `events` and `memories` tables; an empty directory (used by tests) selects an
   in-memory database. WAL mode makes every write durable as it happens — there is no snapshot

@@ -13,12 +13,12 @@ import (
 func TestGetEventById_RPC(t *testing.T) {
 	s := newTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 3}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 3}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
 	for _, id := range []string{"m1", "m2"} {
-		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e1", Body: "detail"}); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e1", Body: "detail"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -58,7 +58,7 @@ func TestGetEventById_RPC(t *testing.T) {
 func TestRecallMemories_RPC(t *testing.T) {
 	s := newTestServer(t)
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "recall me"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "recall me"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -97,7 +97,7 @@ func TestGetMemories_RPC(t *testing.T) {
 	}
 
 	for _, m := range memories {
-		if _, err := s.db.CreateMemory(m); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 		}
 	}

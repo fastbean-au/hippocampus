@@ -145,12 +145,12 @@ func (d *DB) acquireInstanceLock() error {
 // octet_length (a LENGTH synonym on MySQL) reads a stored value's byte size without loading the
 // content, so the cost is one heap scan of the two tables per reading — and UsedBytes is only
 // consulted when a byte capacity is configured.
-func (d *DB) usedBytesLiveRows() (int64, error) {
+func (d *DB) usedBytesLiveRows(ctx context.Context) (int64, error) {
 	log.Trace("func() db.usedBytesLiveRows")
 
 	var used int64
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(

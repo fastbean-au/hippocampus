@@ -48,7 +48,7 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 		return &res, nil
 	}
 
-	id, err := s.db.CreateEvent(event)
+	id, err := s.db.CreateEvent(ctx, event)
 	if err != nil {
 		return &res, err
 	}
@@ -93,7 +93,7 @@ func (s *Server) EndEvent(ctx context.Context, in *contract.EndEventRequest) (*c
 		TimeEnd: t,
 	}
 
-	ok, err := s.db.UpdateEvent(e)
+	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
 
 		return &res, err
@@ -122,7 +122,7 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 		Significance: in.GetSignificance(),
 	}
 
-	ok, err := s.db.UpdateEvent(e)
+	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
 
 		return &res, err
@@ -152,7 +152,7 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 	// of those memories becomes a dangling reference in a single call, so verify it first.
 	// merge_from need not exist - an absent one simply matches no memories, and any
 	// memories still pointing at it are healed onto the real merge_to.
-	exists, err := s.db.EventExists(tid)
+	exists, err := s.db.EventExists(ctx, tid)
 	if err != nil {
 		return &res, err
 	}
@@ -162,7 +162,7 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 		return &res, status.Errorf(codes.FailedPrecondition, "merge_to event '%s' does not exist", tid)
 	}
 
-	err = s.db.MergeEventMemories(tid, fid)
+	err = s.db.MergeEventMemories(ctx, tid, fid)
 
 	if err == nil {
 		tel.eventsMerged.Add(ctx, 1)
@@ -186,7 +186,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
 	}
 
-	deleted, err := s.db.DeleteEvent(eid)
+	deleted, err := s.db.DeleteEvent(ctx, eid)
 	if err != nil {
 		return &res, err
 	}
@@ -201,7 +201,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	tel.eventsDeleted.Add(ctx, 1)
 
 	if in.GetMemories() {
-		cnt, err := s.db.DeleteEventMemories(eid)
+		cnt, err := s.db.DeleteEventMemories(ctx, eid)
 		if err != nil {
 			return &res, err
 		}
@@ -209,7 +209,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 		tel.memoriesDeleted.Add(ctx, int64(cnt))
 		s.searchIdx().DeleteByEventId(eid)
 	} else {
-		if _, err := s.db.UnsetMemoriesEventId(eid); err != nil {
+		if _, err := s.db.UnsetMemoriesEventId(ctx, eid); err != nil {
 
 			return &res, err
 		}
@@ -227,14 +227,14 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 
 	eid := in.GetId()
 
-	event, err := s.db.GetEvent(eid)
+	event, err := s.db.GetEvent(ctx, eid)
 	if err != nil {
 		return &res, err
 	}
 	res.Event = event.ToProto()
 
 	if in.GetMemories() {
-		memories, err := s.db.GetMemoriesByEventId(eid)
+		memories, err := s.db.GetMemoriesByEventId(ctx, eid)
 		if err != nil {
 			return &res, err
 		}
@@ -314,12 +314,12 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		Offset:          offset,
 	}
 
-	total, err := s.db.CountEventsFiltered(filter)
+	total, err := s.db.CountEventsFiltered(ctx, filter)
 	if err != nil {
 		return &res, err
 	}
 
-	events, err := s.db.GetEvents(filter)
+	events, err := s.db.GetEvents(ctx, filter)
 	if err != nil {
 		return &res, err
 	}
@@ -341,7 +341,7 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 			indexByEventId[e.Id] = i
 		}
 
-		memories, err := s.db.GetMemoriesByEventIds(eventIds)
+		memories, err := s.db.GetMemoriesByEventIds(ctx, eventIds)
 		if err != nil {
 			return &res, err
 		}

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 
 	"github.com/fastbean-au/hippocampus/types"
@@ -17,11 +18,11 @@ func TestReopenDurability(t *testing.T) {
 		t.Fatalf("failed to create file-backed DB: %s", err)
 	}
 
-	if _, err := db.CreateEvent(types.Event{Id: "e1", Name: "an event", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "an event", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "remember me"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "remember me"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -35,7 +36,7 @@ func TestReopenDurability(t *testing.T) {
 	}
 	defer func() { _ = reopened.Close() }()
 
-	event, err := reopened.GetEvent("e1")
+	event, err := reopened.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent after reopen: %s", err)
 	}
@@ -44,7 +45,7 @@ func TestReopenDurability(t *testing.T) {
 		t.Errorf("expected event name 'an event', got '%s'", event.Name)
 	}
 
-	memories, err := reopened.GetMemoriesByEventId("e1")
+	memories, err := reopened.GetMemoriesByEventId(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId after reopen: %s", err)
 	}
@@ -100,15 +101,15 @@ func TestPreserveReleasesFreeSpace(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	body := make([]byte, 256*1024)
-	if _, err := db.CreateMemory(types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	if err := db.DeleteMemory("big"); err != nil {
+	if err := db.DeleteMemory(context.Background(), "big"); err != nil {
 		t.Fatalf("DeleteMemory: %s", err)
 	}
 
-	if err := db.Preserve(); err != nil {
+	if err := db.Preserve(context.Background()); err != nil {
 		t.Fatalf("Preserve: %s", err)
 	}
 
@@ -138,7 +139,7 @@ func TestWALBytes_GrowsThenShrinksOnPreserve(t *testing.T) {
 	}
 
 	body := make([]byte, 256*1024)
-	if _, err := db.CreateMemory(types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "big", TimeStamp: 100, Significance: 1, Body: string(body)}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -151,7 +152,7 @@ func TestWALBytes_GrowsThenShrinksOnPreserve(t *testing.T) {
 		t.Fatalf("expected WALBytes to grow after a write, got %d (was %d)", grown, before)
 	}
 
-	if err := db.Preserve(); err != nil {
+	if err := db.Preserve(context.Background()); err != nil {
 		t.Fatalf("Preserve: %s", err)
 	}
 
@@ -185,28 +186,28 @@ func TestWALBytes_InMemoryDatabase(t *testing.T) {
 func TestPurge(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateEvent(types.Event{Id: "e1", Name: "an event", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "an event", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	if err := db.Purge(); err != nil {
+	if err := db.Purge(context.Background()); err != nil {
 		t.Fatalf("Purge: %s", err)
 	}
 
-	if db.CountEvents() != 0 {
-		t.Errorf("expected 0 events after purge, got %d", db.CountEvents())
+	if db.CountEvents(context.Background()) != 0 {
+		t.Errorf("expected 0 events after purge, got %d", db.CountEvents(context.Background()))
 	}
 
-	with, without := db.CountMemories()
+	with, without := db.CountMemories(context.Background())
 	if with != 0 || without != 0 {
 		t.Errorf("expected 0 memories after purge, got %d with events, %d without", with, without)
 	}
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, Body: "y"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, Body: "y"}); err != nil {
 		t.Errorf("store should be usable after purge: %s", err)
 	}
 }
@@ -223,7 +224,7 @@ func TestNewSQLiteReadOnly(t *testing.T) {
 		t.Fatalf("New: %s", err)
 	}
 
-	if _, err := writable.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "hello"}); err != nil {
+	if _, err := writable.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "hello"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -238,7 +239,7 @@ func TestNewSQLiteReadOnly(t *testing.T) {
 	defer func() { _ = ro.Close() }()
 
 	// Reads work.
-	got, err := ro.GetMemoriesByIds([]string{"m1"})
+	got, err := ro.GetMemoriesByIds(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -248,12 +249,12 @@ func TestNewSQLiteReadOnly(t *testing.T) {
 	}
 
 	// Writes are rejected by the mode=ro open.
-	if _, err := ro.CreateMemory(types.Memory{Id: "m2", TimeStamp: 200, Significance: 5, Body: "nope"}); err == nil {
+	if _, err := ro.CreateMemory(context.Background(), types.Memory{Id: "m2", TimeStamp: 200, Significance: 5, Body: "nope"}); err == nil {
 		t.Error("expected a write to a read-only database to fail")
 	}
 
 	// Preserve must be a no-op - no checkpoint/incremental-vacuum against a possibly-live database.
-	if err := ro.Preserve(); err != nil {
+	if err := ro.Preserve(context.Background()); err != nil {
 		t.Errorf("Preserve on a read-only database should be a no-op, got: %s", err)
 	}
 }

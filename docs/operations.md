@@ -222,6 +222,13 @@ indefinitely, eventually wedging the instance. Size it **above** the longest leg
 the full-store consolidation scan is the tallest pole, so time a sleep cycle on a
 representative store and leave generous headroom, or a cycle may be aborted mid-scan.
 
+This server-owned bound is independent of, and complementary to, the caller's own context: an RPC's
+deadline or a client that hangs up now propagates all the way to the database driver, so the
+server-side work for an abandoned request is aborted rather than run to completion. Whichever bound
+fires first — the client's deadline or `queryTimeoutSeconds` — ends the operation. The sleep cycle
+is deliberately server-owned (it is not tied to the `Sleep` RPC's deadline), so a manual `Sleep`
+call returning does not cut a consolidation short.
+
 ### Connection pool sizing (server drivers)
 
 `storage.pool.maxOpenConns` (default 25) and `storage.pool.maxIdleConns` (0 → defaults to

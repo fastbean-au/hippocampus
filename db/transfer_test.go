@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestGetPagesRoundTrip(t *testing.T) {
 			IsBinary:     i == 3,
 		}
 
-		if _, err := db.CreateMemory(memory); err != nil {
+		if _, err := db.CreateMemory(context.Background(), memory); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", memory.Id, err)
 		}
 
@@ -32,7 +33,7 @@ func TestGetPagesRoundTrip(t *testing.T) {
 			Significance: int32(i),
 		}
 
-		if _, err := db.CreateEvent(event); err != nil {
+		if _, err := db.CreateEvent(context.Background(), event); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", event.Id, err)
 		}
 	}
@@ -41,7 +42,7 @@ func TestGetPagesRoundTrip(t *testing.T) {
 	afterId := ""
 
 	for {
-		page, err := db.GetMemoriesPage(afterId, 2)
+		page, err := db.GetMemoriesPage(context.Background(), afterId, 2)
 		if err != nil {
 			t.Fatalf("GetMemoriesPage: %s", err)
 		}
@@ -65,7 +66,7 @@ func TestGetPagesRoundTrip(t *testing.T) {
 	afterId = ""
 
 	for {
-		page, err := db.GetEventsPage(afterId, 2)
+		page, err := db.GetEventsPage(context.Background(), afterId, 2)
 		if err != nil {
 			t.Fatalf("GetEventsPage: %s", err)
 		}
@@ -120,16 +121,16 @@ func TestImportPreservesFullState(t *testing.T) {
 	}
 
 	for range 2 { // twice: the second pass must be a no-op overwrite, not a duplicate or error
-		if _, err := db.ImportEvents(events); err != nil {
+		if _, err := db.ImportEvents(context.Background(), events); err != nil {
 			t.Fatalf("ImportEvents: %s", err)
 		}
 
-		if _, err := db.ImportMemories(memories); err != nil {
+		if _, err := db.ImportMemories(context.Background(), memories); err != nil {
 			t.Fatalf("ImportMemories: %s", err)
 		}
 	}
 
-	event, err := db.GetEvent("e1")
+	event, err := db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -153,7 +154,7 @@ func TestImportPreservesFullState(t *testing.T) {
 	memories[0].RecallCount = 0
 	memories[0].TimeRecalled = 0
 
-	if _, err := db.ImportMemories(memories); err != nil {
+	if _, err := db.ImportMemories(context.Background(), memories); err != nil {
 		t.Fatalf("ImportMemories: %s", err)
 	}
 
@@ -169,7 +170,7 @@ func TestClearMemoriesRespectsRecallSnapshots(t *testing.T) {
 	db := newTestDB(t)
 
 	for _, id := range []string{"m1", "m2"} {
-		if _, err := db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+		if _, err := db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -183,11 +184,11 @@ func TestClearMemoriesRespectsRecallSnapshots(t *testing.T) {
 		{Id: "m2", TimeRecalled: 0, RecallCount: 0},
 	}
 
-	if _, err := db.RecallMemories([]string{"m2"}); err != nil {
+	if _, err := db.RecallMemories(context.Background(), []string{"m2"}); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	cleared, err := db.ClearMemories(snapshots)
+	cleared, err := db.ClearMemories(context.Background(), snapshots)
 	if err != nil {
 		t.Fatalf("ClearMemories: %s", err)
 	}

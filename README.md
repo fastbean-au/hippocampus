@@ -41,7 +41,7 @@ Where long-term retention of data is desired but infinite storage is either not 
 
 This could include things such as system logs and audit trails, alerts, anomalies, transactions, and so on.
 
-There are two main configurations that Hippocampus can run in: standalone/embedded/deployed/remote; and, centralised/corporate/organisational.
+There are two main configurations that Hippocampus can run in: independent (standalone/embedded/deployed/remote); and, centralised (corporate/organisational).
 
 ## Current state
 

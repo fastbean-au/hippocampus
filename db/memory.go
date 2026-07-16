@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"sort"
 	"strings"
@@ -40,10 +41,10 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 }
 
 // CreateMemory creates a memory record, returning the id and an error
-func (d *DB) CreateMemory(memory types.Memory) (string, error) {
+func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, error) {
 	log.Trace("func() db.CreateMemory")
 
-	_, err := d.exec(
+	_, err := d.exec(ctx,
 		`INSERT INTO memories (`+memoryColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		memory.Id,
 		memory.TimeStamp,
@@ -67,7 +68,7 @@ func (d *DB) CreateMemory(memory types.Memory) (string, error) {
 //
 // It deliberately does not touch is_binary or is_summary: those are set at creation and by
 // ReplaceMemoriesWithSummary respectively, and are outside the partial-update surface (see #22).
-func (d *DB) UpdateMemory(memory types.Memory) (bool, error) {
+func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error) {
 	log.Trace("func() db.UpdateMemory")
 
 	// Build the SET list from only the fields carrying a value, mirroring db.UpdateEvent's
@@ -104,24 +105,24 @@ func (d *DB) UpdateMemory(memory types.Memory) (bool, error) {
 
 	// Nothing to change: there is no UPDATE to learn existence from, so probe for it directly.
 	if len(sets) == 0 {
-		return d.memoryExists(memory.Id)
+		return d.memoryExists(ctx, memory.Id)
 	}
 
 	args = append(args, memory.Id)
 
-	res, err := d.exec(`UPDATE memories SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+	res, err := d.exec(ctx, `UPDATE memories SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return false, err
 	}
 
-	return d.updatedRowExisted(res, "memories", memory.Id)
+	return d.updatedRowExisted(ctx, res, "memories", memory.Id)
 }
 
 // memoryExists reports whether a memory with the given id exists.
-func (d *DB) memoryExists(id string) (bool, error) {
+func (d *DB) memoryExists(ctx context.Context, id string) (bool, error) {
 	var exists bool
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(ctx, `SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?)`, id).Scan(&exists); err != nil {
@@ -138,7 +139,7 @@ func (d *DB) memoryExists(id string) (bool, error) {
 // authoritative there. MySQL instead counts changed rows and reports 0 when an UPDATE matches a row
 // but leaves every column unchanged, so a 0 there is ambiguous and needs one existence probe to tell
 // "missing" from "matched but unchanged". table is the (constant, not user-supplied) table name.
-func (d *DB) updatedRowExisted(res sql.Result, table string, id string) (bool, error) {
+func (d *DB) updatedRowExisted(ctx context.Context, res sql.Result, table string, id string) (bool, error) {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, err
@@ -154,7 +155,7 @@ func (d *DB) updatedRowExisted(res sql.Result, table string, id string) (bool, e
 
 	var exists bool
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+table+` WHERE id = ?)`, id).Scan(&exists); err != nil {
@@ -166,30 +167,30 @@ func (d *DB) updatedRowExisted(res sql.Result, table string, id string) (bool, e
 
 // DeleteMemory deletes a single memory by id. See UpdateMemory's note: it has no production caller
 // yet (only tests).
-func (d *DB) DeleteMemory(id string) error {
+func (d *DB) DeleteMemory(ctx context.Context, id string) error {
 	log.Trace("func() db.DeleteMemory")
 
-	_, err := d.exec(`DELETE FROM memories WHERE id = ?`, id)
+	_, err := d.exec(ctx, `DELETE FROM memories WHERE id = ?`, id)
 
 	return err
 }
 
-func (d *DB) DeleteMemories(ids []string) (int, error) {
+func (d *DB) DeleteMemories(ctx context.Context, ids []string) (int, error) {
 	log.Trace("func() db.DeleteMemories")
 
-	return d.deleteMemoriesByIds(ids)
+	return d.deleteMemoriesByIds(ctx, ids)
 }
 
 // deleteMemoriesByIds deletes the given memories in chunked IN (...) batches inside a single
 // transaction, returning the number of rows deleted.
-func (d *DB) deleteMemoriesByIds(ids []string) (int, error) {
+func (d *DB) deleteMemoriesByIds(ctx context.Context, ids []string) (int, error) {
 	cnt := 0
 
 	if len(ids) == 0 {
 		return 0, nil
 	}
 
-	tx, cancel, err := d.beginTx()
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -254,12 +255,12 @@ type memoryRecallSnapshot struct {
 // of the rows actually deleted, so the optional search index learns about deletions that never
 // pass through the RPC layer. All three consolidation/eviction paths funnel through here, so
 // this is the single propagation point for them.
-func (d *DB) deleteMemoriesIfUnrecalled(items []memoryRecallSnapshot) ([]string, error) {
+func (d *DB) deleteMemoriesIfUnrecalled(ctx context.Context, items []memoryRecallSnapshot) ([]string, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
 
-	tx, cancel, err := d.beginTx()
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -403,10 +404,10 @@ func scanIds(rows *sql.Rows) ([]string, error) {
 	return ids, rows.Err()
 }
 
-func (d *DB) DeleteEventMemories(eventId string) (int, error) {
+func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, error) {
 	log.Trace("func() db.DeleteEventMemories")
 
-	res, err := d.exec(`DELETE FROM memories WHERE event_id = ?`, eventId)
+	res, err := d.exec(ctx, `DELETE FROM memories WHERE event_id = ?`, eventId)
 	if err != nil {
 		return 0, err
 	}
@@ -419,10 +420,10 @@ func (d *DB) DeleteEventMemories(eventId string) (int, error) {
 	return int(cnt), nil
 }
 
-func (d *DB) UnsetMemoriesEventId(eventId string) (int, error) {
+func (d *DB) UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error) {
 	log.Trace("func() db.UnsetMemoryEventId")
 
-	res, err := d.exec(`UPDATE memories SET event_id = '' WHERE event_id = ?`, eventId)
+	res, err := d.exec(ctx, `UPDATE memories SET event_id = '' WHERE event_id = ?`, eventId)
 	if err != nil {
 		return 0, err
 	}
@@ -444,7 +445,7 @@ func (d *DB) UnsetMemoriesEventId(eventId string) (int, error) {
 // dialect's bound-parameter limit and fails the whole call. Duplicate ids are
 // collapsed first, so an id repeated across a chunk boundary is still reinforced exactly once -
 // matching the single-statement IN, which a set membership test already dedupes.
-func (d *DB) RecallMemories(ids []string) (*[]types.Memory, error) {
+func (d *DB) RecallMemories(ctx context.Context, ids []string) (*[]types.Memory, error) {
 	log.Trace("func() db.RecallMemories")
 
 	var memories []types.Memory
@@ -468,9 +469,9 @@ func (d *DB) RecallMemories(ids []string) (*[]types.Memory, error) {
 		// MySQL has no UPDATE ... RETURNING at all, so its arm reinforces then reads back in one
 		// transaction; the others reinforce and return in a single statement.
 		if d.driver == driverMySQL {
-			chunkMemories, err = d.recallMemoriesMySQL(chunk, now)
+			chunkMemories, err = d.recallMemoriesMySQL(ctx, chunk, now)
 		} else {
-			chunkMemories, err = d.recallMemoriesReturning(chunk, now)
+			chunkMemories, err = d.recallMemoriesReturning(ctx, chunk, now)
 		}
 
 		if err != nil {
@@ -486,7 +487,7 @@ func (d *DB) RecallMemories(ids []string) (*[]types.Memory, error) {
 // recallMemoriesReturning reinforces one chunk of ids and returns the reinforced rows via
 // UPDATE ... RETURNING (SQLite and Postgres). now is passed in so every chunk of a single recall
 // stamps the same recall time.
-func (d *DB) recallMemoriesReturning(ids []string, now int64) (*[]types.Memory, error) {
+func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int64) (*[]types.Memory, error) {
 	var memories []types.Memory
 
 	args := make([]any, 0, len(ids)+1)
@@ -495,7 +496,7 @@ func (d *DB) recallMemoriesReturning(ids []string, now int64) (*[]types.Memory, 
 		args = append(args, id)
 	}
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(
@@ -548,12 +549,12 @@ func dedupeIds(ids []string) []string {
 // other dialects. The transaction sees its own update, so the returned memories carry the new
 // recall state, and a row deleted between the two statements simply drops out of the result the
 // same way RETURNING would have omitted it.
-func (d *DB) recallMemoriesMySQL(ids []string, now int64) (*[]types.Memory, error) {
+func (d *DB) recallMemoriesMySQL(ctx context.Context, ids []string, now int64) (*[]types.Memory, error) {
 	log.Trace("func() db.recallMemoriesMySQL")
 
 	var memories []types.Memory
 
-	tx, cancel, err := d.beginTx()
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +622,7 @@ func (d *DB) recallMemoriesMySQL(ids []string, now int64) (*[]types.Memory, erro
 // particular order; ids with no matching row are simply absent from the result. It backs the
 // non-reinforcing arm of SearchMemories, where ids come from the secondary search index and any
 // that no longer exist in the primary store are stale entries to be dropped.
-func (d *DB) GetMemoriesByIds(ids []string) (*[]types.Memory, error) {
+func (d *DB) GetMemoriesByIds(ctx context.Context, ids []string) (*[]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesByIds")
 
 	var memories []types.Memory
@@ -630,7 +631,7 @@ func (d *DB) GetMemoriesByIds(ids []string) (*[]types.Memory, error) {
 		return &memories, nil
 	}
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// Chunked like deleteMemoriesByIds to stay well inside bound-parameter limits.
@@ -678,10 +679,10 @@ func (d *DB) GetMemoriesByIds(ids []string) (*[]types.Memory, error) {
 // Binary memories are excluded because they are never indexed. Like SetMemoryDeleteObserver, this
 // is deliberately on the concrete DB rather than the Store interface: it exists solely for the
 // optional search index.
-func (d *DB) GetIndexableMemoriesPage(afterId string, limit int) ([]types.Memory, error) {
+func (d *DB) GetIndexableMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error) {
 	log.Trace("func() db.GetIndexableMemoriesPage")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(
@@ -717,7 +718,7 @@ func (d *DB) GetIndexableMemoriesPage(afterId string, limit int) ([]types.Memory
 // query, so a caller listing a page of events with their memories makes one round trip instead of
 // one per event. The caller groups the result by EventId. The id set is bounded by the
 // event page size, so a single IN (...) stays well inside the bound-parameter limits.
-func (d *DB) GetMemoriesByEventIds(eventIds []string) (*[]types.Memory, error) {
+func (d *DB) GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesByEventIds")
 
 	var memories []types.Memory
@@ -731,7 +732,7 @@ func (d *DB) GetMemoriesByEventIds(eventIds []string) (*[]types.Memory, error) {
 		args[i] = id
 	}
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE event_id IN (`+placeholders(len(eventIds))+`)`, args...)
@@ -756,10 +757,10 @@ func (d *DB) GetMemoriesByEventIds(eventIds []string) (*[]types.Memory, error) {
 	return &memories, nil
 }
 
-func (d *DB) GetMemoriesByEventId(eventId string) (*[]types.Memory, error) {
+func (d *DB) GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesByEventId")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE event_id = ?`, eventId)
@@ -786,10 +787,10 @@ func (d *DB) GetMemoriesByEventId(eventId string) (*[]types.Memory, error) {
 	return &memories, nil
 }
 
-func (d *DB) MergeEventMemories(toEventId string, fromEventId string) error {
+func (d *DB) MergeEventMemories(ctx context.Context, toEventId string, fromEventId string) error {
 	log.Trace("func() db.MergeEventMemories")
 
-	_, err := d.exec(`UPDATE memories SET event_id = ? WHERE event_id = ?`, toEventId, fromEventId)
+	_, err := d.exec(ctx, `UPDATE memories SET event_id = ? WHERE event_id = ?`, toEventId, fromEventId)
 
 	return err
 }
@@ -797,10 +798,10 @@ func (d *DB) MergeEventMemories(toEventId string, fromEventId string) error {
 // ReplaceMemoriesWithSummary deletes every memory associated with eventId and inserts the given
 // summary memory in their place, all within a single transaction. Returns the number of memories
 // replaced.
-func (d *DB) ReplaceMemoriesWithSummary(eventId string, summary types.Memory) (int, error) {
+func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error) {
 	log.Trace("func() db.ReplaceMemoriesWithSummary")
 
-	tx, cancel, err := d.beginTx()
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -850,7 +851,7 @@ func (d *DB) ReplaceMemoriesWithSummary(eventId string, summary types.Memory) (i
 // by memory count descending. limit caps the number of rows returned; 0 leaves it unbounded.
 // is_summary memories are excluded, so an event only reappears once fresh, unsummarized memories
 // have accumulated again.
-func (d *DB) FindSummarizationCandidates(minMemories int, maxTimestamp int64, limit int) ([]SummarizationCandidate, error) {
+func (d *DB) FindSummarizationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarizationCandidate, error) {
 	log.Trace("func() db.FindSummarizationCandidates")
 
 	// SQLite's two-argument MAX is a scalar function; Postgres and MySQL spell the same thing
@@ -875,7 +876,7 @@ func (d *DB) FindSummarizationCandidates(minMemories int, maxTimestamp int64, li
 		args = append(args, limit)
 	}
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(ctx, query, args...)
@@ -949,14 +950,14 @@ func memoryFilterConditions(filter MemoryFilter) (string, []any) {
 
 // CountMemoriesFiltered returns the number of memories matching the filter, ignoring Limit/Offset
 // so the caller can size pagination.
-func (d *DB) CountMemoriesFiltered(filter MemoryFilter) (int, error) {
+func (d *DB) CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (int, error) {
 	log.Trace("func() db.CountMemoriesFiltered")
 
 	where, args := memoryFilterConditions(filter)
 
 	var count int
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM memories`+where, args...).Scan(&count); err != nil {
@@ -966,7 +967,7 @@ func (d *DB) CountMemoriesFiltered(filter MemoryFilter) (int, error) {
 	return count, nil
 }
 
-func (d *DB) GetMemories(filter MemoryFilter) (*[]types.Memory, error) {
+func (d *DB) GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Memory, error) {
 	log.Trace("func() db.GetMemories")
 
 	where, args := memoryFilterConditions(filter)
@@ -989,7 +990,7 @@ func (d *DB) GetMemories(filter MemoryFilter) (*[]types.Memory, error) {
 		}
 	}
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(ctx, query, args...)
@@ -1018,12 +1019,12 @@ func (d *DB) GetMemories(filter MemoryFilter) (*[]types.Memory, error) {
 
 // CountMemories returns the number of memories with an event and the number without. A count of
 // -1 indicates the count could not be determined.
-func (d *DB) CountMemories() (int, int) {
+func (d *DB) CountMemories(ctx context.Context) (int, int) {
 	log.Trace("func() db.CountMemories")
 
 	var with, without int
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// COUNT over a CASE with no ELSE counts the rows where the condition holds — the portable
@@ -1047,10 +1048,10 @@ func (d *DB) CountMemories() (int, int) {
 // ConsolidateMemories evaluates every memory that has no associated event and deletes those the
 // server decides should be consolidated. The scan reads only the covering index; memory bodies
 // are never loaded.
-func (d *DB) ConsolidateMemories(s Server) (int, error) {
+func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 	log.Trace("func() db.ConsolidateMemories")
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(
@@ -1094,7 +1095,7 @@ func (d *DB) ConsolidateMemories(s Server) (int, error) {
 
 	_ = rows.Close()
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(deletions)
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions)
 	if err != nil {
 		log.Errorf("failed to delete consolidated memories: %s", err.Error())
 
@@ -1113,7 +1114,7 @@ func (d *DB) ConsolidateMemories(s Server) (int, error) {
 // body lengths, but SQLite serves length() from the record header without loading the content.
 // Returns the number of memories deleted, the number of events deleted, and the estimated bytes
 // freed.
-func (d *DB) EvictMemories(s Server, freeBytes int64) (int, int, int64, error) {
+func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int, int, int64, error) {
 	log.Trace("func() db.EvictMemories")
 
 	if freeBytes <= 0 {
@@ -1129,7 +1130,7 @@ func (d *DB) EvictMemories(s Server, freeBytes int64) (int, int, int64, error) {
 		recallCount  int32
 	}
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// The memories_consolidated fallback is bound rather than a literal: the column is INTEGER
@@ -1222,7 +1223,7 @@ func (d *DB) EvictMemories(s Server, freeBytes int64) (int, int, int64, error) {
 		}
 	}
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(deletions)
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions)
 	if err != nil {
 		log.Errorf("failed to delete evicted memories: %s", err.Error())
 
@@ -1261,7 +1262,7 @@ func (d *DB) EvictMemories(s Server, freeBytes int64) (int, int, int64, error) {
 		if evicted == memoriesPerEvent[id] {
 			var err error
 
-			deleted, err = d.DeleteEventIfEmpty(id)
+			deleted, err = d.DeleteEventIfEmpty(ctx, id)
 			if err != nil {
 				log.Errorf("failed to delete event '%s' after eviction: %s", id, err.Error())
 
@@ -1278,7 +1279,7 @@ func (d *DB) EvictMemories(s Server, freeBytes int64) (int, int, int64, error) {
 		}
 
 		if !consolidatedEvents[id] {
-			if err := d.setEventConsolidated(id); err != nil {
+			if err := d.setEventConsolidated(ctx, id); err != nil {
 				log.Errorf("failed to set MemoriesConsolidated for event '%s' after eviction: %s", id, err.Error())
 
 				if retErr == nil {
@@ -1300,7 +1301,7 @@ func (d *DB) EvictMemories(s Server, freeBytes int64) (int, int, int64, error) {
 // event id is never entered into the event bookkeeping, so the events-seen count and the per-event
 // cleanups stay confined to events that actually exist. Returns the number of memories deleted,
 // the number of (real) events seen, and the number of events deleted.
-func (d *DB) ConsolidateEventMemories(s Server) (int, int, int, error) {
+func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error) {
 	log.Trace("func() db.ConsolidateEventMemories")
 
 	type EventDeletion struct {
@@ -1311,7 +1312,7 @@ func (d *DB) ConsolidateEventMemories(s Server) (int, int, int, error) {
 	eventDeletions := make(map[string]EventDeletion)
 	var memoryDeletions []memoryRecallSnapshot
 
-	ctx, cancel := d.opContext()
+	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// LEFT JOIN, not INNER: an INNER JOIN silently drops memories whose event no longer exists, so
@@ -1392,7 +1393,7 @@ func (d *DB) ConsolidateEventMemories(s Server) (int, int, int, error) {
 	// retErr carries the first failure encountered from here on. The bulk delete and the per-event
 	// cleanup below are best-effort - a failure on one event must not stop the others - so they log
 	// and carry on, but the error is still surfaced so the sleep cycle's success metric reflects it.
-	deletedIds, retErr := d.deleteMemoriesIfUnrecalled(memoryDeletions)
+	deletedIds, retErr := d.deleteMemoriesIfUnrecalled(ctx, memoryDeletions)
 	if retErr != nil {
 		log.Errorf("failed to delete consolidated memories: %s", retErr.Error())
 	}
@@ -1411,7 +1412,7 @@ func (d *DB) ConsolidateEventMemories(s Server) (int, int, int, error) {
 		if !event.undeletedMemory {
 			var err error
 
-			deleted, err = d.DeleteEventIfEmpty(id)
+			deleted, err = d.DeleteEventIfEmpty(ctx, id)
 			if err != nil {
 				log.Errorf("failed to delete event '%s' for memory consolidation: %s", id, err.Error())
 
@@ -1428,7 +1429,7 @@ func (d *DB) ConsolidateEventMemories(s Server) (int, int, int, error) {
 		}
 
 		if !event.consolidated {
-			if err := d.setEventConsolidated(id); err != nil {
+			if err := d.setEventConsolidated(ctx, id); err != nil {
 				log.Errorf("failed to set MemoriesConsolidated for event '%s' during memory consolidation: %s", id, err.Error())
 
 				if retErr == nil {

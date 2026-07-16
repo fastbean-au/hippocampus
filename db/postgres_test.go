@@ -71,7 +71,7 @@ func newPostgresTestDB(t *testing.T) *DB {
 		_ = database.Close()
 	})
 
-	if err := database.Purge(); err != nil {
+	if err := database.Purge(context.Background()); err != nil {
 		t.Fatalf("Purge: %s", err)
 	}
 
@@ -133,7 +133,7 @@ func TestPostgres_ReplicaSkipsInstanceLock(t *testing.T) {
 	_ = replica2.Close()
 
 	// The replica can still read/write the shared database.
-	if _, err := replica.CreateEvent(types.Event{Id: "replica-evt", Name: "an event", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := replica.CreateEvent(context.Background(), types.Event{Id: "replica-evt", Name: "an event", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("replica CreateEvent: %s", err)
 	}
 
@@ -231,7 +231,7 @@ func TestPostgres_BatchedDeleteRespectsRecallGuard(t *testing.T) {
 	for i := 0; i < total; i++ {
 		id := fmt.Sprintf("m%05d", i)
 
-		if _, err := database.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+		if _, err := database.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 
@@ -240,11 +240,11 @@ func TestPostgres_BatchedDeleteRespectsRecallGuard(t *testing.T) {
 
 	// Reinforce two memories, one in each chunk, after the snapshot - the guard must protect them.
 	protected := []string{"m00002", fmt.Sprintf("m%05d", deleteChunkSize+3)}
-	if _, err := database.RecallMemories(protected); err != nil {
+	if _, err := database.RecallMemories(context.Background(), protected); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := database.deleteMemoriesIfUnrecalled(snapshot)
+	deleted, err := database.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
@@ -253,7 +253,7 @@ func TestPostgres_BatchedDeleteRespectsRecallGuard(t *testing.T) {
 		t.Errorf("expected %d deletions, got %d", total-len(protected), len(deleted))
 	}
 
-	with, without := database.CountMemories()
+	with, without := database.CountMemories(context.Background())
 	if with+without != len(protected) {
 		t.Errorf("expected only the %d recalled memories to remain, got %d", len(protected), with+without)
 	}
@@ -266,11 +266,11 @@ func TestPostgres_BatchedDeleteRespectsRecallGuard(t *testing.T) {
 func TestPostgres_ReadOnlyOpenBypassesAdvisoryLock(t *testing.T) {
 	database := newPostgresTestDB(t)
 
-	if _, err := database.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, Body: "text"}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, Body: "text"}); err != nil {
 		t.Fatalf("CreateMemory(m1): %s", err)
 	}
 
-	if _, err := database.CreateMemory(types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, Body: "\x00\x01", IsBinary: true}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, Body: "\x00\x01", IsBinary: true}); err != nil {
 		t.Fatalf("CreateMemory(m2): %s", err)
 	}
 
@@ -279,7 +279,7 @@ func TestPostgres_ReadOnlyOpenBypassesAdvisoryLock(t *testing.T) {
 		t.Fatalf("NewPostgresReadOnly should succeed while the lock is held: %s", err)
 	}
 
-	page, err := reader.GetIndexableMemoriesPage("", 10)
+	page, err := reader.GetIndexableMemoriesPage(context.Background(), "", 10)
 	if err != nil {
 		t.Fatalf("GetIndexableMemoriesPage: %s", err)
 	}
@@ -308,11 +308,11 @@ func TestPostgres_ReadOnlyOpenBypassesAdvisoryLock(t *testing.T) {
 func TestPostgres_EvictionDoesNotFlagEventWhenNothingDeleted(t *testing.T) {
 	database := newPostgresTestDB(t)
 
-	if _, err := database.CreateEvent(types.Event{Id: "e1", Name: "e", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "e", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := database.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -322,7 +322,7 @@ func TestPostgres_EvictionDoesNotFlagEventWhenNothingDeleted(t *testing.T) {
 			if !recalled {
 				// Reinforce m1 so its live recall state no longer matches the snapshot the eviction
 				// scan just took; the guarded delete will skip it.
-				_, _ = database.RecallMemories([]string{"m1"})
+				_, _ = database.RecallMemories(context.Background(), []string{"m1"})
 				recalled = true
 			}
 
@@ -330,7 +330,7 @@ func TestPostgres_EvictionDoesNotFlagEventWhenNothingDeleted(t *testing.T) {
 		},
 	}
 
-	memories, events, _, err := database.EvictMemories(server, 1<<30)
+	memories, events, _, err := database.EvictMemories(context.Background(), server, 1<<30)
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
@@ -339,7 +339,7 @@ func TestPostgres_EvictionDoesNotFlagEventWhenNothingDeleted(t *testing.T) {
 		t.Fatalf("expected nothing evicted (m1 recall-skipped), got %d memories / %d events", memories, events)
 	}
 
-	event, err := database.GetEvent("e1")
+	event, err := database.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -355,11 +355,11 @@ func TestPostgres_EvictionDoesNotFlagEventWhenNothingDeleted(t *testing.T) {
 func TestPostgres_UpdateNoOpValueReportsExists(t *testing.T) {
 	database := newPostgresTestDB(t)
 
-	if _, err := database.CreateEvent(types.Event{Id: "e1", Name: "e", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "e", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	ok, err := database.UpdateEvent(types.Event{Id: "e1", Significance: 5})
+	ok, err := database.UpdateEvent(context.Background(), types.Event{Id: "e1", Significance: 5})
 	if err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	}
@@ -414,7 +414,7 @@ func TestPostgres_ReadOnlyOpenFailsFastWithoutTables(t *testing.T) {
 func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 	database := newPostgresTestDB(t)
 
-	used, err := database.UsedBytes()
+	used, err := database.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes (empty): %s", err)
 	}
@@ -423,15 +423,15 @@ func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 		t.Fatalf("expected 0 used bytes in an empty store, got %d", used)
 	}
 
-	if _, err := database.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, Body: strings.Repeat("a", 1000)}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, Body: strings.Repeat("a", 1000)}); err != nil {
 		t.Fatalf("CreateMemory(m1): %s", err)
 	}
 
-	if _, err := database.CreateMemory(types.Memory{Id: "m2", TimeStamp: 100, Significance: 5, Body: strings.Repeat("b", 3000)}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m2", TimeStamp: 100, Significance: 5, Body: strings.Repeat("b", 3000)}); err != nil {
 		t.Fatalf("CreateMemory(m2): %s", err)
 	}
 
-	used, err = database.UsedBytes()
+	used, err = database.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes: %s", err)
 	}
@@ -447,7 +447,7 @@ func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 		return float64(candidate.MemorySignificance)
 	}}
 
-	memories, events, freed, err := database.EvictMemories(server, 1)
+	memories, events, freed, err := database.EvictMemories(context.Background(), server, 1)
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
@@ -456,7 +456,7 @@ func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 		t.Fatalf("expected exactly 1 memory evicted, got %d memories and %d events", memories, events)
 	}
 
-	remaining, err := database.UsedBytes()
+	remaining, err := database.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes (after eviction): %s", err)
 	}
@@ -468,11 +468,11 @@ func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 	}
 
 	// Events contribute too - their payload plus the same per-row allowance.
-	if _, err := database.CreateEvent(types.Event{Id: "e1", Name: "sized event", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "sized event", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	withEvent, err := database.UsedBytes()
+	withEvent, err := database.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes (with event): %s", err)
 	}
@@ -487,27 +487,27 @@ func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 func TestPostgres_MemoryAndEventRoundTrip(t *testing.T) {
 	database := newPostgresTestDB(t)
 
-	if _, err := database.CreateEvent(types.Event{Id: "e1", Name: "event one", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "event one", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := database.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 3, EventId: "e1", Body: "hello"}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 3, EventId: "e1", Body: "hello"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	if _, err := database.CreateMemory(types.Memory{Id: "m2", TimeStamp: 200, Significance: 7, Body: "loose"}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m2", TimeStamp: 200, Significance: 7, Body: "loose"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
 	// The conditional UPDATE exercises the partial-overwrite semantics: only non-zero fields may
 	// overwrite, so the name must change while significance survives.
-	if ok, err := database.UpdateEvent(types.Event{Id: "e1", Name: "renamed event"}); err != nil {
+	if ok, err := database.UpdateEvent(context.Background(), types.Event{Id: "e1", Name: "renamed event"}); err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateEvent reported the existing event as missing")
 	}
 
-	event, err := database.GetEvent("e1")
+	event, err := database.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -516,7 +516,7 @@ func TestPostgres_MemoryAndEventRoundTrip(t *testing.T) {
 		t.Errorf("GetEvent after upsert = (%q, %d), want ('renamed event', 5)", event.Name, event.Significance)
 	}
 
-	memories, err := database.RecallMemories([]string{"m1"})
+	memories, err := database.RecallMemories(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("RecallMemories: %s", err)
 	}
@@ -525,13 +525,13 @@ func TestPostgres_MemoryAndEventRoundTrip(t *testing.T) {
 		t.Errorf("RecallMemories should return the reinforced memory, got %+v", *memories)
 	}
 
-	if ok, err := database.UpdateMemory(types.Memory{Id: "m2", Significance: 9}); err != nil {
+	if ok, err := database.UpdateMemory(context.Background(), types.Memory{Id: "m2", Significance: 9}); err != nil {
 		t.Fatalf("UpdateMemory: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateMemory reported the existing memory as missing")
 	}
 
-	ranged, err := database.GetMemories(MemoryFilter{TimeStampMin: 150, SignificanceMin: 8})
+	ranged, err := database.GetMemories(context.Background(), MemoryFilter{TimeStampMin: 150, SignificanceMin: 8})
 	if err != nil {
 		t.Fatalf("GetMemories: %s", err)
 	}
@@ -540,12 +540,12 @@ func TestPostgres_MemoryAndEventRoundTrip(t *testing.T) {
 		t.Errorf("range query should return only the upserted m2, got %+v", *ranged)
 	}
 
-	with, without := database.CountMemories()
+	with, without := database.CountMemories(context.Background())
 	if with != 1 || without != 1 {
 		t.Errorf("CountMemories = (%d, %d), want (1, 1)", with, without)
 	}
 
-	if count := database.CountEvents(); count != 1 {
+	if count := database.CountEvents(context.Background()); count != 1 {
 		t.Errorf("CountEvents = %d, want 1", count)
 	}
 }
@@ -557,21 +557,21 @@ func TestPostgres_MemoryAndEventRoundTrip(t *testing.T) {
 func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 	database := newPostgresTestDB(t)
 
-	if _, err := database.CreateEvent(types.Event{Id: "e1", Name: "quiet event", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "quiet event", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if _, err := database.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 3, EventId: "e1", Body: "evented"}); err != nil {
+		if _, err := database.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 3, EventId: "e1", Body: "evented"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
 
-	if _, err := database.CreateMemory(types.Memory{Id: "loose", TimeStamp: 100, Significance: 3, Body: "loose"}); err != nil {
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "loose", TimeStamp: 100, Significance: 3, Body: "loose"}); err != nil {
 		t.Fatalf("CreateMemory(loose): %s", err)
 	}
 
-	candidates, err := database.FindSummarizationCandidates(3, time.Now().UnixNano(), 10)
+	candidates, err := database.FindSummarizationCandidates(context.Background(), 3, time.Now().UnixNano(), 10)
 	if err != nil {
 		t.Fatalf("FindSummarizationCandidates: %s", err)
 	}
@@ -580,7 +580,7 @@ func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 		t.Errorf("expected e1 as the sole candidate with 3 memories, got %+v", candidates)
 	}
 
-	replaced, err := database.ReplaceMemoriesWithSummary("e1", types.Memory{Id: "sum", TimeStamp: 300, Significance: 5, EventId: "e1", Body: "summary", IsSummary: true})
+	replaced, err := database.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "sum", TimeStamp: 300, Significance: 5, EventId: "e1", Body: "summary", IsSummary: true})
 	if err != nil {
 		t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
 	}
@@ -590,7 +590,7 @@ func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 	}
 
 	// The summary memory is flagged is_summary, so the event must no longer be a candidate.
-	candidates, err = database.FindSummarizationCandidates(1, time.Now().UnixNano(), 10)
+	candidates, err = database.FindSummarizationCandidates(context.Background(), 1, time.Now().UnixNano(), 10)
 	if err != nil {
 		t.Fatalf("FindSummarizationCandidates after replacement: %s", err)
 	}
@@ -603,13 +603,13 @@ func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 	// then the event with it via DeleteEventIfEmpty.
 	server := &stubServer{consolidateMemories: true, consolidateEvents: true}
 
-	if deleted, err := database.ConsolidateMemories(server); err != nil {
+	if deleted, err := database.ConsolidateMemories(context.Background(), server); err != nil {
 		t.Fatalf("ConsolidateMemories: %s", err)
 	} else if deleted != 1 {
 		t.Errorf("ConsolidateMemories deleted %d, want 1", deleted)
 	}
 
-	memoriesDeleted, eventsSeen, eventsDeleted, err := database.ConsolidateEventMemories(server)
+	memoriesDeleted, eventsSeen, eventsDeleted, err := database.ConsolidateEventMemories(context.Background(), server)
 	if err != nil {
 		t.Fatalf("ConsolidateEventMemories: %s", err)
 	}
@@ -618,12 +618,12 @@ func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 		t.Errorf("ConsolidateEventMemories = (%d, %d, %d), want (1, 1, 1)", memoriesDeleted, eventsSeen, eventsDeleted)
 	}
 
-	with, without := database.CountMemories()
+	with, without := database.CountMemories(context.Background())
 	if with != 0 || without != 0 {
 		t.Errorf("CountMemories after consolidation = (%d, %d), want (0, 0)", with, without)
 	}
 
-	if count := database.CountEvents(); count != 0 {
+	if count := database.CountEvents(context.Background()); count != 0 {
 		t.Errorf("CountEvents after consolidation = %d, want 0", count)
 	}
 }

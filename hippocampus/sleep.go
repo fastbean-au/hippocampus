@@ -73,7 +73,7 @@ func (s *Server) consolidate(ctx context.Context) error {
 		// The percentile cannot be computed over an empty event store; retain the current value
 		// (the configured fixed value, or the last computed percentile) rather than failing the
 		// whole sleep cycle.
-		v, err := s.db.CalculateSignificancePercentile(s.consolidation.defaultEventSignificancePercentile)
+		v, err := s.db.CalculateSignificancePercentile(ctx, s.consolidation.defaultEventSignificancePercentile)
 		if err != nil {
 			log.Warnf(
 				"default event significance percentile unavailable, retaining %d: %s",
@@ -94,7 +94,7 @@ func (s *Server) consolidate(ctx context.Context) error {
 		}
 	}
 
-	with, without := s.db.CountMemories()
+	with, without := s.db.CountMemories(ctx)
 	if with >= 0 && without >= 0 {
 
 		// The byte measure only contributes when a byte capacity is configured; it reuses the
@@ -124,7 +124,7 @@ func (s *Server) consolidate(ctx context.Context) error {
 	}
 
 	// First pass - memories without events
-	md, e1 := s.db.ConsolidateMemories(s)
+	md, e1 := s.db.ConsolidateMemories(ctx, s)
 	log.Infof("consolidated %d memories not associated with an event", md)
 
 	tel.memoriesConsolidated.Add(ctx, int64(md), metric.WithAttributes(attribute.Bool("has_event", false)))
@@ -133,7 +133,7 @@ func (s *Server) consolidate(ctx context.Context) error {
 	))
 
 	// Second pass - memories with events
-	emd, e, ed, e2 := s.db.ConsolidateEventMemories(s)
+	emd, e, ed, e2 := s.db.ConsolidateEventMemories(ctx, s)
 	log.Infof("consolidated %d memories associated with an event from %d events, deleting %d events", emd, e, ed)
 
 	tel.memoriesConsolidated.Add(ctx, int64(emd), metric.WithAttributes(attribute.Bool("has_event", true)))
@@ -145,7 +145,7 @@ func (s *Server) consolidate(ctx context.Context) error {
 	))
 
 	// Third pass - events without memories
-	ec, e3 := s.db.ConsolidateEvents(s)
+	ec, e3 := s.db.ConsolidateEvents(ctx, s)
 	log.Infof("consolidated %d events without memories", ec)
 
 	tel.eventsConsolidated.Add(ctx, int64(ec), metric.WithAttributes(attribute.Bool("has_memories", false)))
@@ -181,7 +181,7 @@ func (s *Server) scanSummarizationCandidates(ctx context.Context) {
 
 	maxTimestamp := time.Now().UnixNano() - int64(s.consolidation.summarizationMinAgeInDays)*DAY_IN_NANOSECONDS
 
-	candidates, err := s.db.FindSummarizationCandidates(
+	candidates, err := s.db.FindSummarizationCandidates(ctx, 
 		s.consolidation.summarizationMinMemories,
 		maxTimestamp,
 		s.consolidation.summarizationMaxCandidates,
@@ -237,7 +237,7 @@ func (s *Server) evict(ctx context.Context) error {
 	ctx, span := tel.tracer.Start(ctx, "evict")
 	defer span.End()
 
-	used, err := s.db.UsedBytes()
+	used, err := s.db.UsedBytes(ctx)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -265,7 +265,7 @@ func (s *Server) evict(ctx context.Context) error {
 		attribute.Int64("capacity_bytes", s.consolidation.capacityBytes),
 	))
 
-	memories, events, freed, err := s.db.EvictMemories(s, excess)
+	memories, events, freed, err := s.db.EvictMemories(ctx, s, excess)
 	log.Infof("evicted %d memories and %d events, freeing an estimated %d bytes", memories, events, freed)
 
 	tel.memoriesEvicted.Add(ctx, int64(memories))
@@ -295,7 +295,7 @@ func (s *Server) preserve(ctx context.Context) error {
 	_, span := tel.tracer.Start(ctx, "preserve")
 	defer span.End()
 
-	if err := s.db.Preserve(); err != nil {
+	if err := s.db.Preserve(ctx); err != nil {
 		err = fmt.Errorf("failed to preserve data")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

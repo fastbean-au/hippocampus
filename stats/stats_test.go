@@ -22,13 +22,13 @@ type countingStore struct {
 	memories int
 }
 
-func (c *countingStore) CountEvents() int {
+func (c *countingStore) CountEvents(ctx context.Context) int {
 	c.events++
 
 	return 7
 }
 
-func (c *countingStore) CountMemories() (int, int) {
+func (c *countingStore) CountMemories(ctx context.Context) (int, int) {
 	c.memories++
 
 	return 5, 3
@@ -45,11 +45,11 @@ type fixedStore struct {
 	memoriesWithout int
 }
 
-func (f *fixedStore) CountEvents() int {
+func (f *fixedStore) CountEvents(ctx context.Context) int {
 	return f.events
 }
 
-func (f *fixedStore) CountMemories() (int, int) {
+func (f *fixedStore) CountMemories(ctx context.Context) (int, int) {
 	return f.memoriesWith, f.memoriesWithout
 }
 

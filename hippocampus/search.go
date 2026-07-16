@@ -72,9 +72,9 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 	var memories *[]types.Memory
 
 	if in.GetReinforce() {
-		memories, err = s.db.RecallMemories(ids)
+		memories, err = s.db.RecallMemories(ctx, ids)
 	} else {
-		memories, err = s.db.GetMemoriesByIds(ids)
+		memories, err = s.db.GetMemoriesByIds(ctx, ids)
 	}
 
 	if err != nil {

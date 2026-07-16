@@ -48,7 +48,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 	// consolidation pass could see it through its event, so reject it rather than create one.
 	// Event-less memories (empty event_id) are unaffected.
 	if memory.EventId != "" {
-		exists, err := s.db.EventExists(memory.EventId)
+		exists, err := s.db.EventExists(ctx, memory.EventId)
 		if err != nil {
 			return &res, err
 		}
@@ -70,7 +70,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 
 	memory.SetDefaults()
 
-	id, err := s.db.CreateMemory(memory)
+	id, err := s.db.CreateMemory(ctx, memory)
 	res.Id = id
 
 	if err == nil {
@@ -113,7 +113,7 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 	// it rather than let the update produce an immortal memory. A partial update
 	// that leaves event_id unset (empty) does not touch the memory's event, so it is unaffected.
 	if memory.EventId != "" {
-		exists, err := s.db.EventExists(memory.EventId)
+		exists, err := s.db.EventExists(ctx, memory.EventId)
 		if err != nil {
 			return &res, err
 		}
@@ -124,7 +124,7 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 		}
 	}
 
-	ok, err := s.db.UpdateMemory(memory)
+	ok, err := s.db.UpdateMemory(ctx, memory)
 	if err != nil {
 
 		return &res, err
@@ -138,7 +138,7 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 	// Re-index from the memory's full current state (the update was partial, so the request alone
 	// does not carry it). Binary memories are never indexed; the stored is_binary flag - which this
 	// RPC does not change - decides, so the caller's content must match it.
-	if updated, err := s.db.GetMemoriesByIds([]string{in.GetId()}); err == nil && len(*updated) == 1 {
+	if updated, err := s.db.GetMemoriesByIds(ctx, []string{in.GetId()}); err == nil && len(*updated) == 1 {
 		if m := (*updated)[0]; !m.IsBinary {
 			s.searchIdx().IndexMemory(search.DocFromMemory(m))
 		}
@@ -160,7 +160,7 @@ func (s *Server) DeleteMemories(ctx context.Context, in *contract.DeleteMemories
 		return &res, nil
 	}
 
-	cnt, err := s.db.DeleteMemories(ids)
+	cnt, err := s.db.DeleteMemories(ctx, ids)
 
 	tel.memoriesDeleted.Add(ctx, int64(cnt))
 
@@ -187,7 +187,7 @@ func (s *Server) RecallMemories(ctx context.Context, in *contract.RecallMemories
 		return &res, nil
 	}
 
-	memories, err := s.db.RecallMemories(ids)
+	memories, err := s.db.RecallMemories(ctx, ids)
 	if err != nil {
 		return &res, err
 	}
@@ -217,7 +217,7 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 		return &res, fmt.Errorf("event_id must be provided")
 	}
 
-	if _, err := s.db.GetEvent(eventId); err != nil {
+	if _, err := s.db.GetEvent(ctx, eventId); err != nil {
 		return &res, err
 	}
 
@@ -244,7 +244,7 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 
 	summary.SetDefaults()
 
-	replaced, err := s.db.ReplaceMemoriesWithSummary(eventId, summary)
+	replaced, err := s.db.ReplaceMemoriesWithSummary(ctx, eventId, summary)
 	if err != nil {
 		return &res, err
 	}
@@ -338,12 +338,12 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		Offset:          offset,
 	}
 
-	total, err := s.db.CountMemoriesFiltered(filter)
+	total, err := s.db.CountMemoriesFiltered(ctx, filter)
 	if err != nil {
 		return &res, err
 	}
 
-	memories, err := s.db.GetMemories(filter)
+	memories, err := s.db.GetMemories(ctx, filter)
 	if err != nil {
 		return &res, err
 	}

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -49,16 +50,16 @@ func TestConsolidateEvents(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
 
-	if _, err := db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "evented", Body: "x"}); err != nil {
+	if _, err := db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "evented", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	deleted, err := db.ConsolidateEvents(&stubServer{consolidateEvents: true})
+	deleted, err := db.ConsolidateEvents(context.Background(), &stubServer{consolidateEvents: true})
 	if err != nil {
 		t.Fatalf("ConsolidateEvents: %s", err)
 	}
@@ -67,12 +68,12 @@ func TestConsolidateEvents(t *testing.T) {
 		t.Errorf("expected 1 event deleted, got %d", deleted)
 	}
 
-	if _, err := db.GetEvent("evented"); err != nil {
+	if _, err := db.GetEvent(context.Background(), "evented"); err != nil {
 		t.Errorf("event with memories should survive the bare-event pass: %s", err)
 	}
 
-	if db.CountEvents() != 1 {
-		t.Errorf("expected 1 remaining event, got %d", db.CountEvents())
+	if db.CountEvents(context.Background()) != 1 {
+		t.Errorf("expected 1 remaining event, got %d", db.CountEvents(context.Background()))
 	}
 }
 
@@ -95,11 +96,11 @@ func TestCreateEvent_CalculatesRelationshipSignificance(t *testing.T) {
 		},
 	}
 
-	if _, err := db.CreateEvent(event); err != nil {
+	if _, err := db.CreateEvent(context.Background(), event); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	got, err := db.GetEvent("e1")
+	got, err := db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -122,14 +123,14 @@ func TestGetEvents_TimeEndFilter(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
 
 	// Filter: timeEndMin=400, timeEndMax=800 — should match e2 (500) and e3 (900 is outside), so
 	// only e2.
-	got, err := db.GetEvents(EventFilter{TimeEndMin: 400, TimeEndMax: 800})
+	got, err := db.GetEvents(context.Background(), EventFilter{TimeEndMin: 400, TimeEndMax: 800})
 	if err != nil {
 		t.Fatalf("GetEvents: %s", err)
 	}
@@ -159,13 +160,13 @@ func TestGetEvents_TimeEndMaxOnly(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
 
 	// Filter: timeEndMax=500 — should match only e1 (TimeEnd=200).
-	got, err := db.GetEvents(EventFilter{TimeEndMax: 500})
+	got, err := db.GetEvents(context.Background(), EventFilter{TimeEndMax: 500})
 	if err != nil {
 		t.Fatalf("GetEvents: %s", err)
 	}
@@ -203,19 +204,19 @@ func TestUpdateEvent_PartialUpdate(t *testing.T) {
 		},
 	}
 
-	if _, err := db.CreateEvent(event); err != nil {
+	if _, err := db.CreateEvent(context.Background(), event); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
 	// Update only the description: every other field, including the relationships, must be
 	// preserved.
-	if ok, err := db.UpdateEvent(types.Event{Id: "e1", Description: "updated"}); err != nil {
+	if ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "e1", Description: "updated"}); err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateEvent reported the existing event as missing")
 	}
 
-	got, err := db.GetEvent("e1")
+	got, err := db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -233,13 +234,13 @@ func TestUpdateEvent_PartialUpdate(t *testing.T) {
 	}
 
 	// Update with new relationships: the relationship significance must be recalculated.
-	if ok, err := db.UpdateEvent(types.Event{Id: "e1", Relationships: []types.Relationship{{EventId: "e4", Significance: 10}}}); err != nil {
+	if ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "e1", Relationships: []types.Relationship{{EventId: "e4", Significance: 10}}}); err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateEvent reported the existing event as missing")
 	}
 
-	got, err = db.GetEvent("e1")
+	got, err = db.GetEvent(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -256,7 +257,7 @@ func TestUpdateEvent_PartialUpdate(t *testing.T) {
 func TestUpdateEvent_DoesNotInsertMissing(t *testing.T) {
 	db := newTestDB(t)
 
-	ok, err := db.UpdateEvent(types.Event{Id: "new", Name: "created by update", TimeStart: 100, Significance: 2})
+	ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "new", Name: "created by update", TimeStart: 100, Significance: 2})
 	if err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	}
@@ -265,7 +266,7 @@ func TestUpdateEvent_DoesNotInsertMissing(t *testing.T) {
 		t.Fatal("UpdateEvent reported an unknown event as existing")
 	}
 
-	if _, err := db.GetEvent("new"); err == nil {
+	if _, err := db.GetEvent(context.Background(), "new"); err == nil {
 		t.Fatal("UpdateEvent created a phantom event for an unknown id; expected no row")
 	}
 }
@@ -276,7 +277,7 @@ func TestUpdateEvent_DoesNotInsertMissing(t *testing.T) {
 func TestUpdateEvent_EmptyIdCreatesNoRow(t *testing.T) {
 	db := newTestDB(t)
 
-	ok, err := db.UpdateEvent(types.Event{Id: "", Significance: 9})
+	ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "", Significance: 9})
 	if err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	}
@@ -285,7 +286,7 @@ func TestUpdateEvent_EmptyIdCreatesNoRow(t *testing.T) {
 		t.Fatal("UpdateEvent reported an empty-id event as existing")
 	}
 
-	if n := db.CountEvents(); n != 0 {
+	if n := db.CountEvents(context.Background()); n != 0 {
 		t.Fatalf("expected no events after an empty-id update, got %d", n)
 	}
 }
@@ -302,13 +303,13 @@ func TestGetEvents_CombinedFilters(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
 
 	// time_start >= 200 and significance <= 4 — only e2 matches both.
-	got, err := db.GetEvents(EventFilter{TimeStartMin: 200, SignificanceMax: 4})
+	got, err := db.GetEvents(context.Background(), EventFilter{TimeStartMin: 200, SignificanceMax: 4})
 	if err != nil {
 		t.Fatalf("GetEvents: %s", err)
 	}
@@ -334,20 +335,20 @@ func TestEventGroup(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
 
-	if e, err := db.GetEvent("e1"); err != nil || e.Group != "billing" {
+	if e, err := db.GetEvent(context.Background(), "e1"); err != nil || e.Group != "billing" {
 		t.Errorf("expected e1 to carry group 'billing', got %+v (%v)", e, err)
 	}
 
-	if e, err := db.GetEvent("e3"); err != nil || e.Group != "" {
+	if e, err := db.GetEvent(context.Background(), "e3"); err != nil || e.Group != "" {
 		t.Errorf("expected e3 to carry no group, got %+v (%v)", e, err)
 	}
 
-	got, err := db.GetEvents(EventFilter{Group: "billing"})
+	got, err := db.GetEvents(context.Background(), EventFilter{Group: "billing"})
 	if err != nil {
 		t.Fatalf("GetEvents: %s", err)
 	}
@@ -357,24 +358,24 @@ func TestEventGroup(t *testing.T) {
 	}
 
 	// An update without a group must leave the stored group untouched.
-	if ok, err := db.UpdateEvent(types.Event{Id: "e1", Significance: 2}); err != nil {
+	if ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "e1", Significance: 2}); err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateEvent reported the existing event as missing")
 	}
 
-	if e, err := db.GetEvent("e1"); err != nil || e.Group != "billing" {
+	if e, err := db.GetEvent(context.Background(), "e1"); err != nil || e.Group != "billing" {
 		t.Errorf("expected e1 to keep group 'billing' after an update without one, got %+v (%v)", e, err)
 	}
 
 	// An update carrying a group overwrites it.
-	if ok, err := db.UpdateEvent(types.Event{Id: "e1", Group: "ops"}); err != nil {
+	if ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "e1", Group: "ops"}); err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateEvent reported the existing event as missing")
 	}
 
-	if e, err := db.GetEvent("e1"); err != nil || e.Group != "ops" {
+	if e, err := db.GetEvent(context.Background(), "e1"); err != nil || e.Group != "ops" {
 		t.Errorf("expected e1 to carry group 'ops' after the update, got %+v (%v)", e, err)
 	}
 }
@@ -386,12 +387,12 @@ func TestCreateEvent_DefaultsTimeStart(t *testing.T) {
 
 	before := time.Now().UnixNano()
 
-	id, err := db.CreateEvent(types.Event{Name: "no start", Significance: 1})
+	id, err := db.CreateEvent(context.Background(), types.Event{Name: "no start", Significance: 1})
 	if err != nil {
 		t.Fatalf("CreateEvent with a zero time_start should default it, got: %s", err)
 	}
 
-	got, err := db.GetEvent(id)
+	got, err := db.GetEvent(context.Background(), id)
 	if err != nil {
 		t.Fatalf("GetEvent: %s", err)
 	}
@@ -439,13 +440,13 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if _, err := db.CreateEvent(e); err != nil {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
 	}
 
 	// significance: sig desc, then time desc, then id asc — c and b tie on 50 so newer (c) wins.
-	bySig, err := db.GetEvents(EventFilter{OrderBy: "significance"})
+	bySig, err := db.GetEvents(context.Background(), EventFilter{OrderBy: "significance"})
 	if err != nil {
 		t.Fatalf("GetEvents(significance): %s", err)
 	}
@@ -455,7 +456,7 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 	}
 
 	// timestamp: time desc only.
-	byTime, err := db.GetEvents(EventFilter{OrderBy: "timestamp"})
+	byTime, err := db.GetEvents(context.Background(), EventFilter{OrderBy: "timestamp"})
 	if err != nil {
 		t.Fatalf("GetEvents(timestamp): %s", err)
 	}
@@ -465,7 +466,7 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 	}
 
 	// an empty/unknown order_by falls back to significance.
-	byDefault, err := db.GetEvents(EventFilter{})
+	byDefault, err := db.GetEvents(context.Background(), EventFilter{})
 	if err != nil {
 		t.Fatalf("GetEvents(default): %s", err)
 	}
@@ -475,7 +476,7 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 	}
 
 	// paging over the significance order: page 1 and page 2 partition the list with no overlap.
-	page1, err := db.GetEvents(EventFilter{OrderBy: "significance", Limit: 2, Offset: 0})
+	page1, err := db.GetEvents(context.Background(), EventFilter{OrderBy: "significance", Limit: 2, Offset: 0})
 	if err != nil {
 		t.Fatalf("GetEvents(page1): %s", err)
 	}
@@ -484,7 +485,7 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 		t.Errorf("page1 = %v, want %v", ids(page1), want)
 	}
 
-	page2, err := db.GetEvents(EventFilter{OrderBy: "significance", Limit: 2, Offset: 2})
+	page2, err := db.GetEvents(context.Background(), EventFilter{OrderBy: "significance", Limit: 2, Offset: 2})
 	if err != nil {
 		t.Fatalf("GetEvents(page2): %s", err)
 	}
@@ -494,7 +495,7 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 	}
 
 	// CountEventsFiltered ignores Limit/Offset and reflects the filter.
-	total, err := db.CountEventsFiltered(EventFilter{Limit: 1, Offset: 3})
+	total, err := db.CountEventsFiltered(context.Background(), EventFilter{Limit: 1, Offset: 3})
 	if err != nil {
 		t.Fatalf("CountEventsFiltered(all): %s", err)
 	}
@@ -503,7 +504,7 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 		t.Errorf("total count = %d, want 4", total)
 	}
 
-	g2, err := db.CountEventsFiltered(EventFilter{Group: "g2"})
+	g2, err := db.CountEventsFiltered(context.Background(), EventFilter{Group: "g2"})
 	if err != nil {
 		t.Fatalf("CountEventsFiltered(g2): %s", err)
 	}
@@ -512,7 +513,7 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 		t.Errorf("group g2 count = %d, want 2", g2)
 	}
 
-	sig, err := db.CountEventsFiltered(EventFilter{SignificanceMin: 50})
+	sig, err := db.CountEventsFiltered(context.Background(), EventFilter{SignificanceMin: 50})
 	if err != nil {
 		t.Fatalf("CountEventsFiltered(sig>=50): %s", err)
 	}

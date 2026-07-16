@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 
 	"github.com/fastbean-au/hippocampus/types"
@@ -10,7 +11,7 @@ import (
 func mustCreateEvent(t *testing.T, db *DB, e types.Event) {
 	t.Helper()
 
-	if _, err := db.CreateEvent(e); err != nil {
+	if _, err := db.CreateEvent(context.Background(), e); err != nil {
 		t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 	}
 }
@@ -19,7 +20,7 @@ func mustCreateEvent(t *testing.T, db *DB, e types.Event) {
 func mustCreateMemory(t *testing.T, db *DB, m types.Memory) {
 	t.Helper()
 
-	if _, err := db.CreateMemory(m); err != nil {
+	if _, err := db.CreateMemory(context.Background(), m); err != nil {
 		t.Fatalf("CreateMemory(%s): %s", m.Id, err)
 	}
 }
@@ -30,11 +31,11 @@ func TestEventExists(t *testing.T) {
 
 	mustCreateEvent(t, db, types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 1})
 
-	if exists, err := db.EventExists("e1"); err != nil || !exists {
+	if exists, err := db.EventExists(context.Background(), "e1"); err != nil || !exists {
 		t.Errorf("expected e1 to exist, got exists=%v err=%v", exists, err)
 	}
 
-	if exists, err := db.EventExists("missing"); err != nil || exists {
+	if exists, err := db.EventExists(context.Background(), "missing"); err != nil || exists {
 		t.Errorf("expected 'missing' not to exist, got exists=%v err=%v", exists, err)
 	}
 }
@@ -46,15 +47,15 @@ func TestDeleteEvent(t *testing.T) {
 
 	mustCreateEvent(t, db, types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 1})
 
-	if deleted, err := db.DeleteEvent("e1"); err != nil || !deleted {
+	if deleted, err := db.DeleteEvent(context.Background(), "e1"); err != nil || !deleted {
 		t.Errorf("expected e1 deleted, got deleted=%v err=%v", deleted, err)
 	}
 
-	if exists, _ := db.EventExists("e1"); exists {
+	if exists, _ := db.EventExists(context.Background(), "e1"); exists {
 		t.Error("e1 should be gone after DeleteEvent")
 	}
 
-	if deleted, err := db.DeleteEvent("missing"); err != nil || deleted {
+	if deleted, err := db.DeleteEvent(context.Background(), "missing"); err != nil || deleted {
 		t.Errorf("expected no deletion for unknown id, got deleted=%v err=%v", deleted, err)
 	}
 }
@@ -69,12 +70,12 @@ func TestCalculateSignificancePercentile(t *testing.T) {
 	}
 
 	// Nearest-rank 100th percentile is the maximum.
-	if got, err := db.CalculateSignificancePercentile(100); err != nil || got != 50 {
+	if got, err := db.CalculateSignificancePercentile(context.Background(), 100); err != nil || got != 50 {
 		t.Errorf("expected 100th percentile 50, got %v err=%v", got, err)
 	}
 
 	// A low percentile picks the smallest value.
-	if got, err := db.CalculateSignificancePercentile(1); err != nil || got != 10 {
+	if got, err := db.CalculateSignificancePercentile(context.Background(), 1); err != nil || got != 10 {
 		t.Errorf("expected 1st percentile 10, got %v err=%v", got, err)
 	}
 }
@@ -90,7 +91,7 @@ func TestDeleteEventMemories(t *testing.T) {
 	mustCreateMemory(t, db, types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "b"})
 	mustCreateMemory(t, db, types.Memory{Id: "m3", TimeStamp: 100, Significance: 1, EventId: "e2", Body: "c"})
 
-	n, err := db.DeleteEventMemories("e1")
+	n, err := db.DeleteEventMemories(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("DeleteEventMemories: %s", err)
 	}
@@ -99,7 +100,7 @@ func TestDeleteEventMemories(t *testing.T) {
 		t.Errorf("expected 2 memories deleted, got %d", n)
 	}
 
-	survivors, err := db.GetMemoriesByEventId("e2")
+	survivors, err := db.GetMemoriesByEventId(context.Background(), "e2")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId: %s", err)
 	}
@@ -118,7 +119,7 @@ func TestUnsetMemoriesEventId(t *testing.T) {
 	mustCreateMemory(t, db, types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "a"})
 	mustCreateMemory(t, db, types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "b"})
 
-	n, err := db.UnsetMemoriesEventId("e1")
+	n, err := db.UnsetMemoriesEventId(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("UnsetMemoriesEventId: %s", err)
 	}
@@ -127,11 +128,11 @@ func TestUnsetMemoriesEventId(t *testing.T) {
 		t.Errorf("expected 2 memories unset, got %d", n)
 	}
 
-	if remaining, _ := db.GetMemoriesByEventId("e1"); len(*remaining) != 0 {
+	if remaining, _ := db.GetMemoriesByEventId(context.Background(), "e1"); len(*remaining) != 0 {
 		t.Errorf("expected e1 to have no memories after unset, got %d", len(*remaining))
 	}
 
-	orphans, err := db.GetMemoriesByEventIds([]string{""})
+	orphans, err := db.GetMemoriesByEventIds(context.Background(), []string{""})
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventIds: %s", err)
 	}
@@ -153,7 +154,7 @@ func TestGetMemoriesByEventIds(t *testing.T) {
 	mustCreateMemory(t, db, types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, EventId: "e2", Body: "b"})
 	mustCreateMemory(t, db, types.Memory{Id: "m3", TimeStamp: 100, Significance: 1, EventId: "e3", Body: "c"})
 
-	got, err := db.GetMemoriesByEventIds([]string{"e1", "e2"})
+	got, err := db.GetMemoriesByEventIds(context.Background(), []string{"e1", "e2"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventIds: %s", err)
 	}
@@ -162,7 +163,7 @@ func TestGetMemoriesByEventIds(t *testing.T) {
 		t.Errorf("expected 2 memories for e1+e2, got %d", len(*got))
 	}
 
-	empty, err := db.GetMemoriesByEventIds(nil)
+	empty, err := db.GetMemoriesByEventIds(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventIds(nil): %s", err)
 	}
@@ -181,15 +182,15 @@ func TestMergeEventMemories(t *testing.T) {
 	mustCreateMemory(t, db, types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "src", Body: "a"})
 	mustCreateMemory(t, db, types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, EventId: "src", Body: "b"})
 
-	if err := db.MergeEventMemories("dst", "src"); err != nil {
+	if err := db.MergeEventMemories(context.Background(), "dst", "src"); err != nil {
 		t.Fatalf("MergeEventMemories: %s", err)
 	}
 
-	if remaining, _ := db.GetMemoriesByEventId("src"); len(*remaining) != 0 {
+	if remaining, _ := db.GetMemoriesByEventId(context.Background(), "src"); len(*remaining) != 0 {
 		t.Errorf("expected src to be emptied, got %d memories", len(*remaining))
 	}
 
-	moved, err := db.GetMemoriesByEventId("dst")
+	moved, err := db.GetMemoriesByEventId(context.Background(), "dst")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId(dst): %s", err)
 	}
@@ -208,7 +209,7 @@ func TestConsolidateMemories(t *testing.T) {
 	mustCreateMemory(t, db, types.Memory{Id: "free", TimeStamp: 100, Significance: 1, Body: "a"})
 	mustCreateMemory(t, db, types.Memory{Id: "evented", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "b"})
 
-	deleted, err := db.ConsolidateMemories(&stubServer{consolidateMemories: true})
+	deleted, err := db.ConsolidateMemories(context.Background(), &stubServer{consolidateMemories: true})
 	if err != nil {
 		t.Fatalf("ConsolidateMemories: %s", err)
 	}
@@ -217,11 +218,11 @@ func TestConsolidateMemories(t *testing.T) {
 		t.Errorf("expected 1 event-less memory deleted, got %d", deleted)
 	}
 
-	if got, _ := db.GetMemoriesByIds([]string{"evented"}); len(*got) != 1 {
+	if got, _ := db.GetMemoriesByIds(context.Background(), []string{"evented"}); len(*got) != 1 {
 		t.Error("evented memory must survive the event-less pass")
 	}
 
-	if got, _ := db.GetMemoriesByIds([]string{"free"}); len(*got) != 0 {
+	if got, _ := db.GetMemoriesByIds(context.Background(), []string{"free"}); len(*got) != 0 {
 		t.Error("event-less memory should have been deleted")
 	}
 }
@@ -232,7 +233,7 @@ func TestConsolidateMemories_KeepsAll(t *testing.T) {
 
 	mustCreateMemory(t, db, types.Memory{Id: "free", TimeStamp: 100, Significance: 1, Body: "a"})
 
-	deleted, err := db.ConsolidateMemories(&stubServer{consolidateMemories: false})
+	deleted, err := db.ConsolidateMemories(context.Background(), &stubServer{consolidateMemories: false})
 	if err != nil {
 		t.Fatalf("ConsolidateMemories: %s", err)
 	}

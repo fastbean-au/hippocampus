@@ -355,7 +355,7 @@ func (s *Server) Purge(ctx context.Context, in *contract.EmptyRequest) (*contrac
 
 	s.purgeInProgress.Store(true)
 
-	err := s.db.Purge()
+	err := s.db.Purge(ctx)
 
 	s.purgeInProgress.Store(false)
 

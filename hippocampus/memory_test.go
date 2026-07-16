@@ -32,12 +32,12 @@ func newTestServer(t *testing.T) *Server {
 func TestReplaceMemoriesWithSummary_RPC(t *testing.T) {
 	s := newTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
 	for _, id := range []string{"m1", "m2"} {
-		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e1", Body: "detail"}); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, EventId: "e1", Body: "detail"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -60,7 +60,7 @@ func TestReplaceMemoriesWithSummary_RPC(t *testing.T) {
 		t.Error("expected a generated summary id")
 	}
 
-	memories, err := s.db.GetMemoriesByEventId("e1")
+	memories, err := s.db.GetMemoriesByEventId(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId: %s", err)
 	}
@@ -82,7 +82,7 @@ func TestReplaceMemoriesWithSummary_UnknownEvent(t *testing.T) {
 
 	// A memory dangling on a non-existent event id, as can happen after DeleteEvent(memories:
 	// false).
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "ghost", Body: "x"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "ghost", Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -95,7 +95,7 @@ func TestReplaceMemoriesWithSummary_UnknownEvent(t *testing.T) {
 		t.Fatal("expected an error for an unknown event id")
 	}
 
-	memories, err := s.db.GetMemoriesByEventId("ghost")
+	memories, err := s.db.GetMemoriesByEventId(context.Background(), "ghost")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId: %s", err)
 	}
@@ -112,11 +112,11 @@ func TestReplaceMemoriesWithSummary_RejectsInsignificantSummary(t *testing.T) {
 	s := newTestServer(t)
 	s.minimumMemorySignificance = 10
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "detail"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "detail"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -129,7 +129,7 @@ func TestReplaceMemoriesWithSummary_RejectsInsignificantSummary(t *testing.T) {
 		t.Fatal("expected an error for a summary below the minimum significance")
 	}
 
-	memories, err := s.db.GetMemoriesByEventId("e1")
+	memories, err := s.db.GetMemoriesByEventId(context.Background(), "e1")
 	if err != nil {
 		t.Fatalf("GetMemoriesByEventId: %s", err)
 	}
@@ -199,7 +199,7 @@ func TestStoreMemory_InsignificantRejected(t *testing.T) {
 		t.Errorf("expected no id for a rejected memory, got %q", res.GetId())
 	}
 
-	if with, without := s.db.CountMemories(); with+without != 0 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 0 {
 		t.Errorf("expected nothing stored, got %d memories", with+without)
 	}
 }
@@ -242,7 +242,7 @@ func TestStoreMemory_NonexistentEventRejected(t *testing.T) {
 		t.Errorf("expected no id for a rejected memory, got %q", res.GetId())
 	}
 
-	if with, without := s.db.CountMemories(); with+without != 0 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 0 {
 		t.Errorf("expected nothing stored, got %d memories", with+without)
 	}
 }
@@ -252,7 +252,7 @@ func TestStoreMemory_NonexistentEventRejected(t *testing.T) {
 func TestStoreMemory_ExistingEventAccepted(t *testing.T) {
 	s := newTestServer(t)
 
-	if _, err := s.db.CreateEvent(types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 5}); err != nil {
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 5}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
@@ -287,7 +287,7 @@ func TestStoreMemory_IgnoresClientRecallState(t *testing.T) {
 		t.Fatal("expected an id for a stored memory")
 	}
 
-	got, err := s.db.GetMemoriesByIds([]string{"m1"})
+	got, err := s.db.GetMemoriesByIds(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -318,7 +318,7 @@ func TestStoreMemory_FutureTimestampRejected(t *testing.T) {
 		t.Errorf("expected no id for a rejected memory, got %q", res.GetId())
 	}
 
-	if with, without := s.db.CountMemories(); with+without != 0 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 0 {
 		t.Errorf("expected nothing stored, got %d memories", with+without)
 	}
 }
@@ -346,7 +346,7 @@ func TestStoreMemory_NearFutureTimestampAccepted(t *testing.T) {
 func TestUpdateMemory_FutureTimestampRejected(t *testing.T) {
 	s := newTestServer(t)
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -365,7 +365,7 @@ func TestUpdateMemory_FutureTimestampRejected(t *testing.T) {
 		t.Error("UpdateMemory reported Ok despite the future timestamp")
 	}
 
-	got, err := s.db.GetMemoriesByIds([]string{"m1"})
+	got, err := s.db.GetMemoriesByIds(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -380,7 +380,7 @@ func TestUpdateMemory_FutureTimestampRejected(t *testing.T) {
 func TestUpdateMemory_PartialUpdate(t *testing.T) {
 	s := newTestServer(t)
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "original", Group: "billing"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "original", Group: "billing"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -393,7 +393,7 @@ func TestUpdateMemory_PartialUpdate(t *testing.T) {
 		t.Error("expected Ok for a successful update")
 	}
 
-	got, err := s.db.GetMemoriesByIds([]string{"m1"})
+	got, err := s.db.GetMemoriesByIds(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -409,7 +409,7 @@ func TestUpdateMemory_PartialUpdate(t *testing.T) {
 func TestUpdateMemory_NonexistentEventRejected(t *testing.T) {
 	s := newTestServer(t)
 
-	if _, err := s.db.CreateMemory(types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
@@ -426,7 +426,7 @@ func TestUpdateMemory_NonexistentEventRejected(t *testing.T) {
 		t.Error("UpdateMemory reported Ok despite the nonexistent event")
 	}
 
-	got, err := s.db.GetMemoriesByIds([]string{"m1"})
+	got, err := s.db.GetMemoriesByIds(context.Background(), []string{"m1"})
 	if err != nil {
 		t.Fatalf("GetMemoriesByIds: %s", err)
 	}
@@ -473,7 +473,7 @@ func TestUpdateMemory_UnknownIdNotFound(t *testing.T) {
 		t.Error("UpdateMemory reported success for an unknown id")
 	}
 
-	if with, without := s.db.CountMemories(); with+without != 0 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 0 {
 		t.Fatalf("UpdateMemory created %d memories for an unknown id; expected none", with+without)
 	}
 }

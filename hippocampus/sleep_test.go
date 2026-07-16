@@ -18,7 +18,7 @@ type failConsolidateStore struct {
 	err error
 }
 
-func (f failConsolidateStore) ConsolidateMemories(s db.Server) (int, error) {
+func (f failConsolidateStore) ConsolidateMemories(ctx context.Context, s db.Server) (int, error) {
 	return 0, f.err
 }
 
@@ -63,10 +63,10 @@ type countingUsedBytesStore struct {
 	usedBytesCalls int
 }
 
-func (c *countingUsedBytesStore) UsedBytes() (int64, error) {
+func (c *countingUsedBytesStore) UsedBytes(ctx context.Context) (int64, error) {
 	c.usedBytesCalls++
 
-	return c.Store.UsedBytes()
+	return c.Store.UsedBytes(ctx)
 }
 
 // TestSleep_UsedBytesScannedOncePerCycle is a regression test: with a byte capacity
@@ -517,7 +517,7 @@ type failPreserveStore struct {
 	err error
 }
 
-func (f failPreserveStore) Preserve() error {
+func (f failPreserveStore) Preserve(ctx context.Context) error {
 	return f.err
 }
 
@@ -537,7 +537,7 @@ func TestEvict_DisabledAndUnderCapacityAreNoOps(t *testing.T) {
 	s := newTestServer(t)
 
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "body"}); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "body"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -556,7 +556,7 @@ func TestEvict_DisabledAndUnderCapacityAreNoOps(t *testing.T) {
 		t.Fatalf("evict (under capacity): %s", err)
 	}
 
-	if with, without := s.db.CountMemories(); with+without != 3 {
+	if with, without := s.db.CountMemories(context.Background()); with+without != 3 {
 		t.Fatalf("expected all 3 memories to survive, got %d", with+without)
 	}
 }
@@ -573,7 +573,7 @@ func TestEvict_ReclaimsWhenOverCapacity(t *testing.T) {
 	}
 
 	for _, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
-		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "a reasonably sized memory body"}); err != nil {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "a reasonably sized memory body"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -585,7 +585,7 @@ func TestEvict_ReclaimsWhenOverCapacity(t *testing.T) {
 		t.Fatalf("evict: %s", err)
 	}
 
-	with, without := s.db.CountMemories()
+	with, without := s.db.CountMemories(context.Background())
 	if with+without >= 5 {
 		t.Fatalf("expected eviction to delete memories, still have %d", with+without)
 	}
@@ -772,12 +772,12 @@ func TestScanSummarizationCandidates_PopulatesList(t *testing.T) {
 
 	tenDaysAgo := time.Now().UnixNano() - int64(10*DAY_IN_NANOSECONDS)
 
-	if _, err := database.CreateEvent(types.Event{Id: "e1", Name: "quiet event", TimeStart: tenDaysAgo, Significance: 1}); err != nil {
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "quiet event", TimeStart: tenDaysAgo, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if _, err := database.CreateMemory(types.Memory{Id: id, TimeStamp: tenDaysAgo, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
+		if _, err := database.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: tenDaysAgo, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
@@ -810,12 +810,12 @@ func TestScanSummarizationCandidates_DisabledByDefault(t *testing.T) {
 
 	tenDaysAgo := time.Now().UnixNano() - int64(10*DAY_IN_NANOSECONDS)
 
-	if _, err := database.CreateEvent(types.Event{Id: "e1", Name: "quiet event", TimeStart: tenDaysAgo, Significance: 1}); err != nil {
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "quiet event", TimeStart: tenDaysAgo, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if _, err := database.CreateMemory(types.Memory{Id: id, TimeStamp: tenDaysAgo, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
+		if _, err := database.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: tenDaysAgo, Significance: 1, EventId: "e1", Body: "x"}); err != nil {
 			t.Fatalf("CreateMemory(%s): %s", id, err)
 		}
 	}
