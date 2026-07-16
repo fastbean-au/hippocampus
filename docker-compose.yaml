@@ -2,6 +2,14 @@
 # volume so it survives container replacement.
 #
 #   docker compose up --build
+#
+# Observability (optional): the `observability` profile adds an all-in-one grafana/otel-lgtm
+# collector (Grafana + Prometheus + Tempo + Loki). Start it and tell the service to ship to it:
+#
+#   OBSERVABILITY=true docker compose --profile observability up --build
+#
+# Then open Grafana at http://localhost:3000. Without OBSERVABILITY set, metrics/traces stay off
+# and the service never attempts (or logs a failure) to export.
 
 services:
   hippocampus:
@@ -11,6 +19,25 @@ services:
       - "8080:8080" # HTTP/JSON gateway (+ /healthz)
     volumes:
       - hippocampus-data:/data
+    environment:
+      HIPPOCAMPUS_OBSERVABILITY_METRICS_ENABLED: "${OBSERVABILITY:-false}"
+      HIPPOCAMPUS_OBSERVABILITY_TRACING_ENABLED: "${OBSERVABILITY:-false}"
+      HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
+      HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
+
+  # All-in-one observability backend. Off by default; started only with `--profile observability`.
+  # The Hippocampus overview dashboard is provisioned in and set as the Grafana home page.
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    profiles: ["observability"]
+    ports:
+      - "3000:3000" # Grafana UI
+      - "4317:4317" # OTLP/gRPC ingest
+    environment:
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json
+    volumes:
+      - ./docker/observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
+      - ./docker/observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
 
 volumes:
   hippocampus-data:

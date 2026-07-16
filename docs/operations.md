@@ -168,11 +168,31 @@ OpenTelemetry tracing and metrics are optional and exported over OTLP/gRPC (see
   high pressure means eviction is doing heavy work and the store is at its bound.
 - `hippocampus.sleeps` (with the `success` attribute) and `hippocampus.sleep_duration` — a run of
   `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
-- `hippocampus.memories_evicted` / `hippocampus.events_evicted` — eviction volume per cycle.
+- `hippocampus.memories_evicted` / `hippocampus.events_evicted` — eviction volume per cycle, with
+  `hippocampus.bytes_evicted` the estimated bytes reclaimed (how much has been reaped).
+- `hippocampus.memory_body_bytes` — a histogram of stored memory-body sizes (how much data each
+  write carries); the sum tracks ingest volume and the distribution surfaces outlier blobs.
 - The `hippocampus.memories.count` / `hippocampus.events.count` gauges — store growth.
 - `hippocampus.panics_recovered` (by `transport`) — a gRPC or gateway handler panicked and was
   recovered (the request got `Internal`/`500` and the process survived); any non-zero value is a
   bug worth investigating.
+
+For local viewing (evaluation, soak testing, dashboard work) every compose stack carries an
+optional all-in-one `grafana/otel-lgtm` collector (Grafana + Prometheus + Tempo + Loki) behind a
+compose `observability` profile — off by default, so a stack run without it never attempts an
+export or logs a failure. Start it and tell the service to ship to it in one command:
+
+```sh
+OBSERVABILITY=true docker compose --profile observability up --build
+```
+
+Grafana is then at `http://localhost:3000`, opening on a pre-built **Hippocampus** dashboard
+(provisioned from `docker/observability/`, set as the home page) that charts ingest, forgetting
+(consolidation/eviction volume and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration
+from the metrics above. The demo soak harness has the same switch: `OBSERVABILITY=1 ./demo/run.sh`
+launches the collector (via docker or podman) with the same dashboard and points the service at it. Metrics stay off unless the collector is present,
+which is what keeps a plain run quiet — enabling export without a reachable OTLP endpoint is the
+only thing that produces export-failure log lines.
 
 Even with observability off, failing requests are visible in the logs at the default `info` level:
 a failing RPC logs at Warn (Info for client-fault codes such as `NotFound`/`InvalidArgument`) with

@@ -1,0 +1,12 @@
+# Grafana dashboard provider for the bundled otel-lgtm image. Mounted alongside the dashboard
+# JSON into the image's provisioning tree so Grafana auto-loads the Hippocampus overview on
+# startup. See docker-compose.yaml (the `otel-lgtm` service under the `observability` profile).
+apiVersion: 1
+providers:
+  - name: "Hippocampus"
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /otel-lgtm/grafana/conf/provisioning/dashboards/custom
+      foldersFromFilesStructure: false

@@ -62,7 +62,7 @@ The full documentation lives under [`docs/`](docs/):
 
 ## Demo
 
-To see the service under sustained, realistic load, run `./demo/run.sh`. It builds and launches the service together with a load generator that stores bursty, slow, and event-less memories, queries and recalls them, and exercises every RPC, capped at 1 GiB of on-disk data. See [demo/README.md](demo/README.md) for details.
+To see the service under sustained, realistic load, run `./demo/run.sh`. It builds and launches the service together with a load generator that stores bursty, slow, and event-less memories, queries and recalls them, and exercises every RPC, capped at 1 GiB of on-disk data. Run it as `OBSERVABILITY=1 ./demo/run.sh` to also launch an `grafana/otel-lgtm` collector (needs docker or podman) and watch the soak live in Grafana at `http://localhost:3000`. See [demo/README.md](demo/README.md) for details.
 
 ## Docker
 
@@ -82,9 +82,30 @@ One compose file per storage driver:
   persistence lives in the postgres service's volume, and startup waits on its health check.
 - `docker compose -f docker/docker-compose.mysql.yaml up --build` — MySQL, the same shape with
   `docker/config.mysql.json` and a `mysql:8.4` service.
+- `docker compose -f docker/docker-compose.opensearch.yaml up --build` — SQLite plus the optional
+  OpenSearch content-search index.
+- `docker compose -f docker/docker-compose.corporate.yaml up --build` — the centralised shape:
+  PostgreSQL primary store plus OpenSearch.
 
 To run with different settings, mount your own config over `/etc/hippocampus/config.json` the
 same way the postgres compose file does.
+
+### Observability
+
+Every compose stack carries an optional all-in-one `grafana/otel-lgtm` collector (Grafana +
+Prometheus + Tempo + Loki) behind a compose `observability` profile — off by default, so a plain
+`up` never pulls or starts it, and the service never attempts (or logs a failed) metric export
+without a collector present. Turn it on for any stack with one command:
+
+```sh
+OBSERVABILITY=true docker compose --profile observability up --build
+```
+
+Grafana comes up at `http://localhost:3000`, opening on a pre-built **Hippocampus** dashboard
+(provisioned from `docker/observability/`) that charts ingest, forgetting (consolidation/eviction
+volume and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration. Metrics and traces
+enable via `HIPPOCAMPUS_OBSERVABILITY_*` env overrides and ship over OTLP/gRPC to the collector.
+See [Observability](docs/operations.md#observability).
 
 ## Horizontal scaling
 

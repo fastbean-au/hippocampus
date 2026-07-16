@@ -25,6 +25,8 @@ type telemetry struct {
 	memoriesConsolidated metric.Int64Counter
 	memoriesEvicted      metric.Int64Counter
 	memoriesSearched     metric.Int64Counter
+	memoryBodyBytes      metric.Int64Histogram
+	bytesEvicted         metric.Int64Counter
 
 	eventsStored       metric.Int64Counter
 	eventsRejected     metric.Int64Counter
@@ -64,6 +66,8 @@ func newTelemetry() *telemetry {
 		memoriesConsolidated: newInt64Counter(meter, "hippocampus.memories.consolidated", "Number of memories forgotten by the sleep cycle."),
 		memoriesEvicted:      newInt64Counter(meter, "hippocampus.memories.evicted", "Number of memories evicted to meet the capacity target."),
 		memoriesSearched:     newInt64Counter(meter, "hippocampus.memories.searched", "Number of memories returned by content search, by whether the search reinforced them."),
+		memoryBodyBytes:      newInt64Histogram(meter, "hippocampus.memory.body_bytes", "", "Size in bytes of each memory body accepted and stored."),
+		bytesEvicted:         newInt64Counter(meter, "hippocampus.bytes.evicted", "Estimated bytes reclaimed by capacity eviction."),
 
 		eventsStored:       newInt64Counter(meter, "hippocampus.events.stored", "Number of events accepted and stored."),
 		eventsRejected:     newInt64Counter(meter, "hippocampus.events.rejected", "Number of events rejected at storage time."),
@@ -98,6 +102,15 @@ func newInt64Counter(meter metric.Meter, name string, description string) metric
 	}
 
 	return c
+}
+
+func newInt64Histogram(meter metric.Meter, name string, unit string, description string) metric.Int64Histogram {
+	h, err := meter.Int64Histogram(name, metric.WithUnit(unit), metric.WithDescription(description))
+	if err != nil {
+		log.Errorf("failed to create histogram '%s': %s", name, err.Error())
+	}
+
+	return h
 }
 
 func newFloat64Histogram(meter metric.Meter, name string, unit string, description string) metric.Float64Histogram {

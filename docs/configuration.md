@@ -51,11 +51,19 @@ OpenTelemetry tracing and metrics are optional and independently enabled through
 Every RPC is traced (via the `otelgrpc` stats handler, which also records the standard
 low-cardinality RPC metrics), and each sleep cycle produces its own trace with span events
 marking the consolidation passes. Domain metrics cover stored/rejected/recalled/deleted
-counts for memories and events, consolidation deletions, capacity evictions, sleep cycle count
+counts for memories and events, consolidation deletions, capacity evictions (row counts and the
+estimated bytes reclaimed), a histogram of stored memory-body sizes, sleep cycle count
 and duration, capacity pressure, the store's used bytes, gauges of the current event and
 memory counts, the number of summarization candidates found by the most recent sleep cycle, and
 memories/summaries created via `ReplaceMemoriesWithSummary`. All metric attributes are bounded
 (booleans or small enumerations) to keep cardinality low.
+
+To view any of this locally without standing up a collector, every compose stack carries an
+optional all-in-one `grafana/otel-lgtm` backend behind a compose `observability` profile:
+`OBSERVABILITY=true docker compose --profile observability up` brings up Grafana on
+`http://localhost:3000` and ships to it; the demo soak harness has the same switch
+(`OBSERVABILITY=1 ./demo/run.sh`). Both are off by default, so a stack run without the profile
+never attempts an export. See [Observability](operations.md#observability) in the operations guide.
 
 The event/memory count gauges and the periodic stats log line share one cached count reading rather
 than each running a full-table `COUNT`. `stats.intervalSeconds` (default **300**) sets both how

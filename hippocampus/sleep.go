@@ -270,6 +270,7 @@ func (s *Server) evict(ctx context.Context) error {
 
 	tel.memoriesEvicted.Add(ctx, int64(memories))
 	tel.eventsEvicted.Add(ctx, int64(events))
+	tel.bytesEvicted.Add(ctx, freed)
 	span.AddEvent("memories_evicted", trace.WithAttributes(
 		attribute.Int("memories_deleted", memories),
 		attribute.Int("events_deleted", events),

@@ -75,6 +75,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 
 	if err == nil {
 		tel.memoriesStored.Add(ctx, 1)
+		tel.memoryBodyBytes.Record(ctx, int64(len(memory.Body)))
 
 		// Binary memories are never indexed - the body is opaque to content search.
 		if !memory.IsBinary {

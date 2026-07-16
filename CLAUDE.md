@@ -18,11 +18,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (requires `protoc` plus the `protoc-gen-go`, `protoc-gen-go-grpc`, `protoc-gen-grpc-gateway`,
   and `protoc-gen-openapiv2` plugins, all `go install`-able; the `google/api` proto dependencies
   the gateway needs are vendored under `contract/google/api/`)
-- Demo/soak test: `./demo/run.sh` (builds and launches the service plus a load generator; see `demo/README.md`)
+- Demo/soak test: `./demo/run.sh` (builds and launches the service plus a load generator; see
+  `demo/README.md`). `OBSERVABILITY=1 ./demo/run.sh` also launches a `grafana/otel-lgtm` collector
+  (docker or podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on
+  `:3000`); the env overrides are exported by `run.sh`, not baked into `demo/config.json`
 - Docker: `docker compose up --build` (SQLite), `docker compose -f docker/docker-compose.postgres.yaml
   up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up --build` (MySQL), or
   `docker compose -f docker/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content
   search); container configs in `docker/`, image config baked from `docker/config.sqlite.json`
+- Observability stack (any compose file): `OBSERVABILITY=true docker compose --profile observability
+  up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTLP `:4317`) behind a
+  compose `observability` profile — off by default. The `hippocampus` service sets
+  `HIPPOCAMPUS_OBSERVABILITY_*` env overrides (metrics/traces on from `${OBSERVABILITY:-false}`,
+  endpoint `otel-lgtm:4317`), so metrics stay off (and never log an export failure) unless the
+  collector is up. A Hippocampus overview dashboard (`docker/observability/`) is bind-mounted into
+  Grafana's provisioning tree and set as the home page (`GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH`)
 - CI: `.github/workflows/ci.yaml` — build/vet/gofmt/tests (with postgres and mysql service
   containers so the `db/postgres_test.go` and `db/mysql_test.go` integration tests run instead
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
@@ -92,7 +102,11 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   server on SIGINT/SIGTERM. All configuration flows through viper keys matching `config.json`
   structure. Instrumentation elsewhere uses the global OTEL providers
   (`hippocampus/telemetry.go`, `stats/stats.go`), so it stays no-op-safe whether or not
-  observability is enabled.
+  observability is enabled. The domain metrics defined in `hippocampus/telemetry.go` (counters,
+  the `sleep.duration` and `memory.body_bytes` histograms, and the `capacity_pressure`/`used_bytes`
+  gauges) keep every attribute low-cardinality (bool or small enum), so it is safe to add attributes
+  only within that constraint; an optional `grafana/otel-lgtm` compose profile with a provisioned
+  dashboard (`docker/observability/`) exists for local viewing.
 - `hippocampus/` — the gRPC service implementation (`Server` in `server.go`). Reads its config
   from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   - `autoSleep` runs `sleep()` every `sleep.periodSeconds`; a manual `Sleep` RPC resets the timer

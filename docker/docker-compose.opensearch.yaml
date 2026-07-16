@@ -20,6 +20,13 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+    environment:
+      # Ship metrics/traces to the otel-lgtm collector only when OBSERVABILITY is set and the
+      # `observability` profile is active; off by default so no export failures are logged.
+      HIPPOCAMPUS_OBSERVABILITY_METRICS_ENABLED: "${OBSERVABILITY:-false}"
+      HIPPOCAMPUS_OBSERVABILITY_TRACING_ENABLED: "${OBSERVABILITY:-false}"
+      HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
+      HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
 
   opensearch:
     image: opensearchproject/opensearch:3.1.0
@@ -34,6 +41,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 24
+
+  # All-in-one observability backend (Grafana on :3000). Off by default; started only with
+  # `--profile observability`. See docker-compose.yaml for the OBSERVABILITY=true invocation.
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    profiles: ["observability"]
+    ports:
+      - "3000:3000" # Grafana UI
+      - "4317:4317" # OTLP/gRPC ingest
+    environment:
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json
+    volumes:
+      - ./observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
+      - ./observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
 
 volumes:
   hippocampus-data:
