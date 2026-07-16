@@ -15,6 +15,7 @@
   - [Documentation](#documentation)
   - [Demo](#demo)
   - [Docker](#docker)
+    - [Observability](#observability)
   - [Horizontal scaling](#horizontal-scaling)
   - [Limitations](#limitations)
 
@@ -37,6 +38,8 @@ While the intention is to limit storage over the long-term, growth between sleep
 ## Use case
 
 Where long-term retention of data is desired but infinite storage is either not available or is undesirable and TTL does not provide fine enough control.
+
+This could include things such as system logs and audit trails, alerts, anomalies, transactions, and so on.
 
 ## Current state
 

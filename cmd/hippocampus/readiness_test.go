@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/health"
+	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
+
 	"github.com/fastbean-au/hippocampus/db"
 )
 
@@ -42,6 +45,57 @@ func TestReadinessProbe_CachesWithinTTL(t *testing.T) {
 	if got := store.pings.Load(); got != 1 {
 		t.Errorf("expected the store to be pinged once within the cache window, got %d", got)
 	}
+}
+
+// waitForServingStatus polls the gRPC health service until "hippocampus" reaches want, failing the
+// test if it does not within a generous deadline.
+func waitForServingStatus(t *testing.T, hs *health.Server, want healthgrpc.HealthCheckResponse_ServingStatus) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+
+	for time.Now().Before(deadline) {
+		resp, err := hs.Check(context.Background(), &healthgrpc.HealthCheckRequest{Service: "hippocampus"})
+		if err == nil && resp.GetStatus() == want {
+			return
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for serving status %s", want)
+}
+
+// TestUpdateHealth_ReflectsStoreState verifies the gRPC health updater flips "hippocampus" to
+// SERVING while the database pings cleanly and NOT_SERVING once it fails, and that closing stop
+// ends the goroutine (its done channel closes).
+func TestUpdateHealth_ReflectsStoreState(t *testing.T) {
+	// A reachable store must drive the status to SERVING.
+	healthy := health.NewServer()
+	stopHealthy := make(chan struct{})
+	doneHealthy := newReadinessProbe(&pingStore{}, time.Second, 10*time.Millisecond).updateHealth(healthy, stopHealthy)
+
+	waitForServingStatus(t, healthy, healthgrpc.HealthCheckResponse_SERVING)
+
+	close(stopHealthy)
+
+	select {
+
+	case <-doneHealthy:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("updateHealth goroutine did not exit after stop was closed")
+	}
+
+	// An unreachable store must drive the status to NOT_SERVING.
+	sick := health.NewServer()
+	stopSick := make(chan struct{})
+	t.Cleanup(func() { close(stopSick) })
+
+	probe := newReadinessProbe(&pingStore{err: fmt.Errorf("connection refused")}, time.Second, 10*time.Millisecond)
+	probe.updateHealth(sick, stopSick)
+
+	waitForServingStatus(t, sick, healthgrpc.HealthCheckResponse_NOT_SERVING)
 }
 
 // TestReadinessProbe_Handler verifies the HTTP mapping: a reachable store yields 200, an

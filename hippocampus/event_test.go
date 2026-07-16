@@ -364,6 +364,129 @@ func TestMergeEvents_NonexistentTargetRejected(t *testing.T) {
 	}
 }
 
+// TestMergeEvents_EmptyIdsRejected verifies both ids are required: an absent merge_from or
+// merge_to is rejected before any store call.
+func TestMergeEvents_EmptyIdsRejected(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.MergeEvents(context.Background(), &contract.MergeEventsRequest{MergeFrom: "", MergeTo: "dst"}); err == nil {
+		t.Error("expected an error for an empty merge_from")
+	}
+
+	if _, err := s.MergeEvents(context.Background(), &contract.MergeEventsRequest{MergeFrom: "src", MergeTo: ""}); err == nil {
+		t.Error("expected an error for an empty merge_to")
+	}
+}
+
+// TestMergeEvents_Success verifies the happy path re-points merge_from's memories onto an existing
+// merge_to and reports Ok.
+func TestMergeEvents_Success(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.db.CreateEvent(types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent(src): %s", err)
+	}
+
+	if _, err := s.db.CreateEvent(types.Event{Id: "dst", Name: "dest", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent(dst): %s", err)
+	}
+
+	for _, id := range []string{"m1", "m2"} {
+		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 5, EventId: "src", Body: "x"}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	res, err := s.MergeEvents(context.Background(), &contract.MergeEventsRequest{MergeFrom: "src", MergeTo: "dst"})
+	if err != nil {
+		t.Fatalf("MergeEvents: %s", err)
+	}
+
+	if !res.GetOk() {
+		t.Error("expected Ok for a successful merge")
+	}
+
+	moved, err := s.db.GetMemoriesByEventId("dst")
+	if err != nil {
+		t.Fatalf("GetMemoriesByEventId(dst): %s", err)
+	}
+
+	if len(*moved) != 2 {
+		t.Errorf("expected 2 memories re-pointed onto dst, got %d", len(*moved))
+	}
+}
+
+// TestMergeEvents_SetsOkOnSuccess is a regression test: a successful merge used to leave the
+// GeneralResponse Ok at its zero value (false) even though the memories moved, inconsistent with
+// every other GeneralResponse RPC (EndEvent, DeleteEvent, UpdateEventSignificance). Ok must be
+// true once the merge succeeds.
+func TestMergeEvents_SetsOkOnSuccess(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.db.CreateEvent(types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent(src): %s", err)
+	}
+
+	if _, err := s.db.CreateEvent(types.Event{Id: "dst", Name: "dest", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent(dst): %s", err)
+	}
+
+	res, err := s.MergeEvents(context.Background(), &contract.MergeEventsRequest{MergeFrom: "src", MergeTo: "dst"})
+	if err != nil {
+		t.Fatalf("MergeEvents: %s", err)
+	}
+
+	if !res.GetOk() {
+		t.Error("expected Ok=true after a successful merge")
+	}
+}
+
+// TestStoreEvent_StoresNestedMemories verifies the nested-memory path: memories carried on the
+// event are stored, defaulted onto the new event id, and counted in the response.
+func TestStoreEvent_StoresNestedMemories(t *testing.T) {
+	s := newEventTestServer(t)
+
+	res, err := s.StoreEvent(context.Background(), &contract.Event{
+		Name:         "trip",
+		TimeStart:    100,
+		Significance: 5,
+		Memories: []*contract.Memory{
+			{Significance: 5, Body: "arrival"},
+			{Significance: 5, Body: "departure"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StoreEvent: %s", err)
+	}
+
+	if res.GetMemoryCount() != 2 {
+		t.Fatalf("expected 2 nested memories stored, got %d", res.GetMemoryCount())
+	}
+
+	attached, err := s.db.GetMemoriesByEventId(res.GetId())
+	if err != nil {
+		t.Fatalf("GetMemoriesByEventId: %s", err)
+	}
+
+	if len(*attached) != 2 {
+		t.Errorf("expected 2 memories attached to the new event, got %d", len(*attached))
+	}
+}
+
+// TestStoreEvent_InvalidRejected verifies a validation failure surfaces as an error and stores
+// nothing (an event with no name fails Validate).
+func TestStoreEvent_InvalidRejected(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.StoreEvent(context.Background(), &contract.Event{Name: "", TimeStart: 100, Significance: 5}); err == nil {
+		t.Fatal("expected a validation error for an event with no name")
+	}
+
+	if s.db.CountEvents() != 0 {
+		t.Error("expected no event stored after a validation failure")
+	}
+}
+
 // TestGetEvents_BatchesMemoriesCorrectly verifies the N+1 fix: GetEvents with memories
 // requested attaches each event's own memories (fetched in one batched query) and never
 // cross-attaches, and a loose memory is left off entirely.

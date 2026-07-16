@@ -167,6 +167,7 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 	if err == nil {
 		tel.eventsMerged.Add(ctx, 1)
 		s.searchIdx().SetEventId(fid, tid)
+		res.Ok = true
 	}
 
 	return &res, err

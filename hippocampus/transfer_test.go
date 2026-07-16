@@ -592,3 +592,37 @@ func TestBatchMemoriesByBytes_DefaultBudget(t *testing.T) {
 		t.Errorf("expected two tiny memories to share one batch under the default budget, got %d batches", len(batches))
 	}
 }
+
+// TestStoreManifest_EvictsOldestBeyondCap verifies the manifest cache is bounded: storing more than
+// manifestCacheLimit manifests evicts the oldest (FIFO), so a long-running exporter cannot leak
+// manifests unboundedly. The most recent manifestCacheLimit remain retrievable; the overflowed
+// oldest are gone.
+func TestStoreManifest_EvictsOldestBeyondCap(t *testing.T) {
+	s := &Server{manifests: make(map[string]*transferManifest)}
+
+	total := manifestCacheLimit + 3
+
+	ids := make([]string, total)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("manifest-%d", i)
+		s.storeManifest(&transferManifest{id: ids[i]})
+	}
+
+	if len(s.manifestIds) != manifestCacheLimit {
+		t.Fatalf("expected the cache bounded to %d, got %d", manifestCacheLimit, len(s.manifestIds))
+	}
+
+	// The first three (oldest) must have been evicted.
+	for _, id := range ids[:3] {
+		if s.takeManifest(id) != nil {
+			t.Errorf("expected the overflowed manifest %q to be evicted", id)
+		}
+	}
+
+	// The most recent manifestCacheLimit must still be present.
+	for _, id := range ids[3:] {
+		if s.takeManifest(id) == nil {
+			t.Errorf("expected the recent manifest %q to be retained", id)
+		}
+	}
+}

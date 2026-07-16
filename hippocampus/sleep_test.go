@@ -510,6 +510,91 @@ func TestEvictionFloor(t *testing.T) {
 	}
 }
 
+// failPreserveStore wraps a real db.Store but forces Preserve to fail, so preserve()'s error arm
+// can be exercised deterministically without breaking a real database.
+type failPreserveStore struct {
+	db.Store
+	err error
+}
+
+func (f failPreserveStore) Preserve() error {
+	return f.err
+}
+
+// TestPreserve_PropagatesError verifies preserve() surfaces a Preserve failure (so a failed
+// compaction is reflected in the sleep cycle's success metric) rather than swallowing it.
+func TestPreserve_PropagatesError(t *testing.T) {
+	s := &Server{db: failPreserveStore{err: errors.New("checkpoint failed")}}
+
+	if err := s.preserve(context.Background()); err == nil {
+		t.Fatal("expected preserve to surface the Preserve error")
+	}
+}
+
+// TestEvict_DisabledAndUnderCapacityAreNoOps verifies evict() leaves the store untouched when byte
+// eviction is disabled (capacityBytes <= 0) and when the store is comfortably under its target.
+func TestEvict_DisabledAndUnderCapacityAreNoOps(t *testing.T) {
+	s := newTestServer(t)
+
+	for _, id := range []string{"m1", "m2", "m3"} {
+		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "body"}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	// capacityBytes <= 0 disables byte eviction entirely.
+	s.consolidation.capacityBytes = 0
+
+	if err := s.evict(context.Background()); err != nil {
+		t.Fatalf("evict (disabled): %s", err)
+	}
+
+	// A target far above the store's footprint evicts nothing.
+	s.consolidation.capacityBytes = 1 << 30
+
+	if err := s.evict(context.Background()); err != nil {
+		t.Fatalf("evict (under capacity): %s", err)
+	}
+
+	if with, without := s.db.CountMemories(); with+without != 3 {
+		t.Fatalf("expected all 3 memories to survive, got %d", with+without)
+	}
+}
+
+// TestEvict_ReclaimsWhenOverCapacity verifies the eviction path: with the store over its byte
+// target, evict() deletes lowest-value memories down toward the floor and caches the fresh used
+// reading for the next cycle's pressure calculation.
+func TestEvict_ReclaimsWhenOverCapacity(t *testing.T) {
+	s := newTestServer(t)
+	s.consolidation = Consolidation{
+		method:           1,
+		aggressiveness:   1.0,
+		unitsOfAgeInDays: 1.0,
+	}
+
+	for _, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
+		if _, err := s.db.CreateMemory(types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "a reasonably sized memory body"}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	// A 1-byte target forces eviction down to the floor, reclaiming almost everything.
+	s.consolidation.capacityBytes = 1
+
+	if err := s.evict(context.Background()); err != nil {
+		t.Fatalf("evict: %s", err)
+	}
+
+	with, without := s.db.CountMemories()
+	if with+without >= 5 {
+		t.Fatalf("expected eviction to delete memories, still have %d", with+without)
+	}
+
+	if s.consolidation.lastUsedBytes <= 0 {
+		t.Fatalf("expected evict to cache a positive used-bytes reading, got %d", s.consolidation.lastUsedBytes)
+	}
+}
+
 // TestShouldConsolidateMemory_CapacityPressure verifies that capacity pressure raises the
 // effective deletion threshold: a memory that survives in an unpressured store is consolidated
 // when the store is under pressure.
