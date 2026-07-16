@@ -15,8 +15,27 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+# Resolve the Go toolchain go.mod asks for (this module needs a newer Go than the base `go` binary
+# on some machines). Without this, a shell whose GOTOOLCHAIN pins the toolchain (e.g. "local") makes
+# every go command below fail with "requires go >= <version>", which looks like a hook bug but is
+# really the ambient toolchain setting blocking the auto-upgrade. "auto" uses the toolchain named in
+# go.mod, downloading it if necessary, matching what CI runs.
+export GOTOOLCHAIN=auto
+
 echo "pre-commit: go mod tidy"
 go mod tidy
+
+# Mirror the CI gofmt gate (.github/workflows/ci.yaml) so a formatting slip is caught here rather
+# than only after the commit lands and CI goes red. golangci-lint does not enforce gofmt unless its
+# gofmt linter is enabled, so this is a separate, explicit check.
+echo "pre-commit: gofmt"
+unformatted="$(gofmt -l .)"
+if [ -n "$unformatted" ]; then
+	echo "pre-commit: these files are not gofmt-clean - run 'gofmt -w .':" >&2
+	echo "$unformatted" >&2
+
+	exit 1
+fi
 
 echo "pre-commit: go vet ./..."
 go vet ./...

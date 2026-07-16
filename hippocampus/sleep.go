@@ -181,7 +181,7 @@ func (s *Server) scanSummarizationCandidates(ctx context.Context) {
 
 	maxTimestamp := time.Now().UnixNano() - int64(s.consolidation.summarizationMinAgeInDays)*DAY_IN_NANOSECONDS
 
-	candidates, err := s.db.FindSummarizationCandidates(ctx, 
+	candidates, err := s.db.FindSummarizationCandidates(ctx,
 		s.consolidation.summarizationMinMemories,
 		maxTimestamp,
 		s.consolidation.summarizationMaxCandidates,
