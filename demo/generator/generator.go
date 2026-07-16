@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -142,7 +143,18 @@ func (g *Generator) burst(ctx context.Context, rng *rand.Rand) {
 			break
 		}
 
-		timestamp += int64(randomDuration(rng, 100*time.Millisecond, 30*time.Second))
+		// A burst floods its event in seconds, so memories step forward by only a few tens to a few
+		// hundred milliseconds. Kept small deliberately: at up to 200 memories a larger step (the
+		// original 30s) walked the timestamp ~50 minutes forward, past the server's 5-minute
+		// clock-skew window, and every memory beyond it was rejected. This span (≤ ~100s even for a
+		// full burst) stays comfortably in the past behind the backdated start.
+		timestamp += int64(randomDuration(rng, 10*time.Millisecond, 500*time.Millisecond))
+
+		// Belt-and-braces: never emit a future timestamp regardless of how count or the step above
+		// are later tuned, so the server never rejects a burst memory as too far in the future.
+		if now := time.Now().UnixNano(); timestamp > now {
+			timestamp = now
+		}
 
 		g.storeMemory(ctx, rng, &contract.Memory{
 			TimeStamp:    timestamp,
@@ -588,6 +600,11 @@ func (g *Generator) logStats(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	// Anchor for the per-interval write throughput: bytesStored counts only accepted writes, so the
+	// delta since the previous tick over the elapsed seconds is the real accepted byte rate.
+	prevBytes := g.bytesStored.Load()
+	prevTime := time.Now()
+
 	for {
 		select {
 
@@ -595,14 +612,35 @@ func (g *Generator) logStats(ctx context.Context) {
 			return
 
 		case <-ticker.C:
+			now := time.Now()
+			currentBytes := g.bytesStored.Load()
+
+			// Accepted bytes per second over just this interval, and that rate as a percentage of the
+			// storage limit per second — how fast we are filling the store relative to its cap (e.g.
+			// "5.00%/s" means at this rate we would fill the limit in 20 seconds, ignoring eviction).
+			bytesPerSecond := float64(0)
+			if elapsed := now.Sub(prevTime).Seconds(); elapsed > 0 {
+				bytesPerSecond = float64(currentBytes-prevBytes) / elapsed
+			}
+
+			limitPctPerSecond := float64(0)
+			if maxBytes := g.budget.maxBytes; maxBytes > 0 {
+				limitPctPerSecond = bytesPerSecond / float64(maxBytes) * 100
+			}
+
+			prevBytes = currentBytes
+			prevTime = now
+
 			log.WithFields(log.Fields{
-				"events_stored":   g.eventsStored.Load(),
-				"memories_stored": g.memoriesStored.Load(),
-				"bytes_stored":    humanize.Bytes(uint64(g.bytesStored.Load())),
-				"database_size":   humanize.Bytes(uint64(g.budget.databaseBytes())),
-				"queries":         g.queriesRun.Load(),
-				"recalls":         g.recallsRun.Load(),
-				"paused":          g.budget.paused(),
+				"events_stored":    g.eventsStored.Load(),
+				"memories_stored":  g.memoriesStored.Load(),
+				"bytes_stored":     humanize.Bytes(uint64(g.bytesStored.Load())),
+				"database_size":    humanize.Bytes(uint64(g.budget.databaseBytes())),
+				"throughput":       humanize.Bytes(uint64(bytesPerSecond)) + "/s",
+				"throughput_limit": fmt.Sprintf("%.2f%%/s", limitPctPerSecond),
+				"queries":          g.queriesRun.Load(),
+				"recalls":          g.recallsRun.Load(),
+				"paused":           g.budget.paused(),
 			}).Info("generator statistics")
 
 			// One line per RPC class covering just the last interval, so a stall behind a

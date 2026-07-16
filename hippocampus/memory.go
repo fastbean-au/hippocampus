@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -218,6 +219,11 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 	}
 
 	if _, err := s.db.GetEvent(ctx, eventId); err != nil {
+		if errors.Is(err, db.ErrEventNotFound) {
+
+			return &res, status.Errorf(codes.NotFound, "event '%s' not found", eventId)
+		}
+
 		return &res, err
 	}
 

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,10 @@ import (
 
 	"github.com/fastbean-au/hippocampus/types"
 )
+
+// ErrEventNotFound is returned (wrapped) by GetEvent when no event has the requested id, so
+// callers can map it to a gRPC NotFound with errors.Is rather than an opaque Unknown.
+var ErrEventNotFound = errors.New("event not found")
 
 const eventColumns = `id, time_start, time_end, significance, name, description, memories_consolidated, relationship_significance, relationships, group_name`
 
@@ -249,7 +254,7 @@ func (d *DB) GetEvent(ctx context.Context, id string) (*types.Event, error) {
 			return nil, err
 		}
 
-		return nil, fmt.Errorf("event '%s' not found", id)
+		return nil, fmt.Errorf("event '%s': %w", id, ErrEventNotFound)
 	}
 
 	event, err := scanEvent(rows.Scan)

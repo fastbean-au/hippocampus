@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/types"
 )
@@ -47,9 +50,15 @@ func TestGetEventById_RPC(t *testing.T) {
 		t.Errorf("expected 2 memories attached, got %d", len(withMems.GetEvent().GetMemories()))
 	}
 
-	// An unknown id surfaces an error.
-	if _, err := s.GetEventById(context.Background(), &contract.GetEventByIdRequest{Id: "missing"}); err == nil {
-		t.Error("expected an error for an unknown event id")
+	// An unknown id surfaces a NotFound error rather than an opaque Unknown, so clients (and the
+	// HTTP gateway's status mapping) see a 404, not a 500.
+	_, err = s.GetEventById(context.Background(), &contract.GetEventByIdRequest{Id: "missing"})
+	if err == nil {
+		t.Fatal("expected an error for an unknown event id")
+	}
+
+	if got := status.Code(err); got != codes.NotFound {
+		t.Errorf("expected NotFound for an unknown event id, got %s", got)
 	}
 }
 

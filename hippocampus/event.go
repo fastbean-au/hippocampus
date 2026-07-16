@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -229,6 +230,11 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 
 	event, err := s.db.GetEvent(ctx, eid)
 	if err != nil {
+		if errors.Is(err, db.ErrEventNotFound) {
+
+			return &res, status.Errorf(codes.NotFound, "event '%s' not found", eid)
+		}
+
 		return &res, err
 	}
 	res.Event = event.ToProto()

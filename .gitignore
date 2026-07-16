@@ -32,5 +32,6 @@ go.work.sum
 
 
 demo/bin/
+demo/data/
 
 TODO.md
