@@ -8,8 +8,15 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
+# VERSION (a git tag when building a release, "dev" otherwise) is stamped into the binary via
+# -ldflags -X so --version and /healthz report the release tag, not "(devel)". A working-tree build
+# never picks the tag up through debug.BuildInfo.Main.Version, so it must be injected explicitly.
+ARG VERSION=dev
+
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /hippocampus ./cmd/hippocampus
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.buildVersion=${VERSION}" \
+    -o /hippocampus ./cmd/hippocampus
 
 # Alpine rather than scratch/distroless: busybox wget enables the compose healthcheck against the
 # gateway's /healthz, which a shell-less image could not run.

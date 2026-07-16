@@ -25,7 +25,7 @@ Reference and guides live under [`docs/`](docs/): [Getting started](docs/getting
 
 ## Overview
 
-Hippocampus is an information or memory storage system that works with finite storage to retain the most significant information based on the memories' significance, age, how often they are recalled, and how they relate to other memories.
+Hippocampus is an information or memory storage system that works with finite storage to retain the most significant information based on the memories' significance, age, how often they are recalled, and how they relate to other memories. It tries to help you keep the *right* information without the overheads of needing to constantly decide what to cull when space runs short.
 
 This service attempts to *somewhat* emulate the workings of human memory, which is to say that the memory is finite, and over time details are lost except for more significant events (or, conversely, the more significant the event the more details will be retained); it does eschew the unreliable in terms of the inaccurate or more fallible nature of human memory. Sleep is used to preserve and consolidate memories. Recalling a memory reinforces it, making it harder to forget. Sleep can also surface events whose memories have piled up and gone quiet as candidates for summarization (see [Summarization](docs/consolidation.md#summarization)) — condensing many memories into one that carries the gist, echoing how human memory consolidates repeated or detailed episodic experience into a single semantic memory.
 
@@ -40,6 +40,8 @@ While the intention is to limit storage over the long-term, growth between sleep
 Where long-term retention of data is desired but infinite storage is either not available or is undesirable and TTL does not provide fine enough control.
 
 This could include things such as system logs and audit trails, alerts, anomalies, transactions, and so on.
+
+There are two main configurations that Hippocampus can run in: standalone/embedded/deployed/remote; and, centralised/corporate/organisational.
 
 ## Current state
 
@@ -149,7 +151,16 @@ warning says so).
   adding read/write replicas (`consolidation.enabled: false`) alongside the single consolidating
   instance. See [Horizontal scaling](#horizontal-scaling) and the
   [Operations guide](docs/operations.md).
+
 - **No visibility into memory content.** Memory bodies are opaque to the service, so it cannot
   generate summaries itself — a client supplies the summary text for `ReplaceMemoriesWithSummary`.
+
 - **Credential management is basic.** No per-client revocation or rotation under `hmac`; use `idp`
   for provider-managed rotation. See [Security](docs/operations.md#security).
+
+- **Content search is best-effort.** The optional OpenSearch index (`opensearch.enabled`) is a
+  strictly secondary index: mutations propagate to it asynchronously through a bounded queue that
+  drops operations under overflow rather than blocking, so it can go sparse or briefly stale.
+  `SearchMemories` re-reads hits from the primary store, so results stay correct, but recall can be
+  incomplete; rebuild the index with `--backfill-search` (`--reindex` to clear stale documents).
+  See [Content search](docs/configuration.md#content-search-opensearch).

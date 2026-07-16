@@ -1,0 +1,141 @@
+name: Release
+
+# Driven entirely by semver tags: the tag IS the release label and the Go module version, so the
+# two can never drift. Cut a release with `git tag vX.Y.Z && git push --tags`; this workflow runs
+# the coverage suite, reports it to Coveralls, creates the GitHub release from the tag, and then
+# builds and publishes the container image to GHCR. The same tag is stamped into the binary at
+# build time via -ldflags (see the Dockerfile), so a running instance reports the release version
+# through --version and /healthz.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # create the GitHub release from the tag
+
+    # The same service containers as CI, so coverage reflects the postgres/mysql/opensearch
+    # integration tests rather than only the SQLite paths - the coverage number reported to
+    # Coveralls should be the real one, not the subset that runs without dependencies.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hippocampus
+          POSTGRES_PASSWORD: hippocampus
+          POSTGRES_DB: hippocampus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hippocampus -d hippocampus_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_USER: hippocampus
+          MYSQL_PASSWORD: hippocampus
+          MYSQL_DATABASE: hippocampus_test
+          MYSQL_ROOT_PASSWORD: hippocampus
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uhippocampus -phippocampus"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+
+      opensearch:
+        image: opensearchproject/opensearch:3.1.0
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 24
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # cmd/ is excluded to match hooks/pre-commit and the release runbook - main-package wiring
+      # is exercised by the docker smoke tests in CI, not by unit coverage.
+      - name: Test with coverage (excluding cmd/)
+        env:
+          HIPPOCAMPUS_TEST_POSTGRES_DSN: postgres://hippocampus:hippocampus@localhost:5432/hippocampus_test?sslmode=disable
+          HIPPOCAMPUS_TEST_MYSQL_DSN: hippocampus:hippocampus@tcp(localhost:3306)/hippocampus_test
+          HIPPOCAMPUS_TEST_OPENSEARCH_URL: http://localhost:9200
+        run: go test -coverprofile=coverage.out $(go list ./... | grep -v '/cmd/')
+
+      - name: Report coverage to Coveralls
+        env:
+          # Set this as a repository secret; goveralls reads it via -service=github. Never inline
+          # the repo token here.
+          COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
+        run: |
+          go install github.com/mattn/goveralls@latest
+          goveralls -coverprofile=coverage.out -service=github
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # --verify-tag refuses to release a ref that is not an existing tag; --generate-notes builds
+        # the changelog from merged PRs since the previous tag.
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+
+  # Build and push the container image to GitHub Container Registry, gated behind the release job
+  # so a failing test suite or coverage run publishes nothing. Auth is the built-in GITHUB_TOKEN
+  # (no extra secrets); the image name is ghcr.io/<owner>/<repo>. The tag is passed as VERSION so
+  # the published binary reports the release version through --version and /healthz.
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Derive the image tags from the git ref: the full version, the major.minor rolling tag, and
+      # (for a non-prerelease semver tag, via the default latest=auto flavor) latest.
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

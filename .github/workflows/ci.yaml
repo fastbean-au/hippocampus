@@ -99,10 +99,16 @@ jobs:
           docker compose -f docker/docker-compose.opensearch.yaml config -q
           docker compose -f docker/docker-compose.corporate.yaml config -q
 
+      # VERSION is passed as a build arg so the -ldflags injection (Dockerfile -> version.go) is
+      # exercised on every push, not only at release time: /healthz must echo back the version we
+      # built, proving the tag would reach the running binary.
       - name: SQLite stack smoke test
+        env:
+          VERSION: ci-smoke-v0.0.0
         run: |
           docker compose up --build -d
           timeout 60 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
+          curl -sf http://localhost:8080/healthz | jq -e --arg v "$VERSION" '.version.version == $v'
           id=$(curl -sf -X POST http://localhost:8080/v1/memories \
             -H 'Content-Type: application/json' \
             -d '{"body":"ci sqlite","significance":5}' | jq -r .id)

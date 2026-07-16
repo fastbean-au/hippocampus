@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook for hippocampus.
+#
+# Runs module hygiene, vet, lint, and the test suite with coverage before a
+# commit is allowed. Any failing step aborts the commit.
+#
+# This hook lives under version control in hooks/; git is pointed at it via
+#   git config core.hooksPath hooks
+# (run that once per clone, or `make hooks` if a target is added).
+
+set -euo pipefail
+
+# Run from the repository root regardless of where git invoked the hook.
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "pre-commit: go mod tidy"
+go mod tidy
+
+echo "pre-commit: go vet ./..."
+go vet ./...
+
+echo "pre-commit: golangci-lint run"
+golangci-lint run
+
+echo "pre-commit: go test (coverage, excluding cmd/)"
+go test -coverprofile=coverage.out $(go list ./... | grep -v '/cmd/')
+go tool cover -html=coverage.out -o coverage.html
+
+echo "pre-commit: all checks passed"

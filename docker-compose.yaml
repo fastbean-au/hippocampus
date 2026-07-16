@@ -13,7 +13,12 @@
 
 services:
   hippocampus:
-    build: .
+    build:
+      context: .
+      # VERSION is stamped into the binary at build time (see the Dockerfile). It defaults to "dev"
+      # so a plain `docker compose up --build` is unchanged; set VERSION to build a specific tag.
+      args:
+        VERSION: "${VERSION:-dev}"
     ports:
       - "50051:50051" # gRPC
       - "8080:8080" # HTTP/JSON gateway (+ /healthz)

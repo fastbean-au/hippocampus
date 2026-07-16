@@ -16,16 +16,38 @@ type versionInfo struct {
 	Modified bool   `json:"modified,omitempty"`
 }
 
+// buildVersion is stamped at build time via -ldflags "-X main.buildVersion=<tag>" (see the
+// Dockerfile and the release workflow). It exists because a git tag only reaches
+// debug.BuildInfo.Main.Version when the module is resolved through the proxy, never for a
+// working-tree or Docker build - so without this override a tagged release would still report
+// "(devel)"/"unknown". When set it takes precedence over the embedded module version, keeping the
+// running binary's reported version in lockstep with the release tag; the VCS revision/time below
+// are still filled in from the build settings.
+var buildVersion string
+
 // readVersionInfo reads the embedded build information. When it is unavailable (e.g. a binary built
 // without module support) it returns a version of "unknown" rather than an empty string, so the
-// startup log and /healthz body always carry a value.
+// startup log and /healthz body always carry a value. A buildVersion stamped in via -ldflags
+// overrides whatever the module version resolved to.
 func readVersionInfo() versionInfo {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return versionInfo{Version: "unknown"}
+		out := versionInfo{Version: "unknown"}
+
+		if buildVersion != "" {
+			out.Version = buildVersion
+		}
+
+		return out
 	}
 
-	return versionInfoFrom(info)
+	out := versionInfoFrom(info)
+
+	if buildVersion != "" {
+		out.Version = buildVersion
+	}
+
+	return out
 }
 
 // versionInfoFrom extracts the version fields from a debug.BuildInfo. It is split out from
