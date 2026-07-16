@@ -57,6 +57,18 @@ memory counts, the number of summarization candidates found by the most recent s
 memories/summaries created via `ReplaceMemoriesWithSummary`. All metric attributes are bounded
 (booleans or small enumerations) to keep cardinality low.
 
+The event/memory count gauges and the periodic stats log line share one cached count reading rather
+than each running a full-table `COUNT`. `stats.intervalSeconds` (default **300**) sets both how
+often the stats line is logged and the maximum age of that cached reading, so the underlying counts
+run at most once per interval no matter how often metrics are exported. Set it to `0` to disable the
+log line (the gauges still serve a cached count).
+
+```json
+"stats": {
+    "intervalSeconds": 300
+}
+```
+
 ### HTTP gateway
 
 Every RPC is also reachable as a JSON/HTTP endpoint, for clients that would rather not speak
@@ -130,7 +142,9 @@ them:
 
 - `/healthz` — **liveness**: the process is up. It never touches the database, so a slow or
   unreachable store does not make it fail; point a probe that _restarts_ the container here, so a
-  transient dependency outage does not trigger a restart loop that cannot fix it.
+  transient dependency outage does not trigger a restart loop that cannot fix it. Its JSON body
+  carries the running build's `version` (the same value `--version` prints), so an operator can tell
+  what is deployed.
 - `/readyz` — **readiness**: the process is up _and_ the database answers a ping. Returns `200`
   when the store is reachable, `503` otherwise. Point load-balancer / service readiness probes
   here so an instance whose database has become unreachable is drained rather than kept in
@@ -147,6 +161,15 @@ them:
 `readiness.pingTimeoutSeconds` bounds each database ping and `readiness.cacheSeconds` caches the
 result so a burst of probes collapses to at most one ping per window; both fall back to internal
 defaults (2 s and 3 s) when left at 0. The Docker image's `HEALTHCHECK` targets `/readyz`.
+
+### Version
+
+`hippocampus --version` prints the build identification and exits (before the config file is read).
+The value comes from the Go module version plus the VCS revision/time the toolchain embeds at build
+time, so it identifies the exact commit even for a `go build` from a working tree. The same string
+is logged at startup, reported in the `/healthz` body, and set as the OTEL `service.version`
+resource attribute when observability is enabled. The Docker image also carries an
+`org.opencontainers.image.version` label (`--build-arg VERSION=<tag>`).
 
 ### Authentication
 
@@ -407,7 +430,8 @@ itself is the watermark.
     "token": "",
     "tls": false,
     "batchSize": 500,
-    "maxBatchBytes": 0
+    "maxBatchBytes": 0,
+    "maxManifestRows": 0
 }
 ```
 
@@ -426,6 +450,14 @@ byte-bounded sub-batches so no message overflows the receiver's gRPC max-receive
 page). A single memory larger than the budget is sent alone. If your bodies can exceed the default
 4 MiB gRPC frame, raise the receiving instance's `maxRecvMsgBytes` (top-level, 0 → grpc-go's 4 MiB
 default) so it accepts them.
+
+`transfer.maxManifestRows` (0 → unlimited, the default) caps how many records a single
+`Export`/`Transfer` may capture into its in-memory manifest. Each captured memory holds its id plus
+its recall-state snapshot, so an unbounded manifest over a very large store can grow to gigabytes
+and OOM the instance. When set, a store larger than the cap is refused with `FAILED_PRECONDITION`
+_before_ any upload, and the operator segments the transfer (e.g. by `group`) or raises the cap. The
+manifest exists so a later `Clear` can delete exactly what was captured; a deployment that never
+uses `Clear` can leave the cap low.
 
 The sleep cycle keeps running during a capture: a record consolidated mid-export simply doesn't
 matter (its clear becomes a no-op), and one consolidated at the centralised end after import is

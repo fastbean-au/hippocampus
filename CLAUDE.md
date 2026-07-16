@@ -28,6 +28,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN=<dsn>`/`HIPPOCAMPUS_TEST_MYSQL_DSN=<dsn>` `go test ./db`
   against any disposable database
+- Print the build version: `go run ./cmd/hippocampus --version` (module + VCS revision/time from
+  `runtime/debug.ReadBuildInfo`; prints and exits before the config is read — see `version.go`)
 - Mint an auth token: `go run ./cmd/hippocampus --mint-token --client-id <id> --ttl 24h -c config.json` (prints the token and exits; see [Authentication](docs/configuration.md#authentication))
 - Backfill/rebuild the OpenSearch index: `go run ./cmd/hippocampus --backfill-search [--reindex] -c config.json`
   (CLI mode in `backfill.go`, exits when done; requires `opensearch.enabled`; safe beside a live
@@ -56,7 +58,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   (logrus) and observability (`observability.go`: optional OTEL tracing/metrics over OTLP/gRPC,
   no-op when disabled), opens the DB, wires the gRPC server with interceptors (plus the
   `otelgrpc` stats handler when observability is enabled), starts stats, and on SIGINT/SIGTERM
-  flushes observability then closes the DB. `--mint-token` (with `--client-id`, `--ttl`,
+  flushes observability then closes the DB. The build version (`version.go`,
+  `runtime/debug.ReadBuildInfo`) is logged in the startup lines, returned in the `/healthz` body,
+  and set as the OTEL `service.version` resource attribute; `--version` prints it and exits before
+  the config file is read. `--mint-token` (with `--client-id`, `--ttl`,
   `--signing-secret`) is a separate CLI mode: it prints a signed `auth.MintToken` token to stdout
   and exits before the database, observability, or server are touched at all; it refuses under
   `auth.method: idp` (the IdP issues tokens there). `auth.method` selects the auth scheme —
@@ -66,7 +71,9 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   when `auth.method` is unset (`true` → `hmac` plus a warning). Whichever verifier is built,
   `auth.UnaryServerInterceptor` is prepended to the gRPC interceptor chain (ahead of
   `InterceptorBlockWhenPurgeInProgress`/`InterceptorLogger`, so unauthenticated requests are
-  rejected before any other interceptor runs); when `tls.enabled`,
+  rejected before any other interceptor runs; `InterceptorLogger` keeps its Trace entry/exit lines
+  but also logs a failing RPC at Warn — Info for client-fault codes — so failures are visible at the
+  default log level); when `tls.enabled`,
   `credentials.NewServerTLSFromFile` is added via `grpc.Creds`. Auth without
   `tls.enabled` only logs a warning — TLS may be terminated upstream instead. When `gateway.port`
   > 0 it also registers `contract.RegisterHippocampusHandlerServer` (the generated
@@ -77,8 +84,11 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   directly and never runs the gRPC interceptor chain, the mux is always wrapped in
   `hipo.HTTPMiddlewareBlockWhenPurgeInProgress` (the HTTP counterpart to
   `InterceptorBlockWhenPurgeInProgress`; open paths `/healthz` and `/v1/openapi.json`, else 503
-  while a purge runs); when `auth.enabled`, that is in turn wrapped in `auth.HTTPMiddleware`
-  (outermost, so unauthenticated requests are rejected first) except `/healthz`. The gateway is shut down before the gRPC
+  while a purge runs), which is in turn wrapped in `httpLoggingMiddleware` (the gateway's counterpart
+  to `InterceptorLogger`, since the gateway never runs the gRPC chain — logs 5xx at Warn, else at
+  Debug, via an intercepting status recorder); when `auth.enabled`, that is in turn wrapped in
+  `auth.HTTPMiddleware` (outermost, so unauthenticated requests are rejected first) except
+  `/healthz`. The gateway is shut down before the gRPC
   server on SIGINT/SIGTERM. All configuration flows through viper keys matching `config.json`
   structure. Instrumentation elsewhere uses the global OTEL providers
   (`hippocampus/telemetry.go`, `stats/stats.go`), so it stays no-op-safe whether or not
@@ -203,7 +213,9 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   (`s3.endpoint`/`s3.usePathStyle` for MinIO; credentials from the standard AWS chain). The
   transfer RPCs live in `hippocampus/transfer.go`: Export/Transfer walk the store via
   `db.GetMemoriesPage`/`db.GetEventsPage` keyset pagination, record an in-memory manifest (ids +
-  recall-state snapshots, last 8 kept), and `Clear` (or the RPCs' `clear` flag) deletes exactly
+  recall-state snapshots, last 8 kept — `transfer.maxManifestRows`, 0/default unlimited, bounds one
+  run's capture: `walkStore` pre-flights the count and re-checks during the walk, refusing over-cap
+  with `FailedPrecondition` before any upload), and `Clear` (or the RPCs' `clear` flag) deletes exactly
   the captured records via `db.ClearMemories` (the exported wrapper over the race-safe
   `deleteMemoriesIfUnrecalled`, so recalls landing mid-run protect their memory) and
   `DeleteEventIfEmpty`. The one-shot `clear` flag clears the manifest in-place (never via a
@@ -215,7 +227,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   UTF-8 everywhere — "binary" memory bodies are client-encoded — so the archive needs no special
   binary handling.
 - `types/` — request/response validation and conversion between proto messages and DB rows.
-- `stats/` — logs event/memory counts every 5 minutes.
+- `stats/` — logs event/memory counts every `stats.intervalSeconds` (default 300; 0 disables the
+  log line) and registers the count gauges. The log ticker and the gauge callback share one
+  `countCache`, so the full-table `CountEvents`/`CountMemories` run at most once per interval
+  regardless of the metric export frequency, rather than once per ticker tick plus once per export.
 - `auth/` — JWT bearer-token support, self-contained (no `*hippocampus.Server`, no DB). `Verifier`
   is an interface (`Verify(token string) (*Claims, error)`) with two implementations, both
   restricted to a single algorithm via `jwt.WithValidMethods` so a token can never select its

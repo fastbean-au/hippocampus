@@ -174,6 +174,17 @@ OpenTelemetry tracing and metrics are optional and exported over OTLP/gRPC (see
   recovered (the request got `Internal`/`500` and the process survived); any non-zero value is a
   bug worth investigating.
 
+Even with observability off, failing requests are visible in the logs at the default `info` level:
+a failing RPC logs at Warn (Info for client-fault codes such as `NotFound`/`InvalidArgument`) with
+the method, status code, duration, and error, and the HTTP gateway logs `5xx` responses at Warn
+(all requests at Debug). Set `stats.intervalSeconds` (default 300; 0 disables) to control the
+periodic event/memory count log line.
+
+Identify the running build with `hippocampus --version`, the `version:` line at startup, or the
+`version` field in the `GET /healthz` body — all report the module version plus the VCS
+revision/time embedded at build time. When observability is on, the same version is the OTEL
+`service.version` resource attribute.
+
 Health surfaces are unauthenticated and always reachable: the gRPC `grpc.health.v1.Health` service
 and the gateway's `GET /healthz` (**liveness** — process up, never touches the database) and
 `GET /readyz` (**readiness** — also pings the store, `503` when it is unreachable, and mirrored by

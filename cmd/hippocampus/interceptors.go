@@ -84,6 +84,10 @@ func recoverMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// InterceptorLogger keeps the Trace-level entry/exit lines for full call tracing, but also surfaces
+// failures at operational log levels so a default-level (info) instance shows which RPCs are failing
+// with what status and how long they took — without needing Trace (which logs every function entry)
+// or full OTEL tracing. Successful calls stay quiet.
 func InterceptorLogger(ctx context.Context,
 	req interface{},
 	info *grpc.UnaryServerInfo,
@@ -95,7 +99,95 @@ func InterceptorLogger(ctx context.Context,
 
 	resp, err := handler(ctx, req)
 
-	log.Tracef("gRPC <- %s (%d us)", info.FullMethod, time.Since(ts).Microseconds())
+	duration := time.Since(ts)
+
+	log.Tracef("gRPC <- %s (%d us)", info.FullMethod, duration.Microseconds())
+
+	if err != nil {
+		code := status.Code(err)
+
+		entry := log.WithFields(log.Fields{
+			"method":      info.FullMethod,
+			"code":        code.String(),
+			"duration_us": duration.Microseconds(),
+			"error":       err.Error(),
+		})
+
+		// Client-fault codes (bad request, not found, unauthenticated, ...) are expected traffic, so
+		// they log at Info to avoid drowning real problems; server-fault and unknown codes log at Warn.
+		if isClientFaultCode(code) {
+			entry.Info("gRPC request failed")
+		} else {
+			entry.Warn("gRPC request failed")
+		}
+	}
 
 	return resp, err
+}
+
+// isClientFaultCode reports whether a gRPC status code represents a caller mistake rather than a
+// server-side failure, so InterceptorLogger can log the former at Info and the latter at Warn.
+func isClientFaultCode(code codes.Code) bool {
+	switch code {
+
+	case codes.InvalidArgument,
+		codes.NotFound,
+		codes.AlreadyExists,
+		codes.PermissionDenied,
+		codes.Unauthenticated,
+		codes.FailedPrecondition,
+		codes.OutOfRange,
+		codes.Canceled:
+
+		return true
+
+	default:
+
+		return false
+
+	}
+}
+
+// statusRecorder wraps an http.ResponseWriter to capture the status code written by the gateway
+// handler, so httpLoggingMiddleware can log it. It defaults to 200, matching net/http's behaviour
+// when a handler writes a body without an explicit WriteHeader.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// httpLoggingMiddleware is the gateway counterpart to InterceptorLogger: the HTTP gateway calls the
+// service directly and never runs the gRPC interceptor chain, so without this its traffic is
+// invisible in logs at any level. It logs every request at Debug and any 5xx response at Warn,
+// capturing the method, path, status, and duration. Wrap it inside auth (so unauthenticated
+// requests are rejected first) but outside the handler.
+func httpLoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := time.Now()
+
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		next.ServeHTTP(recorder, r)
+
+		duration := time.Since(ts)
+
+		entry := log.WithFields(log.Fields{
+			"method":      r.Method,
+			"path":        r.URL.Path,
+			"status":      recorder.status,
+			"duration_us": duration.Microseconds(),
+		})
+
+		if recorder.status >= http.StatusInternalServerError {
+			entry.Warn("HTTP request failed")
+		} else {
+			entry.Debug("HTTP request")
+		}
+	})
 }

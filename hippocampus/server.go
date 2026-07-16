@@ -119,12 +119,13 @@ type Server struct {
 }
 
 type Transfer struct {
-	targetAddress string
-	token         string
-	tls           bool
-	batchSize     int
-	maxBatchBytes int
-	keyPrefix     string
+	targetAddress   string
+	token           string
+	tls             bool
+	batchSize       int
+	maxBatchBytes   int
+	maxManifestRows int
+	keyPrefix       string
 }
 
 func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Server {
@@ -138,12 +139,13 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Se
 		objects:   objects,
 		manifests: make(map[string]*transferManifest),
 		transfer: Transfer{
-			targetAddress: viper.GetString("transfer.targetAddress"),
-			token:         viper.GetString("transfer.token"),
-			tls:           viper.GetBool("transfer.tls"),
-			batchSize:     viper.GetInt("transfer.batchSize"),
-			maxBatchBytes: viper.GetInt("transfer.maxBatchBytes"),
-			keyPrefix:     viper.GetString("s3.keyPrefix"),
+			targetAddress:   viper.GetString("transfer.targetAddress"),
+			token:           viper.GetString("transfer.token"),
+			tls:             viper.GetBool("transfer.tls"),
+			batchSize:       viper.GetInt("transfer.batchSize"),
+			maxBatchBytes:   viper.GetInt("transfer.maxBatchBytes"),
+			maxManifestRows: viper.GetInt("transfer.maxManifestRows"),
+			keyPrefix:       viper.GetString("s3.keyPrefix"),
 		},
 		sleepReset:                reset,
 		minimumEventSignificance:  viper.GetInt32("event.minimumSignificance"),

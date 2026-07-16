@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -37,6 +38,7 @@ func main() {
 	pflag.StringP("config_file", "c", "./config.json", "path to configuration file")
 	pflag.Int("port", 50051, "gRPC server listen port (overrides the config file's \"port\")")
 	pflag.Int("gateway-port", 0, "HTTP/JSON gateway listen port; 0 (the default) disables the gateway. 8080 is the conventional port (overrides the config file's \"gateway.port\")")
+	pflag.Bool("version", false, "print the build version and exit")
 	pflag.Bool("mint-token", false, "mint a signed auth token from the configured signing secret and exit")
 	pflag.String("client-id", "", "client_id claim to embed in a minted token (used with --mint-token)")
 	pflag.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
@@ -56,6 +58,16 @@ func main() {
 	// default (50051 / 8080).
 	if err := viper.BindPFlag("gateway.port", pflag.CommandLine.Lookup("gateway-port")); err != nil {
 		log.Panicf("failed to bind gateway port flag: %s", err.Error())
+	}
+
+	version := readVersionInfo()
+
+	// --version is a CLI mode that needs nothing else: print the build identification to stdout and
+	// exit before the config file is even read, mirroring --mint-token/--backfill-search but earlier.
+	if viper.GetBool("version") {
+		fmt.Println(version.String())
+
+		os.Exit(0)
 	}
 
 	c, err := os.ReadFile(viper.GetString("config_file"))
@@ -150,6 +162,7 @@ func main() {
 	}
 
 	log.Info("initialising hippocampus")
+	log.Infof("version: %s", version.String())
 	log.Infof("logging level: %s", log.GetLevel())
 
 	// initialise observability
@@ -161,6 +174,7 @@ func main() {
 		MetricsIntervalSeconds: viper.GetInt("observability.metrics.exportIntervalSeconds"),
 		OTLPEndpoint:           viper.GetString("observability.otlp.endpoint"),
 		OTLPInsecure:           viper.GetBool("observability.otlp.insecure"),
+		ServiceVersion:         version.Version,
 	}
 
 	shutdownObservability, err := initObservability(context.Background(), obsCfg)
@@ -466,7 +480,9 @@ func main() {
 
 		httpMux := http.NewServeMux()
 		httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "version": version})
 		})
 		httpMux.HandleFunc("/readyz", readiness.handler())
 		httpMux.HandleFunc("/v1/openapi.json", func(w http.ResponseWriter, r *http.Request) {
@@ -481,6 +497,11 @@ func main() {
 		// It is applied unconditionally (independent of auth); /healthz, /readyz, and the static
 		// OpenAPI doc stay reachable while a purge runs.
 		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, []string{"/healthz", "/readyz", "/v1/openapi.json", "/ui"})
+
+		// Per-request logging: the gateway never runs the gRPC interceptor chain, so without this its
+		// traffic is invisible in logs. Positioned inside auth (so unauthenticated requests are still
+		// rejected first) but around the purge gate and handler, capturing status and duration.
+		handler = httpLoggingMiddleware(handler)
 
 		// /healthz and /readyz stay open for liveness/readiness probes; everything else, including
 		// /v1/openapi.json, requires a token when auth is enabled. Auth wraps the purge gate so an
@@ -523,7 +544,10 @@ func main() {
 		log.Debug("HTTP gateway initialised")
 	}
 
-	statsStop := stats.Start(database)
+	// stats.intervalSeconds drives the periodic stats log line and bounds how often the shared count
+	// cache re-queries the store; 0 disables the log line (the gauges still read a cached count).
+	viper.SetDefault("stats.intervalSeconds", 300)
+	statsStop := stats.Start(database, viper.GetInt("stats.intervalSeconds"))
 
 	log.Info("hippocampus started")
 

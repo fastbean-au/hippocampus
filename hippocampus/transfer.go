@@ -46,6 +46,18 @@ const transferMemoryOverheadBytes = 128
 // and the records are recaptured by the next run.
 const manifestCacheLimit = 8
 
+// manifestTooLargeError is returned when a store holds more records than transfer.maxManifestRows
+// allows a single Export/Transfer to capture. FailedPrecondition tells the caller the request is
+// refused by policy (not a transient failure) and to segment the transfer or raise the cap.
+func manifestTooLargeError(rows int, limit int) error {
+	return status.Errorf(
+		codes.FailedPrecondition,
+		"store holds %d records, exceeding transfer.maxManifestRows (%d); transfer in groups/segments (e.g. by group) or raise the cap",
+		rows,
+		limit,
+	)
+}
+
 // transferManifest records exactly what one Export/Transfer run captured: the memory recall
 // snapshots and event ids Clear needs to delete precisely those records and nothing newer.
 type transferManifest struct {
@@ -68,6 +80,23 @@ func (s *Server) walkStore(
 		batchSize = defaultTransferBatchSize
 	}
 
+	maxRows := s.transfer.maxManifestRows
+
+	// Pre-flight the manifest size against the cap before doing any work, so an over-cap Export
+	// fails immediately instead of after the (potentially large, wasted) S3 upload. Counts are a
+	// snapshot and the store can grow underneath the walk, so the accumulation loops below re-check;
+	// this is only the early exit. Skipped when a count errors (negative) — the in-walk guard covers
+	// it. maxRows <= 0 (the default) leaves the manifest unbounded, preserving prior behaviour.
+	if maxRows > 0 {
+		with, without := s.db.CountMemories()
+
+		if events := s.db.CountEvents(); events >= 0 && with >= 0 && without >= 0 {
+			if total := events + with + without; total > maxRows {
+				return nil, 0, 0, manifestTooLargeError(total, maxRows)
+			}
+		}
+	}
+
 	manifest := &transferManifest{id: uuid.New().String()}
 	events := 0
 	memories := 0
@@ -86,6 +115,10 @@ func (s *Server) walkStore(
 
 		for _, event := range page {
 			manifest.eventIds = append(manifest.eventIds, event.Id)
+		}
+
+		if maxRows > 0 && len(manifest.eventIds)+len(manifest.memories) > maxRows {
+			return nil, 0, 0, manifestTooLargeError(len(manifest.eventIds)+len(manifest.memories), maxRows)
 		}
 
 		if err := onEvents(page); err != nil {
@@ -114,6 +147,10 @@ func (s *Server) walkStore(
 				TimeRecalled: memory.TimeRecalled,
 				RecallCount:  memory.RecallCount,
 			})
+		}
+
+		if maxRows > 0 && len(manifest.eventIds)+len(manifest.memories) > maxRows {
+			return nil, 0, 0, manifestTooLargeError(len(manifest.eventIds)+len(manifest.memories), maxRows)
 		}
 
 		if err := onMemories(page); err != nil {

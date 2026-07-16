@@ -259,6 +259,35 @@ func TestExportWithClearFlag(t *testing.T) {
 	}
 }
 
+// TestExportRefusesOverManifestCap verifies that when transfer.maxManifestRows is set below the
+// store's size, Export refuses with FailedPrecondition before uploading anything, and that a cap of
+// 0 (the default) leaves the export unbounded.
+func TestExportRefusesOverManifestCap(t *testing.T) {
+	objects := newFakeObjectStore()
+
+	s := newTransferTestServer(t, objects)
+	seedTransferFixture(t, s)
+
+	// The fixture holds 2 events + 3 memories = 5 records; a cap of 3 must refuse.
+	s.transfer.maxManifestRows = 3
+
+	_, err := s.Export(context.Background(), &contract.ExportRequest{})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition over the manifest cap, got %v", err)
+	}
+
+	if len(objects.objects) != 0 {
+		t.Errorf("expected no object uploaded when refused, got %d", len(objects.objects))
+	}
+
+	// A cap of 0 leaves the manifest unbounded, so the same store exports cleanly.
+	s.transfer.maxManifestRows = 0
+
+	if _, err := s.Export(context.Background(), &contract.ExportRequest{}); err != nil {
+		t.Fatalf("expected an uncapped export to succeed, got %s", err)
+	}
+}
+
 // failClearStore wraps a real db.Store but forces ClearMemories to fail, so the clear arm of
 // Export/Transfer can be driven down its error path.
 type failClearStore struct {

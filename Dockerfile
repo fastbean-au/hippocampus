@@ -15,6 +15,13 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /hippocampus ./cmd/hipp
 # gateway's /healthz, which a shell-less image could not run.
 FROM alpine:3.22
 
+# Build identification. Pass --build-arg VERSION=<tag> to stamp a release; the running binary also
+# reports its embedded module/VCS version via --version and the /healthz body.
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="hippocampus" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.source="https://github.com/fastbean-au/hippocampus"
+
 RUN adduser -D -H -u 1000 hippocampus \
     && mkdir -p /data /etc/hippocampus \
     && chown hippocampus /data

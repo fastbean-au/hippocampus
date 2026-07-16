@@ -7,6 +7,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -26,6 +27,7 @@ type ObservabilityConfig struct {
 	MetricsIntervalSeconds int
 	OTLPEndpoint           string
 	OTLPInsecure           bool
+	ServiceVersion         string
 }
 
 // initObservability installs the global OTEL tracer and meter providers according to the
@@ -55,7 +57,13 @@ func initObservability(ctx context.Context, cfg ObservabilityConfig) (func(conte
 		return shutdown, nil
 	}
 
-	res := resource.NewSchemaless(semconv.ServiceName("hippocampus"))
+	attrs := []attribute.KeyValue{semconv.ServiceName("hippocampus")}
+
+	if cfg.ServiceVersion != "" {
+		attrs = append(attrs, semconv.ServiceVersion(cfg.ServiceVersion))
+	}
+
+	res := resource.NewSchemaless(attrs...)
 
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
