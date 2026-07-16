@@ -74,3 +74,9 @@ longer retention.
 Because record ids compare byte-for-byte across all three drivers, the same records keep their
 identity across the move — and the same path serves **driver migration** (e.g. export from SQLite,
 import into Postgres). See the [Operations guide](operations.md#backup-restore-and-migration).
+
+## Seeing it on real data
+
+For worked examples that load recognisable data — a Dickens novel as a narrative, synthetic service
+logs whose severity drives what survives — in both the embedded and centralised modes, see
+[Demonstrations](demonstrations.md).

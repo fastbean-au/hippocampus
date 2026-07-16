@@ -21,7 +21,8 @@
 
 Reference and guides live under [`docs/`](docs/): [Getting started](docs/getting-started.md),
 [Configurability](docs/configuration.md), [Memory consolidation](docs/consolidation.md),
-[Operations & deployment](docs/operations.md), and [Use cases](docs/use-cases.md).
+[Operations & deployment](docs/operations.md), [Use cases](docs/use-cases.md), and
+[Demonstrations](docs/demonstrations.md).
 
 ## Overview
 
@@ -64,6 +65,9 @@ The full documentation lives under [`docs/`](docs/):
   backup/restore/migration, graceful shutdown, observability, and security.
 - [Use cases & deployment modes](docs/use-cases.md) — embedded/edge vs. centralised topologies and
   the embedded→centralised transfer pattern.
+- [Demonstrations](docs/demonstrations.md) — worked examples loading real-shaped data (a Dickens
+  novel as a narrative, synthetic service logs) in embedded and centralised modes, with the
+  companion [`hippocampus-gen`](https://github.com/fastbean-au/hippocampus-gen) generator.
 
 ## Demo
 
