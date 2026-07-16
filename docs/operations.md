@@ -16,14 +16,14 @@ instances over one database. On the server drivers, that store can instead be sh
 consolidating instance plus read/write replicas; see
 [Horizontal scaling with replicas](#horizontal-scaling-with-replicas) below.
 
-Single ownership is enforced at startup, and a second *consolidating* instance pointed at the same
+Single ownership is enforced at startup, and a second _consolidating_ instance pointed at the same
 store fails fast:
 
-| Driver | Store | Exclusion mechanism |
-| --- | --- | --- |
-| `sqlite` | one database file in `storage.directory` | single connection; the file is owned by the process |
-| `postgres` | the database named in the DSN | a session-scoped `pg_advisory_lock` held for the process lifetime |
-| `mysql` | the schema named in the DSN | a session-scoped `GET_LOCK` held for the process lifetime |
+| Driver     | Store                                    | Exclusion mechanism                                               |
+| ---------- | ---------------------------------------- | ----------------------------------------------------------------- |
+| `sqlite`   | one database file in `storage.directory` | single connection; the file is owned by the process               |
+| `postgres` | the database named in the DSN            | a session-scoped `pg_advisory_lock` held for the process lifetime |
+| `mysql`    | the schema named in the DSN              | a session-scoped `GET_LOCK` held for the process lifetime         |
 
 ### Horizontal scaling with replicas
 
@@ -58,7 +58,7 @@ attempts exactly one reacquisition and, if it cannot retake the lock, **exits im
 (`log.Fatal`) rather than run without it.
 
 **Operational implication:** if a Postgres/MySQL-backed instance exits with a log line like
-*"lost the single-instance lock and could not reacquire it"*, that is the safety mechanism working —
+_"lost the single-instance lock and could not reacquire it"_, that is the safety mechanism working —
 another instance holds the lock, or the database is unreachable. Investigate why the lock session
 died (failover, network, an idle-timeout that outpaced the keepalive) and restart once the cause is
 resolved. Run under a supervisor (systemd, Kubernetes, Docker restart policy) so a fail-stop is
@@ -69,21 +69,21 @@ followed by a clean restart.
 Set `storage.driver` to `sqlite` (default), `postgres`, or `mysql`. All three are pure Go, so the
 binary is statically linked with CGO disabled.
 
-| | SQLite | Postgres | MySQL (8.0.20+) |
-| --- | --- | --- | --- |
-| Best for | embedded / edge / single-node | centralised, server-managed | centralised, server-managed |
-| Dependencies | none (one file) | a Postgres server | a MySQL server |
-| Durability | WAL mode, immediate | server-managed | server-managed |
-| `consolidation.capacityBytes` | yes | yes | yes |
-| `consolidation.walTriggerBytes` | yes | rejected at startup | rejected at startup |
-| On-disk footprint for large bodies | uncompressed | **TOAST-compressed** (smallest) | uncompressed (largest) |
+|                                    | SQLite                        | Postgres                        | MySQL (8.0.20+)             |
+| ---------------------------------- | ----------------------------- | ------------------------------- | --------------------------- |
+| Best for                           | embedded / edge / single-node | centralised, server-managed     | centralised, server-managed |
+| Dependencies                       | none (one file)               | a Postgres server               | a MySQL server              |
+| Durability                         | WAL mode, immediate           | server-managed                  | server-managed              |
+| `consolidation.capacityBytes`      | yes                           | yes                             | yes                         |
+| `consolidation.walTriggerBytes`    | yes                           | rejected at startup             | rejected at startup         |
+| On-disk footprint for large bodies | uncompressed                  | **TOAST-compressed** (smallest) | uncompressed (largest)      |
 
 `walTriggerBytes` is SQLite-only — it measures SQLite's on-disk WAL file, which the server drivers
 have no equivalent of; they reject the setting at startup rather than silently ignore it.
 
 ## Sizing and capacity tuning
 
-### `capacityBytes` is measured on *uncompressed logical* bytes
+### `capacityBytes` is measured on _uncompressed logical_ bytes
 
 The byte-capacity target (`consolidation.capacityBytes`, with hysteresis floor
 `consolidation.capacityBytesFloor` — see [Capacity target](consolidation.md#capacity-target)) is
@@ -92,7 +92,7 @@ compared against the store's **live logical size**, not the physical file size:
 - **SQLite** — database pages excluding the freelist (the size the file would have after a full
   vacuum).
 - **Postgres / MySQL** — an estimate summed from the live rows themselves: each row's payload
-  (`octet_length`) plus a fixed per-row overhead. This is deliberately *not* a file-size measure:
+  (`octet_length`) plus a fixed per-row overhead. This is deliberately _not_ a file-size measure:
   neither server returns space to the filesystem after `DELETE` (they reuse it internally), so a
   file-size reading would plateau at its high-water mark and make eviction chase a figure that can
   never drop.
@@ -127,7 +127,7 @@ autovacuum is enabled (the default) and not throttled below the delete rate.
 
 ### Sleep cadence vs. write rate
 
-`sleep.periodSeconds` sets how often consolidation and eviction run. Growth *between* cycles is
+`sleep.periodSeconds` sets how often consolidation and eviction run. Growth _between_ cycles is
 unbounded, so under a high sustained write rate the store can overshoot `capacityBytes` before the
 next cycle. Options: shorten `sleep.periodSeconds`, or (SQLite only) set
 `consolidation.walTriggerBytes` to force an out-of-cycle checkpoint when the WAL outgrows a bound.
@@ -190,6 +190,22 @@ storage stall, or lock pileup can otherwise block a request goroutine — and it
 indefinitely, eventually wedging the instance. Size it **above** the longest legitimate operation:
 the full-store consolidation scan is the tallest pole, so time a sleep cycle on a
 representative store and leave generous headroom, or a cycle may be aborted mid-scan.
+
+### Connection pool sizing (server drivers)
+
+`storage.pool.maxOpenConns` (default 25) and `storage.pool.maxIdleConns` (0 → defaults to
+`maxOpenConns`) cap the `database/sql` connection pool on the Postgres/MySQL drivers. Without a cap
+`database/sql` opens unlimited connections, so a burst of concurrent RPCs can exhaust the server's
+connection slots — one hot replica then starves every other instance, and the consolidator's
+instance-lock keepalive, into `too many connections` errors. SQLite is single-connection and ignores
+these settings.
+
+Size the pool per instance, then check the fleet total: the **sum of `maxOpenConns` across every
+instance** sharing the database must stay below the server's `max_connections`, with headroom for
+the consolidator's pinned keepalive connection and any superuser/monitoring reserve. For example,
+with Postgres's default `max_connections` of 100 and five instances, 25 each already reaches the
+ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns` at (or near)
+`maxOpenConns` so steady load reuses connections instead of churning them open and closed.
 
 ## Security
 

@@ -5,6 +5,17 @@ file (see [`config.json`](../config.json) for a complete example) loaded via vip
 guided first configuration, start with [Getting started](getting-started.md); for tuning in
 production, see the [Operations guide](operations.md).
 
+## Environment variable overrides
+
+Any config key can be overridden by an environment variable named `HIPPOCAMPUS_<KEY>` with the
+key's dots replaced by underscores and uppercased — so `auth.signingSecret` becomes
+`HIPPOCAMPUS_AUTH_SIGNINGSECRET`, `storage.postgres.dsn` becomes `HIPPOCAMPUS_STORAGE_POSTGRES_DSN`,
+`opensearch.password` becomes `HIPPOCAMPUS_OPENSEARCH_PASSWORD`, and `transfer.token` becomes
+`HIPPOCAMPUS_TRANSFER_TOKEN`. This is the recommended way to supply secrets — inject them as
+Docker/Kubernetes secrets rather than committing or baking them into `config.json`. Precedence is
+**command-line flag > environment variable > config file > built-in default**, so an env var
+overrides the file but an explicit flag still wins.
+
 ## Operational
 
 ### Observability
@@ -82,29 +93,29 @@ Each RPC maps onto a REST-ish path under `/v1`; path segments in `{braces}` come
 `GET`/`DELETE` take their remaining fields as query parameters, and `POST`/`PATCH` take them as
 a JSON body:
 
-| RPC | Method | Path |
-| --- | ------ | ---- |
-| `StoreEvent` | POST | `/v1/events` |
-| `GetEvents` | GET | `/v1/events` |
-| `GetEventById` | GET | `/v1/events/{id}` |
-| `DeleteEvent` | DELETE | `/v1/events/{id}` |
-| `EndEvent` | POST | `/v1/events/{id}/end` |
-| `UpdateEventSignificance` | PATCH | `/v1/events/{id}/significance` |
-| `MergeEvents` | POST | `/v1/events/merge` |
-| `ReplaceMemoriesWithSummary` | POST | `/v1/events/{event_id}/summary` |
-| `StoreMemory` | POST | `/v1/memories` |
-| `UpdateMemory` | PATCH | `/v1/memories/{id}` |
-| `GetMemories` | GET | `/v1/memories` |
-| `DeleteMemories` | POST | `/v1/memories/delete` |
-| `RecallMemories` | POST | `/v1/memories/recall` |
-| `GetSummarizationCandidates` | GET | `/v1/summarization/candidates` |
-| `Export` | POST | `/v1/export` |
-| `Import` | POST | `/v1/import` |
-| `ImportBatch` | POST | `/v1/import/batch` |
-| `Transfer` | POST | `/v1/transfer` |
-| `Clear` | POST | `/v1/clear` |
-| `Sleep` | POST | `/v1/sleep` |
-| `Purge` | POST | `/v1/purge` |
+| RPC                          | Method | Path                            |
+| ---------------------------- | ------ | ------------------------------- |
+| `StoreEvent`                 | POST   | `/v1/events`                    |
+| `GetEvents`                  | GET    | `/v1/events`                    |
+| `GetEventById`               | GET    | `/v1/events/{id}`               |
+| `DeleteEvent`                | DELETE | `/v1/events/{id}`               |
+| `EndEvent`                   | POST   | `/v1/events/{id}/end`           |
+| `UpdateEventSignificance`    | PATCH  | `/v1/events/{id}/significance`  |
+| `MergeEvents`                | POST   | `/v1/events/merge`              |
+| `ReplaceMemoriesWithSummary` | POST   | `/v1/events/{event_id}/summary` |
+| `StoreMemory`                | POST   | `/v1/memories`                  |
+| `UpdateMemory`               | PATCH  | `/v1/memories/{id}`             |
+| `GetMemories`                | GET    | `/v1/memories`                  |
+| `DeleteMemories`             | POST   | `/v1/memories/delete`           |
+| `RecallMemories`             | POST   | `/v1/memories/recall`           |
+| `GetSummarizationCandidates` | GET    | `/v1/summarization/candidates`  |
+| `Export`                     | POST   | `/v1/export`                    |
+| `Import`                     | POST   | `/v1/import`                    |
+| `ImportBatch`                | POST   | `/v1/import/batch`              |
+| `Transfer`                   | POST   | `/v1/transfer`                  |
+| `Clear`                      | POST   | `/v1/clear`                     |
+| `Sleep`                      | POST   | `/v1/sleep`                     |
+| `Purge`                      | POST   | `/v1/purge`                     |
 
 `ReplaceMemoriesWithSummary`'s body maps directly to its `summary` field (a `Memory`), rather
 than the whole request, so a client posts a plain memory object to
@@ -118,9 +129,9 @@ The gateway exposes two probe endpoints, both always open (no token) so orchestr
 them:
 
 - `/healthz` — **liveness**: the process is up. It never touches the database, so a slow or
-  unreachable store does not make it fail; point a probe that *restarts* the container here, so a
+  unreachable store does not make it fail; point a probe that _restarts_ the container here, so a
   transient dependency outage does not trigger a restart loop that cannot fix it.
-- `/readyz` — **readiness**: the process is up *and* the database answers a ping. Returns `200`
+- `/readyz` — **readiness**: the process is up _and_ the database answers a ping. Returns `200`
   when the store is reachable, `503` otherwise. Point load-balancer / service readiness probes
   here so an instance whose database has become unreachable is drained rather than kept in
   rotation while every RPC fails. The gRPC health service (`grpc.health.v1.Health`) reflects the
@@ -232,6 +243,10 @@ and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver fo
     "driver": "sqlite",
     "directory": "./data",
     "queryTimeoutSeconds": 0,
+    "pool": {
+        "maxOpenConns": 25,
+        "maxIdleConns": 0
+    },
     "postgres": {
         "dsn": ""
     },
@@ -247,6 +262,14 @@ fails an operation after a bounded time instead of blocking the request goroutin
 connection — indefinitely; the value must exceed the longest legitimate operation, notably a full
 consolidation scan on a large store, or a sleep cycle could be aborted mid-scan.
 
+`storage.pool.maxOpenConns` (default 25) and `storage.pool.maxIdleConns` (0 → defaults to
+`maxOpenConns`) cap the connection pool on the `postgres`/`mysql` drivers, where `database/sql`
+otherwise allows unlimited open connections and a burst of concurrent RPCs can exhaust the shared
+database's connection slots. SQLite is always single-connection and ignores these. In a replicated
+deployment keep the **sum** of `maxOpenConns` across every instance below the server's
+`max_connections`, leaving headroom for the consolidator's instance-lock keepalive connection and
+any superuser reserve — see [Operations](operations.md#connection-pool-sizing-server-drivers).
+
 MySQL support requires MySQL 8.0.20 or later (the upserts use the `ON DUPLICATE KEY UPDATE` row
 alias). One MySQL-specific bound: ids are `VARCHAR(255)` there (MySQL cannot index an unbounded
 `TEXT` column), so client-supplied event and memory ids longer than 255 characters are rejected
@@ -254,7 +277,7 @@ by that driver; generated UUID ids are unaffected.
 
 Exactly one instance may run consolidation against a given store. With SQLite that is one instance
 full stop — the embedded database cannot be shared between processes. With PostgreSQL or MySQL the
-*consolidating* instance takes a session-scoped advisory lock at startup (MySQL: a `GET_LOCK` lock
+_consolidating_ instance takes a session-scoped advisory lock at startup (MySQL: a `GET_LOCK` lock
 scoped to the schema name); a second instance that also has `consolidation.enabled: true` refuses
 to start, rather than silently running concurrent consolidation cycles against shared data.
 Additional instances with `consolidation.enabled: false` skip the lock and run alongside it as
@@ -383,7 +406,8 @@ itself is the watermark.
     "targetAddress": "central.example.com:50051",
     "token": "",
     "tls": false,
-    "batchSize": 500
+    "batchSize": 500,
+    "maxBatchBytes": 0
 }
 ```
 
@@ -395,9 +419,16 @@ the centralised instance when its [authentication](#authentication) is enabled, 
 `transfer.tls` dials it over TLS. `transfer.batchSize` sets both the pagination page size and
 the archive/ImportBatch batch size.
 
+`transfer.maxBatchBytes` (0 → an internal 3 MiB default) additionally bounds each `ImportBatch`
+message's serialized size during a `Transfer`: a page of large memory bodies is split into
+byte-bounded sub-batches so no message overflows the receiver's gRPC max-receive-message size
+(otherwise the transfer fails permanently, every retry hitting the same oversized deterministic
+page). A single memory larger than the budget is sent alone. If your bodies can exceed the default
+4 MiB gRPC frame, raise the receiving instance's `maxRecvMsgBytes` (top-level, 0 → grpc-go's 4 MiB
+default) so it accepts them.
+
 The sleep cycle keeps running during a capture: a record consolidated mid-export simply doesn't
 matter (its clear becomes a no-op), and one consolidated at the centralised end after import is
 the destination's own decay policy at work.
 
 ## Functional
-

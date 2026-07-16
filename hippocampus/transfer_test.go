@@ -483,3 +483,83 @@ func TestTransferSurfacePreconditions(t *testing.T) {
 		t.Error("ImportBatch must reject a memory without an id")
 	}
 }
+
+// batchTotalSize sums memoryTransferSize over a batch, mirroring the budget accounting.
+func batchTotalSize(batch []types.Memory) int {
+	total := 0
+	for _, memory := range batch {
+		total += memoryTransferSize(memory)
+	}
+
+	return total
+}
+
+// TestBatchMemoriesByBytes_RespectsBudget verifies a page of memories is split so every batch
+// (except one holding a single oversized memory) stays within the byte budget, and that no memory
+// is dropped or reordered - the guard against Transfer→ImportBatch overflowing the receiver's
+// max-receive-message size and failing every retry against the same deterministic page.
+func TestBatchMemoriesByBytes_RespectsBudget(t *testing.T) {
+	// Ten ~1 KiB memories; a 3 KiB budget forces several batches.
+	memories := make([]types.Memory, 10)
+	for i := range memories {
+		memories[i] = types.Memory{Id: fmt.Sprintf("m%d", i), Body: string(bytes.Repeat([]byte("x"), 1024))}
+	}
+
+	budget := 3 * 1024
+	batches := batchMemoriesByBytes(memories, budget)
+
+	if len(batches) < 2 {
+		t.Fatalf("expected the page to split into multiple batches, got %d", len(batches))
+	}
+
+	seen := 0
+
+	for i, batch := range batches {
+		if len(batch) == 0 {
+			t.Fatalf("batch %d is empty", i)
+		}
+
+		if len(batch) > 1 && batchTotalSize(batch) > budget {
+			t.Errorf("batch %d exceeds the byte budget: %d > %d", i, batchTotalSize(batch), budget)
+		}
+
+		seen += len(batch)
+	}
+
+	if seen != len(memories) {
+		t.Errorf("expected all %d memories batched, got %d", len(memories), seen)
+	}
+}
+
+// TestBatchMemoriesByBytes_OversizedMemoryGoesAlone verifies a single memory larger than the whole
+// budget is not dropped: it is emitted alone in its own batch (the receiver must accept it).
+func TestBatchMemoriesByBytes_OversizedMemoryGoesAlone(t *testing.T) {
+	memories := []types.Memory{
+		{Id: "small-a", Body: "a"},
+		{Id: "huge", Body: string(bytes.Repeat([]byte("x"), 8*1024))},
+		{Id: "small-b", Body: "b"},
+	}
+
+	batches := batchMemoriesByBytes(memories, 1024)
+
+	// small-a, then huge alone, then small-b: three batches.
+	if len(batches) != 3 {
+		t.Fatalf("expected 3 batches (small, oversized-alone, small), got %d", len(batches))
+	}
+
+	if len(batches[1]) != 1 || batches[1][0].Id != "huge" {
+		t.Errorf("expected the oversized memory alone in the second batch, got %+v", batches[1])
+	}
+}
+
+// TestBatchMemoriesByBytes_DefaultBudget verifies a non-positive budget falls back to the default
+// rather than putting every memory in its own batch.
+func TestBatchMemoriesByBytes_DefaultBudget(t *testing.T) {
+	memories := []types.Memory{{Id: "a", Body: "a"}, {Id: "b", Body: "b"}}
+
+	batches := batchMemoriesByBytes(memories, 0)
+
+	if len(batches) != 1 {
+		t.Errorf("expected two tiny memories to share one batch under the default budget, got %d batches", len(batches))
+	}
+}

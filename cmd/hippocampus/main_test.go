@@ -240,3 +240,39 @@ func TestValidateConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigureEnvOverrides verifies a config key resolves from its HIPPOCAMPUS_-prefixed
+// environment variable, so secrets can be injected as env vars instead of living in config.json.
+func TestConfigureEnvOverrides(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Setenv("HIPPOCAMPUS_AUTH_SIGNINGSECRET", "from-env")
+
+	configureEnvOverrides()
+
+	if got := viper.GetString("auth.signingSecret"); got != "from-env" {
+		t.Errorf("expected auth.signingSecret to resolve from the environment, got %q", got)
+	}
+}
+
+// TestConfigureEnvOverrides_EnvBeatsFile verifies an environment variable overrides a value set in
+// the config file - the precedence the container secret pattern relies on.
+func TestConfigureEnvOverrides_EnvBeatsFile(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	viper.SetConfigType("json")
+
+	if err := viper.ReadConfig(strings.NewReader(`{"storage":{"postgres":{"dsn":"from-file"}}}`)); err != nil {
+		t.Fatalf("ReadConfig: %s", err)
+	}
+
+	t.Setenv("HIPPOCAMPUS_STORAGE_POSTGRES_DSN", "from-env")
+
+	configureEnvOverrides()
+
+	if got := viper.GetString("storage.postgres.dsn"); got != "from-env" {
+		t.Errorf("expected the environment to override the config file, got %q", got)
+	}
+}

@@ -123,6 +123,7 @@ type Transfer struct {
 	token         string
 	tls           bool
 	batchSize     int
+	maxBatchBytes int
 	keyPrefix     string
 }
 
@@ -141,6 +142,7 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Se
 			token:         viper.GetString("transfer.token"),
 			tls:           viper.GetBool("transfer.tls"),
 			batchSize:     viper.GetInt("transfer.batchSize"),
+			maxBatchBytes: viper.GetInt("transfer.maxBatchBytes"),
 			keyPrefix:     viper.GetString("s3.keyPrefix"),
 		},
 		sleepReset:                reset,

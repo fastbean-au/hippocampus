@@ -96,6 +96,28 @@ func (d *DB) SetQueryTimeout(timeout time.Duration) {
 	d.queryTimeout = timeout
 }
 
+// SetPoolLimits caps the connection pool for the server drivers (postgres/mysql). database/sql
+// otherwise allows an unlimited number of open connections (with an idle cap of 2), so a burst of
+// concurrent RPCs opens as many connections as the burst is wide - on a shared database one hot
+// replica can exhaust the server's connection slots and starve every other instance (and the
+// instance-lock keepalive's reacquisition path). Called once at startup from main before serving; a
+// non-positive maxOpenConns leaves the pool unbounded, and a non-positive maxIdleConns defaults to
+// maxOpenConns so a steady load does not churn connections open and closed. The pinned lock
+// connection counts as one of the open connections, so maxOpenConns must exceed 1. SQLite caps
+// itself at one connection in New and never calls this.
+func (d *DB) SetPoolLimits(maxOpenConns int, maxIdleConns int) {
+	if maxOpenConns <= 0 {
+		return
+	}
+
+	if maxIdleConns <= 0 {
+		maxIdleConns = maxOpenConns
+	}
+
+	d.sql.SetMaxOpenConns(maxOpenConns)
+	d.sql.SetMaxIdleConns(maxIdleConns)
+}
+
 // opContext derives the context bounding a single operation. When no timeout is configured it
 // returns a background context and a no-op cancel, so callers can unconditionally
 // `ctx, cancel := d.opContext(); defer cancel()`. The caller owns the context's lifetime: for the

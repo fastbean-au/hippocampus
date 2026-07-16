@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -72,6 +73,12 @@ func main() {
 		log.Panicf("failed to parse config file '%s': %s", viper.GetString("config_file"), err.Error())
 	}
 
+	// Let environment variables override the config file, so secrets (auth.signingSecret,
+	// opensearch.password, transfer.token, the postgres/mysql DSN passwords) can be injected as
+	// container/Kubernetes secrets rather than baked into a committed config.json. Called after
+	// ReadConfig; viper's precedence is flag > env > file > default regardless.
+	configureEnvOverrides()
+
 	initLogging(viper.GetString("logging.level"), viper.GetBool("logging.json"))
 
 	// --mint-token is a CLI mode, not part of normal startup: it only needs the signing secret,
@@ -102,6 +109,7 @@ func main() {
 
 	// Defaults shared by normal startup and the --backfill-search CLI mode.
 	viper.SetDefault("storage.driver", "sqlite")
+	viper.SetDefault("storage.pool.maxOpenConns", 25)
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
 
@@ -213,6 +221,17 @@ func main() {
 
 	if err != nil {
 		log.Fatalf("failed to open database: %s", err.Error())
+	}
+
+	// Cap the connection pool on the server drivers so a burst of concurrent RPCs cannot exhaust the
+	// shared database's connection slots (database/sql defaults to unlimited open connections).
+	// SQLite caps itself at one connection, so this is skipped there. Sum maxOpenConns across every
+	// instance in a replicated deployment must stay under the server's max_connections.
+	if driver := viper.GetString("storage.driver"); driver == "postgres" || driver == "mysql" {
+		database.SetPoolLimits(
+			viper.GetInt("storage.pool.maxOpenConns"),
+			viper.GetInt("storage.pool.maxIdleConns"),
+		)
 	}
 
 	// Bound how long any single statement or transaction may run, so a hung or unreachable database
@@ -373,6 +392,13 @@ func main() {
 
 	serverOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(interceptors...),
+	}
+
+	// Raise the gRPC max-receive-message size above the 4 MiB default so operators can accept larger
+	// ImportBatch/single-memory payloads (Transfer keeps its own batches under transfer.maxBatchBytes
+	// by default). 0 keeps grpc-go's default.
+	if maxRecvMsgBytes := viper.GetInt("maxRecvMsgBytes"); maxRecvMsgBytes > 0 {
+		serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(maxRecvMsgBytes))
 	}
 
 	// The otelgrpc stats handler creates a server span for every RPC (extracting any incoming
@@ -612,6 +638,17 @@ func maxRequestBytesMiddleware(next http.Handler, maxBytes int64) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// configureEnvOverrides wires viper to read environment variables so any config key can be
+// overridden by HIPPOCAMPUS_<KEY> with dots replaced by underscores (e.g.
+// HIPPOCAMPUS_AUTH_SIGNINGSECRET, HIPPOCAMPUS_STORAGE_POSTGRES_DSN, HIPPOCAMPUS_OPENSEARCH_PASSWORD,
+// HIPPOCAMPUS_TRANSFER_TOKEN). This keeps secrets out of the committed/baked config file. The
+// prefix scopes it so unrelated environment variables cannot collide with a config key.
+func configureEnvOverrides() {
+	viper.SetEnvPrefix("HIPPOCAMPUS")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
 }
 
 // validateConfig rejects consolidation settings that would make the service behave destructively.

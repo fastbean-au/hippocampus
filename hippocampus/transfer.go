@@ -27,6 +27,19 @@ import (
 // defaultTransferBatchSize is the page size used when transfer.batchSize is not configured.
 const defaultTransferBatchSize = 500
 
+// defaultTransferMaxBatchBytes bounds the serialized size of one ImportBatch message Transfer sends
+// when transfer.maxBatchBytes is not configured. It sits under the receiver's default gRPC
+// max-receive-message size (4 MiB) with headroom for proto framing, so a page of large memory
+// bodies is split across several calls instead of overflowing a single message and failing the
+// whole transfer permanently (every retry hits the same oversized, deterministic page).
+const defaultTransferMaxBatchBytes = 3 * 1024 * 1024
+
+// transferMemoryOverheadBytes approximates a memory's serialized proto size beyond its body (id and
+// group strings are added explicitly; this covers the fixed numeric fields and the field tags) when
+// byte-budgeting a Transfer batch. It only needs to be a safe over-estimate: the budget already
+// leaves ~1 MiB of headroom under the frame.
+const transferMemoryOverheadBytes = 128
+
 // manifestCacheLimit caps how many manifests are kept for Clear; beyond it the oldest is
 // discarded. Manifests are in-memory only — a restart discards them all — so a Clear separated
 // from its Export/Transfer by too many runs (or a restart) simply reports an unknown manifest,
@@ -522,6 +535,48 @@ func (s *Server) ingestMemories(ctx context.Context, protos []*contract.Memory) 
 	return count, nil
 }
 
+// memoryTransferSize estimates a memory's serialized proto size for byte-budgeting a Transfer
+// batch: the body plus the id/group strings plus a fixed allowance for the remaining fields.
+func memoryTransferSize(memory types.Memory) int {
+	return len(memory.Body) + len(memory.Id) + len(memory.Group) + transferMemoryOverheadBytes
+}
+
+// batchMemoriesByBytes splits a page of memories into sub-batches each estimated to serialize
+// within maxBytes, so no ImportBatch message Transfer sends exceeds the receiver's gRPC
+// max-receive-message size. transfer.batchSize bounds a page's row count; this bounds each call's
+// byte size. A single memory larger than the budget is sent alone in its own batch rather than
+// dropped - the receiver must accept it (raise maxRecvMsgBytes if its body exceeds the frame).
+func batchMemoriesByBytes(memories []types.Memory, maxBytes int) [][]types.Memory {
+	if maxBytes <= 0 {
+		maxBytes = defaultTransferMaxBatchBytes
+	}
+
+	var batches [][]types.Memory
+	var batch []types.Memory
+	batchBytes := 0
+
+	for _, memory := range memories {
+		size := memoryTransferSize(memory)
+
+		// Flush before adding a memory that would push the batch over budget, unless the batch is
+		// empty - a single oversized memory must still go, on its own.
+		if len(batch) > 0 && batchBytes+size > maxBytes {
+			batches = append(batches, batch)
+			batch = nil
+			batchBytes = 0
+		}
+
+		batch = append(batch, memory)
+		batchBytes += size
+	}
+
+	if len(batch) > 0 {
+		batches = append(batches, batch)
+	}
+
+	return batches
+}
+
 // Transfer streams the whole store directly into a centralised instance's ImportBatch RPC
 // (transfer.targetAddress), caching a manifest like Export; with clear set the captured records
 // are deleted once the target has accepted every batch.
@@ -565,14 +620,22 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 			return err
 		},
 		func(memories []types.Memory) error {
-			batch := make([]*contract.Memory, len(memories))
-			for i, memory := range memories {
-				batch[i] = memory.ToProto()
+
+			// Split the page into byte-bounded sub-batches so no ImportBatch message overflows the
+			// receiver's max-receive-message size; a page of large bodies would otherwise fail every
+			// retry against the same deterministic page.
+			for _, group := range batchMemoriesByBytes(memories, s.transfer.maxBatchBytes) {
+				batch := make([]*contract.Memory, len(group))
+				for i, memory := range group {
+					batch[i] = memory.ToProto()
+				}
+
+				if _, err := client.ImportBatch(ctx, &contract.ImportBatchRequest{Memories: batch}); err != nil {
+					return err
+				}
 			}
 
-			_, err := client.ImportBatch(ctx, &contract.ImportBatchRequest{Memories: batch})
-
-			return err
+			return nil
 		},
 	)
 

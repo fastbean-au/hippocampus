@@ -4,6 +4,7 @@
         "json": false
     },
     "port": 50051,
+    "maxRecvMsgBytes": 0,
     "gateway": {
         "port": 0,
         "maxRequestBytes": 0
@@ -39,6 +40,10 @@
         "driver": "sqlite",
         "directory": "./data",
         "queryTimeoutSeconds": 0,
+        "pool": {
+            "maxOpenConns": 25,
+            "maxIdleConns": 0
+        },
         "postgres": {
             "dsn": ""
         },
@@ -71,7 +76,8 @@
         "targetAddress": "",
         "token": "",
         "tls": false,
-        "batchSize": 500
+        "batchSize": 500,
+        "maxBatchBytes": 0
     },
     "memory": {
         "limit": {
