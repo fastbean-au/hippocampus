@@ -12,6 +12,10 @@
     "auth": {
         "method": "none",
         "signingSecret": "",
+        "signingKeys": [],
+        "activeKid": "",
+        "revocationFile": "",
+        "revocationRefreshSeconds": 30,
         "jwksUrl": "",
         "issuer": "",
         "audience": "",

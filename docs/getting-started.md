@@ -149,8 +149,9 @@ go run ./cmd/hippocampus --mint-token --client-id my-client --ttl 24h -c config.
 ```
 
 See [Authentication](configuration.md#authentication) and [TLS](configuration.md#tls), and the
-[Operations guide](operations.md#security) for the current limitations (CLI-only issuance, no
-revocation) and the `idp` (RS256/JWKS) alternative.
+[Operations guide](operations.md#security) for CLI-only issuance, signing-key
+[rotation](configuration.md#key-rotation-hmac) and token/client
+[revocation](configuration.md#revocation), and the `idp` (RS256/JWKS) alternative.
 
 ## Next steps
 

@@ -243,9 +243,14 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
 - **Authentication** (`auth.method`: `none` / `hmac` / `idp`) and **TLS** (`tls.enabled`) are both
   optional and off by default — see [Authentication](configuration.md#authentication) and
   [TLS](configuration.md#tls). Enable both for any deployment exposed beyond localhost.
-- With `hmac`, tokens are minted by the `--mint-token` CLI from a single shared secret; there is **no
-  per-client revocation or rotation** yet. With `idp` (RS256/JWKS against an identity provider),
-  rotation is handled by the provider.
+- With `hmac`, tokens are minted by the `--mint-token` CLI. Signing secrets rotate without a flag
+  day via `auth.signingKeys` (several `kid`-tagged secrets trusted at once, `auth.activeKid`
+  selecting the one that signs), and individual tokens or clients are revoked ahead of their TTL by
+  a polled `auth.revocationFile` (by `jti`, by `client_id`, or per-client before a cutoff timestamp)
+  — see [Key rotation](configuration.md#key-rotation-hmac) and
+  [Revocation](configuration.md#revocation). The revocation file also applies under `idp`, as a
+  local override when the provider's own revocation lags; otherwise `idp` rotation and revocation
+  are handled by the provider.
 - If auth is enabled without TLS the service only warns — it assumes TLS is terminated upstream (a
   proxy or service mesh). Never send bearer tokens in plaintext. When `tls.enabled`, both listeners
   share one certificate and enforce a TLS 1.2 minimum.

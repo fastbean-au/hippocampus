@@ -18,12 +18,12 @@ func stubHandler(ctx context.Context, req interface{}) (interface{}, error) {
 // TestUnaryServerInterceptor_ValidToken verifies that a request carrying a valid bearer token in
 // the authorization metadata reaches the handler.
 func TestUnaryServerInterceptor_ValidToken(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
 
-	token, err := MintToken("test-secret", "client-1", time.Hour)
+	token, err := MintToken(MintRequest{Secret: "test-secret", ClientID: "client-1", TTL: time.Hour})
 	if err != nil {
 		t.Fatalf("MintToken: %s", err)
 	}
@@ -46,7 +46,7 @@ func TestUnaryServerInterceptor_ValidToken(t *testing.T) {
 // TestUnaryServerInterceptor_MissingToken verifies that a Hippocampus RPC with no authorization
 // metadata is rejected with codes.Unauthenticated.
 func TestUnaryServerInterceptor_MissingToken(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
@@ -62,7 +62,7 @@ func TestUnaryServerInterceptor_MissingToken(t *testing.T) {
 // TestUnaryServerInterceptor_InvalidToken verifies that an unparseable/invalid token is rejected
 // with codes.Unauthenticated.
 func TestUnaryServerInterceptor_InvalidToken(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
@@ -81,7 +81,7 @@ func TestUnaryServerInterceptor_InvalidToken(t *testing.T) {
 // call outside the /proto.Hippocampus/ prefix - the gRPC health service in particular - reaches
 // the handler with no token at all, so orchestrator liveness/readiness probes are never blocked.
 func TestUnaryServerInterceptor_HealthCheckBypassesAuth(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}

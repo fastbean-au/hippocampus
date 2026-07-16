@@ -16,12 +16,12 @@ func stubHTTPHandler() http.Handler {
 // TestHTTPMiddleware_ValidToken verifies that a request carrying a valid bearer token in the
 // Authorization header reaches the wrapped handler.
 func TestHTTPMiddleware_ValidToken(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
 
-	token, err := MintToken("test-secret", "client-1", time.Hour)
+	token, err := MintToken(MintRequest{Secret: "test-secret", ClientID: "client-1", TTL: time.Hour})
 	if err != nil {
 		t.Fatalf("MintToken: %s", err)
 	}
@@ -42,7 +42,7 @@ func TestHTTPMiddleware_ValidToken(t *testing.T) {
 // TestHTTPMiddleware_MissingToken verifies that a request with no Authorization header is
 // rejected with 401 and a WWW-Authenticate header.
 func TestHTTPMiddleware_MissingToken(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
@@ -66,7 +66,7 @@ func TestHTTPMiddleware_MissingToken(t *testing.T) {
 // TestHTTPMiddleware_MalformedToken verifies that a malformed Authorization header (wrong scheme)
 // is rejected with 401.
 func TestHTTPMiddleware_MalformedToken(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
@@ -88,7 +88,7 @@ func TestHTTPMiddleware_MalformedToken(t *testing.T) {
 // side: a path listed in openPaths (e.g. /healthz) is reachable with zero Authorization header,
 // mirroring the gRPC health-check bypass.
 func TestHTTPMiddleware_OpenPathBypassesAuth(t *testing.T) {
-	v, err := NewHMACVerifier("test-secret")
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
 	if err != nil {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}

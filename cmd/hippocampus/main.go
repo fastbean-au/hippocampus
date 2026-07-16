@@ -43,6 +43,7 @@ func main() {
 	pflag.String("client-id", "", "client_id claim to embed in a minted token (used with --mint-token)")
 	pflag.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
 	pflag.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
+	pflag.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
 	pflag.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
 	pflag.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
 	pflag.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
@@ -104,17 +105,26 @@ func main() {
 			log.Fatal("--mint-token is not available with auth.method 'idp' - the identity provider issues tokens")
 		}
 
-		secret := viper.GetString("signing-secret")
-		if secret == "" {
-			secret = viper.GetString("auth.signingSecret")
-		}
+		secret, kid := resolveMintKey(hmacConfigFromViper())
 
-		token, err := auth.MintToken(secret, viper.GetString("client-id"), viper.GetDuration("ttl"))
+		token, err := auth.MintToken(auth.MintRequest{
+			Secret:   secret,
+			Kid:      kid,
+			ClientID: viper.GetString("client-id"),
+			TTL:      viper.GetDuration("ttl"),
+		})
 		if err != nil {
 			log.Fatalf("failed to mint token: %s", err.Error())
 		}
 
 		fmt.Println(token)
+
+		// The jti goes to stderr - not stdout, which must carry only the token so
+		// `token=$(hippocampus --mint-token ...)` works - so an operator can record it for later
+		// per-token revocation.
+		if id, err := auth.TokenID(token); err == nil {
+			fmt.Fprintf(os.Stderr, "jti=%s client_id=%s\n", id, viper.GetString("client-id"))
+		}
 
 		os.Exit(0)
 	}
@@ -351,7 +361,7 @@ func main() {
 	case "none":
 
 	case "hmac":
-		v, err := auth.NewHMACVerifier(viper.GetString("auth.signingSecret"))
+		v, err := auth.NewHMACVerifier(hmacConfigFromViper())
 		if err != nil {
 			log.Fatalf("failed to initialise auth: %s", err.Error())
 		}
@@ -378,6 +388,30 @@ func main() {
 	}
 
 	authEnabled := verifier != nil
+
+	// A revocation list, when configured, wraps whichever verifier was built (hmac or idp) so a
+	// leaked token or decommissioned client can be cut off without rotating the signing secret for
+	// everyone. It reloads from disk on the file's mtime, so revocations take effect without a
+	// restart; a named-but-broken file fails startup rather than silently revoking nothing.
+	var revocations *auth.RevocationList
+
+	if authEnabled {
+		if path := viper.GetString("auth.revocationFile"); path != "" {
+			viper.SetDefault("auth.revocationRefreshSeconds", 30)
+
+			refresh := time.Duration(viper.GetInt("auth.revocationRefreshSeconds")) * time.Second
+
+			list, err := auth.NewRevocationList(path, refresh)
+			if err != nil {
+				log.Fatalf("failed to load revocation list: %s", err.Error())
+			}
+
+			revocations = list
+			verifier = auth.NewRevokingVerifier(verifier, list)
+
+			log.Infof("token revocation enabled from '%s'", path)
+		}
+	}
 
 	if authEnabled && !tlsEnabled {
 		log.Warn("auth.enabled is true but tls.enabled is false - bearer tokens will be sent in " +
@@ -595,6 +629,10 @@ func main() {
 	hipo.Stop()
 	statsStop()
 
+	if revocations != nil {
+		revocations.Stop()
+	}
+
 	// The gRPC server is stopped, so no new index operations can be enqueued; drain whatever is
 	// still queued before flushing observability, so the final export captures the search
 	// counters.
@@ -612,6 +650,60 @@ func main() {
 	}
 
 	_ = database.Close()
+}
+
+// hmacConfigFromViper reads the HMAC signing configuration into an auth.HMACConfig. Centralising the
+// viper access here (per the project convention that all viper reads live in main) means the
+// --mint-token CLI and the running verifier share one interpretation of signingSecret, signingKeys,
+// and activeKid.
+func hmacConfigFromViper() auth.HMACConfig {
+	var keys []auth.SigningKey
+
+	if err := viper.UnmarshalKey("auth.signingKeys", &keys); err != nil {
+		log.Fatalf("failed to read auth.signingKeys: %s", err.Error())
+	}
+
+	return auth.HMACConfig{
+		LegacySecret: viper.GetString("auth.signingSecret"),
+		Keys:         keys,
+		ActiveKid:    viper.GetString("auth.activeKid"),
+	}
+}
+
+// resolveMintKey decides which signing secret and kid --mint-token should use. An explicit
+// --signing-secret override wins (for minting on a host that carries only the secret, not the full
+// config), staying kid-less unless --kid is also given. Otherwise the key comes from the config:
+// --kid, else auth.activeKid, else the first configured signing key, else the legacy secret with no
+// kid. A --kid naming no configured key yields an empty secret, so MintToken fails fast rather than
+// silently signing with the wrong key.
+func resolveMintKey(cfg auth.HMACConfig) (string, string) {
+	if override := viper.GetString("signing-secret"); override != "" {
+		return override, viper.GetString("kid")
+	}
+
+	kid := viper.GetString("kid")
+
+	if kid == "" {
+		kid = cfg.ActiveKid
+	}
+
+	if kid == "" && len(cfg.Keys) > 0 {
+		kid = cfg.Keys[0].Kid
+	}
+
+	if kid == "" {
+		return cfg.LegacySecret, ""
+	}
+
+	for _, v := range cfg.Keys {
+		if v.Kid != kid {
+			continue
+		}
+
+		return v.Secret, kid
+	}
+
+	return "", kid
 }
 
 // Gateway HTTP server hardening timeouts. ReadHeaderTimeout bounds slow-header (slowloris) clients

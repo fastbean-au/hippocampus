@@ -248,15 +248,25 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
 - `auth/` — JWT bearer-token support, self-contained (no `*hippocampus.Server`, no DB). `Verifier`
   is an interface (`Verify(token string) (*Claims, error)`) with two implementations, both
   restricted to a single algorithm via `jwt.WithValidMethods` so a token can never select its
-  own: `HMACVerifier` (HS256, shared secret) and `JWKSVerifier` (`jwks.go`; RS256 against an
+  own: `HMACVerifier` (HS256; built from an `HMACConfig` of a legacy single `signingSecret` plus
+  any number of `kid`-tagged `signingKeys` — every key verifies, so a new secret rotates in while
+  old tokens still verify; a kid-less token uses the legacy secret, an unknown kid is rejected) and
+  `JWKSVerifier` (`jwks.go`; RS256 against an
   identity provider's JWKS — endpoint from `auth.jwksUrl` or OIDC discovery via `auth.issuer`,
   keys cached by kid, re-fetched lazily on `auth.jwksRefreshIntervalSeconds` plus one
   cooldown-limited forced re-fetch on an unknown kid so IdP key rotation verifies on first
   sight; `iss`/`aud` enforced when configured; the initial fetch failing fails construction,
-  later outages leave cached keys serving). `Claims` embeds `jwt.RegisteredClaims` plus
-  `ClientID` (unused beyond logging today). `MintToken` is a plain function, not part of
-  `Verifier`, used by both the `--mint-token` CLI mode and tests; it is HMAC-only — an IdP
-  mints its own tokens.
+  later outages leave cached keys serving). `Claims` embeds `jwt.RegisteredClaims` (including the
+  `jti`) plus `ClientID`. `MintToken` (taking a `MintRequest`) is a plain function, not part of
+  `Verifier`, used by both the `--mint-token` CLI mode and tests; it is HMAC-only (an IdP mints
+  its own tokens), always stamps a random `jti`, and sets a `kid` header when minting under a
+  keyed secret. `revocation.go` adds `RevocationList` (a JSON file of revoked `jti`s and
+  `client_id`s — the latter optionally only before an `issuedBefore` cutoff — reloaded on the
+  file's mtime every `auth.revocationRefreshSeconds`, failing startup on a bad initial load but
+  keeping the last good set on a bad reload) and `NewRevokingVerifier`, a decorator that checks
+  the list after any inner `Verifier` succeeds, so revocation composes with `idp` as well as
+  `hmac`. All viper reads stay in main.go: `hmacConfigFromViper`/`resolveMintKey` there build the
+  `HMACConfig` and pick the minting key.
   `UnaryServerInterceptor` and `HTTPMiddleware` are the two enforcement adapters — both are
   needed because the HTTP gateway calls `hipo` directly and never passes through the gRPC
   interceptor chain. Both scope themselves so Hippocampus RPCs require a token but health surfaces

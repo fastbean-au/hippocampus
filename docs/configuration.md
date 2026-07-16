@@ -185,10 +185,14 @@ Every RPC — on both the native gRPC service and the HTTP gateway — can requi
 token. `auth.method` selects the scheme:
 
 - `none` (the default) — no authentication, preserving the previous no-auth behaviour.
-- `hmac` — tokens are signed and verified with a single shared HS256 secret
-  (`auth.signingSecret`), minted by the service binary itself via `--mint-token`. HS256 is keyed
-  directly with the raw secret, so use a long, random value — at least 32 bytes (256 bits, matching
-  the hash output); a shorter secret is brute-forceable and logs a startup warning.
+- `hmac` — tokens are signed and verified with shared HS256 secrets, minted by the service binary
+  itself via `--mint-token`. HS256 is keyed directly with the raw secret, so use long, random
+  values — at least 32 bytes (256 bits, matching the hash output); a shorter secret is
+  brute-forceable and logs a startup warning. A single secret (`auth.signingSecret`) is the simplest
+  form; `auth.signingKeys` holds several `kid`-identified secrets at once so one can be rotated in
+  while tokens signed by another still verify (see [Key rotation](#key-rotation-hmac)), and
+  `auth.revocationFile` cuts off individual tokens or clients without waiting out their TTL (see
+  [Revocation](#revocation)).
 - `idp` — tokens are issued by an external identity provider and verified as RS256 against the
   provider's published JWKS. `auth.jwksUrl` names the key-set endpoint directly, or `auth.issuer`
   alone resolves it via OIDC discovery (`<issuer>/.well-known/openid-configuration`). When
@@ -204,12 +208,20 @@ token. `auth.method` selects the scheme:
 "auth": {
     "method": "none",
     "signingSecret": "",
+    "signingKeys": [],
+    "activeKid": "",
+    "revocationFile": "",
+    "revocationRefreshSeconds": 30,
     "jwksUrl": "",
     "issuer": "",
     "audience": "",
     "jwksRefreshIntervalSeconds": 300
 }
 ```
+
+`auth.signingKeys` is a structured list (`[{ "kid": "...", "secret": "..." }]`) and so is
+config-file-only — unlike `auth.signingSecret`, it cannot be injected through a single
+`HIPPOCAMPUS_AUTH_*` environment variable.
 
 The boolean `auth.enabled` from earlier releases remains as a deprecated alias: when
 `auth.method` is unset, `auth.enabled: true` selects `hmac` (with a startup warning) and
@@ -231,16 +243,68 @@ the service binary itself:
 hippocampus --mint-token --client-id my-client --ttl 24h -c config.json
 ```
 
-This prints a signed token to stdout and exits without starting the server (or touching the
-database). `--ttl` accepts any Go duration (`1h`, `24h`, `720h`, ...); `--signing-secret` can
-override `auth.signingSecret` from the config file, for minting on a host that only has the
-secret and not the full deployed config. Revocation, for now, means either waiting out a token's
-TTL or rotating `auth.signingSecret` (which invalidates every outstanding token at once). Under
-`idp` the identity provider owns issuance, expiry, and revocation, and `--mint-token` refuses to
-run.
+This prints a signed token to **stdout** and exits without starting the server (or touching the
+database); it also prints the token's `jti` (its unique id) and client to **stderr**, so
+`token=$(hippocampus --mint-token ...)` still captures only the token while an operator can record
+the `jti` for later [revocation](#revocation). `--ttl` accepts any Go duration (`1h`, `24h`,
+`720h`, ...); `--signing-secret` can override the config's secret for minting on a host that only
+has the secret and not the full deployed config. When `auth.signingKeys` is configured, the token
+is signed with `auth.activeKid` (or the first listed key) and stamped with that `kid`; `--kid`
+overrides which key to use. Under `idp` the identity provider owns issuance, expiry, and
+revocation, and `--mint-token` refuses to run.
 
 Verification is written behind an interface (`auth.Verifier`) — `hmac` and `idp` are its two
 implementations, and the interceptor/middleware call sites are identical for both.
+
+#### Key rotation (hmac)
+
+`auth.signingKeys` lets several HS256 secrets be trusted at once, each tagged with a `kid` that is
+written into the header of every token it signs. Because the verifier trusts *every* listed key, a
+new secret can be introduced and start signing while tokens signed by the previous secret keep
+verifying — so a rotation never has a flag day where outstanding tokens are abruptly rejected. The
+procedure:
+
+1. Add the new key to `auth.signingKeys` and point `auth.activeKid` at it (keep the old key in the
+   list); restart. New tokens are now signed with the new key; old tokens still verify.
+2. Re-mint client tokens against the new key as they expire, or all at once.
+3. Once no outstanding tokens are signed by the old key (they have expired or been re-minted),
+   remove it from `auth.signingKeys` and restart.
+
+`auth.signingSecret` and `auth.signingKeys` can be set together: `signingSecret` verifies tokens
+that carry no `kid` (every token minted before rotation existed), while `signingKeys` verifies
+`kid`-tagged ones — a convenient way to migrate an existing single-secret deployment onto keyed
+rotation without invalidating its live tokens. A token whose `kid` names no configured key is
+rejected.
+
+#### Revocation
+
+Two mechanisms cut a credential off before its TTL expires:
+
+- **Rotate the signing secret** — changing `auth.signingSecret` (or removing a key from
+  `auth.signingKeys`) invalidates every token signed by it at once. Coarse, but immediate.
+- **A revocation file** (`auth.revocationFile`) — a JSON file, polled for changes every
+  `auth.revocationRefreshSeconds` (30 by default), that revokes named tokens or clients without a
+  restart and without affecting anyone else:
+
+  ```json
+  {
+      "jtis": ["9fdec40d972eb3a4be7297c29ed95061"],
+      "clients": [
+          { "clientId": "decommissioned-batch-loader" },
+          { "clientId": "rotated-web-console", "issuedBefore": "2026-07-01T00:00:00Z" }
+      ]
+  }
+  ```
+
+  `jtis` revokes individual tokens by the `jti` printed at mint time. A `clients` entry revokes
+  every token for that `client_id`; adding `issuedBefore` (an RFC 3339 timestamp) revokes only
+  tokens issued before it — the per-client rotation move: set the cutoff to now, then mint the
+  client a fresh token. Changes take effect within `auth.revocationRefreshSeconds`, on both the
+  gRPC service and the HTTP gateway. A named-but-unreadable or malformed file **fails startup** (so
+  a typo can't silently revoke nothing); a bad file written *after* startup is ignored with an
+  error log, keeping the last good list in force. The check runs *after* signature verification and
+  works in front of `idp` as well as `hmac`, so a provider-issued token can be revoked locally even
+  when the provider's own revocation lags.
 
 ### TLS
 

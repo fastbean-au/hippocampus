@@ -45,7 +45,7 @@ There are two main configurations that Hippocampus can run in: standalone/embedd
 
 ## Current state
 
-This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), and has been through a dedicated security review — a stored-XSS fix in the embedded web console, HS256 secret-strength warnings, a pinned TLS 1.2 floor, and size caps on JWKS fetches and gateway request bodies (see [Security](docs/operations.md#security)) — on top of two earlier correctness/race-condition sweeps. Token issuance is still a CLI-only, single-shared-secret mechanism with no per-client revocation or rotation — real multi-tenant credential management is still future work. Enable TLS for anything exposed beyond localhost. There are also [Limitations](#limitations) which should be considered before using in a production environment.
+This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), and has been through a dedicated security review — a stored-XSS fix in the embedded web console, HS256 secret-strength warnings, a pinned TLS 1.2 floor, and size caps on JWKS fetches and gateway request bodies (see [Security](docs/operations.md#security)) — on top of two earlier correctness/race-condition sweeps. Token issuance is a CLI operation on the service binary (`--mint-token`): there is no client registry or admin credential API, but signing secrets rotate without a flag day (`auth.signingKeys`) and individual tokens or clients can be revoked ahead of their TTL through a polled revocation file — a full multi-tenant credential system is what the `idp` method delegates to an identity provider. Enable TLS for anything exposed beyond localhost. There are also [Limitations](#limitations) which should be considered before using in a production environment.
 
 ## Documentation
 
@@ -155,8 +155,12 @@ warning says so).
 - **No visibility into memory content.** Memory bodies are opaque to the service, so it cannot
   generate summaries itself — a client supplies the summary text for `ReplaceMemoriesWithSummary`.
 
-- **Credential management is basic.** No per-client revocation or rotation under `hmac`; use `idp`
-  for provider-managed rotation. See [Security](docs/operations.md#security).
+- **Credential management is basic.** Under `hmac` there is no client registry or admin credential
+  API — tokens are minted by the `--mint-token` CLI. Signing secrets rotate via config plus a
+  restart (`auth.signingKeys`) and tokens/clients are revoked through a polled file
+  (`auth.revocationFile`), but for a full multi-tenant credential system — self-service issuance,
+  a managed client directory — use `idp` and let an identity provider own it. See
+  [Security](docs/operations.md#security).
 
 - **Content search is best-effort.** The optional OpenSearch index (`opensearch.enabled`) is a
   strictly secondary index: mutations propagate to it asynchronously through a bounded queue that
