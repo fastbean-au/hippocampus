@@ -123,8 +123,8 @@ Steps 1–6 (higher steps were disk-limited on the test host; see [Caveats](#cav
   a larger buffer pool and relaxed flush settings move MySQL much closer to Postgres. Both server
   backends here ran their default configs, so this is a fair default-vs-default comparison, not a
   tuned one.
-- Under high write concurrency MySQL also throws the occasional InnoDB deadlock (see
-  [MySQL InnoDB deadlocks](#mysql-innodb-deadlocks-open)).
+- Under high write concurrency MySQL also throws the occasional InnoDB deadlock, now retried in the
+  write path (see [MySQL InnoDB deadlocks](#mysql-innodb-deadlocks-fixed)).
 
 ## Cross-backend comparison
 
@@ -188,15 +188,28 @@ iteration. Regression test `TestAutoSleep_TimedCycleFiresWithWALTriggerEnabled`.
 because the long-running soak and the default demo did not combine `walTriggerBytes` with a longer
 period.
 
-### MySQL InnoDB deadlocks (open)
+### MySQL InnoDB deadlocks (fixed)
 
 Under high write concurrency MySQL occasionally aborts a `StoreMemory` transaction with
-`Error 1213 (40001): Deadlock found` — about 2 in ~12,700 writes (~0.02 %) at the lowest step. The
-service currently surfaces it as gRPC `Unknown`, so the write is simply lost. InnoDB deadlocks are
-expected under concurrency and the standard remedy is to retry the transaction; the recommended fix
-is a bounded retry-on-1213 in the MySQL write path, or mapping 1213/serialization failures to
-`codes.Aborted` so callers retry. Left open pending a decision, as it is rare and arguably a
-client-retryable condition.
+`Error 1213 (40001): Deadlock found` — about 2 in ~12,700 writes (~0.02 %) at the lowest step.
+InnoDB deadlocks (and lock-wait timeouts, `Error 1205`) are expected under concurrency, and the
+standard remedy is to retry. The MySQL write path now does both:
+
+- **Bounded retry.** Every single-statement write goes through `db.exec`, which wraps the statement
+  in `withWriteRetry` (`db/retry.go`): on error `1213`/`1205` it re-runs the statement up to five
+  times with a short jittered exponential backoff. A failed autocommit statement is rolled back
+  whole, so the retry is safe — no partial effect. The retry loop runs inside the operation's
+  `queryTimeout` context, so it can never outlast the request, and it is a no-op for the SQLite and
+  Postgres drivers. This clears the common single-collision case invisibly.
+- **Retryable status on exhaustion.** If a conflict outlives the retries, `withWriteRetry` wraps it
+  in `db.ErrWriteConflict`, which the write RPCs map (via `mapWriteError`) to gRPC `codes.Aborted`
+  instead of `Unknown`, so a client sees a retryable conflict rather than a silently lost write.
+  Applied at the service layer so both the gRPC and HTTP-gateway transports get it.
+
+Multi-statement transactions (recall reinforcement, summary replacement) are not covered — retrying
+them needs the whole transaction body re-run, not just one statement, and they were not observed
+deadlocking — so a deadlock there would still surface as `Unknown`. Extending the retry to a
+transaction-closure form is a possible follow-up.
 
 Two unrelated issues found earlier in the same effort — `GetEventById` returning `Unknown` instead
 of `NotFound`, and the demo generator's burst timestamps overflowing the future-timestamp

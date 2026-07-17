@@ -51,7 +51,7 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 
 	id, err := s.db.CreateEvent(ctx, event)
 	if err != nil {
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 	res.Id = id
 
@@ -97,7 +97,7 @@ func (s *Server) EndEvent(ctx context.Context, in *contract.EndEventRequest) (*c
 	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
 
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	if !ok {
@@ -126,7 +126,7 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
 
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	if !ok {
@@ -171,7 +171,7 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 		res.Ok = true
 	}
 
-	return &res, err
+	return &res, mapWriteError(err)
 }
 
 func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventRequest) (*contract.GeneralResponse, error) {
@@ -189,7 +189,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 
 	deleted, err := s.db.DeleteEvent(ctx, eid)
 	if err != nil {
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	// An unknown id deletes nothing; report NotFound rather than success, matching EndEvent and
@@ -204,7 +204,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	if in.GetMemories() {
 		cnt, err := s.db.DeleteEventMemories(ctx, eid)
 		if err != nil {
-			return &res, err
+			return &res, mapWriteError(err)
 		}
 
 		tel.memoriesDeleted.Add(ctx, int64(cnt))
@@ -212,7 +212,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	} else {
 		if _, err := s.db.UnsetMemoriesEventId(ctx, eid); err != nil {
 
-			return &res, err
+			return &res, mapWriteError(err)
 		}
 
 		s.searchIdx().SetEventId(eid, "")

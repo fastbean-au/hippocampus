@@ -251,7 +251,22 @@ func (d *DB) exec(ctx context.Context, query string, args ...any) (sql.Result, e
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	return d.sql.ExecContext(ctx, d.rebind(query), args...)
+	bound := d.rebind(query)
+
+	var res sql.Result
+
+	// A single autocommit statement is safe to retry: a MySQL deadlock/lock-wait timeout rolls it
+	// back whole, so a transient conflict re-runs rather than surfacing as a lost write. No-op on
+	// the other drivers. See withWriteRetry.
+	err := d.withWriteRetry(ctx, func() error {
+		var execErr error
+
+		res, execErr = d.sql.ExecContext(ctx, bound, args...)
+
+		return execErr
+	})
+
+	return res, err
 }
 
 // beginTx opens a transaction bounded by queryTimeout. The returned cancel must be deferred by the

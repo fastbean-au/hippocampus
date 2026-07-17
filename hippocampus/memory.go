@@ -84,7 +84,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 		}
 	}
 
-	return &res, err
+	return &res, mapWriteError(err)
 }
 
 // UpdateMemory applies a partial update to an existing memory: only the content fields carrying a
@@ -128,7 +128,7 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 	ok, err := s.db.UpdateMemory(ctx, memory)
 	if err != nil {
 
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	if !ok {
@@ -173,7 +173,7 @@ func (s *Server) DeleteMemories(ctx context.Context, in *contract.DeleteMemories
 		res.Ok = true
 	}
 
-	return &res, err
+	return &res, mapWriteError(err)
 }
 
 // RecallMemories returns the requested memories and reinforces each one: its recall time is set

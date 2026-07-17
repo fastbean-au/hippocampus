@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +13,34 @@ import (
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/types"
 )
+
+// conflictStore wraps a real db.Store but forces CreateMemory to fail with a wrapped
+// db.ErrWriteConflict, standing in for a MySQL deadlock that survived the driver's retries, so
+// StoreMemory's error mapping can be exercised without a live MySQL server.
+type conflictStore struct {
+	db.Store
+}
+
+func (conflictStore) CreateMemory(ctx context.Context, memory types.Memory) (string, error) {
+	return "", fmt.Errorf("db write: %w", db.ErrWriteConflict)
+}
+
+// TestStoreMemory_WriteConflictMapsToAborted is a regression test: a storage-level write conflict
+// (a MySQL deadlock that outlived the retries) used to surface as a gRPC Unknown, which clients read
+// as a lost write. It must now map to Aborted, which clients treat as retryable.
+func TestStoreMemory_WriteConflictMapsToAborted(t *testing.T) {
+	s := newTestServer(t)
+	s.db = conflictStore{Store: s.db}
+
+	_, err := s.StoreMemory(context.Background(), &contract.Memory{Significance: 5, Body: "x"})
+	if err == nil {
+		t.Fatal("expected StoreMemory to return the write conflict")
+	}
+
+	if got := status.Code(err); got != codes.Aborted {
+		t.Errorf("expected codes.Aborted, got %s (%v)", got, err)
+	}
+}
 
 // newTestServer builds a Server over an in-memory database, ready for RPC-level tests.
 func newTestServer(t *testing.T) *Server {

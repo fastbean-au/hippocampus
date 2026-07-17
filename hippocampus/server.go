@@ -3,6 +3,7 @@ package hippocampus
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,6 +28,24 @@ import (
 // sleepSingleflightKey is the sole key used with Server.sleepGroup: every caller wanting a sleep
 // cycle joins the same in-flight call rather than starting a concurrent one.
 const sleepSingleflightKey = "sleep"
+
+// mapWriteError maps a storage-layer write conflict (db.ErrWriteConflict - a MySQL deadlock or
+// lock-wait timeout that survived the driver's retries) to a gRPC Aborted status, which clients
+// treat as retryable, so the write surfaces as a transient conflict rather than an opaque Unknown
+// (which would look like a lost write). Any other error is returned unchanged. Applied at the
+// write RPCs so both the gRPC and HTTP-gateway transports get the mapping (the gateway calls these
+// handlers directly and never runs the gRPC interceptor chain).
+func mapWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, db.ErrWriteConflict) {
+		return status.Error(codes.Aborted, err.Error())
+	}
+
+	return err
+}
 
 // walCheckInterval is how often autoSleep polls the on-disk WAL size when
 // consolidation.walTriggerBytes is configured. It reads the filesystem directly rather than the
