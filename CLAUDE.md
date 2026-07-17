@@ -215,10 +215,17 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   Strictly secondary: all mutations propagate primary→index asynchronously (bounded queue, one
   FIFO worker — ordering matters for summarization's delete-then-index; overflow drops, never
   blocks), and `SearchMemories` results are always re-read from the primary store so stale index
-  entries drop out. Consolidation/eviction deletes reach it via `db.SetMemoryDeleteObserver` (on
-  the concrete `*db.DB`, not `db.Store`); RPC-layer hooks cover the rest. Binary memories are
-  never indexed. Because propagation is best-effort, the index can go sparse; the
-  `--backfill-search` CLI mode (`backfill.go`) rebuilds it from the primary store via synchronous
+  entries drop out. The worker retries a transient cluster failure (bounded attempts with jittered
+  backoff in `applyWithRetry`) before dropping an operation. Consolidation/eviction deletes reach it
+  via `db.SetMemoryDeleteObserver` (on the concrete `*db.DB`, not `db.Store`); RPC-layer hooks cover
+  the rest. Binary memories are never indexed. Because propagation is best-effort, the index can
+  still go sparse, so two recovery paths exist. The self-healing one is automatic: the consolidating
+  instance runs a periodic reconciliation sweep (`hippocampus/reconcile.go`, gated on
+  `consolidation.enabled` + `opensearch.reconcileIntervalSeconds` > 0, started/stopped alongside
+  `autoSleep`) that pages the primary store via `db.GetMemoriesPage` and re-indexes non-binary
+  memories through the normal async `IndexMemory`, healing missing documents (idempotent; heals
+  missing docs only — stale-doc removal stays a `--reindex` job). The manual one is the
+  `--backfill-search` CLI mode (`backfill.go`), which rebuilds it from the primary store via synchronous
   `IndexMemorySync`/`RecreateIndex` calls that bypass the queue (safe: the tool has no worker or
   live writes of its own) and `db.GetIndexableMemoriesPage` keyset pagination — with `--reindex`
   it recreates the index first to clear stale documents. Each driver opens read-only so the tool

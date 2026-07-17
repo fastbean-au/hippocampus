@@ -134,6 +134,8 @@ func main() {
 	viper.SetDefault("storage.pool.maxOpenConns", 25)
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
+	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
+	viper.SetDefault("opensearch.reconcileBatchSize", 500)
 
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
 	// from the primary store and exits without starting the server (see backfill.go).

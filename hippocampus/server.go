@@ -122,6 +122,17 @@ type Server struct {
 	summarizationCandidates   []db.SummarizationCandidate
 	summarizationCandidatesMu sync.RWMutex
 
+	// reconcileInterval / reconcileBatchSize configure the periodic search-index reconciliation
+	// sweep (reconcile.go): the sweep re-indexes the primary store so any document a dropped,
+	// crashed, or timed-out index operation missed is healed on its own. A non-positive interval
+	// disables it. stopReconcile / reconcileStopped coordinate its shutdown exactly as
+	// stopSleep / sleepStopped do for autoSleep; both are nil when the sweep is not running (search
+	// disabled, this is a replica, or the interval is non-positive).
+	reconcileInterval  time.Duration
+	reconcileBatchSize int
+	stopReconcile      chan struct{}
+	reconcileStopped   chan struct{}
+
 	// objects is the optional S3 object store backing the Export/Import RPCs; nil (s3.bucket not
 	// configured) makes both fail with FAILED_PRECONDITION.
 	objects archive.ObjectStore
@@ -213,17 +224,48 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Se
 
 	s.autoSleep(reset, period)
 
+	s.startReconcile(searchIndex)
+
 	return s
 }
 
-// Stop shuts the autoSleep goroutine down and waits for it to exit. Because the loop only re-enters
-// its select between cycles, that wait also drains any sleep cycle already in flight (started by
-// the timer or the WAL trigger just before shutdown), so nothing is mid-consolidation when the
-// caller closes the database next. Safe to call more than once, and a no-op when the server was
-// built without New (autoSleep never started). Call it after the gRPC server's GracefulStop (which
-// drains RPC-initiated cycles) and before closing the database.
+// startReconcile launches the periodic search-index reconciliation sweep when it is warranted: a
+// real search index is configured, this is the single consolidating instance (so replicas do not
+// duplicate the sweep, and there is exactly one owner of index maintenance), and a positive
+// opensearch.reconcileIntervalSeconds is set. Otherwise it is a no-op and Stop has nothing extra to
+// drain. See reconcile.go.
+func (s *Server) startReconcile(searchIndex search.Index) {
+	s.reconcileInterval = time.Duration(viper.GetInt("opensearch.reconcileIntervalSeconds")) * time.Second
+	s.reconcileBatchSize = viper.GetInt("opensearch.reconcileBatchSize")
+
+	if s.reconcileBatchSize <= 0 {
+		s.reconcileBatchSize = defaultReconcileBatchSize
+	}
+
+	if !s.consolidationEnabled || s.reconcileInterval <= 0 || searchIndex == nil || !searchIndex.Enabled() {
+		return
+	}
+
+	s.stopReconcile = make(chan struct{})
+	s.reconcileStopped = make(chan struct{})
+
+	go s.reconcileLoop()
+}
+
+// Stop shuts the autoSleep goroutine (and the search-index reconciliation sweep, when running)
+// down and waits for them to exit. Because the sleep loop only re-enters its select between cycles,
+// that wait also drains any sleep cycle already in flight (started by the timer or the WAL trigger
+// just before shutdown), so nothing is mid-consolidation when the caller closes the database next.
+// Safe to call more than once, and a no-op when the server was built without New (autoSleep never
+// started). Call it after the gRPC server's GracefulStop (which drains RPC-initiated cycles) and
+// before closing the database.
 func (s *Server) Stop() {
 	s.stopOnce.Do(func() {
+		if s.stopReconcile != nil {
+			close(s.stopReconcile)
+			<-s.reconcileStopped
+		}
+
 		if s.stopSleep == nil {
 			return
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -19,6 +20,18 @@ import (
 // applyTimeout bounds each operation the worker applies against the cluster, so one hung request
 // cannot stall the queue indefinitely.
 const applyTimeout = 10 * time.Second
+
+// applyMaxAttempts caps how many times the worker tries one operation against the cluster before
+// giving up. Every operation is idempotent (documents are keyed by memory id, deletes and the
+// event rewrites converge), so a transient failure - a brief network blip, a node restart, a
+// rolling upgrade - is safe to retry, and a few spaced attempts turn most would-be drops into
+// eventual successes. A persistently failing operation is still healed later by the periodic
+// reconciliation sweep and by --backfill-search.
+const applyMaxAttempts = 4
+
+// applyRetryBaseBackoff is the wait before the second attempt; it doubles (with jitter) each
+// further attempt so a struggling cluster is not hammered. A var so tests can shorten it.
+var applyRetryBaseBackoff = 250 * time.Millisecond
 
 // closeDrainTimeout bounds how long Close waits for the worker to drain the queue at shutdown.
 const closeDrainTimeout = 5 * time.Second
@@ -242,24 +255,58 @@ func (o *OpenSearch) worker() {
 	}
 }
 
-// applyWithRetry makes sure the index exists before applying an operation; failures are logged
-// and the operation abandoned (best-effort by design).
+// applyWithRetry applies one operation, retrying a transient failure up to applyMaxAttempts times
+// with a jittered exponential backoff before giving up. Only when every attempt fails is the
+// operation dropped (logged and counted), rather than on the first hiccup as before - so a brief
+// cluster blip no longer silently loses a write. A drop is still recoverable: the reconciliation
+// sweep and --backfill-search re-index whatever was missed. The backoff waits abort as soon as the
+// index is closing so shutdown is not delayed.
 func (o *OpenSearch) applyWithRetry(v op) {
+	var err error
+
+RETRY:
+	for attempt := range applyMaxAttempts {
+		err = o.applyOnce(v)
+		if err == nil {
+			return
+		}
+
+		if attempt == applyMaxAttempts-1 {
+			break RETRY
+		}
+
+		backoff := applyRetryBaseBackoff*time.Duration(1<<attempt) + time.Duration(rand.Int63n(int64(applyRetryBaseBackoff)))
+
+		select {
+
+		case <-o.stop:
+			// Draining at shutdown: do not sleep out the backoff. Give up on this attempt now; the
+			// reconcile sweep or --backfill-search heals anything left behind.
+			break RETRY
+
+		case <-time.After(backoff):
+
+		}
+	}
+
+	log.Warnf("dropping opensearch %s operation after %d attempts: %s", v.kind, applyMaxAttempts, err.Error())
+	tel.dropped.Add(context.Background(), 1, metric.WithAttributes(attribute.String("op", v.kind.String())))
+}
+
+// applyOnce runs a single attempt at one operation: it makes sure the index exists, then applies
+// the operation, each bounded by applyTimeout. It returns the error (nil on success) so
+// applyWithRetry can decide whether to retry.
+func (o *OpenSearch) applyOnce(v op) error {
 	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout)
 	defer cancel()
 
 	if !o.indexReady.Load() {
 		if err := o.ensureIndex(ctx); err != nil {
-			log.Warnf("opensearch index still not ready - dropping %s operation: %s", v.kind, err.Error())
-			tel.dropped.Add(ctx, 1, metric.WithAttributes(attribute.String("op", v.kind.String())))
-
-			return
+			return fmt.Errorf("index not ready: %w", err)
 		}
 	}
 
-	if err := o.apply(ctx, v); err != nil {
-		log.Warnf("failed to apply opensearch %s operation: %s", v.kind, err.Error())
-	}
+	return o.apply(ctx, v)
 }
 
 // apply executes one operation synchronously. The integration tests call it directly so their

@@ -405,7 +405,9 @@ optionally restricted to one event and/or one `group` label.
     "username": "",
     "password": "",
     "index": "hippocampus-memories",
-    "queueSize": 1024
+    "queueSize": 1024,
+    "reconcileIntervalSeconds": 3600,
+    "reconcileBatchSize": 500
 }
 ```
 
@@ -420,8 +422,11 @@ for every existence, consolidation, and recall decision:
 
 - Writes and deletes (including the sleep cycle's consolidation and eviction, purges, event
   merges, and summarization) propagate to the index asynchronously and best-effort: an
-  unreachable or lagging cluster never fails or slows a primary operation. A full propagation
-  queue (`opensearch.queueSize`) drops operations with a warning rather than blocking.
+  unreachable or lagging cluster never fails or slows a primary operation. The worker retries a
+  transient cluster failure a few times with backoff before giving up, so a brief blip does not
+  lose a write. A full propagation queue (`opensearch.queueSize`) still drops operations with a
+  warning rather than blocking — but see [Self-healing](#self-healing-reconciliation) below, which
+  recovers anything dropped.
 - Search results are always re-read from the primary store; ids the index returns that the
   primary no longer holds are silently dropped. A stale index can therefore miss recent writes
   (indexing is asynchronous on top of OpenSearch's ~1s near-real-time refresh) or carry leftover
@@ -440,11 +445,33 @@ Try it with `docker compose -f docker/docker-compose.opensearch.yaml up --build`
 demo only). Integration tests run against any disposable cluster via
 `HIPPOCAMPUS_TEST_OPENSEARCH_URL=http://localhost:9200 go test ./search`.
 
+#### Self-healing reconciliation
+
+Because propagation is asynchronous, a document can still go missing — an operation dropped under
+queue overflow, lost to a crash before the worker drained, or missed while the cluster was
+unreachable long enough to exhaust the worker's retries. Rather than leave that gap open until an
+operator runs a manual backfill, the **consolidating instance** runs a periodic reconciliation
+sweep that re-indexes every non-binary memory from the primary store, keyed by id (idempotent, so
+it only ever *adds back* what was missing). It is controlled by two keys:
+
+- `opensearch.reconcileIntervalSeconds` (default `3600`) — how often a sweep runs; the interval is
+  measured from the end of one sweep to the start of the next. `0` (or negative) disables it.
+- `opensearch.reconcileBatchSize` (default `500`) — how many memories each page reads; the sweep
+  pauses briefly between pages so it trickles into the async index queue rather than flooding it.
+
+The sweep runs only on the instance with `consolidation.enabled: true` (the single owner of index
+maintenance), so replicas never duplicate it, and it starts a short while after launch so a sparse
+index is healed soon after a restart rather than a whole interval later. It heals only *missing*
+documents: a stale document (one the primary store no longer holds) is already harmless — search
+results are re-verified against the primary store — and removing stale documents needs a full
+enumeration of the index, which remains the job of `--backfill-search --reindex` below.
+
 #### Backfill and reindex
 
-Because propagation is best-effort, a dropped operation, a cluster outage, or enabling
-`opensearch.enabled` on an existing database leaves the index missing documents until the
-affected memories happen to be re-stored. The backfill CLI mode closes that gap:
+The reconciliation sweep above heals a missing document on its own, but two cases still want an
+immediate, synchronous rebuild: enabling `opensearch.enabled` on an existing database (the whole
+index is empty and you do not want to wait for a sweep), and clearing *stale* documents the sweep
+deliberately leaves behind. The backfill CLI mode covers both:
 
 ```sh
 hippocampus --backfill-search -c config.json            # index every non-binary memory

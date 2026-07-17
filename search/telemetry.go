@@ -26,7 +26,7 @@ func newTelemetry() *telemetry {
 	return &telemetry{
 		indexed: newInt64Counter(meter, "hippocampus.search.indexed", "Number of memory documents written to the search index."),
 		deleted: newInt64Counter(meter, "hippocampus.search.deleted", "Number of delete operations applied to the search index."),
-		dropped: newInt64Counter(meter, "hippocampus.search.dropped", "Number of index operations dropped because the queue was full."),
+		dropped: newInt64Counter(meter, "hippocampus.search.dropped", "Number of index operations dropped (queue full, or all apply attempts failed)."),
 		queries: newInt64Counter(meter, "hippocampus.search.queries", "Number of content-search queries served."),
 	}
 }

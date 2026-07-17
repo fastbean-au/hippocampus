@@ -169,9 +169,15 @@ warning says so).
   a managed client directory — use `idp` and let an identity provider own it. See
   [Security](docs/operations.md#security).
 
-- **Content search is best-effort.** The optional OpenSearch index (`opensearch.enabled`) is a
-  strictly secondary index: mutations propagate to it asynchronously through a bounded queue that
-  drops operations under overflow rather than blocking, so it can go sparse or briefly stale.
-  `SearchMemories` re-reads hits from the primary store, so results stay correct, but recall can be
-  incomplete; rebuild the index with `--backfill-search` (`--reindex` to clear stale documents).
-  See [Content search](docs/configuration.md#content-search-opensearch).
+- **Content search is eventually consistent, and self-healing.** The optional OpenSearch index
+  (`opensearch.enabled`) is a strictly secondary index: mutations propagate to it asynchronously so
+  the write path never blocks on the cluster, which means the index can briefly lag or, under
+  sustained overflow, go sparse. `SearchMemories` re-reads every hit from the primary store, so
+  results are always correct — but a missing document means a recent write may not be *found* until
+  the index catches up. Two mechanisms keep it converging on its own: the write path retries
+  transient cluster failures before dropping an operation, and the consolidating instance runs a
+  periodic reconciliation sweep (`opensearch.reconcileIntervalSeconds`, on by default) that
+  re-indexes the store and heals any document a dropped, crashed, or timed-out operation missed. An
+  on-demand full rebuild that also clears stale documents remains available via
+  `--backfill-search` (`--reindex`). See
+  [Content search](docs/configuration.md#content-search-opensearch).

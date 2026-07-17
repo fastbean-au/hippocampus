@@ -96,6 +96,12 @@ type fakeTransport struct {
 
 	// status is the HTTP status returned; 0 means 200.
 	status int
+
+	// failDocWrites, when > 0, makes the first N document-write (PUT /_doc/...) requests fail with a
+	// simulated network error, so the worker's retry path can be exercised. docAttempts counts every
+	// document write seen, including the failed ones.
+	failDocWrites int
+	docAttempts   int
 }
 
 type recordedRequest struct {
@@ -117,7 +123,18 @@ func (f *fakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	f.mu.Lock()
 	f.requests = append(f.requests, recordedRequest{method: req.Method, path: req.URL.Path, body: body})
+
+	isDocWrite := req.Method == http.MethodPut && strings.Contains(req.URL.Path, "/_doc/")
+	if isDocWrite {
+		f.docAttempts++
+	}
+
+	fail := isDocWrite && f.docAttempts <= f.failDocWrites
 	f.mu.Unlock()
+
+	if fail {
+		return nil, fmt.Errorf("simulated cluster failure")
+	}
 
 	status := f.status
 	if status == 0 {
@@ -264,6 +281,70 @@ func TestOpenSearch_OverflowDropsWithoutBlocking(t *testing.T) {
 
 	if docs > 3 {
 		t.Errorf("expected at most 3 index writes to survive the overflow, got %d", docs)
+	}
+}
+
+// countDocWrites returns how many document-write requests (PUT /_doc/...) the transport saw.
+func countDocWrites(transport *fakeTransport) int {
+	n := 0
+
+	for _, r := range transport.recorded() {
+		if r.method == http.MethodPut && strings.Contains(r.path, "/_doc/") {
+			n++
+		}
+	}
+
+	return n
+}
+
+// TestOpenSearch_RetriesTransientFailure verifies the worker retries a transient cluster failure
+// instead of dropping the operation on the first error (the old behaviour, which lost the write).
+// The transport fails the first two document writes, so the operation must land on the third
+// attempt - proving it retried past the failures and then stopped once it succeeded.
+func TestOpenSearch_RetriesTransientFailure(t *testing.T) {
+	restore := applyRetryBaseBackoff
+	applyRetryBaseBackoff = time.Millisecond
+	t.Cleanup(func() { applyRetryBaseBackoff = restore })
+
+	transport := &fakeTransport{failDocWrites: 2}
+	idx := newTestOpenSearch(t, transport, 16)
+
+	idx.IndexMemory(Doc{Id: "m1", Body: "hello"})
+
+	// Two failed attempts + one success = exactly three document writes.
+	waitFor(t, "the write to succeed after retries", func() bool { return countDocWrites(transport) == 3 })
+
+	if err := idx.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	// It must not keep trying after the success.
+	if got := countDocWrites(transport); got != 3 {
+		t.Errorf("expected exactly 3 document writes (2 failed, 1 succeeded), got %d", got)
+	}
+}
+
+// TestOpenSearch_DropsAfterExhaustingRetries verifies the retry loop is bounded: a persistently
+// failing operation is attempted applyMaxAttempts times and then dropped, rather than retried
+// forever. A dropped operation is still recoverable via the reconciliation sweep and backfill.
+func TestOpenSearch_DropsAfterExhaustingRetries(t *testing.T) {
+	restore := applyRetryBaseBackoff
+	applyRetryBaseBackoff = time.Millisecond
+	t.Cleanup(func() { applyRetryBaseBackoff = restore })
+
+	transport := &fakeTransport{failDocWrites: 1000}
+	idx := newTestOpenSearch(t, transport, 16)
+
+	idx.IndexMemory(Doc{Id: "m1", Body: "hello"})
+
+	waitFor(t, "the worker to exhaust its retries", func() bool { return countDocWrites(transport) == applyMaxAttempts })
+
+	if err := idx.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	if got := countDocWrites(transport); got != applyMaxAttempts {
+		t.Errorf("expected exactly %d attempts before dropping, got %d", applyMaxAttempts, got)
 	}
 }
 

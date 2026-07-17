@@ -45,7 +45,9 @@
         "username": "",
         "password": "",
         "index": "hippocampus-memories",
-        "queueSize": 1024
+        "queueSize": 1024,
+        "reconcileIntervalSeconds": 3600,
+        "reconcileBatchSize": 500
     },
     "memory": {
         "limit": {
