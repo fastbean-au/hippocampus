@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -260,6 +261,57 @@ func (r *recordingStore) snapshot() (int, time.Time) {
 	defer r.mu.Unlock()
 
 	return r.calls, r.lastCall
+}
+
+// WALBytes is overridden to a fixed small value so checkWALTrigger is deterministic in tests: with
+// a high walTriggerBytes it never triggers a WAL-driven cycle, isolating the timed cycle.
+func (r *recordingStore) WALBytes() (int64, error) {
+	return 0, nil
+}
+
+// TestAutoSleep_TimedCycleFiresWithWALTriggerEnabled is a regression test: enabling
+// consolidation.walTriggerBytes must not disable the timed sleep cycle. autoSleep used to recreate
+// the period timer (time.After) on every loop iteration, so the walCheck ticker - firing every
+// walCheckInterval, more often than the period - restarted the countdown before it could elapse and
+// the timed cycle never fired. Here walTriggerBytes is so high the WAL never triggers a cycle, so
+// the only way CountMemories runs is the timer firing.
+func TestAutoSleep_TimedCycleFiresWithWALTriggerEnabled(t *testing.T) {
+	// Poll the WAL far more often than the sleep period, the condition that exposed the bug.
+	orig := walCheckInterval
+	walCheckInterval = 5 * time.Millisecond
+	t.Cleanup(func() { walCheckInterval = orig })
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	rec := &recordingStore{Store: database}
+
+	s := &Server{
+		db:           rec,
+		sleepReset:   make(chan bool, 1),
+		stopSleep:    make(chan struct{}),
+		sleepStopped: make(chan struct{}),
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			deletionThreshold: 1.0,
+			walTriggerBytes:   math.MaxInt64,
+		},
+	}
+
+	s.autoSleep(s.sleepReset, 40*time.Millisecond)
+	t.Cleanup(s.Stop)
+
+	// Several periods elapse; with the bug the 5 ms WAL poll keeps restarting the 40 ms timer.
+	time.Sleep(300 * time.Millisecond)
+
+	if calls, _ := rec.snapshot(); calls == 0 {
+		t.Fatal("no timed sleep cycle ran with walTriggerBytes enabled: the WAL poll starved the period timer")
+	}
 }
 
 // TestStop_HaltsSleepBeforeClose is a regression test: Stop must halt the autoSleep

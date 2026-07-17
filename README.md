@@ -21,8 +21,8 @@
 
 Reference and guides live under [`docs/`](docs/): [Getting started](docs/getting-started.md),
 [Configurability](docs/configuration.md), [Memory consolidation](docs/consolidation.md),
-[Operations & deployment](docs/operations.md), [Use cases](docs/use-cases.md), and
-[Demonstrations](docs/demonstrations.md).
+[Operations & deployment](docs/operations.md), [Performance under high throughput](docs/performance.md),
+[Use cases](docs/use-cases.md), and [Demonstrations](docs/demonstrations.md).
 
 ## Overview
 
@@ -63,6 +63,9 @@ The full documentation lives under [`docs/`](docs/):
   optional read/write replicas) and its lock keepalive,
   choosing and sizing a storage driver (including MySQL InnoDB buffer-pool tuning), capacity tuning,
   backup/restore/migration, graceful shutdown, observability, and security.
+- [Performance under high throughput](docs/performance.md) — a stepped write-throughput sweep across
+  all three storage backends: where each saturates, whether reaping keeps the store bounded, and how
+  the population's significance distribution shifts through sleep cycles.
 - [Use cases & deployment modes](docs/use-cases.md) — embedded/edge vs. centralised topologies and
   the embedded→centralised transfer pattern.
 - [Demonstrations](docs/demonstrations.md) — worked examples loading real-shaped data (a Dickens

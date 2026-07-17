@@ -30,8 +30,9 @@ const sleepSingleflightKey = "sleep"
 
 // walCheckInterval is how often autoSleep polls the on-disk WAL size when
 // consolidation.walTriggerBytes is configured. It reads the filesystem directly rather than the
-// database, so polling it far more often than sleep.periodSeconds costs nothing.
-const walCheckInterval = 5 * time.Second
+// database, so polling it far more often than sleep.periodSeconds costs nothing. A var (not const)
+// so tests can shorten it.
+var walCheckInterval = 5 * time.Second
 
 type Consolidation struct {
 	defaultEventSignificanceValue      int32
@@ -234,11 +235,43 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 			walCheck = ticker.C
 		}
 
+		// The timed cycle uses a single long-lived timer, reset after each fire, not a fresh
+		// time.After per loop iteration. Recreating it every iteration meant the walCheck ticker -
+		// firing every walCheckInterval, more often than the period - restarted the countdown before
+		// it could elapse, so with walTriggerBytes enabled the timed cycle never fired. A
+		// non-positive period leaves sleepCh nil (timed sleep disabled), blocking that case forever.
+		var sleepCh <-chan time.Time
+		var timer *time.Timer
+
+		if period > 0 {
+			timer = time.NewTimer(period)
+			defer timer.Stop()
+
+			sleepCh = timer.C
+		}
+
+		resetTimer := func() {
+			if timer == nil {
+				return
+			}
+
+			if !timer.Stop() {
+				select {
+
+				case <-timer.C:
+
+				default:
+				}
+			}
+
+			timer.Reset(period)
+		}
+
 		for {
 
 			// Priority check: if Stop signalled shutdown while the previous cycle was running, exit
-			// before starting another one, even when the timer is also ready (a tiny period makes a
-			// fresh sleepTimer fire immediately, so the main select alone could keep looping).
+			// before starting another one, even when the timer is also ready (a tiny period makes the
+			// timer fire immediately, so the main select alone could keep looping).
 			select {
 
 			case <-s.stopSleep:
@@ -253,10 +286,13 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 				return
 
 			case <-reset:
+				resetTimer()
+
 				continue
 
-			case <-sleepTimer(period):
+			case <-sleepCh:
 				_ = s.sleepOnce()
+				resetTimer()
 
 			case <-walCheck:
 				s.checkWALTrigger()

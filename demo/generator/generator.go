@@ -24,14 +24,28 @@ type Config struct {
 	LooseWorkers   int
 	QueryWorkers   int
 	MutatorWorkers int
+
+	// TargetBytesPerSec, when > 0, caps the aggregate accepted write throughput to this byte rate
+	// via the byte limiter; writers also drop their idle sleeps so the limiter is the only pacing.
+	TargetBytesPerSec int64
+
+	// BodyBytes, when > 0, overrides the mixed body-size distribution with a body of roughly this
+	// size (jittered ±50%). Larger bodies let a byte-throughput target be met at a sane RPC rate,
+	// isolating storage byte throughput from per-RPC overhead in the sweep.
+	BodyBytes int
+
+	// SampleInterval, when > 0, enables the population sampler that periodically records the shape
+	// of the store (event/memory counts and the memory significance distribution).
+	SampleInterval time.Duration
 }
 
 type Generator struct {
-	cfg    Config
-	client contract.HippocampusClient
-	reg    *registry
-	budget *budget
-	lat    *latencyTracker
+	cfg     Config
+	client  contract.HippocampusClient
+	reg     *registry
+	budget  *budget
+	lat     *latencyTracker
+	limiter *byteLimiter
 
 	eventsStored   atomic.Int64
 	memoriesStored atomic.Int64
@@ -42,11 +56,12 @@ type Generator struct {
 
 func New(cfg Config, client contract.HippocampusClient, lat *latencyTracker) *Generator {
 	return &Generator{
-		cfg:    cfg,
-		client: client,
-		reg:    newRegistry(4096, 32768),
-		budget: newBudget(cfg.MaxBytes),
-		lat:    lat,
+		cfg:     cfg,
+		client:  client,
+		reg:     newRegistry(4096, 32768),
+		budget:  newBudget(cfg.MaxBytes),
+		lat:     lat,
+		limiter: newByteLimiter(cfg.TargetBytesPerSec),
 	}
 }
 
@@ -68,6 +83,14 @@ func (g *Generator) Run(ctx context.Context) {
 		defer wg.Done()
 		g.logStats(ctx)
 	}()
+
+	if g.cfg.SampleInterval > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			g.sampleLoop(ctx)
+		}()
+	}
 
 	workerSets := []struct {
 		count  int
@@ -97,6 +120,19 @@ func (g *Generator) Run(ctx context.Context) {
 	wg.Wait()
 }
 
+// paceIdle sleeps for a jittered idle interval between units of work, returning false when the
+// context is cancelled. When a throughput target is set the byte limiter is the only pacing, so
+// writers must not add idle time on top of it; paceIdle then returns immediately (still honouring
+// cancellation) and the limiter alone governs the offered load.
+func (g *Generator) paceIdle(ctx context.Context, rng *rand.Rand, lo time.Duration, hi time.Duration) bool {
+	if g.limiter.enabled() {
+
+		return ctx.Err() == nil
+	}
+
+	return sleepFor(ctx, randomDuration(rng, lo, hi))
+}
+
 // burstyWorker idles, then creates an event and floods it with memories in a short burst.
 func (g *Generator) burstyWorker(ctx context.Context, n int) {
 	log.Tracef("burstyWorker() %d", n)
@@ -104,7 +140,7 @@ func (g *Generator) burstyWorker(ctx context.Context, n int) {
 	rng := rand.New(rand.NewSource(g.cfg.Seed + int64(n)*7919))
 
 	for ctx.Err() == nil {
-		if !sleepFor(ctx, randomDuration(rng, 5*time.Second, 45*time.Second)) {
+		if !g.paceIdle(ctx, rng, 5*time.Second, 45*time.Second) {
 			return
 		}
 
@@ -162,7 +198,7 @@ func (g *Generator) burst(ctx context.Context, rng *rand.Rand) {
 			EventId:      eventID,
 		})
 
-		if !sleepFor(ctx, randomDuration(rng, 5*time.Millisecond, 50*time.Millisecond)) {
+		if !g.paceIdle(ctx, rng, 5*time.Millisecond, 50*time.Millisecond) {
 			break
 		}
 	}
@@ -237,7 +273,7 @@ func (g *Generator) looseWorker(ctx context.Context, n int) {
 	rng := rand.New(rand.NewSource(g.cfg.Seed + int64(n)*1299709))
 
 	for ctx.Err() == nil {
-		if !sleepFor(ctx, randomDuration(rng, 1*time.Second, 10*time.Second)) {
+		if !g.paceIdle(ctx, rng, 1*time.Second, 10*time.Second) {
 			return
 		}
 
@@ -343,6 +379,9 @@ func (g *Generator) storeMemory(ctx context.Context, rng *rand.Rand, memory *con
 	log.Trace("storeMemory()")
 
 	size := bodySize(rng)
+	if g.cfg.BodyBytes > 0 {
+		size = g.cfg.BodyBytes/2 + rng.Intn(g.cfg.BodyBytes)
+	}
 
 	if rng.Intn(20) == 0 {
 		memory.Body = randomBinary(rng, size)
@@ -350,6 +389,13 @@ func (g *Generator) storeMemory(ctx context.Context, rng *rand.Rand, memory *con
 	} else {
 		memory.Body = randomText(rng, size)
 		memory.IsBinary = contract.Bool_FALSE
+	}
+
+	// Pace against the throughput target (a no-op when unset). Charged on the same bytes counted in
+	// bytesStored so the achieved rate the sampler reports matches what the limiter admits.
+	if !g.limiter.wait(ctx, len(memory.Body)) {
+
+		return
 	}
 
 	res, err := g.client.StoreMemory(ctx, memory)

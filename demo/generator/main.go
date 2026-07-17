@@ -33,6 +33,9 @@ func main() {
 	pflag.Int("loose_workers", 2, "workers creating memories with no event")
 	pflag.Int("query_workers", 3, "workers querying and recalling")
 	pflag.Int("mutator_workers", 1, "workers updating, merging, and deleting")
+	pflag.Int64("target_bytes_per_sec", 0, "cap aggregate accepted write throughput to this byte rate; 0 disables the throttle")
+	pflag.Int("body_bytes", 0, "override the mixed body-size distribution with bodies of ~this many bytes (jittered ±50%); 0 uses the default mix")
+	pflag.Int("sample_interval_seconds", 0, "record the store's population shape this often; 0 disables the sampler")
 	pflag.Parse()
 
 	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
@@ -52,15 +55,18 @@ func main() {
 	log.Infof("random seed: %d", seed)
 
 	cfg := Config{
-		Address:        viper.GetString("address"),
-		DataDirectory:  viper.GetString("data_dir"),
-		MaxBytes:       viper.GetInt64("max_bytes"),
-		Seed:           seed,
-		BurstyWorkers:  viper.GetInt("bursty_workers"),
-		SlowWorkers:    viper.GetInt("slow_workers"),
-		LooseWorkers:   viper.GetInt("loose_workers"),
-		QueryWorkers:   viper.GetInt("query_workers"),
-		MutatorWorkers: viper.GetInt("mutator_workers"),
+		Address:           viper.GetString("address"),
+		DataDirectory:     viper.GetString("data_dir"),
+		MaxBytes:          viper.GetInt64("max_bytes"),
+		Seed:              seed,
+		BurstyWorkers:     viper.GetInt("bursty_workers"),
+		SlowWorkers:       viper.GetInt("slow_workers"),
+		LooseWorkers:      viper.GetInt("loose_workers"),
+		QueryWorkers:      viper.GetInt("query_workers"),
+		MutatorWorkers:    viper.GetInt("mutator_workers"),
+		TargetBytesPerSec: viper.GetInt64("target_bytes_per_sec"),
+		BodyBytes:         viper.GetInt("body_bytes"),
+		SampleInterval:    time.Duration(viper.GetInt("sample_interval_seconds")) * time.Second,
 	}
 
 	// Every RPC is timed at the client so the statistics include per-class latency percentiles.
