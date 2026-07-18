@@ -26,17 +26,17 @@ Reference and guides live under [`docs/`](docs/): [Getting started](docs/getting
 
 ## Overview
 
-Hippocampus is an information or memory storage system that works with finite storage to retain the most significant information based on the memories' significance, age, how often they are recalled, and how they relate to other memories. It tries to help you keep the *right* information without the overheads of needing to constantly decide what to cull when space runs short.
+Hippocampus is an information or memory storage system that works with finite storage to retain the most significant information based on the memories' significance, age, how often they are recalled, and how they relate to other memories. It tries to help you keep the _right_ information without the overheads of needing to constantly decide what to cull when space runs short.
 
-This service attempts to *somewhat* emulate the workings of human memory, which is to say that the memory is finite, and over time details are lost except for more significant events (or, conversely, the more significant the event the more details will be retained); it does eschew the unreliable in terms of the inaccurate or more fallible nature of human memory. Sleep is used to preserve and consolidate memories. Recalling a memory reinforces it, making it harder to forget. Sleep can also surface events whose memories have piled up and gone quiet as candidates for summarization (see [Summarization](docs/consolidation.md#summarization)) — condensing many memories into one that carries the gist, echoing how human memory consolidates repeated or detailed episodic experience into a single semantic memory.
+This service attempts to _somewhat_ emulate the workings of human memory, which is to say that the memory is finite, and over time details are lost except for more significant events (or, conversely, the more significant the event the more details will be retained); it does eschew the unreliable in terms of the inaccurate or more fallible nature of human memory. Sleep is used to preserve and consolidate memories. Recalling a memory reinforces it, making it harder to forget. Sleep can also surface events whose memories have piled up and gone quiet as candidates for summarization (see [Summarization](docs/consolidation.md#summarization)) — condensing many memories into one that carries the gist, echoing how human memory consolidates repeated or detailed episodic experience into a single semantic memory.
 
 Memories may be associated with events and each memory and event has significance. Memories that are not associated with events may have a lower significance than those that are associated with an event even when those memories themselves have the same significance.
 
-Significance is a single visible integer, but it can be set *relative* to existing values rather than absolutely: a write may carry a `placement` (`ABOVE`/`BELOW`/`BETWEEN` an anchor significance or an existing item's id) so a new item ranks between two adjacent values, and the service opens a gap for it. Significance may also be left unset (`0` = unranked) and assigned later via `UpdateMemory`/`UpdateEventSignificance`. Because inserting between neighbours renumbers, an item's absolute significance is a relative rank that can drift as others are inserted around it.
+Significance is a single visible integer, but it can be set _relative_ to existing values rather than absolutely: a write may carry a `placement` (`ABOVE`/`BELOW`/`BETWEEN` an anchor significance or an existing item's id) so a new item ranks between two adjacent values, and the service opens a gap for it. Significance may also be left unset (`0` = unranked) and assigned later via `UpdateMemory`/`UpdateEventSignificance`. Because inserting between neighbours renumbers, an item's absolute significance is a relative rank that can drift as others are inserted around it.
 
 Events and memories can also carry an optional freeform `group` label (up to 128 characters — a system, subsystem, org unit, owner, whatever fits the deployment). It gives related events and memories shared context beyond event membership, and `GetEvents`, `GetMemories`, and `SearchMemories` accept a `group` to restrict results to one grouping. The label plays no part in consolidation, decay, or capacity decisions.
 
-While the intention is to limit storage over the long-term, growth between sleep cycles is unbounded: a configurable capacity applies increasing pressure on the deletion threshold as the store fills, and an optional byte-based capacity target (see [Capacity target](docs/consolidation.md#capacity-target)) evicts the least valuable memories each sleep cycle to bound the store's size. Data is stored in an embedded SQLite database in WAL mode, so every acknowledged write is durable immediately; the sleep process compacts the database, returning the space freed by consolidation to the filesystem.
+While the intention is to limit storage over the long-term, growth between sleep cycles is unbounded: a configurable capacity applies increasing pressure on the deletion threshold as the store fills, and an optional byte-based capacity target (see [Capacity target](docs/consolidation.md#capacity-target)) evicts the least valuable memories each sleep cycle to bound the store's size. Pulling the other way, an optional [minimum retention](docs/consolidation.md#minimum-retention) floor (`consolidation.minimumRetentionInDays`) keeps recent data for a fixed window regardless of significance — protecting it from both consolidation and eviction, overriding the capacity target — for compliance or audit needs. Data is stored in an embedded SQLite database in WAL mode, so every acknowledged write is durable immediately; the sleep process compacts the database, returning the space freed by consolidation to the filesystem.
 
 ## Use case
 
@@ -137,7 +137,7 @@ database can be shared by several instances that split the work by role:
   the single-consolidator lock and runs every sleep cycle (consolidation, eviction, summarization).
   Only one such instance may run against a given database; a second refuses to start, as before.
 - **Any number of read/write replicas.** Started with `consolidation.enabled: false`, each opens the
-  shared database *without* the lock and serves the full RPC/HTTP surface — create, recall, query,
+  shared database _without_ the lock and serves the full RPC/HTTP surface — create, recall, query,
   search, import — but never runs a sleep cycle, and rejects the manual `Sleep` RPC with
   `FailedPrecondition`. Because forgetting is driven solely by the one consolidating instance, the
   replicas cannot race it or each other over the global decay/eviction state.
@@ -175,7 +175,7 @@ warning says so).
   (`opensearch.enabled`) is a strictly secondary index: mutations propagate to it asynchronously so
   the write path never blocks on the cluster, which means the index can briefly lag or, under
   sustained overflow, go sparse. `SearchMemories` re-reads every hit from the primary store, so
-  results are always correct — but a missing document means a recent write may not be *found* until
+  results are always correct — but a missing document means a recent write may not be _found_ until
   the index catches up. Two mechanisms keep it converging on its own: the write path retries
   transient cluster failures before dropping an operation, and the consolidating instance runs a
   periodic reconciliation sweep (`opensearch.reconcileIntervalSeconds`, on by default) that

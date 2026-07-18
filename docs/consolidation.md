@@ -51,33 +51,33 @@ $$ S = Significance_e + Significance_m + w \cdot Significance_r + w_c \cdot c $$
 
 $$ threshold \gt { S \over age ^ a } $$ (1)
 
-| Threshold | Significance | Aggressiveness | Lifetime |
-| ----------| ------------ | -------------- | -------- |
+| Threshold | Significance | Aggressiveness | Lifetime                                  |
+| --------- | ------------ | -------------- | ----------------------------------------- |
 | 1,000     | 1,000,000    | 0.1            | 1,000,000,000,000,000,000,000,000,000,000 |
-| 1,000     | 100,000      | 0.1            | 100,000,000,000,000,000,000 |
-| 1,000     | 1,000,000    | 0.2            | 1,000,000,000,000,000 |
-| 1,000     | 100,000      | 0.2            | 10,000,000,000 |
-| 1,000     | 1,000,000    | 0.5            | 1,000,000 |
-| 1,000     | 100,000      | 0.5            | 10,000  |
-| 1,000     | 1,000        | 1.0            | 1,000   |
-| 1,000     | 2,000        | 1.0            | 1       |
-| 1,000     | 5,000        | 1.0            | 5       |
-| 1,000     | 10,000       | 1.0            | 10      |
-| 1,000     | 20,000       | 1.0            | 20      |
-| 1,000     | 50,000       | 1.0            | 50      |
-| 1,000     | 100,000      | 1.0            | 100     |
-| 1,000     | 1,000,000    | 1.0            | 1,000   |
-| 1,000     | 100,000      | 1.2            | 47      |
-| 1,000     | 1,000,000    | 1.2            | 317     |
-| 1,000     | 100,000      | 1.5            | 22      |
-| 1,000     | 1,000,000    | 1.5            | 100     |
-| 1,000     | 100,000      | 2.0            | 10      |
-| 1,000     | 1,000,000    | 2.0            | 32      |
+| 1,000     | 100,000      | 0.1            | 100,000,000,000,000,000,000               |
+| 1,000     | 1,000,000    | 0.2            | 1,000,000,000,000,000                     |
+| 1,000     | 100,000      | 0.2            | 10,000,000,000                            |
+| 1,000     | 1,000,000    | 0.5            | 1,000,000                                 |
+| 1,000     | 100,000      | 0.5            | 10,000                                    |
+| 1,000     | 1,000        | 1.0            | 1,000                                     |
+| 1,000     | 2,000        | 1.0            | 1                                         |
+| 1,000     | 5,000        | 1.0            | 5                                         |
+| 1,000     | 10,000       | 1.0            | 10                                        |
+| 1,000     | 20,000       | 1.0            | 20                                        |
+| 1,000     | 50,000       | 1.0            | 50                                        |
+| 1,000     | 100,000      | 1.0            | 100                                       |
+| 1,000     | 1,000,000    | 1.0            | 1,000                                     |
+| 1,000     | 100,000      | 1.2            | 47                                        |
+| 1,000     | 1,000,000    | 1.2            | 317                                       |
+| 1,000     | 100,000      | 1.5            | 22                                        |
+| 1,000     | 1,000,000    | 1.5            | 100                                       |
+| 1,000     | 100,000      | 2.0            | 10                                        |
+| 1,000     | 1,000,000    | 2.0            | 32                                        |
 
 $$ threshold \gt { S \over \left( age * e ^ a \right) } $$ (2)
 
 | Threshold | Significance | Aggressiveness | Lifetime |
-| ----------| ------------ | -------------- | -------- |
+| --------- | ------------ | -------------- | -------- |
 | 1,000     | 1,000,000    | 0.1            | 905      |
 | 1,000     | 100,000      | 0.1            | 91       |
 | 1,000     | 1,000,000    | 0.2            | 819      |
@@ -102,7 +102,7 @@ $$ threshold \gt { S \over \left( age * e ^ a \right) } $$ (2)
 $$ threshold \gt { S \over age * \left( 1 + \log a \right) } $$ (3)
 
 | Threshold | Significance | Aggressiveness | Lifetime |
-| ----------| ------------ | -------------- | -------- |
+| --------- | ------------ | -------------- | -------- |
 | 1,000     | 1,000,000    | 0.1            | 0        |
 | 1,000     | 100,000      | 0.1            | 0        |
 | 1,000     | 1,000,000    | 0.2            | 0        |
@@ -127,12 +127,12 @@ $$ threshold \gt { S \over age * \left( 1 + \log a \right) } $$ (3)
 $$ threshold \gt { S \over e ^ {age \cdot a} } $$ (4)
 
 Unlike methods 2 and 3, which are linear in age despite their names suggesting otherwise, method
-4 is genuinely exponential: a constant *relative* decay rate, so the value halves every
+4 is genuinely exponential: a constant _relative_ decay rate, so the value halves every
 $ \ln(2) / a $ age units regardless of how old the memory already is. It is the curve most
 recency-scoring systems mean by "decay."
 
 | Threshold | Significance | Aggressiveness | Lifetime |
-| ----------| ------------ | -------------- | -------- |
+| --------- | ------------ | -------------- | -------- |
 | 1,000     | 1,000,000    | 0.1            | 69       |
 | 1,000     | 100,000      | 0.1            | 46       |
 | 1,000     | 1,000,000    | 0.2            | 35       |
@@ -156,34 +156,34 @@ recency-scoring systems mean by "decay."
 
 $$ threshold \gt { S \over a \cdot \ln(age + e) } $$ (5)
 
-Method 5 forgets in proportion to the *logarithm* of age, so even very old memories retain a
+Method 5 forgets in proportion to the _logarithm_ of age, so even very old memories retain a
 sliver of value and lifetimes grow astronomically with significance — the long-tail archival
 option, for stores that want to keep almost everything except the least significant, oldest
 items. `age + e` (Euler's number) keeps the logarithm's argument, and so its value, always
 $ \geq 1 $ without needing to special-case `age = 0`.
 
-| Threshold | Significance | Aggressiveness | Lifetime |
-| ----------| ------------ | -------------- | -------- |
+| Threshold | Significance | Aggressiveness | Lifetime            |
+| --------- | ------------ | -------------- | ------------------- |
 | 1,000     | 1,000,000    | 0.1            | practically eternal |
 | 1,000     | 100,000      | 0.1            | practically eternal |
 | 1,000     | 1,000,000    | 0.2            | practically eternal |
-| 1,000     | 100,000      | 0.2            | 1.4 × 10^217 |
+| 1,000     | 100,000      | 0.2            | 1.4 × 10^217        |
 | 1,000     | 1,000,000    | 0.5            | practically eternal |
-| 1,000     | 100,000      | 0.5            | 7.2 × 10^86 |
-| 1,000     | 1,000        | 1.0            | 0        |
-| 1,000     | 2,000        | 1.0            | 5        |
-| 1,000     | 5,000        | 1.0            | 146      |
-| 1,000     | 10,000       | 1.0            | 22,024   |
-| 1,000     | 20,000       | 1.0            | 485,165,193 |
-| 1,000     | 50,000       | 1.0            | 5.2 × 10^21 |
-| 1,000     | 100,000      | 1.0            | 2.7 × 10^43 |
+| 1,000     | 100,000      | 0.5            | 7.2 × 10^86         |
+| 1,000     | 1,000        | 1.0            | 0                   |
+| 1,000     | 2,000        | 1.0            | 5                   |
+| 1,000     | 5,000        | 1.0            | 146                 |
+| 1,000     | 10,000       | 1.0            | 22,024              |
+| 1,000     | 20,000       | 1.0            | 485,165,193         |
+| 1,000     | 50,000       | 1.0            | 5.2 × 10^21         |
+| 1,000     | 100,000      | 1.0            | 2.7 × 10^43         |
 | 1,000     | 1,000,000    | 1.0            | practically eternal |
-| 1,000     | 100,000      | 1.2            | 1.6 × 10^36 |
+| 1,000     | 100,000      | 1.2            | 1.6 × 10^36         |
 | 1,000     | 1,000,000    | 1.2            | practically eternal |
-| 1,000     | 100,000      | 1.5            | 9.0 × 10^28 |
-| 1,000     | 1,000,000    | 1.5            | 3.4 × 10^289 |
-| 1,000     | 100,000      | 2.0            | 5.2 × 10^21 |
-| 1,000     | 1,000,000    | 2.0            | 1.4 × 10^217 |
+| 1,000     | 100,000      | 1.5            | 9.0 × 10^28         |
+| 1,000     | 1,000,000    | 1.5            | 3.4 × 10^289        |
+| 1,000     | 100,000      | 2.0            | 5.2 × 10^21         |
+| 1,000     | 1,000,000    | 2.0            | 1.4 × 10^217        |
 
 At `aggressiveness` and age scales this large the exact figure stops being meaningful; the table
 keeps them to make the shape of the curve — barely decaying at all across the range where the
@@ -202,7 +202,7 @@ memory that is fragile for a while (the "consolidation window") and, once past i
 durable — the closest of the six to the biological process the service's name refers to.
 
 | Threshold | Significance | Aggressiveness | Lifetime |
-| ----------| ------------ | -------------- | -------- |
+| --------- | ------------ | -------------- | -------- |
 | 1,000     | 1,000,000    | 0.1            | 0        |
 | 1,000     | 100,000      | 0.1            | 0        |
 | 1,000     | 1,000,000    | 0.2            | 0        |
@@ -249,7 +249,37 @@ Eviction uses the same value function as consolidation, so the least significant
 connected, and least recently recalled memories are forgotten first, and an event stripped of
 its last memory is deleted along with it. Unlike consolidation, eviction ignores
 `consolidation.minimumAgeInDays` — the bound must be achievable even when everything in the
-store is fresh.
+store is fresh. The one age-based protection eviction _does_ honour is the minimum retention
+floor below.
+
+## Minimum retention
+
+`consolidation.minimumRetentionInDays` (0, the default, disables it) is a hard floor that
+protects recent items from being reaped at all — by value-based consolidation _and_ by capacity
+eviction. Any memory or event whose age is less than this many days is never deleted by a sleep
+cycle, whatever its decayed value and however full the store is: **retention overrides the
+capacity target**. It is the guarantee to reach for when data must be kept for a fixed window
+regardless of significance (a compliance or audit requirement, say).
+
+This is a stronger, separate guarantee from `consolidation.minimumAgeInDays`. `minimumAgeInDays`
+only defers _value-based_ consolidation and is deliberately ignored by capacity eviction, so an
+item younger than it can still be evicted when the store is over its byte target.
+`minimumRetentionInDays` closes that gap: a retained memory is excluded from the eviction
+candidate pool entirely rather than merely ranked last, so eviction cannot touch it even if that
+leaves the store above `capacityBytes`. Setting `minimumRetentionInDays` at or above
+`minimumAgeInDays` makes the latter redundant.
+
+Age for retention is measured from the same decay timestamp everything else uses — a memory's
+creation time or its most recent recall, an event's start or end — so recalling a memory renews
+its retention window along with its decay clock. Because that timestamp is never earlier than
+creation, a retained item is always kept for at least `minimumRetentionInDays` after it was
+created. An event holding even one retained memory is itself kept alive: eviction still counts
+the retained memory toward the event's total, so the event is never seen as fully evicted and
+deleted out from under it.
+
+Retention is a floor, not a cap: it can hold the store above `capacityBytes` if enough recent,
+protected data accumulates. Size it against your write rate so the retained working set fits the
+capacity you have provisioned.
 
 ## Checkpoint-triggered eviction
 
@@ -295,4 +325,3 @@ Summarization runs between consolidation and eviction each sleep cycle: it surfa
 after decay-based consolidation has already cleared out the truly worthless memories, and before
 capacity pressure would otherwise force eviction to delete valuable-but-numerous memories from
 those events outright.
-

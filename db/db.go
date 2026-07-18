@@ -359,6 +359,11 @@ type Server interface {
 	// MemoryValue returns the memory's current decayed value, used by capacity eviction to rank
 	// memories from least to most valuable.
 	MemoryValue(MemoryConsolidationCandidate) float64
+
+	// MemoryRetained reports whether a memory is still within its minimum retention window, so
+	// capacity eviction must exclude it from the candidate pool even when the store is over its
+	// byte target — the retention floor overrides the capacity limit.
+	MemoryRetained(MemoryConsolidationCandidate) bool
 }
 
 // Store is the storage-backend contract hippocampus.Server and stats.Start depend on, satisfied

@@ -12,9 +12,10 @@ import (
 // decisionServer implements the Server interface with per-candidate decision functions, so tests
 // can consolidate selectively.
 type decisionServer struct {
-	memory func(MemoryConsolidationCandidate) bool
-	event  func(EventConsolidationCandidate) bool
-	value  func(MemoryConsolidationCandidate) float64
+	memory   func(MemoryConsolidationCandidate) bool
+	event    func(EventConsolidationCandidate) bool
+	value    func(MemoryConsolidationCandidate) float64
+	retained func(MemoryConsolidationCandidate) bool
 }
 
 func (s *decisionServer) ShouldConsolidateMemory(candidate MemoryConsolidationCandidate) bool {
@@ -39,6 +40,14 @@ func (s *decisionServer) MemoryValue(candidate MemoryConsolidationCandidate) flo
 	}
 
 	return s.value(candidate)
+}
+
+func (s *decisionServer) MemoryRetained(candidate MemoryConsolidationCandidate) bool {
+	if s.retained == nil {
+		return false
+	}
+
+	return s.retained(candidate)
 }
 
 // getMemory returns the memory with the given id, or nil if it does not exist.

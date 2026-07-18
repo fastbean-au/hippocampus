@@ -1306,15 +1306,27 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		candidate.MemorySignificance = rankOf(ranks, memoryLevelID)
 		candidate.EventSignificance = rankOf(ranks, eventLevelID)
 
-		c.value = s.MemoryValue(candidate)
-		c.timeRecalled = candidate.TimeRecalled
-		c.recallCount = candidate.RecallCount
-		evictionCandidates = append(evictionCandidates, c)
-
+		// Count every memory toward its event's total BEFORE the retention filter below. An event is
+		// deleted only once all of its memories have been evicted; a retained memory must keep its
+		// event alive, so it has to be counted here even though it will never be an eviction
+		// candidate - otherwise the event could be seen as fully evicted and deleted out from under
+		// the memory that survived, leaving it dangling.
 		if c.eventId != "" {
 			memoriesPerEvent[c.eventId]++
 			consolidatedEvents[c.eventId] = consolidated
 		}
+
+		// A memory still inside its minimum retention window is protected from eviction even when the
+		// store is over its byte target: the retention floor overrides the capacity limit, so leave
+		// it out of the candidate pool entirely rather than merely ranking it last.
+		if s.MemoryRetained(candidate) {
+			continue
+		}
+
+		c.value = s.MemoryValue(candidate)
+		c.timeRecalled = candidate.TimeRecalled
+		c.recallCount = candidate.RecallCount
+		evictionCandidates = append(evictionCandidates, c)
 	}
 
 	if err := rows.Err(); err != nil {

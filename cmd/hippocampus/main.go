@@ -786,6 +786,12 @@ func validateConfig() error {
 		return fmt.Errorf("consolidation.aggressiveness must be greater than 0, got %v", aggressiveness)
 	}
 
+	// A negative retention window is meaningless (0 disables the floor). Catch it at startup rather
+	// than let a mis-signed value silently disable the guarantee that overrides the capacity target.
+	if retention := viper.GetInt("consolidation.minimumRetentionInDays"); retention < 0 {
+		return fmt.Errorf("consolidation.minimumRetentionInDays must not be negative, got %d", retention)
+	}
+
 	// sleep.periodSeconds is deliberately not validated: a non-positive value disables automatic
 	// timed sleep cycles (a supported mode - e.g. an import-only instance, or one driven purely by
 	// the manual Sleep RPC or the WAL trigger). autoSleep treats it as "no timed sleep".

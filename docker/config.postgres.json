@@ -63,6 +63,7 @@
         "defaultEventSignificanceValue": 0,
         "defaultEventSignificancePercentile": 0,
         "minimumAgeInDays": 14,
+        "minimumRetentionInDays": 0,
         "aggressiveness": 1.0,
         "deletionThreshold": 10,
         "method": 1,

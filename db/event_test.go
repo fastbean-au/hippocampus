@@ -38,6 +38,10 @@ func (s *stubServer) MemoryValue(candidate MemoryConsolidationCandidate) float64
 	return 0
 }
 
+func (s *stubServer) MemoryRetained(candidate MemoryConsolidationCandidate) bool {
+	return false
+}
+
 // TestConsolidateEvents verifies that the bare-event pass deletes only events without memories:
 // an event with an associated memory must be left for the evented pass regardless of what the
 // decision function says.

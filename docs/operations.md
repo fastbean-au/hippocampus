@@ -134,6 +134,13 @@ next cycle. Options: shorten `sleep.periodSeconds`, or (SQLite only) set
 A non-positive `sleep.periodSeconds` disables timed cycles entirely — a supported mode for an
 import-only or manually-driven instance.
 
+If you set a [minimum retention](consolidation.md#minimum-retention) floor
+(`consolidation.minimumRetentionInDays`), note that it **overrides** `capacityBytes`: eviction will
+not delete data inside the retention window, so a retained working set larger than `capacityBytes`
+holds the store above the target by design. Size `capacityBytes` (and the physical disk/buffer-pool
+budget above) to fit `minimumRetentionInDays × peak write rate`, or the store can grow past the
+capacity target until retained data ages out.
+
 ## Backup, restore, and migration
 
 Two complementary approaches:

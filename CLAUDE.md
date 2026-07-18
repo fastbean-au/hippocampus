@@ -23,11 +23,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (docker or podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on
   `:3000`); the env overrides are exported by `run.sh`, not baked into `demo/config.json`
 - Docker: `docker compose up --build` (SQLite), `docker compose -f docker/docker-compose.postgres.yaml
-  up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up --build` (MySQL), or
+up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up --build` (MySQL), or
   `docker compose -f docker/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content
   search); container configs in `docker/`, image config baked from `docker/config.sqlite.json`
 - Observability stack (any compose file): `OBSERVABILITY=true docker compose --profile observability
-  up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTLP `:4317`) behind a
+up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTLP `:4317`) behind a
   compose `observability` profile — off by default. The `hippocampus` service sets
   `HIPPOCAMPUS_OBSERVABILITY_*` env overrides (metrics/traces on from `${OBSERVABILITY:-false}`,
   endpoint `otel-lgtm:4317`), so metrics stay off (and never log an export failure) unless the
@@ -86,7 +86,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   default log level); when `tls.enabled`,
   `credentials.NewServerTLSFromFile` is added via `grpc.Creds`. Auth without
   `tls.enabled` only logs a warning — TLS may be terminated upstream instead. When `gateway.port`
-  > 0 it also registers `contract.RegisterHippocampusHandlerServer` (the generated
+  is positive it also registers `contract.RegisterHippocampusHandlerServer` (the generated
   `hippocampus.pb.gw.go` reverse proxy) on a `runtime.NewServeMux()` and serves it over HTTP (TLS
   via `ListenAndServeTLS` when `tls.enabled`) — calling straight into the same `hipo` server
   instance, not dialing back over gRPC — alongside a static `/v1/openapi.json` (the embedded
@@ -113,7 +113,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     via the `sleepReset` channel. A non-positive `sleep.periodSeconds` disables the timed cycle
     entirely (`sleepTimer` returns a nil channel, dropping that select case) — a supported mode for
     an instance driven only by the manual `Sleep` RPC or the WAL trigger; the manual RPC and WAL
-    trigger keep working. When `consolidation.walTriggerBytes` > 0, `autoSleep` also polls
+    trigger keep working. When `consolidation.walTriggerBytes` is positive, `autoSleep` also polls
     the on-disk WAL file's size (`db.WALBytes`, a filesystem stat — no database connection needed)
     every `walCheckInterval` and runs an out-of-cycle sleep as soon as it's exceeded, so a
     checkpoint runs sooner than the next timed cycle under sustained high write rates. All three
@@ -121,14 +121,17 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     (`Server.sleepGroup`) keyed on a constant, so a caller landing while a cycle is already running
     joins that in-flight call instead of starting a second, overlapping one.
   - `sleep()` = `consolidate()` (delete memories/events below threshold) +
-    `scanSummarizationCandidates()` (when `consolidation.summarizationMinMemories` > 0, find
+    `scanSummarizationCandidates()` (when `consolidation.summarizationMinMemories` is positive, find
     events with at least that many memories that have all gone quiet — no creation or recall —
     for `summarizationMinAgeInDays`, cache up to `summarizationMaxCandidates` of them for
     `GetSummarizationCandidates` to serve; best-effort, never fails the cycle) + `evict()` (when
-    `consolidation.capacityBytes` > 0 and the store's used bytes still exceed it, delete
+    `consolidation.capacityBytes` is positive and the store's used bytes still exceed it, delete
     memories in ascending value order until back at the eviction floor —
     `consolidation.capacityBytesFloor`, hysteresis headroom below the target; ignores
-    `minimumAgeInDays`) + `preserve()` (compact the database: incremental vacuum + WAL
+    `minimumAgeInDays` but honours `minimumRetentionInDays`, the hard retention floor that
+    overrides the capacity target — retained memories are excluded from the eviction pool, and
+    are still counted toward their event's total so a retained memory keeps its event alive) +
+    `preserve()` (compact the database: incremental vacuum + WAL
     checkpoint). `consolidate()` runs three passes: memories without events, memories with
     events (deleting an event when its last memory goes), and events without memories.
   - `ReplaceMemoriesWithSummary` (in `memory.go`) deletes every memory for an event and inserts a
@@ -144,7 +147,11 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     measured from the most recent recall. The deletion threshold is scaled each cycle by capacity
     pressure (the greater of row-count utilisation against `capacityMemories` and byte
     utilisation against `capacityBytes`, raised to `capacityPressureExponent`) so forgetting
-    becomes more aggressive as the store fills. Memories without an event get a default event significance,
+    becomes more aggressive as the store fills. Both `shouldConsolidate` and eviction first
+    short-circuit on `consolidation.minimumRetentionInDays` (via `retained()`): an item inside
+    the retention window is never reaped by either path, whatever its value or the store's
+    pressure — a hard floor distinct from `minimumAgeInDays`, which only defers value-based
+    consolidation and is ignored by eviction. Memories without an event get a default event significance,
     either a fixed value or computed each sleep cycle from a percentile of existing event
     significances (`consolidation.defaultEventSignificancePercentile`, which overrides the fixed
     value when non-zero).
@@ -189,7 +196,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   `setMySQLColumnCollationIfNeeded` migrates a pre-existing database in place via an
   `information_schema.columns` `COLLATION_NAME` probe), and the schema init probes
   `information_schema` for index/column existence (no `CREATE INDEX IF NOT EXISTS`/`ADD COLUMN
-  IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_test.go` skip
+IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_test.go` skip
   unless `HIPPOCAMPUS_TEST_POSTGRES_DSN`/`HIPPOCAMPUS_TEST_MYSQL_DSN` point at a disposable
   database. A covering index over the memories consolidation columns lets the sleep-cycle scans
   avoid ever reading memory bodies. The `db.Server` interface (implemented by
@@ -206,7 +213,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see
   [Configurability](docs/configuration.md#configurability) for the full mapping); `go generate
-  ./contract` (directive in `generate.go`) turns those into `hippocampus.pb.gw.go` (the gateway)
+./contract` (directive in `generate.go`) turns those into `hippocampus.pb.gw.go` (the gateway)
   and `hippocampus.swagger.json` (the OpenAPI description, embedded via `swagger.go`).
   `contract/google/api/{annotations,http}.proto`
   are vendored copies of the googleapis definitions the annotations depend on.
@@ -221,7 +228,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   the rest. Binary memories are never indexed. Because propagation is best-effort, the index can
   still go sparse, so two recovery paths exist. The self-healing one is automatic: the consolidating
   instance runs a periodic reconciliation sweep (`hippocampus/reconcile.go`, gated on
-  `consolidation.enabled` + `opensearch.reconcileIntervalSeconds` > 0, started/stopped alongside
+  `consolidation.enabled` + a positive `opensearch.reconcileIntervalSeconds`, started/stopped alongside
   `autoSleep`) that pages the primary store via `db.GetMemoriesPage` and re-indexes non-binary
   memories through the normal async `IndexMemory`, healing missing documents (idempotent; heals
   missing docs only — stale-doc removal stays a `--reindex` job). The manual one is the
@@ -246,7 +253,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   `deleteMemoriesIfUnrecalled`, so recalls landing mid-run protect their memory) and
   `DeleteEventIfEmpty`. The one-shot `clear` flag clears the manifest in-place (never via a
   store-then-take round trip, which could return a nil manifest under concurrent runs and panic);
-  on a successful clear the manifest is not cached, and on a *failed* clear it is cached so the
+  on a successful clear the manifest is not cached, and on a _failed_ clear it is cached so the
   returned `manifest_id` can retry via `Clear` (the error message says so). Import/ImportBatch upsert full rows by id (`db.ImportMemories`/
   `db.ImportEvents` — no defaulting, no minimum-significance gate, idempotent) and index
   non-binary memories into the optional search index. Bodies are proto3 strings and therefore

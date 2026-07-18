@@ -214,6 +214,12 @@ func TestValidateConfig(t *testing.T) {
 		{name: "aggressiveness zero", key: "consolidation.aggressiveness", value: 0.0, wantErr: true},
 		{name: "aggressiveness negative", key: "consolidation.aggressiveness", value: -0.5, wantErr: true},
 
+		// minimumRetentionInDays: 0 disables the floor (fine), a positive value enables it (fine), a
+		// negative value is a mis-signed mistake and must be rejected.
+		{name: "minimumRetentionInDays zero", key: "consolidation.minimumRetentionInDays", value: 0, wantErr: false},
+		{name: "minimumRetentionInDays positive", key: "consolidation.minimumRetentionInDays", value: 30, wantErr: false},
+		{name: "minimumRetentionInDays negative", key: "consolidation.minimumRetentionInDays", value: -1, wantErr: true},
+
 		// A non-positive sleep.periodSeconds is a supported "disable automatic sleep" mode, not a
 		// config error - autoSleep drops the timed case.
 		{name: "periodSeconds zero", key: "sleep.periodSeconds", value: 0, wantErr: false},

@@ -332,6 +332,15 @@ func (s *Server) MemoryValue(candidate db.MemoryConsolidationCandidate) float64 
 	return s.calculateValue(s.memorySignificance(candidate), ageUnits)
 }
 
+// MemoryRetained reports whether a memory is still within the configured minimum retention window
+// (consolidation.minimumRetentionInDays), so capacity eviction must exclude it from the candidate
+// pool entirely — a retained memory is never evicted even when the store is over its byte target.
+// Eviction, unlike consolidation, has no per-item value threshold to fold the retention check into,
+// so it consults this directly.
+func (s *Server) MemoryRetained(candidate db.MemoryConsolidationCandidate) bool {
+	return s.retained(memoryDecayTimestamp(candidate))
+}
+
 // memoryDecayTimestamp returns the timestamp the memory decays from. Recalling a memory resets
 // its decay clock: age is measured from the most recent of the creation timestamp and the last
 // recall.
@@ -373,10 +382,34 @@ func (s *Server) ShouldConsolidateEvent(candidate db.EventConsolidationCandidate
 	return s.shouldConsolidate(significance, timestamp)
 }
 
+// retained reports whether an item whose decay clock reads timestamp is still inside the configured
+// minimum retention window, and so must never be reaped — by consolidation OR eviction — regardless
+// of how far its value has decayed or how full the store is. This is the hard floor
+// consolidation.minimumRetentionInDays provides: unlike minimumAgeInDays (which only defers
+// value-based consolidation and is ignored by capacity eviction), retention also overrides the
+// capacity target. A non-positive minimumRetentionInDays disables it, so nothing is retained on
+// this basis. The window is measured from the same decay timestamp age is (creation, or the most
+// recent recall for a memory; start or end for an event), so a recalled memory's retention is
+// renewed with its decay clock — always at least the minimum since creation.
+func (s *Server) retained(timestamp int64) bool {
+	if s.consolidation.minimumRetentionInDays <= 0 {
+		return false
+	}
+
+	ageNanoSeconds := time.Now().UnixNano() - timestamp
+
+	return int(ageNanoSeconds/DAY_IN_NANOSECONDS) < s.consolidation.minimumRetentionInDays
+}
+
 // shouldConsolidate applies the decay and threshold rules shared by memories and events: items
-// younger than the minimum age never consolidate, and otherwise the decayed value is compared
-// against the deletion threshold scaled by the current capacity pressure.
+// still inside the minimum retention window or younger than the minimum age never consolidate, and
+// otherwise the decayed value is compared against the deletion threshold scaled by the current
+// capacity pressure.
 func (s *Server) shouldConsolidate(significance float64, timestamp int64) bool {
+	if s.retained(timestamp) {
+		return false
+	}
+
 	ageNanoSeconds := time.Now().UnixNano() - timestamp
 
 	if int(ageNanoSeconds/DAY_IN_NANOSECONDS) < s.consolidation.minimumAgeInDays {
