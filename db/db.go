@@ -28,6 +28,15 @@ const instanceLockCheckInterval = 60 * time.Second
 // instanceLockCheckTimeout bounds a single keepalive ping and reacquisition attempt.
 const instanceLockCheckTimeout = 10 * time.Second
 
+// instanceLockAcquireTimeout is how long acquiring the instance lock waits for the named lock to
+// become free before concluding another instance holds it. It is deliberately non-zero: MySQL
+// releases a GET_LOCK lock when its owning session ends, but a cleanly closed session's teardown
+// (and thus its lock release) is asynchronous on the server, so a legitimate restart or failover -
+// or one test opening right after the previous one closed - could otherwise be refused while the
+// prior session's lock is still momentarily lingering. Waiting a few seconds bridges that gap while
+// still failing fast enough against a genuinely running second instance.
+const instanceLockAcquireTimeout = 5 * time.Second
+
 // serverConnMaxLifetime caps how long a pooled connection (server drivers) is reused before being
 // recycled, kept well under common server idle timeouts so the pool never hands out a connection
 // the server has already closed. It does not reap the pinned lock connection, which is never

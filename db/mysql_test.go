@@ -239,6 +239,68 @@ func TestMySQL_InstanceLockKeepaliveFailsWhenLockTaken(t *testing.T) {
 	}
 }
 
+// TestMySQL_InstanceLockWaitsOutLingeringSession is a regression test for the acquisition timeout:
+// when the instance lock is still held by a session that is about to end (a restart or failover in
+// production, or the previous test closing just before this one opens), NewMySQL must wait the lock
+// out and acquire it rather than failing instantly on a zero-second GET_LOCK. It holds the lock on a
+// rival session, releases it shortly after, and asserts NewMySQL blocks until then and succeeds.
+func TestMySQL_InstanceLockWaitsOutLingeringSession(t *testing.T) {
+	dsn := os.Getenv(mysqlTestDSNEnv)
+	if dsn == "" {
+		t.Skipf("set %s to run mysql integration tests", mysqlTestDSNEnv)
+	}
+
+	ctx := context.Background()
+
+	raw, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %s", err)
+	}
+
+	t.Cleanup(func() { _ = raw.Close() })
+
+	// Make sure the lock starts free (a previous test may still be releasing it), then take it on a
+	// dedicated session standing in for the outgoing instance.
+	waitMySQLInstanceLockFree(t, raw)
+
+	rival, err := raw.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open rival connection: %s", err)
+	}
+
+	var rivalLocked sql.NullInt64
+	if err := rival.QueryRowContext(ctx, "SELECT GET_LOCK(CONCAT('hippocampus:', DATABASE()), 5)").Scan(&rivalLocked); err != nil {
+		t.Fatalf("rival acquire instance lock: %s", err)
+	}
+
+	if !rivalLocked.Valid || rivalLocked.Int64 != 1 {
+		t.Fatal("rival should have acquired the free instance lock")
+	}
+
+	// Release the lingering lock shortly after, so an acquisition that waits (rather than failing
+	// instantly) succeeds once the outgoing session has let go.
+	const linger = 1500 * time.Millisecond
+
+	go func() {
+		time.Sleep(linger)
+		_, _ = rival.ExecContext(context.Background(), "SELECT RELEASE_LOCK(CONCAT('hippocampus:', DATABASE()))")
+		_ = rival.Close()
+	}()
+
+	start := time.Now()
+
+	database, err := NewMySQL(dsn, true)
+	if err != nil {
+		t.Fatalf("NewMySQL should wait out a lingering lock session and acquire, got: %s", err)
+	}
+
+	t.Cleanup(func() { _ = database.Close() })
+
+	if waited := time.Since(start); waited < linger {
+		t.Fatalf("NewMySQL should have waited for the lingering lock to release (~%s), but returned after %s", linger, waited)
+	}
+}
+
 // TestMySQL_BatchedDeleteRespectsRecallGuard exercises the MySQL arm of the batched delete
 // (SELECT ... FOR UPDATE over the row-value guard, then DELETE by id, since MySQL has no
 // DELETE ... RETURNING) across a chunk boundary: it must delete exactly the

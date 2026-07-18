@@ -104,13 +104,16 @@ func (d *DB) acquireMySQLInstanceLock() error {
 		return err
 	}
 
-	// GET_LOCK returns 1 when acquired, 0 when the zero-second timeout expires because another
-	// session holds it, and NULL on error (e.g. no database selected in the DSN).
+	// GET_LOCK returns 1 when acquired, 0 when the timeout expires because another session holds it,
+	// and NULL on error (e.g. no database selected in the DSN). The timeout is non-zero so a lock
+	// still lingering from a just-ended prior session (a restart, a failover, or the previous test)
+	// is waited out rather than mistaken for a live second instance - see instanceLockAcquireTimeout.
 	var locked sql.NullInt64
 
 	if err := conn.QueryRowContext(
 		context.Background(),
-		`SELECT GET_LOCK(CONCAT('hippocampus:', DATABASE()), 0)`,
+		`SELECT GET_LOCK(CONCAT('hippocampus:', DATABASE()), ?)`,
+		int(instanceLockAcquireTimeout.Seconds()),
 	).Scan(&locked); err != nil {
 		_ = conn.Close()
 		log.Errorf("failed to acquire instance lock: %s", err.Error())
