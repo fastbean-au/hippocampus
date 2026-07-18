@@ -157,3 +157,102 @@ func TestReconcileOnce_StopsPromptlyOnShutdown(t *testing.T) {
 		t.Errorf("expected the sweep to stop early, but it indexed all %d memories", got)
 	}
 }
+
+// TestReconcileLoop_RunsSweepThenStops exercises the outer timer-driven loop (reconcileLoop
+// itself, as opposed to a single reconcileOnce call): after reconcileInitialDelay it must run a
+// sweep on its own, and closing stopReconcile must make it return promptly and close
+// reconcileStopped, exactly as startReconcile's shutdown path (server.go) expects.
+func TestReconcileLoop_RunsSweepThenStops(t *testing.T) {
+	restoreDelay := reconcileInitialDelay
+	reconcileInitialDelay = 10 * time.Millisecond
+	t.Cleanup(func() { reconcileInitialDelay = restoreDelay })
+
+	restorePage := reconcilePageDelay
+	reconcilePageDelay = time.Millisecond
+	t.Cleanup(func() { reconcilePageDelay = restorePage })
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "one"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	idx := &recordingIndex{}
+
+	s := &Server{
+		db:                 database,
+		search:             idx,
+		reconcileInterval:  time.Hour, // long enough that only the initial-delay sweep can fire
+		reconcileBatchSize: 10,
+		stopReconcile:      make(chan struct{}),
+		reconcileStopped:   make(chan struct{}),
+	}
+
+	go s.reconcileLoop()
+
+	// Wait for the initial-delay sweep to index the one memory.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(idx.indexedIds()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := idx.indexedIds(); len(got) != 1 || got[0] != "m1" {
+		t.Fatalf("expected the initial sweep to index [m1], got %v", got)
+	}
+
+	close(s.stopReconcile)
+
+	select {
+
+	case <-s.reconcileStopped:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconcileLoop did not stop promptly after stopReconcile was closed")
+	}
+}
+
+// TestReconcileLoop_StopsBeforeInitialSweep verifies reconcileLoop can be stopped while still
+// waiting out the initial delay, without ever running a sweep - it must not block shutdown behind
+// a timer that has not fired yet.
+func TestReconcileLoop_StopsBeforeInitialSweep(t *testing.T) {
+	restoreDelay := reconcileInitialDelay
+	reconcileInitialDelay = time.Hour
+	t.Cleanup(func() { reconcileInitialDelay = restoreDelay })
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	idx := &recordingIndex{}
+
+	s := &Server{
+		db:                 database,
+		search:             idx,
+		reconcileInterval:  time.Hour,
+		reconcileBatchSize: 10,
+		stopReconcile:      make(chan struct{}),
+		reconcileStopped:   make(chan struct{}),
+	}
+
+	go s.reconcileLoop()
+
+	close(s.stopReconcile)
+
+	select {
+
+	case <-s.reconcileStopped:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconcileLoop did not stop promptly while waiting out the initial delay")
+	}
+
+	if got := idx.indexedIds(); len(got) != 0 {
+		t.Errorf("expected no sweep to have run, got %v", got)
+	}
+}

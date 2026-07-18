@@ -34,7 +34,10 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 		return &res, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if in.GetSignificance() < s.minimumMemorySignificance {
+	// The minimum-significance gate applies only to an absolute positive significance: an unranked
+	// create (significance 0) is a deliberate "rank it later", and a placement is a deliberate
+	// relative ranking - neither is the insignificant-write the gate drops.
+	if !hasPlacement(in.GetPlacement()) && in.GetSignificance() > 0 && in.GetSignificance() < s.minimumMemorySignificance {
 		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "insignificant")))
 
 		// Quietly forgotten, like a brain that does not retain the insignificant: no error, empty
@@ -68,6 +71,18 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 	// deliberately carry recall history and do not pass through this handler.
 	memory.TimeRecalled = 0
 	memory.RecallCount = 0
+
+	// Resolve the requested significance/placement to a registry level, stamping the level id (for
+	// storage) and the resolved rank (for the search index) onto the memory.
+	if err := s.resolveMemorySignificance(ctx, in, &memory); err != nil {
+		if errors.Is(err, db.ErrInvalidPlacement) {
+			tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+			return &res, status.Error(codes.InvalidArgument, err.Error())
+		}
+
+		return &res, err
+	}
 
 	memory.SetDefaults()
 
@@ -123,6 +138,17 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 
 			return &res, status.Errorf(codes.FailedPrecondition, "event '%s' does not exist", memory.EventId)
 		}
+	}
+
+	// A placement is resolved to a level id here; an absolute significance is resolved by the store
+	// (UpdateMemory), and an absent one leaves significance unchanged.
+	if err := s.resolveMemorySignificance(ctx, in, &memory); err != nil {
+		if errors.Is(err, db.ErrInvalidPlacement) {
+
+			return &res, status.Error(codes.InvalidArgument, err.Error())
+		}
+
+		return &res, err
 	}
 
 	ok, err := s.db.UpdateMemory(ctx, memory)
@@ -242,10 +268,20 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 		return &res, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if summary.Significance < s.minimumMemorySignificance {
+	if !hasPlacement(in.GetSummary().GetPlacement()) && summary.Significance > 0 && summary.Significance < s.minimumMemorySignificance {
 		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "insignificant")))
 
 		return &res, fmt.Errorf("summary significance below minimum")
+	}
+
+	// Resolve the summary's significance/placement to a registry level before it is inserted.
+	if err := s.resolveMemorySignificance(ctx, in.GetSummary(), &summary); err != nil {
+		if errors.Is(err, db.ErrInvalidPlacement) {
+
+			return &res, status.Error(codes.InvalidArgument, err.Error())
+		}
+
+		return &res, err
 	}
 
 	summary.SetDefaults()

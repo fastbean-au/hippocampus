@@ -20,7 +20,7 @@ const maxClockSkew = 5 * time.Minute
 type Memory struct {
 	Id           string // if not provided, will be a uuid
 	TimeStamp    int64  // time.Time.Now().UnixNano()
-	Significance int32
+	Significance int32  // the level's rank on read; on write the requested absolute value (0 = unranked)
 	EventId      string
 	Body         string // optionally limited "memory.limit.sizeBytes"
 	IsBinary     bool
@@ -28,6 +28,12 @@ type Memory struct {
 	RecallCount  int32  // number of times the memory has been recalled
 	IsSummary    bool   // set on the memory created by ReplaceMemoriesWithSummary
 	Group        string // optional grouping/context label; limited to 128 characters
+
+	// SignificanceLevelID is the resolved significance registry level id, set by the RPC layer via
+	// db.ResolveSignificanceLevel before a create/update reaches the store. nil means unranked on a
+	// create, or "leave significance unchanged" on a partial update. It is internal - never part of
+	// the proto conversion.
+	SignificanceLevelID *int64
 }
 
 func MemoryFromProto(memory *contract.Memory) Memory {
@@ -71,9 +77,10 @@ func (m *Memory) ValidateInsert(maxMemoryBodyLength int, update bool) error {
 	switch {
 	case update && len(m.Id) == 0:
 		return fmt.Errorf("memory not valid - id must be provided")
-	case !update && m.Significance <= 0:
-		return fmt.Errorf("memory not valid - significance must be > 0")
-	case update && m.Significance < 0:
+	case m.Significance < 0:
+		// 0 is a valid significance now - it means unranked, a memory created (or left) without a
+		// place on the significance scale, to be ranked later via UpdateMemory or a placement. Only
+		// a negative value is rejected: ranks are non-negative by design.
 		return fmt.Errorf("memory not valid - significance must not be < 0")
 	case len(m.Id) > 128:
 		return fmt.Errorf("memory not valid - id too long")

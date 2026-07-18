@@ -179,7 +179,7 @@ func (d *DB) initPostgresSchema() error {
 		id                        TEXT PRIMARY KEY,
 		time_start                BIGINT NOT NULL DEFAULT 0,
 		time_end                  BIGINT NOT NULL DEFAULT 0,
-		significance              INTEGER NOT NULL DEFAULT 0,
+		significance_level_id     BIGINT,
 		name                      TEXT NOT NULL DEFAULT '',
 		description               TEXT NOT NULL DEFAULT '',
 		memories_consolidated     BOOLEAN NOT NULL DEFAULT FALSE,
@@ -191,7 +191,7 @@ func (d *DB) initPostgresSchema() error {
 	CREATE TABLE IF NOT EXISTS memories (
 		id            TEXT PRIMARY KEY,
 		timestamp     BIGINT NOT NULL DEFAULT 0,
-		significance  INTEGER NOT NULL DEFAULT 0,
+		significance_level_id BIGINT,
 		event_id      TEXT NOT NULL DEFAULT '',
 		is_binary     BOOLEAN NOT NULL DEFAULT FALSE,
 		time_recalled BIGINT NOT NULL DEFAULT 0,
@@ -201,11 +201,6 @@ func (d *DB) initPostgresSchema() error {
 		body          BYTEA NOT NULL DEFAULT ''::bytea
 	);
 
-	-- Covering index for the consolidation scans: the sleep cycle reads only these columns, so
-	-- the scan never touches the pages holding memory bodies.
-	CREATE INDEX IF NOT EXISTS idx_memories_consolidation
-		ON memories (event_id, timestamp, significance, time_recalled, recall_count);
-
 	-- Postgres supports ADD COLUMN IF NOT EXISTS natively, so columns added after a table's
 	-- original CREATE TABLE are migrated in place without SQLite's pragma_table_info probe.
 	ALTER TABLE memories ADD COLUMN IF NOT EXISTS is_summary BOOLEAN NOT NULL DEFAULT FALSE;
@@ -213,11 +208,30 @@ func (d *DB) initPostgresSchema() error {
 	-- The column is named group_name rather than group because GROUP is a reserved word.
 	ALTER TABLE memories ADD COLUMN IF NOT EXISTS group_name TEXT NOT NULL DEFAULT '';
 	ALTER TABLE events ADD COLUMN IF NOT EXISTS group_name TEXT NOT NULL DEFAULT '';
+
+	-- The significance registry columns (see significance.go); backfilled from the old per-item
+	-- significance column by migrateSignificanceToLevels below.
+	ALTER TABLE memories ADD COLUMN IF NOT EXISTS significance_level_id BIGINT;
+	ALTER TABLE events ADD COLUMN IF NOT EXISTS significance_level_id BIGINT;
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {
 		log.Errorf("failed to initialise postgres database schema: %s", err.Error())
 
+		return err
+	}
+
+	if _, err := d.sql.Exec(d.significanceLevelsDDL()); err != nil {
+		log.Errorf("failed to initialise significance registry: %s", err.Error())
+
+		return err
+	}
+
+	if err := d.migrateSignificanceToLevels(); err != nil {
+		return err
+	}
+
+	if err := d.ensureCoveringIndex(); err != nil {
 		return err
 	}
 

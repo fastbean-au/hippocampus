@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -42,15 +43,17 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 		b.Fatalf("Begin: %s", err)
 	}
 
+	levelID := seedBenchLevels(b, d, tx)
+
 	insertMemory, err := tx.Prepare(d.rebind(
-		`INSERT INTO memories (` + memoryColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	))
 	if err != nil {
 		b.Fatalf("Prepare (memories): %s", err)
 	}
 
 	insertEvent, err := tx.Prepare(d.rebind(
-		`INSERT INTO events (id, time_start, time_end, significance, name, description,
+		`INSERT INTO events (id, time_start, time_end, significance_level_id, name, description,
 			memories_consolidated, relationship_significance, relationships)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	))
@@ -68,7 +71,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 
 			if i%10 == 0 {
 				if _, err := insertEvent.Exec(
-					eventId, now, now, 1+i%100, "bench event", "", false, 0, "[]",
+					eventId, now, now, levelID[1+i%100], "bench event", "", false, 0, "[]",
 				); err != nil {
 					b.Fatalf("insert event: %s", err)
 				}
@@ -76,7 +79,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 		}
 
 		if _, err := insertMemory.Exec(
-			fmt.Sprintf("bench-memory-%08d", i), now, 1+i%100, eventId, body, false, 0, 0, false, "",
+			fmt.Sprintf("bench-memory-%08d", i), now, levelID[1+i%100], eventId, body, false, 0, 0, false, "",
 		); err != nil {
 			b.Fatalf("insert memory: %s", err)
 		}
@@ -85,7 +88,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 	// Empty events, one per 100 memories, for the bare-event pass.
 	for i := 0; i < memories/100; i++ {
 		if _, err := insertEvent.Exec(
-			fmt.Sprintf("bench-empty-event-%07d", i), now, now, 1+i%100, "bench empty event", "", false, 0, "[]",
+			fmt.Sprintf("bench-empty-event-%07d", i), now, now, levelID[1+i%100], "bench empty event", "", false, 0, "[]",
 		); err != nil {
 			b.Fatalf("insert empty event: %s", err)
 		}
@@ -94,6 +97,51 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 	if err := tx.Commit(); err != nil {
 		b.Fatalf("Commit: %s", err)
 	}
+}
+
+// seedBenchLevels seeds the significance registry with ranks 1..100 inside the given transaction and
+// returns a rank -> level id map, so the bulk seed can reference levels directly (matching the
+// 1+i%100 significance spread the benchmarks use) instead of resolving one level per row.
+func seedBenchLevels(b *testing.B, d *DB, tx *sql.Tx) map[int]int64 {
+	b.Helper()
+
+	// Idempotent so a re-seed (the delete benchmark re-seeds rows each iteration over an already
+	// level-seeded store) does not collide on the rank UNIQUE constraint.
+	for r := 1; r <= 100; r++ {
+		if _, err := tx.Exec(d.rebind(
+			`INSERT INTO significance_levels (level_rank) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM significance_levels WHERE level_rank = ?)`,
+		), r, r); err != nil {
+			b.Fatalf("insert level: %s", err)
+		}
+	}
+
+	rows, err := tx.Query(`SELECT id, level_rank FROM significance_levels`)
+	if err != nil {
+		b.Fatalf("read levels: %s", err)
+	}
+
+	levelID := make(map[int]int64, 100)
+
+	for rows.Next() {
+		var id int64
+		var rank int
+
+		if err := rows.Scan(&id, &rank); err != nil {
+			_ = rows.Close()
+			b.Fatalf("scan level: %s", err)
+		}
+
+		levelID[rank] = id
+	}
+
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		b.Fatalf("read levels: %s", err)
+	}
+
+	_ = rows.Close()
+
+	return levelID
 }
 
 // newBenchSQLite returns a seeded in-memory store. In-memory keeps the numbers deterministic
@@ -204,7 +252,9 @@ func seedDeletableMemories(b *testing.B, d *DB, n int) []memoryRecallSnapshot {
 		b.Fatalf("Begin: %s", err)
 	}
 
-	insert, err := tx.Prepare(d.rebind(`INSERT INTO memories (` + memoryColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`))
+	levelID := seedBenchLevels(b, d, tx)
+
+	insert, err := tx.Prepare(d.rebind(`INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`))
 	if err != nil {
 		b.Fatalf("Prepare: %s", err)
 	}
@@ -214,7 +264,7 @@ func seedDeletableMemories(b *testing.B, d *DB, n int) []memoryRecallSnapshot {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("del-%08d", i)
 
-		if _, err := insert.Exec(id, now, 1, "", body, false, 0, 0, false, ""); err != nil {
+		if _, err := insert.Exec(id, now, levelID[1], "", body, false, 0, 0, false, ""); err != nil {
 			b.Fatalf("insert: %s", err)
 		}
 

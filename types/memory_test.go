@@ -100,7 +100,8 @@ func TestMemoryValidateInsert(t *testing.T) {
 		wantErr string // empty means expect no error
 	}{
 		{"insert valid", Memory{Significance: 1, Body: "b"}, 0, false, ""},
-		{"insert no significance", Memory{Body: "b"}, 0, false, "significance must be > 0"},
+		{"insert unranked significance", Memory{Body: "b"}, 0, false, ""},
+		{"insert negative significance", Memory{Significance: -1, Body: "b"}, 0, false, "significance must not be < 0"},
 		{"insert no body", Memory{Significance: 1}, 0, false, "no body provided"},
 		{"insert body too long", Memory{Significance: 1, Body: longBody}, 10, false, "body too long"},
 		{"insert id too long", Memory{Significance: 1, Body: "b", Id: longId}, 0, false, "id too long"},

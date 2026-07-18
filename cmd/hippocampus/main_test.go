@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+
+	"github.com/fastbean-au/hippocampus/auth"
 )
 
 // TestNewGatewayServer_HardeningTimeouts is a regression test: the gateway HTTP
@@ -274,5 +276,143 @@ func TestConfigureEnvOverrides_EnvBeatsFile(t *testing.T) {
 
 	if got := viper.GetString("storage.postgres.dsn"); got != "from-env" {
 		t.Errorf("expected the environment to override the config file, got %q", got)
+	}
+}
+
+// TestHmacConfigFromViper verifies the config's signing secret, keyed rotation keys, and active kid
+// are all read into the auth.HMACConfig the running verifier and --mint-token share.
+func TestHmacConfigFromViper(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	viper.Set("auth.signingSecret", "legacy-secret")
+	viper.Set("auth.activeKid", "k2")
+	viper.Set("auth.signingKeys", []map[string]string{
+		{"kid": "k1", "secret": "secret-one"},
+		{"kid": "k2", "secret": "secret-two"},
+	})
+
+	got := hmacConfigFromViper()
+
+	if got.LegacySecret != "legacy-secret" {
+		t.Errorf("LegacySecret = %q, want %q", got.LegacySecret, "legacy-secret")
+	}
+
+	if got.ActiveKid != "k2" {
+		t.Errorf("ActiveKid = %q, want %q", got.ActiveKid, "k2")
+	}
+
+	want := []auth.SigningKey{{Kid: "k1", Secret: "secret-one"}, {Kid: "k2", Secret: "secret-two"}}
+	if len(got.Keys) != len(want) {
+		t.Fatalf("Keys = %+v, want %+v", got.Keys, want)
+	}
+
+	for i, v := range want {
+		if got.Keys[i] != v {
+			t.Errorf("Keys[%d] = %+v, want %+v", i, got.Keys[i], v)
+		}
+	}
+}
+
+// TestHmacConfigFromViper_Empty verifies an unconfigured auth section yields a zero-value
+// HMACConfig rather than erroring, since auth is optional.
+func TestHmacConfigFromViper_Empty(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	got := hmacConfigFromViper()
+
+	if got.LegacySecret != "" || got.ActiveKid != "" || len(got.Keys) != 0 {
+		t.Errorf("expected a zero-value HMACConfig, got %+v", got)
+	}
+}
+
+// TestResolveMintKey covers --mint-token's key-selection precedence: an explicit --signing-secret
+// override, an explicit --kid, falling back to auth.activeKid, falling back to the first configured
+// key, falling back to the legacy secret with no keys at all, and an unknown --kid failing fast with
+// an empty secret rather than silently signing with the wrong key.
+func TestResolveMintKey(t *testing.T) {
+	cfg := auth.HMACConfig{
+		LegacySecret: "legacy-secret",
+		ActiveKid:    "k2",
+		Keys: []auth.SigningKey{
+			{Kid: "k1", Secret: "secret-one"},
+			{Kid: "k2", Secret: "secret-two"},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		override   string
+		kid        string
+		cfg        auth.HMACConfig
+		wantSecret string
+		wantKid    string
+	}{
+		{
+			name:       "signing-secret override wins, kid-less without --kid",
+			override:   "cli-secret",
+			cfg:        cfg,
+			wantSecret: "cli-secret",
+			wantKid:    "",
+		},
+		{
+			name:       "signing-secret override with explicit kid",
+			override:   "cli-secret",
+			kid:        "k1",
+			cfg:        cfg,
+			wantSecret: "cli-secret",
+			wantKid:    "k1",
+		},
+		{
+			name:       "explicit kid selects matching key",
+			kid:        "k1",
+			cfg:        cfg,
+			wantSecret: "secret-one",
+			wantKid:    "k1",
+		},
+		{
+			name:       "no kid falls back to active kid",
+			cfg:        cfg,
+			wantSecret: "secret-two",
+			wantKid:    "k2",
+		},
+		{
+			name: "no kid, no active kid falls back to first key",
+			cfg: auth.HMACConfig{
+				LegacySecret: "legacy-secret",
+				Keys:         []auth.SigningKey{{Kid: "k1", Secret: "secret-one"}, {Kid: "k2", Secret: "secret-two"}},
+			},
+			wantSecret: "secret-one",
+			wantKid:    "k1",
+		},
+		{
+			name:       "no keys at all falls back to legacy secret with no kid",
+			cfg:        auth.HMACConfig{LegacySecret: "legacy-secret"},
+			wantSecret: "legacy-secret",
+			wantKid:    "",
+		},
+		{
+			name:       "unknown kid fails fast with an empty secret",
+			kid:        "does-not-exist",
+			cfg:        cfg,
+			wantSecret: "",
+			wantKid:    "does-not-exist",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viper.Reset()
+			defer viper.Reset()
+
+			viper.Set("signing-secret", tt.override)
+			viper.Set("kid", tt.kid)
+
+			secret, kid := resolveMintKey(tt.cfg)
+			if secret != tt.wantSecret || kid != tt.wantKid {
+				t.Errorf("resolveMintKey() = (%q, %q), want (%q, %q)", secret, kid, tt.wantSecret, tt.wantKid)
+			}
+		})
 	}
 }

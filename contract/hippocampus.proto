@@ -10,6 +10,26 @@ enum Bool {
     TRUE = 2;
 }
 
+// SignificancePlacement positions an item's significance relative to existing values instead of
+// taking the absolute `significance` field. It exists because significance is a dense integer with
+// no room between adjacent values: this lets a client say "just above the 5s" or "between 5 and 6"
+// and have the server open a gap for it. Write-only on StoreEvent/StoreMemory/UpdateMemory and
+// UpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the
+// absolute `significance` value is used as-is (0 meaning unranked).
+message SignificancePlacement {
+    enum Mode {
+        UNSPECIFIED = 0;  // ignore placement; use the absolute significance value
+        ABOVE = 1;        // rank just above the anchor, below the next-higher value
+        BELOW = 2;        // rank just below the anchor, above the next-lower value
+        BETWEEN = 3;      // rank strictly between the anchor (lower) and upper bounds
+    }
+    Mode mode = 1;
+    int32 anchor = 2;      // anchor significance value; ignored when anchor_id is set
+    string anchor_id = 3;  // anchor by an existing item's id, whose significance is looked up
+    int32 upper = 4;       // BETWEEN only: the upper bound significance; ignored when upper_id is set
+    string upper_id = 5;   // BETWEEN only: the upper bound by an existing item's id
+}
+
 message Event {
     string id = 1;
     int64 time_start = 2;  // UnixNano; defaults to the current time when unset (0) on create
@@ -22,6 +42,7 @@ message Event {
     repeated Relationship relationships = 9;
     repeated Memory memories = 10;
     string group = 11;  // optional freeform grouping/context label (system, subsystem, owner, ...)
+    SignificancePlacement placement = 12;  // write-only: rank relative to existing values (see SignificancePlacement)
 }
 
 message Relationship {
@@ -40,6 +61,7 @@ message Memory {
     int32 recall_count = 8;
     bool is_summary = 9;
     string group = 10;  // optional freeform grouping/context label (system, subsystem, owner, ...)
+    SignificancePlacement placement = 11;  // write-only: rank relative to existing values (see SignificancePlacement)
 }
 
 // StoreEventResponse carries the stored event's id and how many of its nested memories were
@@ -60,6 +82,7 @@ message EndEventRequest {
 message UpdateEventSignificanceRequest {
     string id = 1;
     int32 significance = 2;
+    SignificancePlacement placement = 3;  // write-only: rank relative to existing values (see SignificancePlacement)
 }
 
 message MergeEventsRequest {

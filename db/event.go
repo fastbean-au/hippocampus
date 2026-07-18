@@ -17,7 +17,21 @@ import (
 // callers can map it to a gRPC NotFound with errors.Is rather than an opaque Unknown.
 var ErrEventNotFound = errors.New("event not found")
 
+// eventColumns is the read projection. significance is the level's rank, exposed by eventsFrom's
+// join to the registry; scanEvent reads it into types.Event.Significance. Use it with eventsFrom as
+// the FROM source, never the bare events table (which has no significance column).
 const eventColumns = `id, time_start, time_end, significance, name, description, memories_consolidated, relationship_significance, relationships, group_name`
+
+// eventStoredColumns is the physical column list of the events table (significance_level_id, not the
+// removed significance): used for INSERT (transfer import).
+const eventStoredColumns = `id, time_start, time_end, significance_level_id, name, description, memories_consolidated, relationship_significance, relationships, group_name`
+
+// eventsFrom is the read source for eventColumns: events LEFT JOINed to the significance registry
+// and aliased back to "events", so WHERE/ORDER clauses naming bare columns (id, significance, ...)
+// need no change. An unranked (NULL) level reads as significance 0.
+const eventsFrom = `(SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0) AS significance,
+	e.name, e.description, e.memories_consolidated, e.relationship_significance, e.relationships,
+	e.group_name FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id) AS events`
 
 func scanEvent(scan func(dest ...any) error) (types.Event, error) {
 	var e types.Event
@@ -69,13 +83,20 @@ func (d *DB) CreateEvent(ctx context.Context, event types.Event) (string, error)
 		return "", err
 	}
 
+	levelID, err := d.ensureSignificanceLevel(ctx, event.Significance, event.SignificanceLevelID)
+	if err != nil {
+		return "", err
+	}
+
+	event.SignificanceLevelID = levelID
+
 	_, err = d.exec(ctx,
-		`INSERT INTO events (id, time_start, time_end, significance, name, description, relationship_significance, relationships, group_name)
+		`INSERT INTO events (id, time_start, time_end, significance_level_id, name, description, relationship_significance, relationships, group_name)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.Id,
 		event.TimeStart,
 		event.TimeEnd,
-		event.Significance,
+		levelIDArg(event.SignificanceLevelID),
 		event.Name,
 		event.Description,
 		event.RelationshipSignificance,
@@ -112,9 +133,23 @@ func (d *DB) UpdateEvent(ctx context.Context, event types.Event) (bool, error) {
 		args = append(args, event.TimeEnd)
 	}
 
-	if event.Significance > 0 {
-		sets = append(sets, `significance = ?`)
-		args = append(args, event.Significance)
+	// Significance is changed when the caller supplied a placement-resolved level id, or an absolute
+	// value > 0 (resolved here). A nil level id with a non-positive value leaves significance
+	// untouched.
+	levelID := event.SignificanceLevelID
+
+	if levelID == nil && event.Significance > 0 {
+		resolved, err := d.ensureSignificanceLevel(ctx, event.Significance, nil)
+		if err != nil {
+			return false, err
+		}
+
+		levelID = resolved
+	}
+
+	if levelID != nil {
+		sets = append(sets, `significance_level_id = ?`)
+		args = append(args, *levelID)
 	}
 
 	if event.Name != "" {
@@ -243,7 +278,7 @@ func (d *DB) GetEvent(ctx context.Context, id string) (*types.Event, error) {
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	rows, err := d.query(ctx, `SELECT `+eventColumns+` FROM events WHERE id = ?`, id)
+	rows, err := d.query(ctx, `SELECT `+eventColumns+` FROM `+eventsFrom+` WHERE id = ?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +366,7 @@ func (d *DB) CountEventsFiltered(ctx context.Context, filter EventFilter) (int, 
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM events`+where, args...).Scan(&count); err != nil {
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+eventsFrom+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 
@@ -348,7 +383,7 @@ func (d *DB) GetEvents(ctx context.Context, filter EventFilter) (*[]types.Event,
 		order = eventOrderClauses[defaultEventOrderBy]
 	}
 
-	query := `SELECT ` + eventColumns + ` FROM events` + where + ` ORDER BY ` + order
+	query := `SELECT ` + eventColumns + ` FROM ` + eventsFrom + where + ` ORDER BY ` + order
 
 	// OFFSET is only valid alongside LIMIT in SQLite/MySQL, so both are gated on a positive limit.
 	if filter.Limit > 0 {
@@ -399,9 +434,9 @@ func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 
 	rows, err := d.query(
 		ctx,
-		`SELECT id, time_start, time_end, significance, relationship_significance
-		FROM events
-		WHERE id NOT IN (SELECT DISTINCT event_id FROM memories WHERE event_id != '')`,
+		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.relationship_significance
+		FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id
+		WHERE e.id NOT IN (SELECT DISTINCT event_id FROM memories WHERE event_id != '')`,
 	)
 	if err != nil {
 		log.Errorf("failed to consolidate events: %s", err.Error())
@@ -483,7 +518,8 @@ func (d *DB) CalculateSignificancePercentile(ctx context.Context, percent float6
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	rows, err := d.query(ctx, `SELECT significance FROM events`)
+	rows, err := d.query(ctx, `SELECT COALESCE(l.level_rank, 0) FROM events e
+		LEFT JOIN significance_levels l ON l.id = e.significance_level_id`)
 	if err != nil {
 		return 0.0, err
 	}

@@ -217,6 +217,62 @@ func TestPostgres_InstanceLockKeepaliveRecovers(t *testing.T) {
 	}
 }
 
+// TestPostgres_InstanceLockKeepaliveFailsWhenLockTaken is the counterpart to
+// TestPostgres_InstanceLockKeepaliveRecovers for the unrecoverable case: when the pinned lock
+// session dies and a different session takes the advisory lock before the keepalive can retake it
+// (simulating a second instance winning the race, or the lock being genuinely gone),
+// verifyInstanceLock must report an error rather than silently returning nil - the keepalive treats
+// any non-nil return as fatal (log.Fatalf) precisely so the process does not keep running unlocked.
+func TestPostgres_InstanceLockKeepaliveFailsWhenLockTaken(t *testing.T) {
+	database := newPostgresTestDB(t)
+
+	// Drive verifyInstanceLock deterministically from the test: stop the background keepalive so it
+	// cannot fire (and log.Fatal) concurrently.
+	close(database.stopKeepalive)
+	<-database.keepaliveStopped
+	database.stopKeepalive = nil
+
+	ctx := context.Background()
+
+	var pid int
+	if err := database.lockConn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+		t.Fatalf("read lock session pid: %s", err)
+	}
+
+	// Kill the lock session, releasing the advisory lock and breaking the pinned connection.
+	if _, err := database.sql.ExecContext(ctx, "SELECT pg_terminate_backend($1)", pid); err != nil {
+		t.Fatalf("terminate lock session: %s", err)
+	}
+
+	waitPostgresAdvisoryLockFree(t, database.sql)
+
+	// Simulate a second instance winning the lock before the keepalive can retake it: hold the
+	// advisory lock on a dedicated connection of our own, kept open for the rest of the test.
+	rival, err := database.sql.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open rival connection: %s", err)
+	}
+
+	t.Cleanup(func() { _ = rival.Close() })
+
+	var rivalLocked bool
+	if err := rival.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockKey).Scan(&rivalLocked); err != nil {
+		t.Fatalf("rival acquire advisory lock: %s", err)
+	}
+
+	if !rivalLocked {
+		t.Fatal("rival should have acquired the now-free advisory lock")
+	}
+
+	t.Cleanup(func() {
+		_, _ = rival.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", advisoryLockKey)
+	})
+
+	if err := database.verifyInstanceLock(); err == nil {
+		t.Fatal("verifyInstanceLock should fail when another session holds the lock, got nil")
+	}
+}
+
 // TestPostgres_BatchedDeleteRespectsRecallGuard exercises the Postgres arm of the batched delete
 // (DELETE ... WHERE (id, time_recalled, recall_count) IN (...) RETURNING id) across a
 // chunk boundary: it must delete exactly the still-matching snapshots and leave any recalled since
@@ -626,4 +682,52 @@ func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 	if count := database.CountEvents(context.Background()); count != 0 {
 		t.Errorf("CountEvents after consolidation = %d, want 0", count)
 	}
+}
+
+// TestPostgres_SignificanceRegistry runs the shared registry behaviour (absolute find-or-create, a
+// placement gap-open across consecutive ranks exercising openGapAt's two-phase shift and the
+// registry advisory lock, and unranked levels) against Postgres.
+func TestPostgres_SignificanceRegistry(t *testing.T) {
+	d := newPostgresTestDB(t)
+
+	assertRegistryPlacement(t, d)
+}
+
+// TestPostgres_MigrateSignificanceToLevels drives initPostgresSchema against a database rebuilt into
+// the pre-registry shape (a per-item significance column and the old covering index), asserting the
+// Postgres migration path (native ADD/DROP COLUMN) preserves the ranks and drops the old column.
+func TestPostgres_MigrateSignificanceToLevels(t *testing.T) {
+	d := newPostgresTestDB(t)
+
+	old := []string{
+		`DROP INDEX IF EXISTS idx_memories_consolidation`,
+		`DROP TABLE IF EXISTS memories`,
+		`DROP TABLE IF EXISTS events`,
+		`DROP TABLE IF EXISTS significance_levels`,
+		`CREATE TABLE events (id TEXT PRIMARY KEY, time_start BIGINT NOT NULL DEFAULT 0, time_end BIGINT NOT NULL DEFAULT 0,
+			significance INTEGER NOT NULL DEFAULT 0, name TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
+			memories_consolidated BOOLEAN NOT NULL DEFAULT FALSE, relationship_significance BIGINT NOT NULL DEFAULT 0,
+			relationships TEXT NOT NULL DEFAULT '[]', group_name TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE memories (id TEXT PRIMARY KEY, timestamp BIGINT NOT NULL DEFAULT 0, significance INTEGER NOT NULL DEFAULT 0,
+			event_id TEXT NOT NULL DEFAULT '', is_binary BOOLEAN NOT NULL DEFAULT FALSE, time_recalled BIGINT NOT NULL DEFAULT 0,
+			recall_count INTEGER NOT NULL DEFAULT 0, is_summary BOOLEAN NOT NULL DEFAULT FALSE, group_name TEXT NOT NULL DEFAULT '',
+			body BYTEA NOT NULL DEFAULT ''::bytea)`,
+		`CREATE INDEX idx_memories_consolidation ON memories (event_id, timestamp, significance, time_recalled, recall_count)`,
+		`INSERT INTO memories (id, timestamp, significance, body) VALUES ('m1', 1, 7, ''::bytea)`,
+		`INSERT INTO memories (id, timestamp, significance, body) VALUES ('m2', 1, 3, ''::bytea)`,
+		`INSERT INTO memories (id, timestamp, significance, event_id, body) VALUES ('m3', 1, 0, '', ''::bytea)`,
+		`INSERT INTO events (id, significance, name) VALUES ('e1', 5, 'evt')`,
+	}
+
+	for _, stmt := range old {
+		if _, err := d.sql.Exec(stmt); err != nil {
+			t.Fatalf("seed old schema: %s", err)
+		}
+	}
+
+	if err := d.initPostgresSchema(); err != nil {
+		t.Fatalf("initPostgresSchema (migration): %s", err)
+	}
+
+	assertMigratedRegistry(t, d)
 }

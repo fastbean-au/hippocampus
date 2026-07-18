@@ -131,7 +131,8 @@ func TestEventValidate(t *testing.T) {
 		wantErr string // empty means expect no error
 	}{
 		{"insert valid", Event{Name: "n", Significance: 1, TimeStart: 1}, false, ""},
-		{"insert no significance", Event{Name: "n", TimeStart: 1}, false, "significance must be > 0"},
+		{"insert unranked significance", Event{Name: "n", TimeStart: 1}, false, ""},
+		{"insert negative significance", Event{Name: "n", Significance: -1, TimeStart: 1}, false, "significance must not be < 0"},
 		{"insert no name", Event{Significance: 1, TimeStart: 1}, false, "no name provided"},
 		{"insert bad timestart", Event{Name: "n", Significance: 1, TimeStart: 0}, false, "TimeStart must be > 0"},
 		{"insert negative timeend", Event{Name: "n", Significance: 1, TimeStart: 1, TimeEnd: -1}, false, "TimeEnd must be > 0"},

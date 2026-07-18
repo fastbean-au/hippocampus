@@ -36,6 +36,13 @@ func (s *Server) sleep() error {
 
 	e3 := s.preserve(ctx)
 
+	// Best-effort registry maintenance: keeps significance ranks compact and inside int32 after
+	// repeated relative insertions. It never fails the sleep cycle (a no-op until inflation warrants
+	// it), so it sits outside the success flag.
+	if err := s.db.CompactSignificanceLevels(ctx); err != nil {
+		log.Warnf("significance registry compaction failed: %s", err.Error())
+	}
+
 	success := e1 == nil && e2 == nil && e3 == nil
 
 	tel.sleeps.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", success)))

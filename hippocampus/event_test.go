@@ -621,3 +621,194 @@ func TestStoreEvent_DefaultsTimeStart(t *testing.T) {
 		t.Errorf("expected time_start defaulted to ~now (>= %d), got %d", before, got.TimeStart)
 	}
 }
+
+// TestStoreEvent_PlacementAboveNumericAnchor exercises resolveEventSignificance's placement path
+// (AnchorEvent) end to end via a numeric anchor: storing an event "above" an existing significance
+// opens a gap and lands it between the neighbours, mirroring the memory placement behaviour but
+// through the events table join.
+func TestStoreEvent_PlacementAboveNumericAnchor(t *testing.T) {
+	s := newEventTestServer(t)
+	ctx := context.Background()
+
+	if _, err := s.StoreEvent(ctx, &contract.Event{Id: "five", Name: "five", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("store five: %s", err)
+	}
+
+	if _, err := s.StoreEvent(ctx, &contract.Event{Id: "six", Name: "six", TimeStart: 100, Significance: 6}); err != nil {
+		t.Fatalf("store six: %s", err)
+	}
+
+	res, err := s.StoreEvent(ctx, &contract.Event{
+		Id:        "between",
+		Name:      "between",
+		TimeStart: 100,
+		Placement: &contract.SignificancePlacement{
+			Mode:   contract.SignificancePlacement_ABOVE,
+			Anchor: 5,
+		},
+	})
+	if err != nil {
+		t.Fatalf("store between: %s", err)
+	}
+
+	if res.GetId() != "between" {
+		t.Fatalf("expected id 'between', got %q", res.GetId())
+	}
+
+	between, err := s.db.GetEvent(ctx, "between")
+	if err != nil {
+		t.Fatalf("GetEvent(between): %s", err)
+	}
+
+	if between.Significance != 6 {
+		t.Errorf("between significance = %d, want 6", between.Significance)
+	}
+
+	six, err := s.db.GetEvent(ctx, "six")
+	if err != nil {
+		t.Fatalf("GetEvent(six): %s", err)
+	}
+
+	if six.Significance != 7 {
+		t.Errorf("six significance = %d, want 7 (shifted up)", six.Significance)
+	}
+
+	five, err := s.db.GetEvent(ctx, "five")
+	if err != nil {
+		t.Fatalf("GetEvent(five): %s", err)
+	}
+
+	if five.Significance != 5 {
+		t.Errorf("five significance = %d, want 5", five.Significance)
+	}
+}
+
+// TestStoreEvent_PlacementIdAnchor verifies an id-based anchor resolves against the anchor event's
+// own current rank rather than a literal value.
+func TestStoreEvent_PlacementIdAnchor(t *testing.T) {
+	s := newEventTestServer(t)
+	ctx := context.Background()
+
+	if _, err := s.StoreEvent(ctx, &contract.Event{Id: "anchor", Name: "anchor", TimeStart: 100, Significance: 10}); err != nil {
+		t.Fatalf("store anchor: %s", err)
+	}
+
+	res, err := s.StoreEvent(ctx, &contract.Event{
+		Id:        "above",
+		Name:      "above",
+		TimeStart: 100,
+		Placement: &contract.SignificancePlacement{
+			Mode:     contract.SignificancePlacement_ABOVE,
+			AnchorId: "anchor",
+		},
+	})
+	if err != nil {
+		t.Fatalf("store above: %s", err)
+	}
+
+	got, err := s.db.GetEvent(ctx, res.GetId())
+	if err != nil {
+		t.Fatalf("GetEvent: %s", err)
+	}
+
+	if got.Significance != 11 {
+		t.Errorf("above significance = %d, want 11", got.Significance)
+	}
+}
+
+// TestStoreEvent_PlacementUnknownIdAnchorRejected confirms a placement naming a missing event
+// anchor is a client error (InvalidArgument) that creates nothing, matching the memory RPC's
+// behaviour for the same case but exercising the events-table anchor lookup.
+func TestStoreEvent_PlacementUnknownIdAnchorRejected(t *testing.T) {
+	s := newEventTestServer(t)
+	ctx := context.Background()
+
+	_, err := s.StoreEvent(ctx, &contract.Event{
+		Id:        "x",
+		Name:      "x",
+		TimeStart: 100,
+		Placement: &contract.SignificancePlacement{
+			Mode:     contract.SignificancePlacement_ABOVE,
+			AnchorId: "does-not-exist",
+		},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
+	}
+
+	if s.db.CountEvents(ctx) != 0 {
+		t.Error("expected no event stored")
+	}
+}
+
+// TestUpdateEventSignificance_PlacementAbove exercises resolveEventSignificance's placement path
+// through UpdateEventSignificance rather than StoreEvent.
+func TestUpdateEventSignificance_PlacementAbove(t *testing.T) {
+	s := newEventTestServer(t)
+	ctx := context.Background()
+
+	if _, err := s.db.CreateEvent(ctx, types.Event{Id: "anchor", Name: "anchor", TimeStart: 100, Significance: 10}); err != nil {
+		t.Fatalf("CreateEvent(anchor): %s", err)
+	}
+
+	if _, err := s.db.CreateEvent(ctx, types.Event{Id: "e1", Name: "e1", TimeStart: 100, Significance: 1}); err != nil {
+		t.Fatalf("CreateEvent(e1): %s", err)
+	}
+
+	res, err := s.UpdateEventSignificance(ctx, &contract.UpdateEventSignificanceRequest{
+		Id: "e1",
+		Placement: &contract.SignificancePlacement{
+			Mode:     contract.SignificancePlacement_ABOVE,
+			AnchorId: "anchor",
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateEventSignificance: %s", err)
+	}
+
+	if !res.GetOk() {
+		t.Error("UpdateEventSignificance did not report Ok")
+	}
+
+	got, err := s.db.GetEvent(ctx, "e1")
+	if err != nil {
+		t.Fatalf("GetEvent: %s", err)
+	}
+
+	if got.Significance != 11 {
+		t.Errorf("e1 significance = %d, want 11", got.Significance)
+	}
+}
+
+// TestUpdateEventSignificance_PlacementInvalidBetweenRejected confirms an inverted BETWEEN range
+// (upper <= lower) surfaces as InvalidArgument rather than an internal error, and leaves the event
+// unchanged.
+func TestUpdateEventSignificance_PlacementInvalidBetweenRejected(t *testing.T) {
+	s := newEventTestServer(t)
+	ctx := context.Background()
+
+	if _, err := s.db.CreateEvent(ctx, types.Event{Id: "e1", Name: "e1", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	_, err := s.UpdateEventSignificance(ctx, &contract.UpdateEventSignificanceRequest{
+		Id: "e1",
+		Placement: &contract.SignificancePlacement{
+			Mode:   contract.SignificancePlacement_BETWEEN,
+			Anchor: 10,
+			Upper:  5,
+		},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
+	}
+
+	got, err := s.db.GetEvent(ctx, "e1")
+	if err != nil {
+		t.Fatalf("GetEvent: %s", err)
+	}
+
+	if got.Significance != 5 {
+		t.Errorf("e1 significance changed to %d, want unchanged 5", got.Significance)
+	}
+}

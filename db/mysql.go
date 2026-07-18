@@ -157,7 +157,7 @@ func (d *DB) initMySQLSchema() error {
 			id                        VARCHAR(255) COLLATE utf8mb4_bin PRIMARY KEY,
 			time_start                BIGINT NOT NULL DEFAULT 0,
 			time_end                  BIGINT NOT NULL DEFAULT 0,
-			significance              INTEGER NOT NULL DEFAULT 0,
+			significance_level_id     BIGINT,
 			name                      TEXT NOT NULL,
 			description               TEXT NOT NULL,
 			memories_consolidated     BOOLEAN NOT NULL DEFAULT FALSE,
@@ -169,7 +169,7 @@ func (d *DB) initMySQLSchema() error {
 		`CREATE TABLE IF NOT EXISTS memories (
 			id            VARCHAR(255) COLLATE utf8mb4_bin PRIMARY KEY,
 			timestamp     BIGINT NOT NULL DEFAULT 0,
-			significance  INTEGER NOT NULL DEFAULT 0,
+			significance_level_id BIGINT,
 			event_id      VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
 			is_binary     BOOLEAN NOT NULL DEFAULT FALSE,
 			time_recalled BIGINT NOT NULL DEFAULT 0,
@@ -178,6 +178,8 @@ func (d *DB) initMySQLSchema() error {
 			group_name    VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
 			body          LONGBLOB NOT NULL
 		)`,
+
+		d.significanceLevelsDDL(),
 	}
 
 	for _, statement := range statements {
@@ -186,18 +188,6 @@ func (d *DB) initMySQLSchema() error {
 
 			return err
 		}
-	}
-
-	// Covering index for the consolidation scans: the sleep cycle reads only these columns, so
-	// the scan never touches the pages holding memory bodies. MySQL has no CREATE INDEX IF NOT
-	// EXISTS, so existence is probed first.
-	if err := d.createMySQLIndexIfMissing(
-		"memories",
-		"idx_memories_consolidation",
-		`CREATE INDEX idx_memories_consolidation
-			ON memories (event_id, timestamp, significance, time_recalled, recall_count)`,
-	); err != nil {
-		return err
 	}
 
 	if err := d.addColumnIfMissing("memories", "is_summary", "BOOLEAN NOT NULL DEFAULT FALSE"); err != nil {
@@ -234,6 +224,25 @@ func (d *DB) initMySQLSchema() error {
 		if err := d.setMySQLColumnCollationIfNeeded(c.table, c.column, c.definition); err != nil {
 			return err
 		}
+	}
+
+	// The significance registry columns (see significance.go); backfilled from the old per-item
+	// significance column by migrateSignificanceToLevels, after which the covering index is rebuilt
+	// on significance_level_id.
+	if err := d.addColumnIfMissing("memories", "significance_level_id", "BIGINT"); err != nil {
+		return err
+	}
+
+	if err := d.addColumnIfMissing("events", "significance_level_id", "BIGINT"); err != nil {
+		return err
+	}
+
+	if err := d.migrateSignificanceToLevels(); err != nil {
+		return err
+	}
+
+	if err := d.ensureCoveringIndex(); err != nil {
+		return err
 	}
 
 	return nil

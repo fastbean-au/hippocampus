@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 
 	log "github.com/sirupsen/logrus"
@@ -32,7 +33,7 @@ func (d *DB) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]
 
 	rows, err := d.query(
 		ctx,
-		`SELECT `+memoryColumns+` FROM memories WHERE id > ? ORDER BY id LIMIT ?`,
+		`SELECT `+memoryColumns+` FROM `+memoriesFrom+` WHERE id > ? ORDER BY id LIMIT ?`,
 		afterId,
 		limit,
 	)
@@ -69,7 +70,7 @@ func (d *DB) GetEventsPage(ctx context.Context, afterId string, limit int) ([]ty
 
 	rows, err := d.query(
 		ctx,
-		`SELECT `+eventColumns+` FROM events WHERE id > ? ORDER BY id LIMIT ?`,
+		`SELECT `+eventColumns+` FROM `+eventsFrom+` WHERE id > ? ORDER BY id LIMIT ?`,
 		afterId,
 		limit,
 	)
@@ -108,11 +109,12 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 	}
 
 	// The ELSE-less full overwrite still qualifies nothing but the excluded/new row, so both
-	// dialect arms stay unambiguous.
-	query := `INSERT INTO memories (` + memoryColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	// dialect arms stay unambiguous. significance travels as the rank on the wire and is resolved
+	// to a registry level id per row (find-or-create) below.
+	query := `INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			timestamp     = excluded.timestamp,
-			significance  = excluded.significance,
+			significance_level_id = excluded.significance_level_id,
 			event_id      = excluded.event_id,
 			body          = excluded.body,
 			is_binary     = excluded.is_binary,
@@ -124,10 +126,10 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 	// MySQL has no ON CONFLICT; ON DUPLICATE KEY UPDATE with the 8.0.20+ row alias is the same
 	// upsert, with 'new' standing in for 'excluded'.
 	if d.driver == driverMySQL {
-		query = `INSERT INTO memories (` + memoryColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
+		query = `INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
 		ON DUPLICATE KEY UPDATE
 			timestamp     = new.timestamp,
-			significance  = new.significance,
+			significance_level_id = new.significance_level_id,
 			event_id      = new.event_id,
 			body          = new.body,
 			is_binary     = new.is_binary,
@@ -137,6 +139,14 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			group_name    = new.group_name`
 	}
 
+	// The registry lock serializes level find-or-create against concurrent writers on the server
+	// drivers (a no-op on SQLite's single connection).
+	releaseLock, err := d.acquireRegistryLock(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer releaseLock()
+
 	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return 0, err
@@ -144,11 +154,18 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 	defer cancel()
 
 	for _, memory := range memories {
+		levelID, err := d.importLevelID(ctx, tx, memory.Significance)
+		if err != nil {
+			_ = tx.Rollback()
+
+			return 0, err
+		}
+
 		if _, err := tx.Exec(
 			d.rebind(query),
 			memory.Id,
 			memory.TimeStamp,
-			memory.Significance,
+			levelID,
 			memory.EventId,
 			[]byte(memory.Body),
 			memory.IsBinary,
@@ -170,6 +187,22 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 	return len(memories), nil
 }
 
+// importLevelID resolves a wire significance (rank) to a registry level id argument for import
+// upserts, find-or-creating the level inside the caller's transaction; a non-positive rank is
+// unranked (NULL).
+func (d *DB) importLevelID(ctx context.Context, tx *sql.Tx, significance int32) (any, error) {
+	if significance <= 0 {
+		return nil, nil
+	}
+
+	id, err := d.findOrCreateLevelTx(ctx, tx, significance)
+	if err != nil {
+		return nil, err
+	}
+
+	return id, nil
+}
+
 // ImportEvents upserts the given events by id with every column taken from the input, inside a
 // single transaction — the event half of ImportMemories. The relationship significance is
 // recomputed from the relationships, matching CreateEvent. Returns the number of rows written.
@@ -180,11 +213,11 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 		return 0, nil
 	}
 
-	query := `INSERT INTO events (` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	query := `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			time_start                = excluded.time_start,
 			time_end                  = excluded.time_end,
-			significance              = excluded.significance,
+			significance_level_id     = excluded.significance_level_id,
 			name                      = excluded.name,
 			description               = excluded.description,
 			memories_consolidated     = excluded.memories_consolidated,
@@ -193,11 +226,11 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			group_name                = excluded.group_name`
 
 	if d.driver == driverMySQL {
-		query = `INSERT INTO events (` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
+		query = `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
 		ON DUPLICATE KEY UPDATE
 			time_start                = new.time_start,
 			time_end                  = new.time_end,
-			significance              = new.significance,
+			significance_level_id     = new.significance_level_id,
 			name                      = new.name,
 			description               = new.description,
 			memories_consolidated     = new.memories_consolidated,
@@ -205,6 +238,12 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			relationships             = new.relationships,
 			group_name                = new.group_name`
 	}
+
+	releaseLock, err := d.acquireRegistryLock(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer releaseLock()
 
 	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
@@ -222,12 +261,19 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			return 0, err
 		}
 
+		levelID, err := d.importLevelID(ctx, tx, event.Significance)
+		if err != nil {
+			_ = tx.Rollback()
+
+			return 0, err
+		}
+
 		if _, err := tx.Exec(
 			d.rebind(query),
 			event.Id,
 			event.TimeStart,
 			event.TimeEnd,
-			event.Significance,
+			levelID,
 			event.Name,
 			event.Description,
 			event.MemoriesConsolidated,

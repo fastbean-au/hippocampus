@@ -20,6 +20,12 @@ type Event struct {
 	RelationshipSignificance int64  // Sum of the significances of all values of the Relationships. This is a calculated value.
 	MemoriesConsolidated     bool   // if true, some memories related to this event have been consolidated (deleted)
 	Group                    string // optional grouping/context label; limited to 128 characters
+
+	// SignificanceLevelID is the resolved significance registry level id, set by the RPC layer via
+	// db.ResolveSignificanceLevel before a create/update reaches the store. nil means unranked on a
+	// create, or "leave significance unchanged" on a partial update. It is internal - never part of
+	// the proto conversion.
+	SignificanceLevelID *int64
 }
 
 type Relationship struct {
@@ -92,9 +98,10 @@ func (e *Event) Validate(update bool) error {
 	switch {
 	case update && len(e.Id) == 0:
 		return fmt.Errorf("event not valid - id must be provided")
-	case !update && e.Significance <= 0:
-		return fmt.Errorf("event not valid - significance must be > 0")
-	case update && e.Significance < 0:
+	case e.Significance < 0:
+		// 0 is a valid significance now - it means unranked, an event created (or left) without a
+		// place on the significance scale, to be ranked later via UpdateEventSignificance or a
+		// placement. Only a negative value is rejected: ranks are non-negative by design.
 		return fmt.Errorf("event not valid - significance must not be < 0")
 	case len(e.Id) > 128:
 		return fmt.Errorf("event not valid - id too long")

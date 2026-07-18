@@ -38,7 +38,10 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 		return &res, err
 	}
 
-	if in.GetSignificance() < s.minimumEventSignificance {
+	// The minimum-significance gate applies only to an absolute positive significance: an unranked
+	// create (significance 0) is a deliberate "rank it later", and a placement is a deliberate
+	// relative ranking - neither is the insignificant-write the gate drops.
+	if !hasPlacement(in.GetPlacement()) && in.GetSignificance() > 0 && in.GetSignificance() < s.minimumEventSignificance {
 		tel.eventsRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "insignificant")))
 
 		// Quietly forgotten, like a brain that does not retain the insignificant: no error, empty
@@ -47,6 +50,17 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 		res.Rejected = true
 
 		return &res, nil
+	}
+
+	// Resolve the requested significance/placement to a registry level before the event is created.
+	if err := s.resolveEventSignificance(ctx, in.GetSignificance(), in.GetPlacement(), &event); err != nil {
+		if errors.Is(err, db.ErrInvalidPlacement) {
+			tel.eventsRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+			return &res, status.Error(codes.InvalidArgument, err.Error())
+		}
+
+		return &res, err
 	}
 
 	id, err := s.db.CreateEvent(ctx, event)
@@ -121,6 +135,17 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 	e := types.Event{
 		Id:           in.GetId(),
 		Significance: in.GetSignificance(),
+	}
+
+	// Resolve the requested significance/placement to a registry level; a partial update with
+	// neither leaves the event's significance unchanged.
+	if err := s.resolveEventSignificance(ctx, in.GetSignificance(), in.GetPlacement(), &e); err != nil {
+		if errors.Is(err, db.ErrInvalidPlacement) {
+
+			return &res, status.Error(codes.InvalidArgument, err.Error())
+		}
+
+		return &res, err
 	}
 
 	ok, err := s.db.UpdateEvent(ctx, e)

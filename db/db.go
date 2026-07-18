@@ -400,6 +400,15 @@ type Store interface {
 	UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error)
 	CalculateSignificancePercentile(ctx context.Context, percent float64) (float64, error)
 
+	// ResolveSignificanceLevel maps a requested significance (an absolute value or a relative
+	// placement) to a registry level id, creating levels and opening gaps as needed. The RPC layer
+	// calls it before a create/update so the store receives a resolved SignificanceLevelID.
+	ResolveSignificanceLevel(ctx context.Context, spec SignificanceSpec) (sql.NullInt64, int32, error)
+
+	// CompactSignificanceLevels renumbers the significance registry to consecutive ranks when it has
+	// inflated toward the int32 ceiling; a best-effort maintenance step run from the sleep cycle.
+	CompactSignificanceLevels(ctx context.Context) error
+
 	ConsolidateMemories(ctx context.Context, s Server) (int, error)
 	ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error)
 	ConsolidateEvents(ctx context.Context, s Server) (int, error)
@@ -555,7 +564,7 @@ func (d *DB) initSchema() error {
 		id                        TEXT PRIMARY KEY,
 		time_start                INTEGER NOT NULL DEFAULT 0,
 		time_end                  INTEGER NOT NULL DEFAULT 0,
-		significance              INTEGER NOT NULL DEFAULT 0,
+		significance_level_id     INTEGER,
 		name                      TEXT NOT NULL DEFAULT '',
 		description               TEXT NOT NULL DEFAULT '',
 		memories_consolidated     INTEGER NOT NULL DEFAULT 0,
@@ -567,7 +576,7 @@ func (d *DB) initSchema() error {
 	CREATE TABLE IF NOT EXISTS memories (
 		id            TEXT PRIMARY KEY,
 		timestamp     INTEGER NOT NULL DEFAULT 0,
-		significance  INTEGER NOT NULL DEFAULT 0,
+		significance_level_id INTEGER,
 		event_id      TEXT NOT NULL DEFAULT '',
 		is_binary     INTEGER NOT NULL DEFAULT 0,
 		time_recalled INTEGER NOT NULL DEFAULT 0,
@@ -576,15 +585,20 @@ func (d *DB) initSchema() error {
 		group_name    TEXT NOT NULL DEFAULT '',
 		body          BLOB NOT NULL DEFAULT x''
 	);
-
-	-- Covering index for the consolidation scans: the sleep cycle reads only these columns, so
-	-- the scan never touches the pages holding memory bodies.
-	CREATE INDEX IF NOT EXISTS idx_memories_consolidation
-		ON memories (event_id, timestamp, significance, time_recalled, recall_count);
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {
 		log.Errorf("failed to initialise database schema: %s", err.Error())
+
+		return err
+	}
+
+	// The significance registry (see significance.go). One shared registry backs both tables; the
+	// covering index is created after the significance_level_id columns are guaranteed to exist
+	// (below), so a database migrated in place from the old per-item significance column gets the
+	// index rebuilt on the new column.
+	if _, err := d.sql.Exec(d.significanceLevelsDDL()); err != nil {
+		log.Errorf("failed to initialise significance registry: %s", err.Error())
 
 		return err
 	}
@@ -600,6 +614,22 @@ func (d *DB) initSchema() error {
 	}
 
 	if err := d.addColumnIfMissing("events", "group_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
+	if err := d.addColumnIfMissing("memories", "significance_level_id", "INTEGER"); err != nil {
+		return err
+	}
+
+	if err := d.addColumnIfMissing("events", "significance_level_id", "INTEGER"); err != nil {
+		return err
+	}
+
+	if err := d.migrateSignificanceToLevels(); err != nil {
+		return err
+	}
+
+	if err := d.ensureCoveringIndex(); err != nil {
 		return err
 	}
 
@@ -826,6 +856,16 @@ func (d *DB) Purge(ctx context.Context) error {
 
 	if _, err := tx.Exec(`DELETE FROM events`); err != nil {
 		log.Errorf("failed to purge - deleting events: %s", err.Error())
+		_ = tx.Rollback()
+
+		return err
+	}
+
+	// Purge deletes everything, so the significance registry goes too - otherwise orphan levels
+	// would accumulate across purges (harmless but untidy, and non-deterministic for tests that
+	// purge to a clean slate).
+	if _, err := tx.Exec(`DELETE FROM significance_levels`); err != nil {
+		log.Errorf("failed to purge - deleting significance levels: %s", err.Error())
 		_ = tx.Rollback()
 
 		return err

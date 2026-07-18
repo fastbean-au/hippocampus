@@ -863,6 +863,10 @@
         "significance": {
           "type": "integer",
           "format": "int32"
+        },
+        "placement": {
+          "$ref": "#/definitions/protoSignificancePlacement",
+          "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       }
     },
@@ -901,8 +905,23 @@
         "group": {
           "type": "string",
           "title": "optional freeform grouping/context label (system, subsystem, owner, ...)"
+        },
+        "placement": {
+          "$ref": "#/definitions/protoSignificancePlacement",
+          "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       }
+    },
+    "SignificancePlacementMode": {
+      "type": "string",
+      "enum": [
+        "UNSPECIFIED",
+        "ABOVE",
+        "BELOW",
+        "BETWEEN"
+      ],
+      "default": "UNSPECIFIED",
+      "title": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
     },
     "protoBool": {
       "type": "string",
@@ -995,6 +1014,10 @@
         "group": {
           "type": "string",
           "title": "optional freeform grouping/context label (system, subsystem, owner, ...)"
+        },
+        "placement": {
+          "$ref": "#/definitions/protoSignificancePlacement",
+          "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       }
     },
@@ -1188,6 +1211,10 @@
         "group": {
           "type": "string",
           "title": "optional freeform grouping/context label (system, subsystem, owner, ...)"
+        },
+        "placement": {
+          "$ref": "#/definitions/protoSignificancePlacement",
+          "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       }
     },
@@ -1262,6 +1289,33 @@
         }
       },
       "description": "SearchMemoriesRequest queries the optional secondary content-search index (opensearch.enabled)\nfor memories whose body matches the query. Results are always re-read from the primary store,\nwhich remains authoritative; ids the index returns that the primary store no longer holds are\nsilently dropped. When reinforce is true the matched memories are recalled - resetting their\ndecay clocks and raising their effective significance - rather than merely fetched."
+    },
+    "protoSignificancePlacement": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/definitions/SignificancePlacementMode"
+        },
+        "anchor": {
+          "type": "integer",
+          "format": "int32",
+          "title": "anchor significance value; ignored when anchor_id is set"
+        },
+        "anchorId": {
+          "type": "string",
+          "title": "anchor by an existing item's id, whose significance is looked up"
+        },
+        "upper": {
+          "type": "integer",
+          "format": "int32",
+          "title": "BETWEEN only: the upper bound significance; ignored when upper_id is set"
+        },
+        "upperId": {
+          "type": "string",
+          "title": "BETWEEN only: the upper bound by an existing item's id"
+        }
+      },
+      "description": "SignificancePlacement positions an item's significance relative to existing values instead of\ntaking the absolute `significance` field. It exists because significance is a dense integer with\nno room between adjacent values: this lets a client say \"just above the 5s\" or \"between 5 and 6\"\nand have the server open a gap for it. Write-only on StoreEvent/StoreMemory/UpdateMemory and\nUpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the\nabsolute `significance` value is used as-is (0 meaning unranked)."
     },
     "protoStoreEventResponse": {
       "type": "object",

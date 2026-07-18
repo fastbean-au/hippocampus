@@ -20,7 +20,21 @@ const deleteChunkSize = 500
 // bytes its deletion will free, covering the remaining columns and the index entries.
 const evictionRowOverheadBytes = 256
 
+// memoryColumns is the read projection. significance is the level's rank, exposed by memoriesFrom's
+// join to the registry; scanMemory reads it into types.Memory.Significance. Use it with memoriesFrom
+// as the FROM source, never the bare memories table (which has no significance column).
 const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name`
+
+// memoryStoredColumns is the physical column list of the memories table (significance_level_id, not
+// the removed significance): used for INSERT and UPDATE ... RETURNING. scanMemoryStored reads it.
+const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name`
+
+// memoriesFrom is the read source for memoryColumns: the memories table LEFT JOINed to the
+// significance registry and aliased back to "memories", so WHERE/ORDER clauses naming bare columns
+// (id, event_id, significance, ...) need no change. An unranked (NULL) level reads as significance 0.
+const memoriesFrom = `(SELECT m.id, m.timestamp, COALESCE(l.level_rank, 0) AS significance, m.event_id,
+	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name
+	FROM memories m LEFT JOIN significance_levels l ON l.id = m.significance_level_id) AS memories`
 
 // placeholders returns a comma-separated list of n SQL parameter placeholders.
 func placeholders(n int) string {
@@ -40,15 +54,76 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 	return m, nil
 }
 
-// CreateMemory creates a memory record, returning the id and an error
+// scanMemoryStored reads the physical memories columns (memoryStoredColumns), carrying the raw
+// significance_level_id into SignificanceLevelID. Significance (the rank) is left 0 for the caller to
+// fill from a registry snapshot (fillRanks) - used where a join is unavailable, e.g. RETURNING.
+func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
+	var m types.Memory
+	var body []byte
+	var levelID sql.NullInt64
+
+	if err := rows.Scan(&m.Id, &m.TimeStamp, &levelID, &m.EventId, &body, &m.IsBinary, &m.TimeRecalled, &m.RecallCount, &m.IsSummary, &m.Group); err != nil {
+		return m, err
+	}
+
+	m.Body = string(body)
+
+	if levelID.Valid {
+		id := levelID.Int64
+		m.SignificanceLevelID = &id
+	}
+
+	return m, nil
+}
+
+// levelIDArg turns a nullable level id into a SQL argument: a real id, or NULL when unranked.
+func levelIDArg(id *int64) any {
+	if id == nil {
+		return nil
+	}
+
+	return *id
+}
+
+// fillRanks resolves each memory's SignificanceLevelID to its rank via a registry snapshot, setting
+// Significance. Used by paths that read the physical row (RETURNING) rather than the joined view.
+func (d *DB) fillRanks(ctx context.Context, memories []types.Memory) error {
+	ranks, err := d.loadSignificanceRanks(ctx)
+	if err != nil {
+		return err
+	}
+
+	for i := range memories {
+		var levelID sql.NullInt64
+
+		if memories[i].SignificanceLevelID != nil {
+			levelID = nullInt64(*memories[i].SignificanceLevelID)
+		}
+
+		memories[i].Significance = rankOf(ranks, levelID)
+	}
+
+	return nil
+}
+
+// CreateMemory creates a memory record, returning the id and an error. The significance level is
+// resolved by the caller (ResolveSignificanceLevel) and carried on SignificanceLevelID; nil is
+// unranked.
 func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, error) {
 	log.Trace("func() db.CreateMemory")
 
-	_, err := d.exec(ctx,
-		`INSERT INTO memories (`+memoryColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	levelID, err := d.ensureSignificanceLevel(ctx, memory.Significance, memory.SignificanceLevelID)
+	if err != nil {
+		return "", err
+	}
+
+	memory.SignificanceLevelID = levelID
+
+	_, err = d.exec(ctx,
+		`INSERT INTO memories (`+memoryStoredColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		memory.Id,
 		memory.TimeStamp,
-		memory.Significance,
+		levelIDArg(memory.SignificanceLevelID),
 		memory.EventId,
 		[]byte(memory.Body),
 		memory.IsBinary,
@@ -83,9 +158,23 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 		args = append(args, memory.TimeStamp)
 	}
 
-	if memory.Significance > 0 {
-		sets = append(sets, `significance = ?`)
-		args = append(args, memory.Significance)
+	// Significance is changed when the caller supplied a placement-resolved level id, or an absolute
+	// value > 0 (resolved here). A nil level id with a non-positive value leaves significance
+	// untouched, so a partial update of other fields does not silently unrank the memory.
+	levelID := memory.SignificanceLevelID
+
+	if levelID == nil && memory.Significance > 0 {
+		resolved, err := d.ensureSignificanceLevel(ctx, memory.Significance, nil)
+		if err != nil {
+			return false, err
+		}
+
+		levelID = resolved
+	}
+
+	if levelID != nil {
+		sets = append(sets, `significance_level_id = ?`)
+		args = append(args, *levelID)
 	}
 
 	if memory.EventId != "" {
@@ -503,7 +592,7 @@ func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int6
 		ctx,
 		`UPDATE memories SET time_recalled = ?, recall_count = recall_count + 1
 		WHERE id IN (`+placeholders(len(ids))+`)
-		RETURNING `+memoryColumns,
+		RETURNING `+memoryStoredColumns,
 		args...,
 	)
 	if err != nil {
@@ -512,7 +601,7 @@ func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int6
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		m, err := scanMemory(rows)
+		m, err := scanMemoryStored(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -521,6 +610,14 @@ func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int6
 	}
 
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	_ = rows.Close()
+
+	// RETURNING cannot join, so it yields the raw level id; resolve each row's rank into
+	// Significance before handing the memories back.
+	if err := d.fillRanks(ctx, memories); err != nil {
 		return nil, err
 	}
 
@@ -581,7 +678,7 @@ func (d *DB) recallMemoriesMySQL(ctx context.Context, ids []string, now int64) (
 	}
 
 	rows, err := tx.Query(
-		`SELECT `+memoryColumns+` FROM memories WHERE id IN (`+placeholders(len(ids))+`)`,
+		`SELECT `+memoryColumns+` FROM `+memoriesFrom+` WHERE id IN (`+placeholders(len(ids))+`)`,
 		selectArgs...,
 	)
 	if err != nil {
@@ -645,7 +742,7 @@ func (d *DB) GetMemoriesByIds(ctx context.Context, ids []string) (*[]types.Memor
 			args[i] = v
 		}
 
-		rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE id IN (`+placeholders(len(chunk))+`)`, args...)
+		rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM `+memoriesFrom+` WHERE id IN (`+placeholders(len(chunk))+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -687,7 +784,7 @@ func (d *DB) GetIndexableMemoriesPage(ctx context.Context, afterId string, limit
 
 	rows, err := d.query(
 		ctx,
-		`SELECT `+memoryColumns+` FROM memories WHERE id > ? AND NOT is_binary ORDER BY id LIMIT ?`,
+		`SELECT `+memoryColumns+` FROM `+memoriesFrom+` WHERE id > ? AND NOT is_binary ORDER BY id LIMIT ?`,
 		afterId,
 		limit,
 	)
@@ -735,7 +832,7 @@ func (d *DB) GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]t
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE event_id IN (`+placeholders(len(eventIds))+`)`, args...)
+	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM `+memoriesFrom+` WHERE event_id IN (`+placeholders(len(eventIds))+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -763,7 +860,7 @@ func (d *DB) GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM memories WHERE event_id = ?`, eventId)
+	rows, err := d.query(ctx, `SELECT `+memoryColumns+` FROM `+memoriesFrom+` WHERE event_id = ?`, eventId)
 	if err != nil {
 		return nil, err
 	}
@@ -801,6 +898,15 @@ func (d *DB) MergeEventMemories(ctx context.Context, toEventId string, fromEvent
 func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error) {
 	log.Trace("func() db.ReplaceMemoriesWithSummary")
 
+	// Resolve the summary's significance level before the delete/insert transaction (level
+	// resolution runs in its own transaction).
+	levelID, err := d.ensureSignificanceLevel(ctx, summary.Significance, summary.SignificanceLevelID)
+	if err != nil {
+		return 0, err
+	}
+
+	summary.SignificanceLevelID = levelID
+
 	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return 0, err
@@ -822,10 +928,10 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 	}
 
 	if _, err := tx.Exec(
-		d.rebind(`INSERT INTO memories (`+memoryColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		d.rebind(`INSERT INTO memories (`+memoryStoredColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		summary.Id,
 		summary.TimeStamp,
-		summary.Significance,
+		levelIDArg(summary.SignificanceLevelID),
 		summary.EventId,
 		[]byte(summary.Body),
 		summary.IsBinary,
@@ -960,7 +1066,7 @@ func (d *DB) CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (in
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM memories`+where, args...).Scan(&count); err != nil {
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+memoriesFrom+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 
@@ -977,7 +1083,7 @@ func (d *DB) GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Mem
 		order = memoryOrderClauses[defaultMemoryOrderBy]
 	}
 
-	query := `SELECT ` + memoryColumns + ` FROM memories` + where + ` ORDER BY ` + order
+	query := `SELECT ` + memoryColumns + ` FROM ` + memoriesFrom + where + ` ORDER BY ` + order
 
 	// OFFSET is only valid alongside LIMIT in SQLite/MySQL, so both are gated on a positive limit.
 	if filter.Limit > 0 {
@@ -1051,12 +1157,21 @@ func (d *DB) CountMemories(ctx context.Context) (int, int) {
 func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 	log.Trace("func() db.ConsolidateMemories")
 
+	ranks, err := d.loadSignificanceRanks(ctx)
+	if err != nil {
+		log.Errorf("failed to load significance registry: %s", err.Error())
+
+		return 0, err
+	}
+
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
+	// significance_level_id is read from the covering index and translated to its rank via the
+	// registry snapshot in Go, so the scan stays on the covering index and never reads memory bodies.
 	rows, err := d.query(
 		ctx,
-		`SELECT id, timestamp, significance, time_recalled, recall_count
+		`SELECT id, timestamp, significance_level_id, time_recalled, recall_count
 		FROM memories WHERE event_id = ''`,
 	)
 	if err != nil {
@@ -1070,13 +1185,16 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 
 	for rows.Next() {
 		var id string
+		var levelID sql.NullInt64
 		var candidate MemoryConsolidationCandidate
 
-		if err := rows.Scan(&id, &candidate.Timestamp, &candidate.MemorySignificance, &candidate.TimeRecalled, &candidate.RecallCount); err != nil {
+		if err := rows.Scan(&id, &candidate.Timestamp, &levelID, &candidate.TimeRecalled, &candidate.RecallCount); err != nil {
 			log.Errorf("failed to scan memory for consolidation: %s", err.Error())
 
 			return 0, err
 		}
+
+		candidate.MemorySignificance = rankOf(ranks, levelID)
 
 		if s.ShouldConsolidateMemory(candidate) {
 			deletions = append(deletions, memoryRecallSnapshot{
@@ -1130,15 +1248,23 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		recallCount  int32
 	}
 
+	ranks, err := d.loadSignificanceRanks(ctx)
+	if err != nil {
+		log.Errorf("failed to load significance registry: %s", err.Error())
+
+		return 0, 0, 0, err
+	}
+
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// The memories_consolidated fallback is bound rather than a literal: the column is INTEGER
-	// on SQLite but BOOLEAN on Postgres, and a bound false coalesces cleanly against both.
+	// on SQLite but BOOLEAN on Postgres, and a bound false coalesces cleanly against both. The
+	// memory and event significance level ids are translated to ranks via the registry snapshot.
 	rows, err := d.query(
 		ctx,
-		`SELECT m.id, m.timestamp, m.significance, m.time_recalled, m.recall_count, m.event_id,
-			COALESCE(e.significance, 0), COALESCE(e.relationship_significance, 0),
+		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
+			e.significance_level_id, COALESCE(e.relationship_significance, 0),
 			COALESCE(e.memories_consolidated, ?), length(m.body)
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 		false,
@@ -1158,15 +1284,16 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		var c evictionCandidate
 		var candidate MemoryConsolidationCandidate
 		var consolidated bool
+		var memoryLevelID, eventLevelID sql.NullInt64
 
 		if err := rows.Scan(
 			&c.id,
 			&candidate.Timestamp,
-			&candidate.MemorySignificance,
+			&memoryLevelID,
 			&candidate.TimeRecalled,
 			&candidate.RecallCount,
 			&c.eventId,
-			&candidate.EventSignificance,
+			&eventLevelID,
 			&candidate.RelationshipSignificance,
 			&consolidated,
 			&c.size,
@@ -1175,6 +1302,9 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 
 			return 0, 0, 0, err
 		}
+
+		candidate.MemorySignificance = rankOf(ranks, memoryLevelID)
+		candidate.EventSignificance = rankOf(ranks, eventLevelID)
 
 		c.value = s.MemoryValue(candidate)
 		c.timeRecalled = candidate.TimeRecalled
@@ -1312,6 +1442,13 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 	eventDeletions := make(map[string]EventDeletion)
 	var memoryDeletions []memoryRecallSnapshot
 
+	ranks, err := d.loadSignificanceRanks(ctx)
+	if err != nil {
+		log.Errorf("failed to load significance registry: %s", err.Error())
+
+		return 0, 0, 0, err
+	}
+
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
@@ -1319,11 +1456,12 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 	// they are never evaluated by any pass and can never decay. The COALESCE defaults (mirroring
 	// EvictMemories) let such a memory be scored as event-less; the bound false covers the
 	// INTEGER-on-SQLite / BOOLEAN-on-Postgres memories_consolidated column. e.id is selected purely
-	// to tell a real event (non-null) from a dangling reference (null).
+	// to tell a real event (non-null) from a dangling reference (null). The memory and event
+	// significance level ids are translated to ranks via the registry snapshot.
 	rows, err := d.query(
 		ctx,
-		`SELECT m.id, m.timestamp, m.significance, m.time_recalled, m.recall_count, m.event_id,
-			COALESCE(e.significance, 0), COALESCE(e.relationship_significance, 0),
+		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
+			e.significance_level_id, COALESCE(e.relationship_significance, 0),
 			COALESCE(e.memories_consolidated, ?), e.id
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id
 		WHERE m.event_id != ''`,
@@ -1340,16 +1478,17 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 		var id, eventId string
 		var consolidated bool
 		var joinedEventId sql.NullString
+		var memoryLevelID, eventLevelID sql.NullInt64
 		var candidate MemoryConsolidationCandidate
 
 		if err := rows.Scan(
 			&id,
 			&candidate.Timestamp,
-			&candidate.MemorySignificance,
+			&memoryLevelID,
 			&candidate.TimeRecalled,
 			&candidate.RecallCount,
 			&eventId,
-			&candidate.EventSignificance,
+			&eventLevelID,
 			&candidate.RelationshipSignificance,
 			&consolidated,
 			&joinedEventId,
@@ -1358,6 +1497,9 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 
 			return 0, 0, 0, err
 		}
+
+		candidate.MemorySignificance = rankOf(ranks, memoryLevelID)
+		candidate.EventSignificance = rankOf(ranks, eventLevelID)
 
 		// A dangling reference has no event row to delete or flag; treat the memory purely as a
 		// consolidation candidate and keep it out of the event bookkeeping entirely.

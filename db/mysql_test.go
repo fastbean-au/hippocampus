@@ -183,6 +183,62 @@ func TestMySQL_InstanceLockKeepaliveRecovers(t *testing.T) {
 	}
 }
 
+// TestMySQL_InstanceLockKeepaliveFailsWhenLockTaken is the counterpart to
+// TestMySQL_InstanceLockKeepaliveRecovers for the unrecoverable case: when the pinned lock session
+// dies and a different session takes the named lock before the keepalive can retake it (simulating
+// a second instance winning the race), verifyInstanceLock must report an error rather than silently
+// returning nil - the keepalive treats any non-nil return as fatal (log.Fatalf) precisely so the
+// process does not keep running unlocked.
+func TestMySQL_InstanceLockKeepaliveFailsWhenLockTaken(t *testing.T) {
+	database := newMySQLTestDB(t)
+
+	// Drive verifyInstanceLock deterministically from the test: stop the background keepalive so it
+	// cannot fire (and log.Fatal) concurrently.
+	close(database.stopKeepalive)
+	<-database.keepaliveStopped
+	database.stopKeepalive = nil
+
+	ctx := context.Background()
+
+	var connID int64
+	if err := database.lockConn.QueryRowContext(ctx, "SELECT CONNECTION_ID()").Scan(&connID); err != nil {
+		t.Fatalf("read lock session connection id: %s", err)
+	}
+
+	// Kill the lock session, releasing the named lock and breaking the pinned connection.
+	if _, err := database.sql.ExecContext(ctx, fmt.Sprintf("KILL %d", connID)); err != nil {
+		t.Fatalf("kill lock session: %s", err)
+	}
+
+	waitMySQLInstanceLockFree(t, database.sql)
+
+	// Simulate a second instance winning the lock before the keepalive can retake it: hold the named
+	// lock on a dedicated connection of our own, kept open for the rest of the test.
+	rival, err := database.sql.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open rival connection: %s", err)
+	}
+
+	t.Cleanup(func() { _ = rival.Close() })
+
+	var rivalLocked sql.NullInt64
+	if err := rival.QueryRowContext(ctx, "SELECT GET_LOCK(CONCAT('hippocampus:', DATABASE()), 0)").Scan(&rivalLocked); err != nil {
+		t.Fatalf("rival acquire instance lock: %s", err)
+	}
+
+	if !rivalLocked.Valid || rivalLocked.Int64 != 1 {
+		t.Fatal("rival should have acquired the now-free instance lock")
+	}
+
+	t.Cleanup(func() {
+		_, _ = rival.ExecContext(context.Background(), "SELECT RELEASE_LOCK(CONCAT('hippocampus:', DATABASE()))")
+	})
+
+	if err := database.verifyInstanceLock(); err == nil {
+		t.Fatal("verifyInstanceLock should fail when another session holds the lock, got nil")
+	}
+}
+
 // TestMySQL_BatchedDeleteRespectsRecallGuard exercises the MySQL arm of the batched delete
 // (SELECT ... FOR UPDATE over the row-value guard, then DELETE by id, since MySQL has no
 // DELETE ... RETURNING) across a chunk boundary: it must delete exactly the
@@ -221,6 +277,44 @@ func TestMySQL_BatchedDeleteRespectsRecallGuard(t *testing.T) {
 	with, without := database.CountMemories(context.Background())
 	if with+without != len(protected) {
 		t.Errorf("expected only the %d recalled memories to remain, got %d", len(protected), with+without)
+	}
+}
+
+// TestMySQL_BatchedDeleteAllRecalledInChunkNoOp exercises deleteChunkMySQL's empty-match branch:
+// when every snapshot in a chunk has since been recalled, the SELECT ... FOR UPDATE guard matches
+// nothing, so there is no DELETE to issue and the chunk contributes no ids - the whole call must
+// still succeed (not error) and leave every memory in place.
+func TestMySQL_BatchedDeleteAllRecalledInChunkNoOp(t *testing.T) {
+	database := newMySQLTestDB(t)
+
+	ids := []string{"n1", "n2", "n3"}
+
+	var snapshot []memoryRecallSnapshot
+
+	for _, id := range ids {
+		if _, err := database.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+
+		snapshot = append(snapshot, memoryRecallSnapshot{id: id, timeRecalled: 0, recallCount: 0})
+	}
+
+	if _, err := database.RecallMemories(context.Background(), ids); err != nil {
+		t.Fatalf("RecallMemories: %s", err)
+	}
+
+	deleted, err := database.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
+	}
+
+	if len(deleted) != 0 {
+		t.Errorf("expected no deletions when every snapshot was recalled since the scan, got %d", len(deleted))
+	}
+
+	with, without := database.CountMemories(context.Background())
+	if with+without != len(ids) {
+		t.Errorf("expected all %d memories to remain, got %d", len(ids), with+without)
 	}
 }
 
@@ -605,4 +699,52 @@ func TestMySQL_ConsolidationAndSummarization(t *testing.T) {
 	if count := database.CountEvents(context.Background()); count != 0 {
 		t.Errorf("CountEvents after consolidation = %d, want 0", count)
 	}
+}
+
+// TestMySQL_SignificanceRegistry runs the shared registry behaviour (absolute find-or-create, a
+// placement gap-open across consecutive ranks exercising openGapAt's two-phase shift and the
+// registry GET_LOCK, and unranked levels) against MySQL.
+func TestMySQL_SignificanceRegistry(t *testing.T) {
+	d := newMySQLTestDB(t)
+
+	assertRegistryPlacement(t, d)
+}
+
+// TestMySQL_MigrateSignificanceToLevels drives initMySQLSchema against a database rebuilt into the
+// pre-registry shape (a per-item significance column and the old covering index), asserting the
+// MySQL migration path (information_schema-probed ADD COLUMN, index drop, column drop) preserves the
+// ranks and drops the old column.
+func TestMySQL_MigrateSignificanceToLevels(t *testing.T) {
+	d := newMySQLTestDB(t)
+
+	old := []string{
+		`DROP TABLE IF EXISTS memories`,
+		`DROP TABLE IF EXISTS events`,
+		`DROP TABLE IF EXISTS significance_levels`,
+		`CREATE TABLE events (id VARCHAR(255) COLLATE utf8mb4_bin PRIMARY KEY, time_start BIGINT NOT NULL DEFAULT 0,
+			time_end BIGINT NOT NULL DEFAULT 0, significance INTEGER NOT NULL DEFAULT 0, name TEXT NOT NULL, description TEXT NOT NULL,
+			memories_consolidated BOOLEAN NOT NULL DEFAULT FALSE, relationship_significance BIGINT NOT NULL DEFAULT 0,
+			relationships TEXT NOT NULL, group_name VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '')`,
+		`CREATE TABLE memories (id VARCHAR(255) COLLATE utf8mb4_bin PRIMARY KEY, timestamp BIGINT NOT NULL DEFAULT 0,
+			significance INTEGER NOT NULL DEFAULT 0, event_id VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+			is_binary BOOLEAN NOT NULL DEFAULT FALSE, time_recalled BIGINT NOT NULL DEFAULT 0, recall_count INTEGER NOT NULL DEFAULT 0,
+			is_summary BOOLEAN NOT NULL DEFAULT FALSE, group_name VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '', body LONGBLOB NOT NULL)`,
+		`CREATE INDEX idx_memories_consolidation ON memories (event_id, timestamp, significance, time_recalled, recall_count)`,
+		`INSERT INTO memories (id, timestamp, significance, body) VALUES ('m1', 1, 7, '')`,
+		`INSERT INTO memories (id, timestamp, significance, body) VALUES ('m2', 1, 3, '')`,
+		`INSERT INTO memories (id, timestamp, significance, event_id, body) VALUES ('m3', 1, 0, '', '')`,
+		`INSERT INTO events (id, significance, name, description, relationships) VALUES ('e1', 5, 'evt', '', '[]')`,
+	}
+
+	for _, stmt := range old {
+		if _, err := d.sql.Exec(stmt); err != nil {
+			t.Fatalf("seed old schema: %s", err)
+		}
+	}
+
+	if err := d.initMySQLSchema(); err != nil {
+		t.Fatalf("initMySQLSchema (migration): %s", err)
+	}
+
+	assertMigratedRegistry(t, d)
 }
