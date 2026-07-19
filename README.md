@@ -97,7 +97,8 @@ One compose file per storage driver:
 - `docker compose -f docker/docker-compose.mysql.yaml up --build` — MySQL, the same shape with
   `docker/config.mysql.json` and a `mysql:8.4` service.
 - `docker compose -f docker/docker-compose.opensearch.yaml up --build` — SQLite plus the optional
-  OpenSearch content-search index.
+  OpenSearch content-search index (security disabled — demo only; see
+  `docker-compose.opensearch-secured.yaml` for the secured, TLS-enabled reference).
 - `docker compose -f docker/docker-compose.corporate.yaml up --build` — the centralised shape:
   PostgreSQL primary store plus OpenSearch.
 

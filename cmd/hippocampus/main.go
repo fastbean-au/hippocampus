@@ -149,15 +149,9 @@ func main() {
 			StorageDirectory: viper.GetString("storage.directory"),
 			PostgresDSN:      viper.GetString("storage.postgres.dsn"),
 			MySQLDSN:         viper.GetString("storage.mysql.dsn"),
-			Search: search.Config{
-				Addresses: viper.GetStringSlice("opensearch.addresses"),
-				Username:  viper.GetString("opensearch.username"),
-				Password:  viper.GetString("opensearch.password"),
-				Index:     viper.GetString("opensearch.index"),
-				QueueSize: viper.GetInt("opensearch.queueSize"),
-			},
-			Reindex:   viper.GetBool("reindex"),
-			BatchSize: viper.GetInt("backfill-batch-size"),
+			Search:           searchConfigFromViper(),
+			Reindex:          viper.GetBool("reindex"),
+			BatchSize:        viper.GetInt("backfill-batch-size"),
 		})
 
 		os.Exit(0)
@@ -277,13 +271,7 @@ func main() {
 	if viper.GetBool("opensearch.enabled") {
 		log.Debug("initialising opensearch")
 
-		idx, err := search.NewOpenSearch(search.Config{
-			Addresses: viper.GetStringSlice("opensearch.addresses"),
-			Username:  viper.GetString("opensearch.username"),
-			Password:  viper.GetString("opensearch.password"),
-			Index:     viper.GetString("opensearch.index"),
-			QueueSize: viper.GetInt("opensearch.queueSize"),
-		})
+		idx, err := search.NewOpenSearch(searchConfigFromViper())
 		if err != nil {
 			log.Fatalf("failed to initialise opensearch: %s", err.Error())
 		}
@@ -658,6 +646,26 @@ func main() {
 // viper access here (per the project convention that all viper reads live in main) means the
 // --mint-token CLI and the running verifier share one interpretation of signingSecret, signingKeys,
 // and activeKid.
+// searchConfigFromViper builds the OpenSearch client config from the opensearch.* viper keys,
+// including the opensearch.tls.* transport-security block. Both the server bootstrap and the
+// --backfill-search CLI mode use it, so the two paths stay in step.
+func searchConfigFromViper() search.Config {
+
+	return search.Config{
+		Addresses: viper.GetStringSlice("opensearch.addresses"),
+		Username:  viper.GetString("opensearch.username"),
+		Password:  viper.GetString("opensearch.password"),
+		Index:     viper.GetString("opensearch.index"),
+		QueueSize: viper.GetInt("opensearch.queueSize"),
+		TLS: search.TLSConfig{
+			CACertFile:         viper.GetString("opensearch.tls.caCertFile"),
+			CertFile:           viper.GetString("opensearch.tls.certFile"),
+			KeyFile:            viper.GetString("opensearch.tls.keyFile"),
+			InsecureSkipVerify: viper.GetBool("opensearch.tls.insecureSkipVerify"),
+		},
+	}
+}
+
 func hmacConfigFromViper() auth.HMACConfig {
 	var keys []auth.SigningKey
 

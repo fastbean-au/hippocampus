@@ -407,7 +407,13 @@ optionally restricted to one event and/or one `group` label.
     "index": "hippocampus-memories",
     "queueSize": 1024,
     "reconcileIntervalSeconds": 3600,
-    "reconcileBatchSize": 500
+    "reconcileBatchSize": 500,
+    "tls": {
+        "caCertFile": "",
+        "certFile": "",
+        "keyFile": "",
+        "insecureSkipVerify": false
+    }
 }
 ```
 
@@ -444,6 +450,38 @@ losing it costs search availability, nothing more.
 Try it with `docker compose -f docker/docker-compose.opensearch.yaml up --build` (security disabled —
 demo only). Integration tests run against any disposable cluster via
 `HIPPOCAMPUS_TEST_OPENSEARCH_URL=http://localhost:9200 go test ./search`.
+
+#### Securing the connection
+
+The bodies of non-binary memories are indexed into OpenSearch as searchable text, so a
+content-search deployment holds a **second plaintext copy** of that content outside the primary
+store. Treat the cluster as needing the same protection as the primary store, not less.
+
+- **Authentication.** Set `opensearch.username`/`opensearch.password` for a cluster running the
+  security plugin. Inject the password as a secret rather than committing it: the environment
+  variable `HIPPOCAMPUS_OPENSEARCH_PASSWORD` overrides `opensearch.password` (see
+  [Environment variable overrides](#environment-variable-overrides)).
+- **Transport encryption.** Give `opensearch.addresses` an `https://` URL. With no `tls` block the
+  server certificate is verified against the host's system certificate pool. The optional
+  `opensearch.tls` block configures the rest:
+  - `caCertFile` — a PEM bundle of certificate authorities to trust for the server certificate, in
+    place of the system pool. Set this to trust a cluster serving a certificate signed by a private
+    CA, **including OpenSearch's own security plugin, which bootstraps self-signed certificates by
+    default**. This is the production-correct alternative to disabling verification.
+  - `certFile` / `keyFile` — a client certificate and key for mutual TLS; set both or neither.
+  - `insecureSkipVerify` — disables server certificate verification entirely. It logs a startup
+    warning and is a **development-only** escape hatch for self-signed certificates; prefer
+    `caCertFile` in production, where an unverified connection offers no protection against
+    interception.
+
+  A malformed `tls` block (an unreadable or empty CA bundle, a half-configured client certificate
+  pair, an unloadable key) fails startup rather than silently downgrading security. The same block
+  applies to the `--backfill-search` CLI mode.
+
+For a secured reference stack — security plugin enabled, HTTPS, credentials via the environment —
+use `docker compose -f docker/docker-compose.opensearch-secured.yaml up --build` (it uses
+`insecureSkipVerify` only because the demo image's certificates are self-signed; the file's header
+comment explains the `caCertFile` swap for production).
 
 #### Self-healing reconciliation
 

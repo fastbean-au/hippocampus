@@ -25,7 +25,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Docker: `docker compose up --build` (SQLite), `docker compose -f docker/docker-compose.postgres.yaml
 up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up --build` (MySQL), or
   `docker compose -f docker/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content
-  search); container configs in `docker/`, image config baked from `docker/config.sqlite.json`
+  search, security disabled — demo only) or `docker compose -f
+  docker/docker-compose.opensearch-secured.yaml up --build` (the same with the OpenSearch security
+  plugin enabled: HTTPS + basic auth, Hippocampus connecting over TLS via the `opensearch.tls`
+  config block, credentials injected as `OPENSEARCH_ADMIN_PASSWORD`); container configs in
+  `docker/`, image config baked from `docker/config.sqlite.json`
 - Observability stack (any compose file): `OBSERVABILITY=true docker compose --profile observability
 up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTLP `:4317`) behind a
   compose `observability` profile — off by default. The `hippocampus` service sets
@@ -219,7 +223,13 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   are vendored copies of the googleapis definitions the annotations depend on.
 - `search/` — the optional OpenSearch secondary content-search index (`opensearch.enabled`,
   off by default; `search.Index` interface with no-op and `opensearch-go/v4` implementations).
-  Strictly secondary: all mutations propagate primary→index asynchronously (bounded queue, one
+  Connection security: basic auth (`opensearch.username`/`password`, the password injectable via
+  `HIPPOCAMPUS_OPENSEARCH_PASSWORD`) plus an optional `opensearch.tls` block for HTTPS clusters
+  (`caCertFile` to trust a private/self-signed CA, `certFile`/`keyFile` for mutual TLS,
+  `insecureSkipVerify` as a dev-only escape hatch) — `TLSConfig.build`/`buildTransport` in
+  `search/opensearch.go` turn it into a cloned default transport with a `*tls.Config`, and a
+  malformed block fails startup. Strictly secondary: all mutations propagate primary→index
+  asynchronously (bounded queue, one
   FIFO worker — ordering matters for summarization's delete-then-index; overflow drops, never
   blocks), and `SearchMemories` results are always re-read from the primary store so stale index
   entries drop out. The worker retries a transient cluster failure (bounded attempts with jittered

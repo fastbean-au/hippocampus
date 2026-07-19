@@ -1,0 +1,90 @@
+{
+    "logging": {
+        "level": "info",
+        "json": true
+    },
+    "port": 50051,
+    "gateway": {
+        "port": 8080
+    },
+    "auth": {
+        "method": "none",
+        "signingSecret": ""
+    },
+    "tls": {
+        "enabled": false,
+        "certFile": "",
+        "keyFile": ""
+    },
+    "observability": {
+        "tracing": {
+            "enabled": false,
+            "samplingRatio": 1.0
+        },
+        "metrics": {
+            "enabled": false,
+            "exportIntervalSeconds": 60
+        },
+        "otlp": {
+            "endpoint": "",
+            "insecure": true
+        }
+    },
+    "storage": {
+        "driver": "sqlite",
+        "directory": "/data",
+        "postgres": {
+            "dsn": ""
+        }
+    },
+    "opensearch": {
+        "enabled": true,
+        "addresses": [
+            "https://opensearch:9200"
+        ],
+        "username": "admin",
+        "password": "",
+        "index": "hippocampus-memories",
+        "queueSize": 1024,
+        "reconcileIntervalSeconds": 3600,
+        "reconcileBatchSize": 500,
+        "tls": {
+            "caCertFile": "",
+            "certFile": "",
+            "keyFile": "",
+            "insecureSkipVerify": true
+        }
+    },
+    "memory": {
+        "limit": {
+            "sizeBytes": 1048576
+        },
+        "minimumSignificance": 0
+    },
+    "event": {
+        "minimumSignificance": 0
+    },
+    "sleep": {
+        "periodSeconds": 3600
+    },
+    "consolidation": {
+        "defaultEventSignificanceValue": 0,
+        "defaultEventSignificancePercentile": 0,
+        "minimumAgeInDays": 14,
+        "minimumRetentionInDays": 0,
+        "aggressiveness": 1.0,
+        "deletionThreshold": 10,
+        "method": 1,
+        "unitsOfAgeInDays": 1.0,
+        "relationshipSignificanceWeight": 1.0,
+        "recallSignificanceWeight": 1.0,
+        "capacityMemories": 100000,
+        "capacityPressureExponent": 4.0,
+        "capacityBytes": 0,
+        "capacityBytesFloor": 0,
+        "walTriggerBytes": 0,
+        "summarizationMinMemories": 0,
+        "summarizationMinAgeInDays": 30,
+        "summarizationMaxCandidates": 100
+    }
+}

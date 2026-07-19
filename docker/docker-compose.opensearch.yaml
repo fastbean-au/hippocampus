@@ -5,8 +5,10 @@
 #   docker compose -f docker/docker-compose.opensearch.yaml up --build
 #
 # The OpenSearch security plugin is disabled here for demo simplicity only - do not expose this
-# stack as-is. The index is a rebuildable secondary: losing the opensearch volume loses nothing
-# but search availability until memories are re-stored.
+# stack as-is. For a secured reference (security plugin enabled, HTTPS, credentials via the
+# environment, Hippocampus connecting over TLS), use docker-compose.opensearch-secured.yaml
+# instead. The index is a rebuildable secondary: losing the opensearch volume loses nothing but
+# search availability until memories are re-stored.
 
 services:
   hippocampus:
