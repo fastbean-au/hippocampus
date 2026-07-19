@@ -81,7 +81,8 @@ service Hippocampus {
 	}
 
 	// GetEvents lists events filtered by time range, significance range, and group, paginated by
-	// limit/offset (see GetEventsRequest).
+	// limit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max
+	// range for "only events tied at the highest (or lowest) significance value" instead.
 	rpc GetEvents(GetEventsRequest) returns (GetEventsResponse) {
 		option (google.api.http) = {
 			get: "/v1/events"
@@ -227,6 +228,16 @@ enum Bool {
 	TRUE                                                             = 2; // binary; the body is opaque and never indexed for content search
 }
 
+// SignificanceExtremum selects "all events tied at the highest (or lowest) significance value"
+// instead of a min/max range - the tied set is computed dynamically from whichever events match
+// GetEventsRequest's other filters (time range, group), not a fixed value the caller supplies.
+// Mutually exclusive with significance_min/significance_max (InvalidArgument if both are set).
+enum SignificanceExtremum {
+	SIGNIFICANCE_EXTREMUM_UNSPECIFIED                                = 0; // no extremum filtering; significance_min/significance_max (if set) apply as a normal range
+	SIGNIFICANCE_EXTREMUM_HIGHEST                                    = 1; // return only events at the highest significance value among those matching the other filters
+	SIGNIFICANCE_EXTREMUM_LOWEST                                     = 2; // return only events at the lowest significance value among those matching the other filters
+}
+
 // SignificancePlacement positions an item's significance relative to existing values instead of
 // taking the absolute `significance` field. It exists because significance is a dense integer with
 // no room between adjacent values: this lets a client say "just above the 5s" or "between 5 and 6"
@@ -344,6 +355,7 @@ message GetEventsRequest {
 	string                                 order_by                  = 9;  // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
 	int32                                  limit                     = 10; // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
 	int32                                  offset                    = 11; // rows to skip for pagination; negative values are clamped to 0; no upper bound
+	SignificanceExtremum                   significance_extremum     = 12; // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
 }
 
 message GetEventsResponse {

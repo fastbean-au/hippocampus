@@ -338,19 +338,32 @@ type MemoryFilter struct {
 }
 
 // EventFilter narrows a GetEvents query. A zero value on any field leaves that dimension
-// unconstrained; Group matches the event's group label exactly.
+// unconstrained; Group matches the event's group label exactly. SignificanceExtremum, when set,
+// takes over from SignificanceMin/SignificanceMax (see eventFilterConditions) rather than
+// combining with them - callers should leave the range fields zero when it is set.
 type EventFilter struct {
-	TimeStartMin    int64
-	TimeStartMax    int64
-	TimeEndMin      int64
-	TimeEndMax      int64
-	SignificanceMin int32
-	SignificanceMax int32
-	Group           string
-	OrderBy         string
-	Limit           int
-	Offset          int
+	TimeStartMin         int64
+	TimeStartMax         int64
+	TimeEndMin           int64
+	TimeEndMax           int64
+	SignificanceMin      int32
+	SignificanceMax      int32
+	SignificanceExtremum SignificanceExtremum
+	Group                string
+	OrderBy              string
+	Limit                int
+	Offset               int
 }
+
+// SignificanceExtremum mirrors contract.SignificanceExtremum without the db package depending on
+// the contract package (see SignificancePlacement for the same pattern).
+type SignificanceExtremum int
+
+const (
+	SignificanceExtremumNone SignificanceExtremum = iota
+	SignificanceExtremumHighest
+	SignificanceExtremumLowest
+)
 
 // SummarizationCandidate identifies an event whose memories have accumulated enough, and gone
 // quiet for long enough, to be worth condensing into a single summary memory via

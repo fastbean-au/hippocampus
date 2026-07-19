@@ -75,6 +75,59 @@ func (Bool) EnumDescriptor() ([]byte, []int) {
 	return file_hippocampus_proto_rawDescGZIP(), []int{0}
 }
 
+// SignificanceExtremum selects "all events tied at the highest (or lowest) significance value"
+// instead of a min/max range - the tied set is computed dynamically from whichever events match
+// GetEventsRequest's other filters (time range, group), not a fixed value the caller supplies.
+// Mutually exclusive with significance_min/significance_max (InvalidArgument if both are set).
+type SignificanceExtremum int32
+
+const (
+	SignificanceExtremum_SIGNIFICANCE_EXTREMUM_UNSPECIFIED SignificanceExtremum = 0 // no extremum filtering; significance_min/significance_max (if set) apply as a normal range
+	SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST     SignificanceExtremum = 1 // return only events at the highest significance value among those matching the other filters
+	SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST      SignificanceExtremum = 2 // return only events at the lowest significance value among those matching the other filters
+)
+
+// Enum value maps for SignificanceExtremum.
+var (
+	SignificanceExtremum_name = map[int32]string{
+		0: "SIGNIFICANCE_EXTREMUM_UNSPECIFIED",
+		1: "SIGNIFICANCE_EXTREMUM_HIGHEST",
+		2: "SIGNIFICANCE_EXTREMUM_LOWEST",
+	}
+	SignificanceExtremum_value = map[string]int32{
+		"SIGNIFICANCE_EXTREMUM_UNSPECIFIED": 0,
+		"SIGNIFICANCE_EXTREMUM_HIGHEST":     1,
+		"SIGNIFICANCE_EXTREMUM_LOWEST":      2,
+	}
+)
+
+func (x SignificanceExtremum) Enum() *SignificanceExtremum {
+	p := new(SignificanceExtremum)
+	*p = x
+	return p
+}
+
+func (x SignificanceExtremum) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SignificanceExtremum) Descriptor() protoreflect.EnumDescriptor {
+	return file_hippocampus_proto_enumTypes[1].Descriptor()
+}
+
+func (SignificanceExtremum) Type() protoreflect.EnumType {
+	return &file_hippocampus_proto_enumTypes[1]
+}
+
+func (x SignificanceExtremum) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SignificanceExtremum.Descriptor instead.
+func (SignificanceExtremum) EnumDescriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{1}
+}
+
 type SignificancePlacement_Mode int32
 
 const (
@@ -111,11 +164,11 @@ func (x SignificancePlacement_Mode) String() string {
 }
 
 func (SignificancePlacement_Mode) Descriptor() protoreflect.EnumDescriptor {
-	return file_hippocampus_proto_enumTypes[1].Descriptor()
+	return file_hippocampus_proto_enumTypes[2].Descriptor()
 }
 
 func (SignificancePlacement_Mode) Type() protoreflect.EnumType {
-	return &file_hippocampus_proto_enumTypes[1]
+	return &file_hippocampus_proto_enumTypes[2]
 }
 
 func (x SignificancePlacement_Mode) Number() protoreflect.EnumNumber {
@@ -905,20 +958,21 @@ func (x *GetEventResponse) GetEvent() *Event {
 }
 
 type GetEventsRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	TimeStartMin    int64                  `protobuf:"varint,1,opt,name=time_start_min,json=timeStartMin,proto3" json:"time_start_min,omitempty"`        // UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound
-	TimeStartMax    int64                  `protobuf:"varint,2,opt,name=time_start_max,json=timeStartMax,proto3" json:"time_start_max,omitempty"`        // UnixNano inclusive upper bound on time_start; 0 (the default) means no upper bound
-	TimeEndMin      int64                  `protobuf:"varint,3,opt,name=time_end_min,json=timeEndMin,proto3" json:"time_end_min,omitempty"`              // UnixNano inclusive lower bound on time_end; 0 (the default) means no lower bound
-	TimeEndMax      int64                  `protobuf:"varint,4,opt,name=time_end_max,json=timeEndMax,proto3" json:"time_end_max,omitempty"`              // UnixNano inclusive upper bound on time_end; 0 (the default) means no upper bound
-	SignificanceMin int32                  `protobuf:"varint,5,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"` // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
-	SignificanceMax int32                  `protobuf:"varint,6,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"` // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
-	Memories        bool                   `protobuf:"varint,7,opt,name=memories,proto3" json:"memories,omitempty"`                                      // when true, include each matching event's memories in the response
-	Group           string                 `protobuf:"bytes,8,opt,name=group,proto3" json:"group,omitempty"`                                             // optional: restrict to events carrying this group label
-	OrderBy         string                 `protobuf:"bytes,9,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`                          // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
-	Limit           int32                  `protobuf:"varint,10,opt,name=limit,proto3" json:"limit,omitempty"`                                           // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
-	Offset          int32                  `protobuf:"varint,11,opt,name=offset,proto3" json:"offset,omitempty"`                                         // rows to skip for pagination; negative values are clamped to 0; no upper bound
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	TimeStartMin         int64                  `protobuf:"varint,1,opt,name=time_start_min,json=timeStartMin,proto3" json:"time_start_min,omitempty"`                                                        // UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound
+	TimeStartMax         int64                  `protobuf:"varint,2,opt,name=time_start_max,json=timeStartMax,proto3" json:"time_start_max,omitempty"`                                                        // UnixNano inclusive upper bound on time_start; 0 (the default) means no upper bound
+	TimeEndMin           int64                  `protobuf:"varint,3,opt,name=time_end_min,json=timeEndMin,proto3" json:"time_end_min,omitempty"`                                                              // UnixNano inclusive lower bound on time_end; 0 (the default) means no lower bound
+	TimeEndMax           int64                  `protobuf:"varint,4,opt,name=time_end_max,json=timeEndMax,proto3" json:"time_end_max,omitempty"`                                                              // UnixNano inclusive upper bound on time_end; 0 (the default) means no upper bound
+	SignificanceMin      int32                  `protobuf:"varint,5,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"`                                                 // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	SignificanceMax      int32                  `protobuf:"varint,6,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"`                                                 // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	Memories             bool                   `protobuf:"varint,7,opt,name=memories,proto3" json:"memories,omitempty"`                                                                                      // when true, include each matching event's memories in the response
+	Group                string                 `protobuf:"bytes,8,opt,name=group,proto3" json:"group,omitempty"`                                                                                             // optional: restrict to events carrying this group label
+	OrderBy              string                 `protobuf:"bytes,9,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`                                                                          // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
+	Limit                int32                  `protobuf:"varint,10,opt,name=limit,proto3" json:"limit,omitempty"`                                                                                           // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
+	Offset               int32                  `protobuf:"varint,11,opt,name=offset,proto3" json:"offset,omitempty"`                                                                                         // rows to skip for pagination; negative values are clamped to 0; no upper bound
+	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,12,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=proto.SignificanceExtremum" json:"significance_extremum,omitempty"` // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *GetEventsRequest) Reset() {
@@ -1026,6 +1080,13 @@ func (x *GetEventsRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *GetEventsRequest) GetSignificanceExtremum() SignificanceExtremum {
+	if x != nil {
+		return x.SignificanceExtremum
+	}
+	return SignificanceExtremum_SIGNIFICANCE_EXTREMUM_UNSPECIFIED
 }
 
 type GetEventsResponse struct {
@@ -2547,7 +2608,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bmemories\x18\x02 \x01(\bR\bmemories\"6\n" +
 	"\x10GetEventResponse\x12\"\n" +
-	"\x05event\x18\x01 \x01(\v2\f.proto.EventR\x05event\"\xf3\x02\n" +
+	"\x05event\x18\x01 \x01(\v2\f.proto.EventR\x05event\"\xc5\x03\n" +
 	"\x10GetEventsRequest\x12$\n" +
 	"\x0etime_start_min\x18\x01 \x01(\x03R\ftimeStartMin\x12$\n" +
 	"\x0etime_start_max\x18\x02 \x01(\x03R\ftimeStartMax\x12 \n" +
@@ -2562,7 +2623,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\border_by\x18\t \x01(\tR\aorderBy\x12\x14\n" +
 	"\x05limit\x18\n" +
 	" \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\v \x01(\x05R\x06offset\"Z\n" +
+	"\x06offset\x18\v \x01(\x05R\x06offset\x12P\n" +
+	"\x15significance_extremum\x18\f \x01(\x0e2\x1b.proto.SignificanceExtremumR\x14significanceExtremum\"Z\n" +
 	"\x11GetEventsResponse\x12$\n" +
 	"\x06events\x18\x01 \x03(\v2\f.proto.EventR\x06events\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
@@ -2664,7 +2726,11 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x04Bool\x12\x0f\n" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05FALSE\x10\x01\x12\b\n" +
-	"\x04TRUE\x10\x022\xc5\x10\n" +
+	"\x04TRUE\x10\x02*\x82\x01\n" +
+	"\x14SignificanceExtremum\x12%\n" +
+	"!SIGNIFICANCE_EXTREMUM_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dSIGNIFICANCE_EXTREMUM_HIGHEST\x10\x01\x12 \n" +
+	"\x1cSIGNIFICANCE_EXTREMUM_LOWEST\x10\x022\xc5\x10\n" +
 	"\vHippocampus\x12G\n" +
 	"\x05Purge\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/purge\x12G\n" +
 	"\x05Sleep\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/sleep\x12L\n" +
@@ -2706,116 +2772,118 @@ func file_hippocampus_proto_rawDescGZIP() []byte {
 	return file_hippocampus_proto_rawDescData
 }
 
-var file_hippocampus_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_hippocampus_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
 var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_hippocampus_proto_goTypes = []any{
 	(Bool)(0),                                  // 0: proto.Bool
-	(SignificancePlacement_Mode)(0),            // 1: proto.SignificancePlacement.Mode
-	(*SignificancePlacement)(nil),              // 2: proto.SignificancePlacement
-	(*Event)(nil),                              // 3: proto.Event
-	(*Relationship)(nil),                       // 4: proto.Relationship
-	(*Memory)(nil),                             // 5: proto.Memory
-	(*StoreEventResponse)(nil),                 // 6: proto.StoreEventResponse
-	(*EndEventRequest)(nil),                    // 7: proto.EndEventRequest
-	(*UpdateEventSignificanceRequest)(nil),     // 8: proto.UpdateEventSignificanceRequest
-	(*MergeEventsRequest)(nil),                 // 9: proto.MergeEventsRequest
-	(*DeleteEventRequest)(nil),                 // 10: proto.DeleteEventRequest
-	(*GetEventByIdRequest)(nil),                // 11: proto.GetEventByIdRequest
-	(*GetEventResponse)(nil),                   // 12: proto.GetEventResponse
-	(*GetEventsRequest)(nil),                   // 13: proto.GetEventsRequest
-	(*GetEventsResponse)(nil),                  // 14: proto.GetEventsResponse
-	(*GetMemoriesRequest)(nil),                 // 15: proto.GetMemoriesRequest
-	(*GetMemoriesResponse)(nil),                // 16: proto.GetMemoriesResponse
-	(*StoreMemoryResponse)(nil),                // 17: proto.StoreMemoryResponse
-	(*DeleteMemoriesRequest)(nil),              // 18: proto.DeleteMemoriesRequest
-	(*RecallMemoriesRequest)(nil),              // 19: proto.RecallMemoriesRequest
-	(*SearchMemoriesRequest)(nil),              // 20: proto.SearchMemoriesRequest
-	(*ReplaceMemoriesWithSummaryRequest)(nil),  // 21: proto.ReplaceMemoriesWithSummaryRequest
-	(*ReplaceMemoriesWithSummaryResponse)(nil), // 22: proto.ReplaceMemoriesWithSummaryResponse
-	(*SummarizationCandidate)(nil),             // 23: proto.SummarizationCandidate
-	(*GetSummarizationCandidatesResponse)(nil), // 24: proto.GetSummarizationCandidatesResponse
-	(*ArchiveHeader)(nil),                      // 25: proto.ArchiveHeader
-	(*ArchiveRecord)(nil),                      // 26: proto.ArchiveRecord
-	(*ImportBatchRequest)(nil),                 // 27: proto.ImportBatchRequest
-	(*ImportBatchResponse)(nil),                // 28: proto.ImportBatchResponse
-	(*ExportRequest)(nil),                      // 29: proto.ExportRequest
-	(*ExportResponse)(nil),                     // 30: proto.ExportResponse
-	(*ImportRequest)(nil),                      // 31: proto.ImportRequest
-	(*ImportResponse)(nil),                     // 32: proto.ImportResponse
-	(*TransferRequest)(nil),                    // 33: proto.TransferRequest
-	(*TransferResponse)(nil),                   // 34: proto.TransferResponse
-	(*ClearRequest)(nil),                       // 35: proto.ClearRequest
-	(*ClearResponse)(nil),                      // 36: proto.ClearResponse
-	(*GeneralResponse)(nil),                    // 37: proto.GeneralResponse
-	(*EmptyRequest)(nil),                       // 38: proto.EmptyRequest
+	(SignificanceExtremum)(0),                  // 1: proto.SignificanceExtremum
+	(SignificancePlacement_Mode)(0),            // 2: proto.SignificancePlacement.Mode
+	(*SignificancePlacement)(nil),              // 3: proto.SignificancePlacement
+	(*Event)(nil),                              // 4: proto.Event
+	(*Relationship)(nil),                       // 5: proto.Relationship
+	(*Memory)(nil),                             // 6: proto.Memory
+	(*StoreEventResponse)(nil),                 // 7: proto.StoreEventResponse
+	(*EndEventRequest)(nil),                    // 8: proto.EndEventRequest
+	(*UpdateEventSignificanceRequest)(nil),     // 9: proto.UpdateEventSignificanceRequest
+	(*MergeEventsRequest)(nil),                 // 10: proto.MergeEventsRequest
+	(*DeleteEventRequest)(nil),                 // 11: proto.DeleteEventRequest
+	(*GetEventByIdRequest)(nil),                // 12: proto.GetEventByIdRequest
+	(*GetEventResponse)(nil),                   // 13: proto.GetEventResponse
+	(*GetEventsRequest)(nil),                   // 14: proto.GetEventsRequest
+	(*GetEventsResponse)(nil),                  // 15: proto.GetEventsResponse
+	(*GetMemoriesRequest)(nil),                 // 16: proto.GetMemoriesRequest
+	(*GetMemoriesResponse)(nil),                // 17: proto.GetMemoriesResponse
+	(*StoreMemoryResponse)(nil),                // 18: proto.StoreMemoryResponse
+	(*DeleteMemoriesRequest)(nil),              // 19: proto.DeleteMemoriesRequest
+	(*RecallMemoriesRequest)(nil),              // 20: proto.RecallMemoriesRequest
+	(*SearchMemoriesRequest)(nil),              // 21: proto.SearchMemoriesRequest
+	(*ReplaceMemoriesWithSummaryRequest)(nil),  // 22: proto.ReplaceMemoriesWithSummaryRequest
+	(*ReplaceMemoriesWithSummaryResponse)(nil), // 23: proto.ReplaceMemoriesWithSummaryResponse
+	(*SummarizationCandidate)(nil),             // 24: proto.SummarizationCandidate
+	(*GetSummarizationCandidatesResponse)(nil), // 25: proto.GetSummarizationCandidatesResponse
+	(*ArchiveHeader)(nil),                      // 26: proto.ArchiveHeader
+	(*ArchiveRecord)(nil),                      // 27: proto.ArchiveRecord
+	(*ImportBatchRequest)(nil),                 // 28: proto.ImportBatchRequest
+	(*ImportBatchResponse)(nil),                // 29: proto.ImportBatchResponse
+	(*ExportRequest)(nil),                      // 30: proto.ExportRequest
+	(*ExportResponse)(nil),                     // 31: proto.ExportResponse
+	(*ImportRequest)(nil),                      // 32: proto.ImportRequest
+	(*ImportResponse)(nil),                     // 33: proto.ImportResponse
+	(*TransferRequest)(nil),                    // 34: proto.TransferRequest
+	(*TransferResponse)(nil),                   // 35: proto.TransferResponse
+	(*ClearRequest)(nil),                       // 36: proto.ClearRequest
+	(*ClearResponse)(nil),                      // 37: proto.ClearResponse
+	(*GeneralResponse)(nil),                    // 38: proto.GeneralResponse
+	(*EmptyRequest)(nil),                       // 39: proto.EmptyRequest
 }
 var file_hippocampus_proto_depIdxs = []int32{
-	1,  // 0: proto.SignificancePlacement.mode:type_name -> proto.SignificancePlacement.Mode
-	4,  // 1: proto.Event.relationships:type_name -> proto.Relationship
-	5,  // 2: proto.Event.memories:type_name -> proto.Memory
-	2,  // 3: proto.Event.placement:type_name -> proto.SignificancePlacement
+	2,  // 0: proto.SignificancePlacement.mode:type_name -> proto.SignificancePlacement.Mode
+	5,  // 1: proto.Event.relationships:type_name -> proto.Relationship
+	6,  // 2: proto.Event.memories:type_name -> proto.Memory
+	3,  // 3: proto.Event.placement:type_name -> proto.SignificancePlacement
 	0,  // 4: proto.Memory.is_binary:type_name -> proto.Bool
-	2,  // 5: proto.Memory.placement:type_name -> proto.SignificancePlacement
-	2,  // 6: proto.UpdateEventSignificanceRequest.placement:type_name -> proto.SignificancePlacement
-	3,  // 7: proto.GetEventResponse.event:type_name -> proto.Event
-	3,  // 8: proto.GetEventsResponse.events:type_name -> proto.Event
-	5,  // 9: proto.GetMemoriesResponse.memories:type_name -> proto.Memory
-	5,  // 10: proto.ReplaceMemoriesWithSummaryRequest.summary:type_name -> proto.Memory
-	23, // 11: proto.GetSummarizationCandidatesResponse.candidates:type_name -> proto.SummarizationCandidate
-	25, // 12: proto.ArchiveRecord.header:type_name -> proto.ArchiveHeader
-	3,  // 13: proto.ArchiveRecord.event:type_name -> proto.Event
-	5,  // 14: proto.ArchiveRecord.memory:type_name -> proto.Memory
-	3,  // 15: proto.ImportBatchRequest.events:type_name -> proto.Event
-	5,  // 16: proto.ImportBatchRequest.memories:type_name -> proto.Memory
-	38, // 17: proto.Hippocampus.Purge:input_type -> proto.EmptyRequest
-	38, // 18: proto.Hippocampus.Sleep:input_type -> proto.EmptyRequest
-	3,  // 19: proto.Hippocampus.StoreEvent:input_type -> proto.Event
-	7,  // 20: proto.Hippocampus.EndEvent:input_type -> proto.EndEventRequest
-	8,  // 21: proto.Hippocampus.UpdateEventSignificance:input_type -> proto.UpdateEventSignificanceRequest
-	9,  // 22: proto.Hippocampus.MergeEvents:input_type -> proto.MergeEventsRequest
-	10, // 23: proto.Hippocampus.DeleteEvent:input_type -> proto.DeleteEventRequest
-	11, // 24: proto.Hippocampus.GetEventById:input_type -> proto.GetEventByIdRequest
-	13, // 25: proto.Hippocampus.GetEvents:input_type -> proto.GetEventsRequest
-	5,  // 26: proto.Hippocampus.StoreMemory:input_type -> proto.Memory
-	5,  // 27: proto.Hippocampus.UpdateMemory:input_type -> proto.Memory
-	18, // 28: proto.Hippocampus.DeleteMemories:input_type -> proto.DeleteMemoriesRequest
-	15, // 29: proto.Hippocampus.GetMemories:input_type -> proto.GetMemoriesRequest
-	19, // 30: proto.Hippocampus.RecallMemories:input_type -> proto.RecallMemoriesRequest
-	20, // 31: proto.Hippocampus.SearchMemories:input_type -> proto.SearchMemoriesRequest
-	21, // 32: proto.Hippocampus.ReplaceMemoriesWithSummary:input_type -> proto.ReplaceMemoriesWithSummaryRequest
-	38, // 33: proto.Hippocampus.GetSummarizationCandidates:input_type -> proto.EmptyRequest
-	29, // 34: proto.Hippocampus.Export:input_type -> proto.ExportRequest
-	31, // 35: proto.Hippocampus.Import:input_type -> proto.ImportRequest
-	27, // 36: proto.Hippocampus.ImportBatch:input_type -> proto.ImportBatchRequest
-	33, // 37: proto.Hippocampus.Transfer:input_type -> proto.TransferRequest
-	35, // 38: proto.Hippocampus.Clear:input_type -> proto.ClearRequest
-	37, // 39: proto.Hippocampus.Purge:output_type -> proto.GeneralResponse
-	37, // 40: proto.Hippocampus.Sleep:output_type -> proto.GeneralResponse
-	6,  // 41: proto.Hippocampus.StoreEvent:output_type -> proto.StoreEventResponse
-	37, // 42: proto.Hippocampus.EndEvent:output_type -> proto.GeneralResponse
-	37, // 43: proto.Hippocampus.UpdateEventSignificance:output_type -> proto.GeneralResponse
-	37, // 44: proto.Hippocampus.MergeEvents:output_type -> proto.GeneralResponse
-	37, // 45: proto.Hippocampus.DeleteEvent:output_type -> proto.GeneralResponse
-	12, // 46: proto.Hippocampus.GetEventById:output_type -> proto.GetEventResponse
-	14, // 47: proto.Hippocampus.GetEvents:output_type -> proto.GetEventsResponse
-	17, // 48: proto.Hippocampus.StoreMemory:output_type -> proto.StoreMemoryResponse
-	37, // 49: proto.Hippocampus.UpdateMemory:output_type -> proto.GeneralResponse
-	37, // 50: proto.Hippocampus.DeleteMemories:output_type -> proto.GeneralResponse
-	16, // 51: proto.Hippocampus.GetMemories:output_type -> proto.GetMemoriesResponse
-	16, // 52: proto.Hippocampus.RecallMemories:output_type -> proto.GetMemoriesResponse
-	16, // 53: proto.Hippocampus.SearchMemories:output_type -> proto.GetMemoriesResponse
-	22, // 54: proto.Hippocampus.ReplaceMemoriesWithSummary:output_type -> proto.ReplaceMemoriesWithSummaryResponse
-	24, // 55: proto.Hippocampus.GetSummarizationCandidates:output_type -> proto.GetSummarizationCandidatesResponse
-	30, // 56: proto.Hippocampus.Export:output_type -> proto.ExportResponse
-	32, // 57: proto.Hippocampus.Import:output_type -> proto.ImportResponse
-	28, // 58: proto.Hippocampus.ImportBatch:output_type -> proto.ImportBatchResponse
-	34, // 59: proto.Hippocampus.Transfer:output_type -> proto.TransferResponse
-	36, // 60: proto.Hippocampus.Clear:output_type -> proto.ClearResponse
-	39, // [39:61] is the sub-list for method output_type
-	17, // [17:39] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	3,  // 5: proto.Memory.placement:type_name -> proto.SignificancePlacement
+	3,  // 6: proto.UpdateEventSignificanceRequest.placement:type_name -> proto.SignificancePlacement
+	4,  // 7: proto.GetEventResponse.event:type_name -> proto.Event
+	1,  // 8: proto.GetEventsRequest.significance_extremum:type_name -> proto.SignificanceExtremum
+	4,  // 9: proto.GetEventsResponse.events:type_name -> proto.Event
+	6,  // 10: proto.GetMemoriesResponse.memories:type_name -> proto.Memory
+	6,  // 11: proto.ReplaceMemoriesWithSummaryRequest.summary:type_name -> proto.Memory
+	24, // 12: proto.GetSummarizationCandidatesResponse.candidates:type_name -> proto.SummarizationCandidate
+	26, // 13: proto.ArchiveRecord.header:type_name -> proto.ArchiveHeader
+	4,  // 14: proto.ArchiveRecord.event:type_name -> proto.Event
+	6,  // 15: proto.ArchiveRecord.memory:type_name -> proto.Memory
+	4,  // 16: proto.ImportBatchRequest.events:type_name -> proto.Event
+	6,  // 17: proto.ImportBatchRequest.memories:type_name -> proto.Memory
+	39, // 18: proto.Hippocampus.Purge:input_type -> proto.EmptyRequest
+	39, // 19: proto.Hippocampus.Sleep:input_type -> proto.EmptyRequest
+	4,  // 20: proto.Hippocampus.StoreEvent:input_type -> proto.Event
+	8,  // 21: proto.Hippocampus.EndEvent:input_type -> proto.EndEventRequest
+	9,  // 22: proto.Hippocampus.UpdateEventSignificance:input_type -> proto.UpdateEventSignificanceRequest
+	10, // 23: proto.Hippocampus.MergeEvents:input_type -> proto.MergeEventsRequest
+	11, // 24: proto.Hippocampus.DeleteEvent:input_type -> proto.DeleteEventRequest
+	12, // 25: proto.Hippocampus.GetEventById:input_type -> proto.GetEventByIdRequest
+	14, // 26: proto.Hippocampus.GetEvents:input_type -> proto.GetEventsRequest
+	6,  // 27: proto.Hippocampus.StoreMemory:input_type -> proto.Memory
+	6,  // 28: proto.Hippocampus.UpdateMemory:input_type -> proto.Memory
+	19, // 29: proto.Hippocampus.DeleteMemories:input_type -> proto.DeleteMemoriesRequest
+	16, // 30: proto.Hippocampus.GetMemories:input_type -> proto.GetMemoriesRequest
+	20, // 31: proto.Hippocampus.RecallMemories:input_type -> proto.RecallMemoriesRequest
+	21, // 32: proto.Hippocampus.SearchMemories:input_type -> proto.SearchMemoriesRequest
+	22, // 33: proto.Hippocampus.ReplaceMemoriesWithSummary:input_type -> proto.ReplaceMemoriesWithSummaryRequest
+	39, // 34: proto.Hippocampus.GetSummarizationCandidates:input_type -> proto.EmptyRequest
+	30, // 35: proto.Hippocampus.Export:input_type -> proto.ExportRequest
+	32, // 36: proto.Hippocampus.Import:input_type -> proto.ImportRequest
+	28, // 37: proto.Hippocampus.ImportBatch:input_type -> proto.ImportBatchRequest
+	34, // 38: proto.Hippocampus.Transfer:input_type -> proto.TransferRequest
+	36, // 39: proto.Hippocampus.Clear:input_type -> proto.ClearRequest
+	38, // 40: proto.Hippocampus.Purge:output_type -> proto.GeneralResponse
+	38, // 41: proto.Hippocampus.Sleep:output_type -> proto.GeneralResponse
+	7,  // 42: proto.Hippocampus.StoreEvent:output_type -> proto.StoreEventResponse
+	38, // 43: proto.Hippocampus.EndEvent:output_type -> proto.GeneralResponse
+	38, // 44: proto.Hippocampus.UpdateEventSignificance:output_type -> proto.GeneralResponse
+	38, // 45: proto.Hippocampus.MergeEvents:output_type -> proto.GeneralResponse
+	38, // 46: proto.Hippocampus.DeleteEvent:output_type -> proto.GeneralResponse
+	13, // 47: proto.Hippocampus.GetEventById:output_type -> proto.GetEventResponse
+	15, // 48: proto.Hippocampus.GetEvents:output_type -> proto.GetEventsResponse
+	18, // 49: proto.Hippocampus.StoreMemory:output_type -> proto.StoreMemoryResponse
+	38, // 50: proto.Hippocampus.UpdateMemory:output_type -> proto.GeneralResponse
+	38, // 51: proto.Hippocampus.DeleteMemories:output_type -> proto.GeneralResponse
+	17, // 52: proto.Hippocampus.GetMemories:output_type -> proto.GetMemoriesResponse
+	17, // 53: proto.Hippocampus.RecallMemories:output_type -> proto.GetMemoriesResponse
+	17, // 54: proto.Hippocampus.SearchMemories:output_type -> proto.GetMemoriesResponse
+	23, // 55: proto.Hippocampus.ReplaceMemoriesWithSummary:output_type -> proto.ReplaceMemoriesWithSummaryResponse
+	25, // 56: proto.Hippocampus.GetSummarizationCandidates:output_type -> proto.GetSummarizationCandidatesResponse
+	31, // 57: proto.Hippocampus.Export:output_type -> proto.ExportResponse
+	33, // 58: proto.Hippocampus.Import:output_type -> proto.ImportResponse
+	29, // 59: proto.Hippocampus.ImportBatch:output_type -> proto.ImportBatchResponse
+	35, // 60: proto.Hippocampus.Transfer:output_type -> proto.TransferResponse
+	37, // 61: proto.Hippocampus.Clear:output_type -> proto.ClearResponse
+	40, // [40:62] is the sub-list for method output_type
+	18, // [18:40] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_hippocampus_proto_init() }
@@ -2833,7 +2901,7 @@ func file_hippocampus_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hippocampus_proto_rawDesc), len(file_hippocampus_proto_rawDesc)),
-			NumEnums:      2,
+			NumEnums:      3,
 			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,

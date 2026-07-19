@@ -304,6 +304,22 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		return &res, fmt.Errorf("TimeEndMax must be greater than or equal to TimeStartMax")
 	}
 
+	extremum := db.SignificanceExtremumNone
+
+	switch in.GetSignificanceExtremum() {
+
+	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST:
+		extremum = db.SignificanceExtremumHighest
+
+	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST:
+		extremum = db.SignificanceExtremumLowest
+
+	}
+
+	if extremum != db.SignificanceExtremumNone && (in.GetSignificanceMin() > 0 || in.GetSignificanceMax() > 0) {
+		return &res, fmt.Errorf("SignificanceExtremum cannot be combined with SignificanceMin/SignificanceMax")
+	}
+
 	orderBy := in.GetOrderBy()
 
 	switch orderBy {
@@ -333,16 +349,17 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 	}
 
 	filter := db.EventFilter{
-		TimeStartMin:    in.GetTimeStartMin(),
-		TimeStartMax:    in.GetTimeStartMax(),
-		TimeEndMin:      in.GetTimeEndMin(),
-		TimeEndMax:      in.GetTimeEndMax(),
-		SignificanceMin: in.GetSignificanceMin(),
-		SignificanceMax: in.GetSignificanceMax(),
-		Group:           in.GetGroup(),
-		OrderBy:         orderBy,
-		Limit:           limit,
-		Offset:          offset,
+		TimeStartMin:         in.GetTimeStartMin(),
+		TimeStartMax:         in.GetTimeStartMax(),
+		TimeEndMin:           in.GetTimeEndMin(),
+		TimeEndMax:           in.GetTimeEndMax(),
+		SignificanceMin:      in.GetSignificanceMin(),
+		SignificanceMax:      in.GetSignificanceMax(),
+		SignificanceExtremum: extremum,
+		Group:                in.GetGroup(),
+		OrderBy:              orderBy,
+		Limit:                limit,
+		Offset:               offset,
 	}
 
 	total, err := s.db.CountEventsFiltered(ctx, filter)

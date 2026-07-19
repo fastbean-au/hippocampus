@@ -80,7 +80,8 @@ type HippocampusClient interface {
 	// NotFound if the event does not exist.
 	GetEventById(ctx context.Context, in *GetEventByIdRequest, opts ...grpc.CallOption) (*GetEventResponse, error)
 	// GetEvents lists events filtered by time range, significance range, and group, paginated by
-	// limit/offset (see GetEventsRequest).
+	// limit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max
+	// range for "only events tied at the highest (or lowest) significance value" instead.
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
@@ -401,7 +402,8 @@ type HippocampusServer interface {
 	// NotFound if the event does not exist.
 	GetEventById(context.Context, *GetEventByIdRequest) (*GetEventResponse, error)
 	// GetEvents lists events filtered by time range, significance range, and group, paginated by
-	// limit/offset (see GetEventsRequest).
+	// limit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max
+	// range for "only events tied at the highest (or lowest) significance value" instead.
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -

@@ -52,7 +52,7 @@
     },
     "/v1/events": {
       "get": {
-        "summary": "GetEvents lists events filtered by time range, significance range, and group, paginated by\nlimit/offset (see GetEventsRequest).",
+        "summary": "GetEvents lists events filtered by time range, significance range, and group, paginated by\nlimit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max\nrange for \"only events tied at the highest (or lowest) significance value\" instead.",
         "operationId": "Hippocampus_GetEvents",
         "responses": {
           "200": {
@@ -153,6 +153,19 @@
             "required": false,
             "type": "integer",
             "format": "int32"
+          },
+          {
+            "name": "significanceExtremum",
+            "description": "when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum\n\n - SIGNIFICANCE_EXTREMUM_UNSPECIFIED: no extremum filtering; significance_min/significance_max (if set) apply as a normal range\n - SIGNIFICANCE_EXTREMUM_HIGHEST: return only events at the highest significance value among those matching the other filters\n - SIGNIFICANCE_EXTREMUM_LOWEST: return only events at the lowest significance value among those matching the other filters",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "SIGNIFICANCE_EXTREMUM_UNSPECIFIED",
+              "SIGNIFICANCE_EXTREMUM_HIGHEST",
+              "SIGNIFICANCE_EXTREMUM_LOWEST"
+            ],
+            "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED"
           }
         ],
         "tags": [
@@ -1360,6 +1373,16 @@
         }
       },
       "description": "SearchMemoriesRequest queries the optional secondary content-search index (opensearch.enabled)\nfor memories whose body matches the query. Results are always re-read from the primary store,\nwhich remains authoritative; ids the index returns that the primary store no longer holds are\nsilently dropped. When reinforce is true the matched memories are recalled - resetting their\ndecay clocks and raising their effective significance - rather than merely fetched."
+    },
+    "protoSignificanceExtremum": {
+      "type": "string",
+      "enum": [
+        "SIGNIFICANCE_EXTREMUM_UNSPECIFIED",
+        "SIGNIFICANCE_EXTREMUM_HIGHEST",
+        "SIGNIFICANCE_EXTREMUM_LOWEST"
+      ],
+      "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED",
+      "description": "SignificanceExtremum selects \"all events tied at the highest (or lowest) significance value\"\ninstead of a min/max range - the tied set is computed dynamically from whichever events match\nGetEventsRequest's other filters (time range, group), not a fixed value the caller supplies.\nMutually exclusive with significance_min/significance_max (InvalidArgument if both are set).\n\n - SIGNIFICANCE_EXTREMUM_UNSPECIFIED: no extremum filtering; significance_min/significance_max (if set) apply as a normal range\n - SIGNIFICANCE_EXTREMUM_HIGHEST: return only events at the highest significance value among those matching the other filters\n - SIGNIFICANCE_EXTREMUM_LOWEST: return only events at the lowest significance value among those matching the other filters"
     },
     "protoSignificancePlacement": {
       "type": "object",

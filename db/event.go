@@ -312,6 +312,11 @@ const defaultEventOrderBy = "significance"
 
 // eventFilterConditions builds the shared WHERE clause and its args for the events filter, so
 // GetEvents and CountEventsFiltered stay in lock-step over the exact same predicate.
+//
+// SignificanceExtremum, when set, replaces the SignificanceMin/SignificanceMax range check with an
+// equality match against the highest (or lowest) significance value among events matching the
+// other filters - computed via a subquery built from this same function (with the extremum and
+// range fields cleared), so the "other filters" stay identical between the two.
 func eventFilterConditions(filter EventFilter) (string, []any) {
 	query := ` WHERE 1=1`
 	var args []any
@@ -336,6 +341,29 @@ func eventFilterConditions(filter EventFilter) (string, []any) {
 		args = append(args, filter.TimeEndMax)
 	}
 
+	if filter.Group != "" {
+		query += ` AND group_name = ?`
+		args = append(args, filter.Group)
+	}
+
+	if filter.SignificanceExtremum != SignificanceExtremumNone {
+		aggregate := "MAX"
+		if filter.SignificanceExtremum == SignificanceExtremumLowest {
+			aggregate = "MIN"
+		}
+
+		subFilter := filter
+		subFilter.SignificanceExtremum = SignificanceExtremumNone
+		subFilter.SignificanceMin = 0
+		subFilter.SignificanceMax = 0
+		subWhere, subArgs := eventFilterConditions(subFilter)
+
+		query += ` AND significance = (SELECT ` + aggregate + `(significance) FROM ` + eventsFrom + subWhere + `)`
+		args = append(args, subArgs...)
+
+		return query, args
+	}
+
 	if filter.SignificanceMin > 0 {
 		query += ` AND significance >= ?`
 		args = append(args, filter.SignificanceMin)
@@ -344,11 +372,6 @@ func eventFilterConditions(filter EventFilter) (string, []any) {
 	if filter.SignificanceMax > 0 {
 		query += ` AND significance <= ?`
 		args = append(args, filter.SignificanceMax)
-	}
-
-	if filter.Group != "" {
-		query += ` AND group_name = ?`
-		args = append(args, filter.Group)
 	}
 
 	return query, args

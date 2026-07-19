@@ -539,6 +539,60 @@ func TestGetEvents_BatchesMemoriesCorrectly(t *testing.T) {
 	}
 }
 
+// TestGetEvents_SignificanceExtremum verifies the RPC passes SignificanceExtremum through to the
+// db filter and returns every event tied at the highest significance, not just one.
+func TestGetEvents_SignificanceExtremum(t *testing.T) {
+	s := newEventTestServer(t)
+
+	for _, e := range []types.Event{
+		{Id: "e1", Name: "one", TimeStart: 100, Significance: 3},
+		{Id: "e2", Name: "two", TimeStart: 200, Significance: 8},
+		{Id: "e3", Name: "three", TimeStart: 300, Significance: 8},
+	} {
+		if _, err := s.db.CreateEvent(context.Background(), e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	res, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST,
+	})
+	if err != nil {
+		t.Fatalf("GetEvents: %s", err)
+	}
+
+	if len(res.GetEvents()) != 2 {
+		t.Fatalf("expected 2 events tied at the highest significance, got %d", len(res.GetEvents()))
+	}
+
+	for _, e := range res.GetEvents() {
+		if e.GetSignificance() != 8 {
+			t.Errorf("expected significance 8, got %d for %s", e.GetSignificance(), e.GetId())
+		}
+	}
+}
+
+// TestGetEvents_SignificanceExtremum_RejectsCombinationWithRange verifies significance_extremum
+// and significance_min/significance_max are mutually exclusive, per the overload the field was
+// deliberately kept separate to avoid.
+func TestGetEvents_SignificanceExtremum_RejectsCombinationWithRange(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST,
+		SignificanceMin:      1,
+	}); err == nil {
+		t.Fatal("expected an error combining SignificanceExtremum with SignificanceMin")
+	}
+
+	if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+		SignificanceMax:      5,
+	}); err == nil {
+		t.Fatal("expected an error combining SignificanceExtremum with SignificanceMax")
+	}
+}
+
 // TestStoreEvent_InsignificantRejected verifies the "quietly forgotten" contract for
 // events: an event below the minimum significance returns no error, no id, stores none of its
 // nested memories, and sets rejected.

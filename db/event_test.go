@@ -327,6 +327,93 @@ func TestGetEvents_CombinedFilters(t *testing.T) {
 	}
 }
 
+// TestGetEvents_SignificanceExtremum verifies HIGHEST/LOWEST return every event tied at that
+// significance value (not just one), computed dynamically rather than against a caller-supplied
+// bound.
+func TestGetEvents_SignificanceExtremum(t *testing.T) {
+	db := newTestDB(t)
+
+	events := []types.Event{
+		{Id: "e1", Name: "low a", TimeStart: 100, Significance: 2},
+		{Id: "e2", Name: "low b", TimeStart: 200, Significance: 2},
+		{Id: "e3", Name: "mid", TimeStart: 300, Significance: 5},
+		{Id: "e4", Name: "high a", TimeStart: 400, Significance: 9},
+		{Id: "e5", Name: "high b", TimeStart: 500, Significance: 9},
+	}
+
+	for _, e := range events {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	highest, err := db.GetEvents(context.Background(), EventFilter{SignificanceExtremum: SignificanceExtremumHighest})
+	if err != nil {
+		t.Fatalf("GetEvents(highest): %s", err)
+	}
+
+	if len(*highest) != 2 {
+		t.Fatalf("expected 2 events tied at the highest significance, got %d: %+v", len(*highest), *highest)
+	}
+
+	for _, e := range *highest {
+		if e.Significance != 9 {
+			t.Errorf("expected significance 9, got %d for %s", e.Significance, e.Id)
+		}
+	}
+
+	lowest, err := db.GetEvents(context.Background(), EventFilter{SignificanceExtremum: SignificanceExtremumLowest})
+	if err != nil {
+		t.Fatalf("GetEvents(lowest): %s", err)
+	}
+
+	if len(*lowest) != 2 {
+		t.Fatalf("expected 2 events tied at the lowest significance, got %d: %+v", len(*lowest), *lowest)
+	}
+
+	for _, e := range *lowest {
+		if e.Significance != 2 {
+			t.Errorf("expected significance 2, got %d for %s", e.Significance, e.Id)
+		}
+	}
+
+	total, err := db.CountEventsFiltered(context.Background(), EventFilter{SignificanceExtremum: SignificanceExtremumHighest})
+	if err != nil {
+		t.Fatalf("CountEventsFiltered(highest): %s", err)
+	}
+
+	if total != 2 {
+		t.Errorf("expected CountEventsFiltered(highest) = 2, got %d", total)
+	}
+}
+
+// TestGetEvents_SignificanceExtremum_ComposesWithOtherFilters verifies the extremum is computed
+// only over events matching the other filters (group here), not the whole store.
+func TestGetEvents_SignificanceExtremum_ComposesWithOtherFilters(t *testing.T) {
+	db := newTestDB(t)
+
+	events := []types.Event{
+		{Id: "e1", Name: "billing low", TimeStart: 100, Significance: 3, Group: "billing"},
+		{Id: "e2", Name: "billing high", TimeStart: 200, Significance: 7, Group: "billing"},
+		{Id: "e3", Name: "ingest highest", TimeStart: 300, Significance: 20, Group: "ingest"},
+	}
+
+	for _, e := range events {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	got, err := db.GetEvents(context.Background(), EventFilter{Group: "billing", SignificanceExtremum: SignificanceExtremumHighest})
+	if err != nil {
+		t.Fatalf("GetEvents: %s", err)
+	}
+
+	if len(*got) != 1 || (*got)[0].Id != "e2" {
+		t.Fatalf("expected only e2 (highest within group 'billing'), got %+v", *got)
+	}
+}
+
 // TestEventGroup verifies the group label round-trips through create/read, filters GetEvents,
 // and follows the upsert's only-non-zero-values-overwrite rule on update.
 func TestEventGroup(t *testing.T) {
