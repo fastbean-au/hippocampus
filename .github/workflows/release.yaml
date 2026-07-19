@@ -2,8 +2,10 @@ name: Release
 
 # Driven entirely by semver tags: the tag IS the release label and the Go module version, so the
 # two can never drift. Cut a release with `git tag vX.Y.Z && git push --tags`; this workflow runs
-# the coverage suite, reports it to Coveralls, creates the GitHub release from the tag, and then
-# builds and publishes the container image to GHCR. The same tag is stamped into the binary at
+# the test suite as a gate, creates the GitHub release from the tag, and then
+# builds and publishes the container image to GHCR. Coverage is reported to Coveralls by the CI
+# workflow on push to main (a tag run would file it under the tag ref, not main). The same tag is
+# stamped into the binary at
 # build time via -ldflags (see the Dockerfile), so a running instance reports the release version
 # through --version and /healthz.
 on:
@@ -72,23 +74,18 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # cmd/ is excluded to match hooks/pre-commit and the release runbook - main-package wiring
-      # is exercised by the docker smoke tests in CI, not by unit coverage.
-      - name: Test with coverage (excluding cmd/)
+      # The full suite (with the service containers above) gates the release: a failing test here
+      # stops the GitHub release and the downstream image publish. cmd/ is excluded from the run to
+      # match hooks/pre-commit and the release runbook - main-package wiring is exercised by the
+      # docker smoke tests in CI, not by unit coverage. Coverage is NOT reported to Coveralls from
+      # here: a tag-triggered run reports under the tag ref, never main, so it would leave the
+      # ?branch=main badge stale - the CI workflow reports it on push to main instead.
+      - name: Test (excluding cmd/)
         env:
           HIPPOCAMPUS_TEST_POSTGRES_DSN: postgres://hippocampus:hippocampus@localhost:5432/hippocampus_test?sslmode=disable
           HIPPOCAMPUS_TEST_MYSQL_DSN: hippocampus:hippocampus@tcp(localhost:3306)/hippocampus_test
           HIPPOCAMPUS_TEST_OPENSEARCH_URL: http://localhost:9200
-        run: go test -coverprofile=coverage.out $(go list ./... | grep -v '/cmd/')
-
-      - name: Report coverage to Coveralls
-        env:
-          # Set this as a repository secret; goveralls reads it via -service=github. Never inline
-          # the repo token here.
-          COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
-        run: |
-          go install github.com/mattn/goveralls@latest
-          goveralls -coverprofile=coverage.out -service=github
+        run: go test $(go list ./... | grep -v '/cmd/')
 
       - name: Create GitHub release
         env:

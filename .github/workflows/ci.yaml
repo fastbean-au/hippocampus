@@ -80,7 +80,22 @@ jobs:
           HIPPOCAMPUS_TEST_POSTGRES_DSN: postgres://hippocampus:hippocampus@localhost:5432/hippocampus_test?sslmode=disable
           HIPPOCAMPUS_TEST_MYSQL_DSN: hippocampus:hippocampus@tcp(localhost:3306)/hippocampus_test
           HIPPOCAMPUS_TEST_OPENSEARCH_URL: http://localhost:9200
-        run: go test ./...
+        run: go test -coverprofile=coverage.out ./...
+
+      # Coverage is reported to Coveralls only on a push to main, never on a PR: fork PRs cannot see
+      # the token secret, and PR coverage must not overwrite the mainline badge. This is what keeps
+      # the README's ?branch=main badge fresh - the tag-triggered release runs report under the tag
+      # ref, so they never update main. cmd/ is filtered out of the profile to match the release
+      # runbook: main-package wiring is exercised by the docker smoke tests below, not unit coverage.
+      - name: Report coverage to Coveralls
+        if: github.event_name == 'push'
+        env:
+          # Repository secret; goveralls reads it via -service=github. Never inline the token.
+          COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
+        run: |
+          grep -v '/cmd/' coverage.out > coverage.nocmd.out
+          go install github.com/mattn/goveralls@latest
+          goveralls -coverprofile=coverage.nocmd.out -service=github
 
   # Build the image and smoke both compose stacks the same way the containerization work was
   # validated by hand: /healthz serves, a memory stores and reads back through the gateway, and

@@ -5,14 +5,15 @@ release label, the Go module version, and — stamped into the binary at build t
 running service reports through `--version`, the `/healthz` body, and the OTEL `service.version`
 attribute. Because all of these derive from the one tag, they can never drift out of lockstep.
 
-Pushing the tag triggers `.github/workflows/release.yaml`, which runs the coverage suite, reports it
-to Coveralls, creates the GitHub release, and publishes the container image to GHCR. The steps below
-are the local pre-flight plus the one command that starts all of that.
+Pushing the tag triggers `.github/workflows/release.yaml`, which runs the test suite as a gate,
+creates the GitHub release, and publishes the container image to GHCR. Coverage is reported to
+Coveralls separately by the CI workflow on push to `main` (see below). The steps below are the local
+pre-flight plus the one command that starts all of that.
 
 ## One-time setup
 
-- **`COVERALLS_TOKEN` repository secret** — the release workflow reports coverage to Coveralls with
-  it. Set it under **Settings → Secrets and variables → Actions** (or
+- **`COVERALLS_TOKEN` repository secret** — the CI workflow reports coverage to Coveralls with it on
+  every push to `main`. Set it under **Settings → Secrets and variables → Actions** (or
   `gh secret set COVERALLS_TOKEN --repo fastbean-au/hippocampus`). No token is ever committed.
 - **Git hooks** — point git at the tracked hooks once per clone: `git config core.hooksPath hooks`.
 - GHCR publishing needs no secret: the workflow authenticates with the built-in `GITHUB_TOKEN`.
@@ -38,6 +39,7 @@ Run these before cutting a tag. Most of the mechanical checks are also enforced 
    Open `coverage.html` and confirm nothing important regressed. (`cmd/` is excluded here and in the
    release workflow — the main-package wiring is covered by the docker smoke tests in CI, not unit
    coverage.)
+
 6. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
    to release.
 
@@ -55,10 +57,11 @@ fixes, minor for backward-compatible features, major for breaking changes.
 
 `.github/workflows/release.yaml`, on any `v*` tag:
 
-1. **`release` job** — runs `go test -coverprofile=…` against real Postgres, MySQL, and OpenSearch
-   service containers (so coverage reflects the integration tests, not just the SQLite paths),
-   reports the profile to Coveralls via `goveralls`, then `gh release create` builds the GitHub
-   release with auto-generated notes from the tag.
+1. **`release` job** — runs `go test` against real Postgres, MySQL, and OpenSearch service
+   containers (so the gate reflects the integration tests, not just the SQLite paths) as a gate,
+   then `gh release create` builds the GitHub release with auto-generated notes from the tag.
+   Coverage is not reported here — a tag-triggered run would file it under the tag ref, leaving the
+   `?branch=main` badge stale; the CI workflow reports coverage to Coveralls on push to `main`.
 2. **`publish` job** (gated on `release` succeeding, so a red build publishes nothing) — builds the
    image and pushes it to **`ghcr.io/fastbean-au/hippocampus`**, tagged with the full version
    (`1.2.3`), the rolling `major.minor` (`1.2`), and `latest` for non-prerelease tags. The tag is
@@ -69,7 +72,8 @@ fixes, minor for backward-compatible features, major for breaking changes.
 - Verify the GitHub release page and its generated notes.
 - Verify the image: `docker pull ghcr.io/fastbean-au/hippocampus:1.2.3` and
   `docker run --rm ghcr.io/fastbean-au/hippocampus:1.2.3 --version` should print `v1.2.3`.
-- Confirm the coverage update on Coveralls.
+- Confirm the coverage update on Coveralls — it lands from the CI run for the merge to `main`, not
+  from the tag push.
 
 ## How the version reaches the binary
 
