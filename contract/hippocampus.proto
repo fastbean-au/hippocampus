@@ -4,10 +4,227 @@ option go_package = "github.com/fastbean-au/hippocampus/contract;contract";
 
 import "google/api/annotations.proto";
 
+// HTTP annotations below map every RPC onto a REST-ish JSON endpoint under /v1, served by the
+// grpc-gateway alongside the native gRPC API. Path-bound fields (e.g. {id}) are taken from the
+// URL; for GET/DELETE the remaining fields are taken from the query string, and for POST/PATCH
+// they are taken from the JSON body.
+service Hippocampus {
+	// Purge deletes every event and memory in the store. While it runs, all other Hippocampus RPCs
+	// are rejected with Unavailable.
+	rpc Purge(EmptyRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/purge"
+		};
+	}
+
+	// Sleep manually triggers a consolidation cycle out of schedule and resets the periodic timer.
+	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
+	// which must never run its own cycle.
+	rpc Sleep(EmptyRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/sleep"
+		};
+	}
+
+	// Events
+	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
+	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
+	// StoreEventResponse.
+	rpc StoreEvent(Event) returns (StoreEventResponse) {
+		option (google.api.http) = {
+			post: "/v1/events"
+			body: "*"
+		};
+	}
+
+	// EndEvent sets an event's time_end (defaults to now when unset). NotFound if the event does
+	// not exist.
+	rpc EndEvent(EndEventRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/events/{id}/end"
+			body: "*"
+		};
+	}
+
+	// UpdateEventSignificance changes an event's significance, either as an absolute value or via
+	// placement (see SignificancePlacement). NotFound if the event does not exist.
+	rpc UpdateEventSignificance(UpdateEventSignificanceRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			patch: "/v1/events/{id}/significance"
+			body: "*"
+		};
+	}
+
+	// MergeEvents re-points every memory of merge_from onto merge_to. merge_to must already exist;
+	// merge_from need not - an absent one simply matches no memories.
+	rpc MergeEvents(MergeEventsRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/events/merge"
+			body: "*"
+		};
+	}
+
+	// DeleteEvent deletes an event. When memories is true its memories are deleted too; otherwise
+	// they are kept but detached (their event_id is cleared). NotFound if the event does not exist.
+	rpc DeleteEvent(DeleteEventRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			delete: "/v1/events/{id}"
+		};
+	}
+
+	// GetEventById fetches a single event by id; set memories to also load its nested memories.
+	// NotFound if the event does not exist.
+	rpc GetEventById(GetEventByIdRequest) returns (GetEventResponse) {
+		option (google.api.http) = {
+			get: "/v1/events/{id}"
+		};
+	}
+
+	// GetEvents lists events filtered by time range, significance range, and group, paginated by
+	// limit/offset (see GetEventsRequest).
+	rpc GetEvents(GetEventsRequest) returns (GetEventsResponse) {
+		option (google.api.http) = {
+			get: "/v1/events"
+		};
+	}
+
+	// Memories
+	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
+	// see StoreMemoryResponse.
+	rpc StoreMemory(Memory) returns (StoreMemoryResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories"
+			body: "*"
+		};
+	}
+
+	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
+	// (significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and
+	// is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
+	// - so any updated content must stay consistent with the memory's existing is_binary/is_summary:
+	// a non-binary memory is re-indexed for content search, so its new body must remain valid text,
+	// and a summary memory should keep summary-appropriate content. An unknown id returns NotFound
+	// (no memory is created).
+	rpc UpdateMemory(Memory) returns (GeneralResponse) {
+		option (google.api.http) = {
+			patch: "/v1/memories/{id}"
+			body: "*"
+		};
+	}
+
+	// DeleteMemories deletes the given memories by id; unknown ids are silently ignored.
+	rpc DeleteMemories(DeleteMemoriesRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/delete"
+			body: "*"
+		};
+	}
+
+	// GetMemories lists memories filtered by time range, significance range, and group, paginated
+	// by limit/offset (see GetMemoriesRequest).
+	rpc GetMemories(GetMemoriesRequest) returns (GetMemoriesResponse) {
+		option (google.api.http) = {
+			get: "/v1/memories"
+		};
+	}
+
+	// RecallMemories returns the requested memories and reinforces each one: its recall time is
+	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
+	// effective significance during consolidation).
+	rpc RecallMemories(RecallMemoriesRequest) returns (GetMemoriesResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/recall"
+			body: "*"
+		};
+	}
+
+	// SearchMemories finds memories via the optional content-search index; see
+	// SearchMemoriesRequest.
+	rpc SearchMemories(SearchMemoriesRequest) returns (GetMemoriesResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/search"
+			body: "*"
+		};
+	}
+
+	// Summarization
+	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
+	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
+	rpc ReplaceMemoriesWithSummary(ReplaceMemoriesWithSummaryRequest) returns (ReplaceMemoriesWithSummaryResponse) {
+		option (google.api.http) = {
+			post: "/v1/events/{event_id}/summary"
+			body: "summary"
+		};
+	}
+
+	// GetSummarizationCandidates returns events identified by the most recent sleep cycle as having
+	// accumulated enough quiet, unsummarized memories to be worth condensing via
+	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
+	// consolidation.summarizationMinMemories is configured.
+	rpc GetSummarizationCandidates(EmptyRequest) returns (GetSummarizationCandidatesResponse) {
+		option (google.api.http) = {
+			get: "/v1/summarization/candidates"
+		};
+	}
+
+	// Transfer and archive (embedded -> centralised)
+	// Export snapshots the whole store into an archive object in S3 and records a manifest of
+	// exactly what was captured; with clear set, the captured records are deleted once the upload
+	// has succeeded.
+	rpc Export(ExportRequest) returns (ExportResponse) {
+		option (google.api.http) = {
+			post: "/v1/export"
+			body: "*"
+		};
+	}
+
+	// Import streams an archive object from S3 into the store, upserting every record by id with
+	// its full state preserved. Idempotent; aborts on the first error.
+	rpc Import(ImportRequest) returns (ImportResponse) {
+		option (google.api.http) = {
+			post: "/v1/import"
+			body: "*"
+		};
+	}
+
+	// ImportBatch upserts full-state rows by id directly - the ingest half of Transfer. Nothing is
+	// defaulted or gated on minimum significance; the rows carry their history.
+	rpc ImportBatch(ImportBatchRequest) returns (ImportBatchResponse) {
+		option (google.api.http) = {
+			post: "/v1/import/batch"
+			body: "*"
+		};
+	}
+
+	// Transfer streams the whole store directly into a centralised instance's ImportBatch RPC,
+	// recording a manifest like Export; with clear set the captured records are deleted once the
+	// target has accepted every batch.
+	rpc Transfer(TransferRequest) returns (TransferResponse) {
+		option (google.api.http) = {
+			post: "/v1/transfer"
+			body: "*"
+		};
+	}
+
+	// Clear deletes exactly the records captured by the Export/Transfer run that produced the
+	// manifest. Memories recalled (or re-created) since the capture survive, as do events that
+	// still have memories.
+	rpc Clear(ClearRequest) returns (ClearResponse) {
+		option (google.api.http) = {
+			post: "/v1/clear"
+			body: "*"
+		};
+	}
+}
+
+// Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an
+// explicitly-set value from one left absent. Used for Memory.is_binary; UNSPECIFIED and FALSE are
+// currently treated identically by the server (both mean not-binary) - only TRUE marks a memory
+// as binary.
 enum Bool {
-    UNSPECIFIED = 0;
-    FALSE = 1;
-    TRUE = 2;
+	UNSPECIFIED                                                      = 0; // not set; the server currently treats this the same as FALSE
+	FALSE                                                            = 1; // explicitly not binary
+	TRUE                                                             = 2; // binary; the body is opaque and never indexed for content search
 }
 
 // SignificancePlacement positions an item's significance relative to existing values instead of
@@ -17,51 +234,62 @@ enum Bool {
 // UpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the
 // absolute `significance` value is used as-is (0 meaning unranked).
 message SignificancePlacement {
-    enum Mode {
-        UNSPECIFIED = 0;  // ignore placement; use the absolute significance value
-        ABOVE = 1;        // rank just above the anchor, below the next-higher value
-        BELOW = 2;        // rank just below the anchor, above the next-lower value
-        BETWEEN = 3;      // rank strictly between the anchor (lower) and upper bounds
-    }
-    Mode mode = 1;
-    int32 anchor = 2;      // anchor significance value; ignored when anchor_id is set
-    string anchor_id = 3;  // anchor by an existing item's id, whose significance is looked up
-    int32 upper = 4;       // BETWEEN only: the upper bound significance; ignored when upper_id is set
-    string upper_id = 5;   // BETWEEN only: the upper bound by an existing item's id
+	enum Mode {
+		UNSPECIFIED                                                     = 0; // ignore placement; use the absolute significance value
+		ABOVE                                                           = 1; // rank just above the anchor, below the next-higher value
+		BELOW                                                           = 2; // rank just below the anchor, above the next-lower value
+		BETWEEN                                                         = 3; // rank strictly between the anchor (lower) and upper bounds
+	}
+	Mode                         mode                                = 1; // the placement mode
+	int32                        anchor                              = 2; // anchor significance value; must be >= 1 unless anchor_id is set
+	string                       anchor_id                           = 3; // anchor by an existing item's id, whose significance is looked up; that item must already be ranked (significance > 0)
+	int32                        upper                               = 4; // BETWEEN only: the upper bound significance; must be >= 1 (and greater than anchor) unless upper_id is set
+	string                       upper_id                            = 5; // BETWEEN only: the upper bound by an existing item's id; that item must already be ranked (significance > 0)
 }
 
+// Event is a named time span with its own significance, optionally carrying relationships to
+// other events and/or nested memories. memories/relationships are populated on read only when
+// requested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each
+// stored via the same rules as StoreMemory.
 message Event {
-    string id = 1;
-    int64 time_start = 2;  // UnixNano; defaults to the current time when unset (0) on create
-    int64 time_end = 3;
-    int32 significance = 4;
-    string name = 5;
-    string description = 6;
-    bool memories_consolidated = 7;
-    int64 relationship_significance = 8;
-    repeated Relationship relationships = 9;
-    repeated Memory memories = 10;
-    string group = 11;  // optional freeform grouping/context label (system, subsystem, owner, ...)
-    SignificancePlacement placement = 12;  // write-only: rank relative to existing values (see SignificancePlacement)
+	string                                 id                        = 1;  // auto-generated UUID if omitted on create; max 128 characters
+	int64                                  time_start                = 2;  // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
+	int64                                  time_end                  = 3;  // UnixNano; 0 means the event has not ended yet (see EndEvent); when set, must not be before time_start
+	int32                                  significance              = 4;  // 0 = unranked (rank it later via UpdateEventSignificance/placement); must be >= 0; higher ranks more significant
+	string                                 name                      = 5;  // required (non-empty) on create; max 256 characters
+	string                                 description               = 6;  // optional; max 1024 characters
+	bool                                   memories_consolidated     = 7;  // read-only: true once a sleep cycle has deleted (consolidated) some of this event's memories; ignored on write
+	int64                                  relationship_significance = 8;  // read-only: sum of relationships' significance values, calculated by the server; ignored on write
+	repeated Relationship                  relationships             = 9;  // relationships to other events, weighted into this event's memories' value (see consolidation.relationshipSignificanceWeight)
+	repeated Memory                        memories                  = 10; // populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory
+	string                                 group                     = 11; // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
+	SignificancePlacement                  placement                 = 12; // write-only: rank relative to existing values (see SignificancePlacement)
 }
 
+// Relationship is a directed reference from one event to another, carrying its own significance,
+// which is weighted into the value calculation of the referencing event's memories (see
+// consolidation.relationshipSignificanceWeight).
 message Relationship {
-    string event_id = 1;
-    int32 significance = 2;
+	string                                 event_id                  = 1; // the related event's id; not validated against existing events
+	int32                                  significance              = 2; // this relationship's weight; unvalidated (may be negative or zero) - not part of the significance registry, never ranked
 }
 
+// Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to
+// an event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective
+// significance rises. is_binary controls whether the body is indexed for content search (see
+// SearchMemories) - a binary body is never indexed.
 message Memory {
-    string id = 1;
-    int64 time_stamp = 2;  // UnixNano; defaults to the current time when unset (0) on create
-    int32 significance = 3;
-    string event_id = 4;
-    string body = 5;
-    Bool is_binary = 6;
-    int64 time_recalled = 7;
-    int32 recall_count = 8;
-    bool is_summary = 9;
-    string group = 10;  // optional freeform grouping/context label (system, subsystem, owner, ...)
-    SignificancePlacement placement = 11;  // write-only: rank relative to existing values (see SignificancePlacement)
+	string                                 id                        = 1;  // auto-generated UUID if omitted on create; max 128 characters
+	int64                                  time_stamp                = 2;  // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
+	int32                                  significance              = 3;  // 0 = unranked (rank it later via UpdateMemory/placement); must be >= 0; higher ranks more significant. On UpdateMemory, 0 with no placement leaves the existing significance unchanged - it cannot reset a memory to unranked
+	string                                 event_id                  = 4;  // optional: leave unset to store the memory unassociated with any event
+	string                                 body                      = 5;  // required (non-empty) on create; a proto3 string, so always valid UTF-8 on the wire - encode true binary payloads (e.g. base64) before setting is_binary; optionally capped by memory.limit.sizeBytes (0 = unlimited)
+	Bool                                   is_binary                 = 6;  // set once at creation; not updatable via UpdateMemory. TRUE bodies are opaque and never indexed for content search (see SearchMemories)
+	int64                                  time_recalled             = 7;  // read-only: UnixNano of the most recent recall (RecallMemories, or SearchMemories with reinforce); 0 if never recalled; ignored on write
+	int32                                  recall_count              = 8;  // read-only: number of times the memory has been recalled; ignored on write
+	bool                                   is_summary                = 9;  // read-only: true for the summary memory created by ReplaceMemoriesWithSummary; not updatable via UpdateMemory
+	string                                 group                     = 10; // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
+	SignificancePlacement                  placement                 = 11; // write-only: rank relative to existing values (see SignificancePlacement)
 }
 
 // StoreEventResponse carries the stored event's id and how many of its nested memories were
@@ -69,90 +297,90 @@ message Memory {
 // like a brain that simply does not retain the insignificant: no error is returned, id is empty,
 // memory_count is 0 (its nested memories are not stored either), and rejected is true.
 message StoreEventResponse {
-    string id = 1;           // the stored event's id; empty when the event was not retained
-    int32 memory_count = 2;  // nested memories stored (those below memory.minimumSignificance are dropped)
-    bool rejected = 3;       // true when the event was dropped for significance below event.minimumSignificance
+	string                                 id                        = 1; // the stored event's id; empty when the event was not retained
+	int32                                  memory_count              = 2; // nested memories stored (those below memory.minimumSignificance are dropped)
+	bool                                   rejected                  = 3; // true when the event was dropped for significance below event.minimumSignificance
 }
 
 message EndEventRequest {
-    string id = 1;
-    int64 time_end = 2;
+	string                                 id                        = 1; // the event to end
+	int64                                  time_end                  = 2; // UnixNano; 0 (the default) uses the current server time
 }
 
 message UpdateEventSignificanceRequest {
-    string id = 1;
-    int32 significance = 2;
-    SignificancePlacement placement = 3;  // write-only: rank relative to existing values (see SignificancePlacement)
+	string                                 id                        = 1; // the event to update
+	int32                                  significance              = 2; // the new absolute significance; must be >= 1 to take effect. IMPORTANT: 0 with no placement is a no-op - it leaves the event's existing significance unchanged; there is no way to reset an event to unranked via this RPC
+	SignificancePlacement                  placement                 = 3; // write-only: rank relative to existing values (see SignificancePlacement); takes precedence over significance when set
 }
 
 message MergeEventsRequest {
-    string merge_to = 1;
-    string merge_from = 2;
+	string                                 merge_to                  = 1; // the surviving event; must already exist
+	string                                 merge_from                = 2; // the event whose memories are moved to merge_to; need not exist - an absent one simply matches no memories
 }
 
 message DeleteEventRequest {
-    string id = 1;
-    bool memories = 2;
+	string                                 id                        = 1;
+	bool                                   memories                  = 2; // true also deletes the event's memories; false only detaches them
 }
 
 message GetEventByIdRequest {
-    string id = 1;
-    bool memories = 2;
+	string                                 id                        = 1; // the event to fetch
+	bool                                   memories                  = 2; // true also loads the event's memories into the response
 }
 
 message GetEventResponse {
-    Event event = 1;
+	Event                                  event                     = 1;
 }
 
 message GetEventsRequest {
-    int64 time_start_min = 1;
-    int64 time_start_max = 2;
-    int64 time_end_min = 3;
-    int64 time_end_max = 4;
-    int32 significance_min = 5;
-    int32 significance_max = 6;
-    bool memories = 7;
-    string group = 8;  // optional: restrict to events carrying this group label
-    string order_by = 9;  // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
-    int32 limit = 10;  // page size; 0 selects the server default (25), values above the server cap are clamped
-    int32 offset = 11;  // rows to skip for pagination
+	int64                                  time_start_min            = 1;  // UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound
+	int64                                  time_start_max            = 2;  // UnixNano inclusive upper bound on time_start; 0 (the default) means no upper bound
+	int64                                  time_end_min              = 3;  // UnixNano inclusive lower bound on time_end; 0 (the default) means no lower bound
+	int64                                  time_end_max              = 4;  // UnixNano inclusive upper bound on time_end; 0 (the default) means no upper bound
+	int32                                  significance_min          = 5;  // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	int32                                  significance_max          = 6;  // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	bool                                   memories                  = 7;  // when true, include each matching event's memories in the response
+	string                                 group                     = 8;  // optional: restrict to events carrying this group label
+	string                                 order_by                  = 9;  // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
+	int32                                  limit                     = 10; // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
+	int32                                  offset                    = 11; // rows to skip for pagination; negative values are clamped to 0; no upper bound
 }
 
 message GetEventsResponse {
-    repeated Event events = 1;
-    int32 total_count = 2;  // events matching the filter, ignoring limit/offset — for pagination
+	repeated Event                         events                    = 1;
+	int32                                  total_count               = 2; // events matching the filter, ignoring limit/offset — for pagination
 }
 
 message GetMemoriesRequest {
-    int64 timestamp_min = 1;
-    int64 timestamp_max = 2;
-    int32 significance_min = 3;
-    int32 significance_max = 4;
-    string group = 5;  // optional: restrict to memories carrying this group label
-    string order_by = 6;  // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
-    int32 limit = 7;  // page size; 0 selects the server default (25), values above the server cap are clamped
-    int32 offset = 8;  // rows to skip for pagination
+	int64                                  timestamp_min             = 1; // UnixNano inclusive lower bound on time_stamp; 0 (the default) means no lower bound
+	int64                                  timestamp_max             = 2; // UnixNano inclusive upper bound on time_stamp; 0 (the default) means no upper bound
+	int32                                  significance_min          = 3; // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	int32                                  significance_max          = 4; // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	string                                 group                     = 5; // optional: restrict to memories carrying this group label
+	string                                 order_by                  = 6; // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
+	int32                                  limit                     = 7; // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
+	int32                                  offset                    = 8; // rows to skip for pagination; negative values are clamped to 0; no upper bound
 }
 
 message GetMemoriesResponse {
-    repeated Memory memories = 1;
-    int32 total_count = 2;  // memories matching the filter, ignoring limit/offset — for pagination
+	repeated Memory                        memories                  = 1;
+	int32                                  total_count               = 2; // memories matching the filter, ignoring limit/offset — for pagination
 }
 
 // StoreMemoryResponse carries the stored memory's id. A memory whose significance is below
 // memory.minimumSignificance is quietly forgotten, like a brain that simply does not retain the
 // insignificant: no error is returned, id is empty, and rejected is true.
 message StoreMemoryResponse {
-    string id = 1;       // the stored memory's id; empty when the memory was not retained
-    bool rejected = 2;   // true when the memory was dropped for significance below memory.minimumSignificance
+	string                                 id                        = 1; // the stored memory's id; empty when the memory was not retained
+	bool                                   rejected                  = 2; // true when the memory was dropped for significance below memory.minimumSignificance
 }
 
 message DeleteMemoriesRequest {
-    repeated string ids = 1;
+	repeated string                        ids                       = 1;
 }
 
 message RecallMemoriesRequest {
-    repeated string ids = 1;
+	repeated string                        ids                       = 1;
 }
 
 // SearchMemoriesRequest queries the optional secondary content-search index (opensearch.enabled)
@@ -161,54 +389,54 @@ message RecallMemoriesRequest {
 // silently dropped. When reinforce is true the matched memories are recalled - resetting their
 // decay clocks and raising their effective significance - rather than merely fetched.
 message SearchMemoriesRequest {
-    string query = 1;
-    int32 limit = 2;      // maximum results; a value <= 0 selects the default (10)
-    string event_id = 3;  // optional: restrict matches to a single event
-    bool reinforce = 4;   // route matches through recall, reinforcing them
-    string group = 5;     // optional: restrict matches to memories carrying this group label
+	string                                 query                     = 1;
+	int32                                  limit                     = 2; // maximum results; a value <= 0 selects the default (10)
+	string                                 event_id                  = 3; // optional: restrict matches to a single event
+	bool                                   reinforce                 = 4; // route matches through recall, reinforcing them
+	string                                 group                     = 5; // optional: restrict matches to memories carrying this group label
 }
 
 // ReplaceMemoriesWithSummaryRequest asks the service to delete every memory associated with an
 // event and replace them with a single caller-supplied summary memory. The service has no
 // visibility into memory content, so it cannot generate the summary itself.
 message ReplaceMemoriesWithSummaryRequest {
-    string event_id = 1;
-    Memory summary = 2;
+	string                                 event_id                  = 1;
+	Memory                                 summary                   = 2;
 }
 
 message ReplaceMemoriesWithSummaryResponse {
-    string id = 1;
-    int32 memories_replaced = 2;
+	string                                 id                        = 1;
+	int32                                  memories_replaced         = 2;
 }
 
 // SummarizationCandidate identifies an event whose memories have accumulated enough, and gone
 // quiet for long enough, to be worth condensing into a single summary memory via
 // ReplaceMemoriesWithSummary.
 message SummarizationCandidate {
-    string event_id = 1;
-    string event_name = 2;
-    int32 memory_count = 3;
+	string                                 event_id                  = 1;
+	string                                 event_name                = 2;
+	int32                                  memory_count              = 3;
 }
 
 message GetSummarizationCandidatesResponse {
-    repeated SummarizationCandidate candidates = 1;
+	repeated SummarizationCandidate         candidates               = 1;
 }
 
 // ArchiveHeader is the first record of an export archive: a gzip-compressed stream of
 // length-delimited ArchiveRecord messages.
 message ArchiveHeader {
-    int32 version = 1;
-    int64 exported_at = 2;  // UnixNano
-    int32 event_count = 3;
-    int32 memory_count = 4;
+	int32                                  version                   = 1;
+	int64                                  exported_at               = 2; // UnixNano
+	int32                                  event_count               = 3;
+	int32                                  memory_count              = 4;
 }
 
 message ArchiveRecord {
-    oneof record {
-        ArchiveHeader header = 1;
-        Event event = 2;
-        Memory memory = 3;
-    }
+	oneof record {
+		ArchiveHeader                          header                   = 1;
+		Event                                  event                    = 2;
+		Memory                                 memory                   = 3;
+	}
 }
 
 // ImportBatchRequest carries full-state rows (original timestamps, recall state, significance,
@@ -216,53 +444,53 @@ message ArchiveRecord {
 // write. It is the ingest half of Transfer and is re-sendable: re-importing the same rows is
 // idempotent.
 message ImportBatchRequest {
-    repeated Event events = 1;
-    repeated Memory memories = 2;
+	repeated Event                         events                    = 1;
+	repeated Memory                        memories                  = 2;
 }
 
 message ImportBatchResponse {
-    int32 events_imported = 1;
-    int32 memories_imported = 2;
+	int32                                  events_imported           = 1;
+	int32                                  memories_imported         = 2;
 }
 
 // Export snapshots every event and memory into an archive object in S3 and records a manifest of
 // exactly what was captured; with clear set, the captured records are deleted after a successful
 // upload (writes and recalls landing mid-run survive, exactly as Clear does).
 message ExportRequest {
-    bool clear = 1;
+	bool                                   clear                     = 1;
 }
 
 message ExportResponse {
-    string manifest_id = 1;
-    string object_key = 2;
-    int32 events_exported = 3;
-    int32 memories_exported = 4;
-    int32 memories_cleared = 5;
-    int32 events_cleared = 6;
+	string                                 manifest_id               = 1;
+	string                                 object_key                = 2;
+	int32                                  events_exported           = 3;
+	int32                                  memories_exported         = 4;
+	int32                                  memories_cleared          = 5;
+	int32                                  events_cleared            = 6;
 }
 
 message ImportRequest {
-    string object_key = 1;
+	string                                 object_key                = 1;
 }
 
 message ImportResponse {
-    int32 events_imported = 1;
-    int32 memories_imported = 2;
+	int32                                  events_imported           = 1;
+	int32                                  memories_imported         = 2;
 }
 
 // Transfer streams every event and memory directly to a centralised instance's ImportBatch RPC
 // (address from transfer.targetAddress); like Export it records a manifest, and with clear set
 // deletes the captured records once the target has accepted them all.
 message TransferRequest {
-    bool clear = 1;
+	bool                                   clear                     = 1;
 }
 
 message TransferResponse {
-    string manifest_id = 1;
-    int32 events_transferred = 2;
-    int32 memories_transferred = 3;
-    int32 memories_cleared = 4;
-    int32 events_cleared = 5;
+	string                                 manifest_id               = 1;
+	int32                                  events_transferred        = 2;
+	int32                                  memories_transferred      = 3;
+	int32                                  memories_cleared          = 4;
+	int32                                  events_cleared            = 5;
 }
 
 // Clear deletes exactly the records captured by the Export/Transfer run that produced the
@@ -270,180 +498,16 @@ message TransferResponse {
 // events only once they have no memories left. Manifests are held in memory - a restart discards
 // them.
 message ClearRequest {
-    string manifest_id = 1;
+	string                                 manifest_id               = 1;
 }
 
 message ClearResponse {
-    int32 memories_cleared = 1;
-    int32 events_cleared = 2;
+	int32                                  memories_cleared          = 1;
+	int32                                  events_cleared            = 2;
 }
 
 message GeneralResponse {
-    bool ok = 1;
+	bool                                   ok                        = 1;
 }
 
 message EmptyRequest {}
-
-// HTTP annotations below map every RPC onto a REST-ish JSON endpoint under /v1, served by the
-// grpc-gateway alongside the native gRPC API. Path-bound fields (e.g. {id}) are taken from the
-// URL; for GET/DELETE the remaining fields are taken from the query string, and for POST/PATCH
-// they are taken from the JSON body.
-service Hippocampus {
-    rpc Purge(EmptyRequest) returns (GeneralResponse) {
-        option (google.api.http) = {
-            post: "/v1/purge"
-        };
-    }
-
-    rpc Sleep(EmptyRequest) returns (GeneralResponse) {
-        option (google.api.http) = {
-            post: "/v1/sleep"
-        };
-    }
-
-    //Events
-    rpc StoreEvent(Event) returns (StoreEventResponse) {
-        option (google.api.http) = {
-            post: "/v1/events"
-            body: "*"
-        };
-    }
-
-    rpc EndEvent(EndEventRequest) returns (GeneralResponse) {
-        option (google.api.http) = {
-            post: "/v1/events/{id}/end"
-            body: "*"
-        };
-    }
-
-    rpc UpdateEventSignificance(UpdateEventSignificanceRequest) returns (GeneralResponse) {
-        option (google.api.http) = {
-            patch: "/v1/events/{id}/significance"
-            body: "*"
-        };
-    }
-
-    rpc MergeEvents(MergeEventsRequest) returns (GeneralResponse) {
-        option (google.api.http) = {
-            post: "/v1/events/merge"
-            body: "*"
-        };
-    }
-
-    rpc DeleteEvent(DeleteEventRequest) returns (GeneralResponse) {
-        option (google.api.http) = {
-            delete: "/v1/events/{id}"
-        };
-    }
-
-    rpc GetEventById(GetEventByIdRequest) returns (GetEventResponse) {
-        option (google.api.http) = {
-            get: "/v1/events/{id}"
-        };
-    }
-
-    rpc GetEvents(GetEventsRequest) returns (GetEventsResponse) {
-        option (google.api.http) = {
-            get: "/v1/events"
-        };
-    }
-
-    // Memories
-    rpc StoreMemory(Memory) returns (StoreMemoryResponse) {
-        option (google.api.http) = {
-            post: "/v1/memories"
-            body: "*"
-        };
-    }
-
-    // UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
-    // (significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and
-    // is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
-    // - so any updated content must stay consistent with the memory's existing is_binary/is_summary:
-    // a non-binary memory is re-indexed for content search, so its new body must remain valid text,
-    // and a summary memory should keep summary-appropriate content. An unknown id returns NotFound
-    // (no memory is created).
-    rpc UpdateMemory(Memory) returns (GeneralResponse) {
-        option (google.api.http) = {
-            patch: "/v1/memories/{id}"
-            body: "*"
-        };
-    }
-
-    rpc DeleteMemories(DeleteMemoriesRequest) returns (GeneralResponse) {
-        option (google.api.http) = {
-            post: "/v1/memories/delete"
-            body: "*"
-        };
-    }
-
-    rpc GetMemories(GetMemoriesRequest) returns (GetMemoriesResponse) {
-        option (google.api.http) = {
-            get: "/v1/memories"
-        };
-    }
-
-    rpc RecallMemories(RecallMemoriesRequest) returns (GetMemoriesResponse) {
-        option (google.api.http) = {
-            post: "/v1/memories/recall"
-            body: "*"
-        };
-    }
-
-    rpc SearchMemories(SearchMemoriesRequest) returns (GetMemoriesResponse) {
-        option (google.api.http) = {
-            post: "/v1/memories/search"
-            body: "*"
-        };
-    }
-
-    // Summarization
-    rpc ReplaceMemoriesWithSummary(ReplaceMemoriesWithSummaryRequest) returns (ReplaceMemoriesWithSummaryResponse) {
-        option (google.api.http) = {
-            post: "/v1/events/{event_id}/summary"
-            body: "summary"
-        };
-    }
-
-    rpc GetSummarizationCandidates(EmptyRequest) returns (GetSummarizationCandidatesResponse) {
-        option (google.api.http) = {
-            get: "/v1/summarization/candidates"
-        };
-    }
-
-    // Transfer and archive (embedded -> centralised)
-    rpc Export(ExportRequest) returns (ExportResponse) {
-        option (google.api.http) = {
-            post: "/v1/export"
-            body: "*"
-        };
-    }
-
-    rpc Import(ImportRequest) returns (ImportResponse) {
-        option (google.api.http) = {
-            post: "/v1/import"
-            body: "*"
-        };
-    }
-
-    rpc ImportBatch(ImportBatchRequest) returns (ImportBatchResponse) {
-        option (google.api.http) = {
-            post: "/v1/import/batch"
-            body: "*"
-        };
-    }
-
-    rpc Transfer(TransferRequest) returns (TransferResponse) {
-        option (google.api.http) = {
-            post: "/v1/transfer"
-            body: "*"
-        };
-    }
-
-    rpc Clear(ClearRequest) returns (ClearResponse) {
-        option (google.api.http) = {
-            post: "/v1/clear"
-            body: "*"
-        };
-    }
-}

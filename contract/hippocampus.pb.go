@@ -22,12 +22,16 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an
+// explicitly-set value from one left absent. Used for Memory.is_binary; UNSPECIFIED and FALSE are
+// currently treated identically by the server (both mean not-binary) - only TRUE marks a memory
+// as binary.
 type Bool int32
 
 const (
-	Bool_UNSPECIFIED Bool = 0
-	Bool_FALSE       Bool = 1
-	Bool_TRUE        Bool = 2
+	Bool_UNSPECIFIED Bool = 0 // not set; the server currently treats this the same as FALSE
+	Bool_FALSE       Bool = 1 // explicitly not binary
+	Bool_TRUE        Bool = 2 // binary; the body is opaque and never indexed for content search
 )
 
 // Enum value maps for Bool.
@@ -131,11 +135,11 @@ func (SignificancePlacement_Mode) EnumDescriptor() ([]byte, []int) {
 // absolute `significance` value is used as-is (0 meaning unranked).
 type SignificancePlacement struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
-	Mode          SignificancePlacement_Mode `protobuf:"varint,1,opt,name=mode,proto3,enum=proto.SignificancePlacement_Mode" json:"mode,omitempty"`
-	Anchor        int32                      `protobuf:"varint,2,opt,name=anchor,proto3" json:"anchor,omitempty"`                    // anchor significance value; ignored when anchor_id is set
-	AnchorId      string                     `protobuf:"bytes,3,opt,name=anchor_id,json=anchorId,proto3" json:"anchor_id,omitempty"` // anchor by an existing item's id, whose significance is looked up
-	Upper         int32                      `protobuf:"varint,4,opt,name=upper,proto3" json:"upper,omitempty"`                      // BETWEEN only: the upper bound significance; ignored when upper_id is set
-	UpperId       string                     `protobuf:"bytes,5,opt,name=upper_id,json=upperId,proto3" json:"upper_id,omitempty"`    // BETWEEN only: the upper bound by an existing item's id
+	Mode          SignificancePlacement_Mode `protobuf:"varint,1,opt,name=mode,proto3,enum=proto.SignificancePlacement_Mode" json:"mode,omitempty"` // the placement mode
+	Anchor        int32                      `protobuf:"varint,2,opt,name=anchor,proto3" json:"anchor,omitempty"`                                   // anchor significance value; must be >= 1 unless anchor_id is set
+	AnchorId      string                     `protobuf:"bytes,3,opt,name=anchor_id,json=anchorId,proto3" json:"anchor_id,omitempty"`                // anchor by an existing item's id, whose significance is looked up; that item must already be ranked (significance > 0)
+	Upper         int32                      `protobuf:"varint,4,opt,name=upper,proto3" json:"upper,omitempty"`                                     // BETWEEN only: the upper bound significance; must be >= 1 (and greater than anchor) unless upper_id is set
+	UpperId       string                     `protobuf:"bytes,5,opt,name=upper_id,json=upperId,proto3" json:"upper_id,omitempty"`                   // BETWEEN only: the upper bound by an existing item's id; that item must already be ranked (significance > 0)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -205,20 +209,24 @@ func (x *SignificancePlacement) GetUpperId() string {
 	return ""
 }
 
+// Event is a named time span with its own significance, optionally carrying relationships to
+// other events and/or nested memories. memories/relationships are populated on read only when
+// requested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each
+// stored via the same rules as StoreMemory.
 type Event struct {
 	state                    protoimpl.MessageState `protogen:"open.v1"`
-	Id                       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	TimeStart                int64                  `protobuf:"varint,2,opt,name=time_start,json=timeStart,proto3" json:"time_start,omitempty"` // UnixNano; defaults to the current time when unset (0) on create
-	TimeEnd                  int64                  `protobuf:"varint,3,opt,name=time_end,json=timeEnd,proto3" json:"time_end,omitempty"`
-	Significance             int32                  `protobuf:"varint,4,opt,name=significance,proto3" json:"significance,omitempty"`
-	Name                     string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
-	Description              string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`
-	MemoriesConsolidated     bool                   `protobuf:"varint,7,opt,name=memories_consolidated,json=memoriesConsolidated,proto3" json:"memories_consolidated,omitempty"`
-	RelationshipSignificance int64                  `protobuf:"varint,8,opt,name=relationship_significance,json=relationshipSignificance,proto3" json:"relationship_significance,omitempty"`
-	Relationships            []*Relationship        `protobuf:"bytes,9,rep,name=relationships,proto3" json:"relationships,omitempty"`
-	Memories                 []*Memory              `protobuf:"bytes,10,rep,name=memories,proto3" json:"memories,omitempty"`
-	Group                    string                 `protobuf:"bytes,11,opt,name=group,proto3" json:"group,omitempty"`         // optional freeform grouping/context label (system, subsystem, owner, ...)
-	Placement                *SignificancePlacement `protobuf:"bytes,12,opt,name=placement,proto3" json:"placement,omitempty"` // write-only: rank relative to existing values (see SignificancePlacement)
+	Id                       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                                              // auto-generated UUID if omitted on create; max 128 characters
+	TimeStart                int64                  `protobuf:"varint,2,opt,name=time_start,json=timeStart,proto3" json:"time_start,omitempty"`                                              // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
+	TimeEnd                  int64                  `protobuf:"varint,3,opt,name=time_end,json=timeEnd,proto3" json:"time_end,omitempty"`                                                    // UnixNano; 0 means the event has not ended yet (see EndEvent); when set, must not be before time_start
+	Significance             int32                  `protobuf:"varint,4,opt,name=significance,proto3" json:"significance,omitempty"`                                                         // 0 = unranked (rank it later via UpdateEventSignificance/placement); must be >= 0; higher ranks more significant
+	Name                     string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`                                                                          // required (non-empty) on create; max 256 characters
+	Description              string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`                                                            // optional; max 1024 characters
+	MemoriesConsolidated     bool                   `protobuf:"varint,7,opt,name=memories_consolidated,json=memoriesConsolidated,proto3" json:"memories_consolidated,omitempty"`             // read-only: true once a sleep cycle has deleted (consolidated) some of this event's memories; ignored on write
+	RelationshipSignificance int64                  `protobuf:"varint,8,opt,name=relationship_significance,json=relationshipSignificance,proto3" json:"relationship_significance,omitempty"` // read-only: sum of relationships' significance values, calculated by the server; ignored on write
+	Relationships            []*Relationship        `protobuf:"bytes,9,rep,name=relationships,proto3" json:"relationships,omitempty"`                                                        // relationships to other events, weighted into this event's memories' value (see consolidation.relationshipSignificanceWeight)
+	Memories                 []*Memory              `protobuf:"bytes,10,rep,name=memories,proto3" json:"memories,omitempty"`                                                                 // populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory
+	Group                    string                 `protobuf:"bytes,11,opt,name=group,proto3" json:"group,omitempty"`                                                                       // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
+	Placement                *SignificancePlacement `protobuf:"bytes,12,opt,name=placement,proto3" json:"placement,omitempty"`                                                               // write-only: rank relative to existing values (see SignificancePlacement)
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -337,10 +345,13 @@ func (x *Event) GetPlacement() *SignificancePlacement {
 	return nil
 }
 
+// Relationship is a directed reference from one event to another, carrying its own significance,
+// which is weighted into the value calculation of the referencing event's memories (see
+// consolidation.relationshipSignificanceWeight).
 type Relationship struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Significance  int32                  `protobuf:"varint,2,opt,name=significance,proto3" json:"significance,omitempty"`
+	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"` // the related event's id; not validated against existing events
+	Significance  int32                  `protobuf:"varint,2,opt,name=significance,proto3" json:"significance,omitempty"`     // this relationship's weight; unvalidated (may be negative or zero) - not part of the significance registry, never ranked
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -389,19 +400,23 @@ func (x *Relationship) GetSignificance() int32 {
 	return 0
 }
 
+// Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to
+// an event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective
+// significance rises. is_binary controls whether the body is indexed for content search (see
+// SearchMemories) - a binary body is never indexed.
 type Memory struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	TimeStamp     int64                  `protobuf:"varint,2,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"` // UnixNano; defaults to the current time when unset (0) on create
-	Significance  int32                  `protobuf:"varint,3,opt,name=significance,proto3" json:"significance,omitempty"`
-	EventId       string                 `protobuf:"bytes,4,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Body          string                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`
-	IsBinary      Bool                   `protobuf:"varint,6,opt,name=is_binary,json=isBinary,proto3,enum=proto.Bool" json:"is_binary,omitempty"`
-	TimeRecalled  int64                  `protobuf:"varint,7,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"`
-	RecallCount   int32                  `protobuf:"varint,8,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`
-	IsSummary     bool                   `protobuf:"varint,9,opt,name=is_summary,json=isSummary,proto3" json:"is_summary,omitempty"`
-	Group         string                 `protobuf:"bytes,10,opt,name=group,proto3" json:"group,omitempty"`         // optional freeform grouping/context label (system, subsystem, owner, ...)
-	Placement     *SignificancePlacement `protobuf:"bytes,11,opt,name=placement,proto3" json:"placement,omitempty"` // write-only: rank relative to existing values (see SignificancePlacement)
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                              // auto-generated UUID if omitted on create; max 128 characters
+	TimeStamp     int64                  `protobuf:"varint,2,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`              // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
+	Significance  int32                  `protobuf:"varint,3,opt,name=significance,proto3" json:"significance,omitempty"`                         // 0 = unranked (rank it later via UpdateMemory/placement); must be >= 0; higher ranks more significant. On UpdateMemory, 0 with no placement leaves the existing significance unchanged - it cannot reset a memory to unranked
+	EventId       string                 `protobuf:"bytes,4,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                     // optional: leave unset to store the memory unassociated with any event
+	Body          string                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`                                          // required (non-empty) on create; a proto3 string, so always valid UTF-8 on the wire - encode true binary payloads (e.g. base64) before setting is_binary; optionally capped by memory.limit.sizeBytes (0 = unlimited)
+	IsBinary      Bool                   `protobuf:"varint,6,opt,name=is_binary,json=isBinary,proto3,enum=proto.Bool" json:"is_binary,omitempty"` // set once at creation; not updatable via UpdateMemory. TRUE bodies are opaque and never indexed for content search (see SearchMemories)
+	TimeRecalled  int64                  `protobuf:"varint,7,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"`     // read-only: UnixNano of the most recent recall (RecallMemories, or SearchMemories with reinforce); 0 if never recalled; ignored on write
+	RecallCount   int32                  `protobuf:"varint,8,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`        // read-only: number of times the memory has been recalled; ignored on write
+	IsSummary     bool                   `protobuf:"varint,9,opt,name=is_summary,json=isSummary,proto3" json:"is_summary,omitempty"`              // read-only: true for the summary memory created by ReplaceMemoriesWithSummary; not updatable via UpdateMemory
+	Group         string                 `protobuf:"bytes,10,opt,name=group,proto3" json:"group,omitempty"`                                       // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
+	Placement     *SignificancePlacement `protobuf:"bytes,11,opt,name=placement,proto3" json:"placement,omitempty"`                               // write-only: rank relative to existing values (see SignificancePlacement)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -579,8 +594,8 @@ func (x *StoreEventResponse) GetRejected() bool {
 
 type EndEventRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	TimeEnd       int64                  `protobuf:"varint,2,opt,name=time_end,json=timeEnd,proto3" json:"time_end,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                           // the event to end
+	TimeEnd       int64                  `protobuf:"varint,2,opt,name=time_end,json=timeEnd,proto3" json:"time_end,omitempty"` // UnixNano; 0 (the default) uses the current server time
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -631,9 +646,9 @@ func (x *EndEventRequest) GetTimeEnd() int64 {
 
 type UpdateEventSignificanceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Significance  int32                  `protobuf:"varint,2,opt,name=significance,proto3" json:"significance,omitempty"`
-	Placement     *SignificancePlacement `protobuf:"bytes,3,opt,name=placement,proto3" json:"placement,omitempty"` // write-only: rank relative to existing values (see SignificancePlacement)
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                      // the event to update
+	Significance  int32                  `protobuf:"varint,2,opt,name=significance,proto3" json:"significance,omitempty"` // the new absolute significance; must be >= 1 to take effect. IMPORTANT: 0 with no placement is a no-op - it leaves the event's existing significance unchanged; there is no way to reset an event to unranked via this RPC
+	Placement     *SignificancePlacement `protobuf:"bytes,3,opt,name=placement,proto3" json:"placement,omitempty"`        // write-only: rank relative to existing values (see SignificancePlacement); takes precedence over significance when set
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -691,8 +706,8 @@ func (x *UpdateEventSignificanceRequest) GetPlacement() *SignificancePlacement {
 
 type MergeEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	MergeTo       string                 `protobuf:"bytes,1,opt,name=merge_to,json=mergeTo,proto3" json:"merge_to,omitempty"`
-	MergeFrom     string                 `protobuf:"bytes,2,opt,name=merge_from,json=mergeFrom,proto3" json:"merge_from,omitempty"`
+	MergeTo       string                 `protobuf:"bytes,1,opt,name=merge_to,json=mergeTo,proto3" json:"merge_to,omitempty"`       // the surviving event; must already exist
+	MergeFrom     string                 `protobuf:"bytes,2,opt,name=merge_from,json=mergeFrom,proto3" json:"merge_from,omitempty"` // the event whose memories are moved to merge_to; need not exist - an absent one simply matches no memories
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -744,7 +759,7 @@ func (x *MergeEventsRequest) GetMergeFrom() string {
 type DeleteEventRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"`
+	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"` // true also deletes the event's memories; false only detaches them
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -795,8 +810,8 @@ func (x *DeleteEventRequest) GetMemories() bool {
 
 type GetEventByIdRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`              // the event to fetch
+	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"` // true also loads the event's memories into the response
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -891,17 +906,17 @@ func (x *GetEventResponse) GetEvent() *Event {
 
 type GetEventsRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	TimeStartMin    int64                  `protobuf:"varint,1,opt,name=time_start_min,json=timeStartMin,proto3" json:"time_start_min,omitempty"`
-	TimeStartMax    int64                  `protobuf:"varint,2,opt,name=time_start_max,json=timeStartMax,proto3" json:"time_start_max,omitempty"`
-	TimeEndMin      int64                  `protobuf:"varint,3,opt,name=time_end_min,json=timeEndMin,proto3" json:"time_end_min,omitempty"`
-	TimeEndMax      int64                  `protobuf:"varint,4,opt,name=time_end_max,json=timeEndMax,proto3" json:"time_end_max,omitempty"`
-	SignificanceMin int32                  `protobuf:"varint,5,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"`
-	SignificanceMax int32                  `protobuf:"varint,6,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"`
-	Memories        bool                   `protobuf:"varint,7,opt,name=memories,proto3" json:"memories,omitempty"`
-	Group           string                 `protobuf:"bytes,8,opt,name=group,proto3" json:"group,omitempty"`                    // optional: restrict to events carrying this group label
-	OrderBy         string                 `protobuf:"bytes,9,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"` // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
-	Limit           int32                  `protobuf:"varint,10,opt,name=limit,proto3" json:"limit,omitempty"`                  // page size; 0 selects the server default (25), values above the server cap are clamped
-	Offset          int32                  `protobuf:"varint,11,opt,name=offset,proto3" json:"offset,omitempty"`                // rows to skip for pagination
+	TimeStartMin    int64                  `protobuf:"varint,1,opt,name=time_start_min,json=timeStartMin,proto3" json:"time_start_min,omitempty"`        // UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound
+	TimeStartMax    int64                  `protobuf:"varint,2,opt,name=time_start_max,json=timeStartMax,proto3" json:"time_start_max,omitempty"`        // UnixNano inclusive upper bound on time_start; 0 (the default) means no upper bound
+	TimeEndMin      int64                  `protobuf:"varint,3,opt,name=time_end_min,json=timeEndMin,proto3" json:"time_end_min,omitempty"`              // UnixNano inclusive lower bound on time_end; 0 (the default) means no lower bound
+	TimeEndMax      int64                  `protobuf:"varint,4,opt,name=time_end_max,json=timeEndMax,proto3" json:"time_end_max,omitempty"`              // UnixNano inclusive upper bound on time_end; 0 (the default) means no upper bound
+	SignificanceMin int32                  `protobuf:"varint,5,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"` // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	SignificanceMax int32                  `protobuf:"varint,6,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"` // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	Memories        bool                   `protobuf:"varint,7,opt,name=memories,proto3" json:"memories,omitempty"`                                      // when true, include each matching event's memories in the response
+	Group           string                 `protobuf:"bytes,8,opt,name=group,proto3" json:"group,omitempty"`                                             // optional: restrict to events carrying this group label
+	OrderBy         string                 `protobuf:"bytes,9,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`                          // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
+	Limit           int32                  `protobuf:"varint,10,opt,name=limit,proto3" json:"limit,omitempty"`                                           // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
+	Offset          int32                  `protobuf:"varint,11,opt,name=offset,proto3" json:"offset,omitempty"`                                         // rows to skip for pagination; negative values are clamped to 0; no upper bound
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1067,14 +1082,14 @@ func (x *GetEventsResponse) GetTotalCount() int32 {
 
 type GetMemoriesRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	TimestampMin    int64                  `protobuf:"varint,1,opt,name=timestamp_min,json=timestampMin,proto3" json:"timestamp_min,omitempty"`
-	TimestampMax    int64                  `protobuf:"varint,2,opt,name=timestamp_max,json=timestampMax,proto3" json:"timestamp_max,omitempty"`
-	SignificanceMin int32                  `protobuf:"varint,3,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"`
-	SignificanceMax int32                  `protobuf:"varint,4,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"`
-	Group           string                 `protobuf:"bytes,5,opt,name=group,proto3" json:"group,omitempty"`                    // optional: restrict to memories carrying this group label
-	OrderBy         string                 `protobuf:"bytes,6,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"` // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
-	Limit           int32                  `protobuf:"varint,7,opt,name=limit,proto3" json:"limit,omitempty"`                   // page size; 0 selects the server default (25), values above the server cap are clamped
-	Offset          int32                  `protobuf:"varint,8,opt,name=offset,proto3" json:"offset,omitempty"`                 // rows to skip for pagination
+	TimestampMin    int64                  `protobuf:"varint,1,opt,name=timestamp_min,json=timestampMin,proto3" json:"timestamp_min,omitempty"`          // UnixNano inclusive lower bound on time_stamp; 0 (the default) means no lower bound
+	TimestampMax    int64                  `protobuf:"varint,2,opt,name=timestamp_max,json=timestampMax,proto3" json:"timestamp_max,omitempty"`          // UnixNano inclusive upper bound on time_stamp; 0 (the default) means no upper bound
+	SignificanceMin int32                  `protobuf:"varint,3,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"` // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	SignificanceMax int32                  `protobuf:"varint,4,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"` // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	Group           string                 `protobuf:"bytes,5,opt,name=group,proto3" json:"group,omitempty"`                                             // optional: restrict to memories carrying this group label
+	OrderBy         string                 `protobuf:"bytes,6,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`                          // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
+	Limit           int32                  `protobuf:"varint,7,opt,name=limit,proto3" json:"limit,omitempty"`                                            // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
+	Offset          int32                  `protobuf:"varint,8,opt,name=offset,proto3" json:"offset,omitempty"`                                          // rows to skip for pagination; negative values are clamped to 0; no upper bound
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }

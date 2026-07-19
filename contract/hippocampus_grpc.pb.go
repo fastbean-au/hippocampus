@@ -52,17 +52,39 @@ const (
 // URL; for GET/DELETE the remaining fields are taken from the query string, and for POST/PATCH
 // they are taken from the JSON body.
 type HippocampusClient interface {
+	// Purge deletes every event and memory in the store. While it runs, all other Hippocampus RPCs
+	// are rejected with Unavailable.
 	Purge(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// Sleep manually triggers a consolidation cycle out of schedule and resets the periodic timer.
+	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
+	// which must never run its own cycle.
 	Sleep(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
 	// Events
+	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
+	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
+	// StoreEventResponse.
 	StoreEvent(ctx context.Context, in *Event, opts ...grpc.CallOption) (*StoreEventResponse, error)
+	// EndEvent sets an event's time_end (defaults to now when unset). NotFound if the event does
+	// not exist.
 	EndEvent(ctx context.Context, in *EndEventRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// UpdateEventSignificance changes an event's significance, either as an absolute value or via
+	// placement (see SignificancePlacement). NotFound if the event does not exist.
 	UpdateEventSignificance(ctx context.Context, in *UpdateEventSignificanceRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// MergeEvents re-points every memory of merge_from onto merge_to. merge_to must already exist;
+	// merge_from need not - an absent one simply matches no memories.
 	MergeEvents(ctx context.Context, in *MergeEventsRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// DeleteEvent deletes an event. When memories is true its memories are deleted too; otherwise
+	// they are kept but detached (their event_id is cleared). NotFound if the event does not exist.
 	DeleteEvent(ctx context.Context, in *DeleteEventRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// GetEventById fetches a single event by id; set memories to also load its nested memories.
+	// NotFound if the event does not exist.
 	GetEventById(ctx context.Context, in *GetEventByIdRequest, opts ...grpc.CallOption) (*GetEventResponse, error)
+	// GetEvents lists events filtered by time range, significance range, and group, paginated by
+	// limit/offset (see GetEventsRequest).
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
 	// Memories
+	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
+	// see StoreMemoryResponse.
 	StoreMemory(ctx context.Context, in *Memory, opts ...grpc.CallOption) (*StoreMemoryResponse, error)
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
 	// (significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and
@@ -72,18 +94,45 @@ type HippocampusClient interface {
 	// and a summary memory should keep summary-appropriate content. An unknown id returns NotFound
 	// (no memory is created).
 	UpdateMemory(ctx context.Context, in *Memory, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// DeleteMemories deletes the given memories by id; unknown ids are silently ignored.
 	DeleteMemories(ctx context.Context, in *DeleteMemoriesRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// GetMemories lists memories filtered by time range, significance range, and group, paginated
+	// by limit/offset (see GetMemoriesRequest).
 	GetMemories(ctx context.Context, in *GetMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
+	// RecallMemories returns the requested memories and reinforces each one: its recall time is
+	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
+	// effective significance during consolidation).
 	RecallMemories(ctx context.Context, in *RecallMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
+	// SearchMemories finds memories via the optional content-search index; see
+	// SearchMemoriesRequest.
 	SearchMemories(ctx context.Context, in *SearchMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
 	// Summarization
+	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
+	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
 	ReplaceMemoriesWithSummary(ctx context.Context, in *ReplaceMemoriesWithSummaryRequest, opts ...grpc.CallOption) (*ReplaceMemoriesWithSummaryResponse, error)
+	// GetSummarizationCandidates returns events identified by the most recent sleep cycle as having
+	// accumulated enough quiet, unsummarized memories to be worth condensing via
+	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
+	// consolidation.summarizationMinMemories is configured.
 	GetSummarizationCandidates(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetSummarizationCandidatesResponse, error)
 	// Transfer and archive (embedded -> centralised)
+	// Export snapshots the whole store into an archive object in S3 and records a manifest of
+	// exactly what was captured; with clear set, the captured records are deleted once the upload
+	// has succeeded.
 	Export(ctx context.Context, in *ExportRequest, opts ...grpc.CallOption) (*ExportResponse, error)
+	// Import streams an archive object from S3 into the store, upserting every record by id with
+	// its full state preserved. Idempotent; aborts on the first error.
 	Import(ctx context.Context, in *ImportRequest, opts ...grpc.CallOption) (*ImportResponse, error)
+	// ImportBatch upserts full-state rows by id directly - the ingest half of Transfer. Nothing is
+	// defaulted or gated on minimum significance; the rows carry their history.
 	ImportBatch(ctx context.Context, in *ImportBatchRequest, opts ...grpc.CallOption) (*ImportBatchResponse, error)
+	// Transfer streams the whole store directly into a centralised instance's ImportBatch RPC,
+	// recording a manifest like Export; with clear set the captured records are deleted once the
+	// target has accepted every batch.
 	Transfer(ctx context.Context, in *TransferRequest, opts ...grpc.CallOption) (*TransferResponse, error)
+	// Clear deletes exactly the records captured by the Export/Transfer run that produced the
+	// manifest. Memories recalled (or re-created) since the capture survive, as do events that
+	// still have memories.
 	Clear(ctx context.Context, in *ClearRequest, opts ...grpc.CallOption) (*ClearResponse, error)
 }
 
@@ -324,17 +373,39 @@ func (c *hippocampusClient) Clear(ctx context.Context, in *ClearRequest, opts ..
 // URL; for GET/DELETE the remaining fields are taken from the query string, and for POST/PATCH
 // they are taken from the JSON body.
 type HippocampusServer interface {
+	// Purge deletes every event and memory in the store. While it runs, all other Hippocampus RPCs
+	// are rejected with Unavailable.
 	Purge(context.Context, *EmptyRequest) (*GeneralResponse, error)
+	// Sleep manually triggers a consolidation cycle out of schedule and resets the periodic timer.
+	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
+	// which must never run its own cycle.
 	Sleep(context.Context, *EmptyRequest) (*GeneralResponse, error)
 	// Events
+	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
+	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
+	// StoreEventResponse.
 	StoreEvent(context.Context, *Event) (*StoreEventResponse, error)
+	// EndEvent sets an event's time_end (defaults to now when unset). NotFound if the event does
+	// not exist.
 	EndEvent(context.Context, *EndEventRequest) (*GeneralResponse, error)
+	// UpdateEventSignificance changes an event's significance, either as an absolute value or via
+	// placement (see SignificancePlacement). NotFound if the event does not exist.
 	UpdateEventSignificance(context.Context, *UpdateEventSignificanceRequest) (*GeneralResponse, error)
+	// MergeEvents re-points every memory of merge_from onto merge_to. merge_to must already exist;
+	// merge_from need not - an absent one simply matches no memories.
 	MergeEvents(context.Context, *MergeEventsRequest) (*GeneralResponse, error)
+	// DeleteEvent deletes an event. When memories is true its memories are deleted too; otherwise
+	// they are kept but detached (their event_id is cleared). NotFound if the event does not exist.
 	DeleteEvent(context.Context, *DeleteEventRequest) (*GeneralResponse, error)
+	// GetEventById fetches a single event by id; set memories to also load its nested memories.
+	// NotFound if the event does not exist.
 	GetEventById(context.Context, *GetEventByIdRequest) (*GetEventResponse, error)
+	// GetEvents lists events filtered by time range, significance range, and group, paginated by
+	// limit/offset (see GetEventsRequest).
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
 	// Memories
+	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
+	// see StoreMemoryResponse.
 	StoreMemory(context.Context, *Memory) (*StoreMemoryResponse, error)
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
 	// (significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and
@@ -344,18 +415,45 @@ type HippocampusServer interface {
 	// and a summary memory should keep summary-appropriate content. An unknown id returns NotFound
 	// (no memory is created).
 	UpdateMemory(context.Context, *Memory) (*GeneralResponse, error)
+	// DeleteMemories deletes the given memories by id; unknown ids are silently ignored.
 	DeleteMemories(context.Context, *DeleteMemoriesRequest) (*GeneralResponse, error)
+	// GetMemories lists memories filtered by time range, significance range, and group, paginated
+	// by limit/offset (see GetMemoriesRequest).
 	GetMemories(context.Context, *GetMemoriesRequest) (*GetMemoriesResponse, error)
+	// RecallMemories returns the requested memories and reinforces each one: its recall time is
+	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
+	// effective significance during consolidation).
 	RecallMemories(context.Context, *RecallMemoriesRequest) (*GetMemoriesResponse, error)
+	// SearchMemories finds memories via the optional content-search index; see
+	// SearchMemoriesRequest.
 	SearchMemories(context.Context, *SearchMemoriesRequest) (*GetMemoriesResponse, error)
 	// Summarization
+	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
+	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
 	ReplaceMemoriesWithSummary(context.Context, *ReplaceMemoriesWithSummaryRequest) (*ReplaceMemoriesWithSummaryResponse, error)
+	// GetSummarizationCandidates returns events identified by the most recent sleep cycle as having
+	// accumulated enough quiet, unsummarized memories to be worth condensing via
+	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
+	// consolidation.summarizationMinMemories is configured.
 	GetSummarizationCandidates(context.Context, *EmptyRequest) (*GetSummarizationCandidatesResponse, error)
 	// Transfer and archive (embedded -> centralised)
+	// Export snapshots the whole store into an archive object in S3 and records a manifest of
+	// exactly what was captured; with clear set, the captured records are deleted once the upload
+	// has succeeded.
 	Export(context.Context, *ExportRequest) (*ExportResponse, error)
+	// Import streams an archive object from S3 into the store, upserting every record by id with
+	// its full state preserved. Idempotent; aborts on the first error.
 	Import(context.Context, *ImportRequest) (*ImportResponse, error)
+	// ImportBatch upserts full-state rows by id directly - the ingest half of Transfer. Nothing is
+	// defaulted or gated on minimum significance; the rows carry their history.
 	ImportBatch(context.Context, *ImportBatchRequest) (*ImportBatchResponse, error)
+	// Transfer streams the whole store directly into a centralised instance's ImportBatch RPC,
+	// recording a manifest like Export; with clear set the captured records are deleted once the
+	// target has accepted every batch.
 	Transfer(context.Context, *TransferRequest) (*TransferResponse, error)
+	// Clear deletes exactly the records captured by the Export/Transfer run that produced the
+	// manifest. Memories recalled (or re-created) since the capture survive, as do events that
+	// still have memories.
 	Clear(context.Context, *ClearRequest) (*ClearResponse, error)
 	mustEmbedUnimplementedHippocampusServer()
 }

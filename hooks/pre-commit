@@ -22,6 +22,14 @@ cd "$repo_root"
 # go.mod, downloading it if necessary, matching what CI runs.
 export GOTOOLCHAIN=auto
 
+# A Go version manager (e.g. `g`) may export GOROOT pinned to whatever version it last activated.
+# That static GOROOT fights GOTOOLCHAIN=auto's re-exec into the toolchain go.mod actually asks for:
+# the driver identifies as the newer version while some tool invocations still resolve against the
+# pinned GOROOT's (older) tool binaries, failing with "compile: version X does not match go tool
+# version Y". Go always derives the correct GOROOT/GOTOOLDIR for whichever toolchain it selects on
+# its own, so an inherited override here can only cause harm - unset it rather than trust it.
+unset GOROOT GOTOOLDIR 2>/dev/null || true
+
 echo "pre-commit: go mod tidy"
 go mod tidy
 
@@ -42,6 +50,22 @@ go vet ./...
 
 echo "pre-commit: golangci-lint run"
 golangci-lint run
+
+# Self-heal a trimmed Go toolchain. GOTOOLCHAIN=auto above may download a newer toolchain module
+# to satisfy go.mod's "go" directive, and every such auto-downloaded module ships a reduced tool
+# set that omits `covdata` - the tool `go test -coverprofile` needs internally to merge coverage
+# for packages with no _test.go files (contract, demo/generator, demo/injector). Its absence fails
+# the coverage step below with `go: no such tool "covdata"`. This isn't a one-off: it recurs on
+# every fresh toolchain download (each new Go patch release), so build covdata back in here rather
+# than requiring a manual fix each time. The module cache directory is read-only, hence the chmod
+# bracketing; idempotent and a no-op once covdata already exists.
+gotooldir="$(go env GOTOOLDIR)"
+if [ ! -x "$gotooldir/covdata" ]; then
+	echo "pre-commit: toolchain at $gotooldir is missing covdata - building it"
+	chmod u+w "$gotooldir"
+	go build -o "$gotooldir/covdata" cmd/covdata
+	chmod u-w "$gotooldir"
+fi
 
 echo "pre-commit: go test (coverage, excluding cmd/)"
 go test -coverprofile=coverage.out $(go list ./... | grep -v '/cmd/')
