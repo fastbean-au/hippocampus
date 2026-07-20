@@ -171,6 +171,23 @@ func main() {
 		log.Fatalf("invalid configuration: %s", err.Error())
 	}
 
+	// Turn SIGINT/SIGTERM into a cancelled context, so run's serve/shutdown lifecycle is driven by a
+	// context a test can cancel too, rather than a signal only a real process receives.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, version); err != nil {
+		log.Fatalf("hippocampus exited with an error: %s", err.Error())
+	}
+}
+
+// run builds the server (observability, database, the optional search/S3/auth/TLS surface, the gRPC
+// server, and the optional HTTP gateway), serves until ctx is cancelled - SIGINT/SIGTERM in main,
+// or an explicit cancel in a test - or a listener fails, then shuts every component down in order.
+// It returns an error for a bootstrap failure or a fatal serve error; a clean shutdown returns nil.
+// Split out of main so the whole serve/shutdown lifecycle can be exercised in-process by a test,
+// which main() (blocking on real signals) cannot be.
+func run(ctx context.Context, version versionInfo) error {
 	log.Info("initialising hippocampus")
 	log.Infof("version: %s", version.String())
 	log.Infof("logging level: %s", log.GetLevel())
@@ -189,7 +206,7 @@ func main() {
 
 	shutdownObservability, err := initObservability(context.Background(), obsCfg)
 	if err != nil {
-		log.Fatal("failed to initialise observability")
+		return fmt.Errorf("failed to initialise observability: %w", err)
 	}
 	log.Debug("observability initialised")
 
@@ -227,24 +244,24 @@ func main() {
 		// file to measure. Failing fast beats accepting the config and silently never triggering.
 		// consolidation.capacityBytes works with every driver.
 		if viper.GetInt64("consolidation.walTriggerBytes") > 0 {
-			log.Fatal("consolidation.walTriggerBytes is not supported with storage.driver 'postgres'")
+			return fmt.Errorf("consolidation.walTriggerBytes is not supported with storage.driver 'postgres'")
 		}
 
 		database, err = db.NewPostgres(viper.GetString("storage.postgres.dsn"), consolidate)
 
 	case "mysql":
 		if viper.GetInt64("consolidation.walTriggerBytes") > 0 {
-			log.Fatal("consolidation.walTriggerBytes is not supported with storage.driver 'mysql'")
+			return fmt.Errorf("consolidation.walTriggerBytes is not supported with storage.driver 'mysql'")
 		}
 
 		database, err = db.NewMySQL(viper.GetString("storage.mysql.dsn"), consolidate)
 
 	default:
-		log.Fatalf("unknown storage.driver '%s' (expected 'sqlite', 'postgres', or 'mysql')", storageDriver)
+		return fmt.Errorf("unknown storage.driver '%s' (expected 'sqlite', 'postgres', or 'mysql')", storageDriver)
 	}
 
 	if err != nil {
-		log.Fatalf("failed to open database: %s", err.Error())
+		return fmt.Errorf("failed to open database: %w", err)
 	}
 
 	// Cap the connection pool on the server drivers so a burst of concurrent RPCs cannot exhaust the
@@ -278,7 +295,7 @@ func main() {
 
 		idx, err := search.NewOpenSearch(searchConfigFromViper())
 		if err != nil {
-			log.Fatalf("failed to initialise opensearch: %s", err.Error())
+			return fmt.Errorf("failed to initialise opensearch: %w", err)
 		}
 
 		searchIndex = idx
@@ -306,7 +323,7 @@ func main() {
 			UsePathStyle: viper.GetBool("s3.usePathStyle"),
 		})
 		if err != nil {
-			log.Fatalf("failed to initialise the s3 object store: %s", err.Error())
+			return fmt.Errorf("failed to initialise the s3 object store: %w", err)
 		}
 
 		objects = store
@@ -343,7 +360,7 @@ func main() {
 	if tlsEnabled {
 		cfg, err := loadServerTLS(viper.GetString("tls.certFile"), viper.GetString("tls.keyFile"))
 		if err != nil {
-			log.Fatalf("failed to load TLS credentials: %s", err.Error())
+			return fmt.Errorf("failed to load TLS credentials: %w", err)
 		}
 
 		tlsConf = cfg
@@ -358,7 +375,7 @@ func main() {
 	case "hmac":
 		v, err := auth.NewHMACVerifier(hmacConfigFromViper())
 		if err != nil {
-			log.Fatalf("failed to initialise auth: %s", err.Error())
+			return fmt.Errorf("failed to initialise auth: %w", err)
 		}
 
 		verifier = v
@@ -373,13 +390,13 @@ func main() {
 			RefreshInterval: time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second,
 		})
 		if err != nil {
-			log.Fatalf("failed to initialise auth: %s", err.Error())
+			return fmt.Errorf("failed to initialise auth: %w", err)
 		}
 
 		verifier = v
 
 	default:
-		log.Fatalf("unknown auth.method '%s' (expected 'none', 'hmac', or 'idp')", authMethod)
+		return fmt.Errorf("unknown auth.method '%s' (expected 'none', 'hmac', or 'idp')", authMethod)
 	}
 
 	authEnabled := verifier != nil
@@ -398,7 +415,7 @@ func main() {
 
 			list, err := auth.NewRevocationList(path, refresh)
 			if err != nil {
-				log.Fatalf("failed to load revocation list: %s", err.Error())
+				return fmt.Errorf("failed to load revocation list: %w", err)
 			}
 
 			revocations = list
@@ -480,8 +497,10 @@ func main() {
 
 	contract.RegisterHippocampusServer(s, hipo)
 
-	exit := make(chan os.Signal, 1)
-	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
+	// A listener that fails to bind or serve sends its error here; run selects on it alongside
+	// ctx.Done so such a failure ends the process (via main's log.Fatal on the returned error)
+	// instead of the old in-goroutine log.Fatal, which a test could not observe.
+	serveErr := make(chan error, 2)
 
 	// Start listening. bindAddress (empty by default) restricts the interface the listener binds to
 	// - e.g. "127.0.0.1" for loopback only behind a sidecar/mesh that terminates TLS; empty binds
@@ -489,12 +508,13 @@ func main() {
 	go func() {
 		lis, err := net.Listen("tcp", viper.GetString("bindAddress")+":"+strconv.Itoa(viper.GetInt("port")))
 		if err != nil {
-			log.Fatalf("gRPC server failed to listen: %v", err)
+			serveErr <- fmt.Errorf("gRPC server failed to listen: %w", err)
+
+			return
 		}
 
-		err = s.Serve(lis)
-		if err != nil {
-			log.Fatalf("gRPC server failed to serve: %v", err)
+		if err := s.Serve(lis); err != nil {
+			serveErr <- fmt.Errorf("gRPC server failed to serve: %w", err)
 		}
 	}()
 
@@ -524,7 +544,7 @@ func main() {
 
 		gwMux := runtime.NewServeMux()
 		if err := contract.RegisterHippocampusHandlerServer(context.Background(), gwMux, hipo); err != nil {
-			log.Fatalf("failed to register HTTP gateway: %v", err)
+			return fmt.Errorf("failed to register HTTP gateway: %w", err)
 		}
 
 		httpMux := http.NewServeMux()
@@ -586,7 +606,7 @@ func main() {
 			}
 
 			if err != nil && err != http.ErrServerClosed {
-				log.Fatalf("HTTP gateway failed to serve: %v", err)
+				serveErr <- fmt.Errorf("HTTP gateway failed to serve: %w", err)
 			}
 		}()
 
@@ -600,9 +620,22 @@ func main() {
 
 	log.Info("hippocampus started")
 
-	<-exit
+	// Serve until a shutdown signal (ctx cancelled) or a fatal listener error. A serve error is
+	// returned after the same orderly shutdown a signal triggers, so the process still drains
+	// cleanly before main turns it into a non-zero exit.
+	var runErr error
 
-	log.Info("shutdown signal received - shutting down.")
+	select {
+
+	case <-ctx.Done():
+		log.Info("shutdown signal received - shutting down.")
+
+	case err := <-serveErr:
+		log.Errorf("server error - shutting down: %s", err.Error())
+
+		runErr = err
+
+	}
 
 	// Mark not-serving before closing any listener, so load balancers and orchestrators drain this
 	// instance ahead of the shutdown rather than racing an in-flight request into a closing server.
@@ -661,14 +694,16 @@ func main() {
 
 	// Flush observability before closing the DB: the final metric collection invokes the stats
 	// gauge callbacks, which query the database.
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	if err := shutdownObservability(ctx); err != nil {
+	if err := shutdownObservability(shutdownCtx); err != nil {
 		log.Errorf("failed to shut down observability cleanly: %s", err.Error())
 	}
 
 	_ = database.Close()
+
+	return runErr
 }
 
 // hmacConfigFromViper reads the HMAC signing configuration into an auth.HMACConfig. Centralising the
