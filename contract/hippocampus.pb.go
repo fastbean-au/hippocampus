@@ -585,10 +585,15 @@ func (x *Memory) GetPlacement() *SignificancePlacement {
 // retained. An event whose significance is below event.minimumSignificance is quietly forgotten,
 // like a brain that simply does not retain the insignificant: no error is returned, id is empty,
 // memory_count is 0 (its nested memories are not stored either), and rejected is true.
+//
+// Nested-memory creation is best-effort: the event is committed first, so a nested memory that
+// fails validation, is dropped for insignificance, or hits a store error does not fail the event
+// create and is not individually reported here - memory_count is only the count actually retained.
+// Store memories individually if you need per-memory success/failure.
 type StoreEventResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                       // the stored event's id; empty when the event was not retained
-	MemoryCount   int32                  `protobuf:"varint,2,opt,name=memory_count,json=memoryCount,proto3" json:"memory_count,omitempty"` // nested memories stored (those below memory.minimumSignificance are dropped)
+	MemoryCount   int32                  `protobuf:"varint,2,opt,name=memory_count,json=memoryCount,proto3" json:"memory_count,omitempty"` // nested memories retained (best-effort; those rejected/dropped are not reported individually)
 	Rejected      bool                   `protobuf:"varint,3,opt,name=rejected,proto3" json:"rejected,omitempty"`                          // true when the event was dropped for significance below event.minimumSignificance
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -473,6 +473,40 @@ func TestStoreEvent_StoresNestedMemories(t *testing.T) {
 	}
 }
 
+// TestStoreEvent_NestedMemoryDroppedNotCounted is a regression test: a nested memory dropped for
+// insignificance returns (rejected, no error), and the old code counted it towards memory_count
+// because it only checked err. memory_count must reflect only the memories actually retained.
+func TestStoreEvent_NestedMemoryDroppedNotCounted(t *testing.T) {
+	s := newEventTestServer(t)
+	s.minimumMemorySignificance = 10
+
+	res, err := s.StoreEvent(context.Background(), &contract.Event{
+		Name:         "trip",
+		TimeStart:    100,
+		Significance: 5,
+		Memories: []*contract.Memory{
+			{Significance: 20, Body: "kept"},
+			{Significance: 5, Body: "dropped"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StoreEvent: %s", err)
+	}
+
+	if res.GetMemoryCount() != 1 {
+		t.Fatalf("expected memory_count 1 (dropped memory excluded), got %d", res.GetMemoryCount())
+	}
+
+	attached, err := s.db.GetMemoriesByEventId(context.Background(), res.GetId())
+	if err != nil {
+		t.Fatalf("GetMemoriesByEventId: %s", err)
+	}
+
+	if len(*attached) != 1 {
+		t.Errorf("expected 1 memory actually attached, got %d", len(*attached))
+	}
+}
+
 // TestStoreEvent_InvalidRejected verifies a validation failure surfaces as an error and stores
 // nothing (an event with no name fails Validate).
 func TestStoreEvent_InvalidRejected(t *testing.T) {

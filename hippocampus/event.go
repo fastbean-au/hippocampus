@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc/codes"
@@ -71,7 +72,12 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 
 	tel.eventsStored.Add(ctx, 1)
 
-	// Memories
+	// Nested memories are best-effort: the event is already committed, so a nested memory that
+	// fails validation, is dropped for insignificance, or hits a store error cannot roll it back.
+	// memory_count reports how many were actually retained. A real store error is logged here - the
+	// nested StoreMemory calls bypass the gRPC interceptor chain, so a failure would otherwise be
+	// entirely silent - but it does not fail the event create. See StoreEventResponse in the
+	// contract.
 	if in.Memories != nil {
 		c := 0
 		for _, m := range in.Memories {
@@ -79,10 +85,19 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 				m.EventId = id
 			}
 
-			_, err := s.StoreMemory(ctx, m)
-			if err == nil {
-				c++
+			mres, err := s.StoreMemory(ctx, m)
+			if err != nil {
+				log.Warnf("StoreEvent: nested memory for event '%s' failed: %s", id, err.Error())
+
+				continue
 			}
+
+			if mres.GetRejected() || mres.GetId() == "" {
+
+				continue
+			}
+
+			c++
 		}
 		res.MemoryCount = int32(c)
 	}

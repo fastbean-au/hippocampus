@@ -28,6 +28,16 @@ type Event struct {
 	SignificanceLevelID *int64
 }
 
+// Relationship validation bounds. Relationships are a client-supplied input into the decay math:
+// the summed relationship significance is weighted into every related memory's value. An uncapped
+// count would serialise an arbitrarily large blob read by every event scan, and an uncapped
+// per-relationship significance could make an event (and its memories) effectively immortal, so
+// both are bounded here.
+const (
+	maxEventRelationships       = 128
+	maxRelationshipSignificance = 1_000_000
+)
+
 type Relationship struct {
 	EventId      string
 	Significance int32
@@ -127,10 +137,31 @@ func (e *Event) Validate(update bool) error {
 		// consolidation's age base uses max(time_start, time_end), so a backwards pair there degrades
 		// gracefully rather than corrupting.
 		return fmt.Errorf("event not valid - TimeEnd must not be before TimeStart")
-	// TODO: validate relationships
-	default:
-		return nil
 	}
+
+	if len(e.Relationships) > maxEventRelationships {
+		return fmt.Errorf("event not valid - too many relationships (max %d)", maxEventRelationships)
+	}
+
+	for i, r := range e.Relationships {
+		switch {
+
+		case len(r.EventId) == 0:
+			return fmt.Errorf("event not valid - relationship %d has no event id", i)
+
+		case len(r.EventId) > 128:
+			return fmt.Errorf("event not valid - relationship %d event id too long", i)
+
+		case r.Significance < 0:
+			return fmt.Errorf("event not valid - relationship %d significance must not be < 0", i)
+
+		case r.Significance > maxRelationshipSignificance:
+			return fmt.Errorf("event not valid - relationship %d significance must not exceed %d", i, maxRelationshipSignificance)
+
+		}
+	}
+
+	return nil
 }
 
 func (e *Event) SetDefaults() {

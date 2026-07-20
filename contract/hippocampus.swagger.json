@@ -1422,14 +1422,14 @@
         "memoryCount": {
           "type": "integer",
           "format": "int32",
-          "title": "nested memories stored (those below memory.minimumSignificance are dropped)"
+          "title": "nested memories retained (best-effort; those rejected/dropped are not reported individually)"
         },
         "rejected": {
           "type": "boolean",
           "title": "true when the event was dropped for significance below event.minimumSignificance"
         }
       },
-      "description": "StoreEventResponse carries the stored event's id and how many of its nested memories were\nretained. An event whose significance is below event.minimumSignificance is quietly forgotten,\nlike a brain that simply does not retain the insignificant: no error is returned, id is empty,\nmemory_count is 0 (its nested memories are not stored either), and rejected is true."
+      "description": "StoreEventResponse carries the stored event's id and how many of its nested memories were\nretained. An event whose significance is below event.minimumSignificance is quietly forgotten,\nlike a brain that simply does not retain the insignificant: no error is returned, id is empty,\nmemory_count is 0 (its nested memories are not stored either), and rejected is true.\n\nNested-memory creation is best-effort: the event is committed first, so a nested memory that\nfails validation, is dropped for insignificance, or hits a store error does not fail the event\ncreate and is not individually reported here - memory_count is only the count actually retained.\nStore memories individually if you need per-memory success/failure."
     },
     "protoStoreMemoryResponse": {
       "type": "object",

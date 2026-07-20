@@ -145,6 +145,12 @@ func TestEventValidate(t *testing.T) {
 		{"update negative significance", Event{Id: "e1", Significance: -1}, true, "significance must not be < 0"},
 		{"update negative timestart", Event{Id: "e1", TimeStart: -1}, true, "TimeStart must not be < 0"},
 		{"update negative timeend", Event{Id: "e1", TimeEnd: -1}, true, "TimeEnd must not be < 0"},
+		{"valid relationship", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: "r1", Significance: 3}}}, false, ""},
+		{"too many relationships", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: manyRelationships(maxEventRelationships + 1)}, false, "too many relationships"},
+		{"relationship no event id", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{Significance: 3}}}, false, "relationship 0 has no event id"},
+		{"relationship event id too long", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: longId, Significance: 3}}}, false, "relationship 0 event id too long"},
+		{"relationship negative significance", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: "r1", Significance: -1}}}, false, "relationship 0 significance must not be < 0"},
+		{"relationship significance too large", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: "r1", Significance: maxRelationshipSignificance + 1}}}, false, "relationship 0 significance must not exceed"},
 	}
 
 	for _, c := range cases {
@@ -168,6 +174,17 @@ func TestEventValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// manyRelationships builds n valid relationships, for the too-many-relationships bound.
+func manyRelationships(n int) []Relationship {
+	rs := make([]Relationship, n)
+
+	for i := range rs {
+		rs[i] = Relationship{EventId: "r", Significance: 1}
+	}
+
+	return rs
 }
 
 // TestEventSetDefaults verifies an id and time_start are filled when absent and preserved otherwise.
