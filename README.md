@@ -48,7 +48,7 @@ There are two main configurations that Hippocampus can run in: independent (stan
 
 ## Current state
 
-This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), and has been through a dedicated security review — a stored-XSS fix in the embedded web console, HS256 secret-strength warnings, a pinned TLS 1.2 floor, and size caps on JWKS fetches and gateway request bodies (see [Security](docs/operations.md#security)) — on top of two earlier correctness/race-condition sweeps. Token issuance is a CLI operation on the service binary (`--mint-token`): there is no client registry or admin credential API, but signing secrets rotate without a flag day (`auth.signingKeys`) and individual tokens or clients can be revoked ahead of their TTL through a polled revocation file — a full multi-tenant credential system is what the `idp` method delegates to an identity provider. Enable TLS for anything exposed beyond localhost. There are also [Limitations](#limitations) which should be considered before using in a production environment.
+This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), and has been through a dedicated security review — a stored-XSS fix in the embedded web console, HS256 secret-strength warnings, a pinned TLS 1.2 floor, and size caps on JWKS fetches and gateway request bodies (see [Security](docs/operations.md#security)) — on top of two earlier correctness/race-condition sweeps and a production-readiness review. Operators can bind each listener to loopback only (`bindAddress`/`gateway.bindAddress`) behind a TLS-terminating sidecar/mesh, cap gRPC concurrency and enforce a keepalive policy (`maxConcurrentStreams`, `keepalive.*`), and bound every storage operation with a query timeout (`storage.queryTimeoutSeconds`, 60s by default) — see [Configurability](docs/configuration.md). Token issuance is a CLI operation on the service binary (`--mint-token`): there is no client registry or admin credential API, but signing secrets rotate without a flag day (`auth.signingKeys`) and individual tokens or clients can be revoked ahead of their TTL through a polled revocation file — a full multi-tenant credential system is what the `idp` method delegates to an identity provider. Enable TLS for anything exposed beyond localhost. There are also [Limitations](#limitations) which should be considered before using in a production environment.
 
 ## Documentation
 
@@ -57,8 +57,8 @@ The full documentation lives under [`docs/`](docs/):
 - [Getting started](docs/getting-started.md) — build, a minimal configuration, and first requests
   over the HTTP/JSON gateway.
 - [Configurability](docs/configuration.md) — the exhaustive reference for every configuration key
-  (observability, HTTP gateway, authentication, TLS, storage drivers, content search, and the
-  transfer/archive surface).
+  (logging, observability, HTTP gateway and listener/transport hardening, authentication, TLS,
+  storage drivers, content search, and the transfer/archive surface).
 - [Memory consolidation](docs/consolidation.md) — the value model, the six deletion algorithms,
   the byte-capacity target, checkpoint-triggered eviction, and summarization.
 - [Operations & deployment](docs/operations.md) — the deployment model (one consolidating instance,

@@ -2,8 +2,11 @@ package hippocampus
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -616,6 +619,57 @@ func batchMemoriesByBytes(memories []types.Memory, maxBytes int) [][]types.Memor
 	return batches
 }
 
+// clientCredentials builds the transport credentials the Transfer client dials with. With TLS
+// disabled it is plaintext (insecure). With TLS enabled it honours the same trust options as the
+// opensearch.tls block: a private-CA bundle (tlsCACertFile) in place of the system pool, a client
+// certificate/key pair for mutual TLS, and an insecureSkipVerify escape hatch; with none set it
+// verifies against the system certificate pool, the previous behaviour. It fails on a half-configured
+// client certificate pair or an unreadable/empty CA bundle.
+func (t Transfer) clientCredentials() (credentials.TransportCredentials, error) {
+	if !t.tls {
+
+		return insecure.NewCredentials(), nil
+	}
+
+	if (t.tlsCertFile == "") != (t.tlsKeyFile == "") {
+
+		return nil, fmt.Errorf("transfer tls client certificate requires both certFile and keyFile, or neither")
+	}
+
+	conf := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: t.tlsInsecureSkipVerify,
+	}
+
+	if t.tlsCACertFile != "" {
+		pem, err := os.ReadFile(t.tlsCACertFile)
+		if err != nil {
+
+			return nil, fmt.Errorf("reading transfer CA cert file %q: %w", t.tlsCACertFile, err)
+		}
+
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+
+			return nil, fmt.Errorf("transfer CA cert file %q contained no valid certificates", t.tlsCACertFile)
+		}
+
+		conf.RootCAs = pool
+	}
+
+	if t.tlsCertFile != "" {
+		cert, err := tls.LoadX509KeyPair(t.tlsCertFile, t.tlsKeyFile)
+		if err != nil {
+
+			return nil, fmt.Errorf("loading transfer client certificate: %w", err)
+		}
+
+		conf.Certificates = []tls.Certificate{cert}
+	}
+
+	return credentials.NewTLS(conf), nil
+}
+
 // Transfer streams the whole store directly into a centralised instance's ImportBatch RPC
 // (transfer.targetAddress), caching a manifest like Export; with clear set the captured records
 // are deleted once the target has accepted every batch.
@@ -628,9 +682,11 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 		return &res, status.Error(codes.FailedPrecondition, "no transfer target is configured (transfer.targetAddress)")
 	}
 
-	creds := insecure.NewCredentials()
-	if s.transfer.tls {
-		creds = credentials.NewClientTLSFromCert(nil, "")
+	creds, err := s.transfer.clientCredentials()
+	if err != nil {
+		tel.transfers.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", false)))
+
+		return &res, err
 	}
 
 	conn, err := grpc.NewClient(s.transfer.targetAddress, grpc.WithTransportCredentials(creds))

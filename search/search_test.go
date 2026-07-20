@@ -348,6 +348,39 @@ func TestOpenSearch_DropsAfterExhaustingRetries(t *testing.T) {
 	}
 }
 
+// TestOpenSearch_WorkerTuningConfig verifies the worker-tuning knobs are read from Config when set
+// and fall back to the package defaults when zero.
+func TestOpenSearch_WorkerTuningConfig(t *testing.T) {
+	custom, err := NewOpenSearch(Config{
+		Addresses:             []string{"http://opensearch.invalid:9200"},
+		Index:                 "test-index",
+		QueueSize:             16,
+		Transport:             &fakeTransport{},
+		ApplyTimeout:          3 * time.Second,
+		ApplyMaxAttempts:      7,
+		ApplyRetryBaseBackoff: 40 * time.Millisecond,
+		CloseDrainTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewOpenSearch (custom): %s", err)
+	}
+	t.Cleanup(func() { _ = custom.Close() })
+
+	if custom.applyTimeout != 3*time.Second || custom.applyMaxAttempts != 7 ||
+		custom.applyRetryBaseBackoff != 40*time.Millisecond || custom.closeDrainTimeout != 2*time.Second {
+		t.Errorf("custom config not applied: got timeout=%s attempts=%d backoff=%s drain=%s",
+			custom.applyTimeout, custom.applyMaxAttempts, custom.applyRetryBaseBackoff, custom.closeDrainTimeout)
+	}
+
+	defaults := newTestOpenSearch(t, &fakeTransport{}, 16)
+
+	if defaults.applyTimeout != applyTimeout || defaults.applyMaxAttempts != applyMaxAttempts ||
+		defaults.applyRetryBaseBackoff != applyRetryBaseBackoff || defaults.closeDrainTimeout != closeDrainTimeout {
+		t.Errorf("defaults not applied: got timeout=%s attempts=%d backoff=%s drain=%s",
+			defaults.applyTimeout, defaults.applyMaxAttempts, defaults.applyRetryBaseBackoff, defaults.closeDrainTimeout)
+	}
+}
+
 // TestOpenSearch_IndexMemorySync verifies the backfill write path is synchronous - the request
 // must be on the wire before the call returns, without waiting on the worker - and that a cluster
 // error surfaces to the caller instead of being logged and dropped.

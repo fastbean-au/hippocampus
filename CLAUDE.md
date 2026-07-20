@@ -69,7 +69,9 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
 - `cmd/hippocampus/` — the `package main` entrypoint (`main.go` plus `backfill.go`,
   `interceptors.go`, `logging.go`, `observability.go`, and the `webui.go`/`webui/` embedded
   console). `main.go` — bootstrap only: reads the JSON config file into viper, initialises logging
-  (logrus) and observability (`observability.go`: optional OTEL tracing/metrics over OTLP/gRPC,
+  (logrus, `logging.go`; `logging.level` selects severity — default `info` — and `logging.json`
+  toggles JSON-vs-text output to stdout) and observability (`observability.go`: optional OTEL
+  tracing/metrics over OTLP/gRPC,
   no-op when disabled), opens the DB, wires the gRPC server with interceptors (plus the
   `otelgrpc` stats handler when observability is enabled), starts stats, and on SIGINT/SIGTERM
   flushes observability then closes the DB. The build version (`version.go`,
@@ -89,7 +91,13 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   but also logs a failing RPC at Warn — Info for client-fault codes — so failures are visible at the
   default log level); when `tls.enabled`,
   `credentials.NewServerTLSFromFile` is added via `grpc.Creds`. Auth without
-  `tls.enabled` only logs a warning — TLS may be terminated upstream instead. When `gateway.port`
+  `tls.enabled` only logs a warning — TLS may be terminated upstream instead. Optional gRPC
+  hardening server options are appended when their keys are positive: `maxRecvMsgBytes`
+  (`grpc.MaxRecvMsgSize`), `maxConcurrentStreams` (`grpc.MaxConcurrentStreams`), and a keepalive
+  enforcement policy from `keepalive.minTimeSeconds`/`keepalive.permitWithoutStream`
+  (`grpc.KeepaliveEnforcementPolicy`); each defaults to grpc-go's own default when unset. Both
+  listeners bind all interfaces unless `bindAddress` (gRPC) / `gateway.bindAddress` (HTTP) restrict
+  the interface — e.g. `127.0.0.1` behind a TLS-terminating sidecar/mesh. When `gateway.port`
   is positive it also registers `contract.RegisterHippocampusHandlerServer` (the generated
   `hippocampus.pb.gw.go` reverse proxy) on a `runtime.NewServeMux()` and serves it over HTTP (TLS
   via `ListenAndServeTLS` when `tls.enabled`) — calling straight into the same `hipo` server
@@ -103,7 +111,8 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   Debug, via an intercepting status recorder); when `auth.enabled`, that is in turn wrapped in
   `auth.HTTPMiddleware` (outermost, so unauthenticated requests are rejected first) except
   `/healthz`. The gateway is shut down before the gRPC
-  server on SIGINT/SIGTERM. All configuration flows through viper keys matching `config.json`
+  server on SIGINT/SIGTERM; `shutdown.timeoutSeconds` (default 10) bounds each phase (gateway drain,
+  gRPC graceful stop, observability flush). All configuration flows through viper keys matching `config.json`
   structure. Instrumentation elsewhere uses the global OTEL providers
   (`hippocampus/telemetry.go`, `stats/stats.go`), so it stays no-op-safe whether or not
   observability is enabled. The domain metrics defined in `hippocampus/telemetry.go` (counters,
@@ -170,9 +179,9 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   `hippocampus.Server` and `stats` depend on — the seam for future non-SQL backends. Every
   `db.Store` method that issues a query takes a leading `ctx context.Context` (all but `WALBytes`,
   a filesystem stat, and `Close`), so an RPC's deadline/cancellation reaches the driver; the db
-  layer wraps that ctx with the optional server-owned `storage.queryTimeoutSeconds` bound in
-  `opContext`, so whichever fires first ends the operation. The sleep cycle passes its own
-  (tracing-span) context and stays server-owned, not tied to the `Sleep` RPC's deadline. SQLite
+  layer wraps that ctx with the server-owned `storage.queryTimeoutSeconds` bound (default 60; 0
+  disables) in `opContext`, so whichever fires first ends the operation. The sleep cycle passes its
+  own (tracing-span) context and stays server-owned, not tied to the `Sleep` RPC's deadline. SQLite
   (`modernc.org/sqlite`, pure Go): one database file (`hippocampus.db` in `storage.directory`)
   holding the `events` and `memories` tables; an empty directory (used by tests) selects an
   in-memory database. WAL mode makes every write durable as it happens — there is no snapshot
@@ -233,7 +242,11 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   FIFO worker — ordering matters for summarization's delete-then-index; overflow drops, never
   blocks), and `SearchMemories` results are always re-read from the primary store so stale index
   entries drop out. The worker retries a transient cluster failure (bounded attempts with jittered
-  backoff in `applyWithRetry`) before dropping an operation. Consolidation/eviction deletes reach it
+  backoff in `applyWithRetry`) before dropping an operation; its four timing constants
+  (`applyTimeout`, `applyMaxAttempts`, `applyRetryBaseBackoff`, `closeDrainTimeout`) are package
+  defaults, each overridable per instance via the matching `opensearch.apply*`/`closeDrain*`
+  `search.Config` field (0 → the default), resolved onto the `OpenSearch` struct at construction.
+  Consolidation/eviction deletes reach it
   via `db.SetMemoryDeleteObserver` (on the concrete `*db.DB`, not `db.Store`); RPC-layer hooks cover
   the rest. Binary memories are never indexed. Because propagation is best-effort, the index can
   still go sparse, so two recovery paths exist. The self-healing one is automatic: the consolidating
@@ -254,7 +267,11 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   protodelim+gzip codec over `ArchiveRecord` protos (versioned header first) and the
   `ObjectStore` interface (Put/Get) with an aws-sdk-go-v2 S3 implementation
   (`s3.endpoint`/`s3.usePathStyle` for MinIO; credentials from the standard AWS chain). The
-  transfer RPCs live in `hippocampus/transfer.go`: Export/Transfer walk the store via
+  transfer RPCs live in `hippocampus/transfer.go`: `Transfer` dials `transfer.targetAddress` with
+  credentials from `Transfer.clientCredentials`, which honours the same TLS trust-option block as
+  `opensearch.tls` (`transfer.tls.{caCertFile,certFile,keyFile,insecureSkipVerify}`); TLS is
+  toggled by `transferTLSEnabled` (`hippocampus/server.go`), accepting both the block form
+  `transfer.tls.enabled` and the legacy scalar `transfer.tls: true`. Export/Transfer walk the store via
   `db.GetMemoriesPage`/`db.GetEventsPage` keyset pagination, record an in-memory manifest (ids +
   recall-state snapshots, last 8 kept — `transfer.maxManifestRows`, 0/default unlimited, bounds one
   run's capture: `walkStore` pre-flights the count and re-checks during the walk, refusing over-cap

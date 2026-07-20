@@ -157,6 +157,32 @@ type Transfer struct {
 	maxBatchBytes   int
 	maxManifestRows int
 	keyPrefix       string
+
+	// TLS trust options mirroring the opensearch.tls block, so a transfer to a target serving a
+	// private-CA or mutual-TLS certificate can verify it. All empty/false by default, in which case
+	// TLS (when enabled) verifies against the system certificate pool, the previous behaviour.
+	tlsCACertFile         string
+	tlsCertFile           string
+	tlsKeyFile            string
+	tlsInsecureSkipVerify bool
+}
+
+// transferTLSEnabled reports whether the Transfer client should dial over TLS. It accepts both the
+// legacy scalar form (transfer.tls: true) and the block form introduced with the trust options
+// (transfer.tls.enabled: true), so existing configs keep working while the block gains caCertFile,
+// certFile/keyFile, and insecureSkipVerify.
+func transferTLSEnabled() bool {
+	switch v := viper.Get("transfer.tls").(type) {
+
+	case bool:
+
+		return v
+
+	default:
+
+		return viper.GetBool("transfer.tls.enabled")
+
+	}
 }
 
 func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Server {
@@ -170,13 +196,17 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Se
 		objects:   objects,
 		manifests: make(map[string]*transferManifest),
 		transfer: Transfer{
-			targetAddress:   viper.GetString("transfer.targetAddress"),
-			token:           viper.GetString("transfer.token"),
-			tls:             viper.GetBool("transfer.tls"),
-			batchSize:       viper.GetInt("transfer.batchSize"),
-			maxBatchBytes:   viper.GetInt("transfer.maxBatchBytes"),
-			maxManifestRows: viper.GetInt("transfer.maxManifestRows"),
-			keyPrefix:       viper.GetString("s3.keyPrefix"),
+			targetAddress:         viper.GetString("transfer.targetAddress"),
+			token:                 viper.GetString("transfer.token"),
+			tls:                   transferTLSEnabled(),
+			batchSize:             viper.GetInt("transfer.batchSize"),
+			maxBatchBytes:         viper.GetInt("transfer.maxBatchBytes"),
+			maxManifestRows:       viper.GetInt("transfer.maxManifestRows"),
+			keyPrefix:             viper.GetString("s3.keyPrefix"),
+			tlsCACertFile:         viper.GetString("transfer.tls.caCertFile"),
+			tlsCertFile:           viper.GetString("transfer.tls.certFile"),
+			tlsKeyFile:            viper.GetString("transfer.tls.keyFile"),
+			tlsInsecureSkipVerify: viper.GetBool("transfer.tls.insecureSkipVerify"),
 		},
 		sleepReset:                reset,
 		minimumEventSignificance:  viper.GetInt32("event.minimumSignificance"),

@@ -161,10 +161,13 @@ preserved across the move.
 ## Graceful shutdown
 
 On `SIGINT`/`SIGTERM` the service shuts down in order: stop the HTTP gateway, drain in-flight gRPC
-calls (`GracefulStop`, bounded to 10 s so a stuck call cannot hang shutdown — e.g. a long
-`Export`/`Transfer` gets to finish), stop the background sleep loop and stats ticker (waiting for any
-in-flight sleep cycle to drain), flush observability, then close the database — which releases the
-Postgres/MySQL instance lock. A supervised restart can then start a fresh instance immediately.
+calls (`GracefulStop`, bounded by `shutdown.timeoutSeconds` — default 10 s — so a stuck call cannot
+hang shutdown, e.g. a long `Export`/`Transfer` gets to finish), stop the background sleep loop and
+stats ticker (waiting for any in-flight sleep cycle to drain), flush observability, then close the
+database — which releases the Postgres/MySQL instance lock. A supervised restart can then start a
+fresh instance immediately. `shutdown.timeoutSeconds` bounds each of the gateway-drain, gRPC
+graceful-stop, and observability-flush phases; raise it for a slower store whose in-flight work
+legitimately needs longer to finish.
 
 ## Observability
 
@@ -269,7 +272,14 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
   are handled by the provider.
 - If auth is enabled without TLS the service only warns — it assumes TLS is terminated upstream (a
   proxy or service mesh). Never send bearer tokens in plaintext. When `tls.enabled`, both listeners
-  share one certificate and enforce a TLS 1.2 minimum.
+  share one certificate and enforce a TLS 1.2 minimum. Behind such a sidecar/mesh, bind the
+  listeners to loopback only with `bindAddress`/`gateway.bindAddress` (`127.0.0.1`) so nothing
+  reaches them except the local proxy.
+- **gRPC transport hardening.** If the gRPC port is exposed beyond trusted callers, cap the
+  concurrent HTTP/2 streams one connection may open with `maxConcurrentStreams`, and enforce a
+  keepalive policy (`keepalive.minTimeSeconds`, `keepalive.permitWithoutStream`) so an abusive
+  client cannot ping the server into a resource spiral — see
+  [HTTP gateway](configuration.md#http-gateway). Both default to grpc-go's own defaults.
 - Under `hmac`, use a long random `auth.signingSecret` — at least 32 bytes; a shorter secret is
   brute-forceable and the service warns at startup.
 - **Web console (`/ui`).** The HTTP gateway serves an embedded single-page console at `/ui`. The

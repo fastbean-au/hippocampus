@@ -28,7 +28,7 @@ import (
 // server must bound slow-header and idle-keepalive clients (ReadHeaderTimeout / IdleTimeout) while
 // leaving WriteTimeout unset so long Export/Import/Transfer responses are not aborted.
 func TestNewGatewayServer_HardeningTimeouts(t *testing.T) {
-	s := newGatewayServer(8080, http.NotFoundHandler())
+	s := newGatewayServer("", 8080, http.NotFoundHandler())
 
 	if s.ReadHeaderTimeout <= 0 {
 		t.Error("gateway server must set a positive ReadHeaderTimeout (slowloris protection)")
@@ -48,6 +48,11 @@ func TestNewGatewayServer_HardeningTimeouts(t *testing.T) {
 
 	if s.Handler == nil {
 		t.Error("gateway server must carry the provided handler")
+	}
+
+	// A non-empty bindAddress restricts the interface the listener binds to.
+	if bound := newGatewayServer("127.0.0.1", 8080, http.NotFoundHandler()); bound.Addr != "127.0.0.1:8080" {
+		t.Errorf("expected addr '127.0.0.1:8080', got %q", bound.Addr)
 	}
 }
 

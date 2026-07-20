@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/fastbean-au/hippocampus/archive"
 	"github.com/fastbean-au/hippocampus/auth"
@@ -134,6 +135,7 @@ func main() {
 	viper.SetDefault("storage.driver", "sqlite")
 	viper.SetDefault("storage.pool.maxOpenConns", 25)
 	viper.SetDefault("storage.queryTimeoutSeconds", 60)
+	viper.SetDefault("shutdown.timeoutSeconds", 10)
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
 	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
@@ -442,6 +444,24 @@ func main() {
 		serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(maxRecvMsgBytes))
 	}
 
+	// Cap the concurrent HTTP/2 streams a single connection may open, bounding the work one caller
+	// can pin at once - the cheapest first defence if the gRPC port is ever exposed beyond trusted
+	// callers. 0 (the default) keeps grpc-go's own default.
+	if maxConcurrentStreams := viper.GetInt("maxConcurrentStreams"); maxConcurrentStreams > 0 {
+		serverOpts = append(serverOpts, grpc.MaxConcurrentStreams(uint32(maxConcurrentStreams)))
+	}
+
+	// Enforce a keepalive policy so an abusive client cannot ping the server into a CPU/bandwidth
+	// spiral. minTimeSeconds is the minimum interval the server tolerates between client pings
+	// before it terminates the connection; permitWithoutStream allows keepalive pings on an idle
+	// connection. Both default to grpc-go's own policy when unset (minTimeSeconds 0 leaves it).
+	if minTime := viper.GetInt("keepalive.minTimeSeconds"); minTime > 0 {
+		serverOpts = append(serverOpts, grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             time.Duration(minTime) * time.Second,
+			PermitWithoutStream: viper.GetBool("keepalive.permitWithoutStream"),
+		}))
+	}
+
 	// The otelgrpc stats handler creates a server span for every RPC (extracting any incoming
 	// trace context) and records the standard low-cardinality RPC metrics (method, service,
 	// status code). Only installed when observability is enabled.
@@ -463,9 +483,11 @@ func main() {
 	exit := make(chan os.Signal, 1)
 	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
 
-	// Start listening
+	// Start listening. bindAddress (empty by default) restricts the interface the listener binds to
+	// - e.g. "127.0.0.1" for loopback only behind a sidecar/mesh that terminates TLS; empty binds
+	// all interfaces, the previous behaviour.
 	go func() {
-		lis, err := net.Listen("tcp", ":"+strconv.Itoa(viper.GetInt("port")))
+		lis, err := net.Listen("tcp", viper.GetString("bindAddress")+":"+strconv.Itoa(viper.GetInt("port")))
 		if err != nil {
 			log.Fatalf("gRPC server failed to listen: %v", err)
 		}
@@ -550,7 +572,7 @@ func main() {
 		// becomes a clean 500 rather than a dropped connection.
 		handler = recoverMiddleware(handler)
 
-		gwServer = newGatewayServer(gatewayPort, handler)
+		gwServer = newGatewayServer(viper.GetString("gateway.bindAddress"), gatewayPort, handler)
 
 		go func() {
 			var err error
@@ -589,8 +611,12 @@ func main() {
 	<-readinessDone
 	hs.SetServingStatus("hippocampus", healthgrpc.HealthCheckResponse_NOT_SERVING)
 
+	// Each shutdown phase (gateway drain, gRPC graceful stop, observability flush) is bounded by the
+	// same timeout so a stuck phase cannot hang the process; a slower store can raise it.
+	shutdownTimeout := time.Duration(viper.GetInt("shutdown.timeoutSeconds")) * time.Second
+
 	if gwServer != nil {
-		gwCtx, gwCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		gwCtx, gwCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer gwCancel()
 
 		if err := gwServer.Shutdown(gwCtx); err != nil {
@@ -611,7 +637,7 @@ func main() {
 
 	select {
 	case <-stopped:
-	case <-time.After(10 * time.Second):
+	case <-time.After(shutdownTimeout):
 		log.Warn("graceful shutdown timed out - forcing stop")
 		s.Stop()
 	}
@@ -635,7 +661,7 @@ func main() {
 
 	// Flush observability before closing the DB: the final metric collection invokes the stats
 	// gauge callbacks, which query the database.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	if err := shutdownObservability(ctx); err != nil {
@@ -660,6 +686,13 @@ func searchConfigFromViper() search.Config {
 		Password:  viper.GetString("opensearch.password"),
 		Index:     viper.GetString("opensearch.index"),
 		QueueSize: viper.GetInt("opensearch.queueSize"),
+
+		// Worker tuning; each 0 (the default) falls back to the search package's own default.
+		ApplyTimeout:          time.Duration(viper.GetInt("opensearch.applyTimeoutSeconds")) * time.Second,
+		ApplyMaxAttempts:      viper.GetInt("opensearch.applyMaxAttempts"),
+		ApplyRetryBaseBackoff: time.Duration(viper.GetInt("opensearch.applyRetryBaseBackoffMillis")) * time.Millisecond,
+		CloseDrainTimeout:     time.Duration(viper.GetInt("opensearch.closeDrainTimeoutSeconds")) * time.Second,
+
 		TLS: search.TLSConfig{
 			CACertFile:         viper.GetString("opensearch.tls.caCertFile"),
 			CertFile:           viper.GetString("opensearch.tls.certFile"),
@@ -730,9 +763,11 @@ const (
 
 // newGatewayServer builds the HTTP gateway server with the hardening timeouts above. It is a
 // separate function so the timeout policy can be unit-tested without standing up the whole service.
-func newGatewayServer(port int, handler http.Handler) *http.Server {
+// bindAddress (empty by default) restricts the interface the listener binds to; empty binds all
+// interfaces, mirroring the gRPC listener's bindAddress.
+func newGatewayServer(bindAddress string, port int, handler http.Handler) *http.Server {
 	return &http.Server{
-		Addr:              ":" + strconv.Itoa(port),
+		Addr:              bindAddress + ":" + strconv.Itoa(port),
 		Handler:           handler,
 		ReadHeaderTimeout: gatewayReadHeaderTimeout,
 		IdleTimeout:       gatewayIdleTimeout,

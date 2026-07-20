@@ -18,6 +18,27 @@ overrides the file but an explicit flag still wins.
 
 ## Operational
 
+### Logging
+
+Logging is written to stdout via [logrus](https://github.com/sirupsen/logrus).
+
+```json
+"logging": {
+    "level": "info",
+    "json": false
+}
+```
+
+- `logging.level` — the minimum severity emitted. One of `trace`, `debug`, `info`, `warn`,
+  `error`, `fatal`, `panic` (case-insensitive; the first letter and a few aliases such as
+  `verbose`→`debug` and `information`→`info` also work). Any unset or unrecognised value falls back
+  to `info`. The service logs its effective level at startup. Most per-function entry/exit lines are
+  at `trace`; a failing RPC is logged at `warn` (`info` for client-fault codes), so the default
+  `info` level surfaces failures without the per-call noise.
+- `logging.json` — when `true`, emit structured JSON (one object per line) instead of the default
+  human-readable text formatter. Use JSON when shipping logs to a collector that parses fields
+  (Loki, Elasticsearch, CloudWatch); leave it `false` for local development.
+
 ### Observability
 
 OpenTelemetry tracing and metrics are optional and independently enabled through the
@@ -108,6 +129,30 @@ The gRPC server port is `port` (default **50051**). Both ports can be set on the
 hippocampus -c config.json --gateway-port 8080   # enable the gateway on the conventional port
 hippocampus -c config.json --port 40000          # gRPC on a custom port; gateway stays off
 ```
+
+Both listeners bind all interfaces by default. `bindAddress` (gRPC) and `gateway.bindAddress`
+(HTTP) restrict the interface each binds to — set them to `127.0.0.1` to accept only loopback
+traffic, e.g. behind a sidecar/mesh that terminates TLS and forwards over the loopback. Empty (the
+default) preserves the all-interfaces behaviour.
+
+```json
+"bindAddress": "",
+"maxConcurrentStreams": 0,
+"maxRecvMsgBytes": 0,
+"keepalive": {
+    "minTimeSeconds": 0,
+    "permitWithoutStream": false
+}
+```
+
+The gRPC transport has a few hardening knobs, all defaulting to grpc-go's own defaults when
+unset — tolerable for trusted callers, worth setting if the gRPC port is exposed further.
+`maxConcurrentStreams` caps the concurrent HTTP/2 streams one connection may open (0 keeps the
+default). `keepalive.minTimeSeconds` is the minimum interval the server tolerates between a
+client's keepalive pings before it terminates the connection (0 leaves grpc-go's policy), and
+`keepalive.permitWithoutStream` allows those pings on an idle connection. `maxRecvMsgBytes`
+(0 → grpc-go's 4 MiB default) raises the maximum receive-message size for larger
+`ImportBatch`/single-memory payloads.
 
 Each RPC maps onto a REST-ish path under `/v1`; path segments in `{braces}` come from the URL,
 `GET`/`DELETE` take their remaining fields as query parameters, and `POST`/`PATCH` take them as
@@ -409,6 +454,10 @@ optionally restricted to one event and/or one `group` label.
     "queueSize": 1024,
     "reconcileIntervalSeconds": 3600,
     "reconcileBatchSize": 500,
+    "applyTimeoutSeconds": 0,
+    "applyMaxAttempts": 0,
+    "applyRetryBaseBackoffMillis": 0,
+    "closeDrainTimeoutSeconds": 0,
     "tls": {
         "caCertFile": "",
         "certFile": "",
@@ -417,6 +466,14 @@ optionally restricted to one event and/or one `group` label.
     }
 }
 ```
+
+The index worker's retry/drain behaviour is tunable, each defaulting (0) to a built-in value:
+`applyTimeoutSeconds` bounds one operation against the cluster (default 10s), `applyMaxAttempts`
+caps retries of a transient failure before dropping (default 4), `applyRetryBaseBackoffMillis` is
+the wait before the second attempt, doubling with jitter thereafter (default 250ms), and
+`closeDrainTimeoutSeconds` bounds how long shutdown waits for the queue to drain (default 5s). Raise
+them for a slower cluster where the defaults drop too many operations before the
+[reconciliation sweep](#self-healing-reconciliation) heals them.
 
 ```sh
 curl -X POST http://localhost:8080/v1/memories/search \
@@ -566,7 +623,13 @@ itself is the watermark.
 "transfer": {
     "targetAddress": "central.example.com:50051",
     "token": "",
-    "tls": false,
+    "tls": {
+        "enabled": false,
+        "caCertFile": "",
+        "certFile": "",
+        "keyFile": "",
+        "insecureSkipVerify": false
+    },
     "batchSize": 500,
     "maxBatchBytes": 0,
     "maxManifestRows": 0
@@ -578,8 +641,16 @@ roles); `s3.endpoint` and `s3.usePathStyle` support S3-compatible stores such as
 `s3.bucket` configured, `Export`/`Import` fail with `FAILED_PRECONDITION`; with no
 `transfer.targetAddress`, so does `Transfer`. `transfer.token` is sent as the bearer token to
 the centralised instance when its [authentication](#authentication) is enabled, and
-`transfer.tls` dials it over TLS. `transfer.batchSize` sets both the pagination page size and
+`transfer.tls.enabled` dials it over TLS. `transfer.batchSize` sets both the pagination page size and
 the archive/ImportBatch batch size.
+
+`transfer.tls` accepts the same trust options as [`opensearch.tls`](#securing-the-connection), so a
+transfer to a target serving a private-CA or mutual-TLS certificate can verify it:
+`caCertFile` is a PEM CA bundle trusted in place of the system pool, `certFile`/`keyFile` are a
+client certificate/key pair for mutual TLS (set both or neither), and `insecureSkipVerify` is a
+dev-only escape hatch that disables verification. With `enabled: true` and none of the trust options
+set, the connection verifies against the system certificate pool. The legacy scalar form
+`"tls": true` still works as a shorthand for `{ "enabled": true }`.
 
 `transfer.maxBatchBytes` (0 → an internal 3 MiB default) additionally bounds each `ImportBatch`
 message's serialized size during a `Transfer`: a page of large memory bodies is split into

@@ -21,7 +21,7 @@ import (
 )
 
 // applyTimeout bounds each operation the worker applies against the cluster, so one hung request
-// cannot stall the queue indefinitely.
+// cannot stall the queue indefinitely. The default; overridable per instance via Config.ApplyTimeout.
 const applyTimeout = 10 * time.Second
 
 // applyMaxAttempts caps how many times the worker tries one operation against the cluster before
@@ -29,14 +29,16 @@ const applyTimeout = 10 * time.Second
 // event rewrites converge), so a transient failure - a brief network blip, a node restart, a
 // rolling upgrade - is safe to retry, and a few spaced attempts turn most would-be drops into
 // eventual successes. A persistently failing operation is still healed later by the periodic
-// reconciliation sweep and by --backfill-search.
+// reconciliation sweep and by --backfill-search. The default; overridable via Config.ApplyMaxAttempts.
 const applyMaxAttempts = 4
 
 // applyRetryBaseBackoff is the wait before the second attempt; it doubles (with jitter) each
-// further attempt so a struggling cluster is not hammered. A var so tests can shorten it.
+// further attempt so a struggling cluster is not hammered. The default; overridable via
+// Config.ApplyRetryBaseBackoff. A var so tests can shorten it.
 var applyRetryBaseBackoff = 250 * time.Millisecond
 
-// closeDrainTimeout bounds how long Close waits for the worker to drain the queue at shutdown.
+// closeDrainTimeout bounds how long Close waits for the worker to drain the queue at shutdown. The
+// default; overridable via Config.CloseDrainTimeout.
 const closeDrainTimeout = 5 * time.Second
 
 // indexMapping is the explicit mapping for the memories index. The memory id is the document
@@ -65,6 +67,15 @@ type Config struct {
 	Password  string
 	Index     string
 	QueueSize int
+
+	// Worker tuning. Each is optional: a zero value falls back to the package default
+	// (applyTimeout, applyMaxAttempts, applyRetryBaseBackoff, closeDrainTimeout). Raise them for a
+	// slower cluster where the defaults drop too many operations before the reconciliation sweep
+	// heals them.
+	ApplyTimeout          time.Duration
+	ApplyMaxAttempts      int
+	ApplyRetryBaseBackoff time.Duration
+	CloseDrainTimeout     time.Duration
 
 	// TLS carries the optional transport-security settings applied to an https:// cluster.
 	TLS TLSConfig
@@ -229,6 +240,12 @@ type OpenSearch struct {
 	stop  chan struct{}
 	done  chan struct{}
 
+	// Worker tuning, resolved from Config (or the package defaults) once at construction.
+	applyTimeout          time.Duration
+	applyMaxAttempts      int
+	applyRetryBaseBackoff time.Duration
+	closeDrainTimeout     time.Duration
+
 	closed atomic.Bool
 
 	// indexReady records that ensureIndex has succeeded at least once, so a cluster that comes
@@ -249,6 +266,22 @@ func NewOpenSearch(cfg Config) (*OpenSearch, error) {
 
 	if cfg.QueueSize <= 0 {
 		cfg.QueueSize = 1024
+	}
+
+	if cfg.ApplyTimeout <= 0 {
+		cfg.ApplyTimeout = applyTimeout
+	}
+
+	if cfg.ApplyMaxAttempts <= 0 {
+		cfg.ApplyMaxAttempts = applyMaxAttempts
+	}
+
+	if cfg.ApplyRetryBaseBackoff <= 0 {
+		cfg.ApplyRetryBaseBackoff = applyRetryBaseBackoff
+	}
+
+	if cfg.CloseDrainTimeout <= 0 {
+		cfg.CloseDrainTimeout = closeDrainTimeout
 	}
 
 	transport, err := buildTransport(cfg)
@@ -273,11 +306,15 @@ func NewOpenSearch(cfg Config) (*OpenSearch, error) {
 	}
 
 	o := &OpenSearch{
-		client: client,
-		index:  cfg.Index,
-		queue:  make(chan op, cfg.QueueSize),
-		stop:   make(chan struct{}),
-		done:   make(chan struct{}),
+		client:                client,
+		index:                 cfg.Index,
+		queue:                 make(chan op, cfg.QueueSize),
+		stop:                  make(chan struct{}),
+		done:                  make(chan struct{}),
+		applyTimeout:          cfg.ApplyTimeout,
+		applyMaxAttempts:      cfg.ApplyMaxAttempts,
+		applyRetryBaseBackoff: cfg.ApplyRetryBaseBackoff,
+		closeDrainTimeout:     cfg.CloseDrainTimeout,
 	}
 
 	if err := o.ensureIndex(context.Background()); err != nil {
@@ -381,17 +418,17 @@ func (o *OpenSearch) applyWithRetry(v op) {
 	var err error
 
 RETRY:
-	for attempt := range applyMaxAttempts {
+	for attempt := range o.applyMaxAttempts {
 		err = o.applyOnce(v)
 		if err == nil {
 			return
 		}
 
-		if attempt == applyMaxAttempts-1 {
+		if attempt == o.applyMaxAttempts-1 {
 			break RETRY
 		}
 
-		backoff := applyRetryBaseBackoff*time.Duration(1<<attempt) + time.Duration(rand.Int63n(int64(applyRetryBaseBackoff)))
+		backoff := o.applyRetryBaseBackoff*time.Duration(1<<attempt) + time.Duration(rand.Int63n(int64(o.applyRetryBaseBackoff)))
 
 		select {
 
@@ -405,7 +442,7 @@ RETRY:
 		}
 	}
 
-	log.Warnf("dropping opensearch %s operation after %d attempts: %s", v.kind, applyMaxAttempts, err.Error())
+	log.Warnf("dropping opensearch %s operation after %d attempts: %s", v.kind, o.applyMaxAttempts, err.Error())
 	tel.dropped.Add(context.Background(), 1, metric.WithAttributes(attribute.String("op", v.kind.String())))
 }
 
@@ -413,7 +450,7 @@ RETRY:
 // the operation, each bounded by applyTimeout. It returns the error (nil on success) so
 // applyWithRetry can decide whether to retry.
 func (o *OpenSearch) applyOnce(v op) error {
-	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), o.applyTimeout)
 	defer cancel()
 
 	if !o.indexReady.Load() {
@@ -598,7 +635,7 @@ func (o *OpenSearch) Purge() {
 func (o *OpenSearch) IndexMemorySync(ctx context.Context, doc Doc) error {
 	log.Trace("func() search.IndexMemorySync")
 
-	ctx, cancel := context.WithTimeout(ctx, applyTimeout)
+	ctx, cancel := context.WithTimeout(ctx, o.applyTimeout)
 	defer cancel()
 
 	if !o.indexReady.Load() {
@@ -616,7 +653,7 @@ func (o *OpenSearch) IndexMemorySync(ctx context.Context, doc Doc) error {
 func (o *OpenSearch) RecreateIndex(ctx context.Context) error {
 	log.Trace("func() search.RecreateIndex")
 
-	ctx, cancel := context.WithTimeout(ctx, applyTimeout)
+	ctx, cancel := context.WithTimeout(ctx, o.applyTimeout)
 	defer cancel()
 
 	if !o.indexReady.Load() {
@@ -706,7 +743,7 @@ func (o *OpenSearch) Close() error {
 	case <-o.done:
 		return nil
 
-	case <-time.After(closeDrainTimeout):
+	case <-time.After(o.closeDrainTimeout):
 		return fmt.Errorf("timed out draining the opensearch queue")
 	}
 }
