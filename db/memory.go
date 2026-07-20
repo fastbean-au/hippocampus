@@ -543,7 +543,7 @@ func (d *DB) RecallMemories(ctx context.Context, ids []string) (*[]types.Memory,
 		return &memories, nil
 	}
 
-	ids = dedupeIds(ids)
+	ids = DedupeIds(ids)
 	now := time.Now().UnixNano()
 
 	for start := 0; start < len(ids); start += deleteChunkSize {
@@ -624,8 +624,8 @@ func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int6
 	return &memories, nil
 }
 
-// dedupeIds returns ids with duplicates removed, preserving first-occurrence order.
-func dedupeIds(ids []string) []string {
+// DedupeIds returns ids with duplicates removed, preserving first-occurrence order.
+func DedupeIds(ids []string) []string {
 	seen := make(map[string]struct{}, len(ids))
 	out := make([]string, 0, len(ids))
 

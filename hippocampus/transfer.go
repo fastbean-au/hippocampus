@@ -352,7 +352,7 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 		if err != nil {
 			s.storeManifest(result.manifest)
 
-			return &res, fmt.Errorf("export succeeded (object '%s') but the clear failed; retry Clear with manifest '%s': %w", key, result.manifest.id, err)
+			return &res, mapWriteError(fmt.Errorf("export succeeded (object '%s') but the clear failed; retry Clear with manifest '%s': %w", key, result.manifest.id, err))
 		}
 
 		res.MemoriesCleared = int32(memoriesCleared)
@@ -396,7 +396,7 @@ func (s *Server) Import(ctx context.Context, in *contract.ImportRequest) (*contr
 	tel.imports.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", err == nil)))
 
 	if err != nil {
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	res.EventsImported = int32(events)
@@ -494,14 +494,14 @@ func (s *Server) ImportBatch(ctx context.Context, in *contract.ImportBatchReques
 	res.EventsImported = int32(events)
 
 	if err != nil {
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	memories, err := s.ingestMemories(ctx, in.GetMemories())
 	res.MemoriesImported = int32(memories)
 
 	if err != nil {
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	return &res, nil
@@ -701,7 +701,7 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 		if err != nil {
 			s.storeManifest(manifest)
 
-			return &res, fmt.Errorf("transfer succeeded but the clear failed; retry Clear with manifest '%s': %w", manifest.id, err)
+			return &res, mapWriteError(fmt.Errorf("transfer succeeded but the clear failed; retry Clear with manifest '%s': %w", manifest.id, err))
 		}
 
 		res.MemoriesCleared = int32(memoriesCleared)
@@ -743,7 +743,7 @@ func (s *Server) Clear(ctx context.Context, in *contract.ClearRequest) (*contrac
 		// handling Export/Transfer got for their one-shot clear flag).
 		s.storeManifest(manifest)
 
-		return &res, err
+		return &res, mapWriteError(err)
 	}
 
 	res.MemoriesCleared = int32(memoriesCleared)

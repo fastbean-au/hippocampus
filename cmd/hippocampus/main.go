@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -404,7 +405,7 @@ func main() {
 	}
 
 	if authEnabled && !tlsEnabled {
-		log.Warn("auth.enabled is true but tls.enabled is false - bearer tokens will be sent in " +
+		log.Warn("authentication is enabled but tls.enabled is false - bearer tokens will be sent in " +
 			"plaintext unless TLS is terminated upstream (e.g. by a proxy or service mesh)")
 	}
 
@@ -792,6 +793,18 @@ func validateConfig() error {
 
 	if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= 0 {
 		return fmt.Errorf("consolidation.aggressiveness must be greater than 0, got %v", aggressiveness)
+	}
+
+	// Method 3's decay factor is 1 + ln(aggressiveness), which goes non-positive for any
+	// aggressiveness at or below 1/e (~0.368). calculateValue treats a non-positive factor as
+	// "never delete" (it returns MaxFloat64 to keep NaN out of eviction's sort), so such a config
+	// silently disables value-based consolidation entirely while the generic aggressiveness > 0
+	// check above passes. Reject it here so the mistake surfaces at startup rather than as a store
+	// that quietly never forgets anything.
+	if method := viper.GetInt("consolidation.method"); method == 3 {
+		if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= math.Exp(-1) {
+			return fmt.Errorf("consolidation.aggressiveness must be greater than 1/e (~0.368) for consolidation.method 3, got %v", aggressiveness)
+		}
 	}
 
 	// A negative retention window is meaningless (0 disables the floor). Catch it at startup rather

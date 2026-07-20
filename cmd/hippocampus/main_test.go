@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"io"
+	"math"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -244,6 +245,44 @@ func TestValidateConfig(t *testing.T) {
 
 			if !tc.wantErr && err != nil {
 				t.Fatalf("validateConfig(%s=%v) = %v, want nil", tc.key, tc.value, err)
+			}
+		})
+	}
+}
+
+// TestValidateConfigMethod3Aggressiveness is a regression test for the method-3 decay factor
+// 1 + ln(aggressiveness): any aggressiveness at or below 1/e (~0.368) makes the factor
+// non-positive, so calculateValue returns MaxFloat64 for every item and value-based consolidation
+// silently never deletes anything - while the generic aggressiveness > 0 check passes. Startup must
+// reject a method-3 config below the 1/e threshold, and must still accept one above it as well as
+// the same low aggressiveness under a method that does not have the constraint.
+func TestValidateConfigMethod3Aggressiveness(t *testing.T) {
+	cases := []struct {
+		name           string
+		method         int
+		aggressiveness float64
+		wantErr        bool
+	}{
+		{name: "method 3 below 1/e", method: 3, aggressiveness: 0.3, wantErr: true},
+		{name: "method 3 at 1/e", method: 3, aggressiveness: math.Exp(-1), wantErr: true},
+		{name: "method 3 above 1/e", method: 3, aggressiveness: 0.5, wantErr: false},
+		{name: "method 1 below 1/e is fine", method: 1, aggressiveness: 0.3, wantErr: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validConsolidationConfig()
+			viper.Set("consolidation.method", tc.method)
+			viper.Set("consolidation.aggressiveness", tc.aggressiveness)
+
+			err := validateConfig()
+
+			if tc.wantErr && err == nil {
+				t.Fatalf("validateConfig(method=%d, aggressiveness=%v) = nil, want error", tc.method, tc.aggressiveness)
+			}
+
+			if !tc.wantErr && err != nil {
+				t.Fatalf("validateConfig(method=%d, aggressiveness=%v) = %v, want nil", tc.method, tc.aggressiveness, err)
 			}
 		})
 	}

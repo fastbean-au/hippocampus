@@ -36,6 +36,15 @@ const (
 	writeRetryBaseBackoff = 2 * time.Millisecond
 )
 
+// IsWriteConflict reports whether err represents a transient storage-level serialization conflict
+// that a client can safely retry, so the RPC layer can map it to a gRPC Aborted status. It matches
+// both the ErrWriteConflict wrapper (a single-statement write whose transparent retries were
+// exhausted) and a raw retryable MySQL deadlock/lock-wait error - the latter surfaces unwrapped from
+// the multi-statement transfer transactions, which withWriteRetry deliberately does not retry.
+func IsWriteConflict(err error) bool {
+	return errors.Is(err, ErrWriteConflict) || isRetryableWriteError(err)
+}
+
 // isRetryableWriteError reports whether err is a transient MySQL serialization conflict that is safe
 // to retry. Only MySQL errors match, so it is a no-op for the SQLite and Postgres drivers (SQLite is
 // single-connection and Postgres's default READ COMMITTED does not deadlock a single INSERT).

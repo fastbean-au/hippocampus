@@ -82,33 +82,6 @@ func TestSleepOnce_ConcurrentCallersShareOneExecution(t *testing.T) {
 	}
 }
 
-// TestSleepTimer_NonPositivePeriodDisablesTimedSleep asserts the contract: a
-// non-positive sleep.periodSeconds means "no automatic timed sleep". sleepTimer must return a nil
-// channel for those periods (which blocks forever in autoSleep's select, dropping the timed case)
-// and a live, firing timer for a positive period.
-func TestSleepTimer_NonPositivePeriodDisablesTimedSleep(t *testing.T) {
-	if ch := sleepTimer(0); ch != nil {
-		t.Error("sleepTimer(0) returned a non-nil channel; a zero period must disable timed sleep")
-	}
-
-	if ch := sleepTimer(-5 * time.Second); ch != nil {
-		t.Error("sleepTimer(-5s) returned a non-nil channel; a negative period must disable timed sleep")
-	}
-
-	ch := sleepTimer(time.Millisecond)
-	if ch == nil {
-		t.Fatal("sleepTimer(1ms) returned nil; a positive period must produce a firing timer")
-	}
-
-	select {
-	case <-ch:
-		// fired as expected
-
-	case <-time.After(time.Second):
-		t.Error("sleepTimer(1ms) did not fire within a second")
-	}
-}
-
 // TestPurgeInProgress_ConcurrentAccess drives concurrent Purge calls and interceptor checks at
 // the race detector. purgeInProgress is written by Purge and read by
 // InterceptorBlockWhenPurgeInProgress from every RPC's own goroutine; before it became an

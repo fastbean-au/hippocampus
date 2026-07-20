@@ -124,6 +124,11 @@ $$ threshold \gt { S \over age * \left( 1 + \log a \right) } $$ (3)
 | 1,000     | 100,000      | 2.0            | 60       |
 | 1,000     | 1,000,000    | 2.0            | 591      |
 
+Method 3's `1 + \log a` factor goes non-positive for any aggressiveness at or below `1/e`
+(≈ 0.368) — the `0.1` and `0.2` rows above, whose "lifetime" is really "never forgotten". Because
+that would silently disable value-based consolidation entirely, startup validation rejects a
+method-3 aggressiveness at or below `1/e`; pick a larger value or a different method.
+
 $$ threshold \gt { S \over e ^ {age \cdot a} } $$ (4)
 
 Unlike methods 2 and 3, which are linear in age despite their names suggesting otherwise, method

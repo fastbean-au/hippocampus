@@ -3,7 +3,6 @@ package hippocampus
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -40,7 +39,7 @@ func mapWriteError(err error) error {
 		return nil
 	}
 
-	if errors.Is(err, db.ErrWriteConflict) {
+	if db.IsWriteConflict(err) {
 		return status.Error(codes.Aborted, err.Error())
 	}
 
@@ -364,19 +363,6 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 	}()
 }
 
-// sleepTimer returns the channel that fires the next timed sleep cycle. A non-positive period
-// disables automatic timed sleep entirely: it returns a nil channel, which blocks forever in
-// autoSleep's select so the timed case never fires, while the manual Sleep RPC and any WAL
-// trigger keep working.
-func sleepTimer(period time.Duration) <-chan time.Time {
-	if period <= 0 {
-
-		return nil
-	}
-
-	return time.After(period)
-}
-
 // checkWALTrigger runs an out-of-cycle sleep when the on-disk WAL has grown past
 // consolidation.walTriggerBytes, so the checkpoint at the end of every sleep cycle runs sooner
 // than the next timed cycle instead of letting the WAL keep accumulating between them.
@@ -448,6 +434,11 @@ func (s *Server) Sleep(ctx context.Context, in *contract.EmptyRequest) (*contrac
 
 // Purge deletes all events and memories. Any error is returned to the caller; a subsequent purge
 // can be attempted.
+//
+// purgeInProgress blocks RPCs that arrive after the purge begins, but a write already past the
+// interceptor when Purge runs can commit after the DELETE, so a row written concurrently with a
+// Purge may survive it. This is deliberate - Purge is not a barrier and does not drain in-flight
+// writes; run it when writers are quiesced if an empty store must be guaranteed.
 func (s *Server) Purge(ctx context.Context, in *contract.EmptyRequest) (*contract.GeneralResponse, error) {
 	log.Debug("Purge()")
 	var res contract.GeneralResponse

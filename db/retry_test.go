@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -130,5 +131,32 @@ func TestWithWriteRetry_StopsOnContextCancellation(t *testing.T) {
 
 	if attempts != 1 {
 		t.Errorf("expected the loop to stop after the first attempt on a cancelled context, got %d", attempts)
+	}
+}
+
+// TestIsWriteConflict verifies the exported classifier the RPC layer uses to map errors to Aborted:
+// it must recognise both the ErrWriteConflict wrapper (single-statement exhaustion) and a raw MySQL
+// deadlock/lock-wait error (the unwrapped form a multi-statement transfer transaction surfaces,
+// which withWriteRetry deliberately never wraps), while leaving ordinary errors unmatched.
+func TestIsWriteConflict(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "wrapped ErrWriteConflict", err: fmt.Errorf("db write: %w", ErrWriteConflict), want: true},
+		{name: "raw deadlock", err: &mysql.MySQLError{Number: mysqlErrDeadlock, Message: "Deadlock found"}, want: true},
+		{name: "raw lock-wait timeout", err: &mysql.MySQLError{Number: mysqlErrLockWaitTimeout, Message: "Lock wait timeout"}, want: true},
+		{name: "unrelated mysql error", err: &mysql.MySQLError{Number: 1062, Message: "Duplicate entry"}, want: false},
+		{name: "ordinary error", err: errors.New("constraint violation"), want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsWriteConflict(tc.err); got != tc.want {
+				t.Errorf("IsWriteConflict(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

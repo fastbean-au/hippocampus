@@ -179,9 +179,10 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 func (s *Server) DeleteMemories(ctx context.Context, in *contract.DeleteMemoriesRequest) (*contract.GeneralResponse, error) {
 	var res contract.GeneralResponse
 
-	// TODO: list of ids should be made unique
-
-	ids := in.GetIds()
+	// Collapse duplicate ids before both the delete and the success check: the store deletes each
+	// row once, so a repeated id would make cnt < len(ids) and report Ok: false despite everything
+	// asked for being gone.
+	ids := db.DedupeIds(in.GetIds())
 
 	if len(ids) == 0 {
 		return &res, nil

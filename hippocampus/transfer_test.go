@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/go-sql-driver/mysql"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -53,6 +54,37 @@ func (f *fakeObjectStore) Get(ctx context.Context, key string) (io.ReadCloser, e
 	}
 
 	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+// importConflictStore wraps a real db.Store but forces ImportEvents to fail with a raw MySQL
+// deadlock error - the unwrapped form a multi-statement transfer transaction surfaces (withWriteRetry
+// only wraps single-statement execs in db.ErrWriteConflict). It stands in for a live MySQL deadlock so
+// the transfer surface's error mapping can be exercised without a MySQL server.
+type importConflictStore struct {
+	db.Store
+}
+
+func (importConflictStore) ImportEvents(ctx context.Context, events []types.Event) (int, error) {
+	return 0, &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock"}
+}
+
+// TestImportBatch_WriteConflictMapsToAborted is a regression test: a transfer transaction that hit a
+// MySQL deadlock surfaced its raw driver error as a gRPC Unknown, so a client could not tell the
+// write was retryable. ImportBatch must now map it to Aborted.
+func TestImportBatch_WriteConflictMapsToAborted(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	s.db = importConflictStore{Store: s.db}
+
+	_, err := s.ImportBatch(context.Background(), &contract.ImportBatchRequest{
+		Events: []*contract.Event{{Id: "e1", Name: "trip", Significance: 5}},
+	})
+	if err == nil {
+		t.Fatal("expected ImportBatch to return the write conflict")
+	}
+
+	if got := status.Code(err); got != codes.Aborted {
+		t.Errorf("expected codes.Aborted, got %s (%v)", got, err)
+	}
 }
 
 // newTransferTestServer builds a Server over an in-memory database, without autoSleep, with a

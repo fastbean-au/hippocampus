@@ -42,6 +42,38 @@ func TestStoreMemory_WriteConflictMapsToAborted(t *testing.T) {
 	}
 }
 
+// TestDeleteMemories_DuplicateIdsReportOk is a regression test: a request repeating an id used to
+// report Ok: false because the store deletes each row once (cnt < len(ids)), even though every
+// requested memory was in fact deleted. Deduplicating the ids first makes the count comparison
+// honest.
+func TestDeleteMemories_DuplicateIdsReportOk(t *testing.T) {
+	s := newTestServer(t)
+
+	for _, id := range []string{"m1", "m2"} {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	res, err := s.DeleteMemories(context.Background(), &contract.DeleteMemoriesRequest{Ids: []string{"m1", "m1", "m2"}})
+	if err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	if !res.GetOk() {
+		t.Error("expected Ok: true when every requested (deduplicated) memory was deleted")
+	}
+
+	memories, err := s.db.GetMemoriesByIds(context.Background(), []string{"m1", "m2"})
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds: %s", err)
+	}
+
+	if len(*memories) != 0 {
+		t.Errorf("expected all memories deleted, %d remain", len(*memories))
+	}
+}
+
 // newTestServer builds a Server over an in-memory database, ready for RPC-level tests.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
