@@ -334,7 +334,7 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 	tel.exports.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", err == nil)))
 
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	tel.recordsExported.Add(ctx, int64(result.events), metric.WithAttributes(attribute.String("kind", "event")))
@@ -390,7 +390,7 @@ func (s *Server) Import(ctx context.Context, in *contract.ImportRequest) (*contr
 	if err != nil {
 		tel.imports.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", false)))
 
-		return &res, err
+		return &res, mapError(err)
 	}
 	defer func() { _ = body.Close() }()
 
@@ -399,7 +399,7 @@ func (s *Server) Import(ctx context.Context, in *contract.ImportRequest) (*contr
 	tel.imports.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", err == nil)))
 
 	if err != nil {
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 
 	res.EventsImported = int32(events)
@@ -497,14 +497,14 @@ func (s *Server) ImportBatch(ctx context.Context, in *contract.ImportBatchReques
 	res.EventsImported = int32(events)
 
 	if err != nil {
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 
 	memories, err := s.ingestMemories(ctx, in.GetMemories())
 	res.MemoriesImported = int32(memories)
 
 	if err != nil {
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 
 	return &res, nil
@@ -686,14 +686,14 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 	if err != nil {
 		tel.transfers.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", false)))
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	conn, err := grpc.NewClient(s.transfer.targetAddress, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		tel.transfers.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", false)))
 
-		return &res, err
+		return &res, mapError(err)
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -738,7 +738,7 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 	tel.transfers.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", err == nil)))
 
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	tel.recordsExported.Add(ctx, int64(events), metric.WithAttributes(attribute.String("kind", "event")))

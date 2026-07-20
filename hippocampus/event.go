@@ -36,7 +36,7 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 	if err := event.Validate(false); err != nil {
 		tel.eventsRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	// The minimum-significance gate applies only to an absolute positive significance: an unranked
@@ -61,12 +61,12 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 			return &res, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	id, err := s.db.CreateEvent(ctx, event)
 	if err != nil {
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 	res.Id = id
 
@@ -126,7 +126,7 @@ func (s *Server) EndEvent(ctx context.Context, in *contract.EndEventRequest) (*c
 	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
 
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 
 	if !ok {
@@ -160,13 +160,13 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 			return &res, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
 
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 
 	if !ok {
@@ -195,7 +195,7 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 	// memories still pointing at it are healed onto the real merge_to.
 	exists, err := s.db.EventExists(ctx, tid)
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	if !exists {
@@ -211,7 +211,7 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 		res.Ok = true
 	}
 
-	return &res, mapWriteError(err)
+	return &res, mapError(err)
 }
 
 func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventRequest) (*contract.GeneralResponse, error) {
@@ -229,7 +229,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 
 	deleted, err := s.db.DeleteEvent(ctx, eid)
 	if err != nil {
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 
 	// An unknown id deletes nothing; report NotFound rather than success, matching EndEvent and
@@ -244,7 +244,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	if in.GetMemories() {
 		cnt, err := s.db.DeleteEventMemories(ctx, eid)
 		if err != nil {
-			return &res, mapWriteError(err)
+			return &res, mapError(err)
 		}
 
 		tel.memoriesDeleted.Add(ctx, int64(cnt))
@@ -252,7 +252,7 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	} else {
 		if _, err := s.db.UnsetMemoriesEventId(ctx, eid); err != nil {
 
-			return &res, mapWriteError(err)
+			return &res, mapError(err)
 		}
 
 		s.searchIdx().SetEventId(eid, "")
@@ -275,14 +275,14 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 			return &res, status.Errorf(codes.NotFound, "event '%s' not found", eid)
 		}
 
-		return &res, err
+		return &res, mapError(err)
 	}
 	res.Event = event.ToProto()
 
 	if in.GetMemories() {
 		memories, err := s.db.GetMemoriesByEventId(ctx, eid)
 		if err != nil {
-			return &res, err
+			return &res, mapError(err)
 		}
 
 		ms := make([]*contract.Memory, len(*memories))
@@ -379,12 +379,12 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 
 	total, err := s.db.CountEventsFiltered(ctx, filter)
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	events, err := s.db.GetEvents(ctx, filter)
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	es := make([]*contract.Event, len(*events))
@@ -406,7 +406,7 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 
 		memories, err := s.db.GetMemoriesByEventIds(ctx, eventIds)
 		if err != nil {
-			return &res, err
+			return &res, mapError(err)
 		}
 
 		for _, m := range *memories {

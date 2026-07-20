@@ -279,7 +279,9 @@ either way. A missing or invalid token gets `codes.Unauthenticated` from gRPC, o
 gateway's `/healthz` are always reachable without a token, regardless of method, so orchestrator
 liveness/readiness probes are never blocked. Both verifiers pin their signing algorithm
 (`jwt.WithValidMethods` — HS256 for `hmac`, RS256 for `idp`), so a token can never select its
-own verification algorithm.
+own verification algorithm, and both require an `exp` claim (`jwt.WithExpirationRequired`), so a
+token minted without an expiry is rejected rather than being valid forever (`--mint-token` always
+sets one).
 
 Under `hmac` there is no client registry or admin RPC — issuing a token is a CLI operation on
 the service binary itself:
@@ -300,6 +302,18 @@ revocation, and `--mint-token` refuses to run.
 
 Verification is written behind an interface (`auth.Verifier`) — `hmac` and `idp` are its two
 implementations, and the interceptor/middleware call sites are identical for both.
+
+A valid token grants access to **every** RPC — there is no per-RPC scope or role. In particular
+`Import`/`ImportBatch` deliberately bypass the write-path validation that `StoreMemory`/`StoreEvent`
+enforce (body-size limit, the future-timestamp clock-skew guard, and the minimum-significance gate)
+so an archive can be restored faithfully, and `Purge`/`Clear` delete data. This is correct for the
+migration/restore use cases those RPCs exist for, but it means **import (and clear) rights are
+effectively admin rights**: any client holding a valid token can create future-dated
+(decay-immune until then) or oversized rows, or delete the store. Under the single-tenant trust
+model this is by design — issue tokens only to trusted callers, and use short TTLs and
+[revocation](#revocation) to contain a leak. The verified `client_id` is logged on every failing
+request (and, on the HTTP gateway, every request), so a leaked token can be traced to the client it
+was issued to.
 
 #### Key rotation (hmac)
 

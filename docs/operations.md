@@ -274,7 +274,15 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
   proxy or service mesh). Never send bearer tokens in plaintext. When `tls.enabled`, both listeners
   share one certificate and enforce a TLS 1.2 minimum. Behind such a sidecar/mesh, bind the
   listeners to loopback only with `bindAddress`/`gateway.bindAddress` (`127.0.0.1`) so nothing
-  reaches them except the local proxy.
+  reaches them except the local proxy. The same applies to the **Transfer client**: setting
+  `transfer.token` without `transfer.tls` sends the token in plaintext to the target, and the
+  service warns at startup — enable `transfer.tls` unless TLS to the target is terminated by a mesh.
+- **A token is all-or-nothing.** There is no per-RPC scope: a valid token can call every RPC,
+  including `Import`/`ImportBatch` (which bypass write-path validation) and `Purge`/`Clear` (which
+  delete data), so **import and clear rights are effectively admin rights** — issue tokens only to
+  trusted callers. The verified `client_id` is logged on every failing request (and, on the HTTP
+  gateway, every request), so a leaked or misbehaving token can be traced to the client it was
+  issued to.
 - **gRPC transport hardening.** If the gRPC port is exposed beyond trusted callers, cap the
   concurrent HTTP/2 streams one connection may open with `maxConcurrentStreams`, and enforce a
   keepalive policy (`keepalive.minTimeSeconds`, `keepalive.permitWithoutStream`) so an abusive

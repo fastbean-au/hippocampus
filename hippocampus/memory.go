@@ -54,7 +54,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 	if memory.EventId != "" {
 		exists, err := s.db.EventExists(ctx, memory.EventId)
 		if err != nil {
-			return &res, err
+			return &res, mapError(err)
 		}
 
 		if !exists {
@@ -81,7 +81,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 			return &res, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	memory.SetDefaults()
@@ -99,7 +99,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 		}
 	}
 
-	return &res, mapWriteError(err)
+	return &res, mapError(err)
 }
 
 // UpdateMemory applies a partial update to an existing memory: only the content fields carrying a
@@ -131,7 +131,7 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 	if memory.EventId != "" {
 		exists, err := s.db.EventExists(ctx, memory.EventId)
 		if err != nil {
-			return &res, err
+			return &res, mapError(err)
 		}
 
 		if !exists {
@@ -148,13 +148,13 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 			return &res, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	ok, err := s.db.UpdateMemory(ctx, memory)
 	if err != nil {
 
-		return &res, mapWriteError(err)
+		return &res, mapError(err)
 	}
 
 	if !ok {
@@ -200,7 +200,7 @@ func (s *Server) DeleteMemories(ctx context.Context, in *contract.DeleteMemories
 		res.Ok = true
 	}
 
-	return &res, mapWriteError(err)
+	return &res, mapError(err)
 }
 
 // RecallMemories returns the requested memories and reinforces each one: its recall time is set
@@ -217,7 +217,7 @@ func (s *Server) RecallMemories(ctx context.Context, in *contract.RecallMemories
 
 	memories, err := s.db.RecallMemories(ctx, ids)
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	tel.memoriesRecalled.Add(ctx, int64(len(*memories)))
@@ -251,7 +251,7 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 			return &res, status.Errorf(codes.NotFound, "event '%s' not found", eventId)
 		}
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	summary := types.MemoryFromProto(in.GetSummary())
@@ -282,14 +282,14 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 			return &res, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	summary.SetDefaults()
 
 	replaced, err := s.db.ReplaceMemoriesWithSummary(ctx, eventId, summary)
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	res.Id = summary.Id
@@ -383,12 +383,12 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 
 	total, err := s.db.CountMemoriesFiltered(ctx, filter)
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	memories, err := s.db.GetMemories(ctx, filter)
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	ms := make([]*contract.Memory, len(*memories))

@@ -87,9 +87,11 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   when `auth.method` is unset (`true` → `hmac` plus a warning). Whichever verifier is built,
   `auth.UnaryServerInterceptor` is prepended to the gRPC interceptor chain (ahead of
   `InterceptorBlockWhenPurgeInProgress`/`InterceptorLogger`, so unauthenticated requests are
-  rejected before any other interceptor runs; `InterceptorLogger` keeps its Trace entry/exit lines
+  rejected before any other interceptor runs; on success it stashes the verified `auth.Claims` in
+  the request context (`auth.ContextWithClaims`) so downstream interceptors can attribute the call.
+  `InterceptorLogger` keeps its Trace entry/exit lines
   but also logs a failing RPC at Warn — Info for client-fault codes — so failures are visible at the
-  default log level); when `tls.enabled`,
+  default log level, adding a `client_id` field from the stashed claims when present; when `tls.enabled`,
   `credentials.NewServerTLSFromFile` is added via `grpc.Creds`. Auth without
   `tls.enabled` only logs a warning — TLS may be terminated upstream instead. Optional gRPC
   hardening server options are appended when their keys are positive: `maxRecvMsgBytes`
@@ -108,8 +110,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   `InterceptorBlockWhenPurgeInProgress`; open paths `/healthz` and `/v1/openapi.json`, else 503
   while a purge runs), which is in turn wrapped in `httpLoggingMiddleware` (the gateway's counterpart
   to `InterceptorLogger`, since the gateway never runs the gRPC chain — logs 5xx at Warn, else at
-  Debug, via an intercepting status recorder); when `auth.enabled`, that is in turn wrapped in
-  `auth.HTTPMiddleware` (outermost, so unauthenticated requests are rejected first) except
+  Debug, via an intercepting status recorder, and adds the `client_id` from the request context
+  when present); when `auth.enabled`, that is in turn wrapped in
+  `auth.HTTPMiddleware` (outermost, so unauthenticated requests are rejected first — and, like the
+  gRPC interceptor, stashing the verified claims on the request context on success) except
   `/healthz`. The gateway is shut down before the gRPC
   server on SIGINT/SIGTERM; `shutdown.timeoutSeconds` (default 10) bounds each phase (gateway drain,
   gRPC graceful stop, observability flush). All configuration flows through viper keys matching `config.json`
@@ -293,8 +297,9 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   regardless of the metric export frequency, rather than once per ticker tick plus once per export.
 - `auth/` — JWT bearer-token support, self-contained (no `*hippocampus.Server`, no DB). `Verifier`
   is an interface (`Verify(token string) (*Claims, error)`) with two implementations, both
-  restricted to a single algorithm via `jwt.WithValidMethods` so a token can never select its
-  own: `HMACVerifier` (HS256; built from an `HMACConfig` of a legacy single `signingSecret` plus
+  restricted to a single algorithm via `jwt.WithValidMethods` (so a token can never select its own)
+  and both requiring an `exp` claim via `jwt.WithExpirationRequired` (golang-jwt only validates `exp`
+  when present, so this stops an expiry-less token verifying forever): `HMACVerifier` (HS256; built from an `HMACConfig` of a legacy single `signingSecret` plus
   any number of `kid`-tagged `signingKeys` — every key verifies, so a new secret rotates in while
   old tokens still verify; a kid-less token uses the legacy secret, an unknown kid is rejected) and
   `JWKSVerifier` (`jwks.go`; RS256 against an
@@ -319,7 +324,9 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   (`grpc.health.v1.Health`, `/healthz`) never do — the gRPC side by a `/proto.Hippocampus/` prefix
   check (mirroring `InterceptorBlockWhenPurgeInProgress`), the HTTP side by an explicit open-path
   allow-list (closed by default, so newly added endpoints are protected without remembering to
-  update anything).
+  update anything). On a successful verify both adapters stash the `*Claims` in the request context
+  (`context.go`: `ContextWithClaims`/`ClaimsFromContext`/`ClientIDFromContext`), which the two
+  loggers read to attach a `client_id` to request logs (a per-client audit trail).
 - `demo/` — a long-running load generator (`demo/generator`, its own `main` package) plus a
   launch script (`run.sh`) and a demo-tuned config. Bursty/slow/event-less writers, query and
   recall workers, and a mutator exercise every RPC; a watcher pauses writes while the database

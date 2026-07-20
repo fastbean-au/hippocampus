@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 // TestWithWriteRetry_RetriesTransientDeadlock exposes the bug: a MySQL deadlock (error 1213) on a
@@ -159,4 +162,55 @@ func TestIsWriteConflict(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestIsDuplicateKey verifies the classifier the RPC layer maps to codes.AlreadyExists: it must
+// recognise the MySQL duplicate-entry number and the Postgres unique_violation SQLSTATE by their
+// native error types, catch a real SQLite unique-constraint error produced by an actual duplicate
+// insert (the driver whose error code is easiest to get wrong), and leave unrelated errors
+// unmatched.
+func TestIsDuplicateKey(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "mysql duplicate entry", err: &mysql.MySQLError{Number: mysqlErrDupEntry, Message: "Duplicate entry"}, want: true},
+		{name: "mysql deadlock", err: &mysql.MySQLError{Number: mysqlErrDeadlock, Message: "Deadlock found"}, want: false},
+		{name: "postgres unique_violation", err: &pgconn.PgError{Code: pgUniqueViolation, Message: "duplicate key value"}, want: true},
+		{name: "postgres other", err: &pgconn.PgError{Code: "23503", Message: "foreign key violation"}, want: false},
+		{name: "ordinary error", err: errors.New("UNIQUE constraint failed: memories.id"), want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsDuplicateKey(tc.err); got != tc.want {
+				t.Errorf("IsDuplicateKey(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+
+	// Exercise the real SQLite driver error path: a second insert of the same primary key must be
+	// classified as a duplicate, so the code check in IsDuplicateKey stays honest against the driver's
+	// actual extended result code.
+	t.Run("real sqlite duplicate insert", func(t *testing.T) {
+		d := newTestDB(t)
+		defer func() { _ = d.Close() }()
+
+		ctx := context.Background()
+
+		if _, err := d.CreateMemory(ctx, types.Memory{Id: "dup", TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
+			t.Fatalf("first CreateMemory: %s", err)
+		}
+
+		_, err := d.CreateMemory(ctx, types.Memory{Id: "dup", TimeStamp: 100, Significance: 1, Body: "y"})
+		if err == nil {
+			t.Fatal("expected a duplicate primary-key insert to fail")
+		}
+
+		if !IsDuplicateKey(err) {
+			t.Errorf("expected a real SQLite duplicate insert to be classified as a duplicate key, got %v", err)
+		}
+	})
 }

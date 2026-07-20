@@ -202,9 +202,12 @@ standard remedy is to retry. The MySQL write path now does both:
   `queryTimeout` context, so it can never outlast the request, and it is a no-op for the SQLite and
   Postgres drivers. This clears the common single-collision case invisibly.
 - **Retryable status on exhaustion.** If a conflict outlives the retries, `withWriteRetry` wraps it
-  in `db.ErrWriteConflict`, which the write RPCs map (via `mapWriteError`) to gRPC `codes.Aborted`
+  in `db.ErrWriteConflict`, which the RPC layer's `mapError` seam maps to gRPC `codes.Aborted`
   instead of `Unknown`, so a client sees a retryable conflict rather than a silently lost write.
-  Applied at the service layer so both the gRPC and HTTP-gateway transports get it.
+  Applied at the service layer so both the gRPC and HTTP-gateway transports get it. The same seam
+  maps a duplicate-key violation (`db.IsDuplicateKey`) to `codes.AlreadyExists` and masks any other
+  storage error as `codes.Internal` with the detail logged server-side, so raw driver text never
+  reaches a client.
 
 Multi-statement transactions (recall reinforcement, summary replacement) are not covered — retrying
 them needs the whole transaction body re-run, not just one statement, and they were not observed

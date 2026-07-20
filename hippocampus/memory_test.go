@@ -3,6 +3,7 @@ package hippocampus
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,36 @@ func TestStoreMemory_WriteConflictMapsToAborted(t *testing.T) {
 
 	if got := status.Code(err); got != codes.Aborted {
 		t.Errorf("expected codes.Aborted, got %s (%v)", got, err)
+	}
+}
+
+// TestStoreMemory_DuplicateIdMapsToAlreadyExists verifies the finding's concrete example: creating
+// a memory whose id already exists used to surface the raw driver text ("UNIQUE constraint failed:
+// memories.id") as a gRPC Unknown, both leaking schema detail and miscoding the error. It must now
+// map to codes.AlreadyExists with a generic message.
+func TestStoreMemory_DuplicateIdMapsToAlreadyExists(t *testing.T) {
+	s := newTestServer(t)
+
+	first, err := s.StoreMemory(context.Background(), &contract.Memory{Id: "dup", Significance: 5, Body: "x"})
+	if err != nil {
+		t.Fatalf("first StoreMemory: %s", err)
+	}
+
+	if first.GetId() != "dup" {
+		t.Fatalf("expected the first create to keep id 'dup', got %q", first.GetId())
+	}
+
+	_, err = s.StoreMemory(context.Background(), &contract.Memory{Id: "dup", Significance: 5, Body: "y"})
+	if err == nil {
+		t.Fatal("expected a duplicate id to be rejected")
+	}
+
+	if got := status.Code(err); got != codes.AlreadyExists {
+		t.Errorf("expected codes.AlreadyExists, got %s (%v)", got, err)
+	}
+
+	if msg := status.Convert(err).Message(); strings.Contains(msg, "memories") || strings.Contains(msg, "UNIQUE") {
+		t.Errorf("duplicate-id error leaked schema detail: %q", msg)
 	}
 }
 

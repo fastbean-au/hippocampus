@@ -34,14 +34,17 @@ func HTTPMiddleware(v Verifier, next http.Handler, openPaths []string) http.Hand
 			return
 		}
 
-		if _, err := v.Verify(token); err != nil {
+		claims, err := v.Verify(token)
+		if err != nil {
 			log.Trace("rejecting request - invalid token")
 			unauthorized(w)
 
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// Stash the verified claims on the request context so the logging middleware inside this one
+		// can attribute the request to the authenticated client.
+		next.ServeHTTP(w, r.WithContext(ContextWithClaims(r.Context(), claims)))
 	})
 }
 

@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	log "github.com/sirupsen/logrus"
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ErrWriteConflict wraps the error returned when a single-statement write could not complete
@@ -27,6 +30,15 @@ const (
 	mysqlErrDeadlock        = 1213
 )
 
+// mysqlErrDupEntry is the MySQL server error number for a duplicate-key (unique or primary)
+// violation; pgUniqueViolation is the PostgreSQL SQLSTATE for the same. SQLite reports it through
+// the modernc extended result codes SQLITE_CONSTRAINT_UNIQUE / SQLITE_CONSTRAINT_PRIMARYKEY. Used
+// by IsDuplicateKey so the RPC layer can map a duplicate create to codes.AlreadyExists.
+const (
+	mysqlErrDupEntry  = 1062
+	pgUniqueViolation = "23505"
+)
+
 // writeRetry* bound the transparent retry of a transient write conflict: a handful of attempts with
 // a short, jittered exponential backoff. Kept small so a genuinely contended write fails fast rather
 // than stalling a request, while the common single-collision case clears on the first retry. The
@@ -43,6 +55,36 @@ const (
 // the multi-statement transfer transactions, which withWriteRetry deliberately does not retry.
 func IsWriteConflict(err error) bool {
 	return errors.Is(err, ErrWriteConflict) || isRetryableWriteError(err)
+}
+
+// IsDuplicateKey reports whether err is a unique- or primary-key constraint violation from any of
+// the three drivers - the storage-layer signal that a client tried to create a row whose id already
+// exists. The RPC layer maps it to codes.AlreadyExists rather than letting the raw driver text
+// (which names the table and column, e.g. "UNIQUE constraint failed: memories.id") reach the client
+// as an opaque Unknown; the constraint detail stays server-side.
+func IsDuplicateKey(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var myErr *mysql.MySQLError
+	if errors.As(err, &myErr) {
+		return myErr.Number == mysqlErrDupEntry
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgUniqueViolation
+	}
+
+	var liteErr *sqlite.Error
+	if errors.As(err, &liteErr) {
+		code := liteErr.Code()
+
+		return code == sqlite3.SQLITE_CONSTRAINT_UNIQUE || code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
+	}
+
+	return false
 }
 
 // isRetryableWriteError reports whether err is a transient MySQL serialization conflict that is safe

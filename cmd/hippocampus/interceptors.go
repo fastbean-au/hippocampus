@@ -14,6 +14,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/fastbean-au/hippocampus/auth"
 )
 
 const interceptorScopeName = "github.com/fastbean-au/hippocampus/cmd/hippocampus"
@@ -106,12 +108,20 @@ func InterceptorLogger(ctx context.Context,
 	if err != nil {
 		code := status.Code(err)
 
-		entry := log.WithFields(log.Fields{
+		fields := log.Fields{
 			"method":      info.FullMethod,
 			"code":        code.String(),
 			"duration_us": duration.Microseconds(),
 			"error":       err.Error(),
-		})
+		}
+
+		// Attribute the failing request to the authenticated client when auth is enabled (the auth
+		// interceptor runs outermost and stashes the verified claims in ctx); absent when auth is off.
+		if clientID := auth.ClientIDFromContext(ctx); clientID != "" {
+			fields["client_id"] = clientID
+		}
+
+		entry := log.WithFields(fields)
 
 		// Client-fault codes (bad request, not found, unauthenticated, ...) are expected traffic, so
 		// they log at Info to avoid drowning real problems; server-fault and unknown codes log at Warn.
@@ -177,12 +187,20 @@ func httpLoggingMiddleware(next http.Handler) http.Handler {
 
 		duration := time.Since(ts)
 
-		entry := log.WithFields(log.Fields{
+		fields := log.Fields{
 			"method":      r.Method,
 			"path":        r.URL.Path,
 			"status":      recorder.status,
 			"duration_us": duration.Microseconds(),
-		})
+		}
+
+		// Attribute the request to the authenticated client when auth is enabled (auth.HTTPMiddleware
+		// runs outside this one and stashes the verified claims on the request context).
+		if clientID := auth.ClientIDFromContext(r.Context()); clientID != "" {
+			fields["client_id"] = clientID
+		}
+
+		entry := log.WithFields(fields)
 
 		if recorder.status >= http.StatusInternalServerError {
 			entry.Warn("HTTP request failed")

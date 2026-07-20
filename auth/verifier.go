@@ -113,15 +113,17 @@ func warnIfShortSecret(label string, secret string) {
 // jwt.WithValidMethods so a token cannot select its own verification algorithm - a token claiming
 // alg "none", or any algorithm this verifier never intended to trust, is rejected outright rather
 // than trusted because the token said so. The signing key is chosen by the token's kid header (or
-// the legacy secret when there is none); an unknown kid is rejected. The specific parsing failure
-// is logged for operator debugging but not returned to the caller, so a rejected request doesn't
-// leak internal token parsing details.
+// the legacy secret when there is none); an unknown kid is rejected. An exp claim is required
+// (jwt.WithExpirationRequired) so a token minted without an expiry - e.g. directly with a leaked
+// signing secret - cannot verify forever; golang-jwt otherwise only validates exp when present.
+// The specific parsing failure is logged for operator debugging but not returned to the caller, so
+// a rejected request doesn't leak internal token parsing details.
 func (v *HMACVerifier) Verify(token string) (*Claims, error) {
 	log.Trace("func() auth.HMACVerifier.Verify")
 
 	var claims Claims
 
-	parsed, err := jwt.ParseWithClaims(token, &claims, v.keyForToken, jwt.WithValidMethods([]string{"HS256"}))
+	parsed, err := jwt.ParseWithClaims(token, &claims, v.keyForToken, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil {
 		log.Debugf("token rejected: %s", err.Error())
 

@@ -3,6 +3,7 @@ package hippocampus
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -28,12 +29,70 @@ import (
 // cycle joins the same in-flight call rather than starting a concurrent one.
 const sleepSingleflightKey = "sleep"
 
-// mapWriteError maps a storage-layer write conflict (db.ErrWriteConflict - a MySQL deadlock or
-// lock-wait timeout that survived the driver's retries) to a gRPC Aborted status, which clients
-// treat as retryable, so the write surfaces as a transient conflict rather than an opaque Unknown
-// (which would look like a lost write). Any other error is returned unchanged. Applied at the
-// write RPCs so both the gRPC and HTTP-gateway transports get the mapping (the gateway calls these
-// handlers directly and never runs the gRPC interceptor chain).
+// mapError is the RPC layer's final error-mapping seam: it turns a storage-layer error into an
+// appropriate gRPC status before it reaches a client on either transport. It is applied at handler
+// return sites (not as an interceptor) because the HTTP gateway calls these handlers directly and
+// never runs the gRPC interceptor chain, so mapping there covers both transports at once.
+//
+// Known cases get a precise, correctly-coded status; anything else is masked as codes.Internal with
+// a generic message and the real detail logged server-side. This keeps a raw driver string (schema
+// and column names, SQL text) from leaking to a caller - which previously happened because most
+// handlers returned storage errors unwrapped, surfacing as a gRPC Unknown carrying driver text (and
+// an HTTP 500 body via the gateway).
+//
+//   - nil                     -> nil
+//   - an existing gRPC status -> unchanged (handlers set InvalidArgument/NotFound/... deliberately)
+//   - context canceled        -> Canceled
+//   - context deadline        -> DeadlineExceeded
+//   - db.IsDuplicateKey       -> AlreadyExists (generic message; the constraint detail is logged)
+//   - db.IsWriteConflict      -> Aborted (retryable: a MySQL deadlock/lock-wait that outlived the
+//     driver's retries, which clients should re-issue rather than read as a lost write)
+//   - anything else           -> Internal (generic message; detail logged server-side only)
+func mapError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// A handler that already produced a status (validation, not-found, precondition, ...) said
+	// exactly what it meant; pass it through untouched. status.FromError unwraps a %w-wrapped status.
+	if _, ok := status.FromError(err); ok {
+		return err
+	}
+
+	switch {
+
+	case errors.Is(err, context.Canceled):
+
+		return status.Error(codes.Canceled, "request canceled")
+
+	case errors.Is(err, context.DeadlineExceeded):
+
+		return status.Error(codes.DeadlineExceeded, "request deadline exceeded")
+
+	case db.IsDuplicateKey(err):
+		log.Warnf("duplicate-key write rejected: %s", err.Error())
+
+		return status.Error(codes.AlreadyExists, "a record with that id already exists")
+
+	case db.IsWriteConflict(err):
+
+		return status.Error(codes.Aborted, "write conflict, retry the request")
+
+	default:
+		log.Errorf("internal error handling request: %s", err.Error())
+
+		return status.Error(codes.Internal, "internal error")
+
+	}
+}
+
+// mapWriteError is the narrower mapper used only by the Export/Transfer/Clear clear-failure paths,
+// where the returned error is a deliberate, admin-facing operational message that must reach the
+// caller intact: it names the manifest id to retry the delete with (see items 19.7/23.3) and stays
+// errors.Is-comparable to the underlying failure. So, unlike mapError, it does not mask - it maps a
+// storage write conflict to a retryable Aborted and otherwise returns err unchanged. These are
+// admin-only operations (clear rights are effectively admin rights), so the trade-off of a more
+// detailed error against the general surface's masking is deliberate.
 func mapWriteError(err error) error {
 	if err == nil {
 		return nil
@@ -236,6 +295,14 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Se
 	}
 
 	s.consolidationEnabled = viper.GetBool("consolidation.enabled")
+
+	// Mirror the server-side auth-without-TLS warning for the Transfer client: a token configured
+	// without transfer.tls is sent as a plaintext bearer credential to the target, where anyone on
+	// the wire can lift it. Warn rather than fail - TLS may be terminated by a sidecar/mesh between
+	// this instance and the target - but make the exposure visible in the logs.
+	if s.transfer.token != "" && !s.transfer.tls {
+		log.Warn("transfer.token is configured without transfer.tls: the bearer token will be sent in plaintext to the transfer target")
+	}
 
 	s.stopSleep = make(chan struct{})
 	s.sleepStopped = make(chan struct{})
@@ -459,7 +526,7 @@ func (s *Server) Sleep(ctx context.Context, in *contract.EmptyRequest) (*contrac
 		res.Ok = true
 	}
 
-	return &res, err
+	return &res, mapError(err)
 }
 
 // Purge deletes all events and memories. Any error is returned to the caller; a subsequent purge
@@ -482,7 +549,7 @@ func (s *Server) Purge(ctx context.Context, in *contract.EmptyRequest) (*contrac
 	tel.purges.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", err == nil)))
 
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	s.searchIdx().Purge()

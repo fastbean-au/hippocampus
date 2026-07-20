@@ -43,6 +43,41 @@ func TestUnaryServerInterceptor_ValidToken(t *testing.T) {
 	}
 }
 
+// TestUnaryServerInterceptor_StashesClaims verifies that a successful verification puts the client's
+// claims on the handler's context, so downstream logging/audit can attribute the request.
+func TestUnaryServerInterceptor_StashesClaims(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	token, err := MintToken(MintRequest{Secret: "test-secret", ClientID: "client-1", TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("MintToken: %s", err)
+	}
+
+	interceptor := UnaryServerInterceptor(v)
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token))
+	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+
+	var seen string
+
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		seen = ClientIDFromContext(ctx)
+
+		return "ok", nil
+	}
+
+	if _, err := interceptor(ctx, nil, info, handler); err != nil {
+		t.Fatalf("expected the call to succeed, got: %s", err)
+	}
+
+	if seen != "client-1" {
+		t.Errorf("expected the handler context to carry client_id 'client-1', got %q", seen)
+	}
+}
+
 // TestUnaryServerInterceptor_MissingToken verifies that a Hippocampus RPC with no authorization
 // metadata is rejected with codes.Unauthenticated.
 func TestUnaryServerInterceptor_MissingToken(t *testing.T) {

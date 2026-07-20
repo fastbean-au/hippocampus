@@ -60,7 +60,7 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 		Limit:   limit,
 	})
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	if len(ids) == 0 {
@@ -78,7 +78,7 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 	}
 
 	if err != nil {
-		return &res, err
+		return &res, mapError(err)
 	}
 
 	tel.memoriesSearched.Add(ctx, int64(len(*memories)), metric.WithAttributes(attribute.Bool("reinforce", in.GetReinforce())))

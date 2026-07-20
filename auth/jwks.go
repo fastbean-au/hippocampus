@@ -104,8 +104,10 @@ func NewJWKSVerifier(cfg JWKSConfig) (*JWKSVerifier, error) {
 // jwt.WithValidMethods, mirroring how HMACVerifier pins HS256 - a token can never select its own
 // verification algorithm. The configured issuer and audience are enforced by the parser itself,
 // so an otherwise-valid token minted by a different tenant of the same provider, or for a
-// different service, is rejected. As with HMACVerifier, the specific parsing failure is logged
-// for operator debugging but not returned to the caller.
+// different service, is rejected. An exp claim is required (jwt.WithExpirationRequired) so an IdP
+// coaxed into issuing a non-expiring token cannot mint one that verifies forever; golang-jwt
+// otherwise only validates exp when present. As with HMACVerifier, the specific parsing failure is
+// logged for operator debugging but not returned to the caller.
 func (v *JWKSVerifier) Verify(token string) (*Claims, error) {
 	log.Trace("func() auth.JWKSVerifier.Verify")
 
@@ -113,7 +115,7 @@ func (v *JWKSVerifier) Verify(token string) (*Claims, error) {
 		log.Debugf("jwks refresh failed, verifying against cached keys: %s", err.Error())
 	}
 
-	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"})}
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired()}
 
 	if v.cfg.Issuer != "" {
 		opts = append(opts, jwt.WithIssuer(v.cfg.Issuer))

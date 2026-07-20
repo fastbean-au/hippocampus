@@ -249,10 +249,12 @@ func TestDeleteEvent_WithMemoriesSuccess(t *testing.T) {
 	}
 }
 
-// TestDeleteEvent_UnsetErrorPropagates verifies that a failure clearing the memories' event_id in
-// the detach arm surfaces to the caller instead of being swallowed as a nil error: the
-// event is gone but the memories still point at it, which the client must be told about.
-func TestDeleteEvent_UnsetErrorPropagates(t *testing.T) {
+// TestDeleteEvent_UnsetErrorSurfaces verifies that a failure clearing the memories' event_id in the
+// detach arm surfaces to the caller instead of being swallowed as a nil error: the event is gone but
+// the memories still point at it, which the client must be told about. The raw storage error is
+// masked to codes.Internal by mapError (the detail is logged server-side, not leaked to the client),
+// so the assertion is on the code and Ok, not on the underlying error text.
+func TestDeleteEvent_UnsetErrorSurfaces(t *testing.T) {
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -267,8 +269,8 @@ func TestDeleteEvent_UnsetErrorPropagates(t *testing.T) {
 		t.Fatal("DeleteEvent swallowed the UnsetMemoriesEventId failure; expected an error")
 	}
 
-	if !errors.Is(err, wantErr) {
-		t.Errorf("expected the UnsetMemoriesEventId error to propagate, got %v", err)
+	if got := status.Code(err); got != codes.Internal {
+		t.Errorf("expected the detach failure masked to codes.Internal, got %s (%v)", got, err)
 	}
 
 	if res.GetOk() {

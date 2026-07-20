@@ -92,6 +92,29 @@ func TestHMACVerifier_ExpiredToken(t *testing.T) {
 	}
 }
 
+// TestHMACVerifier_NoExpirationRejected verifies that a token carrying no exp claim is rejected
+// rather than verifying forever. golang-jwt only validates exp when present, so without
+// jwt.WithExpirationRequired an expiry-less token (e.g. minted directly with a leaked secret) would
+// be irrevocable-by-time.
+func TestHMACVerifier_NoExpirationRejected(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: longSecret})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	// Sign a token by hand with no exp claim - MintToken always stamps one, so this cannot use it.
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{ClientID: "client-1"})
+
+	signed, err := token.SignedString([]byte(longSecret))
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	if _, err := v.Verify(signed); err == nil {
+		t.Error("expected a token without an exp claim to be rejected")
+	}
+}
+
 // TestHMACVerifier_WrongSecret verifies that a token signed with a different secret is rejected.
 func TestHMACVerifier_WrongSecret(t *testing.T) {
 	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "correct-secret"})

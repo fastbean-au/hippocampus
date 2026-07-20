@@ -43,12 +43,16 @@ func UnaryServerInterceptor(v Verifier) grpc.UnaryServerInterceptor {
 			return nil, status.Error(codes.Unauthenticated, err.Error())
 		}
 
-		if _, err := v.Verify(token); err != nil {
+		claims, err := v.Verify(token)
+		if err != nil {
 			log.Trace("rejecting request - invalid token")
 
 			return nil, status.Error(codes.Unauthenticated, "invalid token")
 		}
 
-		return handler(ctx, req)
+		// Stash the verified claims so downstream interceptors (InterceptorLogger) and handlers can
+		// attribute the request to the client that made it - an audit trail for the day a token has
+		// to be revoked.
+		return handler(ContextWithClaims(ctx, claims), req)
 	}
 }
