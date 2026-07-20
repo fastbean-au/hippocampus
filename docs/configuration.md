@@ -337,7 +337,7 @@ and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver fo
 "storage": {
     "driver": "sqlite",
     "directory": "./data",
-    "queryTimeoutSeconds": 0,
+    "queryTimeoutSeconds": 60,
     "pool": {
         "maxOpenConns": 25,
         "maxIdleConns": 0
@@ -351,11 +351,12 @@ and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver fo
 }
 ```
 
-`storage.queryTimeoutSeconds` bounds how long any single statement or transaction may run (0, the
-default, leaves them unbounded). Set it on the server drivers so a hung or unreachable database
-fails an operation after a bounded time instead of blocking the request goroutine — and its pooled
-connection — indefinitely; the value must exceed the longest legitimate operation, notably a full
-consolidation scan on a large store, or a sleep cycle could be aborted mid-scan.
+`storage.queryTimeoutSeconds` bounds how long any single statement or transaction may run (default
+60; 0 leaves them unbounded). The default is comfortably above a full consolidation scan at the
+benchmarked sizes, so a hung or unreachable database fails an operation after a bounded time instead
+of blocking the request goroutine — and its pooled connection — indefinitely. Raise it above the
+longest legitimate operation on a larger store, notably a full consolidation scan, or a sleep cycle
+could be aborted mid-scan; set it to 0 to disable the bound (reasonable for embedded SQLite).
 
 `storage.pool.maxOpenConns` (default 25) and `storage.pool.maxIdleConns` (0 → defaults to
 `maxOpenConns`) cap the connection pool on the `postgres`/`mysql` drivers, where `database/sql`

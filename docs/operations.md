@@ -217,17 +217,19 @@ and the gateway's `GET /healthz` (**liveness** — process up, never touches the
 `GET /readyz` (**readiness** — also pings the store, `503` when it is unreachable, and mirrored by
 the gRPC serving status). Point a restart/liveness probe at `/healthz` and a load-balancer/readiness
 probe at `/readyz` — see [Health and readiness](configuration.md#health-and-readiness). On the server
-drivers, also set `storage.queryTimeoutSeconds` (see below) so a hung database fails operations
+drivers, review `storage.queryTimeoutSeconds` (see below) so a hung database fails operations
 promptly instead of tying up request goroutines and pooled connections.
 
 ### Bounding query time on the server drivers
 
-`storage.queryTimeoutSeconds` (0 = off) bounds every statement and transaction. Leave it off for
-embedded SQLite (a local file rarely hangs); set it on Postgres/MySQL, where a network partition,
-storage stall, or lock pileup can otherwise block a request goroutine — and its pooled connection —
-indefinitely, eventually wedging the instance. Size it **above** the longest legitimate operation:
-the full-store consolidation scan is the tallest pole, so time a sleep cycle on a
-representative store and leave generous headroom, or a cycle may be aborted mid-scan.
+`storage.queryTimeoutSeconds` (default 60; 0 = off) bounds every statement and transaction. The
+default is comfortably above a full consolidation scan at the benchmarked sizes, so it protects
+against a network partition, storage stall, or lock pileup — any of which can otherwise block a
+request goroutine, and its pooled connection, indefinitely, eventually wedging the instance — while
+leaving normal operations untouched. Raise it above the longest legitimate operation on a larger
+store: the full-store consolidation scan is the tallest pole, so time a sleep cycle on a
+representative store and leave generous headroom, or a cycle may be aborted mid-scan. Set it to 0 to
+disable the bound entirely (reasonable for embedded SQLite, where a local file rarely hangs).
 
 This server-owned bound is independent of, and complementary to, the caller's own context: an RPC's
 deadline or a client that hangs up now propagates all the way to the database driver, so the

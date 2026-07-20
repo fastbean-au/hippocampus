@@ -133,6 +133,7 @@ func main() {
 	// Defaults shared by normal startup and the --backfill-search CLI mode.
 	viper.SetDefault("storage.driver", "sqlite")
 	viper.SetDefault("storage.pool.maxOpenConns", 25)
+	viper.SetDefault("storage.queryTimeoutSeconds", 60)
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
 	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
@@ -257,8 +258,9 @@ func main() {
 
 	// Bound how long any single statement or transaction may run, so a hung or unreachable database
 	// fails an operation after a bounded time rather than blocking the RPC goroutine and its pooled
-	// connection indefinitely. 0 (the default) disables it; when set it must exceed the longest
-	// legitimate operation (notably a full consolidation scan), or a cycle could be aborted mid-scan.
+	// connection indefinitely. Defaults to 60s (comfortably above a full consolidation scan at the
+	// benchmarked sizes); 0 disables it. When set it must exceed the longest legitimate operation
+	// (notably a full consolidation scan), or a cycle could be aborted mid-scan.
 	database.SetQueryTimeout(time.Duration(viper.GetInt("storage.queryTimeoutSeconds")) * time.Second)
 
 	log.Debug("database initialised")
