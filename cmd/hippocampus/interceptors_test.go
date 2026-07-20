@@ -11,6 +11,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/fastbean-au/hippocampus/auth"
 )
 
 // TestInterceptorRecoverPanic verifies that a panicking handler is turned into a codes.Internal
@@ -172,5 +174,78 @@ func TestRecoverMiddleware(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected a clean handler to pass through with 200, got %d", rec.Code)
+	}
+}
+
+// TestInterceptorLogger_AttributesFailureToClient verifies that when the auth interceptor has
+// stashed verified claims on the context (auth enabled), a failing RPC's log entry carries the
+// client_id field - the per-client audit trail InterceptorLogger documents - and that it is absent
+// when no claims are present (auth disabled).
+func TestInterceptorLogger_AttributesFailureToClient(t *testing.T) {
+	log.SetLevel(log.InfoLevel)
+
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return nil, status.Error(codes.Internal, "boom")
+	}
+
+	t.Run("claims present", func(t *testing.T) {
+		hook := logtest.NewGlobal()
+
+		ctx := auth.ContextWithClaims(context.Background(), &auth.Claims{ClientID: "client-42"})
+
+		_, _ = InterceptorLogger(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Test"}, handler)
+
+		entry := hook.LastEntry()
+		if entry == nil {
+			t.Fatal("expected a log entry for the failing RPC")
+		}
+
+		if got := entry.Data["client_id"]; got != "client-42" {
+			t.Errorf("client_id = %v, want %q", got, "client-42")
+		}
+	})
+
+	t.Run("no claims", func(t *testing.T) {
+		hook := logtest.NewGlobal()
+
+		_, _ = InterceptorLogger(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Test"}, handler)
+
+		entry := hook.LastEntry()
+		if entry == nil {
+			t.Fatal("expected a log entry for the failing RPC")
+		}
+
+		if _, ok := entry.Data["client_id"]; ok {
+			t.Errorf("expected no client_id field without stashed claims, got %v", entry.Data["client_id"])
+		}
+	})
+}
+
+// TestHTTPLoggingMiddleware_AttributesToClient is the HTTP-gateway counterpart to
+// TestInterceptorLogger_AttributesFailureToClient: auth.HTTPMiddleware stashes verified claims on
+// the request context before httpLoggingMiddleware runs, and the client_id must appear on the log
+// entry so gateway traffic gets the same per-client audit trail as the gRPC side.
+func TestHTTPLoggingMiddleware_AttributesToClient(t *testing.T) {
+	log.SetLevel(log.InfoLevel)
+
+	hook := logtest.NewGlobal()
+
+	h := httpLoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/memories", nil)
+	req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{ClientID: "gateway-client"}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	entry := hook.LastEntry()
+	if entry == nil {
+		t.Fatal("expected a log entry for the 500 response")
+	}
+
+	if got := entry.Data["client_id"]; got != "gateway-client" {
+		t.Errorf("client_id = %v, want %q", got, "gateway-client")
 	}
 }

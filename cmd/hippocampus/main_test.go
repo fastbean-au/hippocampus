@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/fastbean-au/hippocampus/auth"
+	"github.com/fastbean-au/hippocampus/search"
 )
 
 // TestNewGatewayServer_HardeningTimeouts is a regression test: the gateway HTTP
@@ -465,4 +467,80 @@ func TestResolveMintKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSearchConfigFromViper verifies every opensearch.* viper key (including the nested
+// opensearch.tls.* transport-security block and the worker-tuning durations) is read into the
+// search.Config the server bootstrap and --backfill-search CLI mode share.
+func TestSearchConfigFromViper(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	viper.Set("opensearch.addresses", []string{"https://opensearch.example:9200"})
+	viper.Set("opensearch.username", "svc-user")
+	viper.Set("opensearch.password", "svc-pass")
+	viper.Set("opensearch.index", "custom-index")
+	viper.Set("opensearch.queueSize", 512)
+	viper.Set("opensearch.applyTimeoutSeconds", 5)
+	viper.Set("opensearch.applyMaxAttempts", 3)
+	viper.Set("opensearch.applyRetryBaseBackoffMillis", 250)
+	viper.Set("opensearch.closeDrainTimeoutSeconds", 9)
+	viper.Set("opensearch.tls.caCertFile", "/etc/hippocampus/ca.pem")
+	viper.Set("opensearch.tls.certFile", "/etc/hippocampus/client.pem")
+	viper.Set("opensearch.tls.keyFile", "/etc/hippocampus/client.key")
+	viper.Set("opensearch.tls.insecureSkipVerify", true)
+
+	got := searchConfigFromViper()
+
+	want := search.Config{
+		Addresses:             []string{"https://opensearch.example:9200"},
+		Username:              "svc-user",
+		Password:              "svc-pass",
+		Index:                 "custom-index",
+		QueueSize:             512,
+		ApplyTimeout:          5 * time.Second,
+		ApplyMaxAttempts:      3,
+		ApplyRetryBaseBackoff: 250 * time.Millisecond,
+		CloseDrainTimeout:     9 * time.Second,
+		TLS: search.TLSConfig{
+			CACertFile:         "/etc/hippocampus/ca.pem",
+			CertFile:           "/etc/hippocampus/client.pem",
+			KeyFile:            "/etc/hippocampus/client.key",
+			InsecureSkipVerify: true,
+		},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("searchConfigFromViper() = %+v, want %+v", got, want)
+	}
+}
+
+// TestSearchConfigFromViper_Empty verifies an unconfigured opensearch section yields a zero-value
+// search.Config (aside from the un-set slice/struct fields), matching hmacConfigFromViper's
+// analogous "optional section, no error" behaviour.
+func TestSearchConfigFromViper_Empty(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	got := searchConfigFromViper()
+
+	if got.Index != "" || got.QueueSize != 0 || len(got.Addresses) != 0 {
+		t.Errorf("expected a zero-value search.Config from an empty opensearch section, got %+v", got)
+	}
+}
+
+// TestHmacConfigFromViper_BadSigningKeys is a regression test for the hmacConfigFromViper branch
+// that fails fast (log.Fatalf) when auth.signingKeys cannot be unmarshalled into []auth.SigningKey
+// - e.g. a config file that sets it to a scalar instead of a list of {kid, secret} objects. main()
+// must not start (or --mint-token proceed) with a half-read signing key configuration.
+func TestHmacConfigFromViper_BadSigningKeys(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	// A plain string cannot decode into []auth.SigningKey.
+	viper.Set("auth.signingKeys", "not-a-list-of-keys")
+
+	withFatalPanic(t, func() {
+		hmacConfigFromViper()
+	})
 }

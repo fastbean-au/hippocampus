@@ -119,3 +119,34 @@ func TestReadinessProbe_Handler(t *testing.T) {
 		t.Errorf("expected 503 when the database is unreachable, got %d", rec.Code)
 	}
 }
+
+// TestNewReadinessProbe_DefaultsForNonPositiveInputs verifies that a non-positive timeout or
+// cacheTTL falls back to the documented defaults (2s / 3s) rather than leaving the probe with an
+// unbounded ping or a disabled cache, covering both the zero and negative cases for each field.
+func TestNewReadinessProbe_DefaultsForNonPositiveInputs(t *testing.T) {
+	cases := []struct {
+		name         string
+		timeout      time.Duration
+		cacheTTL     time.Duration
+		wantTimeout  time.Duration
+		wantCacheTTL time.Duration
+	}{
+		{name: "zero values", timeout: 0, cacheTTL: 0, wantTimeout: 2 * time.Second, wantCacheTTL: 3 * time.Second},
+		{name: "negative values", timeout: -1, cacheTTL: -1, wantTimeout: 2 * time.Second, wantCacheTTL: 3 * time.Second},
+		{name: "positive values pass through", timeout: 5 * time.Second, cacheTTL: 7 * time.Second, wantTimeout: 5 * time.Second, wantCacheTTL: 7 * time.Second},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newReadinessProbe(&pingStore{}, tc.timeout, tc.cacheTTL)
+
+			if p.timeout != tc.wantTimeout {
+				t.Errorf("timeout = %s, want %s", p.timeout, tc.wantTimeout)
+			}
+
+			if p.cacheTTL != tc.wantCacheTTL {
+				t.Errorf("cacheTTL = %s, want %s", p.cacheTTL, tc.wantCacheTTL)
+			}
+		})
+	}
+}

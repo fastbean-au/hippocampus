@@ -300,21 +300,28 @@ func (g *Generator) queryWorker(ctx context.Context, n int) {
 			return
 		}
 
-		switch rng.Intn(5) {
+		g.queryIteration(ctx, rng)
+	}
+}
 
-		case 0:
-			g.queryEvents(ctx, rng)
+// queryIteration performs one randomly-chosen read-path operation: a range query over events or
+// memories, a lookup by id, or a recall. Split out from queryWorker's loop so it can be exercised
+// directly in tests without waiting through the real pacing sleep.
+func (g *Generator) queryIteration(ctx context.Context, rng *rand.Rand) {
+	switch rng.Intn(5) {
 
-		case 1:
-			g.queryMemories(ctx, rng)
+	case 0:
+		g.queryEvents(ctx, rng)
 
-		case 2:
-			g.queryEventByID(ctx, rng)
+	case 1:
+		g.queryMemories(ctx, rng)
 
-		case 3, 4:
-			g.recallMemories(ctx, rng)
+	case 2:
+		g.queryEventByID(ctx, rng)
 
-		}
+	case 3, 4:
+		g.recallMemories(ctx, rng)
+
 	}
 }
 
@@ -330,30 +337,37 @@ func (g *Generator) mutatorWorker(ctx context.Context, n int) {
 			return
 		}
 
-		switch rng.Intn(10) {
+		g.mutatorIteration(ctx, rng)
+	}
+}
 
-		case 0, 1, 2:
-			g.updateEventSignificance(ctx, rng)
+// mutatorIteration performs one randomly-chosen mutation: a significance update, ending or
+// merging an event, a deletion, a recall, or a manual sleep. Split out from mutatorWorker's loop
+// so it can be exercised directly in tests without waiting through the real pacing sleep.
+func (g *Generator) mutatorIteration(ctx context.Context, rng *rand.Rand) {
+	switch rng.Intn(10) {
 
-		case 3, 4:
-			g.endRandomEvent(ctx, rng)
+	case 0, 1, 2:
+		g.updateEventSignificance(ctx, rng)
 
-		case 5:
-			g.mergeEvents(ctx, rng)
+	case 3, 4:
+		g.endRandomEvent(ctx, rng)
 
-		case 6:
-			g.deleteMemories(ctx, rng)
+	case 5:
+		g.mergeEvents(ctx, rng)
 
-		case 7:
-			g.deleteEvent(ctx, rng)
+	case 6:
+		g.deleteMemories(ctx, rng)
 
-		case 8:
-			g.recallMemories(ctx, rng)
+	case 7:
+		g.deleteEvent(ctx, rng)
 
-		case 9:
-			g.requestSleep(ctx)
+	case 8:
+		g.recallMemories(ctx, rng)
 
-		}
+	case 9:
+		g.requestSleep(ctx)
+
 	}
 }
 

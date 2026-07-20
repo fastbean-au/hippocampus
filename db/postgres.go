@@ -33,6 +33,15 @@ func NewPostgres(dsn string, consolidate bool) (*DB, error) {
 		return nil, err
 	}
 
+	return setupPostgres(sqlDB, consolidate)
+}
+
+// setupPostgres prepares an already-opened Postgres handle: it caps the pooled connection lifetime,
+// takes the single-consolidator advisory lock when consolidate is true, initialises the schema, and
+// starts the lock keepalive. It is split out from NewPostgres, which only turns a DSN into the
+// handle, so this preparation logic can be exercised against a mocked database/sql handle without a
+// live server.
+func setupPostgres(sqlDB *sql.DB, consolidate bool) (*DB, error) {
 	// Recycle pooled connections before a server-side idle timeout can close them under the pool
 	// (see serverConnMaxLifetime). The pinned lock connection is exempt (never returned while held)
 	// and is instead kept alive by the keepalive started below.
@@ -81,6 +90,13 @@ func NewPostgresReadOnly(dsn string) (*DB, error) {
 		return nil, err
 	}
 
+	return setupPostgresReadOnly(sqlDB)
+}
+
+// setupPostgresReadOnly prepares an already-opened Postgres handle for read-only tooling, probing
+// that the tables exist without taking the instance lock or running schema initialisation. Split
+// out from NewPostgresReadOnly so it can be driven by a mocked handle.
+func setupPostgresReadOnly(sqlDB *sql.DB) (*DB, error) {
 	d := &DB{sql: sqlDB, driver: driverPostgres}
 
 	if err := d.checkReadOnlyTables(); err != nil {

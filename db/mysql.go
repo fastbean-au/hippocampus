@@ -28,6 +28,15 @@ func NewMySQL(dsn string, consolidate bool) (*DB, error) {
 		return nil, err
 	}
 
+	return setupMySQL(sqlDB, consolidate)
+}
+
+// setupMySQL prepares an already-opened MySQL handle: it caps the pooled connection lifetime, takes
+// the single-consolidator GET_LOCK lock when consolidate is true, initialises the schema, and
+// starts the lock keepalive. It is split out from NewMySQL, which only turns a DSN into the handle,
+// so this preparation logic can be exercised against a mocked database/sql handle without a live
+// server.
+func setupMySQL(sqlDB *sql.DB, consolidate bool) (*DB, error) {
 	// Recycle pooled connections before MySQL's wait_timeout can close them under the pool (see
 	// serverConnMaxLifetime; go-sql-driver's README recommends exactly this). The pinned lock
 	// connection is exempt (never returned while held) and is kept alive by the keepalive below.
@@ -76,6 +85,13 @@ func NewMySQLReadOnly(dsn string) (*DB, error) {
 		return nil, err
 	}
 
+	return setupMySQLReadOnly(sqlDB)
+}
+
+// setupMySQLReadOnly prepares an already-opened MySQL handle for read-only tooling, probing that
+// the tables exist without taking the instance lock or running schema initialisation. Split out
+// from NewMySQLReadOnly so it can be driven by a mocked handle.
+func setupMySQLReadOnly(sqlDB *sql.DB) (*DB, error) {
 	d := &DB{sql: sqlDB, driver: driverMySQL}
 
 	if err := d.checkReadOnlyTables(); err != nil {

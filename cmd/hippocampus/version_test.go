@@ -63,3 +63,22 @@ func TestVersionInfoFrom_Empty(t *testing.T) {
 		t.Errorf("expected a bare version string with no VCS details, got %q", s)
 	}
 }
+
+// TestReadVersionInfo is a smoke test over the real runtime/debug.ReadBuildInfo() wiring (the `go
+// test` binary always has build info available, so this exercises the ok-branch of readVersionInfo
+// and its delegation to versionInfoFrom) plus the buildVersion ldflags-override branch, which wins
+// over whatever the module version resolved to.
+func TestReadVersionInfo(t *testing.T) {
+	if v := readVersionInfo(); v.Version == "" {
+		t.Error("expected a non-empty version from readVersionInfo()")
+	}
+
+	restore := buildVersion
+	t.Cleanup(func() { buildVersion = restore })
+
+	buildVersion = "v9.9.9-test"
+
+	if v := readVersionInfo(); v.Version != "v9.9.9-test" {
+		t.Errorf("expected buildVersion to override the resolved version, got %q", v.Version)
+	}
+}

@@ -156,6 +156,18 @@ func TestTLSConfigBuild_HalfClientCert(t *testing.T) {
 	}
 }
 
+// TestTLSConfigBuild_ClientCertMismatchedKey confirms a cert and key that do not belong together
+// are rejected by the underlying tls.LoadX509KeyPair validation, rather than silently loading an
+// unusable client certificate.
+func TestTLSConfigBuild_ClientCertMismatchedKey(t *testing.T) {
+	certPath, _ := writeSelfSignedPair(t, t.TempDir())
+	_, otherKeyPath := writeSelfSignedPair(t, t.TempDir())
+
+	if _, err := (TLSConfig{CertFile: certPath, KeyFile: otherKeyPath}).build(); err == nil {
+		t.Fatal("expected an error for a certificate and key that do not match")
+	}
+}
+
 // TestBuildTransport_TestTransportWins confirms a caller-supplied transport (the fake cluster in
 // unit tests) takes precedence over the TLS block and is returned untouched.
 func TestBuildTransport_TestTransportWins(t *testing.T) {
@@ -171,6 +183,15 @@ func TestBuildTransport_TestTransportWins(t *testing.T) {
 
 	if out == nil {
 		t.Fatal("expected the supplied transport to be returned")
+	}
+}
+
+// TestBuildTransport_PropagatesTLSBuildError confirms buildTransport surfaces a malformed TLS
+// block's error rather than falling back to an unconfigured transport.
+func TestBuildTransport_PropagatesTLSBuildError(t *testing.T) {
+	_, err := buildTransport(Config{TLS: TLSConfig{CertFile: "only-cert-set"}})
+	if err == nil {
+		t.Fatal("expected buildTransport to propagate a half-configured client certificate error")
 	}
 }
 

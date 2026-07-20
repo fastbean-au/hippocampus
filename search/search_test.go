@@ -102,6 +102,13 @@ type fakeTransport struct {
 	// document write seen, including the failed ones.
 	failDocWrites int
 	docAttempts   int
+
+	// respond, when set, overrides status/failDocWrites entirely and gives per-request control: it
+	// is called with the recorded request and returns the HTTP status to answer with (0 means 200)
+	// or a non-nil error to simulate a transport-level failure, so a test can fail exactly one kind
+	// of request (e.g. only the mapping update, or only a delete-by-query) without disturbing the
+	// rest of a multi-request flow such as ensureIndex or apply.
+	respond func(req *http.Request) (int, error)
 }
 
 type recordedRequest struct {
@@ -123,6 +130,26 @@ func (f *fakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	f.mu.Lock()
 	f.requests = append(f.requests, recordedRequest{method: req.Method, path: req.URL.Path, body: body})
+
+	if f.respond != nil {
+		status, err := f.respond(req)
+		f.mu.Unlock()
+
+		if err != nil {
+			return nil, err
+		}
+
+		if status == 0 {
+			status = http.StatusOK
+		}
+
+		return &http.Response{
+			StatusCode: status,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{}`)),
+			Request:    req,
+		}, nil
+	}
 
 	isDocWrite := req.Method == http.MethodPut && strings.Contains(req.URL.Path, "/_doc/")
 	if isDocWrite {

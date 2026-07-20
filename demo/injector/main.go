@@ -154,23 +154,33 @@ var filler = []string{
 	"Cross-team coordination happened over the shared operations bridge.",
 }
 
-func main() {
-	url := pflag.String("url", "http://localhost:8080", "base URL of the Hippocampus HTTP gateway")
-	targetBytes := pflag.Int64("target-bytes", 120_000_000, "stop once this many bytes of memory body have been generated")
-	batchMemories := pflag.Int("batch-memories", 400, "memories per ImportBatch request")
-	seed := pflag.Int64("seed", 42, "PRNG seed for reproducibility")
-	pflag.Parse()
+// injectResult summarises one runInjection call, for the final "done" line and for tests.
+type injectResult struct {
+	eventCount     int
+	memoryCount    int
+	totalBodyBytes int64
+}
 
-	rng := rand.New(rand.NewSource(*seed))
-	client := &http.Client{Timeout: 60 * time.Second}
-
-	now := time.Now()
+// runInjection drives the generate-batch-flush loop: it mints events/memories via generateEvent
+// until totalBodyBytes reaches targetBytes, flushing a batch through post whenever it reaches
+// batchMemories (and once more at the end for the remainder). progress, when non-nil, is called
+// after every mid-loop flush under the same "roughly every 20000 memories" gate the CLI output
+// used inline before this was extracted, so callers (main, or a test) can observe/log without
+// runInjection depending on stdout directly. post/progress are injected so this loop is testable
+// without a real network client; main wires them to postBatch and fmt.Printf respectively.
+func runInjection(
+	rng *rand.Rand,
+	now time.Time,
+	targetBytes int64,
+	batchMemories int,
+	post func(*batchReq) error,
+	progress func(eventCount int, memoryCount int, totalBodyBytes int64),
+) (injectResult, error) {
 	var (
 		totalBodyBytes int64
 		eventCount     int
 		memoryCount    int
 		batch          batchReq
-		start          = time.Now()
 	)
 
 	flush := func() error {
@@ -178,7 +188,7 @@ func main() {
 			return nil
 		}
 
-		if err := postBatch(client, *url, &batch); err != nil {
+		if err := post(&batch); err != nil {
 			return err
 		}
 
@@ -187,9 +197,7 @@ func main() {
 		return nil
 	}
 
-	fmt.Printf("injecting into %s until ~%d MB of memory bodies...\n", *url, *targetBytes/1_000_000)
-
-	for totalBodyBytes < *targetBytes {
+	for totalBodyBytes < targetBytes {
 		ev, mems := generateEvent(rng, now)
 		batch.Events = append(batch.Events, ev)
 		eventCount++
@@ -199,27 +207,56 @@ func main() {
 			memoryCount++
 			totalBodyBytes += int64(len(mems[i].Body))
 
-			if len(batch.Memories) >= *batchMemories {
+			if len(batch.Memories) >= batchMemories {
 				if err := flush(); err != nil {
-					fmt.Fprintf(os.Stderr, "batch failed: %v\n", err)
-					os.Exit(1)
+					return injectResult{eventCount, memoryCount, totalBodyBytes}, err
 				}
 
-				if memoryCount%20000 < *batchMemories {
-					fmt.Printf("  %d events, %d memories, %d MB (%.0fs)\n",
-						eventCount, memoryCount, totalBodyBytes/1_000_000, time.Since(start).Seconds())
+				if progress != nil && memoryCount%20000 < batchMemories {
+					progress(eventCount, memoryCount, totalBodyBytes)
 				}
 			}
 		}
 	}
 
 	if err := flush(); err != nil {
-		fmt.Fprintf(os.Stderr, "final batch failed: %v\n", err)
+		return injectResult{eventCount, memoryCount, totalBodyBytes}, err
+	}
+
+	return injectResult{eventCount, memoryCount, totalBodyBytes}, nil
+}
+
+func main() {
+	url := pflag.String("url", "http://localhost:8080", "base URL of the Hippocampus HTTP gateway")
+	targetBytes := pflag.Int64("target-bytes", 120_000_000, "stop once this many bytes of memory body have been generated")
+	batchMemories := pflag.Int("batch-memories", 400, "memories per ImportBatch request")
+	seed := pflag.Int64("seed", 42, "PRNG seed for reproducibility")
+	pflag.Parse()
+
+	rng := rand.New(rand.NewSource(*seed))
+	client := &http.Client{Timeout: 60 * time.Second}
+	now := time.Now()
+	start := time.Now()
+
+	fmt.Printf("injecting into %s until ~%d MB of memory bodies...\n", *url, *targetBytes/1_000_000)
+
+	post := func(batch *batchReq) error {
+		return postBatch(client, *url, batch)
+	}
+
+	progress := func(eventCount int, memoryCount int, totalBodyBytes int64) {
+		fmt.Printf("  %d events, %d memories, %d MB (%.0fs)\n",
+			eventCount, memoryCount, totalBodyBytes/1_000_000, time.Since(start).Seconds())
+	}
+
+	result, err := runInjection(rng, now, *targetBytes, *batchMemories, post, progress)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "batch failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("done: %d events, %d memories, %d MB of body in %.0fs\n",
-		eventCount, memoryCount, totalBodyBytes/1_000_000, time.Since(start).Seconds())
+		result.eventCount, result.memoryCount, result.totalBodyBytes/1_000_000, time.Since(start).Seconds())
 }
 
 func postBatch(client *http.Client, base string, batch *batchReq) error {
