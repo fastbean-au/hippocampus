@@ -535,7 +535,7 @@
     },
     "/v1/memories": {
       "get": {
-        "summary": "GetMemories lists memories filtered by time range, significance range, and group, paginated\nby limit/offset (see GetMemoriesRequest).",
+        "summary": "GetMemories lists memories filtered by time range, significance range, and group, paginated\nby limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max\nrange for \"only memories tied at the highest (or lowest) significance value\" instead.",
         "operationId": "Hippocampus_GetMemories",
         "responses": {
           "200": {
@@ -613,6 +613,19 @@
             "required": false,
             "type": "integer",
             "format": "int32"
+          },
+          {
+            "name": "significanceExtremum",
+            "description": "when set, ignore significance_min/significance_max and return only memories tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum\n\n - SIGNIFICANCE_EXTREMUM_UNSPECIFIED: no extremum filtering; significance_min/significance_max (if set) apply as a normal range\n - SIGNIFICANCE_EXTREMUM_HIGHEST: return only events at the highest significance value among those matching the other filters\n - SIGNIFICANCE_EXTREMUM_LOWEST: return only events at the lowest significance value among those matching the other filters",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "SIGNIFICANCE_EXTREMUM_UNSPECIFIED",
+              "SIGNIFICANCE_EXTREMUM_HIGHEST",
+              "SIGNIFICANCE_EXTREMUM_LOWEST"
+            ],
+            "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED"
           }
         ],
         "tags": [

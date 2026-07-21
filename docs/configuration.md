@@ -188,6 +188,16 @@ than the whole request, so a client posts a plain memory object to
 without authentication, for liveness/readiness probes (see [Health and readiness](#health-and-readiness)); every other path, including
 `/v1/openapi.json`, is subject to [Authentication](#authentication) when it is enabled.
 
+The `GetEvents` and `GetMemories` list endpoints additionally accept a `significance_extremum`
+query parameter (`SIGNIFICANCE_EXTREMUM_HIGHEST` or `SIGNIFICANCE_EXTREMUM_LOWEST`): in place of a
+`significance_min`/`significance_max` range, it returns only the events/memories tied at the single
+highest (or lowest) significance value among those matching the other filters (time range, group) —
+computed dynamically, not against a caller-supplied bound. It is mutually exclusive with
+`significance_min`/`significance_max`; supplying both is rejected with `InvalidArgument`. The
+lowest-significance set is exactly what the next sleep cycle forgets first, which makes it a handy
+lens on consolidation (see [Demonstrations](demonstrations.md)). The full field-level request and
+response schema for every endpoint lives in the OpenAPI description at `/v1/openapi.json`.
+
 ### Health and readiness
 
 The gateway exposes two probe endpoints, both always open (no token) so orchestrators can reach

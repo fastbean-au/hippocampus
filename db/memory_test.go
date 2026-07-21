@@ -844,6 +844,93 @@ func TestGetMemories_Filters(t *testing.T) {
 	}
 }
 
+// TestGetMemories_SignificanceExtremum verifies HIGHEST/LOWEST return every memory tied at that
+// significance value (not just one), computed dynamically rather than against a caller-supplied
+// bound.
+func TestGetMemories_SignificanceExtremum(t *testing.T) {
+	db := newTestDB(t)
+
+	memories := []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 2, Body: "low a"},
+		{Id: "m2", TimeStamp: 200, Significance: 2, Body: "low b"},
+		{Id: "m3", TimeStamp: 300, Significance: 5, Body: "mid"},
+		{Id: "m4", TimeStamp: 400, Significance: 9, Body: "high a"},
+		{Id: "m5", TimeStamp: 500, Significance: 9, Body: "high b"},
+	}
+
+	for _, m := range memories {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	highest, err := db.GetMemories(context.Background(), MemoryFilter{SignificanceExtremum: SignificanceExtremumHighest})
+	if err != nil {
+		t.Fatalf("GetMemories(highest): %s", err)
+	}
+
+	if len(*highest) != 2 {
+		t.Fatalf("expected 2 memories tied at the highest significance, got %d: %+v", len(*highest), *highest)
+	}
+
+	for _, m := range *highest {
+		if m.Significance != 9 {
+			t.Errorf("expected significance 9, got %d for %s", m.Significance, m.Id)
+		}
+	}
+
+	lowest, err := db.GetMemories(context.Background(), MemoryFilter{SignificanceExtremum: SignificanceExtremumLowest})
+	if err != nil {
+		t.Fatalf("GetMemories(lowest): %s", err)
+	}
+
+	if len(*lowest) != 2 {
+		t.Fatalf("expected 2 memories tied at the lowest significance, got %d: %+v", len(*lowest), *lowest)
+	}
+
+	for _, m := range *lowest {
+		if m.Significance != 2 {
+			t.Errorf("expected significance 2, got %d for %s", m.Significance, m.Id)
+		}
+	}
+
+	total, err := db.CountMemoriesFiltered(context.Background(), MemoryFilter{SignificanceExtremum: SignificanceExtremumHighest})
+	if err != nil {
+		t.Fatalf("CountMemoriesFiltered(highest): %s", err)
+	}
+
+	if total != 2 {
+		t.Errorf("expected CountMemoriesFiltered(highest) = 2, got %d", total)
+	}
+}
+
+// TestGetMemories_SignificanceExtremum_ComposesWithOtherFilters verifies the extremum is computed
+// only over memories matching the other filters (group here), not the whole store.
+func TestGetMemories_SignificanceExtremum_ComposesWithOtherFilters(t *testing.T) {
+	db := newTestDB(t)
+
+	memories := []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 3, Group: "billing", Body: "billing low"},
+		{Id: "m2", TimeStamp: 200, Significance: 7, Group: "billing", Body: "billing high"},
+		{Id: "m3", TimeStamp: 300, Significance: 20, Group: "ingest", Body: "ingest highest"},
+	}
+
+	for _, m := range memories {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	got, err := db.GetMemories(context.Background(), MemoryFilter{Group: "billing", SignificanceExtremum: SignificanceExtremumHighest})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if len(*got) != 1 || (*got)[0].Id != "m2" {
+		t.Fatalf("expected only m2 (highest within group 'billing'), got %+v", *got)
+	}
+}
+
 // TestGetMemoriesByIds verifies the non-reinforcing fetch: requested rows come back untouched,
 // ids with no matching row are simply absent, and recall state is never modified.
 func TestGetMemoriesByIds(t *testing.T) {

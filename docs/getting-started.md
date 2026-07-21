@@ -76,6 +76,11 @@ curl -s localhost:8080/healthz            # 200 OK
 curl -s localhost:8080/v1/openapi.json    # the OpenAPI description of every endpoint
 ```
 
+The gateway also serves a self-contained browser console at [`/ui`](http://localhost:8080/ui) for
+browsing, searching, and editing memories and events — it drives the same `/v1` endpoints the curl
+examples below use, so it is the quickest way to explore a running instance without writing a
+client. (When `auth.method` is enabled, paste a bearer token into the field at the top right.)
+
 ## First requests (HTTP gateway)
 
 Every RPC is reachable as JSON under `/v1`. Field names are lowerCamelCase.

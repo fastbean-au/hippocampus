@@ -569,3 +569,56 @@ func TestUpdateMemory_UnknownIdNotFound(t *testing.T) {
 		t.Fatalf("UpdateMemory created %d memories for an unknown id; expected none", with+without)
 	}
 }
+
+// TestGetMemories_SignificanceExtremum verifies the RPC passes SignificanceExtremum through to the
+// db filter and returns every memory tied at the highest significance, not just one.
+func TestGetMemories_SignificanceExtremum(t *testing.T) {
+	s := newTestServer(t)
+
+	for _, m := range []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 3, Body: "one"},
+		{Id: "m2", TimeStamp: 200, Significance: 8, Body: "two"},
+		{Id: "m3", TimeStamp: 300, Significance: 8, Body: "three"},
+	} {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	res, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST,
+	})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if len(res.GetMemories()) != 2 {
+		t.Fatalf("expected 2 memories tied at the highest significance, got %d", len(res.GetMemories()))
+	}
+
+	for _, m := range res.GetMemories() {
+		if m.GetSignificance() != 8 {
+			t.Errorf("expected significance 8, got %d for %s", m.GetSignificance(), m.GetId())
+		}
+	}
+}
+
+// TestGetMemories_SignificanceExtremum_RejectsCombinationWithRange verifies significance_extremum
+// and significance_min/significance_max are mutually exclusive, matching GetEvents.
+func TestGetMemories_SignificanceExtremum_RejectsCombinationWithRange(t *testing.T) {
+	s := newTestServer(t)
+
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST,
+		SignificanceMin:      1,
+	}); err == nil {
+		t.Fatal("expected an error combining SignificanceExtremum with SignificanceMin")
+	}
+
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+		SignificanceMax:      5,
+	}); err == nil {
+		t.Fatal("expected an error combining SignificanceExtremum with SignificanceMax")
+	}
+}

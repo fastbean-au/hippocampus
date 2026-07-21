@@ -342,6 +342,22 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		return &res, fmt.Errorf("TimestampMax must be greater than or equal to TimestampMin")
 	}
 
+	extremum := db.SignificanceExtremumNone
+
+	switch in.GetSignificanceExtremum() {
+
+	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST:
+		extremum = db.SignificanceExtremumHighest
+
+	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST:
+		extremum = db.SignificanceExtremumLowest
+
+	}
+
+	if extremum != db.SignificanceExtremumNone && (in.GetSignificanceMin() > 0 || in.GetSignificanceMax() > 0) {
+		return &res, fmt.Errorf("SignificanceExtremum cannot be combined with SignificanceMin/SignificanceMax")
+	}
+
 	orderBy := in.GetOrderBy()
 
 	switch orderBy {
@@ -371,14 +387,15 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 	}
 
 	filter := db.MemoryFilter{
-		TimeStampMin:    in.GetTimestampMin(),
-		TimeStampMax:    in.GetTimestampMax(),
-		SignificanceMin: in.GetSignificanceMin(),
-		SignificanceMax: in.GetSignificanceMax(),
-		Group:           in.GetGroup(),
-		OrderBy:         orderBy,
-		Limit:           limit,
-		Offset:          offset,
+		TimeStampMin:         in.GetTimestampMin(),
+		TimeStampMax:         in.GetTimestampMax(),
+		SignificanceMin:      in.GetSignificanceMin(),
+		SignificanceMax:      in.GetSignificanceMax(),
+		SignificanceExtremum: extremum,
+		Group:                in.GetGroup(),
+		OrderBy:              orderBy,
+		Limit:                limit,
+		Offset:               offset,
 	}
 
 	total, err := s.db.CountMemoriesFiltered(ctx, filter)

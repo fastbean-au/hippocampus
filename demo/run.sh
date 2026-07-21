@@ -5,6 +5,11 @@
 # consolidation settings); the generator drives it until interrupted, pausing whenever the
 # database reaches the 1 GiB cap. Ctrl-C stops both.
 #
+# The service runs with its HTTP/JSON gateway on port 8080, which serves the web console (the
+# front-facing part of the demo) at http://localhost:8080/ui. By default the script also launches
+# an OpenSearch container (needs docker or podman) so the console's content-search tab works; set
+# SEARCH=0 to skip it, or the demo runs without content search if no container runtime is found.
+#
 # Set OBSERVABILITY=1 to also launch an all-in-one grafana/otel-lgtm collector (needs docker or
 # podman) and ship the service's metrics/traces to it, so a soak run can be watched in Grafana at
 # http://localhost:3000. Left unset, metrics stay off and nothing is exported.
@@ -17,15 +22,34 @@ DEMO_DIR="demo"
 BIN_DIR="${DEMO_DIR}/bin"
 DATA_DIR="${DEMO_DIR}/data"
 PORT=8300
+GATEWAY_PORT=8080
 MAX_BYTES="${MAX_BYTES:-$((1024 * 1024 * 1024))}"
 
+SEARCH="${SEARCH:-1}"
 OBSERVABILITY="${OBSERVABILITY:-}"
 OTEL_CONTAINER="hippocampus-demo-otel-lgtm"
+OS_CONTAINER="hippocampus-demo-opensearch"
 OTEL_STARTED=""
+OS_STARTED=""
 CONTAINER_RUNTIME=""
+
+search_on() {
+    [[ -n ${SEARCH} && ${SEARCH} != "false" && ${SEARCH} != "0" ]]
+}
 
 observability_on() {
     [[ -n ${OBSERVABILITY} && ${OBSERVABILITY} != "false" && ${OBSERVABILITY} != "0" ]]
+}
+
+# detect_container_runtime picks docker or podman into CONTAINER_RUNTIME, leaving it empty when
+# neither is present. Both the OpenSearch and the observability paths need a runtime, so it is
+# resolved once up front.
+detect_container_runtime() {
+    if command -v docker > /dev/null 2>&1; then
+        CONTAINER_RUNTIME="docker"
+    elif command -v podman > /dev/null 2>&1; then
+        CONTAINER_RUNTIME="podman"
+    fi
 }
 
 mkdir -p "${BIN_DIR}" "${DATA_DIR}"
@@ -42,15 +66,22 @@ cleanup() {
     echo ""
     echo "shutting down"
 
+    # Stop the generator first and wait for it to exit, so no new RPCs are in flight when the
+    # service drains. Then signal the service and let it shut down gracefully (drain in-flight RPCs,
+    # checkpoint the database) on its own clock rather than racing the generator's traffic.
     if [[ -n ${GENERATOR_PID} ]]; then
         kill "${GENERATOR_PID}" 2> /dev/null || true
+        wait "${GENERATOR_PID}" 2> /dev/null || true
     fi
     if [[ -n ${SERVICE_PID} ]]; then
         kill "${SERVICE_PID}" 2> /dev/null || true
+        wait "${SERVICE_PID}" 2> /dev/null || true
     fi
 
-    wait 2> /dev/null || true
-
+    if [[ -n ${OS_STARTED} ]]; then
+        echo "stopping the opensearch container"
+        "${CONTAINER_RUNTIME}" stop "${OS_CONTAINER}" 2> /dev/null || true
+    fi
     if [[ -n ${OTEL_STARTED} ]]; then
         echo "stopping the otel-lgtm collector"
         "${CONTAINER_RUNTIME}" stop "${OTEL_CONTAINER}" 2> /dev/null || true
@@ -58,12 +89,56 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-if observability_on; then
-    if command -v docker > /dev/null 2>&1; then
-        CONTAINER_RUNTIME="docker"
-    elif command -v podman > /dev/null 2>&1; then
-        CONTAINER_RUNTIME="podman"
+if search_on || observability_on; then
+    detect_container_runtime
+fi
+
+if search_on; then
+    if curl -sf "http://127.0.0.1:9200/_cluster/health" > /dev/null 2>&1; then
+        # Something is already serving OpenSearch on :9200 (e.g. a standing test cluster). Reuse it
+        # rather than starting a colliding container - and leave OS_STARTED unset so cleanup does
+        # not stop a container this script did not start.
+        echo "reusing the OpenSearch already listening on http://localhost:9200"
+        export HIPPOCAMPUS_OPENSEARCH_ENABLED=true
+    elif [[ -n ${CONTAINER_RUNTIME} ]]; then
+        echo "starting the opensearch container (${CONTAINER_RUNTIME})"
+        "${CONTAINER_RUNTIME}" rm -f "${OS_CONTAINER}" > /dev/null 2>&1 || true
+        "${CONTAINER_RUNTIME}" run -d --rm --name "${OS_CONTAINER}" \
+            -p 9200:9200 \
+            -e "discovery.type=single-node" \
+            -e "DISABLE_SECURITY_PLUGIN=true" \
+            -e "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" \
+            opensearchproject/opensearch:3.1.0 > /dev/null
+        OS_STARTED=1
+
+        echo "waiting for opensearch to report healthy on port 9200"
+        OS_READY=""
+        for _ in $(seq 1 120); do
+            if curl -sf "http://127.0.0.1:9200/_cluster/health" > /dev/null 2>&1; then
+                OS_READY=1
+
+                break
+            fi
+
+            sleep 1
+        done
+
+        if [[ -z ${OS_READY} ]]; then
+            echo "warning: opensearch did not report healthy in time; content search may lag" >&2
+        fi
+
+        # The service reads this via viper's HIPPOCAMPUS_* env overrides, enabling the secondary
+        # content-search index against the container we just started without editing the config.
+        export HIPPOCAMPUS_OPENSEARCH_ENABLED=true
     else
+        echo "note: neither docker nor podman is available and nothing is serving :9200 - running" >&2
+        echo "      without OpenSearch, so the console's content-search tab will be inactive" >&2
+        echo "      (set SEARCH=0 to silence this)" >&2
+    fi
+fi
+
+if observability_on; then
+    if [[ -z ${CONTAINER_RUNTIME} ]]; then
         echo "OBSERVABILITY is set but neither docker nor podman is available" >&2
         exit 1
     fi
@@ -116,6 +191,16 @@ for _ in $(seq 1 50); do
 
     sleep 0.2
 done
+
+echo ""
+echo "  web console (the demo UI): http://localhost:${GATEWAY_PORT}/ui"
+if [[ ${HIPPOCAMPUS_OPENSEARCH_ENABLED:-} == "true" ]]; then
+    echo "  content search is live (OpenSearch) - use the console's Search tab"
+fi
+if observability_on; then
+    echo "  grafana dashboard:         http://localhost:3000"
+fi
+echo ""
 
 echo "starting the generator"
 "${BIN_DIR}/generator" --address "localhost:${PORT}" --data_dir "${DATA_DIR}" --max_bytes "${MAX_BYTES}" "$@" &

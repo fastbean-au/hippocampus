@@ -263,6 +263,16 @@
       <div class="card">
         <h2>Filter</h2>
         <div class="row">
+          <div class="field wide">
+            <label for="mf-extremum">Significance</label>
+            <select id="mf-extremum" onchange="syncMemoryExtremum()">
+              <option value="">Range (use min/max below)</option>
+              <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">Highest only — the most durable memories</option>
+              <option value="SIGNIFICANCE_EXTREMUM_LOWEST">Lowest only — first to be forgotten</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
           <div class="field">
             <label for="mf-sigmin">Significance min</label>
             <input id="mf-sigmin" type="number">
@@ -365,6 +375,16 @@
       </div>
       <div class="card">
         <h2>Filter</h2>
+        <div class="row">
+          <div class="field wide">
+            <label for="ef-extremum">Significance</label>
+            <select id="ef-extremum" onchange="syncEventExtremum()">
+              <option value="">Range (use min/max below)</option>
+              <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">Highest only — the most durable events</option>
+              <option value="SIGNIFICANCE_EXTREMUM_LOWEST">Lowest only — first to be forgotten</option>
+            </select>
+          </div>
+        </div>
         <div class="row">
           <div class="field">
             <label for="ef-sigmin">Significance min</label>
@@ -732,13 +752,34 @@ async function memoriesPage(dir) {
   await fetchMemories();
 }
 
+// syncMemoryExtremum greys out the significance min/max inputs while an extremum (highest/lowest) is
+// selected: the server rejects significance_extremum combined with significance_min/max, so the two
+// are mutually exclusive in the form too.
+function syncMemoryExtremum() {
+  const on = $("mf-extremum").value !== "";
+
+  ["mf-sigmin", "mf-sigmax"].forEach((id) => {
+    $(id).disabled = on;
+
+    if (on) $(id).value = "";
+  });
+}
+
 async function fetchMemories() {
   const params = new URLSearchParams();
-  const sigMin = intOrUndef("mf-sigmin");
-  const sigMax = intOrUndef("mf-sigmax");
+  const extremum = $("mf-extremum").value;
 
-  if (sigMin !== undefined) params.set("significance_min", sigMin);
-  if (sigMax !== undefined) params.set("significance_max", sigMax);
+  // significance_extremum ("only the memories tied at the highest/lowest significance") replaces the
+  // min/max range rather than combining with it — sending both is an InvalidArgument.
+  if (extremum) {
+    params.set("significance_extremum", extremum);
+  } else {
+    const sigMin = intOrUndef("mf-sigmin");
+    const sigMax = intOrUndef("mf-sigmax");
+
+    if (sigMin !== undefined) params.set("significance_min", sigMin);
+    if (sigMax !== undefined) params.set("significance_max", sigMax);
+  }
 
   const group = strOrUndef("mf-group");
   if (group) params.set("group", group);
@@ -777,6 +818,8 @@ function updateMemoriesPager(count, total) {
 
 function clearMemoryFilter() {
   ["mf-sigmin", "mf-sigmax", "mf-group", "mf-from", "mf-to"].forEach((id) => ($(id).value = ""));
+  $("mf-extremum").value = "";
+  syncMemoryExtremum();
 }
 
 async function saveMemory() {
@@ -923,13 +966,34 @@ async function eventsPage(dir) {
   await fetchEvents();
 }
 
+// syncEventExtremum greys out the significance min/max inputs while an extremum (highest/lowest) is
+// selected: the server rejects significance_extremum combined with significance_min/max, so the two
+// are mutually exclusive in the form too.
+function syncEventExtremum() {
+  const on = $("ef-extremum").value !== "";
+
+  ["ef-sigmin", "ef-sigmax"].forEach((id) => {
+    $(id).disabled = on;
+
+    if (on) $(id).value = "";
+  });
+}
+
 async function fetchEvents() {
   const params = new URLSearchParams();
-  const sigMin = intOrUndef("ef-sigmin");
-  const sigMax = intOrUndef("ef-sigmax");
+  const extremum = $("ef-extremum").value;
 
-  if (sigMin !== undefined) params.set("significance_min", sigMin);
-  if (sigMax !== undefined) params.set("significance_max", sigMax);
+  // significance_extremum ("only the events tied at the highest/lowest significance") replaces the
+  // min/max range rather than combining with it — sending both is an InvalidArgument.
+  if (extremum) {
+    params.set("significance_extremum", extremum);
+  } else {
+    const sigMin = intOrUndef("ef-sigmin");
+    const sigMax = intOrUndef("ef-sigmax");
+
+    if (sigMin !== undefined) params.set("significance_min", sigMin);
+    if (sigMax !== undefined) params.set("significance_max", sigMax);
+  }
 
   const group = strOrUndef("ef-group");
   if (group) params.set("group", group);
@@ -964,7 +1028,9 @@ function updateEventsPager(count, total) {
 
 function clearEventFilter() {
   ["ef-sigmin", "ef-sigmax", "ef-group"].forEach((id) => ($(id).value = ""));
+  $("ef-extremum").value = "";
   $("ef-memories").checked = false;
+  syncEventExtremum();
 }
 
 async function saveEvent() {

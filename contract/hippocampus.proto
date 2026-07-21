@@ -122,7 +122,8 @@ service Hippocampus {
 	}
 
 	// GetMemories lists memories filtered by time range, significance range, and group, paginated
-	// by limit/offset (see GetMemoriesRequest).
+	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
+	// range for "only memories tied at the highest (or lowest) significance value" instead.
 	rpc GetMemories(GetMemoriesRequest) returns (GetMemoriesResponse) {
 		option (google.api.http) = {
 			get: "/v1/memories"
@@ -377,6 +378,7 @@ message GetMemoriesRequest {
 	string                                 order_by                  = 6; // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
 	int32                                  limit                     = 7; // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
 	int32                                  offset                    = 8; // rows to skip for pagination; negative values are clamped to 0; no upper bound
+	SignificanceExtremum                   significance_extremum     = 9; // when set, ignore significance_min/significance_max and return only memories tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
 }
 
 message GetMemoriesResponse {

@@ -81,6 +81,13 @@ spread; the *shape* — monotonic survival by significance — is the point. Tri
 `Sleep` RPC (`POST /v1/sleep`) or let the timed cycle run. Filter by service with the `group` field
 on `GetMemories`/`GetEvents` (see [Grouping](configuration.md)).
 
+To watch that shape at the edges, both list endpoints accept a `significance_extremum` parameter
+(`SIGNIFICANCE_EXTREMUM_HIGHEST` / `SIGNIFICANCE_EXTREMUM_LOWEST`) that returns only the items tied
+at the highest or lowest significance among those matching the other filters — the lowest set being
+precisely what the next cycle forgets first, the highest set the most durable. The web console
+(`/ui`) exposes it on both the **Memories** and **Events** tabs as a *Significance → Highest/Lowest
+only* selector, so the about-to-be-forgotten tier is one click away during a soak.
+
 ## Centralised mode (Postgres + OpenSearch)
 
 The same generators drive a centralised deployment unchanged — only the target address differs. The

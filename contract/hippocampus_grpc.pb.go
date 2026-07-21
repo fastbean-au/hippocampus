@@ -98,7 +98,8 @@ type HippocampusClient interface {
 	// DeleteMemories deletes the given memories by id; unknown ids are silently ignored.
 	DeleteMemories(ctx context.Context, in *DeleteMemoriesRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
 	// GetMemories lists memories filtered by time range, significance range, and group, paginated
-	// by limit/offset (see GetMemoriesRequest).
+	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
+	// range for "only memories tied at the highest (or lowest) significance value" instead.
 	GetMemories(ctx context.Context, in *GetMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
 	// RecallMemories returns the requested memories and reinforces each one: its recall time is
 	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
@@ -420,7 +421,8 @@ type HippocampusServer interface {
 	// DeleteMemories deletes the given memories by id; unknown ids are silently ignored.
 	DeleteMemories(context.Context, *DeleteMemoriesRequest) (*GeneralResponse, error)
 	// GetMemories lists memories filtered by time range, significance range, and group, paginated
-	// by limit/offset (see GetMemoriesRequest).
+	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
+	// range for "only memories tied at the highest (or lowest) significance value" instead.
 	GetMemories(context.Context, *GetMemoriesRequest) (*GetMemoriesResponse, error)
 	// RecallMemories returns the requested memories and reinforces each one: its recall time is
 	// reset to now (resetting its decay clock) and its recall count is incremented (raising its

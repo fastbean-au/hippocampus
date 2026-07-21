@@ -325,16 +325,19 @@ type EventConsolidationCandidate struct {
 }
 
 // MemoryFilter narrows a GetMemories query. A zero value on any field leaves that dimension
-// unconstrained; Group matches the memory's group label exactly.
+// unconstrained; Group matches the memory's group label exactly. SignificanceExtremum, when set,
+// takes over from SignificanceMin/SignificanceMax (see memoryFilterConditions) rather than
+// combining with them - callers should leave the range fields zero when it is set.
 type MemoryFilter struct {
-	TimeStampMin    int64
-	TimeStampMax    int64
-	SignificanceMin int32
-	SignificanceMax int32
-	Group           string
-	OrderBy         string
-	Limit           int
-	Offset          int
+	TimeStampMin         int64
+	TimeStampMax         int64
+	SignificanceMin      int32
+	SignificanceMax      int32
+	SignificanceExtremum SignificanceExtremum
+	Group                string
+	OrderBy              string
+	Limit                int
+	Offset               int
 }
 
 // EventFilter narrows a GetEvents query. A zero value on any field leaves that dimension

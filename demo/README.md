@@ -2,7 +2,9 @@
 
 A long-running exerciser for the hippocampus service: a load generator that stores, queries,
 recalls, mutates, and deletes events and memories against a live instance, capped at 1 GiB of
-on-disk data.
+on-disk data. The front-facing part of the demo is the **web console** — a single-page UI at
+[http://localhost:8080/ui](http://localhost:8080/ui) for browsing and searching the memories and
+events the generator is churning through in real time.
 
 ## Running
 
@@ -11,10 +13,36 @@ on-disk data.
 ```
 
 The script builds the service and the generator, starts the service with `demo/config.json`
-(port 8300, database under `demo/data`), waits for it to listen, then starts the generator.
-Ctrl-C stops both. The database persists between runs; delete `demo/data` to start fresh.
-`MAX_BYTES=<bytes>` overrides the generator's pause cap, and any arguments passed to the script
-are forwarded to the generator (e.g. `./demo/run.sh --bursty_workers 8`).
+(gRPC on port 8300, the HTTP/JSON gateway and web console on 8080, database under `demo/data`),
+launches an OpenSearch container so content search works (see below), waits for the service to
+listen, then starts the generator. **Open [http://localhost:8080/ui](http://localhost:8080/ui)**
+to watch and drive it. Ctrl-C stops everything. The database persists between runs; delete
+`demo/data` to start fresh. `MAX_BYTES=<bytes>` overrides the generator's pause cap, and any
+arguments passed to the script are forwarded to the generator (e.g. `./demo/run.sh --bursty_workers 8`).
+
+## The web console (the demo UI)
+
+The service's HTTP/JSON gateway (port 8080) serves a self-contained single-page console at
+[http://localhost:8080/ui](http://localhost:8080/ui) — no build step, no external assets. It has
+three tabs, all driving the same `/v1` JSON endpoints the gateway exposes:
+
+- **Search** — free-text content search over memory bodies (`POST /v1/memories/search`, backed by
+  OpenSearch). Event ids in the results are clickable and open the whole event; a `Reinforce` toggle
+  routes matches through recall so you can watch decay clocks reset.
+- **Memories** — create, edit, recall, and delete memories, with significance/group/timestamp
+  filters and paging.
+- **Events** — create, edit, end, and delete events, optionally listing their memories.
+
+Auth is off in the demo config, so the token field can be left blank. Because the generator is
+constantly writing, the console shows live data — and the sleep cycle forgetting and evicting it.
+
+By default `run.sh` provisions OpenSearch for the Search tab: if something is already serving on
+`http://localhost:9200` (e.g. a standing test cluster) it reuses that; otherwise it starts an
+`opensearchproject/opensearch:3.1.0` container (needs `docker` or `podman`) and stops it again on
+exit. Either way the service's secondary content-search index is enabled against it. Set
+`SEARCH=0 ./demo/run.sh` to skip search entirely; if no cluster is reachable and no container
+runtime is found the demo still runs — the Memories and Events tabs work fully, only the Search tab
+is inactive.
 
 ## Watching a soak in Grafana
 

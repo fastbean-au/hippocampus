@@ -4,7 +4,15 @@
         "json": false
     },
     "port": 8300,
-    "gateway": { "port": 0 },
+    "gateway": { "port": 8080 },
+    "opensearch": {
+        "enabled": false,
+        "addresses": ["http://localhost:9200"],
+        "index": "hippocampus-memories",
+        "queueSize": 1024,
+        "reconcileIntervalSeconds": 300,
+        "reconcileBatchSize": 500
+    },
     "observability": {
         "tracing": {
             "enabled": false,
@@ -33,6 +41,9 @@
     },
     "sleep": {
         "periodSeconds": 120
+    },
+    "shutdown": {
+        "timeoutSeconds": 30
     },
     "consolidation": {
         "defaultEventSignificanceValue": 0,

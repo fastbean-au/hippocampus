@@ -76,7 +76,7 @@ The full documentation lives under [`docs/`](docs/):
 
 ## Demo
 
-To see the service under sustained, realistic load, run `./demo/run.sh`. It builds and launches the service together with a load generator that stores bursty, slow, and event-less memories, queries and recalls them, and exercises every RPC, capped at 1 GiB of on-disk data. Run it as `OBSERVABILITY=1 ./demo/run.sh` to also launch an `grafana/otel-lgtm` collector (needs docker or podman) and watch the soak live in Grafana at `http://localhost:3000`. See [demo/README.md](demo/README.md) for details.
+To see the service under sustained, realistic load, run `./demo/run.sh`. It builds and launches the service together with a load generator that stores bursty, slow, and event-less memories, queries and recalls them, and exercises every RPC, capped at 1 GiB of on-disk data. Open the web console at [`http://localhost:8080/ui`](http://localhost:8080/ui) to browse, search, and drive the data live as it churns — the demo also starts an OpenSearch container (docker or podman) so the console's content-search tab works, or reuses one already listening on `:9200` (`SEARCH=0 ./demo/run.sh` skips it). Run it as `OBSERVABILITY=1 ./demo/run.sh` to also launch a `grafana/otel-lgtm` collector and watch the soak live in Grafana at `http://localhost:3000`. See [demo/README.md](demo/README.md) for details.
 
 ## Docker
 
