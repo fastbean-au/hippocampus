@@ -166,3 +166,4 @@ See [Authentication](configuration.md#authentication) and [TLS](configuration.md
 - [Configurability](configuration.md#configurability) — the exhaustive configuration reference.
 - [Memory consolidation](consolidation.md#memory-consolidation) — the decay algorithms, capacity target,
   and summarization.
+- [MCP server](mcp.md) — expose the store to an LLM host (Claude Desktop/Code) as memory tools.

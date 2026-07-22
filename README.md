@@ -57,6 +57,9 @@ docker compose -f docker/docker-compose.postgres.yaml up --build
 
 # Centralized Setup (PostgreSQL + OpenSearch Content Indexing)
 docker compose -f docker/docker-compose.corporate.yaml up --build
+
+# Add an MCP-over-HTTP endpoint to the embedded stack (opt-in profile, publishes :8090)
+docker compose --profile mcp up --build
 ```
 
 ---
@@ -88,6 +91,24 @@ Hippocampus scales cleanly using two primary deployment patterns depending on st
 
 ---
 
+## 🤖 MCP Server — Memory for LLMs
+
+Give an AI agent a long-term memory that forgets like a human one. `cmd/hippocampus-mcp` is a
+[Model Context Protocol](https://modelcontextprotocol.io) server that exposes Hippocampus to
+**Claude Desktop, Claude Code, or any MCP host** — a thin gRPC-client bridge, no extra service to run.
+
+```bash
+go build -o hippocampus-mcp ./cmd/hippocampus-mcp
+claude mcp add hippocampus -- ./hippocampus-mcp --address localhost:50051
+```
+
+* **Curated, safe tools:** store, recall (reinforcing), search, and browse memories and events — destructive/admin RPCs are intentionally withheld, so an agent can't purge or exfiltrate a store.
+* **stdio or streamable HTTP** transports; bearer-token auth and TLS mirror the service's own.
+
+*See **[MCP Server guide](docs/mcp.md)** for the tool reference and host configuration.*
+
+---
+
 ## 📚 Documentation Index
 
 Detailed operational and architectural guides live under [`docs/`](docs/):
@@ -101,6 +122,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | 📊 **[Performance Benchmarks](docs/performance.md)** | Throughput sweeps across SQLite, Postgres, and MySQL under heavy loads. |
 | 📐 **[Use Cases & Patterns](docs/use-cases.md)** | Embedded vs. centralized topologies and data transfer strategies. |
 | 🧪 **[Demonstrations](docs/demonstrations.md)** | Worked scenarios using real-world data shapes and data generators. |
+| 🤖 **[MCP Server](docs/mcp.md)** | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol. |
 
 ---
 

@@ -18,9 +18,39 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.buildVersion=${VERSION}" \
     -o /hippocampus ./cmd/hippocampus
 
+# The MCP bridge (cmd/hippocampus-mcp) is a separate binary and a separate image (the `mcp` stage
+# below). Its version var is main.version, not main.buildVersion.
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /hippocampus-mcp ./cmd/hippocampus-mcp
+
+# The MCP-server image. Selected with `target: mcp` (see the profile-gated `mcp` service in
+# docker-compose.yaml); it runs the streamable-HTTP transport so an MCP host can reach it over the
+# network. The stdio transport is not useful in a container - for local stdio use, build the binary
+# on the host and point your MCP host at the service's exposed gRPC port (see docs/mcp.md). No
+# HEALTHCHECK: the streamable-HTTP handler exposes no health endpoint. It is built before the
+# default hippocampus stage so a plain (no-target) `docker compose build` still selects hippocampus.
+FROM alpine:3.22 AS mcp
+
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="hippocampus-mcp" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.source="https://github.com/fastbean-au/hippocampus"
+
+RUN adduser -D -H -u 1000 hippocampus
+
+COPY --from=build /hippocampus-mcp /usr/local/bin/hippocampus-mcp
+
+USER hippocampus
+
+# Streamable-HTTP transport default (the compose service sets the address/transport flags).
+EXPOSE 8090
+
+ENTRYPOINT ["hippocampus-mcp"]
+
 # Alpine rather than scratch/distroless: busybox wget enables the compose healthcheck against the
 # gateway's /healthz, which a shell-less image could not run.
-FROM alpine:3.22
+FROM alpine:3.22 AS hippocampus
 
 # Build identification. Pass --build-arg VERSION=<tag> to stamp a release; the running binary also
 # reports its embedded module/VCS version via --version and the /healthz body.

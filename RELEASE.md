@@ -62,16 +62,26 @@ fixes, minor for backward-compatible features, major for breaking changes.
    then `gh release create` builds the GitHub release with auto-generated notes from the tag.
    Coverage is not reported here — a tag-triggered run would file it under the tag ref, leaving the
    `?branch=main` badge stale; the CI workflow reports coverage to Coveralls on push to `main`.
-2. **`publish` job** (gated on `release` succeeding, so a red build publishes nothing) — builds the
-   image and pushes it to **`ghcr.io/fastbean-au/hippocampus`**, tagged with the full version
-   (`1.2.3`), the rolling `major.minor` (`1.2`), and `latest` for non-prerelease tags. The tag is
-   passed as `--build-arg VERSION=v1.2.3`, so the published binary reports the release version.
+2. **`binaries` job** (gated on `release`) — cross-compiles both `hippocampus` and `hippocampus-mcp`
+   for `linux`, `darwin`, and `windows` on `amd64` and `arm64` (pure Go, CGO disabled, so the whole
+   matrix builds on one runner), archives each with `LICENSE` (`.tar.gz`, or `.zip` for Windows),
+   and attaches them plus a `checksums.txt` to the release. This is what lets someone run the MCP
+   bridge — which an MCP host spawns locally over stdio — without a Go toolchain.
+3. **`publish` job** (gated on `release` succeeding, so a red build publishes nothing) — builds two
+   images and pushes them to GHCR, each tagged with the full version (`1.2.3`), the rolling
+   `major.minor` (`1.2`), and `latest` for non-prerelease tags: the service image at
+   **`ghcr.io/fastbean-au/hippocampus`** and the MCP-bridge image (Dockerfile `target: mcp`) at
+   **`ghcr.io/fastbean-au/hippocampus-mcp`**. The tag is passed as `--build-arg VERSION=v1.2.3`, so
+   each published binary reports the release version.
 
 ## After the release
 
-- Verify the GitHub release page and its generated notes.
-- Verify the image: `docker pull ghcr.io/fastbean-au/hippocampus:1.2.3` and
+- Verify the GitHub release page, its generated notes, and the attached binary archives +
+  `checksums.txt`.
+- Verify the service image: `docker pull ghcr.io/fastbean-au/hippocampus:1.2.3` and
   `docker run --rm ghcr.io/fastbean-au/hippocampus:1.2.3 --version` should print `v1.2.3`.
+- Verify the MCP image: `docker run --rm ghcr.io/fastbean-au/hippocampus-mcp:1.2.3 --version` should
+  print `v1.2.3`.
 - Confirm the coverage update on Coveralls — it lands from the CI run for the merge to `main`, not
   from the tag push.
 

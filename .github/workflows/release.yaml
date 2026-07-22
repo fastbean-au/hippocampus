@@ -94,6 +94,68 @@ jobs:
         # the changelog from merged PRs since the previous tag.
         run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
 
+  # Cross-compile both binaries and attach them to the release, so an end user can grab a runnable
+  # tool without a Go toolchain - most valuable for cmd/hippocampus-mcp, which an MCP host (Claude
+  # Desktop/Code) spawns locally over stdio. Everything is pure Go with CGO disabled, so the whole
+  # OS/arch matrix cross-compiles from one runner with no cross toolchain. Gated on `release` so the
+  # release the assets attach to already exists. A single job (rather than a build matrix) keeps the
+  # checksums in one file; the builds are seconds each.
+  binaries:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # upload release assets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The tag is stamped into each binary via -ldflags -X, matching the Dockerfile: the service
+      # binary reads main.buildVersion, the MCP bridge reads main.version. Each platform archive
+      # bundles the binary plus LICENSE; Windows gets a .zip, everything else a .tar.gz. A single
+      # checksums.txt over all archives lets a downloader verify integrity.
+      - name: Cross-compile and archive
+        env:
+          VERSION: ${{ github.ref_name }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            export GOOS="${platform%/*}" GOARCH="${platform#*/}"
+
+            ext=""
+            if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+
+            go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o "hippocampus${ext}" ./cmd/hippocampus
+            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "hippocampus-mcp${ext}" ./cmd/hippocampus-mcp
+
+            plat="${GOOS}_${GOARCH}"
+
+            if [ "$GOOS" = "windows" ]; then
+              zip -q "dist/hippocampus_${VERSION}_${plat}.zip" "hippocampus${ext}" LICENSE
+              zip -q "dist/hippocampus-mcp_${VERSION}_${plat}.zip" "hippocampus-mcp${ext}" LICENSE
+            else
+              tar -czf "dist/hippocampus_${VERSION}_${plat}.tar.gz" "hippocampus${ext}" LICENSE
+              tar -czf "dist/hippocampus-mcp_${VERSION}_${plat}.tar.gz" "hippocampus-mcp${ext}" LICENSE
+            fi
+
+            rm -f "hippocampus${ext}" "hippocampus-mcp${ext}"
+          done
+
+          ( cd dist && sha256sum ./* > checksums.txt )
+
+      - name: Upload binaries to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # --clobber so re-running the workflow on the same tag replaces assets rather than failing.
+        run: gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+
   # Build and push the container image to GitHub Container Registry, gated behind the release job
   # so a failing test suite or coverage run publishes nothing. Auth is the built-in GITHUB_TOKEN
   # (no extra secrets); the image name is ghcr.io/<owner>/<repo>. The tag is passed as VERSION so
@@ -136,3 +198,26 @@ jobs:
             VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # The MCP bridge ships as its own image (Dockerfile `target: mcp`) under a separate GHCR
+      # package, so the opt-in HTTP compose service - and remote MCP hosts - can pull it instead of
+      # building. Same tag scheme as the service image, VERSION stamped into main.version.
+      - name: Derive MCP image tags
+        id: meta-mcp
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-mcp
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push MCP image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: mcp
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          tags: ${{ steps.meta-mcp.outputs.tags }}
+          labels: ${{ steps.meta-mcp.outputs.labels }}

@@ -30,6 +30,31 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
 
+  # Optional MCP bridge over the streamable-HTTP transport, so an MCP host (Claude Desktop/Code) can
+  # reach this embedded instance's memory tools over the network. Off by default; started only with
+  # `--profile mcp`. It dials the hippocampus service over the compose network and exposes the MCP
+  # endpoint on :8090. The more common local pattern is the stdio transport, where the host spawns
+  # the binary itself and dials the exposed :50051 - no container needed; see docs/mcp.md. This
+  # endpoint is unauthenticated, like the rest of this demo stack - do not expose it as-is.
+  mcp:
+    build:
+      context: .
+      target: mcp
+      args:
+        VERSION: "${VERSION:-dev}"
+    profiles: ["mcp"]
+    command:
+      - "--address"
+      - "hippocampus:50051"
+      - "--transport"
+      - "http"
+      - "--http-address"
+      - ":8090"
+    ports:
+      - "8090:8090" # streamable-HTTP MCP endpoint
+    depends_on:
+      - hippocampus
+
   # All-in-one observability backend. Off by default; started only with `--profile observability`.
   # The Hippocampus overview dashboard is provisioned in and set as the Grafana home page.
   otel-lgtm:

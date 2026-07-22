@@ -6,6 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Build: `go build ./...`
 - Run: `go run ./cmd/hippocampus -c config.json` (the `-c`/`--config_file` flag defaults to `./config.json`)
+- Run the MCP server: `go run ./cmd/hippocampus-mcp --address localhost:50051` (a standalone MCP
+  bridge that dials a running service; stdio by default, `--transport http` for streamable HTTP;
+  see `docs/mcp.md`)
 - Test: `go test ./...` (single test: `go test ./hippocampus -run TestName`)
 - Benchmarks: `go test ./db -bench . -run XXX` (`db/bench_test.go`; run on demand — deliberately
   not CI-gated — and compare with benchstat when touching `hippocampus/sleep.go`, the db scans,
@@ -30,7 +33,16 @@ up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up
   docker/docker-compose.opensearch-secured.yaml up --build` (the same with the OpenSearch security
   plugin enabled: HTTPS + basic auth, Hippocampus connecting over TLS via the `opensearch.tls`
   config block, credentials injected as `OPENSEARCH_ADMIN_PASSWORD`); container configs in
-  `docker/`, image config baked from `docker/config.sqlite.json`
+  `docker/`, image config baked from `docker/config.sqlite.json`. The `Dockerfile` is multi-stage:
+  one build stage compiles both binaries, then an `mcp` stage (the `hippocampus-mcp` image) precedes
+  the default `hippocampus` stage — the mcp stage is placed first so a no-`target` build still selects
+  hippocampus, keeping every existing compose file unchanged
+- MCP-over-HTTP endpoint (SQLite compose only): `docker compose --profile mcp up --build` adds an
+  opt-in `mcp` service (streamable-HTTP transport, `Dockerfile` `target: mcp`) that dials the
+  `hippocampus` service over the compose network and publishes the MCP endpoint on `:8090`; off by
+  default (behind the `mcp` profile), unauthenticated like the rest of that demo stack. The common
+  local pattern is instead the stdio transport, spawned by the MCP host against the published
+  `:50051` — no container. See `docs/mcp.md`
 - Observability stack (any compose file): `OBSERVABILITY=true docker compose --profile observability
 up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTLP `:4317`) behind a
   compose `observability` profile — off by default. The `hippocampus` service sets
@@ -335,6 +347,27 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   the decay clock (`unitsOfAgeInDays` 0.002 ≈ one age unit per 3 minutes) so forgetting,
   recall reinforcement, and the byte capacity target all play out within a session instead of
   over real days.
+- `cmd/hippocampus-mcp/` — a standalone Model Context Protocol server (its own `package main`, like
+  `demo/generator`) that bridges an LLM host (Claude Desktop/Code, any MCP client) to a running
+  Hippocampus instance. A thin gRPC-client bridge, not an in-service transport: it holds no state,
+  dials the service at `--address`, and turns each MCP tool call into an RPC (`main.go` wires the
+  dial/transport, `tools.go` registers the tools and handlers). Serves stdio by default (logging
+  forced to stderr so stdout carries only the MCP JSON-RPC stream) or streamable HTTP
+  (`--transport http`). The tool surface is a curated, safe subset — `store_memory`,
+  `recall_memories`, `search_memories`, `list_memories`, `create_event`, `list_events`,
+  `get_summarization_candidates` — deliberately excluding the destructive/admin RPCs (Purge,
+  Export/Import/Transfer/Clear, event delete/merge) so a model can't wipe or exfiltrate a store.
+  Proto messages are projected to plain view structs for clean inferred JSON schemas. Bearer-token
+  auth (`--token`/`HIPPOCAMPUS_MCP_TOKEN`, injected as an `authorization: Bearer` client
+  interceptor) and the TLS trust-option block mirror the service's Transfer client; a per-call
+  timeout (`--call-timeout-seconds`) bounds each RPC. Handlers depend on a narrow `hippoClient`
+  interface so `tools_test.go` drives them with a fake, plus an end-to-end test over the SDK's
+  in-memory transport (`main_test.go` covers the flag/transport/credential wiring — the package
+  sits ~94%, only the thin `main` shell uncovered). Built on
+  `github.com/modelcontextprotocol/go-sdk/mcp`. Ships as its own image (`Dockerfile` `target: mcp`),
+  reachable over HTTP via the opt-in `mcp` compose profile; the release workflow cross-compiles the
+  binary for every OS/arch onto the GitHub release and publishes the image to
+  `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
 
 ## Conventions in this repo
 
