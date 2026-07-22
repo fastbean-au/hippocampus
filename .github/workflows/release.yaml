@@ -124,7 +124,14 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
-          mkdir -p dist
+          mkdir -p dist stage
+
+          # Binaries are built into stage/ rather than the repo root: the root holds a `hippocampus/`
+          # package directory, so `go build -o hippocampus` would drop the binary inside that
+          # directory instead of producing a file (and the archive/rm steps would then hit the
+          # directory - "rm: cannot remove 'hippocampus': Is a directory"). LICENSE is copied into
+          # stage/ once so each archive can be built from a single directory.
+          cp LICENSE stage/LICENSE
 
           for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             export GOOS="${platform%/*}" GOARCH="${platform#*/}"
@@ -132,20 +139,21 @@ jobs:
             ext=""
             if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
 
-            go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o "hippocampus${ext}" ./cmd/hippocampus
-            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "hippocampus-mcp${ext}" ./cmd/hippocampus-mcp
+            go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o "stage/hippocampus${ext}" ./cmd/hippocampus
+            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "stage/hippocampus-mcp${ext}" ./cmd/hippocampus-mcp
 
             plat="${GOOS}_${GOARCH}"
 
             if [ "$GOOS" = "windows" ]; then
-              zip -q "dist/hippocampus_${VERSION}_${plat}.zip" "hippocampus${ext}" LICENSE
-              zip -q "dist/hippocampus-mcp_${VERSION}_${plat}.zip" "hippocampus-mcp${ext}" LICENSE
+              # -j junks the stage/ path so the archive entries are just the binary and LICENSE.
+              zip -j -q "dist/hippocampus_${VERSION}_${plat}.zip" "stage/hippocampus${ext}" stage/LICENSE
+              zip -j -q "dist/hippocampus-mcp_${VERSION}_${plat}.zip" "stage/hippocampus-mcp${ext}" stage/LICENSE
             else
-              tar -czf "dist/hippocampus_${VERSION}_${plat}.tar.gz" "hippocampus${ext}" LICENSE
-              tar -czf "dist/hippocampus-mcp_${VERSION}_${plat}.tar.gz" "hippocampus-mcp${ext}" LICENSE
+              tar -czf "dist/hippocampus_${VERSION}_${plat}.tar.gz" -C stage "hippocampus${ext}" LICENSE
+              tar -czf "dist/hippocampus-mcp_${VERSION}_${plat}.tar.gz" -C stage "hippocampus-mcp${ext}" LICENSE
             fi
 
-            rm -f "hippocampus${ext}" "hippocampus-mcp${ext}"
+            rm -f "stage/hippocampus${ext}" "stage/hippocampus-mcp${ext}"
           done
 
           ( cd dist && sha256sum ./* > checksums.txt )
