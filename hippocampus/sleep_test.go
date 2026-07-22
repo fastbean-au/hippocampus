@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,6 +247,31 @@ func TestCalculateValue_Method6_SigmoidDecay(t *testing.T) {
 	}
 }
 
+// TestCalculateValue_Method2_LinearVariant verifies method 2's formula directly: despite its name
+// suggesting an exponential curve, it is linear in age (a constant divisor scaled by e raised to
+// aggressiveness), unlike method 4, the one genuinely exponential method.
+func TestCalculateValue_Method2_LinearVariant(t *testing.T) {
+	s := &Server{consolidation: Consolidation{method: 2, aggressiveness: 1.0}}
+
+	got := s.calculateValue(1000, 2.0)
+	want := 1000 / (2.0 * math.Pow(math.E, 1.0))
+
+	if diff := math.Abs(got - want); diff > 1e-9 {
+		t.Errorf("expected %v, got %v", want, got)
+	}
+}
+
+// TestCalculateValue_UnknownMethodNeverConsolidates verifies the default arm: a method number
+// outside the six documented algorithms degrades safely to "never consolidate" (math.MaxFloat64)
+// rather than a zero value that would delete everything.
+func TestCalculateValue_UnknownMethodNeverConsolidates(t *testing.T) {
+	s := &Server{consolidation: Consolidation{method: 99, aggressiveness: 1.0}}
+
+	if got := s.calculateValue(1000, 5.0); got != math.MaxFloat64 {
+		t.Errorf("expected an unknown method to degrade to never-consolidate, got %v", got)
+	}
+}
+
 // TestShouldConsolidateMemory_Method3_NegativeLogFactor verifies that method 3 with an
 // aggressiveness value that drives (1 + ln(aggressiveness)) negative does not incorrectly
 // consolidate memories. Before the fix, calculateValue returned a negative number in this case,
@@ -331,6 +357,45 @@ func TestShouldConsolidateMemory_NonPositiveAge(t *testing.T) {
 	future := time.Now().UnixNano() + int64(10*DAY_IN_NANOSECONDS)
 	if s.ShouldConsolidateMemory(candidate(100, 100, 0, future)) {
 		t.Error("memory timestamped in the future should not be consolidated")
+	}
+}
+
+// TestShouldConsolidateMemory_TinyFutureAgeUnitsNonPositive is a regression-style test for
+// shouldConsolidate's own ageUnits <= 0 guard, distinct from the minimumAgeInDays guard that
+// TestShouldConsolidateMemory_NonPositiveAge's future-timestamp case actually exercises: a
+// timestamp only a few milliseconds in the future still truncates to "0 days old" for the
+// minimumAgeInDays check (so that guard does not fire with minimumAgeInDays 0), but ageUnits itself
+// - computed at finer precision - is still negative, and must be caught rather than flowing into
+// calculateValue.
+func TestShouldConsolidateMemory_TinyFutureAgeUnitsNonPositive(t *testing.T) {
+	s := &Server{
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			minimumAgeInDays:  0,
+			deletionThreshold: 1.0,
+		},
+	}
+
+	tinyFuture := time.Now().UnixNano() + int64(time.Millisecond)
+
+	if s.ShouldConsolidateMemory(candidate(100, 100, 0, tinyFuture)) {
+		t.Error("a timestamp a millisecond in the future must not be consolidated")
+	}
+}
+
+// TestCalculateValue_Method3_PositiveFactor exercises method 3's ordinary (non-degenerate) path,
+// where (1 + ln(aggressiveness)) is positive - the two existing method-3 tests only cover the
+// negative/NaN guard, never this line.
+func TestCalculateValue_Method3_PositiveFactor(t *testing.T) {
+	s := &Server{consolidation: Consolidation{method: 3, aggressiveness: math.E * math.E}} // ln(e^2) = 2
+
+	got := s.calculateValue(1000, 2.0)
+	want := 1000 / (2.0 * 3.0) // factor = 1 + ln(e^2) = 1 + 2 = 3
+
+	if diff := math.Abs(got - want); diff > 1e-6 {
+		t.Errorf("expected %v, got %v", want, got)
 	}
 }
 
@@ -824,6 +889,234 @@ func TestScanSummarizationCandidates_DisabledByDefault(t *testing.T) {
 
 	if s.summarizationCandidates != nil {
 		t.Errorf("expected the candidate list to remain untouched when disabled, got %+v", s.summarizationCandidates)
+	}
+}
+
+// failFindCandidatesStore wraps a real db.Store but forces FindSummarizationCandidates to fail, so
+// scanSummarizationCandidates' error-logging arm can be exercised without a broken database.
+type failFindCandidatesStore struct {
+	db.Store
+	err error
+}
+
+func (f failFindCandidatesStore) FindSummarizationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]db.SummarizationCandidate, error) {
+	return nil, f.err
+}
+
+// TestScanSummarizationCandidates_PropagatesScanError verifies a failing scan is logged and leaves
+// the previously cached candidate list untouched, rather than panicking or clearing it.
+func TestScanSummarizationCandidates_PropagatesScanError(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{
+		db:                      failFindCandidatesStore{Store: database, err: errors.New("scan boom")},
+		consolidation:           Consolidation{summarizationMinMemories: 1},
+		summarizationCandidates: []db.SummarizationCandidate{{EventId: "stale"}},
+	}
+
+	s.scanSummarizationCandidates(context.Background())
+
+	if len(s.summarizationCandidates) != 1 || s.summarizationCandidates[0].EventId != "stale" {
+		t.Errorf("expected the stale candidate list left untouched on scan failure, got %+v", s.summarizationCandidates)
+	}
+}
+
+// failCompactStore wraps a real db.Store but forces CompactSignificanceLevels to fail, so sleep()'s
+// best-effort registry maintenance warning can be exercised without a broken database.
+type failCompactStore struct {
+	db.Store
+	err error
+}
+
+func (f failCompactStore) CompactSignificanceLevels(ctx context.Context) error {
+	return f.err
+}
+
+// TestSleep_CompactSignificanceLevelsFailureIsBestEffort verifies a failing registry compaction is
+// logged and does not fail the sleep cycle - it sits outside the success flag.
+func TestSleep_CompactSignificanceLevelsFailureIsBestEffort(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{
+		db: failCompactStore{Store: database, err: errors.New("compaction boom")},
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			deletionThreshold: 1.0,
+		},
+	}
+
+	if err := s.sleep(); err != nil {
+		t.Errorf("expected a failing CompactSignificanceLevels to be best-effort, got %s", err)
+	}
+}
+
+// TestConsolidate_PercentileCalculatedFromEvents verifies the success arm of the default event
+// significance percentile calculation: with events present, the computed percentile overwrites the
+// configured fixed value (the complementary case to TestConsolidate_PercentileWithNoEvents, which
+// only exercises the empty-store fallback).
+func TestConsolidate_PercentileCalculatedFromEvents(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	for _, e := range []types.Event{
+		{Id: "e1", Name: "one", TimeStart: 100, Significance: 2},
+		{Id: "e2", Name: "two", TimeStart: 100, Significance: 8},
+	} {
+		if _, err := database.CreateEvent(context.Background(), e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	s := &Server{
+		db: database,
+		consolidation: Consolidation{
+			method:                             1,
+			aggressiveness:                     1.0,
+			unitsOfAgeInDays:                   1.0,
+			deletionThreshold:                  1.0,
+			defaultEventSignificanceValue:      5,
+			defaultEventSignificancePercentile: 50,
+		},
+	}
+
+	if err := s.consolidate(context.Background()); err != nil {
+		t.Fatalf("consolidate: %s", err)
+	}
+
+	if s.consolidation.defaultEventSignificanceValue == 5 {
+		t.Error("expected the computed percentile to overwrite the configured fixed value")
+	}
+}
+
+// failUsedBytesStore wraps a real db.Store but forces UsedBytes to fail, so evict()'s error arm can
+// be exercised without a broken database.
+type failUsedBytesStore struct {
+	db.Store
+	err error
+}
+
+func (f failUsedBytesStore) UsedBytes(ctx context.Context) (int64, error) {
+	return 0, f.err
+}
+
+// TestEvict_UsedBytesErrorPropagates verifies a failing UsedBytes reading surfaces through evict()
+// rather than being swallowed.
+func TestEvict_UsedBytesErrorPropagates(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	wantErr := errors.New("used bytes boom")
+
+	s := &Server{
+		db:            failUsedBytesStore{Store: database, err: wantErr},
+		consolidation: Consolidation{capacityBytes: 1000},
+	}
+
+	if err := s.evict(context.Background()); !errors.Is(err, wantErr) {
+		t.Errorf("expected the UsedBytes failure to propagate, got %v", err)
+	}
+}
+
+// failEvictMemoriesStore wraps a real db.Store, reports an inflated UsedBytes so eviction always
+// judges the store over capacity, and forces EvictMemories itself to fail - so evict()'s second
+// error arm (after a successful UsedBytes read) can be exercised.
+type failEvictMemoriesStore struct {
+	db.Store
+	err error
+}
+
+func (f failEvictMemoriesStore) UsedBytes(ctx context.Context) (int64, error) {
+	return math.MaxInt64 / 2, nil
+}
+
+func (f failEvictMemoriesStore) EvictMemories(ctx context.Context, s db.Server, freeBytes int64) (int, int, int64, error) {
+	return 0, 0, 0, f.err
+}
+
+// TestEvict_EvictMemoriesErrorPropagates verifies a failing EvictMemories call surfaces through
+// evict() (after used bytes are recorded and cached) rather than being swallowed.
+func TestEvict_EvictMemoriesErrorPropagates(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	wantErr := errors.New("evict boom")
+
+	s := &Server{
+		db:            failEvictMemoriesStore{Store: database, err: wantErr},
+		consolidation: Consolidation{capacityBytes: 1000},
+	}
+
+	if err := s.evict(context.Background()); !errors.Is(err, wantErr) {
+		t.Errorf("expected the EvictMemories failure to propagate, got %v", err)
+	}
+
+	if s.consolidation.lastUsedBytes <= 0 {
+		t.Error("expected the used-bytes reading to still be cached despite the later EvictMemories failure")
+	}
+}
+
+// TestSleep_WrapsEvictAndPreserveErrors is a regression-style test for sleep()'s own switch: with
+// consolidation succeeding, an evict() failure must surface as e2 and a preserve() failure as e3 -
+// the two switch arms TestSleep_WrapsUnderlyingError (which drives the e1 arm) does not reach.
+func TestSleep_WrapsEvictAndPreserveErrors(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	evictErr := errors.New("used bytes boom")
+
+	s := &Server{
+		db: failUsedBytesStore{Store: database, err: evictErr},
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			deletionThreshold: 1.0,
+			capacityBytes:     1000,
+		},
+	}
+
+	if err := s.sleep(); !errors.Is(err, evictErr) {
+		t.Errorf("expected sleep to wrap the evict failure (e2), got %v", err)
+	}
+
+	preserveErr := errors.New("preserve boom")
+
+	s2 := &Server{
+		db: failPreserveStore{Store: database, err: preserveErr},
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			deletionThreshold: 1.0,
+		},
+	}
+
+	// preserve() re-wraps its underlying cause into a generic message rather than carrying it via
+	// %w (unlike consolidate/evict), so this checks the surfaced message rather than errors.Is.
+	if err := s2.sleep(); err == nil || !strings.Contains(err.Error(), "failed to preserve") {
+		t.Errorf("expected sleep to wrap the preserve failure (e3), got %v", err)
 	}
 }
 

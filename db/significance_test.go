@@ -343,6 +343,169 @@ func TestPlacement_UnknownAnchorErrors(t *testing.T) {
 	}
 }
 
+// TestPlacement_Below verifies the PlacementBelow arm of resolveLevelTx: a new item placed below
+// an anchor takes the anchor's own rank, and the anchor (along with anything at or above it)
+// shifts up to make room.
+func TestPlacement_Below(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	createMemoryWithSignificance(t, d, "five", 5)
+
+	levelID, rank, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{
+		Placement:  PlacementBelow,
+		Anchor:     5,
+		AnchorKind: AnchorMemory,
+	})
+	if err != nil {
+		t.Fatalf("resolve below: %s", err)
+	}
+
+	if rank != 5 {
+		t.Fatalf("placement below 5 resolved rank = %d, want 5", rank)
+	}
+
+	id := levelID.Int64
+	if _, err := d.CreateMemory(context.Background(), types.Memory{
+		Id:                  "under",
+		Body:                "b",
+		SignificanceLevelID: &id,
+		TimeStamp:           time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// "five" must have shifted up out of the way, and "under" now holds rank 5.
+	if got := significanceOf(t, d, "under"); got != 5 {
+		t.Fatalf("under significance = %d, want 5", got)
+	}
+
+	if got := significanceOf(t, d, "five"); got != 6 {
+		t.Fatalf("five significance after being displaced = %d, want 6", got)
+	}
+}
+
+// TestPlacement_BetweenUpperAnchorUnknownErrors verifies the Between placement's upper-anchor
+// resolution failing (an unknown id) surfaces as ErrInvalidPlacement, mirroring the lower anchor.
+func TestPlacement_BetweenUpperAnchorUnknownErrors(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	createMemoryWithSignificance(t, d, "low", 5)
+
+	_, _, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{
+		Placement:  PlacementBetween,
+		AnchorID:   "low",
+		AnchorKind: AnchorMemory,
+		UpperID:    "nonexistent",
+		UpperKind:  AnchorMemory,
+	})
+	if !errors.Is(err, ErrInvalidPlacement) {
+		t.Fatalf("resolve between with unknown upper anchor err = %v, want ErrInvalidPlacement", err)
+	}
+}
+
+// TestPlacement_BetweenUpperNotGreaterThanLowerErrors verifies an inverted or equal Between range
+// (upper <= lower) is rejected rather than silently opening a gap in the wrong direction.
+func TestPlacement_BetweenUpperNotGreaterThanLowerErrors(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	_, _, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{
+		Placement:  PlacementBetween,
+		Anchor:     8,
+		Upper:      5,
+		AnchorKind: AnchorMemory,
+		UpperKind:  AnchorMemory,
+	})
+	if !errors.Is(err, ErrInvalidPlacement) {
+		t.Fatalf("resolve between(8, 5) err = %v, want ErrInvalidPlacement", err)
+	}
+}
+
+// TestAnchorRank_ValueLessThanOneErrors verifies a literal (non-id) anchor value below 1 is
+// rejected: there is nothing to sit "above"/"below" a non-positive rank.
+func TestAnchorRank_ValueLessThanOneErrors(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	_, _, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{
+		Placement:  PlacementAbove,
+		Anchor:     0,
+		AnchorKind: AnchorMemory,
+	})
+	if !errors.Is(err, ErrInvalidPlacement) {
+		t.Fatalf("resolve above anchor 0 err = %v, want ErrInvalidPlacement", err)
+	}
+}
+
+// TestAnchorRank_EventKindUsesEventsTable verifies an id-based anchor naming AnchorEvent resolves
+// against the events table rather than memories - the two tables' anchors must not be confused.
+func TestAnchorRank_EventKindUsesEventsTable(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	if _, err := d.CreateEvent(context.Background(), types.Event{
+		Id: "e1", Name: "anchor event", TimeStart: 100, Significance: 10,
+	}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	_, rank, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{
+		Placement:  PlacementAbove,
+		AnchorID:   "e1",
+		AnchorKind: AnchorEvent,
+	})
+	if err != nil {
+		t.Fatalf("resolve above event anchor: %s", err)
+	}
+
+	if rank != 11 {
+		t.Fatalf("above event anchor (rank 10) resolved rank = %d, want 11", rank)
+	}
+}
+
+// TestAnchorRank_UnrankedAnchorByIdErrors verifies naming an existing but unranked item as an
+// anchor is rejected - there is no rank to sit beside.
+func TestAnchorRank_UnrankedAnchorByIdErrors(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	createMemoryWithSignificance(t, d, "unranked", 0)
+
+	_, _, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{
+		Placement:  PlacementAbove,
+		AnchorID:   "unranked",
+		AnchorKind: AnchorMemory,
+	})
+	if !errors.Is(err, ErrInvalidPlacement) {
+		t.Fatalf("resolve above an unranked anchor err = %v, want ErrInvalidPlacement", err)
+	}
+}
+
+// TestCompactSignificanceLevels_NoOpBelowThreshold verifies the maintenance sweep is a no-op
+// while the registry's top rank is still comfortably below registryCompactionThreshold - the
+// common case on every cycle - covering both the "empty registry" (no rows at all) and the
+// "some ranks, none inflated" shapes.
+func TestCompactSignificanceLevels_NoOpBelowThreshold(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	if err := d.CompactSignificanceLevels(context.Background()); err != nil {
+		t.Fatalf("compact on an empty registry: %s", err)
+	}
+
+	createMemoryWithSignificance(t, d, "m1", 5)
+
+	if err := d.CompactSignificanceLevels(context.Background()); err != nil {
+		t.Fatalf("compact well below threshold: %s", err)
+	}
+
+	if got := significanceOf(t, d, "m1"); got != 5 {
+		t.Fatalf("significance changed by a no-op compaction: got %d, want 5", got)
+	}
+}
+
 func TestCompactSignificanceLevels(t *testing.T) {
 	d := newTestDB(t)
 	defer func() { _ = d.Close() }()

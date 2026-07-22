@@ -96,3 +96,11 @@ func TestMintToken_KidHeader(t *testing.T) {
 		t.Fatalf("expected a kid'd token to verify against its keyed secret, got: %s", err)
 	}
 }
+
+// TestTokenID_MalformedToken verifies that TokenID reports an error for a string that isn't a
+// parseable JWT at all, rather than panicking or returning a bogus id.
+func TestTokenID_MalformedToken(t *testing.T) {
+	if _, err := TokenID("not-a-token"); err == nil {
+		t.Error("expected an error extracting the jti from a malformed token")
+	}
+}

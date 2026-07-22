@@ -69,6 +69,21 @@ func TestByteLimiterWaitBlocksThenSucceeds(t *testing.T) {
 	}
 }
 
+func TestByteLimiterWaitClampsMinimumSleep(t *testing.T) {
+	// A high rate makes the computed refill wait sub-millisecond, exercising the floor that clamps
+	// it up to time.Millisecond so the retry loop never busy-spins.
+	l := &byteLimiter{ratePerSec: 100_000, burst: 10, tokens: 5, last: time.Now()}
+
+	start := time.Now()
+	if !l.wait(context.Background(), 6) {
+		t.Error("wait() should succeed once the sub-millisecond refill completes")
+	}
+
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("wait() took %s, expected well under 1s", elapsed)
+	}
+}
+
 func TestByteLimiterWaitCancelled(t *testing.T) {
 	l := &byteLimiter{ratePerSec: 1, burst: 10, tokens: 0, last: time.Now()}
 

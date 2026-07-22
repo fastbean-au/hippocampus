@@ -19,6 +19,7 @@ func TestExtractBearerToken(t *testing.T) {
 		{name: "wrong scheme", header: "Basic abc123", wantErr: true},
 		{name: "scheme with no token", header: "Bearer ", wantErr: true},
 		{name: "scheme with no separator", header: "Bearerabc123", wantErr: true},
+		{name: "scheme with only whitespace after separator", header: "Bearer    ", wantErr: true},
 	}
 
 	for _, c := range cases {

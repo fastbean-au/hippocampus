@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -43,6 +47,54 @@ func TestInterceptorRecoverPanic(t *testing.T) {
 
 	if resp != "ok" {
 		t.Errorf("expected the clean handler's response to pass through, got %v", resp)
+	}
+}
+
+// erroringMeter embeds noop.Meter so it satisfies metric.Meter, overriding only Int64Counter to
+// return an error - standing in for an instrument-name or provider-level validation failure.
+type erroringMeter struct {
+	noop.Meter
+}
+
+func (erroringMeter) Int64Counter(name string, _ ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	return noop.Int64Counter{}, fmt.Errorf("injected instrument creation failure for %q", name)
+}
+
+// erroringMeterProvider embeds noop.MeterProvider so it satisfies metric.MeterProvider, overriding
+// only Meter to hand back erroringMeter.
+type erroringMeterProvider struct {
+	noop.MeterProvider
+}
+
+func (erroringMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return erroringMeter{}
+}
+
+// TestNewPanicCounter_InstrumentCreationError covers newPanicCounter's error branch: when the
+// installed MeterProvider fails to create the instrument, it must log the failure and still return
+// a usable (if inert) counter rather than panicking or propagating the error, since the panic
+// counter is built once at package init and must never stop the process from starting.
+func TestNewPanicCounter_InstrumentCreationError(t *testing.T) {
+	restore := otel.GetMeterProvider()
+	t.Cleanup(func() { otel.SetMeterProvider(restore) })
+
+	otel.SetMeterProvider(erroringMeterProvider{})
+
+	hook := logtest.NewGlobal()
+	log.SetLevel(log.InfoLevel)
+
+	counter := newPanicCounter()
+
+	// Must not panic when used, even though construction failed.
+	counter.Add(context.Background(), 1)
+
+	entry := hook.LastEntry()
+	if entry == nil {
+		t.Fatal("expected an error log entry when instrument creation fails")
+	}
+
+	if entry.Level != log.ErrorLevel {
+		t.Errorf("expected an Error-level log entry, got %s", entry.Level)
 	}
 }
 

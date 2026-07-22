@@ -209,6 +209,19 @@ func (g *Generator) burst(ctx context.Context, rng *rand.Rand) {
 	}
 }
 
+// slowWorkerIdleMin/Max bound slowWorker's pacing sleep between events, and slowEventMinDuration/
+// MaxDuration and slowEventSleepMin/Max bound slowEvent's own lifetime and per-memory pacing.
+// Package-level vars (rather than literals) so tests can shrink them and observe a real iteration
+// of these loops without waiting out their real-world durations.
+var (
+	slowWorkerIdleMin    = 5 * time.Second
+	slowWorkerIdleMax    = 20 * time.Second
+	slowEventMinDuration = 1 * time.Minute
+	slowEventMaxDuration = 5 * time.Minute
+	slowEventSleepMin    = 2 * time.Second
+	slowEventSleepMax    = 8 * time.Second
+)
+
 // slowWorker creates an event that lives for minutes, trickling memories into it before ending
 // it and starting the next one.
 func (g *Generator) slowWorker(ctx context.Context, n int) {
@@ -217,7 +230,7 @@ func (g *Generator) slowWorker(ctx context.Context, n int) {
 	rng := rand.New(rand.NewSource(g.cfg.Seed + int64(n)*104729))
 
 	for ctx.Err() == nil {
-		if !sleepFor(ctx, randomDuration(rng, 5*time.Second, 20*time.Second)) {
+		if !sleepFor(ctx, randomDuration(rng, slowWorkerIdleMin, slowWorkerIdleMax)) {
 			return
 		}
 
@@ -242,7 +255,7 @@ func (g *Generator) slowEvent(ctx context.Context, rng *rand.Rand) {
 		return
 	}
 
-	deadline := time.Now().Add(randomDuration(rng, 1*time.Minute, 5*time.Minute))
+	deadline := time.Now().Add(randomDuration(rng, slowEventMinDuration, slowEventMaxDuration))
 
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
@@ -257,7 +270,7 @@ func (g *Generator) slowEvent(ctx context.Context, rng *rand.Rand) {
 			})
 		}
 
-		if !sleepFor(ctx, randomDuration(rng, 2*time.Second, 8*time.Second)) {
+		if !sleepFor(ctx, randomDuration(rng, slowEventSleepMin, slowEventSleepMax)) {
 			return
 		}
 	}
@@ -325,6 +338,14 @@ func (g *Generator) queryIteration(ctx context.Context, rng *rand.Rand) {
 	}
 }
 
+// mutatorWorkerIdleMin/Max bound mutatorWorker's pacing sleep between mutations. A package-level
+// var (rather than a literal) so tests can shrink it and observe a real iteration of the loop
+// without waiting out its real-world duration.
+var (
+	mutatorWorkerIdleMin = 15 * time.Second
+	mutatorWorkerIdleMax = 45 * time.Second
+)
+
 // mutatorWorker exercises the remaining RPCs: significance updates, ending and merging events,
 // deletions, and the occasional manual sleep.
 func (g *Generator) mutatorWorker(ctx context.Context, n int) {
@@ -333,7 +354,7 @@ func (g *Generator) mutatorWorker(ctx context.Context, n int) {
 	rng := rand.New(rand.NewSource(g.cfg.Seed + int64(n)*32452843))
 
 	for ctx.Err() == nil {
-		if !sleepFor(ctx, randomDuration(rng, 15*time.Second, 45*time.Second)) {
+		if !sleepFor(ctx, randomDuration(rng, mutatorWorkerIdleMin, mutatorWorkerIdleMax)) {
 			return
 		}
 
@@ -654,10 +675,14 @@ func (g *Generator) requestSleep(ctx context.Context) {
 	}
 }
 
+// logStatsInterval is how often logStats emits its summary line. A package-level var (rather than
+// a literal) so tests can shrink it and observe a real tick without waiting out the full interval.
+var logStatsInterval = 30 * time.Second
+
 func (g *Generator) logStats(ctx context.Context) {
 	log.Trace("logStats()")
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(logStatsInterval)
 	defer ticker.Stop()
 
 	// Anchor for the per-interval write throughput: bytesStored counts only accepted writes, so the

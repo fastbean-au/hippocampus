@@ -2,6 +2,8 @@ package hippocampus
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -620,5 +622,333 @@ func TestGetMemories_SignificanceExtremum_RejectsCombinationWithRange(t *testing
 		SignificanceMax:      5,
 	}); err == nil {
 		t.Fatal("expected an error combining SignificanceExtremum with SignificanceMax")
+	}
+}
+
+// memoryFaultStore wraps a real db.Store and lets a test force any one of several memory-RPC-
+// adjacent methods to fail, so the many single-line mapError branches across memory.go can each be
+// driven down their error path with a single reusable type. Every field defaults to nil, in which
+// case the call passes through to the embedded Store.
+type memoryFaultStore struct {
+	db.Store
+
+	eventExistsErr                error
+	updateMemoryErr               error
+	recallMemoriesErr             error
+	getEventErr                   error
+	replaceMemoriesWithSummaryErr error
+	countMemoriesFilteredErr      error
+	getMemoriesErr                error
+	resolveSignificanceLevelErr   error
+}
+
+func (f memoryFaultStore) EventExists(ctx context.Context, id string) (bool, error) {
+	if f.eventExistsErr != nil {
+		return false, f.eventExistsErr
+	}
+
+	return f.Store.EventExists(ctx, id)
+}
+
+func (f memoryFaultStore) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error) {
+	if f.updateMemoryErr != nil {
+		return false, f.updateMemoryErr
+	}
+
+	return f.Store.UpdateMemory(ctx, memory)
+}
+
+func (f memoryFaultStore) RecallMemories(ctx context.Context, ids []string) (*[]types.Memory, error) {
+	if f.recallMemoriesErr != nil {
+		return nil, f.recallMemoriesErr
+	}
+
+	return f.Store.RecallMemories(ctx, ids)
+}
+
+func (f memoryFaultStore) GetEvent(ctx context.Context, id string) (*types.Event, error) {
+	if f.getEventErr != nil {
+		return nil, f.getEventErr
+	}
+
+	return f.Store.GetEvent(ctx, id)
+}
+
+func (f memoryFaultStore) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error) {
+	if f.replaceMemoriesWithSummaryErr != nil {
+		return 0, f.replaceMemoriesWithSummaryErr
+	}
+
+	return f.Store.ReplaceMemoriesWithSummary(ctx, eventId, summary)
+}
+
+func (f memoryFaultStore) CountMemoriesFiltered(ctx context.Context, filter db.MemoryFilter) (int, error) {
+	if f.countMemoriesFilteredErr != nil {
+		return 0, f.countMemoriesFilteredErr
+	}
+
+	return f.Store.CountMemoriesFiltered(ctx, filter)
+}
+
+func (f memoryFaultStore) GetMemories(ctx context.Context, filter db.MemoryFilter) (*[]types.Memory, error) {
+	if f.getMemoriesErr != nil {
+		return nil, f.getMemoriesErr
+	}
+
+	return f.Store.GetMemories(ctx, filter)
+}
+
+func (f memoryFaultStore) ResolveSignificanceLevel(ctx context.Context, spec db.SignificanceSpec) (sql.NullInt64, int32, error) {
+	if f.resolveSignificanceLevelErr != nil {
+		return sql.NullInt64{}, 0, f.resolveSignificanceLevelErr
+	}
+
+	return f.Store.ResolveSignificanceLevel(ctx, spec)
+}
+
+// TestStoreMemory_EventExistsErrorMapped verifies a generic EventExists failure (checking the
+// memory's event_id) is mapped via mapError rather than returned raw.
+func TestStoreMemory_EventExistsErrorMapped(t *testing.T) {
+	s := newTestServer(t)
+
+	wantErr := errors.New("exists boom")
+	s.db = memoryFaultStore{Store: s.db, eventExistsErr: wantErr}
+
+	_, err := s.StoreMemory(context.Background(), &contract.Memory{EventId: "e1", Significance: 5, Body: "x"})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestStoreMemory_ResolveSignificanceGenericErrorMapped verifies a non-placement failure from
+// resolveMemorySignificance is mapped via mapError rather than returned raw.
+func TestStoreMemory_ResolveSignificanceGenericErrorMapped(t *testing.T) {
+	s := newTestServer(t)
+
+	wantErr := errors.New("resolve boom")
+	s.db = memoryFaultStore{Store: s.db, resolveSignificanceLevelErr: wantErr}
+
+	_, err := s.StoreMemory(context.Background(), &contract.Memory{
+		Body:      "x",
+		Placement: &contract.SignificancePlacement{Mode: contract.SignificancePlacement_ABOVE, Anchor: 5},
+	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestUpdateMemory_EventExistsAndUpdateErrorsMapped verifies UpdateMemory's own EventExists,
+// resolveMemorySignificance, and db.UpdateMemory failures are each mapped via mapError.
+func TestUpdateMemory_EventExistsAndUpdateErrorsMapped(t *testing.T) {
+	s := newTestServer(t)
+
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	real := s.db
+
+	existsErr := errors.New("exists boom")
+	s.db = memoryFaultStore{Store: real, eventExistsErr: existsErr}
+
+	if _, err := s.UpdateMemory(context.Background(), &contract.Memory{Id: "m1", EventId: "e1"}); status.Code(err) != codes.Internal {
+		t.Fatalf("EventExists failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	resolveErr := errors.New("resolve boom")
+	s.db = memoryFaultStore{Store: real, resolveSignificanceLevelErr: resolveErr}
+
+	if _, err := s.UpdateMemory(context.Background(), &contract.Memory{
+		Id:        "m1",
+		Placement: &contract.SignificancePlacement{Mode: contract.SignificancePlacement_ABOVE, Anchor: 5},
+	}); status.Code(err) != codes.Internal {
+		t.Fatalf("resolve failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	updateErr := errors.New("update boom")
+	s.db = memoryFaultStore{Store: real, updateMemoryErr: updateErr}
+
+	if _, err := s.UpdateMemory(context.Background(), &contract.Memory{Id: "m1", Significance: 9}); status.Code(err) != codes.Internal {
+		t.Fatalf("UpdateMemory failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestDeleteMemories_EmptyIdsIsNoOp verifies an empty (post-dedupe) id list returns immediately
+// without touching the store or the search index.
+func TestDeleteMemories_EmptyIdsIsNoOp(t *testing.T) {
+	s := newTestServer(t)
+
+	res, err := s.DeleteMemories(context.Background(), &contract.DeleteMemoriesRequest{})
+	if err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	if res.GetOk() {
+		t.Error("expected Ok false for an empty request (nothing was asked for, nothing succeeded)")
+	}
+}
+
+// TestRecallMemories_ErrorMapped verifies a generic RecallMemories failure is mapped via mapError.
+func TestRecallMemories_ErrorMapped(t *testing.T) {
+	s := newTestServer(t)
+
+	wantErr := errors.New("recall boom")
+	s.db = memoryFaultStore{Store: s.db, recallMemoriesErr: wantErr}
+
+	if _, err := s.RecallMemories(context.Background(), &contract.RecallMemoriesRequest{Ids: []string{"m1"}}); status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestReplaceMemoriesWithSummary_ErrorsMapped covers ReplaceMemoriesWithSummary's remaining
+// error-mapping branches: an empty event_id, an invalid summary body, a generic GetEvent failure,
+// a generic resolveMemorySignificance failure, and a generic db.ReplaceMemoriesWithSummary failure.
+func TestReplaceMemoriesWithSummary_ErrorsMapped(t *testing.T) {
+	s := newTestServer(t)
+
+	if _, err := s.ReplaceMemoriesWithSummary(context.Background(), &contract.ReplaceMemoriesWithSummaryRequest{
+		Summary: &contract.Memory{Body: "gist", Significance: 5},
+	}); err == nil {
+		t.Error("expected an error for a missing event_id")
+	}
+
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	if _, err := s.ReplaceMemoriesWithSummary(context.Background(), &contract.ReplaceMemoriesWithSummaryRequest{
+		EventId: "e1",
+		Summary: &contract.Memory{Significance: 5},
+	}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument for a summary with no body, got %s", status.Code(err))
+	}
+
+	real := s.db
+
+	getEventErr := errors.New("get event boom")
+	s.db = memoryFaultStore{Store: real, getEventErr: getEventErr}
+
+	if _, err := s.ReplaceMemoriesWithSummary(context.Background(), &contract.ReplaceMemoriesWithSummaryRequest{
+		EventId: "e1",
+		Summary: &contract.Memory{Body: "gist", Significance: 5},
+	}); status.Code(err) != codes.Internal {
+		t.Errorf("GetEvent failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	resolveErr := errors.New("resolve boom")
+	s.db = memoryFaultStore{Store: real, resolveSignificanceLevelErr: resolveErr}
+
+	if _, err := s.ReplaceMemoriesWithSummary(context.Background(), &contract.ReplaceMemoriesWithSummaryRequest{
+		EventId: "e1",
+		Summary: &contract.Memory{
+			Body:      "gist",
+			Placement: &contract.SignificancePlacement{Mode: contract.SignificancePlacement_ABOVE, Anchor: 5},
+		},
+	}); status.Code(err) != codes.Internal {
+		t.Errorf("resolve failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	replaceErr := errors.New("replace boom")
+	s.db = memoryFaultStore{Store: real, replaceMemoriesWithSummaryErr: replaceErr}
+
+	if _, err := s.ReplaceMemoriesWithSummary(context.Background(), &contract.ReplaceMemoriesWithSummaryRequest{
+		EventId: "e1",
+		Summary: &contract.Memory{Body: "gist", Significance: 5},
+	}); status.Code(err) != codes.Internal {
+		t.Errorf("db failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// capturingMemoryStore wraps a real db.Store and records the last filter GetMemories was called
+// with, so a test can assert on the RPC layer's limit/offset clamping without needing 200+ rows.
+type capturingMemoryStore struct {
+	db.Store
+	gotFilter db.MemoryFilter
+}
+
+func (c *capturingMemoryStore) GetMemories(ctx context.Context, filter db.MemoryFilter) (*[]types.Memory, error) {
+	c.gotFilter = filter
+
+	return c.Store.GetMemories(ctx, filter)
+}
+
+// TestGetMemories_LimitAndOffsetClamped verifies an over-large limit is clamped to
+// maxMemoryPageSize and a negative offset is clamped to 0.
+func TestGetMemories_LimitAndOffsetClamped(t *testing.T) {
+	s := newTestServer(t)
+
+	captured := &capturingMemoryStore{Store: s.db}
+	s.db = captured
+
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{Limit: 10000, Offset: -5}); err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if captured.gotFilter.Limit != maxMemoryPageSize {
+		t.Errorf("expected limit clamped to %d, got %d", maxMemoryPageSize, captured.gotFilter.Limit)
+	}
+
+	if captured.gotFilter.Offset != 0 {
+		t.Errorf("expected negative offset clamped to 0, got %d", captured.gotFilter.Offset)
+	}
+}
+
+// TestGetMemories_CountAndListErrorsMapped verifies CountMemoriesFiltered's and GetMemories' own
+// generic failures are both mapped via mapError.
+func TestGetMemories_CountAndListErrorsMapped(t *testing.T) {
+	countErr := errors.New("count boom")
+	s := newTestServer(t)
+	s.db = memoryFaultStore{Store: s.db, countMemoriesFilteredErr: countErr}
+
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{}); status.Code(err) != codes.Internal {
+		t.Fatalf("CountMemoriesFiltered failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	listErr := errors.New("list boom")
+	s2 := newTestServer(t)
+	s2.db = memoryFaultStore{Store: s2.db, getMemoriesErr: listErr}
+
+	if _, err := s2.GetMemories(context.Background(), &contract.GetMemoriesRequest{}); status.Code(err) != codes.Internal {
+		t.Fatalf("GetMemories failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestUpdateMemory_PlacementInvalidRejected verifies UpdateMemory's own db.ErrInvalidPlacement
+// branch (naming a placement anchor that does not exist), distinct from a generic
+// resolveMemorySignificance failure - it must map to InvalidArgument, not codes.Internal.
+func TestUpdateMemory_PlacementInvalidRejected(t *testing.T) {
+	s := newTestServer(t)
+
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	_, err := s.UpdateMemory(context.Background(), &contract.Memory{
+		Id:        "m1",
+		Placement: &contract.SignificancePlacement{Mode: contract.SignificancePlacement_ABOVE, AnchorId: "does-not-exist"},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestReplaceMemoriesWithSummary_PlacementInvalidRejected verifies
+// ReplaceMemoriesWithSummary's own db.ErrInvalidPlacement branch for the summary's placement.
+func TestReplaceMemoriesWithSummary_PlacementInvalidRejected(t *testing.T) {
+	s := newTestServer(t)
+
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	_, err := s.ReplaceMemoriesWithSummary(context.Background(), &contract.ReplaceMemoriesWithSummaryRequest{
+		EventId: "e1",
+		Summary: &contract.Memory{
+			Body:      "gist",
+			Placement: &contract.SignificancePlacement{Mode: contract.SignificancePlacement_ABOVE, AnchorId: "does-not-exist"},
+		},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
 	}
 }

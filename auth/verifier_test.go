@@ -61,6 +61,18 @@ func TestNewHMACVerifier_EmptyKid(t *testing.T) {
 	}
 }
 
+// TestNewHMACVerifier_EmptyKeySecret verifies that a signing key with a non-empty kid but an empty
+// secret is rejected, rather than silently accepting a key that verifies nothing (or everything).
+func TestNewHMACVerifier_EmptyKeySecret(t *testing.T) {
+	_, err := NewHMACVerifier(HMACConfig{
+		Keys: []SigningKey{{Kid: "empty", Secret: ""}},
+	})
+
+	if err == nil {
+		t.Error("expected an error for a signing key with an empty secret")
+	}
+}
+
 // TestNewHMACVerifier_UnknownActiveKid verifies that an activeKid naming no configured key is
 // rejected, so a mint would never silently fall back to the wrong key.
 func TestNewHMACVerifier_UnknownActiveKid(t *testing.T) {
@@ -255,6 +267,40 @@ func TestHMACVerifier_RejectsUnexpectedAlgorithm(t *testing.T) {
 
 	if _, err := v.Verify(signed); err == nil {
 		t.Error("expected a token signed with an unexpected algorithm to be rejected")
+	}
+}
+
+// TestHMACVerifier_NonStringKidRejected verifies that a token whose kid header is present but not
+// a JSON string (a malformed/hand-crafted token - golang-jwt decodes header values as
+// map[string]interface{}, so a numeric kid arrives as float64) is rejected rather than panicking
+// on the type assertion.
+func TestHMACVerifier_NonStringKidRejected(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{
+		Keys: []SigningKey{{Kid: "1", Secret: longSecret}},
+	})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	now := time.Now()
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+		},
+		ClientID: "client-1",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token.Header["kid"] = 1
+
+	signed, err := token.SignedString([]byte(longSecret))
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	if _, err := v.Verify(signed); err == nil {
+		t.Error("expected a token with a non-string kid header to be rejected")
 	}
 }
 

@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -151,6 +152,76 @@ func TestSearchMemories_EmptyQueryRejected(t *testing.T) {
 
 	if _, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{}); err == nil {
 		t.Error("expected an error for an empty query")
+	}
+}
+
+// TestSearchMemories_IndexErrorMapped verifies a failing index search is mapped through mapError
+// rather than returned raw (which would leak driver detail and mis-code the RPC).
+func TestSearchMemories_IndexErrorMapped(t *testing.T) {
+	idx := &fakeIndex{enabled: true, searchErr: errors.New("cluster unreachable")}
+	s := newSearchTestServer(t, idx)
+
+	_, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "hello"})
+	if err == nil {
+		t.Fatal("expected the index search failure to surface")
+	}
+
+	if status.Code(err) != codes.Internal {
+		t.Errorf("expected the failure masked to codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestSearchMemories_NoMatchesReturnsEmpty verifies a successful index search returning no ids
+// short-circuits to an empty result without touching the primary store.
+func TestSearchMemories_NoMatchesReturnsEmpty(t *testing.T) {
+	idx := &fakeIndex{enabled: true}
+	s := newSearchTestServer(t, idx)
+
+	res, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "nothing matches"})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.GetMemories()) != 0 {
+		t.Errorf("expected no memories for a search with no matching ids, got %v", res.GetMemories())
+	}
+}
+
+// failFetchStore wraps a real db.Store but forces both post-search fetch paths (RecallMemories,
+// used when reinforce is set, and GetMemoriesByIds otherwise) to fail, so SearchMemories' second
+// error-mapping branch - reached only after the index search itself succeeds - can be exercised.
+type failFetchStore struct {
+	db.Store
+	err error
+}
+
+func (f failFetchStore) RecallMemories(ctx context.Context, ids []string) (*[]types.Memory, error) {
+	return nil, f.err
+}
+
+func (f failFetchStore) GetMemoriesByIds(ctx context.Context, ids []string) (*[]types.Memory, error) {
+	return nil, f.err
+}
+
+// TestSearchMemories_FetchErrorMapped verifies a failure re-reading the matched ids from the
+// primary store - after a successful index search - is also mapped rather than returned raw, for
+// both the reinforcing and non-reinforcing fetch paths.
+func TestSearchMemories_FetchErrorMapped(t *testing.T) {
+	wantErr := errors.New("store unavailable")
+
+	for _, reinforce := range []bool{false, true} {
+		idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
+		s := newSearchTestServer(t, idx)
+		s.db = failFetchStore{Store: s.db, err: wantErr}
+
+		_, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "hello", Reinforce: reinforce})
+		if err == nil {
+			t.Fatalf("reinforce=%v: expected the fetch failure to surface", reinforce)
+		}
+
+		if status.Code(err) != codes.Internal {
+			t.Errorf("reinforce=%v: expected codes.Internal, got %s (%v)", reinforce, status.Code(err), err)
+		}
 	}
 }
 

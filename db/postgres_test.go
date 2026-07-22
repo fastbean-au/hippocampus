@@ -731,3 +731,41 @@ func TestPostgres_MigrateSignificanceToLevels(t *testing.T) {
 
 	assertMigratedRegistry(t, d)
 }
+
+// TestNewPostgres_MalformedDSNFailsAtOpen verifies NewPostgres surfaces sql.Open's error rather
+// than reaching the network at all. pgx's DSN parsing runs synchronously inside sql.Open (unlike
+// go-sql-driver/mysql it does not validate DSN shape lazily on first use), so a string it cannot
+// parse as either a URL or keyword/value pairs fails immediately - no live server needed, and no
+// dial delay either.
+func TestNewPostgres_MalformedDSNFailsAtOpen(t *testing.T) {
+	if _, err := NewPostgres("://not a valid dsn", true); err == nil {
+		t.Error("expected NewPostgres to fail on a malformed DSN")
+	}
+}
+
+func TestNewPostgresReadOnly_MalformedDSNFailsAtOpen(t *testing.T) {
+	if _, err := NewPostgresReadOnly("://not a valid dsn"); err == nil {
+		t.Error("expected NewPostgresReadOnly to fail on a malformed DSN")
+	}
+}
+
+// TestNewPostgres_UnreachableServerFailsFast drives NewPostgres/NewPostgresReadOnly against a
+// syntactically valid DSN naming a port nothing listens on, so the connection is refused
+// immediately (no dial timeout to wait out) rather than needing a real disposable database. This
+// exercises the sql.Open-succeeds-but-the-first-query-fails path for both the consolidator and
+// read-only opens, and both the lock-acquisition and schema-probe first-query sites.
+func TestNewPostgres_UnreachableServerFailsFast(t *testing.T) {
+	const dsn = "postgres://user:pass@127.0.0.1:1/dbname?connect_timeout=1"
+
+	for _, consolidate := range []bool{true, false} {
+		if _, err := NewPostgres(dsn, consolidate); err == nil {
+			t.Errorf("expected NewPostgres(consolidate=%v) to fail against an unreachable server", consolidate)
+		}
+	}
+}
+
+func TestNewPostgresReadOnly_UnreachableServerFailsFast(t *testing.T) {
+	if _, err := NewPostgresReadOnly("postgres://user:pass@127.0.0.1:1/dbname?connect_timeout=1"); err == nil {
+		t.Error("expected NewPostgresReadOnly to fail against an unreachable server")
+	}
+}

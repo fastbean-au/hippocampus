@@ -115,6 +115,153 @@ func TestRevocationList_ClientIssuedBeforeFailsClosed(t *testing.T) {
 	}
 }
 
+// TestNewRevocationList_NonPositiveRefreshDefaults verifies that a zero or negative refresh
+// interval doesn't fail construction: it falls back to the package default (30s) rather than
+// never polling (0) or misbehaving on a negative ticker interval.
+func TestNewRevocationList_NonPositiveRefreshDefaults(t *testing.T) {
+	path := writeRevocationFile(t, `{"jtis":["abc"]}`)
+
+	list, err := NewRevocationList(path, 0)
+	if err != nil {
+		t.Fatalf("NewRevocationList with a zero refresh: %s", err)
+	}
+
+	list.Stop()
+
+	list2, err := NewRevocationList(path, -time.Second)
+	if err != nil {
+		t.Fatalf("NewRevocationList with a negative refresh: %s", err)
+	}
+
+	list2.Stop()
+}
+
+// TestRevocationList_ReloadIfChangedMissingFile verifies that reloadIfChanged reports an error
+// when the underlying file has disappeared, rather than panicking on the failed stat.
+func TestRevocationList_ReloadIfChangedMissingFile(t *testing.T) {
+	path := writeRevocationFile(t, `{"jtis":["abc"]}`)
+
+	list, err := NewRevocationList(path, time.Hour)
+	if err != nil {
+		t.Fatalf("NewRevocationList: %s", err)
+	}
+	defer list.Stop()
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove revocation file: %s", err)
+	}
+
+	if err := list.reloadIfChanged(); err == nil {
+		t.Error("expected reloadIfChanged to error when the file has been removed")
+	}
+
+	if !list.IsRevoked(claimsWith("abc", "c", time.Now())) {
+		t.Error("expected the last good revocation to remain enforced after the file disappears")
+	}
+}
+
+// TestNewRevocationList_PathIsDirectory verifies reload's os.ReadFile failure branch: a path that
+// stats successfully (it exists) but cannot be read as a file - a directory, here - fails
+// construction with a read error rather than a stat error.
+func TestNewRevocationList_PathIsDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a-directory")
+
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("mkdir: %s", err)
+	}
+
+	if _, err := NewRevocationList(path, time.Hour); err == nil {
+		t.Error("expected construction to fail when the path is a directory")
+	}
+}
+
+// TestRevocationList_PollLogsOnReloadError verifies that the background poller survives a reload
+// failure (the file disappearing after a good initial load): it logs the error rather than
+// crashing, and the last good revocation set stays enforced.
+func TestRevocationList_PollLogsOnReloadError(t *testing.T) {
+	path := writeRevocationFile(t, `{"jtis":["staygone"]}`)
+
+	list, err := NewRevocationList(path, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewRevocationList: %s", err)
+	}
+	defer list.Stop()
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove revocation file: %s", err)
+	}
+
+	// Give the poller a few ticks to hit the missing file and log the failure.
+	time.Sleep(100 * time.Millisecond)
+
+	if !list.IsRevoked(claimsWith("staygone", "c", time.Now())) {
+		t.Error("expected the last good revocation to remain enforced after the poller's reload fails")
+	}
+}
+
+// TestRevocationList_SkipsEmptyJTI verifies that an empty string among the listed jtis is skipped
+// rather than matching every claims value with an empty ID.
+func TestRevocationList_SkipsEmptyJTI(t *testing.T) {
+	path := writeRevocationFile(t, `{"jtis":["", "real"]}`)
+
+	list, err := NewRevocationList(path, time.Hour)
+	if err != nil {
+		t.Fatalf("NewRevocationList: %s", err)
+	}
+	defer list.Stop()
+
+	if list.IsRevoked(claimsWith("", "c", time.Now())) {
+		t.Error("expected an empty jti in the list not to revoke claims with an empty ID")
+	}
+
+	if !list.IsRevoked(claimsWith("real", "c", time.Now())) {
+		t.Error("expected the non-empty jti to still be enforced")
+	}
+}
+
+// TestRevocationList_SkipsEmptyClientID verifies that a client entry with an empty clientId is
+// skipped rather than matching every claims value with an empty ClientID.
+func TestRevocationList_SkipsEmptyClientID(t *testing.T) {
+	path := writeRevocationFile(t, `{"clients":[{"clientId":""},{"clientId":"real"}]}`)
+
+	list, err := NewRevocationList(path, time.Hour)
+	if err != nil {
+		t.Fatalf("NewRevocationList: %s", err)
+	}
+	defer list.Stop()
+
+	if list.IsRevoked(claimsWith("j", "", time.Now())) {
+		t.Error("expected an empty clientId entry not to revoke claims with an empty ClientID")
+	}
+
+	if !list.IsRevoked(claimsWith("j", "real", time.Now())) {
+		t.Error("expected the non-empty clientId to still be enforced")
+	}
+}
+
+// TestRevocationList_IsRevoked_NilSetAndNilClaims verifies IsRevoked's two safety fallbacks: a
+// list whose set has never been loaded (the zero value) and a nil claims pointer both report not
+// revoked rather than panicking.
+func TestRevocationList_IsRevoked_NilSetAndNilClaims(t *testing.T) {
+	var zero RevocationList
+
+	if zero.IsRevoked(claimsWith("j", "c", time.Now())) {
+		t.Error("expected a RevocationList with no loaded set to report not revoked")
+	}
+
+	path := writeRevocationFile(t, `{"jtis":["abc"]}`)
+
+	list, err := NewRevocationList(path, time.Hour)
+	if err != nil {
+		t.Fatalf("NewRevocationList: %s", err)
+	}
+	defer list.Stop()
+
+	if list.IsRevoked(nil) {
+		t.Error("expected nil claims to report not revoked")
+	}
+}
+
 // TestRevocationList_ReloadsOnChange verifies that a revocation added to the file after load is
 // picked up by the poller without reconstructing the list.
 func TestRevocationList_ReloadsOnChange(t *testing.T) {

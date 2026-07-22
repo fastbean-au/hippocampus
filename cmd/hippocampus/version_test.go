@@ -82,3 +82,23 @@ func TestReadVersionInfo(t *testing.T) {
 		t.Errorf("expected buildVersion to override the resolved version, got %q", v.Version)
 	}
 }
+
+// TestReadVersionInfoWith_NotOK covers the not-ok fallback (debug.ReadBuildInfo returning false, e.g.
+// a binary built without module support) via a stub, since the real runtime/debug.ReadBuildInfo
+// always succeeds inside `go test` and so can never exercise this branch directly.
+func TestReadVersionInfoWith_NotOK(t *testing.T) {
+	notOK := func() (*debug.BuildInfo, bool) { return nil, false }
+
+	if v := readVersionInfoWith(notOK); v.Version != "unknown" {
+		t.Errorf("expected 'unknown' when build info is unavailable, got %q", v.Version)
+	}
+
+	restore := buildVersion
+	t.Cleanup(func() { buildVersion = restore })
+
+	buildVersion = "v9.9.9-test"
+
+	if v := readVersionInfoWith(notOK); v.Version != "v9.9.9-test" {
+		t.Errorf("expected buildVersion to override the not-ok fallback, got %q", v.Version)
+	}
+}

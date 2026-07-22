@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"testing"
@@ -254,5 +255,75 @@ func TestReconcileLoop_StopsBeforeInitialSweep(t *testing.T) {
 
 	if got := idx.indexedIds(); len(got) != 0 {
 		t.Errorf("expected no sweep to have run, got %v", got)
+	}
+}
+
+// TestReconcileOnce_StopsAtLoopTopBeforeFirstPage verifies the loop-top shutdown check (distinct
+// from the pacing-delay check the other stop tests exercise): with stopReconcile already closed
+// before reconcileOnce is even called, it must return immediately without reading a single page.
+func TestReconcileOnce_StopsAtLoopTopBeforeFirstPage(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	idx := &recordingIndex{}
+
+	s := &Server{
+		db:                 database,
+		search:             idx,
+		reconcileBatchSize: 10,
+		stopReconcile:      make(chan struct{}),
+	}
+
+	close(s.stopReconcile)
+
+	s.reconcileOnce()
+
+	if got := idx.indexedIds(); len(got) != 0 {
+		t.Errorf("expected no memories indexed when already stopped before the first page, got %v", got)
+	}
+}
+
+// failGetMemoriesPageStore wraps a real db.Store but forces GetMemoriesPage to fail, so
+// reconcileOnce's page-read error arm (abandoning the sweep for the next one to retry) can be
+// exercised without a broken database.
+type failGetMemoriesPageStore struct {
+	db.Store
+	err error
+}
+
+func (f failGetMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error) {
+	return nil, f.err
+}
+
+// TestReconcileOnce_PageReadErrorAbandonsSweep verifies a failing GetMemoriesPage is logged and
+// abandons the sweep cleanly (no panic, nothing indexed) rather than propagating - the next sweep
+// simply retries from the start.
+func TestReconcileOnce_PageReadErrorAbandonsSweep(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	idx := &recordingIndex{}
+
+	s := &Server{
+		db:                 failGetMemoriesPageStore{Store: database, err: errors.New("page read boom")},
+		search:             idx,
+		reconcileBatchSize: 10,
+		stopReconcile:      make(chan struct{}),
+	}
+
+	s.reconcileOnce()
+
+	if got := idx.indexedIds(); len(got) != 0 {
+		t.Errorf("expected no memories indexed after a page-read failure, got %v", got)
 	}
 }

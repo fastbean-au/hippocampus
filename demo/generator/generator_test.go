@@ -493,6 +493,52 @@ func TestSlowEventStoreEventFails(t *testing.T) {
 	g.slowEvent(context.Background(), rng)
 }
 
+func TestSlowEventCtxCancelledBeforeLoop(t *testing.T) {
+	client := newFakeHippoClient()
+	g := newTestGenerator(Config{}, client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	rng := rand.New(rand.NewSource(1))
+	// storeEvent succeeds even against a cancelled ctx (the fake ignores it); the loop's own
+	// ctx.Err() check should then return immediately, before ever calling storeMemory.
+	g.slowEvent(ctx, rng)
+
+	if g.eventsStored.Load() != 1 {
+		t.Errorf("eventsStored = %d, want 1", g.eventsStored.Load())
+	}
+
+	if g.memoriesStored.Load() != 0 {
+		t.Errorf("memoriesStored = %d, want 0 when the loop returns on a cancelled context", g.memoriesStored.Load())
+	}
+}
+
+func TestSlowEventCompletesAndEndsEvent(t *testing.T) {
+	origMin, origMax := slowEventMinDuration, slowEventMaxDuration
+	origSleepMin, origSleepMax := slowEventSleepMin, slowEventSleepMax
+	slowEventMinDuration, slowEventMaxDuration = time.Millisecond, 2*time.Millisecond
+	slowEventSleepMin, slowEventSleepMax = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() {
+		slowEventMinDuration, slowEventMaxDuration = origMin, origMax
+		slowEventSleepMin, slowEventSleepMax = origSleepMin, origSleepMax
+	})
+
+	client := newFakeHippoClient()
+	g := newTestGenerator(Config{}, client)
+
+	rng := rand.New(rand.NewSource(1))
+	g.slowEvent(context.Background(), rng)
+
+	if g.eventsStored.Load() != 1 {
+		t.Errorf("eventsStored = %d, want 1", g.eventsStored.Load())
+	}
+
+	if client.callCount("EndEvent") != 1 {
+		t.Errorf("EndEvent calls = %d, want 1 once slowEvent's deadline elapses", client.callCount("EndEvent"))
+	}
+}
+
 func TestSlowWorkerStopsOnCancel(t *testing.T) {
 	client := newFakeHippoClient()
 	g := newTestGenerator(Config{}, client)
@@ -513,6 +559,74 @@ func TestSlowWorkerStopsOnCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("slowWorker() did not stop after context cancellation")
 
+	}
+}
+
+func TestSlowWorkerRunsAnIteration(t *testing.T) {
+	origIdleMin, origIdleMax := slowWorkerIdleMin, slowWorkerIdleMax
+	origEventMin, origEventMax := slowEventMinDuration, slowEventMaxDuration
+	slowWorkerIdleMin, slowWorkerIdleMax = time.Millisecond, 2*time.Millisecond
+	slowEventMinDuration, slowEventMaxDuration = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() {
+		slowWorkerIdleMin, slowWorkerIdleMax = origIdleMin, origIdleMax
+		slowEventMinDuration, slowEventMaxDuration = origEventMin, origEventMax
+	})
+
+	client := newFakeHippoClient()
+	g := newTestGenerator(Config{}, client)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		g.slowWorker(ctx, 1)
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("slowWorker() did not stop after context cancellation")
+
+	}
+
+	if g.eventsStored.Load() == 0 {
+		t.Error("expected slowWorker() to have run at least one slowEvent() iteration")
+	}
+}
+
+func TestSlowWorkerPausedContinue(t *testing.T) {
+	origIdleMin, origIdleMax := slowWorkerIdleMin, slowWorkerIdleMax
+	slowWorkerIdleMin, slowWorkerIdleMax = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() { slowWorkerIdleMin, slowWorkerIdleMax = origIdleMin, origIdleMax })
+
+	client := newFakeHippoClient()
+	g := newTestGenerator(Config{}, client)
+	g.budget.pausedFlag.Store(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		g.slowWorker(ctx, 1)
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("slowWorker() did not stop after context cancellation")
+
+	}
+
+	if g.eventsStored.Load() != 0 {
+		t.Error("expected no slowEvent() to run while the budget is paused")
 	}
 }
 
@@ -680,6 +794,48 @@ func TestMutatorWorkerStopsOnCancel(t *testing.T) {
 	}
 }
 
+func TestMutatorWorkerRunsAnIteration(t *testing.T) {
+	origMin, origMax := mutatorWorkerIdleMin, mutatorWorkerIdleMax
+	mutatorWorkerIdleMin, mutatorWorkerIdleMax = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() { mutatorWorkerIdleMin, mutatorWorkerIdleMax = origMin, origMax })
+
+	client := newFakeHippoClient()
+	g := newTestGenerator(Config{}, client)
+
+	a, _ := g.storeEvent(context.Background(), &contract.Event{Name: "a"})
+	b, _ := g.storeEvent(context.Background(), &contract.Event{Name: "b"})
+	g.reg.addEventID(a)
+	g.reg.addEventID(b)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		g.mutatorWorker(ctx, 1)
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("mutatorWorker() did not stop after context cancellation")
+
+	}
+
+	// Any of mutatorIteration's RPCs count as evidence the loop body ran at least once; over a
+	// handful of iterations with two registered events, at least one lands on a real call.
+	total := client.callCount("UpdateEventSignificance") + client.callCount("EndEvent") +
+		client.callCount("MergeEvents") + client.callCount("DeleteMemories") +
+		client.callCount("DeleteEvent") + client.callCount("RecallMemories") +
+		client.callCount("Sleep")
+	if total == 0 {
+		t.Error("expected mutatorWorker() to have run at least one mutatorIteration()")
+	}
+}
+
 func TestLogStats(t *testing.T) {
 	client := newFakeHippoClient()
 	g := newTestGenerator(Config{MaxBytes: 1000}, client)
@@ -690,6 +846,42 @@ func TestLogStats(t *testing.T) {
 	// logStats' ticker is a fixed 30s, too long to observe a tick in a unit test; just confirm it
 	// starts and stops cleanly around context cancellation.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		g.logStats(ctx)
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("logStats() did not stop after context cancellation")
+
+	}
+}
+
+func TestLogStatsTicks(t *testing.T) {
+	orig := logStatsInterval
+	logStatsInterval = 5 * time.Millisecond
+	t.Cleanup(func() { logStatsInterval = orig })
+
+	client := newFakeHippoClient()
+	g := newTestGenerator(Config{MaxBytes: 1000}, client)
+
+	rng := rand.New(rand.NewSource(1))
+	g.storeMemory(context.Background(), rng, &contract.Memory{})
+
+	// Seed every latency class so drain()'s per-class loop finds a summary for each on the first
+	// tick, covering both the "found" and (once drained) "not found on a later tick" branches.
+	for _, class := range latencyClasses {
+		g.lat.observe(class, time.Millisecond)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	done := make(chan struct{})

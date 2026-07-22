@@ -26,6 +26,10 @@ func newBudget(maxBytes int64) *budget {
 	return &budget{maxBytes: maxBytes}
 }
 
+// budgetWatchInterval is how often watch() re-stats the database directory. A package-level var
+// (rather than a literal) so tests can shrink it and observe a tick without a real 5-second wait.
+var budgetWatchInterval = 5 * time.Second
+
 func (b *budget) paused() bool {
 	return b.pausedFlag.Load()
 }
@@ -37,7 +41,7 @@ func (b *budget) databaseBytes() int64 {
 func (b *budget) watch(ctx context.Context, directory string) {
 	log.Trace("watch()")
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(budgetWatchInterval)
 	defer ticker.Stop()
 
 	for {

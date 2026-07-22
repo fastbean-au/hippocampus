@@ -112,6 +112,25 @@ func TestUnaryServerInterceptor_InvalidToken(t *testing.T) {
 	}
 }
 
+// TestUnaryServerInterceptor_MalformedAuthorizationMetadata verifies that authorization metadata
+// present but not of the form "Bearer <token>" (the ExtractBearerToken error branch, distinct from
+// a well-formed-but-invalid token) is rejected with codes.Unauthenticated.
+func TestUnaryServerInterceptor_MalformedAuthorizationMetadata(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	interceptor := UnaryServerInterceptor(v)
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Basic dXNlcjpwYXNz"))
+	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+
+	if _, err := interceptor(ctx, nil, info, stubHandler); status.Code(err) != codes.Unauthenticated {
+		t.Errorf("expected codes.Unauthenticated for a malformed authorization scheme, got %v", err)
+	}
+}
+
 // TestUnaryServerInterceptor_HealthCheckBypassesAuth verifies the critical scoping guarantee: a
 // call outside the /proto.Hippocampus/ prefix - the gRPC health service in particular - reaches
 // the handler with no token at all, so orchestrator liveness/readiness probes are never blocked.

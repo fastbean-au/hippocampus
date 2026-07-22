@@ -137,3 +137,40 @@ func TestBudgetWatch(t *testing.T) {
 
 	}
 }
+
+func TestBudgetWatchTicks(t *testing.T) {
+	orig := budgetWatchInterval
+	budgetWatchInterval = 5 * time.Millisecond
+	t.Cleanup(func() { budgetWatchInterval = orig })
+
+	dir := t.TempDir()
+
+	// Above the limit from the very first tick, so a tick firing is directly observable as paused().
+	if err := os.WriteFile(filepath.Join(dir, db.DataFile), make([]byte, 1200), 0o600); err != nil {
+		t.Fatalf("WriteFile: %s", err)
+	}
+
+	b := newBudget(1000)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		b.watch(ctx, dir)
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch() did not return after context cancellation")
+
+	}
+
+	if !b.paused() {
+		t.Error("expected watch() to have ticked at least once and paused generation")
+	}
+}

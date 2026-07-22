@@ -84,6 +84,28 @@ func TestHTTPMiddleware_MalformedToken(t *testing.T) {
 	}
 }
 
+// TestHTTPMiddleware_InvalidToken verifies that a well-formed "Bearer <token>" header carrying a
+// token that fails verification (as opposed to a malformed header/scheme) is rejected with 401 -
+// the Verify error branch, distinct from ExtractBearerToken's.
+func TestHTTPMiddleware_InvalidToken(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
+	req.Header.Set("Authorization", "Bearer not-a-real-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for a well-formed but invalid token, got %d", rec.Code)
+	}
+}
+
 // TestHTTPMiddleware_OpenPathBypassesAuth verifies the critical scoping guarantee on the HTTP
 // side: a path listed in openPaths (e.g. /healthz) is reachable with zero Authorization header,
 // mirroring the gRPC health-check bypass.

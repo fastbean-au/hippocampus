@@ -158,3 +158,31 @@ func TestStoreMemory_PlacementUnknownAnchor(t *testing.T) {
 
 	_ = db.ErrInvalidPlacement
 }
+
+// TestSignificanceSpecFromProto_NilAndUnspecified exercises significanceSpecFromProto's two
+// non-placement branches directly: a nil placement (no relative ranking requested at all) and an
+// explicit UNSPECIFIED mode (the switch's default arm) must both yield a plain absolute spec, with
+// no placement fields stamped on it.
+func TestSignificanceSpecFromProto_NilAndUnspecified(t *testing.T) {
+	spec := significanceSpecFromProto(5, nil, db.AnchorMemory)
+
+	if spec.Value != 5 || spec.AnchorKind != db.AnchorMemory || spec.UpperKind != db.AnchorMemory {
+		t.Errorf("nil placement: expected a plain absolute spec, got %+v", spec)
+	}
+
+	if spec.Placement != db.PlacementNone {
+		t.Errorf("nil placement: expected no placement set, got %v", spec.Placement)
+	}
+
+	unspecified := significanceSpecFromProto(7, &contract.SignificancePlacement{
+		Mode: contract.SignificancePlacement_UNSPECIFIED,
+	}, db.AnchorEvent)
+
+	if unspecified.Value != 7 || unspecified.AnchorKind != db.AnchorEvent {
+		t.Errorf("UNSPECIFIED placement: expected a plain absolute spec, got %+v", unspecified)
+	}
+
+	if unspecified.Placement != db.PlacementNone {
+		t.Errorf("UNSPECIFIED placement: expected no placement set, got %v", unspecified.Placement)
+	}
+}

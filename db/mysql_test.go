@@ -810,3 +810,40 @@ func TestMySQL_MigrateSignificanceToLevels(t *testing.T) {
 
 	assertMigratedRegistry(t, d)
 }
+
+// TestNewMySQL_MalformedDSNFailsAtOpen verifies NewMySQL/NewMySQLReadOnly surface sql.Open's
+// error rather than reaching the network at all: go-sql-driver/mysql validates DSN shape
+// synchronously inside sql.Open (unlike pgx, which only parses lazily), so a string missing the
+// required "/dbname" separator fails immediately - no live server, and no dial delay.
+func TestNewMySQL_MalformedDSNFailsAtOpen(t *testing.T) {
+	if _, err := NewMySQL("not a valid dsn", true); err == nil {
+		t.Error("expected NewMySQL to fail on a malformed DSN")
+	}
+}
+
+func TestNewMySQLReadOnly_MalformedDSNFailsAtOpen(t *testing.T) {
+	if _, err := NewMySQLReadOnly("not a valid dsn"); err == nil {
+		t.Error("expected NewMySQLReadOnly to fail on a malformed DSN")
+	}
+}
+
+// TestNewMySQL_UnreachableServerFailsFast drives NewMySQL/NewMySQLReadOnly against a
+// syntactically valid DSN naming a port nothing listens on, so the connection is refused
+// immediately rather than needing a real disposable database. This exercises the
+// sql.Open-succeeds-but-the-first-query-fails path for both the consolidator and read-only
+// opens, and both the lock-acquisition and schema-probe first-query sites.
+func TestNewMySQL_UnreachableServerFailsFast(t *testing.T) {
+	const dsn = "user:pass@tcp(127.0.0.1:1)/dbname?timeout=1s"
+
+	for _, consolidate := range []bool{true, false} {
+		if _, err := NewMySQL(dsn, consolidate); err == nil {
+			t.Errorf("expected NewMySQL(consolidate=%v) to fail against an unreachable server", consolidate)
+		}
+	}
+}
+
+func TestNewMySQLReadOnly_UnreachableServerFailsFast(t *testing.T) {
+	if _, err := NewMySQLReadOnly("user:pass@tcp(127.0.0.1:1)/dbname?timeout=1s"); err == nil {
+		t.Error("expected NewMySQLReadOnly to fail against an unreachable server")
+	}
+}

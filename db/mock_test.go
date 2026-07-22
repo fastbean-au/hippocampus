@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -794,6 +795,864 @@ func TestSetupMySQLReadOnlyMissingTables(t *testing.T) {
 
 	if _, err := setupMySQLReadOnly(d.sql); err == nil {
 		t.Fatal("expected an error when tables are missing")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- columnExists error branches (dialect-generic; the mock reaches them without needing a real
+// server-side probe failure) ---
+
+func TestColumnExistsQueryError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
+
+	if _, err := d.columnExists("memories", "significance"); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// TestColumnExistsRowsIterationError drives the rows.Err() branch: go-sqlmock's RowError makes
+// the underlying Next() call itself fail (rather than a Scan error), which is exactly what
+// database/sql surfaces as rows.Err() after Next() returns false - see rows.Err() in the standard
+// library and go-sqlmock's rowSets.Next.
+func TestColumnExistsRowsIterationError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("significance").RowError(0, errors.New("iteration failed")))
+
+	if _, err := d.columnExists("memories", "significance"); err == nil {
+		t.Fatal("expected an error from rows.Err()")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- dropCoveringIndex: MySQL arm (information_schema probe + conditional DROP INDEX) ---
+
+func TestDropCoveringIndexMySQLProbeError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectQuery(`information_schema.statistics`).WillReturnError(errors.New("boom"))
+
+	if err := d.dropCoveringIndex(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestDropCoveringIndexMySQLAbsentIsNoOp(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	if err := d.dropCoveringIndex(); err != nil {
+		t.Fatalf("dropCoveringIndex: %v", err)
+	}
+
+	// No DROP INDEX expected: expectationsMet fails if one was queued but unmet, so the absence of
+	// an ExpectExec here is itself the assertion that none ran.
+	expectationsMet(t, mock)
+}
+
+func TestDropCoveringIndexMySQLDropsWhenPresent(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(`DROP INDEX idx_memories_consolidation ON memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := d.dropCoveringIndex(); err != nil {
+		t.Fatalf("dropCoveringIndex: %v", err)
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestDropCoveringIndexMySQLDropExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(`DROP INDEX idx_memories_consolidation ON memories`).WillReturnError(errors.New("boom"))
+
+	if err := d.dropCoveringIndex(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- ensureCoveringIndex: non-MySQL CREATE INDEX failure ---
+
+func TestEnsureCoveringIndexExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS idx_memories_consolidation`).WillReturnError(errors.New("boom"))
+
+	if err := d.ensureCoveringIndex(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- migrateSignificanceToLevels error branches. The function only ever reaches the real schema
+// via d.sql, so its every step is driven directly against the mock rather than by seeding an old
+// SQLite schema for each failure mode. driverSQLite keeps every placeholder a plain '?', matching
+// the literal query text below. ---
+
+func TestMigrateSignificanceToLevels_ColumnExistsError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
+
+	if err := d.migrateSignificanceToLevels(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestMigrateSignificanceToLevels_NoOpWhenColumnAbsent(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).WillReturnRows(sqlmock.NewRows([]string{"name"}))
+
+	if err := d.migrateSignificanceToLevels(); err != nil {
+		t.Fatalf("migrateSignificanceToLevels: %v", err)
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestMigrateSignificanceToLevels_SeedError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("significance"))
+	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnError(errors.New("boom"))
+
+	if err := d.migrateSignificanceToLevels(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestMigrateSignificanceToLevels_BackfillError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("significance"))
+	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE memories SET significance_level_id`).WillReturnError(errors.New("boom"))
+
+	if err := d.migrateSignificanceToLevels(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestMigrateSignificanceToLevels_DropIndexError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("significance"))
+	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE memories SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE events SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DROP INDEX IF EXISTS idx_memories_consolidation`).WillReturnError(errors.New("boom"))
+
+	if err := d.migrateSignificanceToLevels(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestMigrateSignificanceToLevels_DropColumnError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`pragma_table_info`).
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("significance"))
+	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE memories SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE events SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DROP INDEX IF EXISTS idx_memories_consolidation`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE memories DROP COLUMN significance`).WillReturnError(errors.New("boom"))
+
+	if err := d.migrateSignificanceToLevels(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- resolveLevelTx's helpers (anchorRank/rankTaken/openGapAt/findOrCreateLevelTx/createLevelTx),
+// driven directly against a mocked transaction for error branches a real SQLite schema can't
+// reach mid-transaction. ---
+
+func beginMockTx(t *testing.T, d *DB, mock sqlmock.Sqlmock) *sql.Tx {
+	t.Helper()
+
+	mock.ExpectBegin()
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+
+	return tx
+}
+
+func TestAnchorRank_QueryErrorOtherThanNoRows(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	tx := beginMockTx(t, d, mock)
+
+	mock.ExpectQuery(`FROM memories t`).WillReturnError(errors.New("connection reset"))
+
+	if _, err := d.anchorRank(context.Background(), tx, 0, "m1", AnchorMemory); err == nil {
+		t.Fatal("expected the raw error to surface")
+	}
+
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+func TestRankTaken_QueryError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	tx := beginMockTx(t, d, mock)
+
+	mock.ExpectQuery(`SELECT EXISTS`).WillReturnError(errors.New("boom"))
+
+	if _, err := d.rankTaken(context.Background(), tx, 5); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+func TestOpenGapAt_FirstExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	tx := beginMockTx(t, d, mock)
+
+	mock.ExpectExec(`UPDATE significance_levels SET level_rank = -`).WillReturnError(errors.New("boom"))
+
+	if err := d.openGapAt(context.Background(), tx, 5); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+func TestFindOrCreateLevelTx_QueryErrorOtherThanNoRows(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	tx := beginMockTx(t, d, mock)
+
+	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
+
+	if _, err := d.findOrCreateLevelTx(context.Background(), tx, 5); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+func TestCreateLevelTx_InsertError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	tx := beginMockTx(t, d, mock)
+
+	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnError(errors.New("boom"))
+
+	if _, err := d.createLevelTx(context.Background(), tx, 5); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+func TestCreateLevelTx_SelectAfterInsertError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	tx := beginMockTx(t, d, mock)
+
+	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
+
+	if _, err := d.createLevelTx(context.Background(), tx, 5); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+// --- acquireRegistryLock: server-driver branches (SQLite's no-op is covered by every SQLite
+// registry test already) ---
+
+func TestAcquireRegistryLock_ConnError(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectClose()
+
+	if err := d.sql.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if _, err := d.acquireRegistryLock(context.Background()); err == nil {
+		t.Fatal("expected an error from a closed handle")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestAcquireRegistryLock_Postgres(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectExec(`pg_advisory_lock`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	release, err := d.acquireRegistryLock(context.Background())
+	if err != nil {
+		t.Fatalf("acquireRegistryLock: %v", err)
+	}
+
+	mock.ExpectExec(`pg_advisory_unlock`).WillReturnResult(sqlmock.NewResult(0, 0))
+	release()
+
+	expectationsMet(t, mock)
+}
+
+func TestAcquireRegistryLock_PostgresExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectExec(`pg_advisory_lock`).WillReturnError(errors.New("boom"))
+
+	if _, err := d.acquireRegistryLock(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestAcquireRegistryLock_MySQL(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectExec(`GET_LOCK`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	release, err := d.acquireRegistryLock(context.Background())
+	if err != nil {
+		t.Fatalf("acquireRegistryLock: %v", err)
+	}
+
+	mock.ExpectExec(`RELEASE_LOCK`).WillReturnResult(sqlmock.NewResult(0, 0))
+	release()
+
+	expectationsMet(t, mock)
+}
+
+func TestAcquireRegistryLock_MySQLExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectExec(`GET_LOCK`).WillReturnError(errors.New("boom"))
+
+	if _, err := d.acquireRegistryLock(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// TestAcquireRegistryLock_UnknownDriverFallsThrough exercises the switch's fallthrough for a
+// driver value that is neither SQLite (already returned above) nor Postgres/MySQL - defensive
+// dead code today (only three driver values are ever constructed in production) but cheap to
+// pin: it must release the connection and hand back a no-op release rather than panicking.
+func TestAcquireRegistryLock_UnknownDriverFallsThrough(t *testing.T) {
+	d, mock := newMockDB(t, driver(99))
+
+	release, err := d.acquireRegistryLock(context.Background())
+	if err != nil {
+		t.Fatalf("acquireRegistryLock: %v", err)
+	}
+
+	if release == nil {
+		t.Fatal("expected a non-nil no-op release")
+	}
+
+	release()
+	expectationsMet(t, mock)
+}
+
+// --- initPostgresSchema / initMySQLSchema failure branches not already covered by the fresh/
+// migrate success-path tests above. ---
+
+func TestInitPostgresSchema_SignificanceLevelsDDLError(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnError(errors.New("boom"))
+
+	if err := d.initPostgresSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitPostgresSchema_MigrateError(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))
+
+	if err := d.initPostgresSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitPostgresSchema_EnsureCoveringIndexError(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`information_schema.columns`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+
+	if err := d.initPostgresSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitMySQLSchema_CreateTableError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitMySQLSchema_AddColumnError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// addColumnIfMissing(memories, is_summary): probe reports missing, then the ALTER fails.
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN is_summary`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitMySQLSchema_CollationError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	columnPresent := func() {
+		mock.ExpectQuery(`column_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	columnPresent()
+	columnPresent()
+	columnPresent()
+
+	// First collation probe (events.id) reports a mismatch, and the MODIFY fails.
+	mock.ExpectQuery(`collation_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow("utf8mb4_0900_ai_ci"))
+	mock.ExpectExec(`ALTER TABLE events MODIFY id`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitMySQLSchema_SignificanceLevelIDColumnError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	columnPresent := func() {
+		mock.ExpectQuery(`column_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+	}
+
+	collationCorrect := func() {
+		mock.ExpectQuery(`collation_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	columnPresent()
+	columnPresent()
+	columnPresent()
+
+	for range 5 {
+		collationCorrect()
+	}
+
+	// addColumnIfMissing(memories, significance_level_id): reports missing, then the ALTER fails.
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitMySQLSchema_EnsureCoveringIndexError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	columnPresent := func() {
+		mock.ExpectQuery(`column_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+	}
+
+	collationCorrect := func() {
+		mock.ExpectQuery(`collation_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	columnPresent()
+	columnPresent()
+	columnPresent()
+
+	for range 5 {
+		collationCorrect()
+	}
+
+	columnPresent()
+	columnPresent()
+
+	// migrateSignificanceToLevels: old column absent -> no-op.
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+
+	// ensureCoveringIndex -> createMySQLIndexIfMissing: reported absent, and the CREATE INDEX fails.
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`CREATE INDEX`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestCreateMySQLIndexMissingCreateExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`CREATE INDEX idx_x`).WillReturnError(errors.New("boom"))
+
+	if err := d.createMySQLIndexIfMissing("memories", "idx_x", "CREATE INDEX idx_x ON memories (x)"); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- loadSignificanceRanks error branches ---
+
+func TestLoadSignificanceRanks_ScanError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT id, level_rank FROM significance_levels`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "level_rank"}).AddRow("not-an-int", int32(5)))
+
+	if _, err := d.loadSignificanceRanks(context.Background()); err == nil {
+		t.Fatal("expected a scan error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestLoadSignificanceRanks_RowsIterationError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT id, level_rank FROM significance_levels`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "level_rank"}).
+			AddRow(int64(1), int32(5)).
+			RowError(0, errors.New("boom")))
+
+	if _, err := d.loadSignificanceRanks(context.Background()); err == nil {
+		t.Fatal("expected an iteration error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- ResolveSignificanceLevel: findLevel error and the tx.Commit() failure ---
+
+func TestResolveSignificanceLevel_FindLevelError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
+
+	if _, _, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{Value: 5}); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestResolveSignificanceLevel_CommitError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	// The fast path (findLevel) reports no existing level, so ResolveSignificanceLevel takes the
+	// lock+transaction path; findOrCreateLevelTx then also finds nothing and creates one.
+	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
+	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
+
+	if _, _, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{Value: 5}); err == nil {
+		t.Fatal("expected a commit error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- CompactSignificanceLevels: mid-transaction failure branches, driven directly since a real
+// SQLite schema can't be made to fail mid-transaction on demand. ---
+
+func TestCompactSignificanceLevels_TxQueryError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT MAX`).
+		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(int64(registryCompactionThreshold)))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM significance_levels ORDER BY level_rank`).WillReturnError(errors.New("boom"))
+	mock.ExpectRollback()
+
+	if err := d.CompactSignificanceLevels(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestCompactSignificanceLevels_ScanError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT MAX`).
+		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(int64(registryCompactionThreshold)))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM significance_levels ORDER BY level_rank`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("not-an-int"))
+	mock.ExpectRollback()
+
+	if err := d.CompactSignificanceLevels(context.Background()); err == nil {
+		t.Fatal("expected a scan error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestCompactSignificanceLevels_RowsIterationError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT MAX`).
+		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(int64(registryCompactionThreshold)))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM significance_levels ORDER BY level_rank`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)).RowError(0, errors.New("boom")))
+	mock.ExpectRollback()
+
+	if err := d.CompactSignificanceLevels(context.Background()); err == nil {
+		t.Fatal("expected an iteration error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestCompactSignificanceLevels_UpdateExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT MAX`).
+		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(int64(registryCompactionThreshold)))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM significance_levels ORDER BY level_rank`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)).AddRow(int64(2)))
+	mock.ExpectExec(`UPDATE significance_levels SET level_rank`).WillReturnError(errors.New("boom"))
+	mock.ExpectRollback()
+
+	if err := d.CompactSignificanceLevels(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestCompactSignificanceLevels_FinalFlipExecError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+
+	mock.ExpectQuery(`SELECT MAX`).
+		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(int64(registryCompactionThreshold)))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM significance_levels ORDER BY level_rank`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
+	mock.ExpectExec(`UPDATE significance_levels SET level_rank = \?`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE significance_levels SET level_rank = -level_rank`).WillReturnError(errors.New("boom"))
+	mock.ExpectRollback()
+
+	if err := d.CompactSignificanceLevels(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- setupMySQL: releasing a freshly taken lock connection when schema init fails, mirroring
+// TestSetupPostgresSchemaInitFailsReleasesLock. ---
+
+func TestSetupMySQL_SchemaInitFailsReleasesLock(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectQuery(`GET_LOCK`).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(int64(1)))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("ddl failed"))
+	mock.ExpectClose()
+
+	if _, err := setupMySQL(d.sql, true); err == nil {
+		t.Fatal("expected setupMySQL to fail when schema init fails")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// --- initMySQLSchema: the remaining addColumnIfMissing propagation branches not already
+// exercised by TestInitMySQLSchema_AddColumnError (is_summary) or
+// TestInitMySQLSchema_SignificanceLevelIDColumnError (memories.significance_level_id). ---
+
+func TestInitMySQLSchema_MemoriesGroupNameColumnError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	columnPresent := func() {
+		mock.ExpectQuery(`column_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// is_summary present, then group_name(memories) reported missing and its ALTER fails.
+	columnPresent()
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitMySQLSchema_EventsGroupNameColumnError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	columnPresent := func() {
+		mock.ExpectQuery(`column_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// is_summary and group_name(memories) present, group_name(events) missing and its ALTER fails.
+	columnPresent()
+	columnPresent()
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	mock.ExpectExec(`ALTER TABLE events ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitMySQLSchema_EventsSignificanceLevelIDColumnError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	columnPresent := func() {
+		mock.ExpectQuery(`column_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+	}
+
+	collationCorrect := func() {
+		mock.ExpectQuery(`collation_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	columnPresent()
+	columnPresent()
+	columnPresent()
+
+	for range 5 {
+		collationCorrect()
+	}
+
+	// memories.significance_level_id present, events.significance_level_id missing and its ALTER
+	// fails.
+	columnPresent()
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	mock.ExpectExec(`ALTER TABLE events ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
 	}
 
 	expectationsMet(t, mock)

@@ -3,18 +3,28 @@ package hippocampus
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/fastbean-au/hippocampus/archive"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/types"
@@ -518,6 +528,137 @@ func TestTransferDirect(t *testing.T) {
 	}
 }
 
+// TestTransfer_DialErrorMapped verifies a grpc.NewClient failure (a target address grpc-go itself
+// rejects while parsing, before any network I/O) is mapped via mapError rather than returned raw.
+func TestTransfer_DialErrorMapped(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	s.transfer.targetAddress = "\x00" // a control character fails target-string parsing outright
+
+	if _, err := s.Transfer(context.Background(), &contract.TransferRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestTransferDirect_WithoutClearCachesManifest verifies Transfer with clear unset caches the
+// manifest for a later Clear call, mirroring Export's own no-clear behaviour, rather than only ever
+// being exercised with clear: true.
+func TestTransferDirect_WithoutClearCachesManifest(t *testing.T) {
+	target := newTransferTestServer(t, nil)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %s", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	contract.RegisterHippocampusServer(grpcServer, target)
+
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	source := newTransferTestServer(t, nil)
+	source.transfer.targetAddress = listener.Addr().String()
+	source.transfer.token = "a-bearer-token" // also exercises the outgoing-metadata branch
+	seedTransferFixture(t, source)
+
+	transferred, err := source.Transfer(context.Background(), &contract.TransferRequest{})
+	if err != nil {
+		t.Fatalf("Transfer: %s", err)
+	}
+
+	if transferred.GetManifestId() == "" {
+		t.Fatal("expected a manifest id when clear was not requested")
+	}
+
+	// The source is untouched (no clear), and the manifest is cached for a later Clear call.
+	if with, without := source.db.CountMemories(context.Background()); with+without != 3 {
+		t.Errorf("expected the source untouched, got %d memories", with+without)
+	}
+
+	if source.takeManifest(transferred.GetManifestId()) == nil {
+		t.Error("expected the manifest cached for a later Clear call")
+	}
+}
+
+// failImportMemoriesStore wraps a real db.Store but forces ImportMemories to fail, standing in for
+// a target rejecting a memories batch mid-transfer.
+type failImportMemoriesStore struct {
+	db.Store
+	err error
+}
+
+func (f failImportMemoriesStore) ImportMemories(ctx context.Context, memories []types.Memory) (int, error) {
+	return 0, f.err
+}
+
+// TestTransferDirect_MemoriesImportFailurePropagates verifies a target rejecting the memories batch
+// (after the events batch already succeeded) surfaces through Transfer, mapped rather than raw.
+func TestTransferDirect_MemoriesImportFailurePropagates(t *testing.T) {
+	target := newTransferTestServer(t, nil)
+	target.db = failImportMemoriesStore{Store: target.db, err: errors.New("memories rejected")}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %s", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	contract.RegisterHippocampusServer(grpcServer, target)
+
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	source := newTransferTestServer(t, nil)
+	source.transfer.targetAddress = listener.Addr().String()
+	seedTransferFixture(t, source)
+
+	if _, err := source.Transfer(context.Background(), &contract.TransferRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestTransferDirect_ClearFailureCachesManifestForRetry verifies Transfer's own inline clear
+// failure (distinct from Export's and the standalone Clear RPC's, both already covered) re-caches
+// the manifest so the caller can retry the delete with the returned manifest id.
+func TestTransferDirect_ClearFailureCachesManifestForRetry(t *testing.T) {
+	target := newTransferTestServer(t, nil)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %s", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	contract.RegisterHippocampusServer(grpcServer, target)
+
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	source := newTransferTestServer(t, nil)
+	source.transfer.targetAddress = listener.Addr().String()
+	seedTransferFixture(t, source)
+
+	wantErr := errors.New("clear failed")
+	source.db = failClearStore{Store: source.db, err: wantErr}
+
+	res, err := source.Transfer(context.Background(), &contract.TransferRequest{Clear: true})
+	if err == nil {
+		t.Fatal("expected the clear failure to surface")
+	}
+
+	if !errors.Is(err, wantErr) {
+		t.Errorf("expected the ClearMemories error to propagate, got %v", err)
+	}
+
+	if res.GetManifestId() == "" {
+		t.Fatal("expected a manifest id after a failed clear")
+	}
+
+	if source.takeManifest(res.GetManifestId()) == nil {
+		t.Error("expected the manifest re-cached after a failed clear so Clear can retry it")
+	}
+}
+
 // TestTransferSurfacePreconditions verifies the unconfigured-feature and bad-input failure modes.
 func TestTransferSurfacePreconditions(t *testing.T) {
 	s := newTransferTestServer(t, nil)
@@ -656,5 +797,602 @@ func TestStoreManifest_EvictsOldestBeyondCap(t *testing.T) {
 		if s.takeManifest(id) == nil {
 			t.Errorf("expected the recent manifest %q to be retained", id)
 		}
+	}
+}
+
+// TestTakeManifest_SkipsNonMatchingEntries verifies takeManifest's removal loop actually walks past
+// non-matching ids (rather than only ever being exercised with the target already first), and
+// leaves the remaining ids in their original order.
+func TestTakeManifest_SkipsNonMatchingEntries(t *testing.T) {
+	s := &Server{manifests: make(map[string]*transferManifest)}
+
+	for _, id := range []string{"a", "b", "c"} {
+		s.storeManifest(&transferManifest{id: id})
+	}
+
+	got := s.takeManifest("c")
+	if got == nil || got.id != "c" {
+		t.Fatalf("expected to retrieve manifest 'c', got %v", got)
+	}
+
+	if len(s.manifestIds) != 2 || s.manifestIds[0] != "a" || s.manifestIds[1] != "b" {
+		t.Errorf("expected [a b] to remain in order, got %v", s.manifestIds)
+	}
+}
+
+// failEventsPageStore wraps a real db.Store but forces GetEventsPage to fail, so walkStore's error
+// arm reading the events pass can be exercised without a broken database.
+type failEventsPageStore struct {
+	db.Store
+	err error
+}
+
+func (f failEventsPageStore) GetEventsPage(ctx context.Context, afterId string, limit int) ([]types.Event, error) {
+	return nil, f.err
+}
+
+// failMemoriesPageStore wraps a real db.Store but forces GetMemoriesPage to fail, so walkStore's
+// error arm reading the memories pass can be exercised without a broken database.
+type failMemoriesPageStore struct {
+	db.Store
+	err error
+}
+
+func (f failMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error) {
+	return nil, f.err
+}
+
+// TestWalkStore_PageReadErrorsPropagate verifies a failure paging either events or memories
+// surfaces directly from walkStore rather than being swallowed.
+func TestWalkStore_PageReadErrorsPropagate(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	noop := func(_ []types.Event) error { return nil }
+	noopMem := func(_ []types.Memory) error { return nil }
+
+	eventsErr := errors.New("events page boom")
+	s := &Server{db: failEventsPageStore{Store: database, err: eventsErr}, transfer: Transfer{batchSize: 2}}
+
+	if _, _, _, err := s.walkStore(context.Background(), noop, noopMem); !errors.Is(err, eventsErr) {
+		t.Errorf("expected the GetEventsPage failure to propagate, got %v", err)
+	}
+
+	memoriesErr := errors.New("memories page boom")
+	s2 := &Server{db: failMemoriesPageStore{Store: database, err: memoriesErr}, transfer: Transfer{batchSize: 2}}
+
+	if _, _, _, err := s2.walkStore(context.Background(), noop, noopMem); !errors.Is(err, memoriesErr) {
+		t.Errorf("expected the GetMemoriesPage failure to propagate, got %v", err)
+	}
+}
+
+// TestWalkStore_CallbackErrorsPropagate verifies a failing onEvents/onMemories callback surfaces
+// directly from walkStore, aborting the walk.
+func TestWalkStore_CallbackErrorsPropagate(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	seedTransferFixture(t, s)
+
+	eventsErr := errors.New("onEvents boom")
+
+	if _, _, _, err := s.walkStore(context.Background(),
+		func(_ []types.Event) error { return eventsErr },
+		func(_ []types.Memory) error { return nil },
+	); !errors.Is(err, eventsErr) {
+		t.Errorf("expected the onEvents callback failure to propagate, got %v", err)
+	}
+
+	memoriesErr := errors.New("onMemories boom")
+
+	if _, _, _, err := s.walkStore(context.Background(),
+		func(_ []types.Event) error { return nil },
+		func(_ []types.Memory) error { return memoriesErr },
+	); !errors.Is(err, memoriesErr) {
+		t.Errorf("expected the onMemories callback failure to propagate, got %v", err)
+	}
+}
+
+// failCountEventsStore wraps a real db.Store but forces CountEvents to report -1 (as if it had
+// errored), so walkStore's pre-flight manifest-cap check is skipped and only the in-walk check (re-
+// verified as each page is accumulated) can trip - exercising that check on its own.
+type failCountEventsStore struct {
+	db.Store
+}
+
+func (f failCountEventsStore) CountEvents(ctx context.Context) int {
+	return -1
+}
+
+// TestWalkStore_InWalkManifestCapTrips verifies the in-walk manifest-cap check (re-verified as each
+// page is accumulated, independent of the pre-flight count) refuses an over-cap walk even when the
+// pre-flight check itself was skipped (here, because CountEvents reported an error).
+func TestWalkStore_InWalkManifestCapTrips(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	seedTransferFixture(t, s) // 2 events + 3 memories = 5 records
+
+	s.db = failCountEventsStore{Store: s.db}
+	s.transfer.maxManifestRows = 1
+
+	noop := func(_ []types.Event) error { return nil }
+	noopMem := func(_ []types.Memory) error { return nil }
+
+	_, _, _, err := s.walkStore(context.Background(), noop, noopMem)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition from the in-walk cap check, got %v", err)
+	}
+}
+
+// TestWalkStore_InWalkManifestCapTripsDuringMemoriesPass is the memories-pass counterpart to
+// TestWalkStore_InWalkManifestCapTrips: the cap fits the events alone but is exceeded once the
+// first page of memories is accumulated, tripping the second in-walk check.
+func TestWalkStore_InWalkManifestCapTripsDuringMemoriesPass(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	seedTransferFixture(t, s) // 2 events + 3 memories = 5 records; batchSize 2
+
+	s.db = failCountEventsStore{Store: s.db}
+	s.transfer.maxManifestRows = 2 // fits the 2 events exactly, but not events + any memories
+
+	noop := func(_ []types.Event) error { return nil }
+	noopMem := func(_ []types.Memory) error { return nil }
+
+	_, _, _, err := s.walkStore(context.Background(), noop, noopMem)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition from the in-walk cap check during the memories pass, got %v", err)
+	}
+}
+
+// failPutObjectStore is an archive.ObjectStore whose Put always fails immediately without reading
+// its body, so the archive writer's pipe is closed with an error before it can write anything -
+// driving Export's WriteHeader failure arm without needing to corrupt a real archive stream.
+type failPutObjectStore struct{}
+
+func (failPutObjectStore) Put(ctx context.Context, key string, body io.Reader) error {
+	return errors.New("put failed")
+}
+
+func (failPutObjectStore) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	return nil, errors.New("not implemented")
+}
+
+// TestExport_WriteHeaderErrorSurfaces verifies a write-side failure while streaming the archive
+// (here, the upload rejecting before reading anything, closing the pipe before the archive is
+// flushed) is mapped and surfaced rather than hanging or panicking.
+func TestExport_WriteHeaderErrorSurfaces(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	s.objects = failPutObjectStore{}
+	seedTransferFixture(t, s)
+
+	_, err := s.Export(context.Background(), &contract.ExportRequest{})
+	if err == nil {
+		t.Fatal("expected Export to surface the archive write failure")
+	}
+}
+
+// TestExport_WriteEventErrorSurfaces is a variant of TestExport_WriteHeaderErrorSurfaces with many
+// maximum-length events: enough that buffering them overflows the archive writer's internal buffer
+// partway through the loop and forces an eager flush against the (already failing) upload pipe from
+// within some WriteEvent call itself, rather than only at the final Close - the small fixture in
+// the sibling test never triggers that eager flush, so this is the only path that reaches
+// WriteEvent's own error return.
+func TestExport_WriteEventErrorSurfaces(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	s.objects = failPutObjectStore{}
+
+	// 256 is types.Event's own max name length; enough of these comfortably overflows bufio's
+	// default 4096-byte buffer partway through the archive writer's event loop.
+	for i := 0; i < 40; i++ {
+		if _, err := s.db.CreateEvent(context.Background(), types.Event{
+			Id:           fmt.Sprintf("e%d", i),
+			Name:         strings.Repeat("x", 256),
+			TimeStart:    100,
+			Significance: 5,
+		}); err != nil {
+			t.Fatalf("CreateEvent(%d): %s", i, err)
+		}
+	}
+
+	_, err := s.Export(context.Background(), &contract.ExportRequest{})
+	if err == nil {
+		t.Fatal("expected Export to surface the archive write failure")
+	}
+}
+
+// TestExport_WriteMemoryErrorSurfaces is the memories-pass counterpart to
+// TestExport_WriteEventErrorSurfaces: enough bulky memories that the archive writer's buffer
+// overflows partway through the memories loop, forcing an eager flush against the (already
+// failing) upload pipe from within some WriteMemory call itself.
+func TestExport_WriteMemoryErrorSurfaces(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	s.objects = failPutObjectStore{}
+
+	for i := 0; i < 40; i++ {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{
+			Id:           fmt.Sprintf("m%d", i),
+			TimeStamp:    100,
+			Significance: 5,
+			Body:         strings.Repeat("x", 256),
+		}); err != nil {
+			t.Fatalf("CreateMemory(%d): %s", i, err)
+		}
+	}
+
+	_, err := s.Export(context.Background(), &contract.ExportRequest{})
+	if err == nil {
+		t.Fatal("expected Export to surface the archive write failure")
+	}
+}
+
+// TestImport_EmptyObjectKeyRejected verifies a missing object_key is rejected before touching the
+// object store.
+func TestImport_EmptyObjectKeyRejected(t *testing.T) {
+	s := newTransferTestServer(t, newFakeObjectStore())
+
+	if _, err := s.Import(context.Background(), &contract.ImportRequest{}); err == nil {
+		t.Error("expected an error for a missing object_key")
+	}
+}
+
+// TestImport_ObjectGetErrorMapped verifies a failure fetching the archive object (here, simply an
+// unknown key) is mapped via mapError rather than returned raw.
+func TestImport_ObjectGetErrorMapped(t *testing.T) {
+	s := newTransferTestServer(t, newFakeObjectStore())
+
+	if _, err := s.Import(context.Background(), &contract.ImportRequest{ObjectKey: "does-not-exist"}); status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestImport_MalformedArchiveErrorMapped verifies a fetched object that is not a valid archive
+// (garbage bytes) fails at Import via importArchive's archive.NewReader error, mapped rather than
+// returned raw.
+func TestImport_MalformedArchiveErrorMapped(t *testing.T) {
+	objects := newFakeObjectStore()
+	if err := objects.Put(context.Background(), "garbage", bytes.NewReader([]byte("not an archive"))); err != nil {
+		t.Fatalf("Put: %s", err)
+	}
+
+	s := newTransferTestServer(t, objects)
+
+	if _, err := s.Import(context.Background(), &contract.ImportRequest{ObjectKey: "garbage"}); status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// buildArchive writes a minimal, well-formed archive (valid header, given events and memories) to
+// a buffer for import tests that need to drive ingestEvents/ingestMemories failures, which require
+// getting past archive.NewReader's own header validation first.
+func buildArchive(t *testing.T, events []*contract.Event, memories []*contract.Memory) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	w := archive.NewWriter(&buf)
+
+	if err := w.WriteHeader(&contract.ArchiveHeader{Version: archive.Version}); err != nil {
+		t.Fatalf("WriteHeader: %s", err)
+	}
+
+	for _, e := range events {
+		if err := w.WriteEvent(e); err != nil {
+			t.Fatalf("WriteEvent: %s", err)
+		}
+	}
+
+	for _, m := range memories {
+		if err := w.WriteMemory(m); err != nil {
+			t.Fatalf("WriteMemory: %s", err)
+		}
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	return buf.Bytes()
+}
+
+// TestImportArchive_RejectsEventWithoutId_MidLoopFlush verifies an imported event without an id is
+// rejected, with transfer.batchSize small enough that the bad record triggers a flush mid-loop
+// (before EOF) rather than only at the final flush.
+func TestImportArchive_RejectsEventWithoutId_MidLoopFlush(t *testing.T) {
+	body := buildArchive(t, []*contract.Event{{Name: "no id", Significance: 5}}, nil)
+
+	objects := newFakeObjectStore()
+	if err := objects.Put(context.Background(), "bad", bytes.NewReader(body)); err != nil {
+		t.Fatalf("Put: %s", err)
+	}
+
+	s := newTransferTestServer(t, objects)
+	s.transfer.batchSize = 1
+
+	if _, err := s.Import(context.Background(), &contract.ImportRequest{ObjectKey: "bad"}); err == nil {
+		t.Error("expected an error for an imported event without an id")
+	}
+}
+
+// TestImportArchive_RejectsMemoryWithoutId_FinalFlush verifies an imported memory without an id is
+// rejected at the final flush (transfer.batchSize left large so the whole archive is buffered
+// before the bad record is reached).
+func TestImportArchive_RejectsMemoryWithoutId_FinalFlush(t *testing.T) {
+	body := buildArchive(t,
+		[]*contract.Event{{Id: "e1", Name: "fine", Significance: 5}},
+		[]*contract.Memory{{Body: "no id", Significance: 5}},
+	)
+
+	objects := newFakeObjectStore()
+	if err := objects.Put(context.Background(), "bad", bytes.NewReader(body)); err != nil {
+		t.Fatalf("Put: %s", err)
+	}
+
+	s := newTransferTestServer(t, objects)
+
+	// Large enough that both records are read before batchSize forces a mid-loop flush, so the
+	// failure is caught by the final, post-EOF flush instead (the complementary case to the
+	// mid-loop variant above).
+	s.transfer.batchSize = 100
+
+	if _, err := s.Import(context.Background(), &contract.ImportRequest{ObjectKey: "bad"}); err == nil {
+		t.Error("expected an error for an imported memory without an id")
+	}
+}
+
+// TestImportArchive_TruncatedStreamErrorMapped verifies a mid-stream (non-EOF) read failure - here,
+// an otherwise well-formed archive truncated a few bytes short, so its header parses fine but a
+// later record does not - surfaces through Import mapped rather than raw or silently accepted as a
+// short read.
+func TestImportArchive_TruncatedStreamErrorMapped(t *testing.T) {
+	full := buildArchive(t,
+		[]*contract.Event{{Id: "e1", Name: "one", Significance: 5}},
+		[]*contract.Memory{{Id: "m1", Body: "a longer body so there is enough compressed data to truncate meaningfully", Significance: 5}},
+	)
+
+	truncated := full[:len(full)-4]
+
+	objects := newFakeObjectStore()
+	if err := objects.Put(context.Background(), "truncated", bytes.NewReader(truncated)); err != nil {
+		t.Fatalf("Put: %s", err)
+	}
+
+	s := newTransferTestServer(t, objects)
+
+	if _, err := s.Import(context.Background(), &contract.ImportRequest{ObjectKey: "truncated"}); status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestImportBatch_SkipsBinaryMemoriesInSearchIndex verifies ImportBatch's ingestMemories skips
+// indexing binary memories, mirroring StoreMemory's own binary-skip contract.
+func TestImportBatch_SkipsBinaryMemoriesInSearchIndex(t *testing.T) {
+	idx := &fakeIndex{enabled: true}
+
+	s := newTransferTestServer(t, nil)
+	s.search = idx
+
+	_, err := s.ImportBatch(context.Background(), &contract.ImportBatchRequest{
+		Memories: []*contract.Memory{
+			{Id: "text", Body: "hello", Significance: 5},
+			{Id: "bin", Body: "AAEC", Significance: 5, IsBinary: contract.Bool_TRUE},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportBatch: %s", err)
+	}
+
+	want := []string{"index:text"}
+
+	if len(idx.calls) != len(want) || idx.calls[0] != want[0] {
+		t.Errorf("expected only the non-binary memory indexed, got %v", idx.calls)
+	}
+}
+
+// TestImportArchive_DefaultBatchSize verifies a non-positive transfer.batchSize falls back to the
+// default rather than, say, never flushing - exercised via a real round trip with batchSize left at
+// its zero value.
+func TestImportArchive_DefaultBatchSize(t *testing.T) {
+	objects := newFakeObjectStore()
+
+	source := newTransferTestServer(t, objects)
+	source.transfer.batchSize = 0
+	seedTransferFixture(t, source)
+
+	exported, err := source.Export(context.Background(), &contract.ExportRequest{})
+	if err != nil {
+		t.Fatalf("Export: %s", err)
+	}
+
+	target := newTransferTestServer(t, objects)
+	target.transfer.batchSize = 0
+
+	imported, err := target.Import(context.Background(), &contract.ImportRequest{ObjectKey: exported.GetObjectKey()})
+	if err != nil {
+		t.Fatalf("Import: %s", err)
+	}
+
+	if imported.GetEventsImported() != 2 || imported.GetMemoriesImported() != 3 {
+		t.Errorf("expected 2 events and 3 memories imported under the default batch size, got %v", imported)
+	}
+}
+
+// generateSelfSignedCertFiles writes a fresh self-signed certificate and private key to two PEM
+// files under t.TempDir(), for exercising clientCredentials' certificate-loading branches without a
+// live CA.
+func generateSelfSignedCertFiles(t *testing.T) (certFile string, keyFile string) {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %s", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "hippocampus-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		IsCA:         true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %s", err)
+	}
+
+	dir := t.TempDir()
+
+	certFile = dir + "/cert.pem"
+	keyFile = dir + "/key.pem"
+
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		t.Fatalf("create cert file: %s", err)
+	}
+
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		t.Fatalf("encode cert: %s", err)
+	}
+
+	if err := certOut.Close(); err != nil {
+		t.Fatalf("close cert file: %s", err)
+	}
+
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		t.Fatalf("create key file: %s", err)
+	}
+
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
+		t.Fatalf("encode key: %s", err)
+	}
+
+	if err := keyOut.Close(); err != nil {
+		t.Fatalf("close key file: %s", err)
+	}
+
+	return certFile, keyFile
+}
+
+// TestTransferClientCredentials_CACertAndClientCert covers the remaining clientCredentials
+// branches: a valid CA bundle, an invalid (non-PEM) CA bundle, and a valid client certificate/key
+// pair.
+func TestTransferClientCredentials_CACertAndClientCert(t *testing.T) {
+	certFile, keyFile := generateSelfSignedCertFiles(t)
+
+	// Valid CA bundle: the self-signed cert doubles as its own CA.
+	creds, err := (Transfer{tls: true, tlsCACertFile: certFile}).clientCredentials()
+	if err != nil {
+		t.Fatalf("valid CA cert: unexpected error: %s", err)
+	}
+
+	if proto := creds.Info().SecurityProtocol; proto != "tls" {
+		t.Errorf("valid CA cert: expected tls credentials, got %q", proto)
+	}
+
+	// Invalid (non-PEM) CA bundle content.
+	badCACert := t.TempDir() + "/bad-ca.pem"
+	if err := os.WriteFile(badCACert, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatalf("write bad CA file: %s", err)
+	}
+
+	if _, err := (Transfer{tls: true, tlsCACertFile: badCACert}).clientCredentials(); err == nil {
+		t.Error("invalid CA cert content: expected an error, got nil")
+	}
+
+	// Valid client certificate/key pair (mutual TLS).
+	creds, err = (Transfer{tls: true, tlsCertFile: certFile, tlsKeyFile: keyFile}).clientCredentials()
+	if err != nil {
+		t.Fatalf("valid client cert: unexpected error: %s", err)
+	}
+
+	if proto := creds.Info().SecurityProtocol; proto != "tls" {
+		t.Errorf("valid client cert: expected tls credentials, got %q", proto)
+	}
+
+	// Invalid client key file (unparseable content, valid cert).
+	badKeyFile := t.TempDir() + "/bad-key.pem"
+	if err := os.WriteFile(badKeyFile, []byte("not a key"), 0o600); err != nil {
+		t.Fatalf("write bad key file: %s", err)
+	}
+
+	if _, err := (Transfer{tls: true, tlsCertFile: certFile, tlsKeyFile: badKeyFile}).clientCredentials(); err == nil {
+		t.Error("invalid client key: expected an error, got nil")
+	}
+}
+
+// TestTransfer_ClientCredentialsErrorSurfaces verifies the Transfer RPC maps a clientCredentials
+// failure (here, a half-configured client certificate pair) rather than returning it raw.
+func TestTransfer_ClientCredentialsErrorSurfaces(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+	s.transfer.targetAddress = "127.0.0.1:0"
+	s.transfer.tls = true
+	s.transfer.tlsCertFile = "cert-without-a-key.pem"
+
+	if _, err := s.Transfer(context.Background(), &contract.TransferRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestClear_EmptyManifestIdRejected verifies a missing manifest_id is rejected before any lookup.
+func TestClear_EmptyManifestIdRejected(t *testing.T) {
+	s := newTransferTestServer(t, nil)
+
+	if _, err := s.Clear(context.Background(), &contract.ClearRequest{}); err == nil {
+		t.Error("expected an error for a missing manifest_id")
+	}
+}
+
+// failDeleteEventIfEmptyStore wraps a real db.Store but forces DeleteEventIfEmpty to fail for one
+// specific event id, so clearManifest's per-event error-logged-and-skipped loop can be exercised:
+// the failing event is skipped (logged, not counted) while the rest of the manifest still clears.
+type failDeleteEventIfEmptyStore struct {
+	db.Store
+	failId string
+	err    error
+}
+
+func (f failDeleteEventIfEmptyStore) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
+	if id == f.failId {
+		return false, f.err
+	}
+
+	return f.Store.DeleteEventIfEmpty(ctx, id)
+}
+
+// TestClearManifest_EventDeleteErrorLoggedAndSkipped verifies a failing DeleteEventIfEmpty for one
+// event in the manifest is logged and skipped rather than aborting the whole clear - the other
+// captured event still clears, and memoriesCleared is unaffected.
+func TestClearManifest_EventDeleteErrorLoggedAndSkipped(t *testing.T) {
+	s := newTransferTestServer(t, newFakeObjectStore())
+	seedTransferFixture(t, s) // events e1 (has memories) and e2 (referenced via relationship only)
+
+	// e2 has no memories, so it is eligible for deletion in the manifest's event-cleanup pass.
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m-e2", TimeStamp: 100, Significance: 5, EventId: "e2", Body: "x"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if _, err := s.db.DeleteMemories(context.Background(), []string{"m-e2"}); err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	manifest := &transferManifest{id: "m1", eventIds: []string{"e1", "e2"}}
+
+	wantErr := errors.New("delete event boom")
+	s.db = failDeleteEventIfEmptyStore{Store: s.db, failId: "e2", err: wantErr}
+
+	memoriesCleared, eventsCleared, err := s.clearManifest(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("clearManifest: %s", err)
+	}
+
+	if memoriesCleared != 0 {
+		t.Errorf("expected no memories in this manifest, got %d", memoriesCleared)
+	}
+
+	// e1 still owns memories (not empty) so it is not deleted either; the point under test is that
+	// e2's failure did not abort the loop or fail the call.
+	if eventsCleared != 0 {
+		t.Errorf("expected 0 events cleared (e1 not empty, e2 errored), got %d", eventsCleared)
 	}
 }

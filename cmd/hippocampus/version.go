@@ -30,7 +30,14 @@ var buildVersion string
 // startup log and /healthz body always carry a value. A buildVersion stamped in via -ldflags
 // overrides whatever the module version resolved to.
 func readVersionInfo() versionInfo {
-	info, ok := debug.ReadBuildInfo()
+	return readVersionInfoWith(debug.ReadBuildInfo)
+}
+
+// readVersionInfoWith does the actual work, taking the debug.ReadBuildInfo lookup as a parameter so
+// the not-ok fallback can be driven by a stub in a test - the real runtime/debug.ReadBuildInfo always
+// succeeds inside `go test`, so that branch is otherwise unreachable.
+func readVersionInfoWith(readBuildInfo func() (*debug.BuildInfo, bool)) versionInfo {
+	info, ok := readBuildInfo()
 	if !ok {
 		out := versionInfo{Version: "unknown"}
 

@@ -1,12 +1,17 @@
 package hippocampus
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -482,5 +487,285 @@ func TestNew_ConsolidationDisabledRunsNoTimedSleep(t *testing.T) {
 
 	if _, err := s.Sleep(context.Background(), &contract.EmptyRequest{}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("Sleep on a disabled instance: got %v, want FailedPrecondition", err)
+	}
+}
+
+// TestMapError_ContextErrors verifies mapError's context-cancellation branches directly: a
+// wrapped context.Canceled/context.DeadlineExceeded must map to the matching gRPC code rather than
+// falling through to the generic codes.Internal masking.
+func TestMapError_ContextErrors(t *testing.T) {
+	if got := status.Code(mapError(fmt.Errorf("query: %w", context.Canceled))); got != codes.Canceled {
+		t.Errorf("expected codes.Canceled, got %s", got)
+	}
+
+	if got := status.Code(mapError(fmt.Errorf("query: %w", context.DeadlineExceeded))); got != codes.DeadlineExceeded {
+		t.Errorf("expected codes.DeadlineExceeded, got %s", got)
+	}
+}
+
+// TestMapWriteError_NilAndPassthrough verifies mapWriteError's own branches directly: a nil error
+// stays nil, a write conflict maps to a retryable Aborted carrying the original message (unlike
+// mapError, which masks it), and any other error is returned unchanged so an admin retrying a
+// failed Clear sees the real cause.
+func TestMapWriteError_NilAndPassthrough(t *testing.T) {
+	if err := mapWriteError(nil); err != nil {
+		t.Errorf("expected nil to stay nil, got %v", err)
+	}
+
+	wrapped := fmt.Errorf("clear: %w", db.ErrWriteConflict)
+	if got := status.Code(mapWriteError(wrapped)); got != codes.Aborted {
+		t.Errorf("expected codes.Aborted for a write conflict, got %s", got)
+	}
+
+	other := errors.New("manifest gone missing")
+	if got := mapWriteError(other); got != other {
+		t.Errorf("expected the original error unchanged, got %v", got)
+	}
+}
+
+// failWALBytesStore wraps a real db.Store but forces WALBytes to fail, so checkWALTrigger's error
+// arm can be exercised without a broken database.
+type failWALBytesStore struct {
+	db.Store
+	err error
+}
+
+func (f failWALBytesStore) WALBytes() (int64, error) {
+	return 0, f.err
+}
+
+// countingSleepStore wraps a real db.Store and counts CountMemories calls - a proxy for "a sleep
+// cycle ran" - without shadowing WALBytes the way recordingStore deliberately does, so it composes
+// with a fault store that overrides WALBytes underneath it.
+type countingSleepStore struct {
+	db.Store
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingSleepStore) CountMemories(ctx context.Context) (int, int) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+
+	return c.Store.CountMemories(ctx)
+}
+
+func (c *countingSleepStore) snapshot() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.calls
+}
+
+// TestCheckWALTrigger_WALBytesErrorIsNoOp verifies a failure reading the WAL size is logged and
+// otherwise ignored - it must not panic or run a spurious sleep cycle.
+func TestCheckWALTrigger_WALBytesErrorIsNoOp(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	rec := &countingSleepStore{Store: failWALBytesStore{Store: database, err: errors.New("stat failed")}}
+
+	s := &Server{
+		db: rec,
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			deletionThreshold: 1.0,
+			walTriggerBytes:   1,
+		},
+	}
+
+	s.checkWALTrigger()
+
+	if calls := rec.snapshot(); calls != 0 {
+		t.Errorf("expected no sleep cycle when the WAL size read fails, got %d", calls)
+	}
+}
+
+// TestSleep_ResetSentWhenBufferHasRoom verifies the Sleep RPC's non-blocking nudge actually sends
+// on the reset channel when there is room (the complementary case to
+// TestSleep_NonBlockingResetWhenBufferFull, which only proves the full-buffer case doesn't block).
+func TestSleep_ResetSentWhenBufferHasRoom(t *testing.T) {
+	s, _ := walTestServer(t, 0)
+	s.sleepReset = make(chan bool, 1)
+
+	if _, err := s.Sleep(context.Background(), &contract.EmptyRequest{}); err != nil {
+		t.Fatalf("Sleep: %s", err)
+	}
+
+	select {
+
+	case v := <-s.sleepReset:
+		if !v {
+			t.Error("expected true sent on the reset channel")
+		}
+
+	default:
+		t.Error("expected Sleep to send a reset signal onto a non-full buffer")
+	}
+}
+
+// TestAutoSleep_ManualResetWithTimedSleepDisabled is a regression-style check for resetTimer's
+// nil-timer guard: with the timed cycle disabled (period <= 0, e.g. a WAL-trigger-only or purely
+// RPC-driven instance), a reset signal must still be handled - resetTimer must return immediately
+// rather than dereferencing the nil timer. If it ever blocked or panicked, the reset channel would
+// never drain and this test would time out.
+func TestAutoSleep_ManualResetWithTimedSleepDisabled(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{
+		db:           database,
+		sleepReset:   make(chan bool, 1),
+		stopSleep:    make(chan struct{}),
+		sleepStopped: make(chan struct{}),
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			deletionThreshold: 1.0,
+		},
+	}
+
+	s.autoSleep(s.sleepReset, 0)
+	t.Cleanup(s.Stop)
+
+	s.sleepReset <- true
+
+	// If the reset case (and resetTimer's nil-timer branch inside it) processed cleanly, the
+	// channel is drained and a second send succeeds well before the timeout.
+	select {
+
+	case s.sleepReset <- true:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("autoSleep did not drain the reset signal with the timed cycle disabled")
+	}
+}
+
+// TestNew_StartsAndStopsReconcile verifies New's reconcile wiring end to end: with consolidation
+// enabled, an enabled search index, and a positive reconcileIntervalSeconds, it must launch the
+// sweep goroutine (stopReconcile/reconcileStopped non-nil), and Stop must drain it promptly rather
+// than hanging.
+func TestNew_StartsAndStopsReconcile(t *testing.T) {
+	viper.Set("consolidation.enabled", true)
+	viper.Set("opensearch.reconcileIntervalSeconds", 3600)
+	viper.Set("sleep.periodSeconds", 0)
+	viper.Set("consolidation.method", 1)
+	viper.Set("consolidation.aggressiveness", 1.0)
+	viper.Set("consolidation.unitsOfAgeInDays", 1.0)
+	viper.Set("consolidation.deletionThreshold", 1.0)
+
+	t.Cleanup(func() {
+		viper.Set("opensearch.reconcileIntervalSeconds", 0)
+		viper.Set("sleep.periodSeconds", 0)
+	})
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	idx := &fakeIndex{enabled: true}
+
+	s := New(database, idx, nil)
+
+	if s.stopReconcile == nil || s.reconcileStopped == nil {
+		t.Fatal("expected startReconcile to launch the reconciliation sweep goroutine")
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		s.Stop()
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return promptly; the reconcile goroutine may not have drained")
+	}
+}
+
+// TestNew_TransferTokenWithoutTLSWarns verifies New logs a warning when transfer.token is
+// configured without transfer.tls, mirroring the server-side auth-without-TLS warning - a
+// plaintext bearer token sent to the transfer target is a real exposure worth flagging.
+func TestNew_TransferTokenWithoutTLSWarns(t *testing.T) {
+	var buf bytes.Buffer
+
+	restoreOutput := log.StandardLogger().Out
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(restoreOutput) })
+
+	viper.Set("transfer.token", "secret-token")
+	viper.Set("sleep.periodSeconds", 0)
+	viper.Set("consolidation.method", 1)
+	viper.Set("consolidation.aggressiveness", 1.0)
+	viper.Set("consolidation.unitsOfAgeInDays", 1.0)
+	viper.Set("consolidation.deletionThreshold", 1.0)
+
+	t.Cleanup(func() {
+		viper.Set("transfer.token", "")
+		viper.Set("sleep.periodSeconds", 0)
+	})
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := New(database, nil, nil)
+	t.Cleanup(s.Stop)
+
+	if !strings.Contains(buf.String(), "transfer.token is configured without transfer.tls") {
+		t.Errorf("expected a warning about the plaintext bearer token, got log output: %s", buf.String())
+	}
+}
+
+// failPurgeStore wraps a real db.Store but forces Purge to fail, so the Purge RPC's error-mapping
+// branch can be exercised without a broken database.
+type failPurgeStore struct {
+	db.Store
+	err error
+}
+
+func (f failPurgeStore) Purge(ctx context.Context) error {
+	return f.err
+}
+
+// TestPurge_ErrorMapped verifies a generic Purge failure is mapped via mapError rather than
+// returned raw, and purgeInProgress is still cleared afterwards so subsequent RPCs are not blocked
+// forever.
+func TestPurge_ErrorMapped(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	wantErr := errors.New("purge boom")
+
+	s := &Server{db: failPurgeStore{Store: database, err: wantErr}}
+
+	if _, err := s.Purge(context.Background(), &contract.EmptyRequest{}); status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	if s.purgeInProgress.Load() {
+		t.Error("expected purgeInProgress cleared after a failed Purge")
 	}
 }

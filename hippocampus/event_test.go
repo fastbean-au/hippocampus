@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -900,5 +901,414 @@ func TestUpdateEventSignificance_PlacementInvalidBetweenRejected(t *testing.T) {
 
 	if got.Significance != 5 {
 		t.Errorf("e1 significance changed to %d, want unchanged 5", got.Significance)
+	}
+}
+
+// eventFaultStore wraps a real db.Store and lets a test force any one of several event-RPC-adjacent
+// methods to fail, so the many single-line mapError branches across event.go can each be driven
+// down their error path with a single reusable type rather than one hand-written wrapper apiece.
+// Every field defaults to nil, in which case the call passes through to the embedded Store.
+type eventFaultStore struct {
+	db.Store
+
+	eventExistsErr              error
+	getEventErr                 error
+	updateEventErr              error
+	deleteEventErr              error
+	createEventErr              error
+	deleteEventMemoriesErr      error
+	getMemoriesByEventIdErr     error
+	getMemoriesByEventIdsErr    error
+	countEventsFilteredErr      error
+	getEventsErr                error
+	resolveSignificanceLevelErr error
+}
+
+func (f eventFaultStore) EventExists(ctx context.Context, id string) (bool, error) {
+	if f.eventExistsErr != nil {
+		return false, f.eventExistsErr
+	}
+
+	return f.Store.EventExists(ctx, id)
+}
+
+func (f eventFaultStore) GetEvent(ctx context.Context, id string) (*types.Event, error) {
+	if f.getEventErr != nil {
+		return nil, f.getEventErr
+	}
+
+	return f.Store.GetEvent(ctx, id)
+}
+
+func (f eventFaultStore) UpdateEvent(ctx context.Context, event types.Event) (bool, error) {
+	if f.updateEventErr != nil {
+		return false, f.updateEventErr
+	}
+
+	return f.Store.UpdateEvent(ctx, event)
+}
+
+func (f eventFaultStore) DeleteEvent(ctx context.Context, id string) (bool, error) {
+	if f.deleteEventErr != nil {
+		return false, f.deleteEventErr
+	}
+
+	return f.Store.DeleteEvent(ctx, id)
+}
+
+func (f eventFaultStore) CreateEvent(ctx context.Context, event types.Event) (string, error) {
+	if f.createEventErr != nil {
+		return "", f.createEventErr
+	}
+
+	return f.Store.CreateEvent(ctx, event)
+}
+
+func (f eventFaultStore) DeleteEventMemories(ctx context.Context, eventId string) (int, error) {
+	if f.deleteEventMemoriesErr != nil {
+		return 0, f.deleteEventMemoriesErr
+	}
+
+	return f.Store.DeleteEventMemories(ctx, eventId)
+}
+
+func (f eventFaultStore) GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error) {
+	if f.getMemoriesByEventIdErr != nil {
+		return nil, f.getMemoriesByEventIdErr
+	}
+
+	return f.Store.GetMemoriesByEventId(ctx, eventId)
+}
+
+func (f eventFaultStore) GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]types.Memory, error) {
+	if f.getMemoriesByEventIdsErr != nil {
+		return nil, f.getMemoriesByEventIdsErr
+	}
+
+	return f.Store.GetMemoriesByEventIds(ctx, eventIds)
+}
+
+func (f eventFaultStore) CountEventsFiltered(ctx context.Context, filter db.EventFilter) (int, error) {
+	if f.countEventsFilteredErr != nil {
+		return 0, f.countEventsFilteredErr
+	}
+
+	return f.Store.CountEventsFiltered(ctx, filter)
+}
+
+func (f eventFaultStore) GetEvents(ctx context.Context, filter db.EventFilter) (*[]types.Event, error) {
+	if f.getEventsErr != nil {
+		return nil, f.getEventsErr
+	}
+
+	return f.Store.GetEvents(ctx, filter)
+}
+
+func (f eventFaultStore) ResolveSignificanceLevel(ctx context.Context, spec db.SignificanceSpec) (sql.NullInt64, int32, error) {
+	if f.resolveSignificanceLevelErr != nil {
+		return sql.NullInt64{}, 0, f.resolveSignificanceLevelErr
+	}
+
+	return f.Store.ResolveSignificanceLevel(ctx, spec)
+}
+
+// TestStoreEvent_NestedMemoryErrorLoggedAndSkipped is a regression test for the nested-memory
+// best-effort loop: a nested memory that fails with a genuine store error (not merely rejected for
+// insignificance) must be logged and skipped, and excluded from memory_count, while the event
+// create itself still succeeds.
+func TestStoreEvent_NestedMemoryErrorLoggedAndSkipped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "dup", TimeStamp: 100, Significance: 5, Body: "existing"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	res, err := s.StoreEvent(context.Background(), &contract.Event{
+		Name:         "trip",
+		TimeStart:    100,
+		Significance: 5,
+		Memories: []*contract.Memory{
+			{Id: "dup", Significance: 5, Body: "colliding"},
+			{Significance: 5, Body: "fine"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StoreEvent: %s", err)
+	}
+
+	if res.GetMemoryCount() != 1 {
+		t.Fatalf("expected memory_count 1 (the colliding nested memory errored and was skipped), got %d", res.GetMemoryCount())
+	}
+}
+
+// TestStoreEvent_ResolveSignificanceGenericErrorMapped verifies a non-placement failure from
+// resolveEventSignificance (e.g. a storage error opening a registry gap) is mapped via mapError
+// rather than returned raw.
+func TestStoreEvent_ResolveSignificanceGenericErrorMapped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	wantErr := errors.New("resolve boom")
+	s.db = eventFaultStore{Store: s.db, resolveSignificanceLevelErr: wantErr}
+
+	_, err := s.StoreEvent(context.Background(), &contract.Event{
+		Name:      "trip",
+		TimeStart: 100,
+		Placement: &contract.SignificancePlacement{Mode: contract.SignificancePlacement_ABOVE, Anchor: 5},
+	})
+	if err == nil {
+		t.Fatal("expected the ResolveSignificanceLevel failure to surface")
+	}
+
+	if status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestStoreEvent_CreateEventErrorMapped verifies a generic CreateEvent failure is mapped via
+// mapError rather than returned raw.
+func TestStoreEvent_CreateEventErrorMapped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	wantErr := errors.New("create boom")
+	s.db = eventFaultStore{Store: s.db, createEventErr: wantErr}
+
+	_, err := s.StoreEvent(context.Background(), &contract.Event{Name: "trip", TimeStart: 100, Significance: 5})
+	if err == nil {
+		t.Fatal("expected the CreateEvent failure to surface")
+	}
+
+	if status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestEndEvent_UpdateEventErrorMapped verifies a generic UpdateEvent failure is mapped via
+// mapError rather than returned raw.
+func TestEndEvent_UpdateEventErrorMapped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	wantErr := errors.New("update boom")
+	s.db = eventFaultStore{Store: s.db, updateEventErr: wantErr}
+
+	_, err := s.EndEvent(context.Background(), &contract.EndEventRequest{Id: "e1"})
+	if err == nil {
+		t.Fatal("expected the UpdateEvent failure to surface")
+	}
+
+	if status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestUpdateEventSignificance_ResolveAndUpdateErrorsMapped verifies both of
+// UpdateEventSignificance's own error-mapping branches: a generic resolveEventSignificance failure,
+// and a generic UpdateEvent failure once resolution succeeds.
+func TestUpdateEventSignificance_ResolveAndUpdateErrorsMapped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	real := s.db
+
+	resolveErr := errors.New("resolve boom")
+	s.db = eventFaultStore{Store: real, resolveSignificanceLevelErr: resolveErr}
+
+	_, err := s.UpdateEventSignificance(context.Background(), &contract.UpdateEventSignificanceRequest{
+		Id:        "e1",
+		Placement: &contract.SignificancePlacement{Mode: contract.SignificancePlacement_ABOVE, Anchor: 5},
+	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("resolve failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	updateErr := errors.New("update boom")
+	s.db = eventFaultStore{Store: real, updateEventErr: updateErr}
+
+	_, err = s.UpdateEventSignificance(context.Background(), &contract.UpdateEventSignificanceRequest{Id: "e1", Significance: 9})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("update failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestMergeEvents_EventExistsErrorMapped verifies a generic EventExists failure (checking merge_to)
+// is mapped via mapError rather than returned raw.
+func TestMergeEvents_EventExistsErrorMapped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	wantErr := errors.New("exists boom")
+	s.db = eventFaultStore{Store: s.db, eventExistsErr: wantErr}
+
+	_, err := s.MergeEvents(context.Background(), &contract.MergeEventsRequest{MergeTo: "e1", MergeFrom: "e2"})
+	if err == nil {
+		t.Fatal("expected the EventExists failure to surface")
+	}
+
+	if status.Code(err) != codes.Internal {
+		t.Errorf("expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestDeleteEvent_ErrorsMapped verifies DeleteEvent's own DeleteEvent-call failure and (with
+// memories: true) its DeleteEventMemories failure are both mapped via mapError.
+func TestDeleteEvent_ErrorsMapped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	wantErr := errors.New("delete boom")
+	s.db = eventFaultStore{Store: s.db, deleteEventErr: wantErr}
+
+	if _, err := s.DeleteEvent(context.Background(), &contract.DeleteEventRequest{Id: "e1"}); status.Code(err) != codes.Internal {
+		t.Fatalf("DeleteEvent failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	memErr := errors.New("delete memories boom")
+	s.db = eventFaultStore{Store: database, deleteEventMemoriesErr: memErr}
+
+	if _, err := s.DeleteEvent(context.Background(), &contract.DeleteEventRequest{Id: "e1", Memories: true}); status.Code(err) != codes.Internal {
+		t.Fatalf("DeleteEventMemories failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestGetEventById_ErrorsMapped verifies a generic GetEvent failure and (with memories: true) a
+// generic GetMemoriesByEventId failure are both mapped via mapError.
+func TestGetEventById_ErrorsMapped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	getEventErr := errors.New("get event boom")
+	s.db = eventFaultStore{Store: s.db, getEventErr: getEventErr}
+
+	if _, err := s.GetEventById(context.Background(), &contract.GetEventByIdRequest{Id: "e1"}); status.Code(err) != codes.Internal {
+		t.Fatalf("GetEvent failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	memErr := errors.New("get memories boom")
+	s.db = eventFaultStore{Store: database, getMemoriesByEventIdErr: memErr}
+
+	if _, err := s.GetEventById(context.Background(), &contract.GetEventByIdRequest{Id: "e1", Memories: true}); status.Code(err) != codes.Internal {
+		t.Fatalf("GetMemoriesByEventId failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestGetEvents_ValidationErrors covers the remaining GetEvents validation combinations beyond
+// significance_extremum (already covered elsewhere): every inverted time range, and an unsupported
+// order_by.
+func TestGetEvents_ValidationErrors(t *testing.T) {
+	s := newEventTestServer(t)
+
+	cases := []struct {
+		name string
+		req  *contract.GetEventsRequest
+	}{
+		{"SignificanceMax < SignificanceMin", &contract.GetEventsRequest{SignificanceMin: 9, SignificanceMax: 1}},
+		{"TimeStartMax < TimeStartMin", &contract.GetEventsRequest{TimeStartMin: 300, TimeStartMax: 100}},
+		{"TimeEndMax < TimeEndMin", &contract.GetEventsRequest{TimeEndMin: 300, TimeEndMax: 100}},
+		{"TimeEndMin < TimeStartMin", &contract.GetEventsRequest{TimeStartMin: 300, TimeEndMin: 100}},
+		{"TimeEndMax < TimeStartMax", &contract.GetEventsRequest{TimeStartMax: 300, TimeEndMax: 100}},
+		{"unsupported order_by", &contract.GetEventsRequest{OrderBy: "bogus"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := s.GetEvents(context.Background(), tc.req); err == nil {
+				t.Errorf("expected an error for %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestGetEvents_LimitAndOffsetClamped verifies an over-large limit is clamped to maxEventPageSize
+// and a negative offset is clamped to 0, by capturing the filter actually reaching the store.
+func TestGetEvents_LimitAndOffsetClamped(t *testing.T) {
+	s := newEventTestServer(t)
+
+	captured := &capturingEventStore{Store: s.db}
+	s.db = captured
+
+	if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{Limit: 10000, Offset: -5}); err != nil {
+		t.Fatalf("GetEvents: %s", err)
+	}
+
+	if captured.gotFilter.Limit != maxEventPageSize {
+		t.Errorf("expected limit clamped to %d, got %d", maxEventPageSize, captured.gotFilter.Limit)
+	}
+
+	if captured.gotFilter.Offset != 0 {
+		t.Errorf("expected negative offset clamped to 0, got %d", captured.gotFilter.Offset)
+	}
+}
+
+// capturingEventStore wraps a real db.Store and records the last filter GetEvents was called
+// with, so a test can assert on the RPC layer's clamping without needing 200+ fixture rows.
+type capturingEventStore struct {
+	db.Store
+	gotFilter db.EventFilter
+}
+
+func (c *capturingEventStore) GetEvents(ctx context.Context, filter db.EventFilter) (*[]types.Event, error) {
+	c.gotFilter = filter
+
+	return c.Store.GetEvents(ctx, filter)
+}
+
+// TestGetEvents_CountAndListErrorsMapped verifies CountEventsFiltered's and GetEvents' own
+// generic failures, and (with memories: true) GetMemoriesByEventIds', are all mapped via mapError.
+func TestGetEvents_CountAndListErrorsMapped(t *testing.T) {
+	countErr := errors.New("count boom")
+	s := newEventTestServer(t)
+	s.db = eventFaultStore{Store: s.db, countEventsFilteredErr: countErr}
+
+	if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{}); status.Code(err) != codes.Internal {
+		t.Fatalf("CountEventsFiltered failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	listErr := errors.New("list boom")
+	s2 := newEventTestServer(t)
+	s2.db = eventFaultStore{Store: s2.db, getEventsErr: listErr}
+
+	if _, err := s2.GetEvents(context.Background(), &contract.GetEventsRequest{}); status.Code(err) != codes.Internal {
+		t.Fatalf("GetEvents failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
+	}
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	batchErr := errors.New("batch boom")
+	s3 := newEventTestServer(t)
+	s3.db = eventFaultStore{Store: database, getMemoriesByEventIdsErr: batchErr}
+
+	if _, err := s3.GetEvents(context.Background(), &contract.GetEventsRequest{Memories: true}); status.Code(err) != codes.Internal {
+		t.Fatalf("GetMemoriesByEventIds failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
 	}
 }

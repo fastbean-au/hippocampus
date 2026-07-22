@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
@@ -128,6 +129,51 @@ func TestBackfillSearch_HappyPath(t *testing.T) {
 	// Reindex: true must delete the index before recreating/backfilling it.
 	if got := fake.count("DELETE /test-index"); got == 0 {
 		t.Errorf("expected a DELETE against the index for --reindex, got requests: %v", fake.recorded())
+	}
+}
+
+// TestBackfillSearch_ProgressLogging verifies the "indexed N memories so far" progress line fires
+// once per 10000 memories indexed - the loop's only way to report progress on a run large enough
+// that operators would otherwise see no output for a long time.
+func TestBackfillSearch_ProgressLogging(t *testing.T) {
+	const memoryCount = 10001
+
+	dir := seedSQLiteFixture(t, memoryCount)
+
+	fake := &fakeOpenSearchServer{}
+	server := httptest.NewServer(fake.handler())
+	t.Cleanup(server.Close)
+
+	hook := logtest.NewGlobal()
+	log.SetLevel(log.InfoLevel)
+
+	backfillSearch(backfillConfig{
+		StorageDriver:    "sqlite",
+		StorageDirectory: dir,
+		Search: search.Config{
+			Addresses: []string{server.URL},
+			Index:     "test-index",
+			QueueSize: 16,
+		},
+		BatchSize: 4000,
+	})
+
+	if got := fake.count("/_doc/"); got != memoryCount {
+		t.Errorf("expected %d document index requests, got %d", memoryCount, got)
+	}
+
+	found := false
+
+	for _, entry := range hook.AllEntries() {
+		if entry.Message == "indexed 10000 memories so far" {
+			found = true
+
+			break
+		}
+	}
+
+	if !found {
+		t.Error("expected a progress log entry at 10000 memories indexed")
 	}
 }
 
