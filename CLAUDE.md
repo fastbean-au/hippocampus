@@ -19,9 +19,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   and `protoc-gen-openapiv2` plugins, all `go install`-able; the `google/api` proto dependencies
   the gateway needs are vendored under `contract/google/api/`)
 - Demo/soak test: `./demo/run.sh` (builds and launches the service plus a load generator; see
-  `demo/README.md`). `OBSERVABILITY=1 ./demo/run.sh` also launches a `grafana/otel-lgtm` collector
-  (docker or podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on
-  `:3000`); the env overrides are exported by `run.sh`, not baked into `demo/config.json`
+  `demo/README.md`). By default it also launches a `grafana/otel-lgtm` collector (docker or
+  podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on `:3000`); set
+  `OBSERVABILITY=0` to skip it. The env overrides are exported by `run.sh`, not baked into
+  `demo/config.json`
 - Docker: `docker compose up --build` (SQLite), `docker compose -f docker/docker-compose.postgres.yaml
 up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up --build` (MySQL), or
   `docker compose -f docker/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content

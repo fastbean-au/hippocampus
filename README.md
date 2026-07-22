@@ -1,186 +1,129 @@
 # Hippocampus
 
-![Hippocampus](docs/go-hippocampus.png)
+> **A finite, biological-inspired memory storage engine for log retention, audit trails, and context management.**
 
-[![Coverage Status](https://coveralls.io/repos/github/fastbean-au/hippocampus/badge.svg?branch=main)](https://coveralls.io/github/fastbean-au/hippocampus?branch=main)
+[![Coverage Status](https://coveralls.io/repos/github/fastbean-au/hippocampus/badge.svg?branch=main)](https://coveralls.io/github/fastbean-au/hippocampus)
 ![Dependabot](https://img.shields.io/badge/dependabot-enabled-brightgreen)
 [![Known Vulnerabilities](https://snyk.io/test/github/fastbean-au/hippocampus/badge.svg)](https://snyk.io/test/github/fastbean-au/hippocampus)
 [![Go Reference](https://pkg.go.dev/badge/github.com/fastbean-au/hippocampus.svg)](https://pkg.go.dev/github.com/fastbean-au/hippocampus)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/fastbean-au/hippocampus)
 
-- [Hippocampus](#hippocampus)
-  - [Overview](#overview)
-  - [Use case](#use-case)
-  - [Current state](#current-state)
-  - [Documentation](#documentation)
-  - [Demo](#demo)
-  - [Docker](#docker)
-    - [Observability](#observability)
-  - [Horizontal scaling](#horizontal-scaling)
-  - [Limitations](#limitations)
+![Hippocampus Architecture](docs/go-hippocampus.png)
 
-Reference and guides live under [`docs/`](docs/): [Getting started](docs/getting-started.md),
-[Configurability](docs/configuration.md), [Memory consolidation](docs/consolidation.md),
-[Operations & deployment](docs/operations.md), [Performance under high throughput](docs/performance.md),
-[Use cases](docs/use-cases.md), and [Demonstrations](docs/demonstrations.md).
+---
 
-## Overview
+## 💡 Why Hippocampus?
 
-Hippocampus is an information or memory storage system that works with finite storage to retain the most significant information based on the memories' significance, age, how often they are recalled, and how they relate to other memories. It tries to help you keep the _right_ information without the overheads of needing to constantly decide what to cull when space runs short.
+Traditional storage engines rely on **Time-To-Live (TTL)** or fixed FIFO queues to manage bounded disk space. But age alone is a poor indicator of value: critical system anomalies, high-impact audit events, and frequently referenced context often get purged simply because they crossed an arbitrary time threshold.
 
-This service attempts to _somewhat_ emulate the workings of human memory, which is to say that the memory is finite, and over time details are lost except for more significant events (or, conversely, the more significant the event the more details will be retained); it does eschew the unreliable in terms of the inaccurate or more fallible nature of human memory. Sleep is used to preserve and consolidate memories. Recalling a memory reinforces it, making it harder to forget. Sleep can also surface events whose memories have piled up and gone quiet as candidates for summarization (see [Summarization](docs/consolidation.md#summarization)) — condensing many memories into one that carries the gist, echoing how human memory consolidates repeated or detailed episodic experience into a single semantic memory.
+Hippocampus applies principles from human memory consolidation to solve long-term data retention under finite capacity. Rather than indiscriminately truncating or expiring data, it continuously evaluates significance, access frequency, and relationships—retaining the **highest-value context** while gracefully degrading low-value noise.
 
-Memories may be associated with events and each memory and event has significance. Memories that are not associated with events may have a lower significance than those that are associated with an event even when those memories themselves have the same significance.
+* **Relative Significance & Ranking:** Insert events dynamically relative to adjacent records (`ABOVE`, `BELOW`, or `BETWEEN`) without enforcing rigid, static importance scales.
+* **Reinforcement through Recall:** Accessing or querying a record strengthens its retention weight, protecting high-demand operational data from decay.
+* **Sleep & Consolidation:** Runs periodic background consolidation cycles to apply decay models, compact space, and distill clusters of episodic details into compact semantic summaries.
+* **Durable & Compliance-Safe:** Embedded or centralized deployment backed by SQLite (WAL mode), PostgreSQL, or MySQL. Includes configurable minimum retention floors to guarantee compliance windows regardless of storage pressure.
 
-Significance is a single visible integer, but it can be set _relative_ to existing values rather than absolutely: a write may carry a `placement` (`ABOVE`/`BELOW`/`BETWEEN` an anchor significance or an existing item's id) so a new item ranks between two adjacent values, and the service opens a gap for it. Significance may also be left unset (`0` = unranked) and assigned later via `UpdateMemory`/`UpdateEventSignificance`. Because inserting between neighbours renumbers, an item's absolute significance is a relative rank that can drift as others are inserted around it.
+---
 
-Events and memories can also carry an optional freeform `group` label (up to 128 characters — a system, subsystem, org unit, owner, whatever fits the deployment). It gives related events and memories shared context beyond event membership, and `GetEvents`, `GetMemories`, and `SearchMemories` accept a `group` to restrict results to one grouping. The label plays no part in consolidation, decay, or capacity decisions.
+## ⚡ 30-Second Quick Start
 
-While the intention is to limit storage over the long-term, growth between sleep cycles is unbounded: a configurable capacity applies increasing pressure on the deletion threshold as the store fills, and an optional byte-based capacity target (see [Capacity target](docs/consolidation.md#capacity-target)) evicts the least valuable memories each sleep cycle to bound the store's size. Pulling the other way, an optional [minimum retention](docs/consolidation.md#minimum-retention) floor (`consolidation.minimumRetentionInDays`) keeps recent data for a fixed window regardless of significance — protecting it from both consolidation and eviction, overriding the capacity target — for compliance or audit needs. Data is stored in an embedded SQLite database in WAL mode, so every acknowledged write is durable immediately; the sleep process compacts the database, returning the space freed by consolidation to the filesystem.
+Try Hippocampus locally with zero external dependencies (uses pure-Go embedded SQLite):
 
-## Use case
-
-Where long-term retention of data is desired but infinite storage is either not available or is undesirable and TTL does not provide fine enough control.
-
-This could include things such as system logs and audit trails, alerts, anomalies, transactions, and so on.
-
-There are two main configurations that Hippocampus can run in: independent (standalone/embedded/deployed/remote); and, centralised (corporate/organisational).
-
-## Current state
-
-This service is being hardened for production. It supports optional [JWT bearer-token authentication](docs/configuration.md#authentication) and [TLS](docs/configuration.md#tls), and has been through a dedicated security review — a stored-XSS fix in the embedded web console, HS256 secret-strength warnings, a pinned TLS 1.2 floor, size caps on JWKS fetches and gateway request bodies, mandatory token expiry (`exp` is required, so a token can never verify forever), masking of internal storage errors behind proper gRPC status codes so raw driver text never reaches a client, and per-client `client_id` request attribution in the logs (see [Security](docs/operations.md#security)) — on top of two earlier correctness/race-condition sweeps and a production-readiness review. Operators can bind each listener to loopback only (`bindAddress`/`gateway.bindAddress`) behind a TLS-terminating sidecar/mesh, cap gRPC concurrency and enforce a keepalive policy (`maxConcurrentStreams`, `keepalive.*`), and bound every storage operation with a query timeout (`storage.queryTimeoutSeconds`, 60s by default) — see [Configurability](docs/configuration.md). Token issuance is a CLI operation on the service binary (`--mint-token`): there is no client registry or admin credential API, but signing secrets rotate without a flag day (`auth.signingKeys`) and individual tokens or clients can be revoked ahead of their TTL through a polled revocation file — a full multi-tenant credential system is what the `idp` method delegates to an identity provider. Enable TLS for anything exposed beyond localhost. There are also [Limitations](#limitations) which should be considered before using in a production environment.
-
-## Documentation
-
-The full documentation lives under [`docs/`](docs/):
-
-- [Getting started](docs/getting-started.md) — build, a minimal configuration, and first requests
-  over the HTTP/JSON gateway.
-- [Configurability](docs/configuration.md) — the exhaustive reference for every configuration key
-  (logging, observability, HTTP gateway and listener/transport hardening, authentication, TLS,
-  storage drivers, content search, and the transfer/archive surface).
-- [Memory consolidation](docs/consolidation.md) — the value model, the six deletion algorithms,
-  the byte-capacity target, checkpoint-triggered eviction, and summarization.
-- [Operations & deployment](docs/operations.md) — the deployment model (one consolidating instance,
-  optional read/write replicas) and its lock keepalive,
-  choosing and sizing a storage driver (including MySQL InnoDB buffer-pool tuning), capacity tuning,
-  backup/restore/migration, graceful shutdown, observability, and security.
-- [Performance under high throughput](docs/performance.md) — a stepped write-throughput sweep across
-  all three storage backends: where each saturates, whether reaping keeps the store bounded, and how
-  the population's significance distribution shifts through sleep cycles.
-- [Use cases & deployment modes](docs/use-cases.md) — embedded/edge vs. centralised topologies and
-  the embedded→centralised transfer pattern.
-- [Demonstrations](docs/demonstrations.md) — worked examples loading real-shaped data (a Dickens
-  novel as a narrative, synthetic service logs) in embedded and centralised modes, with the
-  companion [`hippocampus-gen`](https://github.com/fastbean-au/hippocampus-gen) generator.
-
-## Demo
-
-To see the service under sustained, realistic load, run `./demo/run.sh`. It builds and launches the service together with a load generator that stores bursty, slow, and event-less memories, queries and recalls them, and exercises every RPC, capped at 1 GiB of on-disk data. Open the web console at [`http://localhost:8080/ui`](http://localhost:8080/ui) to browse, search, and drive the data live as it churns — the demo also starts an OpenSearch container (docker or podman) so the console's content-search tab works, or reuses one already listening on `:9200` (`SEARCH=0 ./demo/run.sh` skips it). Run it as `OBSERVABILITY=1 ./demo/run.sh` to also launch a `grafana/otel-lgtm` collector and watch the soak live in Grafana at `http://localhost:3000`. See [demo/README.md](demo/README.md) for details.
-
-## Docker
-
-`Dockerfile` builds a small Alpine-based image (all three storage drivers are pure Go, so the binary
-is statically compiled with CGO disabled). The image bakes in `docker/config.sqlite.json`, runs
-as a non-root user, exposes 50051 (gRPC) and 8080 (HTTP gateway), and health-checks itself against
-the gateway's `/healthz`. The gateway also serves an embedded browser console at `/ui`; it is a
-trusted-operator tool (the bearer token is held in the browser), so serve it over TLS and keep it
-behind your ingress' access controls — see [Security](docs/operations.md#security).
-
-One compose file per storage driver:
-
-- `docker compose up --build` — embedded SQLite, with the database file persisted in a named
-  volume mounted at `/data`.
-- `docker compose -f docker/docker-compose.postgres.yaml up --build` — PostgreSQL, mounting
-  `docker/config.postgres.json` over the baked-in config. The hippocampus container is stateless;
-  persistence lives in the postgres service's volume, and startup waits on its health check.
-- `docker compose -f docker/docker-compose.mysql.yaml up --build` — MySQL, the same shape with
-  `docker/config.mysql.json` and a `mysql:8.4` service.
-- `docker compose -f docker/docker-compose.opensearch.yaml up --build` — SQLite plus the optional
-  OpenSearch content-search index (security disabled — demo only; see
-  `docker-compose.opensearch-secured.yaml` for the secured, TLS-enabled reference).
-- `docker compose -f docker/docker-compose.corporate.yaml up --build` — the centralised shape:
-  PostgreSQL primary store plus OpenSearch.
-
-To run with different settings, mount your own config over `/etc/hippocampus/config.json` the
-same way the postgres compose file does.
-
-### Observability
-
-Every compose stack carries an optional all-in-one `grafana/otel-lgtm` collector (Grafana +
-Prometheus + Tempo + Loki) behind a compose `observability` profile — off by default, so a plain
-`up` never pulls or starts it, and the service never attempts (or logs a failed) metric export
-without a collector present. Turn it on for any stack with one command:
-
-```sh
-OBSERVABILITY=true docker compose --profile observability up --build
+### 1. Run the Demo Stack
+```bash
+git clone https://github.com/fastbean-au/hippocampus.git
+cd hippocampus
+./demo/run.sh
 ```
 
-Grafana comes up at `http://localhost:3000`, opening on a pre-built **Hippocampus** dashboard
-(provisioned from `docker/observability/`) that charts ingest, forgetting (consolidation/eviction
-volume and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration. Metrics and traces
-enable via `HIPPOCAMPUS_OBSERVABILITY_*` env overrides and ship over OTLP/gRPC to the collector.
-See [Observability](docs/operations.md#observability).
+### 2. Access the UI & Services
+* **Embedded Web Console:** Open [`http://localhost:8080/ui`](http://localhost:8080/ui) to browse, search, and observe memory consolidation in real time.
+* **gRPC Endpoint:** Listening on `localhost:50051`
+* **HTTP Gateway:** Listening on `localhost:8080`
+* **LGTM stack:** Listening on [`http://localhost:3000`](http://localhost:3000) to view live metrics in Grafana.
 
-## Horizontal scaling
+---
 
-The primary way to scale Hippocampus is **one instance per store** — per tenant, subsystem, or
-device. Decay, capacity pressure, and eviction are global dynamics over a store, so an instance owns
-its store's memory dynamics entirely; running many small instances (each its own SQLite file or
-PostgreSQL/MySQL database) shards the load cleanly with no coordination. This is the recommended
-model and the one the [containerization](#docker) and [transfer/archive](docs/configuration.md#transfer-and-archive)
-surfaces are built around.
+## 🚀 Docker Setup
 
-For the remaining case — a **single store too large for one instance** — a PostgreSQL or MySQL
-database can be shared by several instances that split the work by role:
+Run Hippocampus in containerized environments with pre-configured compose files:
 
-- **One consolidating instance.** Started with `consolidation.enabled: true` (the default), it holds
-  the single-consolidator lock and runs every sleep cycle (consolidation, eviction, summarization).
-  Only one such instance may run against a given database; a second refuses to start, as before.
-- **Any number of read/write replicas.** Started with `consolidation.enabled: false`, each opens the
-  shared database _without_ the lock and serves the full RPC/HTTP surface — create, recall, query,
-  search, import — but never runs a sleep cycle, and rejects the manual `Sleep` RPC with
-  `FailedPrecondition`. Because forgetting is driven solely by the one consolidating instance, the
-  replicas cannot race it or each other over the global decay/eviction state.
+```bash
+# Embedded SQLite (Stateless binary, volume-backed DB)
+docker compose up --build
 
-Put a load balancer in front of the instances; direct writes and reads at any of them. Start the
-consolidating instance first so it owns schema creation and any in-place migration. This is a
-deliberately simple, statically-assigned split rather than dynamic leader election with automatic
-failover: if the consolidating instance dies, promote a replica by restarting it with
-`consolidation.enabled: true` (it will take the now-free lock). This mode requires the `postgres` or
-`mysql` driver — SQLite is a single embedded file and cannot be shared between processes, so
-`consolidation.enabled: false` there simply yields an instance that never consolidates (a startup
-warning says so).
+# PostgreSQL Backed
+docker compose -f docker/docker-compose.postgres.yaml up --build
 
-## Limitations
+# Centralized Setup (PostgreSQL + OpenSearch Content Indexing)
+docker compose -f docker/docker-compose.corporate.yaml up --build
+```
 
-- **One consolidating instance per store.** Decay, capacity pressure, and eviction are global
-  dynamics over a store, so exactly one instance may run consolidation against it at a time; it is
-  enforced at startup (a second consolidating instance fails fast). Scale either by running one
-  instance per store (per tenant, subsystem, or device), or — on the `postgres`/`mysql` drivers — by
-  adding read/write replicas (`consolidation.enabled: false`) alongside the single consolidating
-  instance. See [Horizontal scaling](#horizontal-scaling) and the
-  [Operations guide](docs/operations.md).
+---
 
-- **No visibility into memory content.** Memory bodies are opaque to the service, so it cannot
-  generate summaries itself — a client supplies the summary text for `ReplaceMemoriesWithSummary`.
+## 🏗️ Deployment Topology & Scaling
 
-- **Credential management is basic.** Under `hmac` there is no client registry or admin credential
-  API — tokens are minted by the `--mint-token` CLI. Signing secrets rotate via config plus a
-  restart (`auth.signingKeys`) and tokens/clients are revoked through a polled file
-  (`auth.revocationFile`), but for a full multi-tenant credential system — self-service issuance,
-  a managed client directory — use `idp` and let an identity provider own it. See
-  [Security](docs/operations.md#security).
+Hippocampus scales cleanly using two primary deployment patterns depending on store ownership:
 
-- **Content search is eventually consistent, and self-healing.** The optional OpenSearch index
-  (`opensearch.enabled`) is a strictly secondary index: mutations propagate to it asynchronously so
-  the write path never blocks on the cluster, which means the index can briefly lag or, under
-  sustained overflow, go sparse. `SearchMemories` re-reads every hit from the primary store, so
-  results are always correct — but a missing document means a recent write may not be _found_ until
-  the index catches up. Two mechanisms keep it converging on its own: the write path retries
-  transient cluster failures before dropping an operation, and the consolidating instance runs a
-  periodic reconciliation sweep (`opensearch.reconcileIntervalSeconds`, on by default) that
-  re-indexes the store and heals any document a dropped, crashed, or timed-out operation missed. An
-  on-demand full rebuild that also clears stale documents remains available via
-  `--backfill-search` (`--reindex`). See
-  [Content search](docs/configuration.md#content-search-opensearch).
+```
+[ Isolated Multi-Tenant / Embedded ]        [ High-Throughput Centralized ]
+
++----------------------+                  +-----------------------+
+|  Tenant A / Device   |                  |  Consolidating Node   |
+| (1 Instance = 1 DB)  |                  | (Runs Sleep/Eviction) |
++----------------------+                  +-----------+-----------+
+                                                      |
++----------------------+                 +------------+------------+
+|  Tenant B / Device   |                 | Shared DB (Postgres/MySQL)|
+| (1 Instance = 1 DB)  |                 +------------+------------+
++----------------------+                              |
+                                         +------------+------------+
+                                         | Read / Write Replicas   |
+                                         | (consolidation.enabled=f)|
+                                         +-------------------------+
+```
+
+1. **One Instance per Store (Recommended):** Run independent, lightweight Hippocampus instances per subsystem, client tenant, or edge node using SQLite or dedicated databases.
+2. **Shared Store with Replicas:** Scale centralized stores by running **one** consolidating instance (`consolidation.enabled: true`) alongside any number of stateless read/write HTTP/gRPC replicas (`consolidation.enabled: false`).
+
+---
+
+## 📚 Documentation Index
+
+Detailed operational and architectural guides live under [`docs/`](docs/):
+
+| Guide | Description |
+| :--- | :--- |
+| 🎬 **[Getting Started](docs/getting-started.md)** | Step-by-step build, initial config, and first gRPC/HTTP requests. |
+| ⚙️ **[Configurability](docs/configuration.md)** | Exhaustive key reference for TLS, auth, storage drivers, and listeners. |
+| 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarization. |
+| 🛠️ **[Operations & Deployment](docs/operations.md)** | Sizing storage, PostgreSQL/MySQL tuning, backups, and security hardening. |
+| 📊 **[Performance Benchmarks](docs/performance.md)** | Throughput sweeps across SQLite, Postgres, and MySQL under heavy loads. |
+| 📐 **[Use Cases & Patterns](docs/use-cases.md)** | Embedded vs. centralized topologies and data transfer strategies. |
+| 🧪 **[Demonstrations](docs/demonstrations.md)** | Worked scenarios using real-world data shapes and data generators. |
+
+---
+
+## 🔒 Security & Hardening
+
+Hippocampus is production-hardened out of the box:
+* **Built-in Authentication:** JWT bearer tokens with mandatory expiration (`exp`) and zero-downtime rotation via `auth.signingKeys`.
+* **Transport Security:** Pinned TLS 1.2+ floor for both internal and external communication.
+* **Storage Isolation:** Driver error masking behind standard gRPC status codes to prevent database schema leaks.
+* **Client Isolation:** Per-client request attribution, execution query timeouts, and stream concurrency limits.
+
+*Read the [Security Section in Operations](docs/operations.md#security) for details on proxying behind sidecars, token revocation files, and network boundaries.*
+
+---
+
+## ⚠️ Key Limitations
+
+* **Single Consolidator Rule:** Only one instance may perform consolidation/decay tasks per store to prevent race conditions during database compaction.
+* **Opaque Payloads:** Memory payloads are stored as raw bytes; summaries must be constructed upstream by client applications and submitted via `ReplaceMemoriesWithSummary`.
+* **Eventually Consistent Search:** The OpenSearch index is secondary and asynchronous. Primary database reads remain strictly consistent, while background sweeps handle reconciliation for content search.
+
+---
+
+## 📄 License
+
+Distributed under the terms specified in the repository. See `LICENSE` for details.

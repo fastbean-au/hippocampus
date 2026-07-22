@@ -10,9 +10,10 @@
 # an OpenSearch container (needs docker or podman) so the console's content-search tab works; set
 # SEARCH=0 to skip it, or the demo runs without content search if no container runtime is found.
 #
-# Set OBSERVABILITY=1 to also launch an all-in-one grafana/otel-lgtm collector (needs docker or
-# podman) and ship the service's metrics/traces to it, so a soak run can be watched in Grafana at
-# http://localhost:3000. Left unset, metrics stay off and nothing is exported.
+# By default the script also launches an all-in-one grafana/otel-lgtm collector (needs docker or
+# podman) and ships the service's metrics/traces to it, so a soak run can be watched in Grafana at
+# http://localhost:3000. Set OBSERVABILITY=0 to skip it, or the demo runs without observability if
+# no container runtime is found.
 
 set -euo pipefail
 
@@ -26,7 +27,7 @@ GATEWAY_PORT=8080
 MAX_BYTES="${MAX_BYTES:-$((1024 * 1024 * 1024))}"
 
 SEARCH="${SEARCH:-1}"
-OBSERVABILITY="${OBSERVABILITY:-}"
+OBSERVABILITY="${OBSERVABILITY:-1}"
 OTEL_CONTAINER="hippocampus-demo-otel-lgtm"
 OS_CONTAINER="hippocampus-demo-opensearch"
 OTEL_STARTED=""
@@ -137,12 +138,17 @@ if search_on; then
     fi
 fi
 
+OBSERVABILITY_RUNTIME_AVAILABLE=""
 if observability_on; then
-    if [[ -z ${CONTAINER_RUNTIME} ]]; then
-        echo "OBSERVABILITY is set but neither docker nor podman is available" >&2
-        exit 1
+    if [[ -n ${CONTAINER_RUNTIME} ]]; then
+        OBSERVABILITY_RUNTIME_AVAILABLE=1
+    else
+        echo "note: neither docker nor podman is available - running without observability, so" >&2
+        echo "      metrics/traces will not be exported (set OBSERVABILITY=0 to silence this)" >&2
     fi
+fi
 
+if [[ -n ${OBSERVABILITY_RUNTIME_AVAILABLE} ]]; then
     echo "starting the otel-lgtm collector (${CONTAINER_RUNTIME})"
     "${CONTAINER_RUNTIME}" rm -f "${OTEL_CONTAINER}" > /dev/null 2>&1 || true
     DASHBOARD_DIR="${PWD}/docker/observability"
@@ -197,7 +203,7 @@ echo "  web console (the demo UI): http://localhost:${GATEWAY_PORT}/ui"
 if [[ ${HIPPOCAMPUS_OPENSEARCH_ENABLED:-} == "true" ]]; then
     echo "  content search is live (OpenSearch) - use the console's Search tab"
 fi
-if observability_on; then
+if [[ -n ${OTEL_STARTED} ]]; then
     echo "  grafana dashboard:         http://localhost:3000"
 fi
 echo ""

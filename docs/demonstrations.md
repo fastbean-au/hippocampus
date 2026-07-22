@@ -118,6 +118,6 @@ consolidation/eviction metrics while the sleep cycle runs.
 - **Capacity eviction** — set `consolidation.capacityBytes` (or `capacityMemories`) below the loaded
   size and watch eviction remove the least-valuable memories to hit the target
   (see [Capacity target](consolidation.md#capacity-target)).
-- **Observability** — with the `corporate` stack (or `OBSERVABILITY=1 ./demo/run.sh`), the
-  provisioned Grafana dashboard shows `memories.consolidated`, `memories.evicted`, `used_bytes`, and
-  `capacity_pressure` per cycle.
+- **Observability** — with the `corporate` stack (or `./demo/run.sh`, which launches it by default),
+  the provisioned Grafana dashboard shows `memories.consolidated`, `memories.evicted`, `used_bytes`,
+  and `capacity_pressure` per cycle.
