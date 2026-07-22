@@ -68,19 +68,19 @@ Hippocampus scales cleanly using two primary deployment patterns depending on st
 ```
 [ Isolated Multi-Tenant / Embedded ]        [ High-Throughput Centralized ]
 
-+----------------------+                  +-----------------------+
-|  Tenant A / Device   |                  |  Consolidating Node   |
-| (1 Instance = 1 DB)  |                  | (Runs Sleep/Eviction) |
-+----------------------+                  +-----------+-----------+
++----------------------+                  +-------------------------+
+|  Tenant A / Device   |                  |   Consolidating Node    |
+| (1 Instance = 1 DB)  |                  |  (Runs Sleep/Eviction)  |
++----------------------+                  +-----------+-------------+
                                                       |
-+----------------------+                 +------------+------------+
++----------------------+                 +------------+--------------+
 |  Tenant B / Device   |                 | Shared DB (Postgres/MySQL)|
-| (1 Instance = 1 DB)  |                 +------------+------------+
+| (1 Instance = 1 DB)  |                 +------------+--------------+
 +----------------------+                              |
-                                         +------------+------------+
-                                         | Read / Write Replicas   |
-                                         | (consolidation.enabled=f)|
-                                         +-------------------------+
+                                         +------------+--------------+
+                                         |   Read / Write Replicas   |
+                                         | (consolidation.enabled=f) |
+                                         +---------------------------+
 ```
 
 1. **One Instance per Store (Recommended):** Run independent, lightweight Hippocampus instances per subsystem, client tenant, or edge node using SQLite or dedicated databases.
