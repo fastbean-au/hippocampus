@@ -1,0 +1,12 @@
+[DEBUG] cache lookup for key user:42 hit
+[INFO] handled GET /v1/health in 3ms
+[DEBUG] connection pool size now 8
+[INFO] user 42 logged in
+[WARN] request latency 812ms exceeded soft budget
+[INFO] handled POST /v1/orders in 41ms
+[ERROR] failed to reach payment gateway: connection refused
+[DEBUG] retrying payment gateway attempt 2
+[WARN] disk usage at 81% on /data
+[ERROR] order 9182 rolled back after gateway timeout
+[FATAL] out of memory: killing worker to recover
+[INFO] worker restarted, resuming queue

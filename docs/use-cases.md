@@ -83,4 +83,6 @@ import into Postgres). See the [Operations guide](operations.md#backup-restore-a
 
 For worked examples that load recognisable data — a Dickens novel as a narrative, synthetic service
 logs whose severity drives what survives — in both the embedded and centralised modes, see
-[Demonstrations](demonstrations.md).
+[Demonstrations](demonstrations.md). To ingest **real** logs from files or instrumented
+applications, the [OpenTelemetry Collector logs exporter](../otel/hippocampusexporter) drops
+Hippocampus into a standard collector pipeline (severity → significance, `service.name` → group).

@@ -109,6 +109,25 @@ claude mcp add hippocampus -- ./hippocampus-mcp --address localhost:50051
 
 ---
 
+## 🪵 OpenTelemetry Log Ingestion
+
+Feed real logs into Hippocampus through the standard OpenTelemetry Collector pipeline.
+[`otel/hippocampusexporter`](otel/hippocampusexporter) is a collector **logs exporter** that turns
+each log record into a memory: **severity drives significance**, so the decay cycle forgets routine
+`DEBUG`/`INFO` noise first and keeps `ERROR`/`FATAL`. `service.name` becomes the `group`, and records
+can be bucketed into events keyed by configurable attributes.
+
+```bash
+go install go.opentelemetry.io/collector/cmd/builder@v0.157.0
+cd otel/collector && builder --config builder-config.yaml   # filelog/otlp → batch → hippocampus
+./_build/hippocampus-otelcol --config config.yaml
+```
+
+*See the **[collector walkthrough](otel/collector/README.md)** and the
+**[exporter configuration](otel/hippocampusexporter/README.md)**.*
+
+---
+
 ## 📚 Documentation Index
 
 Detailed operational and architectural guides live under [`docs/`](docs/):

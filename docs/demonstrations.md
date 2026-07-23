@@ -88,6 +88,32 @@ precisely what the next cycle forgets first, the highest set the most durable. T
 (`/ui`) exposes it on both the **Memories** and **Events** tabs as a *Significance → Highest/Lowest
 only* selector, so the about-to-be-forgotten tier is one click away during a soak.
 
+### Logs via the OpenTelemetry Collector
+
+The `cmd/logs` generator above synthesises log lines directly. To ingest **real** logs — from files,
+or from any OTel-instrumented application — Hippocampus ships an OpenTelemetry Collector **logs
+exporter** (`otel/hippocampusexporter/`). Dropped into a collector pipeline
+(`filelog`/`otlp` receiver → `batch` → `hippocampus`), it turns each log record into a memory:
+severity (`SeverityNumber`, falling back to `SeverityText`) drives significance, `service.name`
+becomes the `group`, and — with `create_events: true` — records are bucketed into events keyed by
+configurable attributes (`event_key_from`, `event_bucket`). The default significance table matches
+the one above, so the same **routine noise forgotten first, errors survive** result holds, now from a
+live pipeline rather than the generator.
+
+```sh
+go install go.opentelemetry.io/collector/cmd/builder@v0.157.0
+cd otel/collector
+builder --config builder-config.yaml
+./_build/hippocampus-otelcol --config config.yaml   # tails otel/collector/sample.log
+```
+
+Ingesting the bundled 12-line `sample.log` produces 12 memories (monotonic significance from `DEBUG`
+to `FATAL`, one event for the day); a `Sleep` cycle with decay tuned to bite then forgets the
+low-severity tiers first, leaving the `ERROR`/`FATAL` survivors. See
+[`otel/collector/README.md`](../otel/collector/README.md) for the full walkthrough and
+[`otel/hippocampusexporter/README.md`](../otel/hippocampusexporter/README.md) for the exporter's
+configuration (auth/TLS, the significance table, and the event-keying options).
+
 ## Centralised mode (Postgres + OpenSearch)
 
 The same generators drive a centralised deployment unchanged — only the target address differs. The

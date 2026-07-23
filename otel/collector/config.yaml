@@ -1,0 +1,70 @@
+# Sample runtime config for the hippocampus-otelcol binary built from builder-config.yaml.
+#
+# Pipeline: tail a log file (filelog) -> batch -> Hippocampus (each line becomes a memory whose
+# significance is set from the record's severity). A debug exporter is included so you can watch
+# records flow. Point `include` at your own logs, and `endpoint` at a running Hippocampus instance
+# (see ../../docs/getting-started.md).
+
+receivers:
+  filelog:
+    include: [./sample.log]
+    start_at: beginning
+    # Parse "LEVEL message" lines so severity drives significance. Adjust to your log format.
+    operators:
+      - type: regex_parser
+        regex: '^\[(?P<sev>[A-Z]+)\]\s+(?P<msg>.*)$'
+        severity:
+          parse_from: attributes.sev
+      - type: move
+        from: attributes.msg
+        to: body
+
+  # Also accept OTLP logs pushed by instrumented apps.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 200
+    timeout: 2s
+
+exporters:
+  debug:
+    verbosity: basic
+
+  hippocampus:
+    endpoint: localhost:50051
+    tls:
+      insecure: true
+    # token: <bearer token>   # when the service has auth.method: hmac/idp
+    create_events: true
+    group_from: service.name
+    default_group: otel-logs
+    event_key_from: [service.name]
+    event_bucket: day
+    event_name_template: "{key} — {bucket}"
+    prefix_severity: false
+    significance:
+      trace: 1000
+      debug: 2000
+      info: 6000
+      warn: 16000
+      error: 28000
+      fatal: 32000
+      default: 6000
+      jitter: 1500
+      min: 1
+      max: 32767
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog, otlp]
+      processors: [batch]
+      exporters: [hippocampus, debug]

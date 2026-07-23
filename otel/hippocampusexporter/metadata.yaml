@@ -1,0 +1,21 @@
+type: hippocampus
+display_name: Hippocampus Exporter
+
+status:
+  class: exporter
+  stability:
+    development: [logs]
+  distributions: []
+  codeowners:
+    active: [fastbean-au]
+
+tests:
+  config:
+    endpoint: localhost:50051
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: false
+  expect_consumer_error: true

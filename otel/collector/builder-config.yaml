@@ -1,0 +1,36 @@
+# OpenTelemetry Collector Builder (OCB) manifest for a collector that ships the Hippocampus logs
+# exporter. Build with:
+#
+#   go install go.opentelemetry.io/collector/cmd/builder@v0.157.0
+#   builder --config builder-config.yaml
+#
+# then run the generated binary against ./config.yaml:
+#
+#   ./_build/hippocampus-otelcol --config config.yaml
+#
+# See README.md for the end-to-end walkthrough.
+
+dist:
+  module: github.com/fastbean-au/hippocampus/otel/collector
+  name: hippocampus-otelcol
+  description: OpenTelemetry Collector with the Hippocampus logs exporter.
+  version: 0.0.1
+  output_path: ./_build
+  otelcol_version: 0.157.0
+
+receivers:
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.157.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver v0.157.0
+
+processors:
+  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.157.0
+
+exporters:
+  - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.157.0
+  - gomod: github.com/fastbean-au/hippocampus/otel/hippocampusexporter v0.0.0
+
+# Local sources: the exporter lives beside this manifest, and it in turn depends on the Hippocampus
+# contract at the repository root. Both replaces are relative to the generated go.mod under _build/.
+replaces:
+  - github.com/fastbean-au/hippocampus/otel/hippocampusexporter => ../../hippocampusexporter
+  - github.com/fastbean-au/hippocampus => ../../..
