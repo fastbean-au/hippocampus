@@ -1,7 +1,7 @@
 // Copyright The Hippocampus Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package hippocampusexporter // import "github.com/fastbean-au/hippocampus/otel/hippocampusexporter"
+package hippocampusexporter // import "github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter"
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 
-	"github.com/fastbean-au/hippocampus/otel/hippocampusexporter/internal/metadata"
+	"github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter/internal/metadata"
 )
 
 const defaultEndpoint = "localhost:50051"

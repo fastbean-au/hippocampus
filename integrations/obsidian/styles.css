@@ -1,0 +1,15 @@
+/* Hippocampus Memory — minimal styling for the search-results modal. */
+
+.hippocampus-search-result {
+	padding: var(--size-2-2) 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.hippocampus-search-result:last-child {
+	border-bottom: none;
+}
+
+.hippocampus-search-result-meta {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}

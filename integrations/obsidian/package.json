@@ -1,0 +1,26 @@
+{
+	"name": "hippocampus-obsidian",
+	"version": "0.1.0",
+	"description": "Obsidian plugin bridging a vault to a Hippocampus memory service over its HTTP/JSON gateway.",
+	"main": "main.js",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+		"test": "node --test --import tsx test/*.test.ts"
+	},
+	"keywords": [
+		"obsidian",
+		"hippocampus",
+		"memory"
+	],
+	"author": "fastbean-au",
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^20.11.0",
+		"builtin-modules": "^3.3.0",
+		"esbuild": "^0.20.0",
+		"obsidian": "^1.4.11",
+		"tsx": "^4.7.0",
+		"typescript": "^5.4.0"
+	}
+}

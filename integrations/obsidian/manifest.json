@@ -1,0 +1,10 @@
+{
+	"id": "hippocampus",
+	"name": "Hippocampus Memory",
+	"version": "0.1.0",
+	"minAppVersion": "1.4.0",
+	"description": "Use a Hippocampus instance as a bounded, self-consolidating memory layer for your vault: store notes as memories, search and recall them, and let low-value noise decay while high-value facts survive.",
+	"author": "fastbean-au",
+	"authorUrl": "https://github.com/fastbean-au/hippocampus",
+	"isDesktopOnly": false
+}

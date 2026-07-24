@@ -26,6 +26,10 @@ important for a long time, and which is which is not known up front. Some shapes
   into a single "gist" memory rather than dropping the detail outright.
 - **Per-device / edge telemetry** — retain a device's own significant history locally within a fixed
   storage budget, and periodically transfer it to a central store.
+- **Personal knowledge management (Obsidian / Logseq)** — a memory layer for a note vault, so an AI
+  assistant reads a distilled set of durable facts instead of years of raw daily notes: notes that
+  get recalled are reinforced and survive, trivial ones decay. See the
+  [Obsidian integration](obsidian.md).
 
 It is **not** a general-purpose database, a cache, or a system of record for data you must never
 lose: forgetting is the point, and the service has no visibility into memory _content_ (bodies are

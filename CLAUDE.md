@@ -368,6 +368,24 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   reachable over HTTP via the opt-in `mcp` compose profile; the release workflow cross-compiles the
   binary for every OS/arch onto the GitHub release and publishes the image to
   `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
+- `integrations/` — non-Go client/edge subprojects, each self-contained (mirroring how
+  `cmd/hippocampus-mcp` is a thin bridge, not part of the core service).
+  - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
+    top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
+    `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace
+    github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter turning each log
+    record into a `StoreMemory` call (severity→significance, `service.name`→`group`); `collector/`
+    is the OCB builder manifest (`builder-config.yaml`) that links it into a runnable collector. See
+    the two READMEs and `otel/collector`'s walkthrough. **NB the root module does not import this
+    module**, so the main build is unaffected by it.
+  - `integrations/obsidian/` — a TypeScript Obsidian community plugin (its own npm project, not part
+    of the Go module) that uses Hippocampus as a memory layer for a vault. It talks to the **HTTP
+    `/v1` gateway** via Obsidian's `requestUrl` (not gRPC, not the MCP bridge) — store notes/
+    selections as memories, search/recall, and optional idempotent folder auto-sync (a persisted
+    note-path→memory-id map, update-or-recreate on 404). Pure logic (`parse.ts` wire normalisation,
+    `mapping.ts` note→memory mapping) is split out from the Obsidian-dependent modules so it is
+    unit-testable without a running app. Requires Node.js to build (`npm install && npm run build`);
+    there is no JS runtime in the default dev image. See `docs/obsidian.md` and the plugin README.
 
 ## Conventions in this repo
 

@@ -112,19 +112,32 @@ claude mcp add hippocampus -- ./hippocampus-mcp --address localhost:50051
 ## 🪵 OpenTelemetry Log Ingestion
 
 Feed real logs into Hippocampus through the standard OpenTelemetry Collector pipeline.
-[`otel/hippocampusexporter`](otel/hippocampusexporter) is a collector **logs exporter** that turns
+[`integrations/otel/hippocampusexporter`](integrations/otel/hippocampusexporter) is a collector **logs exporter** that turns
 each log record into a memory: **severity drives significance**, so the decay cycle forgets routine
 `DEBUG`/`INFO` noise first and keeps `ERROR`/`FATAL`. `service.name` becomes the `group`, and records
 can be bucketed into events keyed by configurable attributes.
 
 ```bash
 go install go.opentelemetry.io/collector/cmd/builder@v0.157.0
-cd otel/collector && builder --config builder-config.yaml   # filelog/otlp → batch → hippocampus
+cd integrations/otel/collector && builder --config builder-config.yaml   # filelog/otlp → batch → hippocampus
 ./_build/hippocampus-otelcol --config config.yaml
 ```
 
-*See the **[collector walkthrough](otel/collector/README.md)** and the
-**[exporter configuration](otel/hippocampusexporter/README.md)**.*
+*See the **[collector walkthrough](integrations/otel/collector/README.md)** and the
+**[exporter configuration](integrations/otel/hippocampusexporter/README.md)**.*
+
+---
+
+## 📓 Obsidian — Memory Layer for Your Vault
+
+Use Hippocampus as a bounded, self-consolidating memory layer for an Obsidian vault, so an AI
+assistant reads a distilled set of durable facts instead of years of raw daily notes.
+[`integrations/obsidian`](integrations/obsidian) is a plugin that stores notes/selections as
+memories, searches and recalls them from inside a note, and can auto-sync a folder — talking to the
+HTTP gateway, so notes you keep touching are reinforced and survive while trivial ones decay.
+
+*See the **[Obsidian integration guide](docs/obsidian.md)** and the
+**[plugin README](integrations/obsidian/README.md)**.*
 
 ---
 
@@ -142,6 +155,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | 📐 **[Use Cases & Patterns](docs/use-cases.md)** | Embedded vs. centralized topologies and data transfer strategies. |
 | 🧪 **[Demonstrations](docs/demonstrations.md)** | Worked scenarios using real-world data shapes and data generators. |
 | 🤖 **[MCP Server](docs/mcp.md)** | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol. |
+| 📓 **[Obsidian Integration](docs/obsidian.md)** | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge. |
 
 ---
 

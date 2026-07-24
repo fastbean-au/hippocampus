@@ -1,4 +1,4 @@
-module github.com/fastbean-au/hippocampus/otel/hippocampusexporter
+module github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter
 
 go 1.25.0
 
@@ -91,4 +91,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/fastbean-au/hippocampus => ../..
+replace github.com/fastbean-au/hippocampus => ../../..

@@ -1,7 +1,7 @@
 // Copyright The Hippocampus Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package hippocampusexporter // import "github.com/fastbean-au/hippocampus/otel/hippocampusexporter"
+package hippocampusexporter // import "github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter"
 
 import (
 	"fmt"

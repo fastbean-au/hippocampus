@@ -5,7 +5,7 @@ log records as Hippocampus memories over the service's gRPC contract. Each log r
 memory whose significance is derived from the record's severity, so the Hippocampus consolidation
 (decay) cycle forgets routine `DEBUG`/`INFO` noise first and keeps `ERROR`/`FATAL` — significance-by-
 severity survival becomes your retention policy. See the repository
-[demonstrations](../../docs/demonstrations.md) for the shape of that result.
+[demonstrations](../../../docs/demonstrations.md) for the shape of that result.
 
 This is its own Go module (the collector dependency tree is large and kept out of the root module).
 It is a thin gRPC client of a running Hippocampus instance — it holds no state beyond the currently

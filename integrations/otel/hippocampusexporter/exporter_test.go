@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/fastbean-au/hippocampus/contract"
-	"github.com/fastbean-au/hippocampus/otel/hippocampusexporter/internal/metadata"
+	"github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter/internal/metadata"
 )
 
 // fakeClient records the requests the exporter issues and lets a test inject responses/errors.

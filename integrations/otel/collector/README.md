@@ -14,7 +14,7 @@ from [`builder-config.yaml`](builder-config.yaml):
 
 ```sh
 go install go.opentelemetry.io/collector/cmd/builder@v0.157.0
-cd otel/collector
+cd integrations/otel/collector
 builder --config builder-config.yaml
 ```
 
@@ -37,7 +37,7 @@ lines are included, alongside a `debug` exporter so you can watch records flow.
 ## End-to-end demonstration
 
 With a local SQLite Hippocampus running (gRPC `:50051`, gateway `:8081` — see
-[getting started](../../docs/getting-started.md)) and decay tuned to bite:
+[getting started](../../../docs/getting-started.md)) and decay tuned to bite:
 
 1. Run the collector over `sample.log`; the 12 lines become 12 memories, one event for the day.
    Confirm via the gateway:
@@ -53,7 +53,7 @@ With a local SQLite Hippocampus running (gRPC `:50051`, gateway `:8081` — see
    list again: the lowest-severity memories are forgotten first while the errors and fatals
    survive — significance-by-severity survival, driven by a real OTel pipeline. (In a live
    deployment this plays out over days as logs age; the demonstration compresses the decay clock —
-   see [demonstrations](../../docs/demonstrations.md).)
+   see [demonstrations](../../../docs/demonstrations.md).)
 
 ## Notes
 

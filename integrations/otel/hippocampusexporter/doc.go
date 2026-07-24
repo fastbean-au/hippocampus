@@ -8,4 +8,4 @@
 // memory whose significance is derived from the record's severity, so the Hippocampus consolidation
 // (decay) cycle forgets routine low-severity noise first and keeps errors. Optionally, records are
 // bucketed into events keyed by configurable resource/log attributes.
-package hippocampusexporter // import "github.com/fastbean-au/hippocampus/otel/hippocampusexporter"
+package hippocampusexporter // import "github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter"

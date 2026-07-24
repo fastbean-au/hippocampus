@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc"
 	grpcmd "google.golang.org/grpc/metadata"
 
-	"github.com/fastbean-au/hippocampus/otel/hippocampusexporter/internal/metadata"
+	"github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter/internal/metadata"
 )
 
 func TestStartDialsAndShutdownCloses(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/pdata/plog"
 
-	"github.com/fastbean-au/hippocampus/otel/hippocampusexporter/internal/metadata"
+	"github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter/internal/metadata"
 )
 
 func TestNewFactory(t *testing.T) {

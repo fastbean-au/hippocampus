@@ -10,6 +10,10 @@ and restart it freely. Because it is a normal gRPC client, it works against any 
 — an embedded per-tenant SQLite instance, a centralised Postgres/MySQL store, or a read/write
 replica behind a load balancer.
 
+> For an Obsidian vault specifically — either pointing an MCP-capable assistant here, or using the
+> first-party plugin that talks to the HTTP gateway — see the
+> [Obsidian integration](obsidian.md).
+
 ## Install
 
 Grab a pre-built binary for your platform from the
