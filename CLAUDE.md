@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Build: `go build ./...`
 - Run: `go run ./cmd/hippocampus -c config.json` (the `-c`/`--config_file` flag defaults to `./config.json`)
-- Run the MCP server: `go run ./cmd/hippocampus-mcp --address localhost:50051` (a standalone MCP
+- Run the MCP server: `go run ./integrations/hippocampus-mcp --address localhost:50051` (a standalone MCP
   bridge that dials a running service; stdio by default, `--transport http` for streamable HTTP;
   see `docs/mcp.md`)
 - Test: `go test ./...` (single test: `go test ./hippocampus -run TestName`)
@@ -347,7 +347,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   the decay clock (`unitsOfAgeInDays` 0.002 ≈ one age unit per 3 minutes) so forgetting,
   recall reinforcement, and the byte capacity target all play out within a session instead of
   over real days.
-- `cmd/hippocampus-mcp/` — a standalone Model Context Protocol server (its own `package main`, like
+- `integrations/hippocampus-mcp/` — a standalone Model Context Protocol server (its own `package main`, like
   `demo/generator`) that bridges an LLM host (Claude Desktop/Code, any MCP client) to a running
   Hippocampus instance. A thin gRPC-client bridge, not an in-service transport: it holds no state,
   dials the service at `--address`, and turns each MCP tool call into an RPC (`main.go` wires the
@@ -369,7 +369,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   binary for every OS/arch onto the GitHub release and publishes the image to
   `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
 - `integrations/` — non-Go client/edge subprojects, each self-contained (mirroring how
-  `cmd/hippocampus-mcp` is a thin bridge, not part of the core service).
+  `integrations/hippocampus-mcp` is a thin bridge, not part of the core service).
   - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
     top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace

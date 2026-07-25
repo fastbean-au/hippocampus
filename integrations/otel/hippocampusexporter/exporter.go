@@ -351,7 +351,7 @@ func (e *hippoExporter) lookup(resAttrs pcommon.Map, recAttrs pcommon.Map, name 
 }
 
 // bearerTokenInterceptor stamps "authorization: Bearer <token>" onto every RPC, matching the
-// service's auth interceptor, mirroring cmd/hippocampus-mcp.
+// service's auth interceptor, mirroring integrations/hippocampus-mcp.
 func bearerTokenInterceptor(token string) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req any, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)

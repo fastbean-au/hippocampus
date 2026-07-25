@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -37,21 +38,39 @@ import (
 )
 
 func main() {
-	pflag.StringP("config_file", "c", "./config.json", "path to configuration file")
-	pflag.Int("port", 50051, "gRPC server listen port (overrides the config file's \"port\")")
-	pflag.Int("gateway-port", 0, "HTTP/JSON gateway listen port; 0 (the default) disables the gateway. 8080 is the conventional port (overrides the config file's \"gateway.port\")")
-	pflag.Bool("version", false, "print the build version and exit")
-	pflag.Bool("mint-token", false, "mint a signed auth token from the configured signing secret and exit")
-	pflag.String("client-id", "", "client_id claim to embed in a minted token (used with --mint-token)")
-	pflag.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
-	pflag.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
-	pflag.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
-	pflag.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
-	pflag.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
-	pflag.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
-	pflag.Parse()
+	execute(os.Args[1:])
+}
 
-	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
+// execute is main() with its process-owned inputs made injectable: it takes the argument slice
+// rather than reading os.Args, and returns on the CLI-mode success paths (--version/--mint-token/
+// --backfill-search) rather than calling os.Exit, so the whole startup dispatch can be driven
+// in-process by a test. The fatal-error paths keep their log.Panicf/log.Fatalf calls; a test traps
+// those through logrus's ExitFunc (see withFatalPanic) or a recovered panic.
+func execute(args []string) {
+	flags := pflag.NewFlagSet("hippocampus", pflag.ContinueOnError)
+	flags.StringP("config_file", "c", "./config.json", "path to configuration file")
+	flags.Int("port", 50051, "gRPC server listen port (overrides the config file's \"port\")")
+	flags.Int("gateway-port", 0, "HTTP/JSON gateway listen port; 0 (the default) disables the gateway. 8080 is the conventional port (overrides the config file's \"gateway.port\")")
+	flags.Bool("version", false, "print the build version and exit")
+	flags.Bool("mint-token", false, "mint a signed auth token from the configured signing secret and exit")
+	flags.String("client-id", "", "client_id claim to embed in a minted token (used with --mint-token)")
+	flags.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
+	flags.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
+	flags.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
+	flags.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
+	flags.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
+	flags.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
+
+	// --help is not an error: pflag prints usage and returns ErrHelp, which should exit cleanly.
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return
+		}
+
+		log.Panicf("failed to parse command line flags: %s", err.Error())
+	}
+
+	if err := viper.BindPFlags(flags); err != nil {
 		log.Panicf("failed to bind command line flags: %s", err.Error())
 	}
 
@@ -59,7 +78,7 @@ func main() {
 	// cannot reach through BindPFlags, so bind it explicitly. The gRPC "port" flag maps to its
 	// config key directly. For both, an explicit flag beats the config file, which beats the flag
 	// default (50051 / 8080).
-	if err := viper.BindPFlag("gateway.port", pflag.CommandLine.Lookup("gateway-port")); err != nil {
+	if err := viper.BindPFlag("gateway.port", flags.Lookup("gateway-port")); err != nil {
 		log.Panicf("failed to bind gateway port flag: %s", err.Error())
 	}
 
@@ -70,7 +89,7 @@ func main() {
 	if viper.GetBool("version") {
 		fmt.Println(version.String())
 
-		os.Exit(0)
+		return
 	}
 
 	c, err := os.ReadFile(viper.GetString("config_file"))
@@ -128,7 +147,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "jti=%s client_id=%s\n", id, viper.GetString("client-id"))
 		}
 
-		os.Exit(0)
+		return
 	}
 
 	// Defaults shared by normal startup and the --backfill-search CLI mode.
@@ -158,7 +177,7 @@ func main() {
 			BatchSize:        viper.GetInt("backfill-batch-size"),
 		})
 
-		os.Exit(0)
+		return
 	}
 
 	// Validate the consolidation and sleep config before touching the database or server. A

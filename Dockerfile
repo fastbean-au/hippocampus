@@ -18,11 +18,11 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.buildVersion=${VERSION}" \
     -o /hippocampus ./cmd/hippocampus
 
-# The MCP bridge (cmd/hippocampus-mcp) is a separate binary and a separate image (the `mcp` stage
-# below). Its version var is main.version, not main.buildVersion.
+# The MCP bridge (integrations/hippocampus-mcp) is a separate binary and a separate image (the `mcp`
+# stage below). Its version var is main.version, not main.buildVersion.
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
-    -o /hippocampus-mcp ./cmd/hippocampus-mcp
+    -o /hippocampus-mcp ./integrations/hippocampus-mcp
 
 # The MCP-server image. Selected with `target: mcp` (see the profile-gated `mcp` service in
 # docker-compose.yaml); it runs the streamable-HTTP transport so an MCP host can reach it over the

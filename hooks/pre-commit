@@ -67,8 +67,11 @@ if [ ! -x "$gotooldir/covdata" ]; then
 	chmod u-w "$gotooldir"
 fi
 
-echo "pre-commit: go test (coverage, excluding cmd/)"
-go test -coverprofile=coverage.out $(go list ./... | grep -v '/cmd/')
-go tool cover -html=coverage.out -o coverage.html
+echo "pre-commit: go test (coverage)"
+go test -coverprofile=coverage.out ./...
+# The reported profile excludes the generated protobuf/gateway code (contract/hippocampus*.pb*.go
+# and *_grpc.pb.go) to mirror the Coveralls report in CI - coverage of generated getters is noise.
+grep -vE '/contract/hippocampus[^/]*\.go:' coverage.out > coverage.filtered.out
+go tool cover -html=coverage.filtered.out -o coverage.html
 
 echo "pre-commit: all checks passed"

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -539,5 +541,54 @@ func TestPostBatchNetworkError(t *testing.T) {
 	err := postBatch(http.DefaultClient, url, &batchReq{})
 	if err == nil {
 		t.Fatal("postBatch() error = nil, want a non-nil error when the server is unreachable")
+	}
+}
+
+// TestRun drives the whole run() flow against an httptest server with a tiny --target-bytes so it
+// finishes immediately, confirming flags wire through to runInjection and the summary is written.
+func TestRun(t *testing.T) {
+	var batches int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		batches++
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+
+	args := []string{"--url", server.URL, "--target-bytes", "2000", "--batch-memories", "8", "--seed", "1"}
+	if err := run(args, &out); err != nil {
+		t.Fatalf("run() error = %v, want nil", err)
+	}
+
+	if batches == 0 {
+		t.Error("run() posted no batches to the server")
+	}
+
+	if s := out.String(); !strings.Contains(s, "done:") {
+		t.Errorf("run() output missing the final summary, got %q", s)
+	}
+}
+
+// TestRunPostError confirms run() surfaces a batch-post failure (the server 500s) rather than
+// swallowing it.
+func TestRunPostError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	err := run([]string{"--url", server.URL, "--target-bytes", "2000"}, io.Discard)
+	if err == nil {
+		t.Fatal("run() error = nil, want a non-nil error when the server rejects the batch")
+	}
+}
+
+// TestRunBadFlag confirms an unparseable flag fails run() rather than proceeding with defaults.
+func TestRunBadFlag(t *testing.T) {
+	if err := run([]string{"--not-a-real-flag"}, io.Discard); err == nil {
+		t.Fatal("run() error = nil, want a flag-parse error")
 	}
 }

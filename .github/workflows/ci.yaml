@@ -85,17 +85,19 @@ jobs:
       # Coverage is reported to Coveralls only on a push to main, never on a PR: fork PRs cannot see
       # the token secret, and PR coverage must not overwrite the mainline badge. This is what keeps
       # the README's ?branch=main badge fresh - the tag-triggered release runs report under the tag
-      # ref, so they never update main. cmd/ is filtered out of the profile to match the release
-      # runbook: main-package wiring is exercised by the docker smoke tests below, not unit coverage.
+      # ref, so they never update main. Everything hand-written is reported, including cmd/ and the
+      # relocated integrations/hippocampus-mcp; only the generated protobuf/gateway code
+      # (contract/hippocampus*.pb*.go and *_grpc.pb.go) is filtered out, because coverage of
+      # generated getters is noise rather than a signal about our code.
       - name: Report coverage to Coveralls
         if: github.event_name == 'push'
         env:
           # Repository secret; goveralls reads it via -service=github. Never inline the token.
           COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
         run: |
-          grep -v '/cmd/' coverage.out > coverage.nocmd.out
+          grep -vE '/contract/hippocampus[^/]*\.go:' coverage.out > coverage.filtered.out
           go install github.com/mattn/goveralls@latest
-          goveralls -coverprofile=coverage.nocmd.out -service=github
+          goveralls -coverprofile=coverage.filtered.out -service=github
 
   # Build the image and smoke both compose stacks the same way the containerization work was
   # validated by hand: /healthz serves, a memory stores and reads back through the gateway, and
@@ -165,3 +167,57 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"query\":\"fox\"}" | jq -e ".memories[] | select(.id == \"'"$id"'\")" > /dev/null; do sleep 2; done'
           docker compose -f docker/docker-compose.opensearch.yaml down
+
+  # The OTEL collector exporter under integrations/otel is a SEPARATE Go module (its dependency tree
+  # is large and kept out of the root module), so the test job's `go build/test ./...` never
+  # descends into it - it would rot undetected. Build, vet, and test it here on its own. It has a
+  # `replace => ../../..` back to the repo root, so the full checkout is required.
+  otel-exporter:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: integrations/otel/hippocampusexporter/go.mod
+
+      - name: Build, vet, and test the exporter module
+        working-directory: integrations/otel/hippocampusexporter
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  # The Obsidian plugin under integrations/obsidian is a TypeScript project outside the Go module, so
+  # nothing in the Go jobs exercises it. Typecheck+bundle and run its unit tests here - this is the
+  # only place they run (there is no JS runtime on the maintainer's box). `npm ci` installs from the
+  # committed package-lock.json for a reproducible, drift-detecting build.
+  obsidian-plugin:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: integrations/obsidian
+        run: npm ci
+
+      # Fail the build on any moderate-or-higher advisory in the dependency tree. These are all
+      # build-time (dev) dependencies, but a compromised build tool can inject into the shipped
+      # main.js, so a known-vulnerable toolchain must not build a release. npm ci does not audit,
+      # so this is a distinct step; it queries the registry advisory database on every run and thus
+      # catches advisories disclosed after the lockfile was written.
+      - name: Audit dependencies
+        working-directory: integrations/obsidian
+        run: npm audit --audit-level=moderate
+
+      - name: Build and test the plugin
+        working-directory: integrations/obsidian
+        run: |
+          npm run build
+          npm test
