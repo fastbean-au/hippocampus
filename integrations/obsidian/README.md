@@ -29,16 +29,50 @@ npm test          # unit tests for the wire parsing and note→memory mapping
 
 `npm run dev` runs esbuild in watch mode for iterative development.
 
+## Releasing
+
+The plugin versions **independently** of the Hippocampus service and has its own tag namespace, so a
+plugin release never triggers the service release and vice versa. To cut one:
+
+1. Bump `version` in `manifest.json` and add the matching `"<version>": "<minAppVersion>"` entry to
+   `versions.json` (the two must agree — `minAppVersion` in `manifest.json` must equal the
+   `versions.json` value for that version).
+2. Tag with the `obsidian-v` prefix and push:
+
+   ```bash
+   git tag obsidian-v0.2.0 && git push origin obsidian-v0.2.0
+   ```
+
+The [`release-obsidian.yaml`](../../.github/workflows/release-obsidian.yaml) workflow **validates**
+that the tag version matches `manifest.json`/`versions.json` before building — a mismatch fails the
+run rather than shipping a broken release — then builds and publishes a GitHub release tagged with
+the **bare** version (`0.2.0`), which is what Obsidian's updater and BRAT key on.
+
 ## Install into a vault
 
-Copy `manifest.json`, `styles.css`, and the built `main.js` into
-`<your-vault>/.obsidian/plugins/hippocampus/`, then enable **Hippocampus Memory** under
-*Settings → Community plugins*. (For development you can symlink the plugin folder there and rely on
-`npm run dev`.)
+### From a release (recommended)
+
+Each plugin release publishes `main.js`, `manifest.json`, and `styles.css` as assets on a GitHub
+release tagged with the bare plugin version (e.g. `0.1.0`). Either:
+
+- **[BRAT](https://github.com/TfTHacker/obsidian42-brat)** — add `fastbean-au/hippocampus` as a beta
+  plugin; BRAT tracks the releases and updates automatically. (Point BRAT at this repo; it reads the
+  bare-version releases, not the service's `vX.Y.Z` releases.)
+- **Manually** — download the three assets from the
+  [latest plugin release](https://github.com/fastbean-au/hippocampus/releases) into
+  `<your-vault>/.obsidian/plugins/hippocampus/`.
+
+Then enable **Hippocampus Memory** under _Settings → Community plugins_.
+
+### From source
+
+Copy `manifest.json`, `styles.css`, and the built `main.js` (see [Build](#build)) into
+`<your-vault>/.obsidian/plugins/hippocampus/`, then enable the plugin. (For development you can
+symlink the plugin folder there and rely on `npm run dev`.)
 
 ## Configure
 
-Open *Settings → Hippocampus Memory*:
+Open _Settings → Hippocampus Memory_:
 
 - **Server URL** — e.g. `http://127.0.0.1:8080`.
 - **Bearer token** — only if the service has auth enabled; sent as `Authorization: Bearer <token>`.
@@ -47,20 +81,20 @@ Open *Settings → Hippocampus Memory*:
 - **Group source** — how a memory's `group` label is derived: the note's top-level folder, a
   frontmatter key, or a fixed value.
 - **Strip frontmatter from body** — drop a note's leading YAML before storing it.
-- **Search** — result limit and whether searching also *reinforces* (recalls) the matches.
+- **Search** — result limit and whether searching also _reinforces_ (recalls) the matches.
 - **Auto-sync** — see below.
 
 Use **Test connection** to confirm the URL/token reach a live gateway.
 
 ## Commands
 
-| Command | What it does |
-| :-- | :-- |
-| **Store current note as memory** | Store (or idempotently update) the active note as one memory, keyed by its path. |
-| **Store selection as memory** | Store the current editor selection as a standalone memory. |
-| **Search memories and insert results** | Prompt for a query, search the content index, insert the matches at the cursor. |
-| **Sync folder now** | Run the auto-sync pass once over the configured folder. |
-| **Test connection** | Ping `/healthz`. |
+| Command                                | What it does                                                                     |
+| :------------------------------------- | :------------------------------------------------------------------------------- |
+| **Store current note as memory**       | Store (or idempotently update) the active note as one memory, keyed by its path. |
+| **Store selection as memory**          | Store the current editor selection as a standalone memory.                       |
+| **Search memories and insert results** | Prompt for a query, search the content index, insert the matches at the cursor.  |
+| **Sync folder now**                    | Run the auto-sync pass once over the configured folder.                          |
+| **Test connection**                    | Ping `/healthz`.                                                                 |
 
 "Search" requires the service's optional content-search index (`opensearch.enabled`).
 

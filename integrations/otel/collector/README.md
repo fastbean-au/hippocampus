@@ -6,6 +6,20 @@ pipeline (a `filelog` receiver tailing files, an `otlp` receiver for instrumente
 Hippocampus as memories. Severity drives significance, so the decay cycle forgets routine noise
 first and keeps errors.
 
+## Prebuilt image
+
+Each tagged release publishes this collector to GHCR, so you can run it without building anything:
+
+```sh
+docker run --rm -v "$(pwd)/config.yaml:/etc/otelcol/config.yaml" \
+  ghcr.io/fastbean-au/hippocampus-otel-collector:latest
+```
+
+The image bundles a runnable demo `config.yaml`/`sample.log` at `/etc/otelcol/`; mount your own
+`config.yaml` over it for a real deployment. It is tagged with the release version, the rolling
+`major.minor`, and `latest` (see [`.github/workflows/release.yaml`](../../../.github/workflows/release.yaml)).
+Build it yourself from source instead with the steps below.
+
 ## Build
 
 The collector is assembled with the

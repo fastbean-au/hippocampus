@@ -1,0 +1,128 @@
+name: Release Obsidian plugin
+
+# The Obsidian plugin versions independently of the Hippocampus service, so it has its own tag
+# namespace and its own release workflow - the service's `v*` release pipeline (release.yaml) is
+# never touched by a plugin release, and vice versa. Obsidian's community-registry updater (and
+# BRAT) key on a GitHub release whose tag name is EXACTLY the plugin's manifest.json version - bare
+# semver, no `v` prefix - carrying main.js/manifest.json/styles.css as individual assets. The
+# service's `vX.Y.Z` tags can never satisfy that, so this workflow is driven by `obsidian-v*` tags
+# and mints the bare-version release the updater expects.
+#
+# Cut a plugin release by bumping integrations/obsidian/manifest.json + versions.json, then:
+#
+#   git tag obsidian-v1.0.1 && git push origin obsidian-v1.0.1
+#
+# The `obsidian-v<version>` tag is the human-facing trigger; the workflow validates that <version>
+# matches manifest.json exactly (and that versions.json is consistent) BEFORE building, then creates
+# a release tagged `1.0.1` - the bare version Obsidian keys on. `obsidian-v*` does not match the
+# `v*` that release.yaml watches, and the minted bare `1.0.1` tag matches neither pattern, so there
+# is no cross-trigger or release loop.
+on:
+  push:
+    tags:
+      - "obsidian-v*"
+
+# Never let two runs for the same tag race on the release/asset upload.
+concurrency:
+  group: release-obsidian-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the plugin release and upload its assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: integrations/obsidian
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail fast, before any build, if the tag and the committed plugin metadata disagree - a
+      # mismatch here is exactly the silent breakage (updater can't match the release) that this
+      # whole workflow exists to prevent. Guards, in order:
+      #   1. the tag is well-formed `obsidian-v<version>`;
+      #   2. <version> equals manifest.json .version exactly (this becomes the release tag);
+      #   3. versions.json has an entry for <version> (the updater reads it for compatibility);
+      #   4. manifest.json .minAppVersion equals versions.json[<version>] (internal consistency).
+      # The resolved bare version is exported for later steps.
+      - name: Validate plugin version metadata
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#obsidian-v}"
+
+          if [ "$version" = "$tag" ] || [ -z "$version" ]; then
+            echo "::error::tag '$tag' is not of the form 'obsidian-v<version>'"
+            exit 1
+          fi
+
+          manifest_version="$(jq -r '.version' manifest.json)"
+
+          if [ "$version" != "$manifest_version" ]; then
+            echo "::error::tag version '$version' does not match manifest.json .version '$manifest_version' - bump manifest.json (and versions.json) to match the tag"
+            exit 1
+          fi
+
+          if ! jq -e --arg v "$version" 'has($v)' versions.json >/dev/null; then
+            echo "::error::versions.json has no entry for '$version' - add \"$version\": \"<minAppVersion>\""
+            exit 1
+          fi
+
+          manifest_min="$(jq -r '.minAppVersion' manifest.json)"
+          versions_min="$(jq -r --arg v "$version" '.[$v]' versions.json)"
+
+          if [ "$manifest_min" != "$versions_min" ]; then
+            echo "::error::manifest.json .minAppVersion '$manifest_min' does not match versions.json['$version'] '$versions_min'"
+            exit 1
+          fi
+
+          echo "PLUGIN_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Validated plugin version $version"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: integrations/obsidian/package-lock.json
+
+      # `npm ci` builds from the committed lockfile (reproducible, unlike `npm install`); the build
+      # script type-checks (tsc --noEmit) and bundles src/main.ts to main.js via esbuild. The
+      # assertion guarantees a release never ships an empty/absent bundle if esbuild silently no-ops.
+      - name: Install, build, and verify assets
+        run: |
+          set -euo pipefail
+
+          npm ci
+          npm run build
+
+          for asset in main.js manifest.json styles.css; do
+            if [ ! -s "$asset" ]; then
+              echo "::error::expected release asset '$asset' is missing or empty after build"
+              exit 1
+            fi
+          done
+
+      # Create the release tagged with the BARE version (what Obsidian matches), pointing at the
+      # commit the obsidian-v* tag marks. Idempotent: if a release for this version already exists
+      # (a re-run), reuse it and just re-upload assets with --clobber rather than failing.
+      - name: Publish plugin release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$PLUGIN_VERSION" >/dev/null 2>&1; then
+            echo "release $PLUGIN_VERSION already exists - updating its assets"
+          else
+            gh release create "$PLUGIN_VERSION" \
+              --target "$GITHUB_SHA" \
+              --title "Obsidian plugin $PLUGIN_VERSION" \
+              --notes "Hippocampus Obsidian plugin \`$PLUGIN_VERSION\`. Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat) or copy \`main.js\`, \`manifest.json\`, and \`styles.css\` into \`<vault>/.obsidian/plugins/hippocampus/\`. See integrations/obsidian/README.md."
+          fi
+
+          gh release upload "$PLUGIN_VERSION" main.js manifest.json styles.css --clobber
