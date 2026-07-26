@@ -37,7 +37,7 @@ cd hippocampus
 ```
 
 ### 2. Access the UI & Services
-* **Embedded Web Console:** Open [`http://localhost:8080/ui`](http://localhost:8080/ui) to browse, search, and observe memory consolidation in real time.
+* **Embedded Web Console:** Open [`http://localhost:8080/ui`](http://localhost:8080/ui) to browse, search, and observe memory consolidation in real time — with optional sign-in through your identity provider (Auth0, Keycloak, any OIDC) when `auth.method: idp` is enabled.
 * **gRPC Endpoint:** Listening on `localhost:50051`
 * **HTTP Gateway:** Listening on `localhost:8080`
 * **LGTM stack:** Listening on [`http://localhost:3000`](http://localhost:3000) to view live metrics in Grafana.

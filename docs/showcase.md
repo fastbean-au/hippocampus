@@ -14,7 +14,8 @@ The service configs are [`docker/config.showcase-book.json`](../docker/config.sh
 [`docker/config.showcase-logs.json`](../docker/config.showcase-logs.json); the compose stacks are
 [`docker/docker-compose.showcase-book.yaml`](../docker/docker-compose.showcase-book.yaml) and
 [`…-logs.yaml`](../docker/docker-compose.showcase-logs.yaml). This document covers the
-identity-provider setup and how to run the stacks; the GCP VM provisioning is covered separately.
+identity-provider setup and how to run the stacks; the GCP VM provisioning is a separate
+[runbook](showcase-gcp.md).
 
 ## What the configs assume
 
@@ -180,7 +181,8 @@ go run ./cmd/logs -s <vm>:50052 --live --rate 120 \
   --oidc-client-id hippocampus-gen --oidc-client-secret "$GEN_SECRET"
 ```
 
-Running these unattended (a systemd unit per stack) is covered in the GCP deployment runbook.
+Running these unattended (a systemd unit per stack) is covered in the [GCP deployment
+runbook](showcase-gcp.md).
 
 ### Local evaluation without a public domain
 
