@@ -52,6 +52,7 @@
     gap: 8px;
   }
   .token-box input { width: 260px; }
+  .manual-token { display: flex; align-items: center; gap: 8px; }
   /* Read-only gating: when the caller's role is below writer, hide every write-oriented control.
      This is a UX convenience only - the server enforces authorization regardless of what is shown. */
   body.readonly .writer-only { display: none !important; }
@@ -182,8 +183,15 @@
   <h1><span>&#129504;</span> Hippocampus Console</h1>
   <div class="token-box">
     <span id="role-pill" class="pill" title="your effective authorization role"></span>
-    <label for="token" style="margin:0">Bearer token</label>
-    <input id="token" type="password" placeholder="optional — only if auth enabled" autocomplete="off">
+    <!-- Manual bearer-token entry: used when auth is off or hmac. Hidden in OIDC mode, where the
+         Sign in / Sign out buttons drive the login instead. -->
+    <span id="manual-token" class="manual-token">
+      <label for="token" style="margin:0">Bearer token</label>
+      <input id="token" type="password" placeholder="optional — only if auth enabled" autocomplete="off">
+    </span>
+    <!-- OIDC controls: shown only when /ui/config reports auth.method idp with a UI client. -->
+    <button id="login-btn" class="btn small" style="display:none">Sign in</button>
+    <button id="logout-btn" class="btn ghost small" style="display:none">Sign out</button>
   </div>
 </header>
 
@@ -456,7 +464,32 @@
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "hippocampus_token";
 
-function getToken() { return $("token").value.trim(); }
+// oidc holds the browser login state used only when /ui/config reports auth.method "idp" with a UI
+// client. In every other mode it stays disabled and the manual bearer-token box below drives auth.
+// The access token lives in sessionStorage (cleared when the tab closes) rather than localStorage,
+// and no client secret is ever involved - this is an Authorization Code + PKCE public client.
+const OIDC_ACCESS_KEY = "hippocampus_oidc_access";
+const OIDC_REFRESH_KEY = "hippocampus_oidc_refresh";
+const OIDC_EXPIRY_KEY = "hippocampus_oidc_expiry";
+const PKCE_KEY = "hippocampus_pkce"; // {verifier, state}, kept across the provider redirect
+
+const oidc = {
+  enabled: false,
+  cfg: null,       // {issuer, clientId, scopes, audience} from /ui/config
+  endpoints: null, // {authorization_endpoint, token_endpoint, end_session_endpoint} from discovery
+  accessToken: sessionStorage.getItem(OIDC_ACCESS_KEY) || "",
+  refreshTimer: null,
+};
+
+// getToken returns the bearer sent on every /v1 call: the OIDC access token when a login flow is
+// active, otherwise whatever is typed into the manual token box.
+function getToken() {
+  if (oidc.enabled) {
+    return oidc.accessToken || "";
+  }
+
+  return $("token").value.trim();
+}
 
 $("token").value = localStorage.getItem(TOKEN_KEY) || "";
 $("token").addEventListener("change", () => {
@@ -534,7 +567,7 @@ async function api(method, path, body) {
 
     // Give the authorization failures a plain-language message rather than the terse server body:
     // 401 means the token is missing/invalid, 403 means it is valid but its role is insufficient.
-    if (res.status === 401) msg = "Unauthorized — set a valid bearer token above.";
+    if (res.status === 401) msg = oidc.enabled ? "Session expired — please sign in again." : "Unauthorized — set a valid bearer token above.";
     if (res.status === 403) msg = "Forbidden — your token's role does not permit this action.";
 
     const err = new Error(msg);
@@ -671,9 +704,272 @@ document.querySelectorAll("nav button").forEach((b) => {
   });
 });
 
-// Resolve the current token's capabilities on load so the write controls are gated before the
-// operator interacts with them.
-refreshCaps();
+// ------------------------------------------------------------------ oidc login (idp mode only)
+// These implement an OpenID Connect Authorization Code + PKCE flow entirely in the browser, with no
+// external library and no client secret. They run only when boot() finds auth.method "idp" in
+// /ui/config; the access token they obtain is sent as the Authorization: Bearer on /v1 calls and
+// verified by the service exactly like any other idp token.
+
+// b64url base64url-encodes bytes without padding, as PKCE and JWT expect.
+function b64url(bytes) {
+  return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// randomString returns a base64url token of n random bytes, for the PKCE verifier and the state.
+function randomString(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+
+  return b64url(a);
+}
+
+// redirectUri is the console's own URL with any query/hash stripped (.../ui). It must be registered
+// as an allowed callback on the identity provider's client.
+function redirectUri() {
+  return window.location.origin + window.location.pathname;
+}
+
+// discover fetches the provider's OIDC metadata to learn its authorization and token endpoints.
+async function discover(issuer) {
+  const res = await fetch(issuer.replace(/\/$/, "") + "/.well-known/openid-configuration");
+
+  if (!res.ok) {
+    throw new Error("OIDC discovery failed (" + res.status + ")");
+  }
+
+  return res.json();
+}
+
+// login starts the flow: it mints a PKCE verifier/challenge and a state, stashes them for the
+// return leg, and redirects the browser to the provider's authorization endpoint.
+async function login() {
+  try {
+    const verifier = randomString(64);
+    const state = randomString(16);
+    const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+
+    sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state }));
+
+    const p = new URLSearchParams({
+      response_type: "code",
+      client_id: oidc.cfg.clientId,
+      redirect_uri: redirectUri(),
+      scope: oidc.cfg.scopes || "openid profile",
+      state,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    });
+
+    // Providers whose access token is opaque without an API audience (Auth0) need this to mint a
+    // verifiable JWT; providers that ignore it (Keycloak) are unaffected.
+    if (oidc.cfg.audience) {
+      p.set("audience", oidc.cfg.audience);
+    }
+
+    window.location.assign(oidc.endpoints.authorization_endpoint + "?" + p.toString());
+  } catch (e) {
+    fail("Sign in failed", e);
+  }
+}
+
+// cleanUrl strips the ?code/&state (or ?error) query the provider appended, so a reload does not
+// replay the callback and the address bar stays tidy.
+function cleanUrl() {
+  window.history.replaceState({}, document.title, redirectUri());
+}
+
+// handleRedirect completes the flow when the page has loaded as the provider's callback: it
+// validates the returned state against the stashed one and exchanges the code for tokens.
+async function handleRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const err = params.get("error");
+
+  if (err) {
+    cleanUrl();
+    fail("Sign in failed", new Error(params.get("error_description") || err));
+
+    return;
+  }
+
+  if (!code) {
+    return;
+  }
+
+  const saved = JSON.parse(sessionStorage.getItem(PKCE_KEY) || "null");
+  sessionStorage.removeItem(PKCE_KEY);
+  cleanUrl();
+
+  if (!saved || saved.state !== params.get("state")) {
+    fail("Sign in failed", new Error("state mismatch — please try again"));
+
+    return;
+  }
+
+  await exchange(new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri(),
+    client_id: oidc.cfg.clientId,
+    code_verifier: saved.verifier,
+  }));
+}
+
+// exchange posts a grant (authorization_code or refresh_token) to the token endpoint and stores the
+// resulting session, clearing it and throwing on failure.
+async function exchange(body) {
+  const res = await fetch(oidc.endpoints.token_endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    clearSession();
+
+    throw new Error(data.error_description || data.error || ("token endpoint " + res.status));
+  }
+
+  setSession(data);
+}
+
+// setSession records the tokens and schedules a silent refresh before the access token expires.
+function setSession(data) {
+  oidc.accessToken = data.access_token || "";
+  sessionStorage.setItem(OIDC_ACCESS_KEY, oidc.accessToken);
+
+  if (data.refresh_token) {
+    sessionStorage.setItem(OIDC_REFRESH_KEY, data.refresh_token);
+  }
+
+  const expiry = Number(data.expires_in) ? Date.now() + Number(data.expires_in) * 1000 : 0;
+  sessionStorage.setItem(OIDC_EXPIRY_KEY, String(expiry));
+
+  scheduleRefresh(expiry);
+  applyOidcButtons();
+}
+
+// scheduleRefresh arms a timer to refresh ~60s before expiry, but only when a refresh token is
+// available; otherwise the session simply lapses and the caller must sign in again.
+function scheduleRefresh(expiry) {
+  if (oidc.refreshTimer) {
+    clearTimeout(oidc.refreshTimer);
+    oidc.refreshTimer = null;
+  }
+
+  if (!expiry || !sessionStorage.getItem(OIDC_REFRESH_KEY)) {
+    return;
+  }
+
+  oidc.refreshTimer = setTimeout(refresh, Math.max(expiry - Date.now() - 60000, 5000));
+}
+
+// refresh silently swaps the refresh token for a new access token; on failure it drops the session
+// so the UI falls back to a Sign in prompt.
+async function refresh() {
+  const refreshToken = sessionStorage.getItem(OIDC_REFRESH_KEY);
+
+  if (!refreshToken) {
+    return;
+  }
+
+  try {
+    await exchange(new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: oidc.cfg.clientId,
+    }));
+
+    refreshCaps();
+  } catch (e) {
+    clearSession();
+    applyOidcButtons();
+    applyCaps();
+  }
+}
+
+// clearSession forgets the tokens and cancels any pending refresh.
+function clearSession() {
+  oidc.accessToken = "";
+  sessionStorage.removeItem(OIDC_ACCESS_KEY);
+  sessionStorage.removeItem(OIDC_REFRESH_KEY);
+  sessionStorage.removeItem(OIDC_EXPIRY_KEY);
+
+  if (oidc.refreshTimer) {
+    clearTimeout(oidc.refreshTimer);
+    oidc.refreshTimer = null;
+  }
+}
+
+// logout clears the local session and, when the provider advertises an end-session endpoint, does
+// an RP-initiated logout so the provider's own session is dropped too.
+function logout() {
+  const end = oidc.endpoints && oidc.endpoints.end_session_endpoint;
+
+  clearSession();
+  applyOidcButtons();
+
+  if (end) {
+    const p = new URLSearchParams({ client_id: oidc.cfg.clientId, post_logout_redirect_uri: redirectUri() });
+    window.location.assign(end + "?" + p.toString());
+
+    return;
+  }
+
+  refreshCaps();
+}
+
+// applyOidcButtons shows Sign in when signed out and Sign out when signed in.
+function applyOidcButtons() {
+  const signedIn = !!oidc.accessToken;
+
+  $("login-btn").style.display = signedIn ? "none" : "inline-block";
+  $("logout-btn").style.display = signedIn ? "inline-block" : "none";
+}
+
+// boot reads /ui/config and, under idp, wires the login flow (processing a callback if the page was
+// loaded as one) before resolving capabilities. In every other mode it just resolves capabilities,
+// leaving the manual token box in place.
+async function boot() {
+  let cfg = { authMethod: "none" };
+
+  try {
+    cfg = await (await fetch("/ui/config")).json();
+  } catch (e) {
+    // A missing/unreachable config endpoint leaves the console in manual-token mode.
+  }
+
+  if (cfg.authMethod === "idp" && cfg.clientId) {
+    oidc.enabled = true;
+    oidc.cfg = cfg;
+    $("manual-token").style.display = "none";
+
+    $("login-btn").addEventListener("click", login);
+    $("logout-btn").addEventListener("click", logout);
+
+    try {
+      oidc.endpoints = await discover(cfg.issuer);
+
+      await handleRedirect();
+    } catch (e) {
+      fail("Sign in unavailable", e);
+    }
+
+    if (oidc.accessToken) {
+      scheduleRefresh(Number(sessionStorage.getItem(OIDC_EXPIRY_KEY)) || 0);
+    }
+
+    applyOidcButtons();
+  }
+
+  refreshCaps();
+}
+
+// Resolve config and the current token's capabilities on load so the write controls are gated and
+// the right auth affordance (manual box or Sign in) is shown before the operator interacts.
+boot();
 
 // ------------------------------------------------------------------ search
 // openEvent loads one event and every memory attached to it, then shows them in the search
