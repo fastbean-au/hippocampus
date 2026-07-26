@@ -2514,6 +2514,70 @@ func (x *GeneralResponse) GetOk() bool {
 	return false
 }
 
+// WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the
+// caller's effective authorization tier ("reader", "writer", or "admin"); auth_enabled is false
+// when the service runs without authentication, in which case role is "admin" (unrestricted) and
+// client_id is empty.
+type WhoAmIResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Role          string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
+	AuthEnabled   bool                   `protobuf:"varint,3,opt,name=auth_enabled,json=authEnabled,proto3" json:"auth_enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WhoAmIResponse) Reset() {
+	*x = WhoAmIResponse{}
+	mi := &file_hippocampus_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WhoAmIResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WhoAmIResponse) ProtoMessage() {}
+
+func (x *WhoAmIResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hippocampus_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WhoAmIResponse.ProtoReflect.Descriptor instead.
+func (*WhoAmIResponse) Descriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *WhoAmIResponse) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *WhoAmIResponse) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *WhoAmIResponse) GetAuthEnabled() bool {
+	if x != nil {
+		return x.AuthEnabled
+	}
+	return false
+}
+
 type EmptyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -2522,7 +2586,7 @@ type EmptyRequest struct {
 
 func (x *EmptyRequest) Reset() {
 	*x = EmptyRequest{}
-	mi := &file_hippocampus_proto_msgTypes[36]
+	mi := &file_hippocampus_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2534,7 +2598,7 @@ func (x *EmptyRequest) String() string {
 func (*EmptyRequest) ProtoMessage() {}
 
 func (x *EmptyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[36]
+	mi := &file_hippocampus_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2547,7 +2611,7 @@ func (x *EmptyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmptyRequest.ProtoReflect.Descriptor instead.
 func (*EmptyRequest) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{36}
+	return file_hippocampus_proto_rawDescGZIP(), []int{37}
 }
 
 var File_hippocampus_proto protoreflect.FileDescriptor
@@ -2735,7 +2799,11 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x10memories_cleared\x18\x01 \x01(\x05R\x0fmemoriesCleared\x12%\n" +
 	"\x0eevents_cleared\x18\x02 \x01(\x05R\reventsCleared\"!\n" +
 	"\x0fGeneralResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"d\n" +
+	"\x0eWhoAmIResponse\x12\x1b\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x12\n" +
+	"\x04role\x18\x02 \x01(\tR\x04role\x12!\n" +
+	"\fauth_enabled\x18\x03 \x01(\bR\vauthEnabled\"\x0e\n" +
 	"\fEmptyRequest*,\n" +
 	"\x04Bool\x12\x0f\n" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +
@@ -2744,10 +2812,12 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x14SignificanceExtremum\x12%\n" +
 	"!SIGNIFICANCE_EXTREMUM_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dSIGNIFICANCE_EXTREMUM_HIGHEST\x10\x01\x12 \n" +
-	"\x1cSIGNIFICANCE_EXTREMUM_LOWEST\x10\x022\xc5\x10\n" +
+	"\x1cSIGNIFICANCE_EXTREMUM_LOWEST\x10\x022\x8f\x11\n" +
 	"\vHippocampus\x12G\n" +
 	"\x05Purge\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/purge\x12G\n" +
-	"\x05Sleep\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/sleep\x12L\n" +
+	"\x05Sleep\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/sleep\x12H\n" +
+	"\x06WhoAmI\x12\x13.proto.EmptyRequest\x1a\x15.proto.WhoAmIResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
+	"/v1/whoami\x12L\n" +
 	"\n" +
 	"StoreEvent\x12\f.proto.Event\x1a\x19.proto.StoreEventResponse\"\x15\x82\xd3\xe4\x93\x02\x0f:\x01*\"\n" +
 	"/v1/events\x12Z\n" +
@@ -2787,7 +2857,7 @@ func file_hippocampus_proto_rawDescGZIP() []byte {
 }
 
 var file_hippocampus_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
 var file_hippocampus_proto_goTypes = []any{
 	(Bool)(0),                                  // 0: proto.Bool
 	(SignificanceExtremum)(0),                  // 1: proto.SignificanceExtremum
@@ -2828,7 +2898,8 @@ var file_hippocampus_proto_goTypes = []any{
 	(*ClearRequest)(nil),                       // 36: proto.ClearRequest
 	(*ClearResponse)(nil),                      // 37: proto.ClearResponse
 	(*GeneralResponse)(nil),                    // 38: proto.GeneralResponse
-	(*EmptyRequest)(nil),                       // 39: proto.EmptyRequest
+	(*WhoAmIResponse)(nil),                     // 39: proto.WhoAmIResponse
+	(*EmptyRequest)(nil),                       // 40: proto.EmptyRequest
 }
 var file_hippocampus_proto_depIdxs = []int32{
 	2,  // 0: proto.SignificancePlacement.mode:type_name -> proto.SignificancePlacement.Mode
@@ -2850,52 +2921,54 @@ var file_hippocampus_proto_depIdxs = []int32{
 	6,  // 16: proto.ArchiveRecord.memory:type_name -> proto.Memory
 	4,  // 17: proto.ImportBatchRequest.events:type_name -> proto.Event
 	6,  // 18: proto.ImportBatchRequest.memories:type_name -> proto.Memory
-	39, // 19: proto.Hippocampus.Purge:input_type -> proto.EmptyRequest
-	39, // 20: proto.Hippocampus.Sleep:input_type -> proto.EmptyRequest
-	4,  // 21: proto.Hippocampus.StoreEvent:input_type -> proto.Event
-	8,  // 22: proto.Hippocampus.EndEvent:input_type -> proto.EndEventRequest
-	9,  // 23: proto.Hippocampus.UpdateEventSignificance:input_type -> proto.UpdateEventSignificanceRequest
-	10, // 24: proto.Hippocampus.MergeEvents:input_type -> proto.MergeEventsRequest
-	11, // 25: proto.Hippocampus.DeleteEvent:input_type -> proto.DeleteEventRequest
-	12, // 26: proto.Hippocampus.GetEventById:input_type -> proto.GetEventByIdRequest
-	14, // 27: proto.Hippocampus.GetEvents:input_type -> proto.GetEventsRequest
-	6,  // 28: proto.Hippocampus.StoreMemory:input_type -> proto.Memory
-	6,  // 29: proto.Hippocampus.UpdateMemory:input_type -> proto.Memory
-	19, // 30: proto.Hippocampus.DeleteMemories:input_type -> proto.DeleteMemoriesRequest
-	16, // 31: proto.Hippocampus.GetMemories:input_type -> proto.GetMemoriesRequest
-	20, // 32: proto.Hippocampus.RecallMemories:input_type -> proto.RecallMemoriesRequest
-	21, // 33: proto.Hippocampus.SearchMemories:input_type -> proto.SearchMemoriesRequest
-	22, // 34: proto.Hippocampus.ReplaceMemoriesWithSummary:input_type -> proto.ReplaceMemoriesWithSummaryRequest
-	39, // 35: proto.Hippocampus.GetSummarizationCandidates:input_type -> proto.EmptyRequest
-	30, // 36: proto.Hippocampus.Export:input_type -> proto.ExportRequest
-	32, // 37: proto.Hippocampus.Import:input_type -> proto.ImportRequest
-	28, // 38: proto.Hippocampus.ImportBatch:input_type -> proto.ImportBatchRequest
-	34, // 39: proto.Hippocampus.Transfer:input_type -> proto.TransferRequest
-	36, // 40: proto.Hippocampus.Clear:input_type -> proto.ClearRequest
-	38, // 41: proto.Hippocampus.Purge:output_type -> proto.GeneralResponse
-	38, // 42: proto.Hippocampus.Sleep:output_type -> proto.GeneralResponse
-	7,  // 43: proto.Hippocampus.StoreEvent:output_type -> proto.StoreEventResponse
-	38, // 44: proto.Hippocampus.EndEvent:output_type -> proto.GeneralResponse
-	38, // 45: proto.Hippocampus.UpdateEventSignificance:output_type -> proto.GeneralResponse
-	38, // 46: proto.Hippocampus.MergeEvents:output_type -> proto.GeneralResponse
-	38, // 47: proto.Hippocampus.DeleteEvent:output_type -> proto.GeneralResponse
-	13, // 48: proto.Hippocampus.GetEventById:output_type -> proto.GetEventResponse
-	15, // 49: proto.Hippocampus.GetEvents:output_type -> proto.GetEventsResponse
-	18, // 50: proto.Hippocampus.StoreMemory:output_type -> proto.StoreMemoryResponse
-	38, // 51: proto.Hippocampus.UpdateMemory:output_type -> proto.GeneralResponse
-	38, // 52: proto.Hippocampus.DeleteMemories:output_type -> proto.GeneralResponse
-	17, // 53: proto.Hippocampus.GetMemories:output_type -> proto.GetMemoriesResponse
-	17, // 54: proto.Hippocampus.RecallMemories:output_type -> proto.GetMemoriesResponse
-	17, // 55: proto.Hippocampus.SearchMemories:output_type -> proto.GetMemoriesResponse
-	23, // 56: proto.Hippocampus.ReplaceMemoriesWithSummary:output_type -> proto.ReplaceMemoriesWithSummaryResponse
-	25, // 57: proto.Hippocampus.GetSummarizationCandidates:output_type -> proto.GetSummarizationCandidatesResponse
-	31, // 58: proto.Hippocampus.Export:output_type -> proto.ExportResponse
-	33, // 59: proto.Hippocampus.Import:output_type -> proto.ImportResponse
-	29, // 60: proto.Hippocampus.ImportBatch:output_type -> proto.ImportBatchResponse
-	35, // 61: proto.Hippocampus.Transfer:output_type -> proto.TransferResponse
-	37, // 62: proto.Hippocampus.Clear:output_type -> proto.ClearResponse
-	41, // [41:63] is the sub-list for method output_type
-	19, // [19:41] is the sub-list for method input_type
+	40, // 19: proto.Hippocampus.Purge:input_type -> proto.EmptyRequest
+	40, // 20: proto.Hippocampus.Sleep:input_type -> proto.EmptyRequest
+	40, // 21: proto.Hippocampus.WhoAmI:input_type -> proto.EmptyRequest
+	4,  // 22: proto.Hippocampus.StoreEvent:input_type -> proto.Event
+	8,  // 23: proto.Hippocampus.EndEvent:input_type -> proto.EndEventRequest
+	9,  // 24: proto.Hippocampus.UpdateEventSignificance:input_type -> proto.UpdateEventSignificanceRequest
+	10, // 25: proto.Hippocampus.MergeEvents:input_type -> proto.MergeEventsRequest
+	11, // 26: proto.Hippocampus.DeleteEvent:input_type -> proto.DeleteEventRequest
+	12, // 27: proto.Hippocampus.GetEventById:input_type -> proto.GetEventByIdRequest
+	14, // 28: proto.Hippocampus.GetEvents:input_type -> proto.GetEventsRequest
+	6,  // 29: proto.Hippocampus.StoreMemory:input_type -> proto.Memory
+	6,  // 30: proto.Hippocampus.UpdateMemory:input_type -> proto.Memory
+	19, // 31: proto.Hippocampus.DeleteMemories:input_type -> proto.DeleteMemoriesRequest
+	16, // 32: proto.Hippocampus.GetMemories:input_type -> proto.GetMemoriesRequest
+	20, // 33: proto.Hippocampus.RecallMemories:input_type -> proto.RecallMemoriesRequest
+	21, // 34: proto.Hippocampus.SearchMemories:input_type -> proto.SearchMemoriesRequest
+	22, // 35: proto.Hippocampus.ReplaceMemoriesWithSummary:input_type -> proto.ReplaceMemoriesWithSummaryRequest
+	40, // 36: proto.Hippocampus.GetSummarizationCandidates:input_type -> proto.EmptyRequest
+	30, // 37: proto.Hippocampus.Export:input_type -> proto.ExportRequest
+	32, // 38: proto.Hippocampus.Import:input_type -> proto.ImportRequest
+	28, // 39: proto.Hippocampus.ImportBatch:input_type -> proto.ImportBatchRequest
+	34, // 40: proto.Hippocampus.Transfer:input_type -> proto.TransferRequest
+	36, // 41: proto.Hippocampus.Clear:input_type -> proto.ClearRequest
+	38, // 42: proto.Hippocampus.Purge:output_type -> proto.GeneralResponse
+	38, // 43: proto.Hippocampus.Sleep:output_type -> proto.GeneralResponse
+	39, // 44: proto.Hippocampus.WhoAmI:output_type -> proto.WhoAmIResponse
+	7,  // 45: proto.Hippocampus.StoreEvent:output_type -> proto.StoreEventResponse
+	38, // 46: proto.Hippocampus.EndEvent:output_type -> proto.GeneralResponse
+	38, // 47: proto.Hippocampus.UpdateEventSignificance:output_type -> proto.GeneralResponse
+	38, // 48: proto.Hippocampus.MergeEvents:output_type -> proto.GeneralResponse
+	38, // 49: proto.Hippocampus.DeleteEvent:output_type -> proto.GeneralResponse
+	13, // 50: proto.Hippocampus.GetEventById:output_type -> proto.GetEventResponse
+	15, // 51: proto.Hippocampus.GetEvents:output_type -> proto.GetEventsResponse
+	18, // 52: proto.Hippocampus.StoreMemory:output_type -> proto.StoreMemoryResponse
+	38, // 53: proto.Hippocampus.UpdateMemory:output_type -> proto.GeneralResponse
+	38, // 54: proto.Hippocampus.DeleteMemories:output_type -> proto.GeneralResponse
+	17, // 55: proto.Hippocampus.GetMemories:output_type -> proto.GetMemoriesResponse
+	17, // 56: proto.Hippocampus.RecallMemories:output_type -> proto.GetMemoriesResponse
+	17, // 57: proto.Hippocampus.SearchMemories:output_type -> proto.GetMemoriesResponse
+	23, // 58: proto.Hippocampus.ReplaceMemoriesWithSummary:output_type -> proto.ReplaceMemoriesWithSummaryResponse
+	25, // 59: proto.Hippocampus.GetSummarizationCandidates:output_type -> proto.GetSummarizationCandidatesResponse
+	31, // 60: proto.Hippocampus.Export:output_type -> proto.ExportResponse
+	33, // 61: proto.Hippocampus.Import:output_type -> proto.ImportResponse
+	29, // 62: proto.Hippocampus.ImportBatch:output_type -> proto.ImportBatchResponse
+	35, // 63: proto.Hippocampus.Transfer:output_type -> proto.TransferResponse
+	37, // 64: proto.Hippocampus.Clear:output_type -> proto.ClearResponse
+	42, // [42:65] is the sub-list for method output_type
+	19, // [19:42] is the sub-list for method input_type
 	19, // [19:19] is the sub-list for extension type_name
 	19, // [19:19] is the sub-list for extension extendee
 	0,  // [0:19] is the sub-list for field type_name
@@ -2917,7 +2990,7 @@ func file_hippocampus_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hippocampus_proto_rawDesc), len(file_hippocampus_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   37,
+			NumMessages:   38,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

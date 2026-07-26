@@ -239,7 +239,8 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   probe with SQLite via `information_schema`).
 - `contract/` — the gRPC contract (`hippocampus.proto`) and generated code. RPCs cover
   event/memory CRUD plus `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
-  `ReplaceMemoriesWithSummary`, `GetSummarizationCandidates`, and the transfer/archive surface
+  `ReplaceMemoriesWithSummary`, `GetSummarizationCandidates`, `WhoAmI` (reports the caller's
+  effective authorization tier, so the web console can adapt), and the transfer/archive surface
   (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see
   [Configurability](docs/configuration.md#configurability) for the full mapping); `go generate
@@ -321,7 +322,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   cooldown-limited forced re-fetch on an unknown kid so IdP key rotation verifies on first
   sight; `iss`/`aud` enforced when configured; the initial fetch failing fails construction,
   later outages leave cached keys serving). `Claims` embeds `jwt.RegisteredClaims` (including the
-  `jti`) plus `ClientID`. `MintToken` (taking a `MintRequest`) is a plain function, not part of
+  `jti`) plus `ClientID` and `Roles`. `MintToken` (taking a `MintRequest`) is a plain function, not part of
   `Verifier`, used by both the `--mint-token` CLI mode and tests; it is HMAC-only (an IdP mints
   its own tokens), always stamps a random `jti`, and sets a `kid` header when minting under a
   keyed secret. `revocation.go` adds `RevocationList` (a JSON file of revoked `jti`s and
@@ -340,6 +341,22 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   update anything). On a successful verify both adapters stash the `*Claims` in the request context
   (`context.go`: `ContextWithClaims`/`ClaimsFromContext`/`ClientIDFromContext`), which the two
   loggers read to attach a `client_id` to request logs (a per-client audit trail).
+  Authorization (`authz.go`) layers roles on top of that authentication: a `Tier` hierarchy
+  (`reader` ⊂ `writer` ⊂ `admin`) and a single `policies` table assigning every RPC a minimum
+  tier, from which `NewAuthorizer` derives both a gRPC method map and a gateway verb+path map — so
+  the two transports enforce one policy from one source (a drift-guard test asserts every RPC in
+  the service descriptor has a policy). `Authorizer.UnaryServerInterceptor` (chained right after
+  the auth interceptor) and `Authorizer.GatewayMiddleware` (a grpc-gateway `runtime.WithMiddlewares`
+  middleware keyed on the matched `runtime.HTTPPattern`, normalised — `RPCMethod` is not yet set
+  pre-handler) are the two enforcement adapters; both resolve the highest tier the verified
+  `Claims.Roles` grant (default-closed: a token resolving to no known tier is denied every RPC) and
+  stash it via `ContextWithTier`/`TierFromContext`. Roles come from the `roles` claim (or
+  `auth.roleClaim` for an IdP that names it differently), mapped to tiers by `auth.roleMapping`;
+  `--mint-token --role` stamps them. The authorizer is built (in main.go) only when auth is enabled.
+  The stashed tier drives two things: `hippocampus.Server.mayReinforce` (the reader-recall gate —
+  `auth.readerRecallReinforces` decides whether a reader's `RecallMemories`/reinforcing
+  `SearchMemories` actually reinforces or is downgraded to a plain read) and the `WhoAmI` RPC, which
+  reports the caller's effective tier so the web console can hide the write controls it may not use.
 - `demo/` — a long-running load generator (`demo/generator`, its own `main` package) plus a
   launch script (`run.sh`) and a demo-tuned config. Bursty/slow/event-less writers, query and
   recall workers, and a mutator exercise every RPC; a watcher pauses writes while the database

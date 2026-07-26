@@ -907,6 +907,29 @@
           "Hippocampus"
         ]
       }
+    },
+    "/v1/whoami": {
+      "get": {
+        "summary": "WhoAmI reports the authenticated caller's identity and effective authorization tier\n(reader/writer/admin), so a client - the web console - can tailor what it offers instead of\nguessing at the token's roles. Requires only the reader tier. When the service runs without\nauthentication it reports auth_enabled false and an unrestricted (admin) tier.",
+        "operationId": "Hippocampus_WhoAmI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoWhoAmIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Hippocampus"
+        ]
+      }
     }
   },
   "definitions": {
@@ -1506,6 +1529,21 @@
           "format": "int32"
         }
       }
+    },
+    "protoWhoAmIResponse": {
+      "type": "object",
+      "properties": {
+        "clientId": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "authEnabled": {
+          "type": "boolean"
+        }
+      },
+      "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."
     },
     "protobufAny": {
       "type": "object",

@@ -52,6 +52,11 @@
     gap: 8px;
   }
   .token-box input { width: 260px; }
+  /* Read-only gating: when the caller's role is below writer, hide every write-oriented control.
+     This is a UX convenience only - the server enforces authorization regardless of what is shown. */
+  body.readonly .writer-only { display: none !important; }
+  #role-pill { display: none; }
+  #role-pill.ro { border-color: var(--accent); color: var(--accent); }
   nav {
     display: flex;
     gap: 4px;
@@ -176,6 +181,7 @@
 <header>
   <h1><span>&#129504;</span> Hippocampus Console</h1>
   <div class="token-box">
+    <span id="role-pill" class="pill" title="your effective authorization role"></span>
     <label for="token" style="margin:0">Bearer token</label>
     <input id="token" type="password" placeholder="optional — only if auth enabled" autocomplete="off">
   </div>
@@ -233,7 +239,7 @@
   <!-- ===================== MEMORIES ===================== -->
   <section id="tab-memories" class="tab">
     <div class="split">
-      <div class="card">
+      <div class="card writer-only">
         <h2 id="mem-form-title">Create memory</h2>
         <input id="mem-id" type="hidden">
         <div class="field wide">
@@ -336,7 +342,7 @@
   <!-- ===================== EVENTS ===================== -->
   <section id="tab-events" class="tab">
     <div class="split">
-      <div class="card">
+      <div class="card writer-only">
         <h2 id="ev-form-title">Create event</h2>
         <input id="ev-id" type="hidden">
         <div class="row">
@@ -453,7 +459,51 @@ const TOKEN_KEY = "hippocampus_token";
 function getToken() { return $("token").value.trim(); }
 
 $("token").value = localStorage.getItem(TOKEN_KEY) || "";
-$("token").addEventListener("change", () => localStorage.setItem(TOKEN_KEY, getToken()));
+$("token").addEventListener("change", () => {
+  localStorage.setItem(TOKEN_KEY, getToken());
+  refreshCaps();
+});
+
+// caps holds what the current token is allowed to do, as reported by GET /v1/whoami. It gates the
+// write-oriented controls in the UI (a convenience only - the server enforces authorization on
+// every RPC regardless of what the console shows). canWrite defaults to true so the UI is usable
+// before the first whoami resolves and when authentication is disabled.
+let caps = { canWrite: true, role: null, authEnabled: false };
+
+// refreshCaps asks the server who the current token is and applies the result. A 401 (no/invalid
+// token while auth is on) or 403 (valid token, but a role that grants nothing) both mean "cannot
+// write", handled without a toast since this runs on load and on every token change.
+async function refreshCaps() {
+  try {
+    const who = await api("GET", "/v1/whoami");
+    const role = who.role || null;
+    const authEnabled = !!who.authEnabled;
+
+    caps = { role, authEnabled, canWrite: !authEnabled || role === "writer" || role === "admin" };
+  } catch (e) {
+    caps = { role: null, authEnabled: true, canWrite: false };
+  }
+
+  applyCaps();
+}
+
+// applyCaps toggles the read-only body class (which hides .writer-only controls) and updates the
+// role pill in the header.
+function applyCaps() {
+  document.body.classList.toggle("readonly", !caps.canWrite);
+
+  const pill = $("role-pill");
+
+  if (!caps.authEnabled) {
+    pill.style.display = "none";
+
+    return;
+  }
+
+  pill.style.display = "inline-block";
+  pill.classList.toggle("ro", !caps.canWrite);
+  pill.textContent = caps.role ? ("role: " + caps.role) : "no access — check token";
+}
 
 // api issues a JSON request to the gateway (same origin). Returns parsed body,
 // throws Error(message) on a non-2xx response so callers can surface it.
@@ -480,8 +530,17 @@ async function api(method, path, body) {
   }
 
   if (!res.ok) {
-    const msg = data.message || data.error || data.raw || (res.status + " " + res.statusText);
-    throw new Error(msg);
+    let msg = data.message || data.error || data.raw || (res.status + " " + res.statusText);
+
+    // Give the authorization failures a plain-language message rather than the terse server body:
+    // 401 means the token is missing/invalid, 403 means it is valid but its role is insufficient.
+    if (res.status === 401) msg = "Unauthorized — set a valid bearer token above.";
+    if (res.status === 403) msg = "Forbidden — your token's role does not permit this action.";
+
+    const err = new Error(msg);
+    err.status = res.status;
+
+    throw err;
   }
 
   return data;
@@ -612,6 +671,10 @@ document.querySelectorAll("nav button").forEach((b) => {
   });
 });
 
+// Resolve the current token's capabilities on load so the write controls are gated before the
+// operator interacts with them.
+refreshCaps();
+
 // ------------------------------------------------------------------ search
 // openEvent loads one event and every memory attached to it, then shows them in the search
 // results panel. Reached by clicking an event id in any result table, or by searching with only
@@ -699,9 +762,9 @@ function memoryRow(m) {
     <td class="id">${esc(m.id)}</td>
     <td>
       <div class="actions">
-        <button class="btn small ghost" data-act="edit-memory" data-id="${esc(m.id)}">Edit</button>
+        <button class="btn small ghost writer-only" data-act="edit-memory" data-id="${esc(m.id)}">Edit</button>
         <button class="btn small ghost" data-act="recall-memory" data-id="${esc(m.id)}">Recall</button>
-        <button class="btn small danger" data-act="delete-memory" data-id="${esc(m.id)}">Delete</button>
+        <button class="btn small danger writer-only" data-act="delete-memory" data-id="${esc(m.id)}">Delete</button>
       </div>
     </td>
   </tr>`;
@@ -914,9 +977,9 @@ function eventRow(e) {
     <td class="id">${esc(e.id)}</td>
     <td>
       <div class="actions">
-        <button class="btn small ghost" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
-        <button class="btn small ghost" data-act="end-event" data-id="${esc(e.id)}">End</button>
-        <button class="btn small danger" data-act="delete-event" data-id="${esc(e.id)}">Delete</button>
+        <button class="btn small ghost writer-only" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
+        <button class="btn small ghost writer-only" data-act="end-event" data-id="${esc(e.id)}">End</button>
+        <button class="btn small danger writer-only" data-act="delete-event" data-id="${esc(e.id)}">Delete</button>
       </div>
     </td>
   </tr>`;

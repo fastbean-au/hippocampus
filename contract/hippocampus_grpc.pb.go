@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Hippocampus_Purge_FullMethodName                      = "/proto.Hippocampus/Purge"
 	Hippocampus_Sleep_FullMethodName                      = "/proto.Hippocampus/Sleep"
+	Hippocampus_WhoAmI_FullMethodName                     = "/proto.Hippocampus/WhoAmI"
 	Hippocampus_StoreEvent_FullMethodName                 = "/proto.Hippocampus/StoreEvent"
 	Hippocampus_EndEvent_FullMethodName                   = "/proto.Hippocampus/EndEvent"
 	Hippocampus_UpdateEventSignificance_FullMethodName    = "/proto.Hippocampus/UpdateEventSignificance"
@@ -59,6 +60,11 @@ type HippocampusClient interface {
 	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
 	// which must never run its own cycle.
 	Sleep(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// WhoAmI reports the authenticated caller's identity and effective authorization tier
+	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
+	// guessing at the token's roles. Requires only the reader tier. When the service runs without
+	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
+	WhoAmI(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*WhoAmIResponse, error)
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
@@ -162,6 +168,16 @@ func (c *hippocampusClient) Sleep(ctx context.Context, in *EmptyRequest, opts ..
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GeneralResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_Sleep_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) WhoAmI(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*WhoAmIResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WhoAmIResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_WhoAmI_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -384,6 +400,11 @@ type HippocampusServer interface {
 	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
 	// which must never run its own cycle.
 	Sleep(context.Context, *EmptyRequest) (*GeneralResponse, error)
+	// WhoAmI reports the authenticated caller's identity and effective authorization tier
+	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
+	// guessing at the token's roles. Requires only the reader tier. When the service runs without
+	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
+	WhoAmI(context.Context, *EmptyRequest) (*WhoAmIResponse, error)
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
@@ -478,6 +499,9 @@ func (UnimplementedHippocampusServer) Purge(context.Context, *EmptyRequest) (*Ge
 }
 func (UnimplementedHippocampusServer) Sleep(context.Context, *EmptyRequest) (*GeneralResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Sleep not implemented")
+}
+func (UnimplementedHippocampusServer) WhoAmI(context.Context, *EmptyRequest) (*WhoAmIResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WhoAmI not implemented")
 }
 func (UnimplementedHippocampusServer) StoreEvent(context.Context, *Event) (*StoreEventResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StoreEvent not implemented")
@@ -592,6 +616,24 @@ func _Hippocampus_Sleep_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HippocampusServer).Sleep(ctx, req.(*EmptyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_WhoAmI_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EmptyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).WhoAmI(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_WhoAmI_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).WhoAmI(ctx, req.(*EmptyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -970,6 +1012,10 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Sleep",
 			Handler:    _Hippocampus_Sleep_Handler,
+		},
+		{
+			MethodName: "WhoAmI",
+			Handler:    _Hippocampus_WhoAmI_Handler,
 		},
 		{
 			MethodName: "StoreEvent",

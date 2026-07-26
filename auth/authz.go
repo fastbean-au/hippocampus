@@ -98,6 +98,7 @@ type rpcPolicy struct {
 // RPC in the service descriptor has an entry here.
 var policies = map[string]rpcPolicy{
 	// reads
+	"WhoAmI":                     {TierReader, http.MethodGet, "/v1/whoami"},
 	"GetEvents":                  {TierReader, http.MethodGet, "/v1/events"},
 	"GetEventById":               {TierReader, http.MethodGet, "/v1/events/*"},
 	"GetMemories":                {TierReader, http.MethodGet, "/v1/memories"},

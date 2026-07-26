@@ -26,6 +26,16 @@ service Hippocampus {
 		};
 	}
 
+	// WhoAmI reports the authenticated caller's identity and effective authorization tier
+	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
+	// guessing at the token's roles. Requires only the reader tier. When the service runs without
+	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
+	rpc WhoAmI(EmptyRequest) returns (WhoAmIResponse) {
+		option (google.api.http) = {
+			get: "/v1/whoami"
+		};
+	}
+
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
@@ -529,6 +539,16 @@ message ClearResponse {
 
 message GeneralResponse {
 	bool                                   ok                        = 1;
+}
+
+// WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the
+// caller's effective authorization tier ("reader", "writer", or "admin"); auth_enabled is false
+// when the service runs without authentication, in which case role is "admin" (unrestricted) and
+// client_id is empty.
+message WhoAmIResponse {
+	string                                 client_id                 = 1;
+	string                                 role                      = 2;
+	bool                                   auth_enabled              = 3;
 }
 
 message EmptyRequest {}

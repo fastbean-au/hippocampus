@@ -181,6 +181,7 @@ a JSON body:
 | `Clear`                      | POST   | `/v1/clear`                     |
 | `Sleep`                      | POST   | `/v1/sleep`                     |
 | `Purge`                      | POST   | `/v1/purge`                     |
+| `WhoAmI`                     | GET    | `/v1/whoami`                    |
 
 `ReplaceMemoriesWithSummary`'s body maps directly to its `summary` field (a `Memory`), rather
 than the whole request, so a client posts a plain memory object to
@@ -334,7 +335,7 @@ everything a lower one can:
 
 | Tier     | May call                                                                                                                                                                  |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarizationCandidates`                                                              |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarizationCandidates`, `WhoAmI`                                                    |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `Export`, `Transfer`, `Clear`                                                                                              |
 

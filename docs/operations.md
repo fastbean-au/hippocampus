@@ -297,9 +297,13 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
 - **Web console (`/ui`).** The HTTP gateway serves an embedded single-page console at `/ui`. The
   static page loads without a token (it carries none — the operator pastes the bearer token into it,
   which is then kept in the browser's `localStorage` and sent with each `/v1` call), but every action
-  it performs still goes through auth and the purge gate like any other request. Because the token
-  lives in the browser, serve `/ui` only over TLS and treat it as a trusted-operator tool, not a
-  public endpoint; put it behind your ingress' access controls if the gateway is internet-facing.
+  it performs still goes through auth, [authorization](configuration.md#authorization), and the purge
+  gate like any other request. On the token you paste it calls `GET /v1/whoami` and adapts what it
+  offers to the effective role — hiding the write controls for a `reader` and showing the role in the
+  header — but that is a convenience only; the server still enforces the tier on every RPC, so a
+  hidden control is not a security boundary. Because the token lives in the browser, serve `/ui` only
+  over TLS and treat it as a trusted-operator tool, not a public endpoint; put it behind your ingress'
+  access controls if the gateway is internet-facing.
 - **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left
   unset there is no cap. The native gRPC transport bounds a whole request at its 4 MiB default, but
   the HTTP gateway does not by default — set `gateway.maxRequestBytes` to a transport-level ceiling
