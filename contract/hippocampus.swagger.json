@@ -700,7 +700,7 @@
     },
     "/v1/memories/recall": {
       "post": {
-        "summary": "RecallMemories returns the requested memories and reinforces each one: its recall time is\nreset to now (resetting its decay clock) and its recall count is incremented (raising its\neffective significance during consolidation).",
+        "summary": "RecallMemories returns the requested memories and reinforces each one: its recall time is\nreset to now (resetting its decay clock) and its recall count is incremented (raising its\neffective significance during consolidation). A reader-tier caller for whom reinforcement is\ndisabled (auth.readerRecallReinforces) gets a plain, non-reinforcing read instead; writer and\nadmin callers always reinforce.",
         "operationId": "Hippocampus_RecallMemories",
         "responses": {
           "200": {

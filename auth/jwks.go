@@ -47,6 +47,12 @@ type JWKSConfig struct {
 	Issuer          string
 	Audience        string
 	RefreshInterval time.Duration
+
+	// RoleClaim names the token claim carrying the bearer's roles when the provider does not use
+	// the standard top-level "roles" claim. Empty or "roles" uses the value parsed directly into
+	// Claims.Roles; any other name triggers a secondary read of that top-level claim (see
+	// rolesFromClaim). Nested claims are not supported.
+	RoleClaim string
 }
 
 // JWKSVerifier verifies RS256 tokens against the RSA keys published at an identity provider's
@@ -136,6 +142,12 @@ func (v *JWKSVerifier) Verify(token string) (*Claims, error) {
 
 	if !parsed.Valid {
 		return nil, fmt.Errorf("auth: token invalid")
+	}
+
+	// When the provider publishes roles under a non-standard claim name, resolve them from there.
+	// The signature is already verified above, so reading the claim value unverified is safe.
+	if v.cfg.RoleClaim != "" && v.cfg.RoleClaim != "roles" {
+		claims.Roles = rolesFromClaim(token, v.cfg.RoleClaim)
 	}
 
 	return &claims, nil

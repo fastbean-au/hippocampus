@@ -54,6 +54,7 @@ func execute(args []string) {
 	flags.Bool("version", false, "print the build version and exit")
 	flags.Bool("mint-token", false, "mint a signed auth token from the configured signing secret and exit")
 	flags.String("client-id", "", "client_id claim to embed in a minted token (used with --mint-token)")
+	flags.StringSlice("role", nil, "authorization role(s) to embed in a minted token: reader, writer, and/or admin (repeatable or comma-separated; used with --mint-token)")
 	flags.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
 	flags.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
 	flags.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
@@ -128,10 +129,19 @@ func execute(args []string) {
 
 		secret, kid := resolveMintKey(hmacConfigFromViper())
 
+		roles := viper.GetStringSlice("role")
+
+		// A token with no role authorizes no Hippocampus RPC under the default-closed policy, so
+		// minting one is almost certainly a mistake - fail loudly rather than hand back a dead token.
+		if len(roles) == 0 {
+			log.Fatal("--mint-token requires at least one --role (reader, writer, and/or admin); a role-less token is denied every RPC")
+		}
+
 		token, err := auth.MintToken(auth.MintRequest{
 			Secret:   secret,
 			Kid:      kid,
 			ClientID: viper.GetString("client-id"),
+			Roles:    roles,
 			TTL:      viper.GetDuration("ttl"),
 		})
 		if err != nil {
@@ -144,7 +154,7 @@ func execute(args []string) {
 		// `token=$(hippocampus --mint-token ...)` works - so an operator can record it for later
 		// per-token revocation.
 		if id, err := auth.TokenID(token); err == nil {
-			fmt.Fprintf(os.Stderr, "jti=%s client_id=%s\n", id, viper.GetString("client-id"))
+			fmt.Fprintf(os.Stderr, "jti=%s client_id=%s roles=%s\n", id, viper.GetString("client-id"), strings.Join(roles, ","))
 		}
 
 		return
@@ -401,12 +411,14 @@ func run(ctx context.Context, version versionInfo) error {
 
 	case "idp":
 		viper.SetDefault("auth.jwksRefreshIntervalSeconds", 300)
+		viper.SetDefault("auth.roleClaim", "roles")
 
 		v, err := auth.NewJWKSVerifier(auth.JWKSConfig{
 			JWKSURL:         viper.GetString("auth.jwksUrl"),
 			Issuer:          viper.GetString("auth.issuer"),
 			Audience:        viper.GetString("auth.audience"),
 			RefreshInterval: time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second,
+			RoleClaim:       viper.GetString("auth.roleClaim"),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to initialise auth: %w", err)
@@ -449,6 +461,28 @@ func run(ctx context.Context, version versionInfo) error {
 			"plaintext unless TLS is terminated upstream (e.g. by a proxy or service mesh)")
 	}
 
+	// Authorization rides on top of authentication: it maps each RPC to a required role tier
+	// (reader/writer/admin) and rejects an authenticated caller whose token does not grant it. Built
+	// only when auth is enabled - with auth off there is no principal to authorize, so the service
+	// behaves as it always has. auth.roleMapping translates an identity provider's own group names
+	// onto the tiers (empty for hmac, where --mint-token stamps the tier names directly).
+	var authorizer *auth.Authorizer
+
+	if authEnabled {
+		var roleMapping map[string]string
+
+		if err := viper.UnmarshalKey("auth.roleMapping", &roleMapping); err != nil {
+			return fmt.Errorf("failed to read auth.roleMapping: %w", err)
+		}
+
+		a, err := auth.NewAuthorizer(roleMapping)
+		if err != nil {
+			return fmt.Errorf("failed to initialise authorization: %w", err)
+		}
+
+		authorizer = a
+	}
+
 	// initialise the gRPC server
 	log.Debug("initialising gRPC server")
 
@@ -461,7 +495,12 @@ func run(ctx context.Context, version versionInfo) error {
 	interceptors := []grpc.UnaryServerInterceptor{InterceptorRecoverPanic}
 
 	if authEnabled {
-		interceptors = append(interceptors, auth.UnaryServerInterceptor(verifier))
+		// Authentication first (rejects an invalid/absent token), then authorization (rejects a
+		// valid token whose role does not grant the RPC), both ahead of the purge gate and logger.
+		interceptors = append(interceptors,
+			auth.UnaryServerInterceptor(verifier),
+			authorizer.UnaryServerInterceptor(),
+		)
 	}
 
 	interceptors = append(interceptors,
@@ -561,7 +600,17 @@ func run(ctx context.Context, version versionInfo) error {
 	if gatewayPort := viper.GetInt("gateway.port"); gatewayPort > 0 {
 		log.Debug("initialising HTTP gateway")
 
-		gwMux := runtime.NewServeMux()
+		// Authorization on the gateway runs as a post-routing middleware (so the matched route -
+		// hence the RPC's required tier - is known) rather than an outer HTTP wrapper. It reads the
+		// claims stashed by auth.HTTPMiddleware below, so it enforces the same policy as the gRPC
+		// interceptor from the same table. Added only when auth is enabled, mirroring the gRPC side.
+		var muxOpts []runtime.ServeMuxOption
+
+		if authEnabled {
+			muxOpts = append(muxOpts, runtime.WithMiddlewares(authorizer.GatewayMiddleware()))
+		}
+
+		gwMux := runtime.NewServeMux(muxOpts...)
 		if err := contract.RegisterHippocampusHandlerServer(context.Background(), gwMux, hipo); err != nil {
 			return fmt.Errorf("failed to register HTTP gateway: %w", err)
 		}

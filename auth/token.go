@@ -26,6 +26,11 @@ type MintRequest struct {
 	// and per-client revocation.
 	ClientID string
 
+	// Roles are stamped into the token's roles claim, granting the bearer the corresponding
+	// authorization tiers (reader/writer/admin). An empty Roles mints a token that authorizes no
+	// Hippocampus RPC under the default-closed policy.
+	Roles []string
+
 	// TTL is how long the token stays valid from the moment it is minted.
 	TTL time.Duration
 }
@@ -55,6 +60,7 @@ func MintToken(req MintRequest) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(now.Add(req.TTL)),
 		},
 		ClientID: req.ClientID,
+		Roles:    req.Roles,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

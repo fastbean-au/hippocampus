@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc/codes"
@@ -203,9 +204,11 @@ func (s *Server) DeleteMemories(ctx context.Context, in *contract.DeleteMemories
 	return &res, mapError(err)
 }
 
-// RecallMemories returns the requested memories and reinforces each one: its recall time is set
-// to now (resetting its decay clock) and its recall count is incremented (raising its effective
-// significance during consolidation).
+// RecallMemories returns the requested memories and, for callers permitted to reinforce, resets
+// each memory's decay clock and increments its recall count (raising its effective significance
+// during consolidation). A reader-tier caller for whom reinforcement is disabled
+// (auth.readerRecallReinforces) instead gets a plain, non-reinforcing read - recall stays available
+// to read-only users without the write side effect. See mayReinforce.
 func (s *Server) RecallMemories(ctx context.Context, in *contract.RecallMemoriesRequest) (*contract.GetMemoriesResponse, error) {
 	var res contract.GetMemoriesResponse
 
@@ -215,12 +218,26 @@ func (s *Server) RecallMemories(ctx context.Context, in *contract.RecallMemories
 		return &res, nil
 	}
 
-	memories, err := s.db.RecallMemories(ctx, ids)
+	reinforce := s.mayReinforce(ctx)
+
+	var memories *[]types.Memory
+	var err error
+
+	if reinforce {
+		memories, err = s.db.RecallMemories(ctx, ids)
+	} else {
+		log.Trace("recall reinforcement suppressed for reader role")
+
+		memories, err = s.db.GetMemoriesByIds(ctx, ids)
+	}
+
 	if err != nil {
 		return &res, mapError(err)
 	}
 
-	tel.memoriesRecalled.Add(ctx, int64(len(*memories)))
+	if reinforce {
+		tel.memoriesRecalled.Add(ctx, int64(len(*memories)))
+	}
 
 	ms := make([]*contract.Memory, len(*memories))
 	for i, m := range *memories {

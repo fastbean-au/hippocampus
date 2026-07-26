@@ -270,9 +270,15 @@ token. `auth.method` selects the scheme:
     "jwksUrl": "",
     "issuer": "",
     "audience": "",
-    "jwksRefreshIntervalSeconds": 300
+    "jwksRefreshIntervalSeconds": 300,
+    "roleClaim": "roles",
+    "roleMapping": {},
+    "readerRecallReinforces": false
 }
 ```
+
+`auth.roleClaim`, `auth.roleMapping`, and `auth.readerRecallReinforces` drive
+[authorization](#authorization) and are only consulted when authentication is enabled.
 
 `auth.signingKeys` is a structured list (`[{ "kid": "...", "secret": "..." }]`) and so is
 config-file-only — unlike `auth.signingSecret`, it cannot be injected through a single
@@ -297,13 +303,16 @@ Under `hmac` there is no client registry or admin RPC — issuing a token is a C
 the service binary itself:
 
 ```sh
-hippocampus --mint-token --client-id my-client --ttl 24h -c config.json
+hippocampus --mint-token --client-id my-client --role writer --ttl 24h -c config.json
 ```
 
 This prints a signed token to **stdout** and exits without starting the server (or touching the
-database); it also prints the token's `jti` (its unique id) and client to **stderr**, so
+database); it also prints the token's `jti` (its unique id), client, and roles to **stderr**, so
 `token=$(hippocampus --mint-token ...)` still captures only the token while an operator can record
-the `jti` for later [revocation](#revocation). `--ttl` accepts any Go duration (`1h`, `24h`,
+the `jti` for later [revocation](#revocation). `--role` is **required** and names one or more
+[authorization](#authorization) tiers — `reader`, `writer`, and/or `admin` (repeatable, or
+comma-separated: `--role reader,writer`); a role-less token authorizes nothing under the
+default-closed policy, so minting one is refused. `--ttl` accepts any Go duration (`1h`, `24h`,
 `720h`, ...); `--signing-secret` can override the config's secret for minting on a host that only
 has the secret and not the full deployed config. When `auth.signingKeys` is configured, the token
 is signed with `auth.activeKid` (or the first listed key) and stamped with that `kid`; `--kid`
@@ -313,17 +322,49 @@ revocation, and `--mint-token` refuses to run.
 Verification is written behind an interface (`auth.Verifier`) — `hmac` and `idp` are its two
 implementations, and the interceptor/middleware call sites are identical for both.
 
-A valid token grants access to **every** RPC — there is no per-RPC scope or role. In particular
-`Import`/`ImportBatch` deliberately bypass the write-path validation that `StoreMemory`/`StoreEvent`
-enforce (body-size limit, the future-timestamp clock-skew guard, and the minimum-significance gate)
-so an archive can be restored faithfully, and `Purge`/`Clear` delete data. This is correct for the
-migration/restore use cases those RPCs exist for, but it means **import (and clear) rights are
-effectively admin rights**: any client holding a valid token can create future-dated
-(decay-immune until then) or oversized rows, or delete the store. Under the single-tenant trust
-model this is by design — issue tokens only to trusted callers, and use short TTLs and
-[revocation](#revocation) to contain a leak. The verified `client_id` is logged on every failing
-request (and, on the HTTP gateway, every request), so a leaked token can be traced to the client it
-was issued to.
+The verified `client_id` is logged on every failing request (and, on the HTTP gateway, every
+request), so a leaked token can be traced to the client it was issued to. What each token may *do*
+is governed by [authorization](#authorization) below.
+
+### Authorization
+
+When authentication is enabled, each RPC also requires a minimum **role tier**, carried in the
+token's `roles` claim. The tiers nest — `reader` ⊂ `writer` ⊂ `admin` — so a higher tier can do
+everything a lower one can:
+
+| Tier     | May call                                                                                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarizationCandidates`                                                              |
+| `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `Import`, `ImportBatch` |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `Export`, `Transfer`, `Clear`                                                                                              |
+
+`Export`/`Transfer` are `admin` because they read the whole store out; `Import`/`ImportBatch` are
+`writer` because they deliberately bypass the write-path validation `StoreMemory`/`StoreEvent`
+enforce (body-size limit, future-timestamp clock-skew guard, minimum-significance gate) to restore
+an archive faithfully. A caller whose token grants a tier below the RPC's requirement gets
+`codes.PermissionDenied` from gRPC, or `403` from the HTTP gateway (distinct from the `401` an
+*unauthenticated* request gets). The same policy governs both transports from one table, so gRPC
+and the gateway can never diverge.
+
+Authorization is **default-closed**: a token whose roles resolve to no known tier is denied every
+RPC. Because tokens minted before this release carry no `roles` claim, **enabling a newer build
+against existing tokens requires re-minting them with a `--role`** (or, under `idp`, adding roles
+to the provider's token). With `auth.method: none` there is no authenticated principal, so
+authorization is off and every RPC is reachable, exactly as before.
+
+Under `hmac`, `--mint-token --role` stamps the tier names (`reader`/`writer`/`admin`) directly.
+Under `idp`, the provider supplies them: by default they are read from a top-level `roles` claim;
+`auth.roleClaim` points at a differently-named top-level claim when the provider uses one (nested
+claims such as Keycloak's `realm_access.roles` are not supported). `auth.roleMapping` translates a
+provider's own group names onto the tiers, e.g. `{ "hippo-ops": "admin", "hippo-app": "writer" }`;
+the tier names always map to themselves, so a mapping is only needed for other names.
+
+`RecallMemories` and `SearchMemories` are `reader`-tier: recall is a read as far as *access* goes,
+even though it normally reinforces the memory (resets its decay clock, raises its recall count).
+Whether a **reader** actually triggers that reinforcement is controlled globally by
+`auth.readerRecallReinforces` (default `false`): left off, a reader's recall/search returns the
+memories without the write side effect; turned on, readers reinforce like anyone else. `writer` and
+`admin` callers always reinforce.
 
 #### Key rotation (hmac)
 

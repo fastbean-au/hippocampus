@@ -163,6 +163,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 
 Hippocampus is production-hardened out of the box:
 * **Built-in Authentication:** JWT bearer tokens with mandatory expiration (`exp`) and zero-downtime rotation via `auth.signingKeys`.
+* **Role-Based Authorization:** Per-RPC `reader`/`writer`/`admin` tiers carried in the token, enforced identically on gRPC and the HTTP gateway.
 * **Transport Security:** Pinned TLS 1.2+ floor for both internal and external communication.
 * **Storage Isolation:** Driver error masking behind standard gRPC status codes to prevent database schema leaks.
 * **Client Isolation:** Per-client request attribution, execution query timeouts, and stream concurrency limits.

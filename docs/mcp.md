@@ -76,8 +76,10 @@ hippocampus-mcp --address memory.internal:50051 --tls --tls-ca-cert /etc/ssl/hip
 
 The auth and TLS options mirror the service's own [authentication](configuration.md#authentication)
 and [TLS](configuration.md#tls) surface. Mint a token with
-`hippocampus --mint-token --client-id <id> --ttl 24h -c config.json`; the same token authenticates
-the bridge. The token may also be supplied as `HIPPOCAMPUS_MCP_TOKEN` (any flag maps to
+`hippocampus --mint-token --client-id <id> --role writer --ttl 24h -c config.json`; the same token
+authenticates the bridge. Give it at least the `writer` [tier](configuration.md#authorization) — the
+bridge's tools include `store_memory` and `create_event` — or `reader` if you only expose the
+read-only tools. The token may also be supplied as `HIPPOCAMPUS_MCP_TOKEN` (any flag maps to
 `HIPPOCAMPUS_MCP_<NAME>` with dashes as underscores), keeping the secret out of the argv the host
 stores.
 

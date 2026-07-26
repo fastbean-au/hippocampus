@@ -277,12 +277,16 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
   reaches them except the local proxy. The same applies to the **Transfer client**: setting
   `transfer.token` without `transfer.tls` sends the token in plaintext to the target, and the
   service warns at startup — enable `transfer.tls` unless TLS to the target is terminated by a mesh.
-- **A token is all-or-nothing.** There is no per-RPC scope: a valid token can call every RPC,
-  including `Import`/`ImportBatch` (which bypass write-path validation) and `Purge`/`Clear` (which
-  delete data), so **import and clear rights are effectively admin rights** — issue tokens only to
-  trusted callers. The verified `client_id` is logged on every failing request (and, on the HTTP
-  gateway, every request), so a leaked or misbehaving token can be traced to the client it was
-  issued to.
+- **Scope each token to a role tier.** Every RPC requires a minimum tier — `reader`, `writer`, or
+  `admin` (nesting, `reader ⊂ writer ⊂ admin`) — carried in the token's `roles` claim and enforced
+  on both transports; see [Authorization](configuration.md#authorization). Issue `reader` tokens to
+  read-only consumers and reserve `admin` (which alone may `Purge`/`Sleep`/`Clear`/`Transfer`/
+  `Export`) for operators. `Import`/`ImportBatch` are `writer`-tier and still bypass write-path
+  validation to restore archives faithfully, so grant `writer` only to trusted loaders. Authorization
+  is default-closed: a token whose roles resolve to no tier is denied everything, so **on upgrade,
+  re-mint pre-existing tokens with a `--role`**. The verified `client_id` is logged on every failing
+  request (and, on the HTTP gateway, every request), so a leaked or misbehaving token can be traced
+  to the client it was issued to.
 - **gRPC transport hardening.** If the gRPC port is exposed beyond trusted callers, cap the
   concurrent HTTP/2 streams one connection may open with `maxConcurrentStreams`, and enforce a
   keepalive policy (`keepalive.minTimeSeconds`, `keepalive.permitWithoutStream`) so an abusive

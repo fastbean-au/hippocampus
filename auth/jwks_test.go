@@ -188,6 +188,45 @@ func TestJWKSVerifier_ValidToken(t *testing.T) {
 	}
 }
 
+// TestJWKSVerifier_RoleClaim covers the auth.roleClaim path: when the provider publishes roles
+// under a non-standard top-level claim, Verify resolves Claims.Roles from there.
+func TestJWKSVerifier_RoleClaim(t *testing.T) {
+	key := testRSAKey(t)
+
+	keySet := &testKeySet{}
+	keySet.set(testJWK("key-1", &key.PublicKey))
+
+	srv := httptest.NewServer(http.HandlerFunc(keySet.serve))
+	defer srv.Close()
+
+	v, err := NewJWKSVerifier(JWKSConfig{JWKSURL: srv.URL, RefreshInterval: time.Minute, RoleClaim: "groups"})
+	if err != nil {
+		t.Fatalf("NewJWKSVerifier: %s", err)
+	}
+
+	// A token with roles under "groups" (not "roles"); sign a MapClaims directly, the way an IdP
+	// with a custom claim would.
+	raw := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"exp":    time.Now().Add(time.Hour).Unix(),
+		"groups": []any{"reader", "writer"},
+	})
+	raw.Header["kid"] = "key-1"
+
+	signed, err := raw.SignedString(key)
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	claims, err := v.Verify(signed)
+	if err != nil {
+		t.Fatalf("Verify: %s", err)
+	}
+
+	if len(claims.Roles) != 2 || claims.Roles[0] != "reader" || claims.Roles[1] != "writer" {
+		t.Fatalf("expected roles [reader writer] from the groups claim, got %v", claims.Roles)
+	}
+}
+
 // TestJWKSVerifier_RejectsHS256 verifies the algorithm pin: a token declaring HS256 must be
 // rejected outright, closing the classic key-confusion attack where an HMAC token signed with the
 // public key's own bytes would otherwise verify against it.

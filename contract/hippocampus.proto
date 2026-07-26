@@ -132,7 +132,9 @@ service Hippocampus {
 
 	// RecallMemories returns the requested memories and reinforces each one: its recall time is
 	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
-	// effective significance during consolidation).
+	// effective significance during consolidation). A reader-tier caller for whom reinforcement is
+	// disabled (auth.readerRecallReinforces) gets a plain, non-reinforcing read instead; writer and
+	// admin callers always reinforce.
 	rpc RecallMemories(RecallMemoriesRequest) returns (GetMemoriesResponse) {
 		option (google.api.http) = {
 			post: "/v1/memories/recall"

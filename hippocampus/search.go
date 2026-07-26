@@ -67,11 +67,16 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 		return &res, nil
 	}
 
+	// A reinforcing search is only honoured when the caller may reinforce: a reader for whom
+	// reinforcement is disabled (auth.readerRecallReinforces) gets a plain read instead, matching
+	// RecallMemories.
+	reinforce := in.GetReinforce() && s.mayReinforce(ctx)
+
 	// Both fetch paths return only rows the primary store still holds, so stale index entries
 	// drop out here without any special handling.
 	var memories *[]types.Memory
 
-	if in.GetReinforce() {
+	if reinforce {
 		memories, err = s.db.RecallMemories(ctx, ids)
 	} else {
 		memories, err = s.db.GetMemoriesByIds(ctx, ids)
@@ -81,9 +86,9 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 		return &res, mapError(err)
 	}
 
-	tel.memoriesSearched.Add(ctx, int64(len(*memories)), metric.WithAttributes(attribute.Bool("reinforce", in.GetReinforce())))
+	tel.memoriesSearched.Add(ctx, int64(len(*memories)), metric.WithAttributes(attribute.Bool("reinforce", reinforce)))
 
-	if in.GetReinforce() {
+	if reinforce {
 		tel.memoriesRecalled.Add(ctx, int64(len(*memories)))
 	}
 

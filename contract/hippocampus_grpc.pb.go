@@ -103,7 +103,9 @@ type HippocampusClient interface {
 	GetMemories(ctx context.Context, in *GetMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
 	// RecallMemories returns the requested memories and reinforces each one: its recall time is
 	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
-	// effective significance during consolidation).
+	// effective significance during consolidation). A reader-tier caller for whom reinforcement is
+	// disabled (auth.readerRecallReinforces) gets a plain, non-reinforcing read instead; writer and
+	// admin callers always reinforce.
 	RecallMemories(ctx context.Context, in *RecallMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
 	// SearchMemories finds memories via the optional content-search index; see
 	// SearchMemoriesRequest.
@@ -426,7 +428,9 @@ type HippocampusServer interface {
 	GetMemories(context.Context, *GetMemoriesRequest) (*GetMemoriesResponse, error)
 	// RecallMemories returns the requested memories and reinforces each one: its recall time is
 	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
-	// effective significance during consolidation).
+	// effective significance during consolidation). A reader-tier caller for whom reinforcement is
+	// disabled (auth.readerRecallReinforces) gets a plain, non-reinforcing read instead; writer and
+	// admin callers always reinforce.
 	RecallMemories(context.Context, *RecallMemoriesRequest) (*GetMemoriesResponse, error)
 	// SearchMemories finds memories via the optional content-search index; see
 	// SearchMemoriesRequest.

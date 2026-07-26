@@ -134,12 +134,27 @@ func TestExecute_MintTokenHappyPath(t *testing.T) {
 	path := writeConfigFile(t, `{"auth":{"signingSecret":"unit-test-signing-secret-value"}}`)
 
 	out := captureStdout(t, func() {
-		execute([]string{"--mint-token", "--client-id", "unit-test", "--config_file", path})
+		execute([]string{"--mint-token", "--client-id", "unit-test", "--role", "writer", "--config_file", path})
 	})
 
 	if strings.TrimSpace(out) == "" {
 		t.Error("execute(--mint-token) printed no token")
 	}
+}
+
+// TestExecute_MintTokenRequiresRole fails fast when --mint-token is given no --role: a role-less
+// token authorizes no RPC under the default-closed policy, so it is almost certainly a mistake.
+func TestExecute_MintTokenRequiresRole(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	path := writeConfigFile(t, `{"auth":{"signingSecret":"unit-test-signing-secret-value"}}`)
+
+	withFatalPanic(t, func() {
+		execute([]string{"--mint-token", "--client-id", "unit-test", "--config_file", path})
+	})
 }
 
 // TestExecute_MintTokenIdpRejected fails fast under auth.method 'idp': the identity provider issues

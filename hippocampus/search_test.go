@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
@@ -143,6 +144,30 @@ func TestSearchMemories_ReinforceRecalls(t *testing.T) {
 
 	if len(res.Memories) != 1 || res.Memories[0].RecallCount != 1 {
 		t.Errorf("reinforce=true should recall the match (recall_count 1), got %v", res.Memories)
+	}
+}
+
+// TestSearchMemories_ReinforceSuppressedForReader verifies the reinforcement gate applies to the
+// search path too: a reader for whom reinforcement is disabled gets the match back but without the
+// recall write, exactly as RecallMemories downgrades.
+func TestSearchMemories_ReinforceSuppressedForReader(t *testing.T) {
+	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
+	s := newSearchTestServer(t, idx)
+	s.readerRecallReinforces = false
+
+	if _, err := s.db.CreateMemory(context.Background(), testMemory("m1", 5)); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	ctx := auth.ContextWithTier(context.Background(), auth.TierReader)
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "hello", Reinforce: true})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 1 || res.Memories[0].RecallCount != 0 {
+		t.Errorf("a reader with reinforcement disabled should get the match without recall (recall_count 0), got %v", res.Memories)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/archive"
+	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
@@ -156,6 +157,12 @@ type Server struct {
 	maxMemoryBodyLength       int
 	consolidation             Consolidation
 
+	// readerRecallReinforces (auth.readerRecallReinforces) decides whether a reader-tier caller's
+	// RecallMemories / reinforcing SearchMemories actually reinforces the memories or is downgraded
+	// to a plain read. Writer/admin callers always reinforce; when authorization is not in effect
+	// (auth disabled) recall reinforces as it always has. See mayReinforce.
+	readerRecallReinforces bool
+
 	// consolidationEnabled reflects consolidation.enabled: true (the default) means this instance
 	// runs the sleep cycle - the timed loop, the WAL trigger, and the manual Sleep RPC. False makes
 	// it a read/write replica in a horizontally scaled deployment: New starts no sleep
@@ -244,6 +251,25 @@ func transferTLSEnabled() bool {
 	}
 }
 
+// mayReinforce reports whether the caller behind ctx may reinforce recalled memories (reset the
+// decay clock, raise the recall count). Writer and admin tiers always may; a reader may only when
+// auth.readerRecallReinforces is set. When no tier is on the context - authorization is not in
+// effect because authentication is disabled - recall reinforces as it always has, so an unsecured
+// instance is unchanged.
+func (s *Server) mayReinforce(ctx context.Context) bool {
+	tier, ok := auth.TierFromContext(ctx)
+
+	if !ok {
+		return true
+	}
+
+	if tier >= auth.TierWriter {
+		return true
+	}
+
+	return s.readerRecallReinforces
+}
+
 func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Server {
 	log.Trace("func() hippocampus.New()")
 
@@ -271,6 +297,7 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Se
 		minimumEventSignificance:  viper.GetInt32("event.minimumSignificance"),
 		minimumMemorySignificance: viper.GetInt32("memory.minimumSignificance"),
 		maxMemoryBodyLength:       viper.GetInt("memory.limit.sizeBytes"),
+		readerRecallReinforces:    viper.GetBool("auth.readerRecallReinforces"),
 		consolidation: Consolidation{
 			defaultEventSignificanceValue:      viper.GetInt32("consolidation.defaultEventSignificanceValue"),
 			defaultEventSignificancePercentile: viper.GetFloat64("consolidation.defaultEventSignificancePercentile"),
