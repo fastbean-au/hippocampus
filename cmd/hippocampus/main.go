@@ -627,13 +627,38 @@ func run(ctx context.Context, version versionInfo) error {
 			_, _ = w.Write(contract.SwaggerJSON)
 		})
 		httpMux.Handle("/ui", webUIHandler())
+
+		// The front-channel OIDC config the console reads to start a login. The browser fetches it
+		// before it has a token, so it must stay unauthenticated and reachable during a purge, like
+		// the page itself. The issuer defaults to auth.issuer (the same one the verifier discovers
+		// its JWKS from); scopes default to a plain openid/profile request when unset.
+		uiIssuer := viper.GetString("auth.ui.issuer")
+
+		if uiIssuer == "" {
+			uiIssuer = viper.GetString("auth.issuer")
+		}
+
+		uiScopes := viper.GetString("auth.ui.scopes")
+
+		if uiScopes == "" {
+			uiScopes = "openid profile"
+		}
+
+		httpMux.Handle("/ui/config", uiConfigHandler(UIConfig{
+			AuthMethod: authMethod,
+			Issuer:     uiIssuer,
+			ClientID:   viper.GetString("auth.ui.clientId"),
+			Scopes:     uiScopes,
+			Audience:   viper.GetString("auth.ui.audience"),
+		}))
+
 		httpMux.Handle("/", gwMux)
 
 		// The gateway calls hipo directly, bypassing the gRPC interceptor chain, so the purge gate
 		// must be re-applied here or /v1/... requests would run during a purge.
-		// It is applied unconditionally (independent of auth); /healthz, /readyz, and the static
-		// OpenAPI doc stay reachable while a purge runs.
-		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, []string{"/healthz", "/readyz", "/v1/openapi.json", "/ui"})
+		// It is applied unconditionally (independent of auth); /healthz, /readyz, the static
+		// OpenAPI doc, the console, and its front-channel config stay reachable while a purge runs.
+		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, []string{"/healthz", "/readyz", "/v1/openapi.json", "/ui", "/ui/config"})
 
 		// Per-request logging: the gateway never runs the gRPC interceptor chain, so without this its
 		// traffic is invisible in logs. Positioned inside auth (so unauthenticated requests are still
@@ -645,7 +670,7 @@ func run(ctx context.Context, version versionInfo) error {
 		// unauthenticated request is rejected before any other check, mirroring the gRPC chain
 		// order.
 		if authEnabled {
-			handler = auth.HTTPMiddleware(verifier, handler, []string{"/healthz", "/readyz", "/ui"})
+			handler = auth.HTTPMiddleware(verifier, handler, []string{"/healthz", "/readyz", "/ui", "/ui/config"})
 		}
 
 		// Cap the request body the gateway will read when configured (0, the default, leaves it

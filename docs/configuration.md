@@ -278,12 +278,30 @@ token. `auth.method` selects the scheme:
     "jwksRefreshIntervalSeconds": 300,
     "roleClaim": "roles",
     "roleMapping": {},
-    "readerRecallReinforces": false
+    "readerRecallReinforces": false,
+    "ui": {
+        "issuer": "",
+        "clientId": "",
+        "scopes": "openid profile",
+        "audience": ""
+    }
 }
 ```
 
 `auth.roleClaim`, `auth.roleMapping`, and `auth.readerRecallReinforces` drive
 [authorization](#authorization) and are only consulted when authentication is enabled.
+
+`auth.ui` is the **front-channel** configuration the embedded web console (`/ui`) reads — from the
+unauthenticated `GET /ui/config` endpoint — to start a browser OIDC login under `auth.method: idp`.
+It carries no secret: only the public single-page-app `clientId`, the `scopes` to request
+(default `openid profile`), the `issuer` the browser runs OIDC discovery against (defaults to
+`auth.issuer`), and an optional `audience`. The audience matters for providers whose access token is
+opaque unless an API audience is requested — **Auth0** needs it set to the API identifier to mint a
+verifiable JWT; **Keycloak** issues a JWT without it. The access token the flow returns is sent as
+the `Authorization: Bearer` on every `/v1` call and verified exactly like any other `idp` token, so
+the tier still comes from `auth.roleClaim`/`auth.roleMapping`. When `auth.method` is `none` or
+`hmac`, `/ui/config` simply reports the method and the console falls back to its manual bearer-token
+box.
 
 `auth.signingKeys` is a structured list (`[{ "kid": "...", "secret": "..." }]`) and so is
 config-file-only — unlike `auth.signingSecret`, it cannot be injected through a single
