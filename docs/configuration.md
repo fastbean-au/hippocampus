@@ -135,6 +135,10 @@ Both listeners bind all interfaces by default. `bindAddress` (gRPC) and `gateway
 traffic, e.g. behind a sidecar/mesh that terminates TLS and forwards over the loopback. Empty (the
 default) preserves the all-interfaces behaviour.
 
+To run several independent instances on one host, give each its own `port`, `gateway.port`, and
+`storage.directory`/DSN — the defaults collide and the second to start fails to bind. See
+[Running more than one instance on one host](operations.md#running-more-than-one-instance-on-one-host).
+
 ```json
 "bindAddress": "",
 "maxConcurrentStreams": 0,
@@ -509,6 +513,12 @@ Recall is normally by id, event, or time/significance range — memory bodies ar
 service. Enabling the optional OpenSearch integration adds one more read path: `SearchMemories`
 (`POST /v1/memories/search`) finds memories whose body matches a query, most relevant first,
 optionally restricted to one event and/or one `group` label.
+
+**Enabling on a store that already has data:** the index starts empty and nothing already stored is
+retroactively indexed, so existing memories stay unsearchable until they are re-indexed. Run a
+one-time [`--backfill-search`](#backfill-and-reindex) to populate it immediately; on the
+consolidating instance the [self-healing sweep](#self-healing-reconciliation) also fills it within
+one `reconcileIntervalSeconds`, but backfill is instant.
 
 ```json
 "opensearch": {

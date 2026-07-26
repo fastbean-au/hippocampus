@@ -64,6 +64,85 @@ died (failover, network, an idle-timeout that outpaced the keepalive) and restar
 resolved. Run under a supervisor (systemd, Kubernetes, Docker restart policy) so a fail-stop is
 followed by a clean restart.
 
+## Running as a service
+
+The binary is a foreground process: it runs until it receives `SIGINT`/`SIGTERM`, then shuts down
+gracefully (see [Graceful shutdown](#graceful-shutdown)). For anything past a manual run, put it
+under a process supervisor that restarts it on failure and starts it at boot — the same supervision
+the sections above assume. Point the supervisor's liveness check at `GET /healthz`. The examples
+below run the compiled binary directly; the containerised path is instead any of the
+[Docker compose stacks](../README.md) with a `restart:` policy.
+
+### macOS (launchd)
+
+A per-user LaunchAgent at `~/Library/LaunchAgents/au.example.hippocampus.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>             <string>au.example.hippocampus</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/hippocampus</string>
+        <string>-c</string>
+        <string>/opt/hippocampus/config.json</string>
+    </array>
+    <key>RunAtLoad</key>         <true/>
+    <key>KeepAlive</key>         <true/>
+    <key>ProcessType</key>      <string>Background</string>
+    <key>StandardOutPath</key>  <string>/opt/hippocampus/logs/out.log</string>
+    <key>StandardErrorPath</key><string>/opt/hippocampus/logs/err.log</string>
+</dict>
+</plist>
+```
+
+`RunAtLoad` starts it at login and `KeepAlive` restarts it if it exits. Manage it with:
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/au.example.hippocampus.plist  # load + start
+launchctl kickstart -k gui/$(id -u)/au.example.hippocampus                            # restart after upgrade/config change
+launchctl bootout   gui/$(id -u) ~/Library/LaunchAgents/au.example.hippocampus.plist  # stop + unload
+```
+
+### Linux (systemd)
+
+A unit at `/etc/systemd/system/hippocampus.service`:
+
+```ini
+[Unit]
+Description=Hippocampus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/hippocampus -c /etc/hippocampus/config.json
+Restart=on-failure
+RestartSec=5
+User=hippocampus
+Group=hippocampus
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`systemctl enable --now hippocampus` starts it and enables it at boot; `systemctl restart
+hippocampus` after an upgrade. Run it as a dedicated unprivileged user that owns
+`storage.directory`. If the store is on a server driver or an external content-search cluster, order
+the unit after that dependency (`After=`) so it does not start before its backing service is
+reachable.
+
+### Running more than one instance on one host
+
+Several independent stores can run side by side on one machine — each is its own process owning its
+own store (a demo instance beside a personal one, say). This is orthogonal to the
+single-consolidator rule above, which concerns two instances sharing *one* store; here each instance
+owns a *separate* store. Give **each its own `storage.directory` (SQLite) or DSN, its own `port`, and
+its own `gateway.port`**: the defaults (`50051`/`8080`) collide, and the second instance to start
+fails to bind the port. An external content-search cluster likewise needs a distinct
+`opensearch.index` (or a separate cluster) per instance so their documents do not intermingle.
+
 ## Choosing a storage driver
 
 Set `storage.driver` to `sqlite` (default), `postgres`, or `mysql`. All three are pure Go, so the

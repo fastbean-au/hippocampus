@@ -124,6 +124,12 @@ Add an entry to `claude_desktop_config.json`:
 claude mcp add hippocampus -- /path/to/hippocampus-mcp --address localhost:50051
 ```
 
+`claude mcp add` registers the server in **local** scope (this project only) by default. Add
+`--scope user` to make it available in every project, or `--scope project` to write it to the repo's
+`.mcp.json` for a team. If the service listens on a non-default gRPC port — for instance when another
+instance already owns `50051` — point `--address` at it (e.g. `--address localhost:50151`). A newly
+added server is picked up when the host starts a session, so restart Claude Code after adding it.
+
 ## Running with Docker
 
 The bridge fits the **embedded** deployment naturally — one instance, one store, one mind — and there

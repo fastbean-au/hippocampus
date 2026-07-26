@@ -110,6 +110,7 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 	}
 
 	res.Memories = ms
+	res.TotalCount = int32(len(ms))
 
 	return &res, nil
 }

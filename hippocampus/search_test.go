@@ -125,6 +125,10 @@ func TestSearchMemories_DropsStaleIdsAndKeepsRelevanceOrder(t *testing.T) {
 	if res.Memories[0].RecallCount != 0 {
 		t.Errorf("reinforce=false must not touch recall state, got recall_count %d", res.Memories[0].RecallCount)
 	}
+
+	if res.TotalCount != 2 {
+		t.Errorf("expected total_count to match the returned rows (2, stale dropped), got %d", res.TotalCount)
+	}
 }
 
 // TestSearchMemories_ReinforceRecalls verifies the reinforce flag routes matches through recall,
