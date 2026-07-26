@@ -1,0 +1,90 @@
+{
+    "realm": "hippocampus",
+    "enabled": true,
+    "displayName": "Hippocampus Showcase",
+    "sslRequired": "external",
+    "registrationAllowed": false,
+    "loginWithEmailAllowed": true,
+    "accessTokenLifespan": 900,
+    "roles": {
+        "realm": [
+            { "name": "reader", "description": "Read-only access to the Hippocampus API" },
+            { "name": "writer", "description": "Create/update/delete memories and events" },
+            { "name": "admin", "description": "Administrative and destructive operations (Purge, Sleep, ...)" }
+        ]
+    },
+    "clients": [
+        {
+            "clientId": "hippocampus-console",
+            "name": "Hippocampus Web Console",
+            "description": "Public single-page client for the /ui console: Authorization Code + PKCE, no secret.",
+            "protocol": "openid-connect",
+            "enabled": true,
+            "publicClient": true,
+            "standardFlowEnabled": true,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": false,
+            "attributes": {
+                "pkce.code.challenge.method": "S256",
+                "post.logout.redirect.uris": "+"
+            },
+            "redirectUris": [
+                "http://localhost:8080/ui",
+                "http://localhost:8081/ui",
+                "https://book.hippocampus.example/ui",
+                "https://logs.hippocampus.example/ui"
+            ],
+            "webOrigins": ["+"]
+        },
+        {
+            "clientId": "hippocampus-gen",
+            "name": "Hippocampus Generator (machine-to-machine)",
+            "description": "Confidential client for the data generators: client-credentials grant, admin role.",
+            "protocol": "openid-connect",
+            "enabled": true,
+            "publicClient": false,
+            "secret": "showcase-gen-secret-change-me",
+            "standardFlowEnabled": false,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": true
+        }
+    ],
+    "users": [
+        {
+            "username": "admin-demo",
+            "enabled": true,
+            "emailVerified": true,
+            "email": "admin@hippocampus.example",
+            "firstName": "Ada",
+            "lastName": "Admin",
+            "credentials": [{ "type": "password", "value": "admin", "temporary": false }],
+            "realmRoles": ["admin"]
+        },
+        {
+            "username": "writer-demo",
+            "enabled": true,
+            "emailVerified": true,
+            "email": "writer@hippocampus.example",
+            "firstName": "Wilma",
+            "lastName": "Writer",
+            "credentials": [{ "type": "password", "value": "writer", "temporary": false }],
+            "realmRoles": ["writer"]
+        },
+        {
+            "username": "reader-demo",
+            "enabled": true,
+            "emailVerified": true,
+            "email": "reader@hippocampus.example",
+            "firstName": "Rhea",
+            "lastName": "Reader",
+            "credentials": [{ "type": "password", "value": "reader", "temporary": false }],
+            "realmRoles": ["reader"]
+        },
+        {
+            "username": "service-account-hippocampus-gen",
+            "enabled": true,
+            "serviceAccountClientId": "hippocampus-gen",
+            "realmRoles": ["admin"]
+        }
+    ]
+}
