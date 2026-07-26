@@ -11,9 +11,10 @@ generators:
 | **logs** | a continuous log trickle, reaped by consolidation + capacity eviction | `cmd/logs --live --rate <n>` |
 
 The service configs are [`docker/config.showcase-book.json`](../docker/config.showcase-book.json) and
-[`docker/config.showcase-logs.json`](../docker/config.showcase-logs.json). This document covers the
-identity-provider setup those configs assume; the compose stacks and the GCP deployment are covered
-separately.
+[`docker/config.showcase-logs.json`](../docker/config.showcase-logs.json); the compose stacks are
+[`docker/docker-compose.showcase-book.yaml`](../docker/docker-compose.showcase-book.yaml) and
+[`…-logs.yaml`](../docker/docker-compose.showcase-logs.yaml). This document covers the
+identity-provider setup and how to run the stacks; the GCP VM provisioning is covered separately.
 
 ## What the configs assume
 
@@ -118,3 +119,73 @@ nested dotted-path lookup is what makes Keycloak's `realm_access.roles` work. On
 providers — see [Authorization](configuration.md#authorization).
 
 The generators authenticate to Auth0 with the same flags plus `--oidc-audience <API Identifier>`.
+
+## Running the stacks
+
+Each stack is a self-contained compose project: hippocampus (Postgres + OpenSearch) + a Keycloak IdP
++ the otel-lgtm telemetry stack, all behind **Caddy**, which terminates TLS (automatic Let's Encrypt)
+and routes by hostname. The two stacks are independent and run side by side on one host.
+
+### The split-issuer fix
+
+`auth.issuer` must be the one URL both the browser and the service reach (see [the one issuer
+rule](#the-one-issuer-rule)). Caddy provides it: it joins the compose network with the public
+hostnames (`${DOMAIN}`, `auth.${DOMAIN}`, `grafana.${DOMAIN}`) as **network aliases**, so the
+hippocampus container resolves `auth.${DOMAIN}` to Caddy and reaches Keycloak at exactly the URL the
+browser uses via public DNS. The compose sets `HIPPOCAMPUS_AUTH_ISSUER`/`_UI_ISSUER` and Keycloak's
+`KC_HOSTNAME` to that same `https://auth.${DOMAIN}` value.
+
+> Do **not** substitute a `*.localhost` hostname here: libc and Go resolve the `.localhost` TLD to
+> loopback (RFC 6761) and never consult the compose DNS, so the container would dial itself instead
+> of Caddy. Use a real domain (below), or `/etc/hosts` aliases for a non-`.localhost` name locally.
+
+### Deploy (public domain)
+
+Point DNS A/AAAA records for `${DOMAIN}`, `auth.${DOMAIN}`, and `grafana.${DOMAIN}` at the VM, open
+ports 80 and 443, then before first run **change the two demo secrets**: Keycloak's admin password
+and the `hippocampus-gen` client `secret` in
+[`docker/keycloak/realm-hippocampus.json`](../docker/keycloak/realm-hippocampus.json) (the realm's
+console `redirectUris` already list `https://book.hippocampus.example/ui` /
+`https://logs.hippocampus.example/ui` — change these to your domains too).
+
+```sh
+BOOK_DOMAIN=book.example ACME_EMAIL=you@example.com \
+  docker compose -f docker/docker-compose.showcase-book.yaml up --build -d
+
+LOGS_DOMAIN=logs.example ACME_EMAIL=you@example.com \
+  docker compose -f docker/docker-compose.showcase-logs.yaml up --build -d
+```
+
+Sign in to `https://book.example/ui` as `admin-demo` / `writer-demo` / `reader-demo` (password = the
+role) and watch the console adapt to the tier.
+
+### Drive it with the generators
+
+The generators run as **host processes** (they are a separate Go module whose private dependency a
+clean image build can't fetch without credentials — so they are not compose services). Build them
+from the sibling [`hippocampus-gen`](https://github.com/fastbean-au/hippocampus-gen) checkout and
+point them at the published gRPC port, authenticating to Keycloak as the `hippocampus-gen` client
+(admin tier — the book path calls `Purge`/`Sleep`):
+
+```sh
+# book: reload + summarise every 24h, spread across 2h, ageing live
+go run ./cmd/book -s <vm>:50051 \
+  --loop --period 24h --reset --pace-window 2h --live --summarize \
+  --oidc-issuer https://auth.book.example/realms/hippocampus \
+  --oidc-client-id hippocampus-gen --oidc-client-secret "$GEN_SECRET"
+
+# logs: a steady trickle the sleep cycle keeps reaping
+go run ./cmd/logs -s <vm>:50052 --live --rate 120 \
+  --oidc-issuer https://auth.logs.example/realms/hippocampus \
+  --oidc-client-id hippocampus-gen --oidc-client-secret "$GEN_SECRET"
+```
+
+Running these unattended (a systemd unit per stack) is covered in the GCP deployment runbook.
+
+### Local evaluation without a public domain
+
+Automatic HTTPS needs a real domain, so the full Caddy stack does not come up as-is on a laptop. To
+try the pieces locally, run Keycloak directly (the [Keycloak](#keycloak-self-hosted) section's
+`podman run`) and a SQLite instance with `auth.method: idp` pointed at
+`http://localhost:8092/realms/hippocampus` — the arrangement the idp round-trip was verified against.
+The `docker/docker-compose.corporate.yaml` stack remains the quick, unauthenticated local demo.

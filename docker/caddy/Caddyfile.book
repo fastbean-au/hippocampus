@@ -1,0 +1,27 @@
+# Caddy reverse proxy for the "book" showcase stack, with automatic HTTPS (Let's Encrypt) for a real
+# domain. It routes by hostname to the console, Keycloak, and Grafana.
+#
+# THE SPLIT-ISSUER FIX: Caddy is on the compose network with these same hostnames as network aliases
+# (see the compose file), so the hippocampus container resolves e.g. auth.book.example to Caddy and
+# reaches Keycloak at exactly the URL the browser uses (via public DNS). The token issuer then
+# matches the service's configured issuer. NB do NOT use a *.localhost name here: libc/Go resolve the
+# .localhost TLD to loopback (RFC 6761) and bypass the compose DNS alias, which would break this.
+#
+# Requires public DNS A/AAAA records for the three hostnames pointing at the VM, and ports 80/443
+# reachable (for the ACME challenge). For a purely local run without a public domain, see the
+# /etc/hosts + internal-CA note in docs/showcase.md, or use the direct-Keycloak method there.
+{
+	email {$ACME_EMAIL:admin@example.com}
+}
+
+{$BOOK_DOMAIN:book.hippocampus.example} {
+	reverse_proxy hippocampus:8080
+}
+
+auth.{$BOOK_DOMAIN:book.hippocampus.example} {
+	reverse_proxy keycloak:8080
+}
+
+grafana.{$BOOK_DOMAIN:book.hippocampus.example} {
+	reverse_proxy otel-lgtm:3000
+}
