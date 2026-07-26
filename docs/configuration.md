@@ -359,8 +359,11 @@ authorization is off and every RPC is reachable, exactly as before.
 
 Under `hmac`, `--mint-token --role` stamps the tier names (`reader`/`writer`/`admin`) directly.
 Under `idp`, the provider supplies them: by default they are read from a top-level `roles` claim;
-`auth.roleClaim` points at a differently-named top-level claim when the provider uses one (nested
-claims such as Keycloak's `realm_access.roles` are not supported). `auth.roleMapping` translates a
+`auth.roleClaim` points at a differently-named claim when the provider uses one. The claim name is
+resolved literally first — so a provider that namespaces roles under a URI-shaped key (Auth0's
+`https://your-domain/roles`) matches as a top-level key — and, when no literal key exists, as a
+dotted path through nested objects, so Keycloak's `realm_access.roles` also resolves.
+`auth.roleMapping` translates a
 provider's own group names onto the tiers, e.g. `{ "hippo-ops": "admin", "hippo-app": "writer" }`;
 the tier names always map to themselves, so a mapping is only needed for other names.
 

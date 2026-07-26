@@ -50,8 +50,10 @@ type JWKSConfig struct {
 
 	// RoleClaim names the token claim carrying the bearer's roles when the provider does not use
 	// the standard top-level "roles" claim. Empty or "roles" uses the value parsed directly into
-	// Claims.Roles; any other name triggers a secondary read of that top-level claim (see
-	// rolesFromClaim). Nested claims are not supported.
+	// Claims.Roles; any other name triggers a secondary read of that claim (see rolesFromClaim),
+	// resolved literally first (so Auth0's URI-namespaced key matches as a top-level key) and, when
+	// no literal key exists, as a dotted path through nested objects (so Keycloak's
+	// "realm_access.roles" resolves).
 	RoleClaim string
 }
 

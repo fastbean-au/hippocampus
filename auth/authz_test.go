@@ -366,3 +366,68 @@ func TestRolesFromClaim(t *testing.T) {
 		t.Fatalf("expected no roles from an unparseable token, got %v", got)
 	}
 }
+
+// TestRolesFromClaimProviderShapes covers the two real-world provider shapes: Auth0 namespaces its
+// roles under a URI-keyed top-level claim (dots and slashes in the key, matched literally), and
+// Keycloak nests them under realm_access.roles (matched as a dotted path when no literal key
+// exists).
+func TestRolesFromClaimProviderShapes(t *testing.T) {
+	raw := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"exp": time.Now().Add(time.Hour).Unix(),
+
+		// Auth0: a URI-namespaced top-level claim. The key itself contains dots and slashes, so it
+		// must match literally rather than being split into a path.
+		"https://hippocampus.demo/roles": []any{"writer", "admin"},
+
+		// Keycloak: roles nested one level down under realm_access.
+		"realm_access": map[string]any{
+			"roles": []any{"reader", "writer"},
+		},
+	})
+
+	signed, err := raw.SignedString([]byte(strings.Repeat("x", 32)))
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	if got := rolesFromClaim(signed, "https://hippocampus.demo/roles"); len(got) != 2 || got[0] != "writer" || got[1] != "admin" {
+		t.Fatalf("expected [writer admin] from the Auth0 namespaced claim, got %v", got)
+	}
+
+	if got := rolesFromClaim(signed, "realm_access.roles"); len(got) != 2 || got[0] != "reader" || got[1] != "writer" {
+		t.Fatalf("expected [reader writer] from the Keycloak nested claim, got %v", got)
+	}
+
+	// A dotted path whose intermediate segment is missing yields no roles rather than erroring.
+	if got := rolesFromClaim(signed, "resource_access.roles"); got != nil {
+		t.Fatalf("expected no roles for an absent nested path, got %v", got)
+	}
+
+	// A dotted path that bottoms out on a non-object before its final segment also yields nothing.
+	if got := rolesFromClaim(signed, "realm_access.roles.extra"); got != nil {
+		t.Fatalf("expected no roles when the path walks past a leaf, got %v", got)
+	}
+
+	// A provider that publishes a single role as a bare string (rather than a one-element array) is
+	// accepted, at a top-level key and down a nested path alike.
+	scalar := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"exp":  time.Now().Add(time.Hour).Unix(),
+		"role": "admin",
+		"realm_access": map[string]any{
+			"role": "writer",
+		},
+	})
+
+	signedScalar, err := scalar.SignedString([]byte(strings.Repeat("x", 32)))
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	if got := rolesFromClaim(signedScalar, "role"); len(got) != 1 || got[0] != "admin" {
+		t.Fatalf("expected [admin] from a scalar top-level claim, got %v", got)
+	}
+
+	if got := rolesFromClaim(signedScalar, "realm_access.role"); len(got) != 1 || got[0] != "writer" {
+		t.Fatalf("expected [writer] from a scalar nested claim, got %v", got)
+	}
+}

@@ -305,11 +305,15 @@ func forbidden(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden"})
 }
 
-// rolesFromClaim extracts a role list from a differently-named top-level claim, for identity
-// providers that do not publish roles under "roles" (auth.roleClaim). It parses the token
+// rolesFromClaim extracts a role list from a differently-named claim, for identity providers that
+// do not publish roles under the standard top-level "roles" (auth.roleClaim). It parses the token
 // unverified - the signature was already checked by the caller, and this only reads a claim value,
 // never makes a trust decision - and accepts either a JSON array of strings or a single string.
-// Nested claims (e.g. Keycloak's realm_access.roles) are out of scope and yield no roles.
+//
+// The claim name is resolved literally first, so a provider whose key itself contains dots or
+// slashes (Auth0 namespaces its roles under a URI such as "https://example.com/roles") matches as a
+// plain top-level key. Only when no literal key matches is the name treated as a dotted path and
+// walked through nested objects, so a nested claim (Keycloak's "realm_access.roles") also resolves.
 func rolesFromClaim(token string, claimName string) []string {
 	var raw jwt.MapClaims
 
@@ -317,7 +321,43 @@ func rolesFromClaim(token string, claimName string) []string {
 		return nil
 	}
 
-	switch v := raw[claimName].(type) {
+	return coerceRoles(resolveClaim(raw, claimName))
+}
+
+// resolveClaim looks up claimName in the parsed claims, preferring a literal top-level key and
+// falling back to a dotted-path walk through nested objects when no literal key is present. It
+// returns nil when neither resolves.
+func resolveClaim(raw jwt.MapClaims, claimName string) any {
+	if v, ok := raw[claimName]; ok {
+		return v
+	}
+
+	if !strings.Contains(claimName, ".") {
+		return nil
+	}
+
+	var current any = map[string]any(raw)
+
+	for segment := range strings.SplitSeq(claimName, ".") {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+
+		current, ok = object[segment]
+
+		if !ok {
+			return nil
+		}
+	}
+
+	return current
+}
+
+// coerceRoles turns a resolved claim value into a role list, accepting a single string or a JSON
+// array and keeping only the string members of an array. Any other type yields no roles.
+func coerceRoles(value any) []string {
+	switch v := value.(type) {
 
 	case string:
 
