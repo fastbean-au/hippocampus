@@ -370,10 +370,14 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   dials the service at `--address`, and turns each MCP tool call into an RPC (`main.go` wires the
   dial/transport, `tools.go` registers the tools and handlers). Serves stdio by default (logging
   forced to stderr so stdout carries only the MCP JSON-RPC stream) or streamable HTTP
-  (`--transport http`). The tool surface is a curated, safe subset — `store_memory`,
-  `recall_memories`, `search_memories`, `list_memories`, `create_event`, `list_events`,
-  `get_summarization_candidates` — deliberately excluding the destructive/admin RPCs (Purge,
-  Export/Import/Transfer/Clear, event delete/merge) so a model can't wipe or exfiltrate a store.
+  (`--transport http`). The tool surface is the per-item memory/event operations — `store_memory`,
+  `update_memory`, `delete_memories` (a by-id scalpel), `recall_memories`, `search_memories`,
+  `list_memories`, `create_event`, `list_events`, `get_summarization_candidates` — deliberately
+  excluding the admin/destructive and bulk data-movement RPCs (Purge, Sleep,
+  Export/Import/Transfer/Clear, event delete/merge) so a model can't wipe or exfiltrate a store. The
+  mutating tools are all writer-tier, so what a token may actually do is enforced by the service's
+  role tiers (a reader-scoped token is refused every mutation regardless of the registered tools),
+  not by tool omission.
   Proto messages are projected to plain view structs for clean inferred JSON schemas. Bearer-token
   auth (`--token`/`HIPPOCAMPUS_MCP_TOKEN`, injected as an `authorization: Bearer` client
   interceptor) and the TLS trust-option block mirror the service's Transfer client; a per-call

@@ -35,14 +35,21 @@ docker pull ghcr.io/fastbean-au/hippocampus-mcp:latest
 
 ## Tools
 
-The surface is deliberately the memory-and-event operations a model needs to give and retrieve
-memories. Destructive and administrative RPCs (`Purge`, `Export`/`Import`/`Transfer`/`Clear`, event
-deletion/merge) are **not** exposed, so a model cannot wipe or exfiltrate a store through this
-bridge.
+The surface is the per-item memory-and-event operations a model needs to give, retrieve, revise, and
+forget memories. The administrative, destructive, and bulk data-movement RPCs (`Purge`, `Sleep`,
+`Export`/`Import`/`Transfer`/`Clear`, event deletion/merge) are **not** exposed, so a model cannot
+wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`, `update_memory`,
+`delete_memories`, `create_event`) are all `writer`-tier; what a given token may actually do is
+enforced by the service's [role tiers](configuration.md#authorization), so a `reader`-scoped token is
+refused every mutation regardless of which tools are registered here. `delete_memories` is a by-id
+scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear`,
+which stay `admin`-tier and off this surface.
 
 | Tool | Maps to | Notes |
 | :--- | :--- | :--- |
 | `store_memory` | `StoreMemory` | Store text with a significance; low-significance memories are forgotten over time. |
+| `update_memory` | `UpdateMemory` | Revise a memory by id; only fields you set change, significance `0` leaves it unchanged. |
+| `delete_memories` | `DeleteMemories` | Forget memories by id on demand (unknown ids ignored); a scalpel, not a bulk wipe. |
 | `recall_memories` | `RecallMemories` | Fetch by id **and reinforce** — resets the decay clock, raises effective significance. |
 | `search_memories` | `SearchMemories` | Content search (needs the service's OpenSearch index); `reinforce` off by default. |
 | `list_memories` | `GetMemories` | Read-only browse by group/significance; does **not** reinforce. |

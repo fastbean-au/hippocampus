@@ -17,6 +17,8 @@ import (
 // drive the handlers with a fake, without a live service or a real network connection.
 type hippoClient interface {
 	StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error)
+	UpdateMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
+	DeleteMemories(ctx context.Context, in *contract.DeleteMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
 	RecallMemories(ctx context.Context, in *contract.RecallMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
 	SearchMemories(ctx context.Context, in *contract.SearchMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
 	GetMemories(ctx context.Context, in *contract.GetMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
@@ -45,10 +47,14 @@ func (b *bridge) callContext(ctx context.Context) (context.Context, context.Canc
 	return context.WithTimeout(ctx, b.callTimeout)
 }
 
-// newServer builds the MCP server and registers the curated tool set. The surface is deliberately
-// the memory-and-event operations an LLM needs to give and retrieve memories; the destructive and
-// administrative RPCs (Purge, Export/Import/Transfer/Clear, event deletion/merge) are intentionally
-// not exposed, so a model cannot wipe or exfiltrate a store through this bridge.
+// newServer builds the MCP server and registers the curated tool set. The surface is the per-item
+// memory-and-event operations an LLM needs to give, retrieve, revise, and forget memories -
+// including update_memory and a by-id delete_memories, both writer-tier operations no broader than
+// the store_memory already exposed here. The administrative, destructive, and bulk data-movement
+// RPCs (Purge, Sleep, Export/Import/Transfer/Clear, event deletion/merge) are intentionally not
+// exposed, so a model cannot wipe or exfiltrate a store through this bridge. What a given token may
+// actually do is enforced by the service's role tiers (reader/writer/admin): a reader-scoped token
+// is refused every mutation regardless of which tools are registered here.
 func newServer(b *bridge, serverVersion string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "hippocampus",
@@ -63,6 +69,23 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 			"important the memory is. Returns the stored memory's id, or rejected=true if the " +
 			"service dropped it for being below its minimum significance.",
 	}, b.storeMemory)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "update_memory",
+		Description: "Revise an existing memory by id: only the fields you set are changed (body, " +
+			"significance, group, event_id) and omitted fields keep their stored values. Significance " +
+			"0 leaves the existing significance unchanged (it cannot reset a memory to unranked), and a " +
+			"memory's binary/summary nature cannot be changed here. Use this to correct or amend a " +
+			"memory you already stored rather than storing a duplicate. An unknown id is reported as " +
+			"not found; no memory is created.",
+	}, b.updateMemory)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "delete_memories",
+		Description: "Delete memories by id (unknown ids are silently ignored). This is a by-id " +
+			"scalpel, not a bulk wipe: it can only remove memories you explicitly name. Use it to " +
+			"forget something on demand rather than waiting for it to decay out of the store.",
+	}, b.deleteMemories)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "recall_memories",
@@ -208,6 +231,77 @@ func (b *bridge) storeMemory(ctx context.Context, _ *mcp.CallToolRequest, in sto
 	}
 
 	return nil, storeMemoryOutput{Id: res.GetId(), Rejected: res.GetRejected()}, nil
+}
+
+// --- update_memory ---
+
+type updateMemoryInput struct {
+	Id           string `json:"id" jsonschema:"id of the memory to update (required)"`
+	Body         string `json:"body,omitempty" jsonschema:"new memory content; omit to leave the body unchanged"`
+	Significance int32  `json:"significance,omitempty" jsonschema:"new significance; higher survives longer; 0 leaves the existing significance unchanged"`
+	Group        string `json:"group,omitempty" jsonschema:"new grouping/context label; omit to leave the group unchanged"`
+	EventId      string `json:"event_id,omitempty" jsonschema:"associate the memory with this event; omit to leave the association unchanged"`
+}
+
+type updateMemoryOutput struct {
+	Ok bool `json:"ok" jsonschema:"true when the update was applied"`
+}
+
+func (b *bridge) updateMemory(ctx context.Context, _ *mcp.CallToolRequest, in updateMemoryInput) (*mcp.CallToolResult, updateMemoryOutput, error) {
+	if in.Id == "" {
+
+		return nil, updateMemoryOutput{}, fmt.Errorf("id is required")
+	}
+
+	if in.Body == "" && in.Significance == 0 && in.Group == "" && in.EventId == "" {
+
+		return nil, updateMemoryOutput{}, fmt.Errorf("at least one field (body, significance, group, event_id) must be set to update")
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.UpdateMemory(callCtx, &contract.Memory{
+		Id:           in.Id,
+		Body:         in.Body,
+		Significance: in.Significance,
+		Group:        in.Group,
+		EventId:      in.EventId,
+	})
+	if err != nil {
+
+		return nil, updateMemoryOutput{}, fmt.Errorf("UpdateMemory failed: %w", err)
+	}
+
+	return nil, updateMemoryOutput{Ok: res.GetOk()}, nil
+}
+
+// --- delete_memories ---
+
+type deleteMemoriesInput struct {
+	Ids []string `json:"ids" jsonschema:"ids of the memories to delete (required, non-empty); unknown ids are silently ignored"`
+}
+
+type deleteMemoriesOutput struct {
+	Ok bool `json:"ok" jsonschema:"true when the delete was applied"`
+}
+
+func (b *bridge) deleteMemories(ctx context.Context, _ *mcp.CallToolRequest, in deleteMemoriesInput) (*mcp.CallToolResult, deleteMemoriesOutput, error) {
+	if len(in.Ids) == 0 {
+
+		return nil, deleteMemoriesOutput{}, fmt.Errorf("ids is required")
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.DeleteMemories(callCtx, &contract.DeleteMemoriesRequest{Ids: in.Ids})
+	if err != nil {
+
+		return nil, deleteMemoriesOutput{}, fmt.Errorf("DeleteMemories failed: %w", err)
+	}
+
+	return nil, deleteMemoriesOutput{Ok: res.GetOk()}, nil
 }
 
 // --- recall_memories ---

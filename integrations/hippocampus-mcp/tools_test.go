@@ -20,6 +20,12 @@ type fakeClient struct {
 	storeMemoryReq *contract.Memory
 	storeMemoryRes *contract.StoreMemoryResponse
 
+	updateMemoryReq *contract.Memory
+	updateMemoryRes *contract.GeneralResponse
+
+	deleteMemoriesReq *contract.DeleteMemoriesRequest
+	deleteMemoriesRes *contract.GeneralResponse
+
 	recallReq *contract.RecallMemoriesRequest
 	recallRes *contract.GetMemoriesResponse
 
@@ -44,6 +50,18 @@ func (f *fakeClient) StoreMemory(_ context.Context, in *contract.Memory, _ ...gr
 	f.storeMemoryReq = in
 
 	return f.storeMemoryRes, f.err
+}
+
+func (f *fakeClient) UpdateMemory(_ context.Context, in *contract.Memory, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.updateMemoryReq = in
+
+	return f.updateMemoryRes, f.err
+}
+
+func (f *fakeClient) DeleteMemories(_ context.Context, in *contract.DeleteMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.deleteMemoriesReq = in
+
+	return f.deleteMemoriesRes, f.err
 }
 
 func (f *fakeClient) RecallMemories(_ context.Context, in *contract.RecallMemoriesRequest, _ ...grpc.CallOption) (*contract.GetMemoriesResponse, error) {
@@ -96,6 +114,14 @@ func TestHandlers_PropagateRPCError(t *testing.T) {
 
 	if _, _, err := b.recallMemories(ctx, nil, recallMemoriesInput{Ids: []string{"m1"}}); err == nil {
 		t.Error("recallMemories should propagate the RPC error")
+	}
+
+	if _, _, err := b.updateMemory(ctx, nil, updateMemoryInput{Id: "m1", Body: "x"}); err == nil {
+		t.Error("updateMemory should propagate the RPC error")
+	}
+
+	if _, _, err := b.deleteMemories(ctx, nil, deleteMemoriesInput{Ids: []string{"m1"}}); err == nil {
+		t.Error("deleteMemories should propagate the RPC error")
 	}
 
 	if _, _, err := b.searchMemories(ctx, nil, searchMemoriesInput{Query: "x"}); err == nil {
@@ -176,6 +202,89 @@ func TestStoreMemory_PropagatesError(t *testing.T) {
 
 	if _, _, err := b.storeMemory(context.Background(), nil, storeMemoryInput{Body: "x"}); err == nil {
 		t.Fatal("expected the gRPC error to propagate")
+	}
+}
+
+func TestUpdateMemory_MapsRequestAndResponse(t *testing.T) {
+	f := &fakeClient{updateMemoryRes: &contract.GeneralResponse{Ok: true}}
+	b := newBridge(f)
+
+	_, out, err := b.updateMemory(context.Background(), nil, updateMemoryInput{
+		Id:           "m1",
+		Body:         "revised",
+		Significance: 8,
+		Group:        "notes",
+		EventId:      "e1",
+	})
+	if err != nil {
+		t.Fatalf("updateMemory returned error: %v", err)
+	}
+
+	if !out.Ok {
+		t.Fatalf("unexpected output: %+v", out)
+	}
+
+	if f.updateMemoryReq.GetId() != "m1" || f.updateMemoryReq.GetBody() != "revised" ||
+		f.updateMemoryReq.GetSignificance() != 8 || f.updateMemoryReq.GetGroup() != "notes" ||
+		f.updateMemoryReq.GetEventId() != "e1" {
+		t.Fatalf("request not mapped through: %+v", f.updateMemoryReq)
+	}
+}
+
+func TestUpdateMemory_RejectsMissingId(t *testing.T) {
+	f := &fakeClient{}
+	b := newBridge(f)
+
+	if _, _, err := b.updateMemory(context.Background(), nil, updateMemoryInput{Body: "x"}); err == nil {
+		t.Fatal("expected an error when id is missing")
+	}
+
+	if f.updateMemoryReq != nil {
+		t.Fatal("UpdateMemory should not have been called without an id")
+	}
+}
+
+func TestUpdateMemory_RejectsNoFields(t *testing.T) {
+	f := &fakeClient{}
+	b := newBridge(f)
+
+	if _, _, err := b.updateMemory(context.Background(), nil, updateMemoryInput{Id: "m1"}); err == nil {
+		t.Fatal("expected an error when no updatable field is set")
+	}
+
+	if f.updateMemoryReq != nil {
+		t.Fatal("UpdateMemory should not have been called with nothing to update")
+	}
+}
+
+func TestDeleteMemories_MapsRequestAndResponse(t *testing.T) {
+	f := &fakeClient{deleteMemoriesRes: &contract.GeneralResponse{Ok: true}}
+	b := newBridge(f)
+
+	_, out, err := b.deleteMemories(context.Background(), nil, deleteMemoriesInput{Ids: []string{"m1", "m2"}})
+	if err != nil {
+		t.Fatalf("deleteMemories returned error: %v", err)
+	}
+
+	if !out.Ok {
+		t.Fatalf("unexpected output: %+v", out)
+	}
+
+	if len(f.deleteMemoriesReq.GetIds()) != 2 || f.deleteMemoriesReq.GetIds()[0] != "m1" {
+		t.Fatalf("ids not mapped through: %+v", f.deleteMemoriesReq)
+	}
+}
+
+func TestDeleteMemories_RejectsEmptyIds(t *testing.T) {
+	f := &fakeClient{}
+	b := newBridge(f)
+
+	if _, _, err := b.deleteMemories(context.Background(), nil, deleteMemoriesInput{}); err == nil {
+		t.Fatal("expected an error for empty ids")
+	}
+
+	if f.deleteMemoriesReq != nil {
+		t.Fatal("DeleteMemories should not have been called with no ids")
 	}
 }
 
@@ -375,6 +484,8 @@ func TestServer_EndToEnd(t *testing.T) {
 
 	want := map[string]bool{
 		"store_memory":                 false,
+		"update_memory":                false,
+		"delete_memories":              false,
 		"recall_memories":              false,
 		"search_memories":              false,
 		"list_memories":                false,
