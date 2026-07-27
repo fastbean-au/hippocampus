@@ -5,10 +5,10 @@ the Grafana/OTEL telemetry stack — with the UI protected by an identity provid
 independent stacks**, each driven by the [`hippocampus-gen`](https://github.com/fastbean-au/hippocampus-gen)
 generators:
 
-| Stack | Shape | Generator |
-|---|---|---|
-| **book** | *Great Expectations* reloaded daily, summarised, decaying | `cmd/book --loop --period 24h --reset --live --pace-window <w> --summarize` |
-| **logs** | a continuous log trickle, reaped by consolidation + capacity eviction | `cmd/logs --live --rate <n>` |
+| Stack    | Shape                                                                 | Generator                                                                   |
+| -------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| **book** | _Great Expectations_ reloaded daily, summarised, decaying             | `cmd/book --loop --period 24h --reset --live --pace-window <w> --summarize` |
+| **logs** | a continuous log trickle, reaped by consolidation + capacity eviction | `cmd/logs --live --rate <n>`                                                |
 
 The service configs are [`docker/config.showcase-book.json`](../docker/config.showcase-book.json) and
 [`docker/config.showcase-logs.json`](../docker/config.showcase-logs.json); the compose stacks are
@@ -16,6 +16,10 @@ The service configs are [`docker/config.showcase-book.json`](../docker/config.sh
 [`…-logs.yaml`](../docker/docker-compose.showcase-logs.yaml). This document covers the
 identity-provider setup and how to run the stacks; the GCP VM provisioning is a separate
 [runbook](showcase-gcp.md).
+
+> **Tight on resources?** There is also a **lite** single stack that trades OpenSearch content search
+> and the Grafana/OTEL telemetry for a footprint that fits a 0.25 vCPU / 1 GiB VM — see
+> [A lite single stack](#a-lite-single-stack-e2-micro) below.
 
 ## What the configs assume
 
@@ -93,10 +97,10 @@ Auth0 is wired through the same `auth.method: idp` path; only the config values 
 dashboard:
 
 1. **APIs → Create API.** The **Identifier** you choose is the **audience**. Enable RS256. This is
-   what makes Auth0 mint a *JWT* access token — without an audience it returns an opaque token that
+   what makes Auth0 mint a _JWT_ access token — without an audience it returns an opaque token that
    cannot be verified.
 2. **Applications → Create → Single Page Application** for the console. Add your console URL to
-   *Allowed Callback URLs* and *Allowed Web Origins*. PKCE is automatic for SPAs.
+   _Allowed Callback URLs_ and _Allowed Web Origins_. PKCE is automatic for SPAs.
 3. **Applications → Create → Machine to Machine**, authorise it for the API above, for the
    generators (client-credentials). Grant it the permission/role your `admin` tier maps to.
 4. **Add roles to the token.** Auth0 does not put roles in a standard claim; add a Login/Client-
@@ -123,9 +127,9 @@ The generators authenticate to Auth0 with the same flags plus `--oidc-audience <
 
 ## Running the stacks
 
-Each stack is a self-contained compose project: hippocampus (Postgres + OpenSearch) + a Keycloak IdP
-+ the otel-lgtm telemetry stack, all behind **Caddy**, which terminates TLS (automatic Let's Encrypt)
-and routes by hostname. The two stacks are independent and run side by side on one host.
+Each stack is a self-contained compose project: hippocampus (Postgres + OpenSearch), a Keycloak IdP,
+and the otel-lgtm telemetry stack, all behind **Caddy**, which terminates TLS (automatic Let's
+Encrypt) and routes by hostname. The two stacks are independent and run side by side on one host.
 
 ### The split-issuer fix
 
@@ -183,6 +187,33 @@ go run ./cmd/logs -s <vm>:50052 --live --rate 120 \
 
 Running these unattended (a systemd unit per stack) is covered in the [GCP deployment
 runbook](showcase-gcp.md).
+
+### A lite single stack (e2-micro)
+
+The book/logs stacks each run Postgres + OpenSearch + Keycloak + otel-lgtm behind Caddy — together
+they want ~10 GiB of RAM. When that is too much (a single tiny VM, a throwaway demo), the **lite
+stack** [`docker/docker-compose.showcase-lite.yaml`](../docker/docker-compose.showcase-lite.yaml)
+(config [`docker/config.showcase-lite.json`](../docker/config.showcase-lite.json)) strips it to two
+containers — hippocampus on **SQLite** plus Caddy — and moves auth to **hosted [Auth0](#auth0-saas)**,
+so there is no JVM on the box. It fits a **0.25 vCPU / 1 GiB** machine (~500 MiB in use; the quarter
+core, not RAM, is the limit). The trade-off is the two heavy sidecars: **no content-search tab**
+(OpenSearch) and **no Grafana dashboards** (telemetry).
+
+Because Auth0's issuer is a single public URL the browser and the container both reach, the lite stack
+needs neither the [split-issuer](#the-split-issuer-fix) Caddy-alias trick nor an `auth.` subdomain —
+just one A record for the console. Bring it up with your Auth0 tenant details:
+
+```sh
+LITE_DOMAIN=demo.example ACME_EMAIL=you@example.com \
+  AUTH0_DOMAIN=your-tenant.us.auth0.com \
+  AUTH0_AUDIENCE=https://hippocampus.api \
+  AUTH0_CLIENT_ID=<console SPA client id> \
+  AUTH0_ROLES_CLAIM=https://hippocampus.example/roles \
+  docker compose -f docker/docker-compose.showcase-lite.yaml up --build -d
+```
+
+The full walkthrough — Auth0 setup, the machine-to-machine generator, and the systemd unit — is the
+[lite section of the GCP runbook](showcase-gcp.md#a-lite-stack-for-an-e2-micro).
 
 ### Local evaluation without a public domain
 

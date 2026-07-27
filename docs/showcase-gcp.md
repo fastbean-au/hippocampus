@@ -200,102 +200,176 @@ RAM is comfortable (~500 MiB in use); the **0.25 vCPU is the real limit**, so ru
 | Image        | Ubuntu 24.04 LTS                             |
 | Auth         | An Auth0 tenant (free tier is fine)          |
 
-### 1. Set up Auth0
+The phases below are ordered so a mistake surfaces at the next **Checkpoint** rather than three steps
+later. Two ordering rules matter: **DNS must resolve before you start the stack** (Caddy's Let's
+Encrypt challenge fails otherwise), and **Auth0's callback URL must match your final domain** — so
+Auth0 and DNS come first, before anything boots.
 
-In the Auth0 dashboard:
+### Phase 0 — Gather your values
 
-1. **API** (Applications → APIs → Create). Set an identifier, e.g. `https://hippocampus.api` — this
-   is the **audience**. Signing algorithm RS256. Both the console and the generator must request this
-   audience, or Auth0 returns an _opaque_ token the service cannot verify.
-2. **Roles** (User Management → Roles). Create `reader`, `writer`, `admin` and assign them to your
-   demo users. Naming them exactly after the service's tiers means `roleMapping` can stay empty.
-3. **Action** to put the roles on the token (Actions → Library → Build from scratch, add it to the
-   **Login** flow, and — so the generator's token also carries a role — the **Machine to Machine**
-   flow). It stamps a **namespaced** claim (Auth0 rejects non-namespaced custom claims):
+Fill these in once; every command references them. You supply a domain, a GCP project, and an Auth0
+tenant.
+
+| Placeholder                    | What it is                             | Example                             |
+| ------------------------------ | -------------------------------------- | ----------------------------------- |
+| `DOMAIN`                       | Public hostname for the console        | `demo.example.com`                  |
+| `ACME_EMAIL`                   | Email for Let's Encrypt                | `you@example.com`                   |
+| `GCP_PROJECT`                  | Your GCP project id                    | `my-project`                        |
+| `GCP_ZONE`                     | Zone to run in                         | `us-central1-a`                     |
+| `AUTH0_DOMAIN`                 | Your Auth0 tenant domain               | `your-tenant.us.auth0.com`          |
+| `AUTH0_AUDIENCE`               | Auth0 API identifier (you choose it)   | `https://hippocampus.api`           |
+| `AUTH0_ROLES_CLAIM`            | Namespaced roles claim (you choose it) | `https://hippocampus.example/roles` |
+| `AUTH0_CLIENT_ID`              | SPA app client id (from Phase 1)       | _filled in Phase 1_                 |
+| `GEN_CLIENT_ID` / `GEN_SECRET` | M2M app id + secret (from Phase 1)     | _filled in Phase 1_                 |
+
+> `GCP_ZONE`'s region (the zone minus its trailing letter, e.g. `us-central1`) is used for the static
+> IP below — keep them consistent.
+
+### Phase 1 — Auth0 (browser, ~10 min)
+
+In the [Auth0 dashboard](https://manage.auth0.com):
+
+1. **Create the API.** Applications → APIs → **Create API**. Set **Identifier** = `AUTH0_AUDIENCE`;
+   Signing Algorithm **RS256**. The audience is what makes Auth0 mint a verifiable _JWT_ rather than an
+   opaque token — both the console and the generator must request it.
+2. **Create the roles.** User Management → Roles → create `reader`, `writer`, `admin`, and assign them
+   to your test users. Naming them exactly after the service's tiers lets `roleMapping` stay empty.
+3. **Add the roles-claim Action.** Actions → Library → **Build from scratch** (trigger _Login / Post
+   Login_), deploy it, then drag it into the **Login** flow. Add a second one on the **Machine to
+   Machine** flow so the generator's token also carries a role. It stamps a **namespaced** claim
+   (Auth0 rejects non-namespaced custom claims):
 
    ```js
+   // Login flow:
    exports.onExecutePostLogin = async (event, api) => {
-     const claim = "https://hippocampus.example/roles";
+     const claim = "https://hippocampus.example/roles"; // == AUTH0_ROLES_CLAIM
      api.accessToken.setCustomClaim(claim, event.authorization?.roles ?? []);
    };
-   // For the M2M/client-credentials flow, stamp a fixed role for the generator's client_id:
+   // Machine to Machine flow — a fixed role for the generator's client:
    exports.onExecuteCredentialsExchange = async (event, api) => {
      const claim = "https://hippocampus.example/roles";
      api.accessToken.setCustomClaim(claim, ["writer"]);
    };
    ```
 
-   The namespaced claim URI is what `AUTH0_ROLES_CLAIM` / `auth.roleClaim` must match. (The service
-   reads a claim key literally, so the dots and slashes in the URI are fine — it is not treated as a
-   nested path.)
+   That URI is what `AUTH0_ROLES_CLAIM` / `auth.roleClaim` must match. (The service reads a claim key
+   literally, so the dots and slashes are fine — it is not treated as a nested path.)
 
-4. **Single-Page Application** (the console). Note its **Client ID**. Set _Allowed Callback URLs_ to
-   `https://<LITE_DOMAIN>/ui`, and _Allowed Web Origins_ + _Allowed Logout URLs_ to
-   `https://<LITE_DOMAIN>`.
-5. **Machine-to-Machine application** (the generator), authorized for the API from step 1. Note its
-   **Client ID** and **Client Secret**.
+4. **Console app (SPA).** Applications → **Create Application** → _Single Page Web Application_. Set
+   _Allowed Callback URLs_ to `https://DOMAIN/ui`, and _Allowed Web Origins_ + _Allowed Logout URLs_
+   to `https://DOMAIN`. Copy its **Client ID** → `AUTH0_CLIENT_ID`.
+5. **Generator app (M2M).** Applications → **Create Application** → _Machine to Machine_, authorized
+   for the API from step 1. Copy its **Client ID** + **Client Secret** → `GEN_CLIENT_ID` / `GEN_SECRET`.
 
-### 2. DNS, VM, and firewall
+> **Checkpoint:** you now hold `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, `AUTH0_ROLES_CLAIM`,
+> `AUTH0_CLIENT_ID`, `GEN_CLIENT_ID`, and `GEN_SECRET`.
 
-One A record — just the apex/console — pointing at the VM's external IP (reserve a static IP so it
-survives a restart). No `auth.` or `grafana.` subdomains: Auth0 is the issuer, and there is no Grafana.
+### Phase 2 — Static IP and DNS
+
+Reserve an IP so it survives restarts, then point your domain at it. No `auth.` or `grafana.`
+subdomains — Auth0 is the issuer and there is no Grafana.
+
+```sh
+gcloud compute addresses create hippocampus-lite-ip \
+  --project=GCP_PROJECT --region=us-central1     # region = GCP_ZONE minus its trailing letter
+
+gcloud compute addresses describe hippocampus-lite-ip \
+  --project=GCP_PROJECT --region=us-central1 --format='value(address)'
+```
+
+Create **one A record** at your DNS provider: `DOMAIN` → that IP.
+
+> **Checkpoint:** `dig +short DOMAIN` returns the reserved IP. **Do not proceed to Phase 5 until it
+> does** — the ACME challenge needs it.
+
+### Phase 3 — Create the VM and firewall
 
 ```sh
 gcloud compute instances create hippocampus-lite \
+  --project=GCP_PROJECT --zone=GCP_ZONE \
   --machine-type=e2-micro --boot-disk-size=20GB --boot-disk-type=pd-standard \
   --image-family=ubuntu-2404-lts --image-project=ubuntu-os-cloud \
-  --tags=hippocampus-lite --address=<RESERVED_STATIC_IP>
+  --tags=hippocampus-lite \
+  --address=$(gcloud compute addresses describe hippocampus-lite-ip \
+      --project=GCP_PROJECT --region=us-central1 --format='value(address)')
 
 gcloud compute firewall-rules create hippocampus-lite-web \
-  --allow=tcp:80,tcp:443 --target-tags=hippocampus-lite --direction=INGRESS
+  --project=GCP_PROJECT --allow=tcp:80,tcp:443 \
+  --target-tags=hippocampus-lite --direction=INGRESS
 ```
 
-Install Docker only — **do not build Go on the box** (the compiler can OOM a 1 GiB machine):
+Only 80/443 face the internet; gRPC stays VM-local. SSH in:
+
+```sh
+gcloud compute ssh hippocampus-lite --project=GCP_PROJECT --zone=GCP_ZONE
+```
+
+### Phase 4 — Install Docker (on the VM)
 
 ```sh
 sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
-sudo usermod -aG docker "$USER"   # log out/in for this to take effect
+sudo usermod -aG docker "$USER"
 ```
 
-### 3. Bring up the lite stack
+Log out and back in (`exit`, then `gcloud compute ssh …` again) for the group to take effect.
+
+> **Do not install Go on the box** — the compiler can OOM a 1 GiB machine. The generator is
+> cross-compiled elsewhere in Phase 6.
+
+### Phase 5 — Bring up the lite stack (on the VM)
 
 ```sh
 git clone https://github.com/fastbean-au/hippocampus.git && cd hippocampus
 
-LITE_DOMAIN=demo.example ACME_EMAIL=you@example.com \
-  AUTH0_DOMAIN=your-tenant.us.auth0.com \
-  AUTH0_AUDIENCE=https://hippocampus.api \
-  AUTH0_CLIENT_ID=<console SPA client id> \
-  AUTH0_ROLES_CLAIM=https://hippocampus.example/roles \
+LITE_DOMAIN=DOMAIN ACME_EMAIL=ACME_EMAIL \
+  AUTH0_DOMAIN=AUTH0_DOMAIN \
+  AUTH0_AUDIENCE=AUTH0_AUDIENCE \
+  AUTH0_CLIENT_ID=AUTH0_CLIENT_ID \
+  AUTH0_ROLES_CLAIM=AUTH0_ROLES_CLAIM \
   docker compose -f docker/docker-compose.showcase-lite.yaml up --build -d
 ```
 
-Watch the certificate arrive (`docker compose ... logs -f caddy`), then browse to
-`https://demo.example/ui` and sign in through Auth0. gRPC is published on `127.0.0.1:50051` only.
+The first build compiles the Go image and is slow (several minutes) on a quarter-core — that is
+one-time. Watch Caddy obtain the certificate (this confirms DNS + 80/443 are right):
 
-### 4. Run the generator (Auth0 M2M)
+```sh
+docker compose -f docker/docker-compose.showcase-lite.yaml logs -f caddy
+# wait for "certificate obtained successfully" for DOMAIN, then Ctrl-C
+```
+
+> **Checkpoint:** `curl -s https://DOMAIN/healthz` is OK, and browsing to `https://DOMAIN/ui` loads
+> the console and bounces you through Auth0 sign-in. Sign in as a user with the `admin` role — the
+> write controls should appear. A sign-in loop or 401 is almost always a callback-URL (Phase 1.4),
+> audience, or roles-claim mismatch. gRPC is published on `127.0.0.1:50051` only.
+
+### Phase 6 — Build and deploy the generator (Auth0 M2M)
 
 The generator is the private [`hippocampus-gen`](https://github.com/fastbean-au/hippocampus-gen)
-module. **Cross-compile it on a machine that already has Go and repo access, then `scp` the binary
-over** — don't build it on the e2-micro:
+module. **Cross-compile it on your workstation** (which has Go and repo access), then copy the binary
+over — do not build it on the e2-micro:
 
 ```sh
 # on your workstation, inside a hippocampus-gen checkout
+export GOPRIVATE=github.com/fastbean-au/*
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o hippocampus-gen-book ./cmd/book
-scp hippocampus-gen-book <vm>:/tmp/ && ssh <vm> sudo install /tmp/hippocampus-gen-book /usr/local/bin/
+
+gcloud compute scp hippocampus-gen-book hippocampus-lite:/tmp/ \
+  --project=GCP_PROJECT --zone=GCP_ZONE
 ```
 
-Put the M2M client secret in a root-only env file, then a systemd unit — note the **`--oidc-audience`**
-flag: Auth0's client-credentials grant only returns a JWT for the API when the audience is requested.
+Back **on the VM**, install it and stash the M2M secret in a root-only env file:
 
 ```sh
+sudo install /tmp/hippocampus-gen-book /usr/local/bin/
+
 sudo install -d /etc/hippocampus-gen
-printf 'GEN_CLIENT_ID=%s\nGEN_SECRET=%s\n' '<m2m client id>' '<m2m client secret>' \
+printf 'GEN_CLIENT_ID=%s\nGEN_SECRET=%s\n' 'GEN_CLIENT_ID' 'GEN_SECRET' \
   | sudo tee /etc/hippocampus-gen/lite.env >/dev/null
 sudo chmod 600 /etc/hippocampus-gen/lite.env
 ```
 
-`/etc/systemd/system/hippocampus-gen-lite.service`:
+Create `/etc/systemd/system/hippocampus-gen-lite.service` — note the **`--oidc-audience`** flag:
+Auth0's client-credentials grant only returns a JWT for the API when the audience is requested.
 
 ```ini
 [Unit]
@@ -308,8 +382,8 @@ Type=simple
 EnvironmentFile=/etc/hippocampus-gen/lite.env
 ExecStart=/usr/local/bin/hippocampus-gen-book -s localhost:50051 \
   --loop --period 24h --reset --pace-window 6h --live --summarize \
-  --oidc-issuer https://your-tenant.us.auth0.com/ \
-  --oidc-audience https://hippocampus.api \
+  --oidc-issuer https://AUTH0_DOMAIN/ \
+  --oidc-audience AUTH0_AUDIENCE \
   --oidc-client-id ${GEN_CLIENT_ID} --oidc-client-secret ${GEN_SECRET}
 Restart=always
 RestartSec=30
@@ -325,12 +399,21 @@ sudo systemctl enable --now hippocampus-gen-lite
 journalctl -u hippocampus-gen-lite -f
 ```
 
+> **Checkpoint:** the journal shows the generator obtaining a token and storing memories, and the
+> console's list fills in.
+
 > If your `hippocampus-gen` build predates Auth0 support and has no `--oidc-audience` flag, the
 > client-credentials token comes back opaque and the service rejects it — add the audience parameter
 > to the generator's OIDC client before deploying.
 
-Operate it like the full stack (§7 above), minus Grafana: `docker compose ... down -v` resets the
-SQLite store and Caddy certs; stop the VM when idle to save cost.
+### Phase 7 — Operate
+
+- **Logs:** `docker compose -f docker/docker-compose.showcase-lite.yaml logs -f hippocampus`.
+- **Restart:** `docker compose -f docker/docker-compose.showcase-lite.yaml restart`.
+- **Update:** `git pull`, `docker compose … up --build -d`, and re-`scp` the generator if it changed.
+- **Wipe and reset:** `docker compose … down -v` drops the SQLite store and Caddy certs.
+- **Cost:** `gcloud compute instances stop hippocampus-lite` when idle — the static IP and disk
+  persist; `start` when you want it back.
 
 ## Terraform
 
