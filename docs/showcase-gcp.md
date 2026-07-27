@@ -5,18 +5,23 @@ Google Compute Engine VM: the server side runs as Docker Compose, the two data g
 systemd services, and Caddy provisions TLS automatically. Read [Hosted showcase](showcase.md) first —
 this only covers the VM.
 
+> **Two ways to run this.** The runbook below (steps 1–7) is the full stack and needs a beefy VM
+> (`e2-standard-4`+). If you only want _one_ showcase and can live without the content-search tab and
+> the Grafana dashboards, jump to [A lite stack for an e2-micro](#a-lite-stack-for-an-e2-micro): the
+> same console and Auth0 sign-in, trimmed to fit a 0.25 vCPU / 1 GiB machine.
+
 ## 1. Sizing
 
 Each stack runs Postgres + OpenSearch (1 GiB heap) + Keycloak (JVM) + an otel-lgtm bundle
 (Grafana/Prometheus/Tempo/Loki) + hippocampus + Caddy, and there are two of them. Budget ~10 GiB of
 RAM in use.
 
-| | Recommendation |
-|---|---|
+|              | Recommendation                                                         |
+| ------------ | ---------------------------------------------------------------------- |
 | Machine type | `e2-standard-4` (4 vCPU / 16 GiB) minimum; `e2-standard-8` comfortable |
-| Boot disk | 50 GiB `pd-ssd` (OpenSearch + telemetry retention) |
-| Image | Ubuntu 24.04 LTS (simple Docker + Go install) |
-| Region | anywhere close to your viewers |
+| Boot disk    | 50 GiB `pd-ssd` (OpenSearch + telemetry retention)                     |
+| Image        | Ubuntu 24.04 LTS (simple Docker + Go install)                          |
+| Region       | anywhere close to your viewers                                         |
 
 ## 2. DNS
 
@@ -175,6 +180,157 @@ journalctl -u hippocampus-gen-book -f
 - **Certificates** live in the `*-caddy-data` volume and renew automatically; keep 80/443 reachable.
 - **Cost:** shut the VM down when not demoing (`gcloud compute instances stop hippocampus-showcase`);
   the static IP and disk persist.
+
+## A lite stack for an e2-micro
+
+The full stack above runs Postgres + OpenSearch + Keycloak + otel-lgtm + hippocampus + Caddy, twice —
+budget ~10 GiB of RAM. The **lite stack** (`docker/docker-compose.showcase-lite.yaml`) is the same
+console trimmed down to fit a single **`e2-micro` (0.25 vCPU / 1 GiB)**: it drops Postgres (SQLite
+instead), OpenSearch (no content-search tab), and otel-lgtm (no Grafana dashboards), and it replaces
+self-hosted Keycloak with **hosted Auth0** — so there is no JVM on the box at all. What remains is two
+small containers (hippocampus on SQLite, and Caddy), plus the generator as a host process.
+
+RAM is comfortable (~500 MiB in use); the **0.25 vCPU is the real limit**, so run the generator gently
+(low pace, one loop) and treat this as a trickle demo, not a soak test.
+
+|              | Recommendation                               |
+| ------------ | -------------------------------------------- |
+| Machine type | `e2-micro` (0.25 vCPU / 1 GiB)               |
+| Boot disk    | 20 GiB `pd-standard` (SQLite + image layers) |
+| Image        | Ubuntu 24.04 LTS                             |
+| Auth         | An Auth0 tenant (free tier is fine)          |
+
+### 1. Set up Auth0
+
+In the Auth0 dashboard:
+
+1. **API** (Applications → APIs → Create). Set an identifier, e.g. `https://hippocampus.api` — this
+   is the **audience**. Signing algorithm RS256. Both the console and the generator must request this
+   audience, or Auth0 returns an _opaque_ token the service cannot verify.
+2. **Roles** (User Management → Roles). Create `reader`, `writer`, `admin` and assign them to your
+   demo users. Naming them exactly after the service's tiers means `roleMapping` can stay empty.
+3. **Action** to put the roles on the token (Actions → Library → Build from scratch, add it to the
+   **Login** flow, and — so the generator's token also carries a role — the **Machine to Machine**
+   flow). It stamps a **namespaced** claim (Auth0 rejects non-namespaced custom claims):
+
+   ```js
+   exports.onExecutePostLogin = async (event, api) => {
+     const claim = "https://hippocampus.example/roles";
+     api.accessToken.setCustomClaim(claim, event.authorization?.roles ?? []);
+   };
+   // For the M2M/client-credentials flow, stamp a fixed role for the generator's client_id:
+   exports.onExecuteCredentialsExchange = async (event, api) => {
+     const claim = "https://hippocampus.example/roles";
+     api.accessToken.setCustomClaim(claim, ["writer"]);
+   };
+   ```
+
+   The namespaced claim URI is what `AUTH0_ROLES_CLAIM` / `auth.roleClaim` must match. (The service
+   reads a claim key literally, so the dots and slashes in the URI are fine — it is not treated as a
+   nested path.)
+
+4. **Single-Page Application** (the console). Note its **Client ID**. Set _Allowed Callback URLs_ to
+   `https://<LITE_DOMAIN>/ui`, and _Allowed Web Origins_ + _Allowed Logout URLs_ to
+   `https://<LITE_DOMAIN>`.
+5. **Machine-to-Machine application** (the generator), authorized for the API from step 1. Note its
+   **Client ID** and **Client Secret**.
+
+### 2. DNS, VM, and firewall
+
+One A record — just the apex/console — pointing at the VM's external IP (reserve a static IP so it
+survives a restart). No `auth.` or `grafana.` subdomains: Auth0 is the issuer, and there is no Grafana.
+
+```sh
+gcloud compute instances create hippocampus-lite \
+  --machine-type=e2-micro --boot-disk-size=20GB --boot-disk-type=pd-standard \
+  --image-family=ubuntu-2404-lts --image-project=ubuntu-os-cloud \
+  --tags=hippocampus-lite --address=<RESERVED_STATIC_IP>
+
+gcloud compute firewall-rules create hippocampus-lite-web \
+  --allow=tcp:80,tcp:443 --target-tags=hippocampus-lite --direction=INGRESS
+```
+
+Install Docker only — **do not build Go on the box** (the compiler can OOM a 1 GiB machine):
+
+```sh
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker "$USER"   # log out/in for this to take effect
+```
+
+### 3. Bring up the lite stack
+
+```sh
+git clone https://github.com/fastbean-au/hippocampus.git && cd hippocampus
+
+LITE_DOMAIN=demo.example ACME_EMAIL=you@example.com \
+  AUTH0_DOMAIN=your-tenant.us.auth0.com \
+  AUTH0_AUDIENCE=https://hippocampus.api \
+  AUTH0_CLIENT_ID=<console SPA client id> \
+  AUTH0_ROLES_CLAIM=https://hippocampus.example/roles \
+  docker compose -f docker/docker-compose.showcase-lite.yaml up --build -d
+```
+
+Watch the certificate arrive (`docker compose ... logs -f caddy`), then browse to
+`https://demo.example/ui` and sign in through Auth0. gRPC is published on `127.0.0.1:50051` only.
+
+### 4. Run the generator (Auth0 M2M)
+
+The generator is the private [`hippocampus-gen`](https://github.com/fastbean-au/hippocampus-gen)
+module. **Cross-compile it on a machine that already has Go and repo access, then `scp` the binary
+over** — don't build it on the e2-micro:
+
+```sh
+# on your workstation, inside a hippocampus-gen checkout
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o hippocampus-gen-book ./cmd/book
+scp hippocampus-gen-book <vm>:/tmp/ && ssh <vm> sudo install /tmp/hippocampus-gen-book /usr/local/bin/
+```
+
+Put the M2M client secret in a root-only env file, then a systemd unit — note the **`--oidc-audience`**
+flag: Auth0's client-credentials grant only returns a JWT for the API when the audience is requested.
+
+```sh
+sudo install -d /etc/hippocampus-gen
+printf 'GEN_CLIENT_ID=%s\nGEN_SECRET=%s\n' '<m2m client id>' '<m2m client secret>' \
+  | sudo tee /etc/hippocampus-gen/lite.env >/dev/null
+sudo chmod 600 /etc/hippocampus-gen/lite.env
+```
+
+`/etc/systemd/system/hippocampus-gen-lite.service`:
+
+```ini
+[Unit]
+Description=Hippocampus lite showcase generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/hippocampus-gen/lite.env
+ExecStart=/usr/local/bin/hippocampus-gen-book -s localhost:50051 \
+  --loop --period 24h --reset --pace-window 6h --live --summarize \
+  --oidc-issuer https://your-tenant.us.auth0.com/ \
+  --oidc-audience https://hippocampus.api \
+  --oidc-client-id ${GEN_CLIENT_ID} --oidc-client-secret ${GEN_SECRET}
+Restart=always
+RestartSec=30
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now hippocampus-gen-lite
+journalctl -u hippocampus-gen-lite -f
+```
+
+> If your `hippocampus-gen` build predates Auth0 support and has no `--oidc-audience` flag, the
+> client-credentials token comes back opaque and the service rejects it — add the audience parameter
+> to the generator's OIDC client before deploying.
+
+Operate it like the full stack (§7 above), minus Grafana: `docker compose ... down -v` resets the
+SQLite store and Caddy certs; stop the VM when idle to save cost.
 
 ## Terraform
 

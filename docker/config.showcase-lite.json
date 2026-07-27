@@ -1,0 +1,84 @@
+{
+  "logging": {
+    "level": "info",
+    "json": true
+  },
+  "port": 50051,
+  "bindAddress": "0.0.0.0",
+  "gateway": {
+    "port": 8080
+  },
+  "auth": {
+    "method": "idp",
+    "issuer": "https://your-tenant.us.auth0.com/",
+    "audience": "https://hippocampus.api",
+    "roleClaim": "https://hippocampus.example/roles",
+    "roleMapping": {},
+    "jwksRefreshIntervalSeconds": 300,
+    "readerRecallReinforces": false,
+    "ui": {
+      "issuer": "https://your-tenant.us.auth0.com/",
+      "clientId": "your-auth0-spa-client-id",
+      "scopes": "openid profile",
+      "audience": "https://hippocampus.api"
+    }
+  },
+  "tls": {
+    "enabled": false,
+    "certFile": "",
+    "keyFile": ""
+  },
+  "observability": {
+    "tracing": {
+      "enabled": false,
+      "samplingRatio": 1.0
+    },
+    "metrics": {
+      "enabled": false,
+      "exportIntervalSeconds": 60
+    },
+    "otlp": {
+      "endpoint": "localhost:4317",
+      "insecure": true
+    }
+  },
+  "storage": {
+    "driver": "sqlite",
+    "directory": "/data"
+  },
+  "opensearch": {
+    "enabled": false
+  },
+  "memory": {
+    "limit": {
+      "sizeBytes": 1048576
+    },
+    "minimumSignificance": 0
+  },
+  "event": {
+    "minimumSignificance": 0
+  },
+  "sleep": {
+    "periodSeconds": 120
+  },
+  "consolidation": {
+    "defaultEventSignificanceValue": 0,
+    "defaultEventSignificancePercentile": 25,
+    "minimumAgeInDays": 0,
+    "minimumRetentionInDays": 0,
+    "aggressiveness": 1.0,
+    "deletionThreshold": 5,
+    "method": 1,
+    "unitsOfAgeInDays": 0.002,
+    "relationshipSignificanceWeight": 1.0,
+    "recallSignificanceWeight": 1.0,
+    "capacityMemories": 0,
+    "capacityPressureExponent": 4.0,
+    "capacityBytes": 0,
+    "capacityBytesFloor": 0,
+    "walTriggerBytes": 0,
+    "summarizationMinMemories": 20,
+    "summarizationMinAgeInDays": 0,
+    "summarizationMaxCandidates": 100
+  }
+}

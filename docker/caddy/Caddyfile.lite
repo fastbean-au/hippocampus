@@ -1,0 +1,16 @@
+# Caddy reverse proxy for the "lite" showcase stack (single e2-micro VM), with automatic HTTPS
+# (Let's Encrypt) for a real domain. Just one hostname, routed straight to the console.
+#
+# Unlike the book/logs stacks there is NO split-issuer trick here: auth is handled by hosted Auth0,
+# whose issuer is a public URL that the browser and the hippocampus container reach identically.
+# So Caddy needs no compose-network aliases, and there is no auth. or grafana. subdomain to route.
+#
+# Requires a public DNS A/AAAA record for the hostname pointing at the VM, with ports 80/443
+# reachable (for the ACME challenge).
+{
+	email {$ACME_EMAIL:admin@example.com}
+}
+
+{$LITE_DOMAIN:hippocampus.example} {
+	reverse_proxy hippocampus:8080
+}

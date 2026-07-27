@@ -1,0 +1,66 @@
+# Lite showcase: the smallest usable hosted stack, sized to fit a single GCP e2-micro (0.25 vCPU /
+# 1 GiB). It is the book/logs showcase with every JVM/heavy sidecar removed - no Postgres (SQLite
+# instead), no OpenSearch (so no content-search tab), no otel-lgtm (so no Grafana dashboards), and no
+# self-hosted Keycloak. Auth is handled by hosted Auth0, off the box entirely. What is left runs in
+# two small containers - hippocampus (SQLite) and Caddy for automatic HTTPS.
+#
+#   LITE_DOMAIN=demo.example ACME_EMAIL=you@example.com \
+#     AUTH0_DOMAIN=your-tenant.us.auth0.com \
+#     AUTH0_AUDIENCE=https://hippocampus.api \
+#     AUTH0_CLIENT_ID=<console SPA client id> \
+#     AUTH0_ROLES_CLAIM=https://hippocampus.example/roles \
+#     docker compose -f docker/docker-compose.showcase-lite.yaml up --build -d
+#
+# The data generator is NOT a container here (its module pulls a private dependency a clean image
+# build cannot fetch without credentials); it runs as a host process against the loopback-only gRPC
+# port, authenticating with an Auth0 machine-to-machine token. See docs/showcase-gcp.md for the Auth0
+# setup and the systemd unit.
+#
+# Requires a public DNS record for ${LITE_DOMAIN} -> the VM, with ports 80/443 reachable for the ACME
+# challenge. Browse:
+#   console:  https://${LITE_DOMAIN}/ui   (sign in via Auth0)
+#   gRPC:     127.0.0.1:50051             (VM-local only, for the host-run generator)
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      LITE_DOMAIN: "${LITE_DOMAIN:-hippocampus.example}"
+      ACME_EMAIL: "${ACME_EMAIL:-admin@example.com}"
+    volumes:
+      - ./caddy/Caddyfile.lite:/etc/caddy/Caddyfile:ro
+      - lite-caddy-data:/data
+      - lite-caddy-config:/config
+    depends_on:
+      - hippocampus
+
+  hippocampus:
+    build: ..
+    restart: unless-stopped
+    # gRPC is published on loopback only: the generator runs on this same VM and dials localhost, so
+    # there is no reason to expose it. Only Caddy's 80/443 face the internet.
+    ports:
+      - "127.0.0.1:${LITE_GRPC_PORT:-50051}:50051"
+    volumes:
+      - ./config.showcase-lite.json:/etc/hippocampus/config.json:ro
+      - lite-hippocampus-data:/data
+    environment:
+      # Auth0 tenant wiring. The issuer is a public URL both the browser and this container reach
+      # identically, so (unlike the Keycloak stacks) no compose-network alias trick is needed. The
+      # audience must be your Auth0 API identifier so Auth0 mints a verifiable JWT access token
+      # rather than an opaque one. The roles claim is the namespaced URI your Auth0 Action stamps.
+      HIPPOCAMPUS_AUTH_ISSUER: "https://${AUTH0_DOMAIN:-your-tenant.us.auth0.com}/"
+      HIPPOCAMPUS_AUTH_AUDIENCE: "${AUTH0_AUDIENCE:-https://hippocampus.api}"
+      HIPPOCAMPUS_AUTH_ROLECLAIM: "${AUTH0_ROLES_CLAIM:-https://hippocampus.example/roles}"
+      HIPPOCAMPUS_AUTH_UI_ISSUER: "https://${AUTH0_DOMAIN:-your-tenant.us.auth0.com}/"
+      HIPPOCAMPUS_AUTH_UI_CLIENTID: "${AUTH0_CLIENT_ID:-your-auth0-spa-client-id}"
+      HIPPOCAMPUS_AUTH_UI_AUDIENCE: "${AUTH0_AUDIENCE:-https://hippocampus.api}"
+
+volumes:
+  lite-hippocampus-data:
+  lite-caddy-data:
+  lite-caddy-config:
