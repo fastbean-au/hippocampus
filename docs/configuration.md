@@ -303,6 +303,50 @@ the tier still comes from `auth.roleClaim`/`auth.roleMapping`. When `auth.method
 `hmac`, `/ui/config` simply reports the method and the console falls back to its manual bearer-token
 box.
 
+#### Server-side sign-in (`auth.oauth2`)
+
+`auth.ui` above runs the OIDC Authorization Code + PKCE flow **in the browser** as a public client
+(no secret; the token lives in the page's `sessionStorage`). `auth.oauth2` is the alternative: the
+**service itself** runs the flow as a **confidential client** — the code-for-token exchange happens
+on the server with a client secret, and the resulting session rides an `HttpOnly` cookie the page
+can never read. Prefer it when the identity provider requires a confidential client, or to keep the
+token out of page-readable storage (mitigating token theft via XSS). It is available only under
+`auth.method: idp`, and it does not change how tokens are *verified* — the cookie carries the same
+IdP access token, checked by the same `idp` verifier as a bearer header.
+
+```jsonc
+"auth": {
+  "method": "idp",
+  "issuer": "https://idp.example.com/realms/hippocampus",
+  "audience": "hippocampus-api",              // API audience for the access token (as for idp)
+  "roleClaim": "realm_access.roles",
+  "oauth2": {
+    "enabled": true,
+    "clientId": "hippocampus-console",         // a CONFIDENTIAL client at the provider
+    "clientSecret": "…",                       // inject via HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET
+    "redirectUrl": "https://hippo.example.com/auth/callback",  // must be registered at the provider
+    "scopes": "openid profile email offline_access"           // offline_access → a refresh token
+    // optional: issuer/audience (default to auth.issuer/auth.audience), cookieSecure (defaults to
+    // the redirectUrl scheme), cookieDomain, successRedirectUrl (default /ui),
+    // postLogoutRedirectUrl, sessionTTLSeconds, refreshTTLSeconds
+  }
+}
+```
+
+When enabled, the gateway serves four endpoints — `GET /auth/login` (start the flow),
+`GET /auth/callback` (the provider's redirect target; exchanges the code, verifies the `id_token`
+signature and `nonce`, sets the session cookie), `POST /auth/refresh` (swap the refresh cookie for a
+fresh access token), and `GET /auth/logout` (clear the cookies and, when the provider advertises an
+`end_session_endpoint`, RP-initiated logout) — all reachable without a token. The session cookie
+(`hippo_session`) is `HttpOnly`, `SameSite=Lax`, and `Secure` (following the `redirectUrl` scheme
+unless `cookieSecure` overrides); the refresh cookie is scoped to `/auth` so it is never sent to the
+API. `/ui/config` reports `loginMode: "server"`, and the console shows a **Sign in** button that
+navigates to `/auth/login` instead of running the in-page flow. The `redirectUrl` **must** point at
+the service's own `…/auth/callback` and be registered as an allowed redirect on the provider's
+client. Because the client secret is a secret, inject it via
+`HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET` rather than committing it. Serve the console over HTTPS
+(directly or via a TLS-terminating proxy) so the `Secure` session cookie is not dropped.
+
 `auth.signingKeys` is a structured list (`[{ "kid": "...", "secret": "..." }]`) and so is
 config-file-only — unlike `auth.signingSecret`, it cannot be injected through a single
 `HIPPOCAMPUS_AUTH_*` environment variable.

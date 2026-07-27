@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -33,6 +34,22 @@ func TestMintToken_RoundTrip(t *testing.T) {
 func TestMintToken_EmptySecret(t *testing.T) {
 	if _, err := MintToken(MintRequest{ClientID: "client-1", TTL: time.Hour}); err == nil {
 		t.Error("expected an error minting with an empty secret")
+	}
+}
+
+// TestMintToken_EntropyFailure verifies that when the entropy source fails, minting surfaces the
+// error rather than issuing a token with a predictable (or empty) jti - exercising the newTokenID
+// failure path and MintToken's handling of it.
+func TestMintToken_EntropyFailure(t *testing.T) {
+	orig := randRead
+	defer func() { randRead = orig }()
+
+	randRead = func(b []byte) (int, error) {
+		return 0, fmt.Errorf("no entropy")
+	}
+
+	if _, err := MintToken(MintRequest{Secret: "test-secret", ClientID: "client-1", TTL: time.Hour}); err == nil {
+		t.Error("expected MintToken to fail when the entropy source is unavailable")
 	}
 }
 

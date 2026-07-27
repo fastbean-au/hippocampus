@@ -13,7 +13,13 @@ import (
 // token). Unlike UnaryServerInterceptor's prefix-based scoping, this is closed by default: any
 // path not in openPaths requires a token, including new endpoints added later without remembering
 // to update an allow-list of what's protected.
-func HTTPMiddleware(v Verifier, next http.Handler, openPaths []string) http.Handler {
+//
+// sessionCookie, when non-empty, names a cookie the middleware falls back to for the token when the
+// request carries no Authorization header - the seam the server-side OIDC login uses so a browser
+// that signed in via /auth/login is authenticated by its HttpOnly session cookie alone, without the
+// token ever living in page-readable storage. An empty name disables the fallback, preserving the
+// header-only behaviour for hmac and header-bearing clients.
+func HTTPMiddleware(v Verifier, next http.Handler, openPaths []string, sessionCookie string) http.Handler {
 	open := make(map[string]bool, len(openPaths))
 	for _, p := range openPaths {
 		open[p] = true
@@ -26,9 +32,9 @@ func HTTPMiddleware(v Verifier, next http.Handler, openPaths []string) http.Hand
 			return
 		}
 
-		token, err := ExtractBearerToken(r.Header.Get("Authorization"))
+		token, err := tokenFromRequest(r, sessionCookie)
 		if err != nil {
-			log.Trace("rejecting request - malformed authorization header")
+			log.Trace("rejecting request - no bearer token in header or session cookie")
 			unauthorized(w)
 
 			return

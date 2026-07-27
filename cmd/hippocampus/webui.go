@@ -18,6 +18,12 @@ type UIConfig struct {
 	ClientID   string `json:"clientId,omitempty"`
 	Scopes     string `json:"scopes,omitempty"`
 	Audience   string `json:"audience,omitempty"`
+
+	// LoginMode tells the console how sign-in works under idp: "browser" (the default) runs the
+	// in-page Authorization Code + PKCE flow using the fields above, while "server" means the service
+	// hosts the flow at /auth/login and the console only links to it - the browser holds no token, the
+	// session rides an HttpOnly cookie. Empty in non-idp modes, where the manual token box is used.
+	LoginMode string `json:"loginMode,omitempty"`
 }
 
 // uiConfigHandler serves the front-channel OIDC configuration as JSON at /ui/config. Like the

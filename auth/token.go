@@ -93,11 +93,16 @@ func TokenID(token string) (string, error) {
 	return claims.ID, nil
 }
 
+// randRead is the entropy source for token ids. It is a var, not a direct call to rand.Read, only so
+// a test can force the (on a healthy host practically unreachable) read failure and exercise the
+// error path, mirroring how maxJWKSBytes is a var for the same reason.
+var randRead = rand.Read
+
 // newTokenID returns a random 128-bit identifier, hex-encoded, for use as a token's jti.
 func newTokenID() (string, error) {
 	buf := make([]byte, 16)
 
-	if _, err := rand.Read(buf); err != nil {
+	if _, err := randRead(buf); err != nil {
 		return "", fmt.Errorf("auth: failed to generate token id")
 	}
 

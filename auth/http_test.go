@@ -26,7 +26,7 @@ func TestHTTPMiddleware_ValidToken(t *testing.T) {
 		t.Fatalf("MintToken: %s", err)
 	}
 
-	handler := HTTPMiddleware(v, stubHTTPHandler(), nil)
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -47,7 +47,7 @@ func TestHTTPMiddleware_MissingToken(t *testing.T) {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
 
-	handler := HTTPMiddleware(v, stubHTTPHandler(), nil)
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
 	rec := httptest.NewRecorder()
@@ -71,7 +71,7 @@ func TestHTTPMiddleware_MalformedToken(t *testing.T) {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
 
-	handler := HTTPMiddleware(v, stubHTTPHandler(), nil)
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
 	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
@@ -93,7 +93,7 @@ func TestHTTPMiddleware_InvalidToken(t *testing.T) {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
 
-	handler := HTTPMiddleware(v, stubHTTPHandler(), nil)
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
 	req.Header.Set("Authorization", "Bearer not-a-real-token")
@@ -115,7 +115,7 @@ func TestHTTPMiddleware_OpenPathBypassesAuth(t *testing.T) {
 		t.Fatalf("NewHMACVerifier: %s", err)
 	}
 
-	handler := HTTPMiddleware(v, stubHTTPHandler(), []string{"/healthz"})
+	handler := HTTPMiddleware(v, stubHTTPHandler(), []string{"/healthz"}, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -124,5 +124,87 @@ func TestHTTPMiddleware_OpenPathBypassesAuth(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected the open path to bypass auth entirely, got %d", rec.Code)
+	}
+}
+
+// TestHTTPMiddleware_SessionCookieFallback verifies that when a session cookie name is configured, a
+// request carrying no Authorization header but a valid token in that cookie is authenticated - the
+// seam the server-side OIDC login relies on.
+func TestHTTPMiddleware_SessionCookieFallback(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	token, err := MintToken(MintRequest{Secret: "test-secret", ClientID: "client-1", TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("MintToken: %s", err)
+	}
+
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil, SessionCookieName)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected the session cookie to authenticate the request, got %d", rec.Code)
+	}
+}
+
+// TestHTTPMiddleware_SessionCookieIgnoredWhenUnconfigured verifies that the cookie fallback is off
+// by default: with no session cookie name configured, a token present only in a cookie does not
+// authenticate, preserving the header-only behaviour for hmac and API clients.
+func TestHTTPMiddleware_SessionCookieIgnoredWhenUnconfigured(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	token, err := MintToken(MintRequest{Secret: "test-secret", ClientID: "client-1", TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("MintToken: %s", err)
+	}
+
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 when the cookie fallback is unconfigured, got %d", rec.Code)
+	}
+}
+
+// TestHTTPMiddleware_HeaderWinsOverCookie verifies that an explicit Authorization header takes
+// precedence over the session cookie, so an API client's header is never overridden by a stale
+// cookie on the same request.
+func TestHTTPMiddleware_HeaderWinsOverCookie(t *testing.T) {
+	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %s", err)
+	}
+
+	good, err := MintToken(MintRequest{Secret: "test-secret", ClientID: "client-1", TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("MintToken: %s", err)
+	}
+
+	handler := HTTPMiddleware(v, stubHTTPHandler(), nil, SessionCookieName)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
+	req.Header.Set("Authorization", "Bearer "+good)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "garbage-cookie-token"})
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected the valid header to win over the bad cookie, got %d", rec.Code)
 	}
 }

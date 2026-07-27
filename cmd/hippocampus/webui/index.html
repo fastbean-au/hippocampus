@@ -481,14 +481,46 @@ const oidc = {
   refreshTimer: null,
 };
 
-// getToken returns the bearer sent on every /v1 call: the OIDC access token when a login flow is
+// server holds the state for the server-side login mode (/ui/config loginMode "server"): the service
+// hosts the OIDC flow at /auth/login and sets an HttpOnly session cookie, so this page never sees or
+// stores a token. The Sign in / Sign out buttons simply navigate to /auth/login and /auth/logout,
+// and every /v1 call is authenticated by the cookie the browser sends automatically.
+const server = { enabled: false };
+
+// getToken returns the bearer sent on every /v1 call: nothing in server-login mode (the HttpOnly
+// cookie carries auth and is not script-readable), the OIDC access token when the in-browser flow is
 // active, otherwise whatever is typed into the manual token box.
 function getToken() {
+  if (server.enabled) {
+    return "";
+  }
+
   if (oidc.enabled) {
     return oidc.accessToken || "";
   }
 
   return $("token").value.trim();
+}
+
+// serverRefresh asks the service to swap the refresh cookie for a fresh access token (204 on
+// success). Used to transparently recover an expired session before surfacing a 401.
+async function serverRefresh() {
+  try {
+    const res = await fetch("/auth/refresh", { method: "POST" });
+
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// applyServerButtons shows Sign in when there is no active session and Sign out when there is,
+// deciding from whether whoami resolved a role.
+function applyServerButtons() {
+  const signedIn = !!caps.role;
+
+  $("login-btn").style.display = signedIn ? "none" : "inline-block";
+  $("logout-btn").style.display = signedIn ? "inline-block" : "none";
 }
 
 $("token").value = localStorage.getItem(TOKEN_KEY) || "";
@@ -535,12 +567,19 @@ function applyCaps() {
 
   pill.style.display = "inline-block";
   pill.classList.toggle("ro", !caps.canWrite);
-  pill.textContent = caps.role ? ("role: " + caps.role) : "no access — check token";
+  pill.textContent = caps.role ? ("role: " + caps.role) : (server.enabled ? "not signed in" : "no access — check token");
+
+  // In server-login mode the Sign in / Sign out buttons track the resolved session, so keep them in
+  // step with each capability refresh (login, logout, or an expiry surfaced by a failed call).
+  if (server.enabled) {
+    applyServerButtons();
+  }
 }
 
 // api issues a JSON request to the gateway (same origin). Returns parsed body,
-// throws Error(message) on a non-2xx response so callers can surface it.
-async function api(method, path, body) {
+// throws Error(message) on a non-2xx response so callers can surface it. The internal _retried flag
+// guards the single silent-refresh replay used in server-login mode.
+async function api(method, path, body, _retried) {
   const headers = { "Content-Type": "application/json" };
   const tok = getToken();
 
@@ -555,6 +594,15 @@ async function api(method, path, body) {
   }
 
   const res = await fetch(path, opts);
+
+  // In server-login mode the access token lives in a cookie that may have just expired; try one
+  // silent refresh through /auth/refresh and replay the request before surfacing the 401.
+  if (res.status === 401 && server.enabled && !_retried && path !== "/auth/refresh") {
+    if (await serverRefresh()) {
+      return api(method, path, body, true);
+    }
+  }
+
   const text = await res.text();
   let data = {};
 
@@ -567,7 +615,7 @@ async function api(method, path, body) {
 
     // Give the authorization failures a plain-language message rather than the terse server body:
     // 401 means the token is missing/invalid, 403 means it is valid but its role is insufficient.
-    if (res.status === 401) msg = oidc.enabled ? "Session expired — please sign in again." : "Unauthorized — set a valid bearer token above.";
+    if (res.status === 401) msg = (oidc.enabled || server.enabled) ? "Session expired — please sign in again." : "Unauthorized — set a valid bearer token above.";
     if (res.status === 403) msg = "Forbidden — your token's role does not permit this action.";
 
     const err = new Error(msg);
@@ -941,7 +989,16 @@ async function boot() {
     // A missing/unreachable config endpoint leaves the console in manual-token mode.
   }
 
-  if (cfg.authMethod === "idp" && cfg.clientId) {
+  if (cfg.authMethod === "idp" && cfg.loginMode === "server") {
+    // Server-hosted login: the service owns the OIDC flow and the session cookie, so the page only
+    // navigates to its endpoints. refreshCaps() (at the end of boot) resolves whether a session
+    // exists and applyServerButtons (via applyCaps) shows the right control.
+    server.enabled = true;
+    $("manual-token").style.display = "none";
+
+    $("login-btn").addEventListener("click", () => window.location.assign("/auth/login"));
+    $("logout-btn").addEventListener("click", () => window.location.assign("/auth/logout"));
+  } else if (cfg.authMethod === "idp" && cfg.clientId) {
     oidc.enabled = true;
     oidc.cfg = cfg;
     $("manual-token").style.display = "none";

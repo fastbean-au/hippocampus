@@ -162,7 +162,8 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 ## 🔒 Security & Hardening
 
 Hippocampus is production-hardened out of the box:
-* **Built-in Authentication:** JWT bearer tokens with mandatory expiration (`exp`) and zero-downtime rotation via `auth.signingKeys`.
+* **Built-in Authentication:** JWT bearer tokens with mandatory expiration (`exp`) and zero-downtime rotation via `auth.signingKeys`, or RS256/JWKS verification against any OIDC identity provider (`auth.method: idp`).
+* **Single Sign-On (SSO):** OpenID Connect login for the web console — an in-browser PKCE flow, or a server-side [confidential-client flow](docs/configuration.md#server-side-sign-in-authoauth2) (`auth.oauth2`) that keeps the token in an `HttpOnly` session cookie.
 * **Role-Based Authorization:** Per-RPC `reader`/`writer`/`admin` tiers carried in the token, enforced identically on gRPC and the HTTP gateway.
 * **Transport Security:** Pinned TLS 1.2+ floor for both internal and external communication.
 * **Storage Isolation:** Driver error masking behind standard gRPC status codes to prevent database schema leaks.

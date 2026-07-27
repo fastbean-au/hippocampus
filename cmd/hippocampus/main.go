@@ -397,6 +397,12 @@ func run(ctx context.Context, version versionInfo) error {
 
 	var verifier auth.Verifier
 
+	// oauth2Login, when built, is the server-side OIDC relying-party login (confidential-client
+	// Authorization Code flow). It is only available under auth.method "idp" and only when
+	// auth.oauth2.enabled is set; it is registered as /auth/* handlers on the gateway below and its
+	// session cookie is fed to the HTTP auth middleware.
+	var oauth2Login *auth.OAuth2Login
+
 	switch authMethod {
 
 	case "none":
@@ -413,11 +419,13 @@ func run(ctx context.Context, version versionInfo) error {
 		viper.SetDefault("auth.jwksRefreshIntervalSeconds", 300)
 		viper.SetDefault("auth.roleClaim", "roles")
 
+		refreshInterval := time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second
+
 		v, err := auth.NewJWKSVerifier(auth.JWKSConfig{
 			JWKSURL:         viper.GetString("auth.jwksUrl"),
 			Issuer:          viper.GetString("auth.issuer"),
 			Audience:        viper.GetString("auth.audience"),
-			RefreshInterval: time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second,
+			RefreshInterval: refreshInterval,
 			RoleClaim:       viper.GetString("auth.roleClaim"),
 		})
 		if err != nil {
@@ -425,6 +433,15 @@ func run(ctx context.Context, version versionInfo) error {
 		}
 
 		verifier = v
+
+		if viper.GetBool("auth.oauth2.enabled") {
+			login, err := buildOAuth2Login(refreshInterval)
+			if err != nil {
+				return fmt.Errorf("failed to initialise oauth2 login: %w", err)
+			}
+
+			oauth2Login = login
+		}
 
 	default:
 		return fmt.Errorf("unknown auth.method '%s' (expected 'none', 'hmac', or 'idp')", authMethod)
@@ -644,21 +661,55 @@ func run(ctx context.Context, version versionInfo) error {
 			uiScopes = "openid profile"
 		}
 
+		// loginMode tells the console how sign-in works: server-hosted (/auth/login) when the oauth2
+		// login is built, otherwise the in-browser PKCE flow under idp, and empty otherwise.
+		loginMode := ""
+
+		if authMethod == "idp" {
+			loginMode = "browser"
+
+			if oauth2Login != nil {
+				loginMode = "server"
+			}
+		}
+
 		httpMux.Handle("/ui/config", uiConfigHandler(UIConfig{
 			AuthMethod: authMethod,
 			Issuer:     uiIssuer,
 			ClientID:   viper.GetString("auth.ui.clientId"),
 			Scopes:     uiScopes,
 			Audience:   viper.GetString("auth.ui.audience"),
+			LoginMode:  loginMode,
 		}))
+
+		// When the server-side login is enabled, register its handlers and mark them open (they run
+		// before, or in place of, holding a token). /auth/refresh authenticates itself via the refresh
+		// cookie, so it too must be reachable without an access token.
+		sessionCookie := ""
+		authOpenPaths := []string{"/healthz", "/readyz", "/ui", "/ui/config"}
+		purgeOpenPaths := []string{"/healthz", "/readyz", "/v1/openapi.json", "/ui", "/ui/config"}
+
+		if oauth2Login != nil {
+			httpMux.Handle("/auth/login", http.HandlerFunc(oauth2Login.Login))
+			httpMux.Handle("/auth/callback", http.HandlerFunc(oauth2Login.Callback))
+			httpMux.Handle("/auth/refresh", http.HandlerFunc(oauth2Login.Refresh))
+			httpMux.Handle("/auth/logout", http.HandlerFunc(oauth2Login.Logout))
+
+			authPaths := []string{"/auth/login", "/auth/callback", "/auth/refresh", "/auth/logout"}
+			authOpenPaths = append(authOpenPaths, authPaths...)
+			purgeOpenPaths = append(purgeOpenPaths, authPaths...)
+
+			sessionCookie = auth.SessionCookieName
+		}
 
 		httpMux.Handle("/", gwMux)
 
 		// The gateway calls hipo directly, bypassing the gRPC interceptor chain, so the purge gate
 		// must be re-applied here or /v1/... requests would run during a purge.
 		// It is applied unconditionally (independent of auth); /healthz, /readyz, the static
-		// OpenAPI doc, the console, and its front-channel config stay reachable while a purge runs.
-		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, []string{"/healthz", "/readyz", "/v1/openapi.json", "/ui", "/ui/config"})
+		// OpenAPI doc, the console, its front-channel config, and the login endpoints stay reachable
+		// while a purge runs.
+		handler := hipo.HTTPMiddlewareBlockWhenPurgeInProgress(httpMux, purgeOpenPaths)
 
 		// Per-request logging: the gateway never runs the gRPC interceptor chain, so without this its
 		// traffic is invisible in logs. Positioned inside auth (so unauthenticated requests are still
@@ -670,7 +721,7 @@ func run(ctx context.Context, version versionInfo) error {
 		// unauthenticated request is rejected before any other check, mirroring the gRPC chain
 		// order.
 		if authEnabled {
-			handler = auth.HTTPMiddleware(verifier, handler, []string{"/healthz", "/readyz", "/ui", "/ui/config"})
+			handler = auth.HTTPMiddleware(verifier, handler, authOpenPaths, sessionCookie)
 		}
 
 		// Cap the request body the gateway will read when configured (0, the default, leaves it
@@ -842,6 +893,74 @@ func hmacConfigFromViper() auth.HMACConfig {
 		Keys:         keys,
 		ActiveKid:    viper.GetString("auth.activeKid"),
 	}
+}
+
+// buildOAuth2Login assembles the server-side OIDC login from the auth.oauth2 config block. All viper
+// reads stay here, per the repo convention. The issuer and audience default to the top-level
+// auth.issuer/auth.audience the token verifier already uses, so a single-provider deployment only
+// has to set the client credentials and redirect URL. A dedicated JWKS verifier is built to check
+// the id_token (whose audience is the client id, not the API audience), reusing the same key
+// machinery as the access-token verifier. The Secure cookie attribute follows the redirect URL's
+// scheme unless auth.oauth2.cookieSecure is set explicitly, so a Secure cookie is not silently
+// dropped on a local http rig nor omitted on an https deployment.
+func buildOAuth2Login(refreshInterval time.Duration) (*auth.OAuth2Login, error) {
+	issuer := viper.GetString("auth.oauth2.issuer")
+
+	if issuer == "" {
+		issuer = viper.GetString("auth.issuer")
+	}
+
+	audience := viper.GetString("auth.oauth2.audience")
+
+	if audience == "" {
+		audience = viper.GetString("auth.audience")
+	}
+
+	clientID := viper.GetString("auth.oauth2.clientId")
+
+	scopes := strings.Fields(viper.GetString("auth.oauth2.scopes"))
+
+	if len(scopes) == 0 {
+		scopes = []string{"openid", "profile", "email", "offline_access"}
+	}
+
+	redirectURL := viper.GetString("auth.oauth2.redirectUrl")
+
+	cookieSecure := strings.HasPrefix(strings.ToLower(redirectURL), "https")
+
+	if viper.IsSet("auth.oauth2.cookieSecure") {
+		cookieSecure = viper.GetBool("auth.oauth2.cookieSecure")
+	}
+
+	// The id_token carries the client id as its audience, so it needs its own verifier distinct from
+	// the access-token one (which enforces the API audience). Both discover from the same issuer and
+	// share the JWKS fetch/cache logic.
+	idTokenVerifier, err := auth.NewJWKSVerifier(auth.JWKSConfig{
+		JWKSURL:         viper.GetString("auth.jwksUrl"),
+		Issuer:          issuer,
+		Audience:        clientID,
+		RefreshInterval: refreshInterval,
+		RoleClaim:       viper.GetString("auth.roleClaim"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build id_token verifier: %w", err)
+	}
+
+	return auth.NewOAuth2Login(auth.OAuth2Config{
+		Issuer:                issuer,
+		ClientID:              clientID,
+		ClientSecret:          viper.GetString("auth.oauth2.clientSecret"),
+		RedirectURL:           redirectURL,
+		Scopes:                scopes,
+		Audience:              audience,
+		IDTokenVerifier:       idTokenVerifier,
+		CookieSecure:          cookieSecure,
+		CookieDomain:          viper.GetString("auth.oauth2.cookieDomain"),
+		PostLogoutRedirectURL: viper.GetString("auth.oauth2.postLogoutRedirectUrl"),
+		SuccessRedirectURL:    viper.GetString("auth.oauth2.successRedirectUrl"),
+		SessionTTL:            time.Duration(viper.GetInt("auth.oauth2.sessionTTLSeconds")) * time.Second,
+		RefreshTTL:            time.Duration(viper.GetInt("auth.oauth2.refreshTTLSeconds")) * time.Second,
+	})
 }
 
 // resolveMintKey decides which signing secret and kid --mint-token should use. An explicit
