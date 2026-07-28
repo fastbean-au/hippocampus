@@ -71,8 +71,12 @@ recurring **sleep** cycle consolidates (deletes) memories and events whose compu
 below a threshold, then persists the survivors to disk. Recalling a memory (`RecallMemories` RPC)
 reinforces it: the decay clock resets and each recall raises its effective significance. The sleep
 cycle can also identify events worth condensing into a single **summary** memory
-(`GetSummarizationCandidates`); the service has no visibility into memory content, so a client
-performs the actual replacement (`ReplaceMemoriesWithSummary`). Every RPC is also reachable as a
+(`GetSummarizationCandidates`); by default the service has no visibility into memory content, so a
+client performs the actual replacement (`ReplaceMemoriesWithSummary`). An optional embedded LLM
+(Ollama, `ollama.enabled`, off by default — the `summarize` package) lets the service author the
+summary itself: the `SummariseMemories` RPC generates and replaces in one call, and
+`ollama.autoSummarize` does it automatically for the scan's candidates during sleep. Every RPC is
+also reachable as a
 JSON/HTTP endpoint under `/v1` via an in-process grpc-gateway (`gateway.port`, 0 disables). Both
 transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`idp`) and TLS
 (`tls.enabled`); both are off by default.
@@ -239,7 +243,8 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   probe with SQLite via `information_schema`).
 - `contract/` — the gRPC contract (`hippocampus.proto`) and generated code. RPCs cover
   event/memory CRUD plus `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
-  `ReplaceMemoriesWithSummary`, `GetSummarizationCandidates`, `WhoAmI` (reports the caller's
+  `ReplaceMemoriesWithSummary`, `GetSummarizationCandidates`, `SummariseMemories` (the embedded-LLM
+  generate-and-replace), `WhoAmI` (reports the caller's
   effective authorization tier, so the web console can adapt), and the transfer/archive surface
   (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see
@@ -281,6 +286,19 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `Preserve` a no-op — so it never writes DDL or checkpoints the database the service owns),
   Postgres/MySQL via `db.NewPostgresReadOnly`/`NewMySQLReadOnly` (skipping the instance lock). Integration tests skip unless `HIPPOCAMPUS_TEST_OPENSEARCH_URL` is set;
   `docker/docker-compose.opensearch.yaml` runs the full stack.
+- `summarize/` — the optional embedded-LLM summariser (`ollama.enabled`, off by default;
+  `summarize.Summarizer` interface with a no-op and an `Ollama` implementation). The `Ollama`
+  impl is a small hand-rolled HTTP client to Ollama's `POST /api/generate` (`stream:false`, no new
+  module dependency), bounding the prompt by body count and total characters and never sending
+  binary bodies. It is the one component with visibility into memory content. Wired into
+  `hippocampus.Server` via the `summarize.Summarizer` field (nil-safe through `summariser()`, like
+  `searchIdx()`): the `SummariseMemories` RPC reads an event's memories, generates a summary, and
+  replaces them through the same `insertSummary` path `ReplaceMemoriesWithSummary` uses; the sleep
+  cycle's `autoSummarizeCandidates` (gated on `ollama.autoSummarize`, off by default) does the same
+  for the scan's candidates, best-effort. All viper reads stay in main.go, which builds the no-op or
+  `Ollama` from the `ollama.*` keys. An optional `ollama` compose profile ships it alongside the
+  service. Deliberately off the MCP tool surface (it deletes memories, like the omitted
+  `ReplaceMemoriesWithSummary`).
 - `archive/` — the export/import wire format and object storage:
   protodelim+gzip codec over `ArchiveRecord` protos (versioned header first) and the
   `ObjectStore` interface (Put/Get) with an aws-sdk-go-v2 S3 implementation

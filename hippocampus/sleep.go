@@ -32,6 +32,8 @@ func (s *Server) sleep() error {
 
 	s.scanSummarizationCandidates(ctx)
 
+	s.autoSummarizeCandidates(ctx)
+
 	e2 := s.evict(ctx)
 
 	e3 := s.preserve(ctx)

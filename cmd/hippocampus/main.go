@@ -35,6 +35,7 @@ import (
 	"github.com/fastbean-au/hippocampus/hippocampus"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/stats"
+	"github.com/fastbean-au/hippocampus/summarize"
 )
 
 func main() {
@@ -169,6 +170,9 @@ func execute(args []string) {
 	viper.SetDefault("opensearch.queueSize", 1024)
 	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
 	viper.SetDefault("opensearch.reconcileBatchSize", 500)
+	viper.SetDefault("ollama.address", "http://localhost:11434")
+	viper.SetDefault("ollama.model", "llama3.2")
+	viper.SetDefault("ollama.timeoutSeconds", 120)
 
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
 	// from the primary store and exits without starting the server (see backfill.go).
@@ -335,6 +339,34 @@ func run(ctx context.Context, version versionInfo) error {
 	// Consolidation and eviction delete memories inside the db layer, where the RPC-level
 	// write-through hooks never see them; the observer closes that gap.
 	database.SetMemoryDeleteObserver(searchIndex.DeleteMemories)
+
+	// initialise the optional embedded-LLM summariser (Ollama). Disabled by default: the no-op
+	// summariser makes SummariseMemories fail with FAILED_PRECONDITION and the sleep cycle's
+	// auto-summarisation a no-op, so the service behaves exactly as it did before. Construction
+	// only fails on unusable configuration (a missing address/model) - an unreachable Ollama server
+	// must not prevent startup, since summarisation is optional and best-effort.
+	summariser := summarize.NewNoop()
+
+	if viper.GetBool("ollama.enabled") {
+		log.Debug("initialising ollama summariser")
+
+		s, err := summarize.NewOllama(summarize.Config{
+			Address:         viper.GetString("ollama.address"),
+			Model:           viper.GetString("ollama.model"),
+			Timeout:         time.Duration(viper.GetInt("ollama.timeoutSeconds")) * time.Second,
+			MaxBodies:       viper.GetInt("ollama.maxMemories"),
+			PromptCharLimit: viper.GetInt("ollama.promptCharLimit"),
+			SystemPrompt:    viper.GetString("ollama.systemPrompt"),
+			Temperature:     viper.GetFloat64("ollama.temperature"),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialise ollama summariser: %w", err)
+		}
+
+		summariser = s
+
+		log.Debug("ollama summariser initialised")
+	}
 
 	// initialise the optional S3 object store backing the Export/Import RPCs. Nil when no bucket
 	// is configured, which makes those RPCs fail with FAILED_PRECONDITION rather than at startup:
@@ -503,7 +535,7 @@ func run(ctx context.Context, version versionInfo) error {
 	// initialise the gRPC server
 	log.Debug("initialising gRPC server")
 
-	hipo := hippocampus.New(database, searchIndex, objects)
+	hipo := hippocampus.New(database, searchIndex, objects, summariser)
 
 	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
 	// interceptor and returns codes.Internal rather than letting it crash the process. Auth runs

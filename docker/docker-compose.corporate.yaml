@@ -33,6 +33,13 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_TRACING_ENABLED: "${OBSERVABILITY:-false}"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
+      # Embedded-LLM summarisation (optional). Off unless OLLAMA=true and the `ollama` profile is
+      # active. Pull the model once the stack is up:
+      #   docker compose -f docker/docker-compose.corporate.yaml exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"
+      HIPPOCAMPUS_OLLAMA_ENABLED: "${OLLAMA:-false}"
+      HIPPOCAMPUS_OLLAMA_ADDRESS: "http://ollama:11434"
+      HIPPOCAMPUS_OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
+      HIPPOCAMPUS_OLLAMA_AUTOSUMMARIZE: "${OLLAMA_AUTOSUMMARIZE:-false}"
 
   postgres:
     image: postgres:17-alpine
@@ -84,6 +91,20 @@ services:
       - ./observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
       - ./observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
 
+  # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
+  # (and OLLAMA=true so the service uses it):
+  #
+  #   OLLAMA=true docker compose -f docker/docker-compose.corporate.yaml --profile ollama up --build
+  #   docker compose -f docker/docker-compose.corporate.yaml exec ollama ollama pull llama3.2
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - corporate-ollama-models:/root/.ollama
+
 volumes:
   corporate-postgres-data:
   corporate-opensearch-data:
+  corporate-ollama-models:

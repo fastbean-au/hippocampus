@@ -37,6 +37,7 @@ const (
 	Hippocampus_SearchMemories_FullMethodName             = "/proto.Hippocampus/SearchMemories"
 	Hippocampus_ReplaceMemoriesWithSummary_FullMethodName = "/proto.Hippocampus/ReplaceMemoriesWithSummary"
 	Hippocampus_GetSummarizationCandidates_FullMethodName = "/proto.Hippocampus/GetSummarizationCandidates"
+	Hippocampus_SummariseMemories_FullMethodName          = "/proto.Hippocampus/SummariseMemories"
 	Hippocampus_Export_FullMethodName                     = "/proto.Hippocampus/Export"
 	Hippocampus_Import_FullMethodName                     = "/proto.Hippocampus/Import"
 	Hippocampus_ImportBatch_FullMethodName                = "/proto.Hippocampus/ImportBatch"
@@ -125,6 +126,11 @@ type HippocampusClient interface {
 	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
 	// consolidation.summarizationMinMemories is configured.
 	GetSummarizationCandidates(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetSummarizationCandidatesResponse, error)
+	// SummariseMemories condenses an event's memories into a single summary using the optional
+	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
+	// does - so the service generates the summary the caller would otherwise have to supply. Fails
+	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
+	SummariseMemories(ctx context.Context, in *SummariseMemoriesRequest, opts ...grpc.CallOption) (*SummariseMemoriesResponse, error)
 	// Transfer and archive (embedded -> centralised)
 	// Export snapshots the whole store into an archive object in S3 and records a manifest of
 	// exactly what was captured; with clear set, the captured records are deleted once the upload
@@ -334,6 +340,16 @@ func (c *hippocampusClient) GetSummarizationCandidates(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *hippocampusClient) SummariseMemories(ctx context.Context, in *SummariseMemoriesRequest, opts ...grpc.CallOption) (*SummariseMemoriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SummariseMemoriesResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_SummariseMemories_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *hippocampusClient) Export(ctx context.Context, in *ExportRequest, opts ...grpc.CallOption) (*ExportResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExportResponse)
@@ -465,6 +481,11 @@ type HippocampusServer interface {
 	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
 	// consolidation.summarizationMinMemories is configured.
 	GetSummarizationCandidates(context.Context, *EmptyRequest) (*GetSummarizationCandidatesResponse, error)
+	// SummariseMemories condenses an event's memories into a single summary using the optional
+	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
+	// does - so the service generates the summary the caller would otherwise have to supply. Fails
+	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
+	SummariseMemories(context.Context, *SummariseMemoriesRequest) (*SummariseMemoriesResponse, error)
 	// Transfer and archive (embedded -> centralised)
 	// Export snapshots the whole store into an archive object in S3 and records a manifest of
 	// exactly what was captured; with clear set, the captured records are deleted once the upload
@@ -547,6 +568,9 @@ func (UnimplementedHippocampusServer) ReplaceMemoriesWithSummary(context.Context
 }
 func (UnimplementedHippocampusServer) GetSummarizationCandidates(context.Context, *EmptyRequest) (*GetSummarizationCandidatesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSummarizationCandidates not implemented")
+}
+func (UnimplementedHippocampusServer) SummariseMemories(context.Context, *SummariseMemoriesRequest) (*SummariseMemoriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SummariseMemories not implemented")
 }
 func (UnimplementedHippocampusServer) Export(context.Context, *ExportRequest) (*ExportResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Export not implemented")
@@ -908,6 +932,24 @@ func _Hippocampus_GetSummarizationCandidates_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Hippocampus_SummariseMemories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SummariseMemoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).SummariseMemories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_SummariseMemories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).SummariseMemories(ctx, req.(*SummariseMemoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Hippocampus_Export_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ExportRequest)
 	if err := dec(in); err != nil {
@@ -1076,6 +1118,10 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSummarizationCandidates",
 			Handler:    _Hippocampus_GetSummarizationCandidates_Handler,
+		},
+		{
+			MethodName: "SummariseMemories",
+			Handler:    _Hippocampus_SummariseMemories_Handler,
 		},
 		{
 			MethodName: "Export",

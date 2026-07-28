@@ -42,7 +42,7 @@ func newGatewayTestServer(t *testing.T) (*httptest.Server, *hippocampus.Server) 
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(database, nil, nil)
+	hipo := hippocampus.New(database, nil, nil, nil)
 	t.Cleanup(hipo.Stop)
 
 	gwMux := runtime.NewServeMux()
@@ -517,7 +517,7 @@ func TestGatewaySleepRejectedOnReplica(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(database, nil, nil)
+	hipo := hippocampus.New(database, nil, nil, nil)
 	t.Cleanup(hipo.Stop)
 
 	gwMux := runtime.NewServeMux()

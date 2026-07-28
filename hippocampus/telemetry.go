@@ -44,6 +44,7 @@ type telemetry struct {
 	summarizationCandidates metric.Int64Gauge
 	memoriesSummarized      metric.Int64Counter
 	summariesCreated        metric.Int64Counter
+	summarisations          metric.Int64Counter
 
 	exports         metric.Int64Counter
 	imports         metric.Int64Counter
@@ -83,8 +84,9 @@ func newTelemetry() *telemetry {
 		purges:           newInt64Counter(meter, "hippocampus.purges", "Number of purges performed."),
 
 		summarizationCandidates: newInt64Gauge(meter, "hippocampus.summarization_candidates", "Number of events identified as summarization candidates by the most recent sleep cycle."),
-		memoriesSummarized:      newInt64Counter(meter, "hippocampus.memories.summarized", "Number of memories replaced by a summary memory via ReplaceMemoriesWithSummary."),
-		summariesCreated:        newInt64Counter(meter, "hippocampus.summaries.created", "Number of summary memories created via ReplaceMemoriesWithSummary."),
+		memoriesSummarized:      newInt64Counter(meter, "hippocampus.memories.summarized", "Number of memories replaced by a summary memory (ReplaceMemoriesWithSummary or SummariseMemories)."),
+		summariesCreated:        newInt64Counter(meter, "hippocampus.summaries.created", "Number of summary memories created (ReplaceMemoriesWithSummary or SummariseMemories)."),
+		summarisations:          newInt64Counter(meter, "hippocampus.summarisations", "Number of embedded-LLM summarisation calls, by success."),
 
 		exports:         newInt64Counter(meter, "hippocampus.exports", "Number of Export runs, by success."),
 		imports:         newInt64Counter(meter, "hippocampus.imports", "Number of Import runs, by success."),

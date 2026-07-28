@@ -176,7 +176,7 @@ Hippocampus is production-hardened out of the box:
 ## ⚠️ Key Limitations
 
 * **Single Consolidator Rule:** Only one instance may perform consolidation/decay tasks per store to prevent race conditions during database compaction.
-* **Opaque Payloads:** Memory payloads are stored as raw bytes; summaries must be constructed upstream by client applications and submitted via `ReplaceMemoriesWithSummary`.
+* **Opaque Payloads:** Memory payloads are stored as raw bytes; by default summaries must be constructed upstream by client applications and submitted via `ReplaceMemoriesWithSummary`. An optional embedded LLM (Ollama, `ollama.enabled`) lets the service author summaries itself — via the `SummariseMemories` RPC or automatically during the sleep cycle — see [Summarization](docs/consolidation.md#summarization).
 * **Eventually Consistent Search:** The OpenSearch index is secondary and asynchronous. Primary database reads remain strictly consistent, while background sweeps handle reconciliation for content search.
 
 ---

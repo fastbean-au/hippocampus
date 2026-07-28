@@ -330,3 +330,46 @@ Summarization runs between consolidation and eviction each sleep cycle: it surfa
 after decay-based consolidation has already cleared out the truly worthless memories, and before
 capacity pressure would otherwise force eviction to delete valuable-but-numerous memories from
 those events outright.
+
+### Embedded LLM (Ollama)
+
+By default the service cannot write a summary itself — a client supplies it. Enabling the optional
+embedded LLM (an [Ollama](https://github.com/ollama/ollama) server) lets the service author the
+summary instead, using the one component that is allowed to read memory content. It is off by
+default; when disabled the service behaves exactly as above.
+
+- `SummariseMemories` (`POST /v1/events/{event_id}/summarise`) reads the event's memories, sends
+  their text bodies to the LLM to generate a summary, then replaces the memories with it in one
+  transaction — the same delete-and-insert `ReplaceMemoriesWithSummary` performs, but with the
+  service authoring the summary. Binary memories are excluded from the prompt (their bodies are
+  opaque, not text) but are still replaced. The summary's significance defaults to the highest
+  significance among the replaced memories unless the request sets `significance`/`placement`. It
+  fails with `FAILED_PRECONDITION` when no summariser is configured or the event has no text
+  memories, `NOT_FOUND` for an unknown event, and `UNAVAILABLE` when the LLM call fails. Like
+  `ReplaceMemoriesWithSummary`, it is a writer-tier RPC.
+- **Automatic summarization during sleep** (`ollama.autoSummarize`, off by default) makes the sleep
+  cycle summarise the candidates the scan just identified, instead of only surfacing them for a
+  client. It is best-effort: a per-event failure (unreachable model, an event that changed since
+  the scan) is logged and skipped without failing the cycle, and a summarised event is dropped from
+  the candidate list. It has effect only when both a summariser is configured (`ollama.enabled`)
+  and the candidate scan is enabled (`consolidation.summarizationMinMemories > 0`). It is off by
+  default so enabling the LLM does not silently start rewriting stored memories — turn it on
+  deliberately.
+
+Configuration (`ollama.*`):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ollama.enabled` | `false` | Enable the embedded summariser. When false, `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarization is a no-op. |
+| `ollama.address` | `http://localhost:11434` | Base URL of the Ollama server. |
+| `ollama.model` | `llama3.2` | Ollama model tag used for generation. |
+| `ollama.autoSummarize` | `false` | Summarise scan candidates automatically during the sleep cycle. |
+| `ollama.timeoutSeconds` | `120` | Per-call timeout for one summarisation request. |
+| `ollama.maxMemories` | `200` | Cap on how many memory bodies go into one prompt. |
+| `ollama.promptCharLimit` | `32000` | Cap on the total characters of memory bodies in one prompt. |
+| `ollama.systemPrompt` | built-in | Override the instruction sent to the model. |
+| `ollama.temperature` | model default | Sampling temperature; a low value keeps summaries faithful. |
+
+Deploy Ollama alongside the service with the optional `ollama` compose profile (see the comments
+in `docker-compose.yaml`); it must have the configured model pulled
+(`docker compose exec ollama ollama pull <model>`).

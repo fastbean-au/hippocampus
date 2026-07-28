@@ -45,7 +45,7 @@ func newGRPCTestServer(t *testing.T) (contract.HippocampusClient, string) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(database, nil, nil)
+	hipo := hippocampus.New(database, nil, nil, nil)
 	t.Cleanup(hipo.Stop)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -330,7 +330,7 @@ func TestGRPCEndToEndWithInterceptor(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(database, nil, nil)
+	hipo := hippocampus.New(database, nil, nil, nil)
 	t.Cleanup(hipo.Stop)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

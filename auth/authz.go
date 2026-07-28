@@ -116,6 +116,7 @@ var policies = map[string]rpcPolicy{
 	"UpdateMemory":               {TierWriter, http.MethodPatch, "/v1/memories/*"},
 	"DeleteMemories":             {TierWriter, http.MethodPost, "/v1/memories/delete"},
 	"ReplaceMemoriesWithSummary": {TierWriter, http.MethodPost, "/v1/events/*/summary"},
+	"SummariseMemories":          {TierWriter, http.MethodPost, "/v1/events/*/summarise"},
 	"Import":                     {TierWriter, http.MethodPost, "/v1/import"},
 	"ImportBatch":                {TierWriter, http.MethodPost, "/v1/import/batch"},
 

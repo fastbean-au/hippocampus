@@ -162,30 +162,31 @@ Each RPC maps onto a REST-ish path under `/v1`; path segments in `{braces}` come
 `GET`/`DELETE` take their remaining fields as query parameters, and `POST`/`PATCH` take them as
 a JSON body:
 
-| RPC                          | Method | Path                            |
-| ---------------------------- | ------ | ------------------------------- |
-| `StoreEvent`                 | POST   | `/v1/events`                    |
-| `GetEvents`                  | GET    | `/v1/events`                    |
-| `GetEventById`               | GET    | `/v1/events/{id}`               |
-| `DeleteEvent`                | DELETE | `/v1/events/{id}`               |
-| `EndEvent`                   | POST   | `/v1/events/{id}/end`           |
-| `UpdateEventSignificance`    | PATCH  | `/v1/events/{id}/significance`  |
-| `MergeEvents`                | POST   | `/v1/events/merge`              |
-| `ReplaceMemoriesWithSummary` | POST   | `/v1/events/{event_id}/summary` |
-| `StoreMemory`                | POST   | `/v1/memories`                  |
-| `UpdateMemory`               | PATCH  | `/v1/memories/{id}`             |
-| `GetMemories`                | GET    | `/v1/memories`                  |
-| `DeleteMemories`             | POST   | `/v1/memories/delete`           |
-| `RecallMemories`             | POST   | `/v1/memories/recall`           |
-| `GetSummarizationCandidates` | GET    | `/v1/summarization/candidates`  |
-| `Export`                     | POST   | `/v1/export`                    |
-| `Import`                     | POST   | `/v1/import`                    |
-| `ImportBatch`                | POST   | `/v1/import/batch`              |
-| `Transfer`                   | POST   | `/v1/transfer`                  |
-| `Clear`                      | POST   | `/v1/clear`                     |
-| `Sleep`                      | POST   | `/v1/sleep`                     |
-| `Purge`                      | POST   | `/v1/purge`                     |
-| `WhoAmI`                     | GET    | `/v1/whoami`                    |
+| RPC                          | Method | Path                              |
+| ---------------------------- | ------ | --------------------------------- |
+| `StoreEvent`                 | POST   | `/v1/events`                      |
+| `GetEvents`                  | GET    | `/v1/events`                      |
+| `GetEventById`               | GET    | `/v1/events/{id}`                 |
+| `DeleteEvent`                | DELETE | `/v1/events/{id}`                 |
+| `EndEvent`                   | POST   | `/v1/events/{id}/end`             |
+| `UpdateEventSignificance`    | PATCH  | `/v1/events/{id}/significance`    |
+| `MergeEvents`                | POST   | `/v1/events/merge`                |
+| `ReplaceMemoriesWithSummary` | POST   | `/v1/events/{event_id}/summary`   |
+| `StoreMemory`                | POST   | `/v1/memories`                    |
+| `UpdateMemory`               | PATCH  | `/v1/memories/{id}`               |
+| `GetMemories`                | GET    | `/v1/memories`                    |
+| `DeleteMemories`             | POST   | `/v1/memories/delete`             |
+| `RecallMemories`             | POST   | `/v1/memories/recall`             |
+| `GetSummarizationCandidates` | GET    | `/v1/summarization/candidates`    |
+| `SummariseMemories`          | POST   | `/v1/events/{event_id}/summarise` |
+| `Export`                     | POST   | `/v1/export`                      |
+| `Import`                     | POST   | `/v1/import`                      |
+| `ImportBatch`                | POST   | `/v1/import/batch`                |
+| `Transfer`                   | POST   | `/v1/transfer`                    |
+| `Clear`                      | POST   | `/v1/clear`                       |
+| `Sleep`                      | POST   | `/v1/sleep`                       |
+| `Purge`                      | POST   | `/v1/purge`                       |
+| `WhoAmI`                     | GET    | `/v1/whoami`                      |
 
 `ReplaceMemoriesWithSummary`'s body maps directly to its `summary` field (a `Memory`), rather
 than the whole request, so a client posts a plain memory object to
@@ -402,7 +403,7 @@ everything a lower one can:
 | Tier     | May call                                                                                                                                                                  |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarizationCandidates`, `WhoAmI`                                                    |
-| `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `Import`, `ImportBatch` |
+| `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `Export`, `Transfer`, `Clear`                                                                                              |
 
 `Export`/`Transfer` are `admin` because they read the whole store out; `Import`/`ImportBatch` are
@@ -727,6 +728,40 @@ and the Postgres open skips the single-instance advisory lock (it only reads). T
 a live run is that a memory deleted by the service mid-backfill can be re-indexed after its
 deletion propagated, leaving a stale document — harmless for reads (results are re-verified
 against the primary store) and cleared by the next `--reindex` run.
+
+### Summarization (embedded LLM / Ollama)
+
+By default summaries are authored by the client (`ReplaceMemoriesWithSummary`, see
+[Summarization](consolidation.md#summarization)). Enabling the optional embedded LLM — an
+[Ollama](https://github.com/ollama/ollama) server — lets the service author them itself: the
+`SummariseMemories` RPC (`POST /v1/events/{event_id}/summarise`) reads an event's memories,
+generates a summary via the model, and replaces them with it; and `ollama.autoSummarize` makes the
+sleep cycle do the same for each scan candidate. Off by default; when disabled `SummariseMemories`
+returns `FAILED_PRECONDITION` and auto-summarization is a no-op. The summariser is the one component
+that reads memory content, and it sends memory bodies to the Ollama server — see the
+[operations security note](operations.md#security).
+
+```json
+"ollama": {
+    "enabled": false,
+    "address": "http://localhost:11434",
+    "model": "llama3.2",
+    "autoSummarize": false,
+    "timeoutSeconds": 120,
+    "maxMemories": 200,
+    "promptCharLimit": 32000,
+    "systemPrompt": "",
+    "temperature": 0
+}
+```
+
+`enabled`/`address`/`model` are the core settings; the rest have sensible defaults (`maxMemories`
+and `promptCharLimit` bound the prompt so a large event cannot overrun a small model's context;
+`systemPrompt` empty uses a built-in memory-consolidation instruction; `temperature` 0 uses the
+model default). Binary memories are excluded from the prompt (their bodies are opaque). Deploy
+Ollama with the optional `ollama` compose profile (see `docker-compose.yaml`), with the configured
+model pulled (`docker compose exec ollama ollama pull <model>`). For the full behaviour, see
+[Summarization → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
 
 ### Transfer and archive
 

@@ -24,6 +24,7 @@ import (
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
+	"github.com/fastbean-au/hippocampus/summarize"
 )
 
 // sleepSingleflightKey is the sole key used with Server.sleepGroup: every caller wanting a sleep
@@ -137,6 +138,14 @@ type Consolidation struct {
 	summarizationMinMemories   int
 	summarizationMinAgeInDays  int
 	summarizationMaxCandidates int
+
+	// autoSummarize (ollama.autoSummarize) makes the sleep cycle summarise the candidates the scan
+	// identifies with the embedded LLM, instead of only surfacing them via
+	// GetSummarizationCandidates for a client to summarise. It has effect only when a real
+	// summariser is configured (ollama.enabled) and the candidate scan is enabled
+	// (summarizationMinMemories > 0). Off by default: enabling the LLM must not silently start
+	// rewriting stored memories.
+	autoSummarize bool
 }
 
 type Server struct {
@@ -146,6 +155,11 @@ type Server struct {
 	// search is the optional secondary content-search index; nil (as in tests constructing a
 	// Server directly) behaves as the disabled no-op via searchIdx().
 	search search.Index
+
+	// summarizer is the optional embedded-LLM summariser backing SummariseMemories and the sleep
+	// cycle's auto-summarisation; nil (as in tests constructing a Server directly) behaves as the
+	// disabled no-op via summariser().
+	summarizer summarize.Summarizer
 
 	// purgeInProgress is written by Purge and read by InterceptorBlockWhenPurgeInProgress from
 	// every RPC's own goroutine, so it must be an atomic rather than a plain bool.
@@ -270,16 +284,17 @@ func (s *Server) mayReinforce(ctx context.Context) bool {
 	return s.readerRecallReinforces
 }
 
-func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Server {
+func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore, summarizer summarize.Summarizer) *Server {
 	log.Trace("func() hippocampus.New()")
 
 	reset := make(chan bool, 1)
 
 	s := &Server{
-		db:        db,
-		search:    searchIndex,
-		objects:   objects,
-		manifests: make(map[string]*transferManifest),
+		db:         db,
+		search:     searchIndex,
+		summarizer: summarizer,
+		objects:    objects,
+		manifests:  make(map[string]*transferManifest),
 		transfer: Transfer{
 			targetAddress:         viper.GetString("transfer.targetAddress"),
 			token:                 viper.GetString("transfer.token"),
@@ -318,6 +333,7 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore) *Se
 			summarizationMinMemories:           viper.GetInt("consolidation.summarizationMinMemories"),
 			summarizationMinAgeInDays:          viper.GetInt("consolidation.summarizationMinAgeInDays"),
 			summarizationMaxCandidates:         viper.GetInt("consolidation.summarizationMaxCandidates"),
+			autoSummarize:                      viper.GetBool("ollama.autoSummarize"),
 		},
 	}
 

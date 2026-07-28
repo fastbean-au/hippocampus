@@ -29,6 +29,14 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_TRACING_ENABLED: "${OBSERVABILITY:-false}"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
+      # Embedded-LLM summarisation (optional). Off unless OLLAMA=true, which also requires the
+      # `ollama` profile (below). When on, SummariseMemories and (with OLLAMA_AUTOSUMMARIZE=true)
+      # the sleep cycle condense an event's memories via the ollama service. Pull the model first:
+      #   docker compose exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"
+      HIPPOCAMPUS_OLLAMA_ENABLED: "${OLLAMA:-false}"
+      HIPPOCAMPUS_OLLAMA_ADDRESS: "http://ollama:11434"
+      HIPPOCAMPUS_OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
+      HIPPOCAMPUS_OLLAMA_AUTOSUMMARIZE: "${OLLAMA_AUTOSUMMARIZE:-false}"
 
   # Optional MCP bridge over the streamable-HTTP transport, so an MCP host (Claude Desktop/Code) can
   # reach this embedded instance's memory tools over the network. Off by default; started only with
@@ -69,5 +77,22 @@ services:
       - ./docker/observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
       - ./docker/observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
 
+  # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
+  # (and set OLLAMA=true so the service actually uses it):
+  #
+  #   OLLAMA=true docker compose --profile ollama up --build
+  #   docker compose exec ollama ollama pull llama3.2   # one-time model pull
+  #
+  # Runs on CPU by default; for GPU acceleration add a `deploy.resources.reservations.devices`
+  # block per the ollama image docs. Models persist in the ollama-models volume.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434" # Ollama HTTP API
+    volumes:
+      - ollama-models:/root/.ollama
+
 volumes:
   hippocampus-data:
+  ollama-models:

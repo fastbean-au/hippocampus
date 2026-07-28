@@ -181,6 +181,17 @@ service Hippocampus {
 		};
 	}
 
+	// SummariseMemories condenses an event's memories into a single summary using the optional
+	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
+	// does - so the service generates the summary the caller would otherwise have to supply. Fails
+	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
+	rpc SummariseMemories(SummariseMemoriesRequest) returns (SummariseMemoriesResponse) {
+		option (google.api.http) = {
+			post: "/v1/events/{event_id}/summarise"
+			body: "*"
+		};
+	}
+
 	// Transfer and archive (embedded -> centralised)
 	// Export snapshots the whole store into an archive object in S3 and records a manifest of
 	// exactly what was captured; with clear set, the captured records are deleted once the upload
@@ -451,6 +462,22 @@ message SummarizationCandidate {
 
 message GetSummarizationCandidatesResponse {
 	repeated SummarizationCandidate         candidates               = 1;
+}
+
+// SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the
+// embedded LLM (ollama.enabled) and replace them with it in one transaction, like
+// ReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are
+// excluded from the LLM prompt (their bodies are opaque, not text).
+message SummariseMemoriesRequest {
+	string                                 event_id                  = 1;
+	int32                                  significance              = 2; // optional: significance for the resulting summary memory; 0 (and no placement) defaults to the highest significance among the replaced memories
+	SignificancePlacement                  placement                 = 3; // optional: rank the summary relative to existing values (see SignificancePlacement); takes precedence over significance when set
+}
+
+message SummariseMemoriesResponse {
+	string                                 id                        = 1; // the new summary memory's id
+	int32                                  memories_replaced         = 2; // how many memories the summary replaced
+	string                                 summary                   = 3; // the LLM-generated summary text stored in the new memory
 }
 
 // ArchiveHeader is the first record of an export archive: a gzip-compressed stream of

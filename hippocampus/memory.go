@@ -271,7 +271,26 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 		return &res, mapError(err)
 	}
 
-	summary := types.MemoryFromProto(in.GetSummary())
+	id, replaced, err := s.insertSummary(ctx, eventId, in.GetSummary())
+	if err != nil {
+		return &res, err
+	}
+
+	res.Id = id
+	res.MemoriesReplaced = int32(replaced)
+
+	return &res, nil
+}
+
+// insertSummary validates summaryProto, resolves its significance/placement, and replaces every
+// memory of eventId with a single summary memory built from it, in one transaction. The caller
+// must have verified the event exists. It is the shared body of ReplaceMemoriesWithSummary
+// (caller-supplied summary) and SummariseMemories (LLM-generated summary): same validation,
+// minimum-significance gate, recall-state reset, significance resolution, telemetry, and search
+// write-through. The returned error is already an appropriate gRPC status (InvalidArgument for a
+// rejected summary, else mapError'd), ready to return unchanged.
+func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto *contract.Memory) (string, int, error) {
+	summary := types.MemoryFromProto(summaryProto)
 	summary.EventId = eventId
 	summary.IsSummary = true
 
@@ -283,34 +302,31 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 	if err := summary.ValidateInsert(s.maxMemoryBodyLength, false); err != nil {
 		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
 
-		return &res, status.Error(codes.InvalidArgument, err.Error())
+		return "", 0, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if !hasPlacement(in.GetSummary().GetPlacement()) && summary.Significance > 0 && summary.Significance < s.minimumMemorySignificance {
+	if !hasPlacement(summaryProto.GetPlacement()) && summary.Significance > 0 && summary.Significance < s.minimumMemorySignificance {
 		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "insignificant")))
 
-		return &res, fmt.Errorf("summary significance below minimum")
+		return "", 0, status.Error(codes.InvalidArgument, "summary significance below minimum")
 	}
 
 	// Resolve the summary's significance/placement to a registry level before it is inserted.
-	if err := s.resolveMemorySignificance(ctx, in.GetSummary(), &summary); err != nil {
+	if err := s.resolveMemorySignificance(ctx, summaryProto, &summary); err != nil {
 		if errors.Is(err, db.ErrInvalidPlacement) {
 
-			return &res, status.Error(codes.InvalidArgument, err.Error())
+			return "", 0, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		return &res, mapError(err)
+		return "", 0, mapError(err)
 	}
 
 	summary.SetDefaults()
 
 	replaced, err := s.db.ReplaceMemoriesWithSummary(ctx, eventId, summary)
 	if err != nil {
-		return &res, mapError(err)
+		return "", 0, mapError(err)
 	}
-
-	res.Id = summary.Id
-	res.MemoriesReplaced = int32(replaced)
 
 	tel.memoriesSummarized.Add(ctx, int64(replaced))
 	tel.summariesCreated.Add(ctx, 1)
@@ -320,7 +336,7 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 	s.searchIdx().DeleteByEventId(eventId)
 	s.searchIdx().IndexMemory(search.DocFromMemory(summary))
 
-	return &res, nil
+	return summary.Id, replaced, nil
 }
 
 // GetSummarizationCandidates returns the events identified by the most recent sleep cycle as

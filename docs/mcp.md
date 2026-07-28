@@ -37,8 +37,9 @@ docker pull ghcr.io/fastbean-au/hippocampus-mcp:latest
 
 The surface is the per-item memory-and-event operations a model needs to give, retrieve, revise, and
 forget memories. The administrative, destructive, and bulk data-movement RPCs (`Purge`, `Sleep`,
-`Export`/`Import`/`Transfer`/`Clear`, event deletion/merge) are **not** exposed, so a model cannot
-wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`, `update_memory`,
+`Export`/`Import`/`Transfer`/`Clear`, event deletion/merge, and `SummariseMemories` — which deletes
+an event's memories, replacing them with an LLM-generated summary) are **not** exposed, so a model
+cannot wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`, `update_memory`,
 `delete_memories`, `create_event`) are all `writer`-tier; what a given token may actually do is
 enforced by the service's [role tiers](configuration.md#authorization), so a `reader`-scoped token is
 refused every mutation regardless of which tools are registered here. `delete_memories` is a by-id

@@ -388,3 +388,11 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
   the HTTP gateway does not by default — set `gateway.maxRequestBytes` to a transport-level ceiling
   (and/or `memory.limit.sizeBytes`) when the gateway is reachable by untrusted callers. Keep the
   ceiling above your largest legitimate `ImportBatch`/`Transfer` body.
+- **Embedded LLM summariser (`ollama.enabled`).** Off by default; when on, the summariser is the one
+  component that reads memory content, and it sends the text bodies of an event's memories to the
+  configured Ollama server (`SummariseMemories`, and — with `ollama.autoSummarize` — the sleep
+  cycle). Treat that as memory content leaving the process: run Ollama on a private network or the
+  same host (`http://localhost:11434`), not a shared or third-party endpoint, and reach it over TLS
+  if it is remote. `ollama.autoSummarize` rewrites stored memories automatically during sleep, so
+  leave it off unless that behaviour is intended. See
+  [Summarization → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).

@@ -159,6 +159,50 @@ func TestRun_OpenSearchInitError(t *testing.T) {
 	}
 }
 
+// TestRun_OllamaEnabled covers the ollama.enabled success branch: NewOllama only validates the
+// address/model (no connectivity check), so pointing at an address nothing listens on still lets run
+// start and serve normally with the summariser wired in.
+func TestRun_OllamaEnabled(t *testing.T) {
+	_, gwBase := baseRunConfig(t)
+	viper.Set("ollama.enabled", true)
+	viper.Set("ollama.address", "http://127.0.0.1:1")
+	viper.Set("ollama.model", "test-model")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, versionInfo{}) }()
+
+	waitForOK(t, http.DefaultClient, gwBase+"/healthz")
+
+	cancel()
+
+	select {
+
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned an error: %v", err)
+		}
+
+	case <-time.After(20 * time.Second):
+		t.Fatal("run did not return after cancellation")
+
+	}
+}
+
+// TestRun_OllamaInitError covers the ollama.enabled error branch: an empty model fails NewOllama's
+// construction synchronously, so run must return that error before starting the server.
+func TestRun_OllamaInitError(t *testing.T) {
+	baseRunConfig(t)
+	viper.Set("ollama.enabled", true)
+	viper.Set("ollama.address", "http://127.0.0.1:11434")
+	viper.Set("ollama.model", "")
+
+	if err := run(context.Background(), versionInfo{}); err == nil {
+		t.Fatal("expected run to fail on an ollama configuration with no model")
+	}
+}
+
 // TestRun_S3Configured covers the s3.bucket success branch: constructing the S3 object store only
 // resolves the AWS SDK's default credential/config chain, which succeeds without a reachable AWS
 // endpoint, so run must start and serve normally with the archive object store wired in.

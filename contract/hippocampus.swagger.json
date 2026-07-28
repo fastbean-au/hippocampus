@@ -238,6 +238,45 @@
         ]
       }
     },
+    "/v1/events/{eventId}/summarise": {
+      "post": {
+        "summary": "SummariseMemories condenses an event's memories into a single summary using the optional\nembedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary\ndoes - so the service generates the summary the caller would otherwise have to supply. Fails\nwith FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.",
+        "operationId": "Hippocampus_SummariseMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoSummariseMemoriesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusSummariseMemoriesBody"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/events/{eventId}/summary": {
       "post": {
         "summary": "Summarization\nReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single\ncaller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.",
@@ -943,6 +982,21 @@
         }
       }
     },
+    "HippocampusSummariseMemoriesBody": {
+      "type": "object",
+      "properties": {
+        "significance": {
+          "type": "integer",
+          "format": "int32",
+          "title": "optional: significance for the resulting summary memory; 0 (and no placement) defaults to the highest significance among the replaced memories"
+        },
+        "placement": {
+          "$ref": "#/definitions/protoSignificancePlacement",
+          "title": "optional: rank the summary relative to existing values (see SignificancePlacement); takes precedence over significance when set"
+        }
+      },
+      "description": "SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the\nembedded LLM (ollama.enabled) and replace them with it in one transaction, like\nReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are\nexcluded from the LLM prompt (their bodies are opaque, not text)."
+    },
     "HippocampusUpdateEventSignificanceBody": {
       "type": "object",
       "properties": {
@@ -1480,6 +1534,24 @@
         }
       },
       "description": "StoreMemoryResponse carries the stored memory's id. A memory whose significance is below\nmemory.minimumSignificance is quietly forgotten, like a brain that simply does not retain the\ninsignificant: no error is returned, id is empty, and rejected is true."
+    },
+    "protoSummariseMemoriesResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "the new summary memory's id"
+        },
+        "memoriesReplaced": {
+          "type": "integer",
+          "format": "int32",
+          "title": "how many memories the summary replaced"
+        },
+        "summary": {
+          "type": "string",
+          "title": "the LLM-generated summary text stored in the new memory"
+        }
+      }
     },
     "protoSummarizationCandidate": {
       "type": "object",
