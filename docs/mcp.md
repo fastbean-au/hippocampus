@@ -41,7 +41,7 @@ forget memories. The administrative, destructive, and bulk data-movement RPCs (`
 an event's memories, replacing them with an LLM-generated summary) are **not** exposed, so a model
 cannot wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`, `update_memory`,
 `delete_memories`, `create_event`) are all `writer`-tier; what a given token may actually do is
-enforced by the service's [role tiers](configuration.md#authorization), so a `reader`-scoped token is
+enforced by the service's [role tiers](configuration.md#authorisation), so a `reader`-scoped token is
 refused every mutation regardless of which tools are registered here. `delete_memories` is a by-id
 scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear`,
 which stay `admin`-tier and off this surface.
@@ -56,7 +56,7 @@ which stay `admin`-tier and off this surface.
 | `list_memories` | `GetMemories` | Read-only browse by group/significance; does **not** reinforce. |
 | `create_event` | `StoreEvent` | A named time span memories can be grouped under. |
 | `list_events` | `GetEvents` | Read-only browse of events. |
-| `get_summarization_candidates` | `GetSummarizationCandidates` | Events the last consolidation cycle flagged as worth condensing. |
+| `get_summarisation_candidates` | `GetSummarisationCandidates` | Events the last consolidation cycle flagged as worth condensing. |
 
 Memories and events are returned as plain JSON objects (the read-only fields — `id`, `time_stamp`,
 `recall_count`, `is_summary`, and so on — included) so the model can reason about them and feed ids
@@ -85,7 +85,7 @@ hippocampus-mcp --address memory.internal:50051 --tls --tls-ca-cert /etc/ssl/hip
 The auth and TLS options mirror the service's own [authentication](configuration.md#authentication)
 and [TLS](configuration.md#tls) surface. Mint a token with
 `hippocampus --mint-token --client-id <id> --role writer --ttl 24h -c config.json`; the same token
-authenticates the bridge. Give it at least the `writer` [tier](configuration.md#authorization) — the
+authenticates the bridge. Give it at least the `writer` [tier](configuration.md#authorisation) — the
 bridge's tools include `store_memory` and `create_event` — or `reader` if you only expose the
 read-only tools. The token may also be supplied as `HIPPOCAMPUS_MCP_TOKEN` (any flag maps to
 `HIPPOCAMPUS_MCP_<NAME>` with dashes as underscores), keeping the secret out of the argv the host

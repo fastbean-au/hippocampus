@@ -233,18 +233,18 @@ func TestReplaceMemoriesWithSummary_RejectsInsignificantSummary(t *testing.T) {
 	}
 }
 
-// TestGetSummarizationCandidates_RPC verifies that the RPC returns whatever the most recent scan
+// TestGetSummarisationCandidates_RPC verifies that the RPC returns whatever the most recent scan
 // stored on the server, converted to contract.
-func TestGetSummarizationCandidates_RPC(t *testing.T) {
+func TestGetSummarisationCandidates_RPC(t *testing.T) {
 	s := newTestServer(t)
 
-	s.summarizationCandidates = []db.SummarizationCandidate{
+	s.summarisationCandidates = []db.SummarisationCandidate{
 		{EventId: "e1", EventName: "trip", MemoryCount: 12},
 	}
 
-	res, err := s.GetSummarizationCandidates(context.Background(), &contract.EmptyRequest{})
+	res, err := s.GetSummarisationCandidates(context.Background(), &contract.EmptyRequest{})
 	if err != nil {
-		t.Fatalf("GetSummarizationCandidates: %s", err)
+		t.Fatalf("GetSummarisationCandidates: %s", err)
 	}
 
 	if len(res.GetCandidates()) != 1 {
@@ -257,15 +257,15 @@ func TestGetSummarizationCandidates_RPC(t *testing.T) {
 	}
 }
 
-// TestGetSummarizationCandidates_Empty verifies that an unpopulated candidate list (the default
+// TestGetSummarisationCandidates_Empty verifies that an unpopulated candidate list (the default
 // before the first sleep cycle, or with the scan disabled) returns an empty response rather than
 // an error.
-func TestGetSummarizationCandidates_Empty(t *testing.T) {
+func TestGetSummarisationCandidates_Empty(t *testing.T) {
 	s := newTestServer(t)
 
-	res, err := s.GetSummarizationCandidates(context.Background(), &contract.EmptyRequest{})
+	res, err := s.GetSummarisationCandidates(context.Background(), &contract.EmptyRequest{})
 	if err != nil {
-		t.Fatalf("GetSummarizationCandidates: %s", err)
+		t.Fatalf("GetSummarisationCandidates: %s", err)
 	}
 
 	if len(res.GetCandidates()) != 0 {

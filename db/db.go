@@ -368,10 +368,10 @@ const (
 	SignificanceExtremumLowest
 )
 
-// SummarizationCandidate identifies an event whose memories have accumulated enough, and gone
+// SummarisationCandidate identifies an event whose memories have accumulated enough, and gone
 // quiet for long enough, to be worth condensing into a single summary memory via
 // ReplaceMemoriesWithSummary.
-type SummarizationCandidate struct {
+type SummarisationCandidate struct {
 	EventId     string
 	EventName   string
 	MemoryCount int
@@ -443,7 +443,7 @@ type Store interface {
 	ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error)
 	ConsolidateEvents(ctx context.Context, s Server) (int, error)
 	EvictMemories(ctx context.Context, s Server, freeBytes int64) (int, int, int64, error)
-	FindSummarizationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarizationCandidate, error)
+	FindSummarisationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarisationCandidate, error)
 
 	// Export/transfer surface (see transfer.go): keyset pagination over the whole store,
 	// full-state import upserts, and the manifest-scoped clear primitives.

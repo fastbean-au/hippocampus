@@ -161,7 +161,7 @@ service Hippocampus {
 		};
 	}
 
-	// Summarization
+	// Summarisation
 	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
 	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
 	rpc ReplaceMemoriesWithSummary(ReplaceMemoriesWithSummaryRequest) returns (ReplaceMemoriesWithSummaryResponse) {
@@ -171,13 +171,13 @@ service Hippocampus {
 		};
 	}
 
-	// GetSummarizationCandidates returns events identified by the most recent sleep cycle as having
-	// accumulated enough quiet, unsummarized memories to be worth condensing via
+	// GetSummarisationCandidates returns events identified by the most recent sleep cycle as having
+	// accumulated enough quiet, unsummarised memories to be worth condensing via
 	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
-	// consolidation.summarizationMinMemories is configured.
-	rpc GetSummarizationCandidates(EmptyRequest) returns (GetSummarizationCandidatesResponse) {
+	// consolidation.summarisationMinMemories is configured.
+	rpc GetSummarisationCandidates(EmptyRequest) returns (GetSummarisationCandidatesResponse) {
 		option (google.api.http) = {
-			get: "/v1/summarization/candidates"
+			get: "/v1/summarisation/candidates"
 		};
 	}
 
@@ -451,17 +451,17 @@ message ReplaceMemoriesWithSummaryResponse {
 	int32                                  memories_replaced         = 2;
 }
 
-// SummarizationCandidate identifies an event whose memories have accumulated enough, and gone
+// SummarisationCandidate identifies an event whose memories have accumulated enough, and gone
 // quiet for long enough, to be worth condensing into a single summary memory via
 // ReplaceMemoriesWithSummary.
-message SummarizationCandidate {
+message SummarisationCandidate {
 	string                                 event_id                  = 1;
 	string                                 event_name                = 2;
 	int32                                  memory_count              = 3;
 }
 
-message GetSummarizationCandidatesResponse {
-	repeated SummarizationCandidate         candidates               = 1;
+message GetSummarisationCandidatesResponse {
+	repeated SummarisationCandidate         candidates               = 1;
 }
 
 // SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the

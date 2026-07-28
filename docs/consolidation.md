@@ -1,7 +1,7 @@
 # Memory consolidation
 
 How Hippocampus decides what to forget: the value model, the six deletion algorithms, the
-byte-capacity target, checkpoint-triggered eviction, and summarization. For the knobs that
+byte-capacity target, checkpoint-triggered eviction, and summarisation. For the knobs that
 drive these, see [Configurability](configuration.md); for operational tuning, the
 [Operations guide](operations.md).
 
@@ -300,9 +300,9 @@ eviction it finds due) happens sooner. The check runs every few seconds against 
 size on disk, independent of `sleep.periodSeconds`, and — like the manual `Sleep` RPC — shares a
 single in-flight sleep cycle with the timer rather than running a second, overlapping one.
 
-## Summarization
+## Summarisation
 
-Consolidation and eviction can only delete memories outright. Summarization offers a third
+Consolidation and eviction can only delete memories outright. Summarisation offers a third
 option — for an event whose memories have accumulated enough to be worth condensing, and gone
 quiet for long enough that they are unlikely to be added to again, replace them with a single
 memory that carries the gist instead of losing the detail entirely. The service has no
@@ -311,12 +311,12 @@ client must supply it, typically after inspecting the event's memories via `GetE
 
 Two RPCs support this:
 
-- `GetSummarizationCandidates` returns the events identified by the most recent sleep cycle as
-  candidates: at least `consolidation.summarizationMinMemories` unsummarized memories (0
+- `GetSummarisationCandidates` returns the events identified by the most recent sleep cycle as
+  candidates: at least `consolidation.summarisationMinMemories` unsummarised memories (0
   disables the scan), all of them last touched — created or recalled — more than
-  `consolidation.summarizationMinAgeInDays` ago. Requiring every memory in the group to have
+  `consolidation.summarisationMinAgeInDays` ago. Requiring every memory in the group to have
   gone quiet avoids flagging an event that is still being actively written to. The list is
-  capped at `consolidation.summarizationMaxCandidates` events (0 leaves it unbounded) and is a
+  capped at `consolidation.summarisationMaxCandidates` events (0 leaves it unbounded) and is a
   point-in-time snapshot, refreshed each sleep cycle and not updated in between.
 - `ReplaceMemoriesWithSummary` deletes every memory associated with the given event and inserts
   the caller-supplied summary memory in their place, in a single transaction. The summary is
@@ -324,9 +324,9 @@ Two RPCs support this:
   rejected summary leaves the original memories untouched. The new memory is flagged
   `is_summary`; it decays and can be recalled like any other memory, and — since it no longer
   meets the memory-count threshold on its own — will not be re-offered as a candidate until
-  enough fresh, unsummarized memories accumulate against the same event again.
+  enough fresh, unsummarised memories accumulate against the same event again.
 
-Summarization runs between consolidation and eviction each sleep cycle: it surfaces candidates
+Summarisation runs between consolidation and eviction each sleep cycle: it surfaces candidates
 after decay-based consolidation has already cleared out the truly worthless memories, and before
 capacity pressure would otherwise force eviction to delete valuable-but-numerous memories from
 those events outright.
@@ -347,12 +347,12 @@ default; when disabled the service behaves exactly as above.
   fails with `FAILED_PRECONDITION` when no summariser is configured or the event has no text
   memories, `NOT_FOUND` for an unknown event, and `UNAVAILABLE` when the LLM call fails. Like
   `ReplaceMemoriesWithSummary`, it is a writer-tier RPC.
-- **Automatic summarization during sleep** (`ollama.autoSummarize`, off by default) makes the sleep
+- **Automatic summarisation during sleep** (`ollama.autoSummarise`, off by default) makes the sleep
   cycle summarise the candidates the scan just identified, instead of only surfacing them for a
   client. It is best-effort: a per-event failure (unreachable model, an event that changed since
   the scan) is logged and skipped without failing the cycle, and a summarised event is dropped from
   the candidate list. It has effect only when both a summariser is configured (`ollama.enabled`)
-  and the candidate scan is enabled (`consolidation.summarizationMinMemories > 0`). It is off by
+  and the candidate scan is enabled (`consolidation.summarisationMinMemories > 0`). It is off by
   default so enabling the LLM does not silently start rewriting stored memories — turn it on
   deliberately.
 
@@ -360,10 +360,10 @@ Configuration (`ollama.*`):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `ollama.enabled` | `false` | Enable the embedded summariser. When false, `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarization is a no-op. |
+| `ollama.enabled` | `false` | Enable the embedded summariser. When false, `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. |
 | `ollama.address` | `http://localhost:11434` | Base URL of the Ollama server. |
 | `ollama.model` | `llama3.2` | Ollama model tag used for generation. |
-| `ollama.autoSummarize` | `false` | Summarise scan candidates automatically during the sleep cycle. |
+| `ollama.autoSummarise` | `false` | Summarise scan candidates automatically during the sleep cycle. |
 | `ollama.timeoutSeconds` | `120` | Per-call timeout for one summarisation request. |
 | `ollama.maxMemories` | `200` | Cap on how many memory bodies go into one prompt. |
 | `ollama.promptCharLimit` | `32000` | Cap on the total characters of memory bodies in one prompt. |

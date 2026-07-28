@@ -24,7 +24,7 @@ type hippoClient interface {
 	GetMemories(ctx context.Context, in *contract.GetMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
 	StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error)
 	GetEvents(ctx context.Context, in *contract.GetEventsRequest, opts ...grpc.CallOption) (*contract.GetEventsResponse, error)
-	GetSummarizationCandidates(ctx context.Context, in *contract.EmptyRequest, opts ...grpc.CallOption) (*contract.GetSummarizationCandidatesResponse, error)
+	GetSummarisationCandidates(ctx context.Context, in *contract.EmptyRequest, opts ...grpc.CallOption) (*contract.GetSummarisationCandidatesResponse, error)
 }
 
 // bridge holds the gRPC client every tool handler dispatches through, plus the per-call timeout
@@ -121,11 +121,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 	}, b.listEvents)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "get_summarization_candidates",
+		Name: "get_summarisation_candidates",
 		Description: "List events whose memories have accumulated and gone quiet long enough to be " +
 			"worth condensing into a single summary. Identified by the most recent consolidation " +
 			"cycle; empty unless the service is configured to scan for them.",
-	}, b.getSummarizationCandidates)
+	}, b.getSummarisationCandidates)
 
 	return server
 }
@@ -484,37 +484,37 @@ func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in list
 	return nil, eventsPageOutput{Events: out, TotalCount: res.GetTotalCount()}, nil
 }
 
-// --- get_summarization_candidates ---
+// --- get_summarisation_candidates ---
 
-type summarizationCandidateView struct {
+type summarisationCandidateView struct {
 	EventId     string `json:"event_id"`
 	EventName   string `json:"event_name"`
 	MemoryCount int32  `json:"memory_count"`
 }
 
-type summarizationCandidatesOutput struct {
-	Candidates []summarizationCandidateView `json:"candidates"`
+type summarisationCandidatesOutput struct {
+	Candidates []summarisationCandidateView `json:"candidates"`
 }
 
-func (b *bridge) getSummarizationCandidates(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, summarizationCandidatesOutput, error) {
+func (b *bridge) getSummarisationCandidates(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, summarisationCandidatesOutput, error) {
 	callCtx, cancel := b.callContext(ctx)
 	defer cancel()
 
-	res, err := b.client.GetSummarizationCandidates(callCtx, &contract.EmptyRequest{})
+	res, err := b.client.GetSummarisationCandidates(callCtx, &contract.EmptyRequest{})
 	if err != nil {
 
-		return nil, summarizationCandidatesOutput{}, fmt.Errorf("GetSummarizationCandidates failed: %w", err)
+		return nil, summarisationCandidatesOutput{}, fmt.Errorf("GetSummarisationCandidates failed: %w", err)
 	}
 
-	out := make([]summarizationCandidateView, 0, len(res.GetCandidates()))
+	out := make([]summarisationCandidateView, 0, len(res.GetCandidates()))
 
 	for _, v := range res.GetCandidates() {
-		out = append(out, summarizationCandidateView{
+		out = append(out, summarisationCandidateView{
 			EventId:     v.GetEventId(),
 			EventName:   v.GetEventName(),
 			MemoryCount: v.GetMemoryCount(),
 		})
 	}
 
-	return nil, summarizationCandidatesOutput{Candidates: out}, nil
+	return nil, summarisationCandidatesOutput{Candidates: out}, nil
 }

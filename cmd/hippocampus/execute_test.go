@@ -143,7 +143,7 @@ func TestExecute_MintTokenHappyPath(t *testing.T) {
 }
 
 // TestExecute_MintTokenRequiresRole fails fast when --mint-token is given no --role: a role-less
-// token authorizes no RPC under the default-closed policy, so it is almost certainly a mistake.
+// token authorises no RPC under the default-closed policy, so it is almost certainly a mistake.
 func TestExecute_MintTokenRequiresRole(t *testing.T) {
 	viper.Reset()
 	defer viper.Reset()

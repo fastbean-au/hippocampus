@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Tier is an ordered authorization level. The tiers nest - writer includes every reader-level RPC,
+// Tier is an ordered authorisation level. The tiers nest - writer includes every reader-level RPC,
 // admin includes every writer-level RPC - so a required tier is satisfied by any tier at or above
 // it (tier >= required). Zero is deliberately not a valid tier: a token whose roles resolve to no
 // known tier has tierNone and is denied every Hippocampus RPC (default-closed).
@@ -81,7 +81,7 @@ func parseTier(name string) (Tier, bool) {
 	}
 }
 
-// rpcPolicy is the authorization policy for a single RPC: the minimum tier a caller needs, plus the
+// rpcPolicy is the authorisation policy for a single RPC: the minimum tier a caller needs, plus the
 // HTTP verb and (capture-normalised) path the gateway exposes it as. It is the one place a new RPC
 // is assigned a tier; both the gRPC method map and the gateway route map are derived from it, so
 // the two transports can never enforce different policies.
@@ -91,9 +91,9 @@ type rpcPolicy struct {
 	httpPath   string
 }
 
-// policies is the authoritative per-RPC authorization table, keyed by bare gRPC method name (as it
+// policies is the authoritative per-RPC authorisation table, keyed by bare gRPC method name (as it
 // appears in contract.Hippocampus_ServiceDesc). httpPath is the google.api.http path with every
-// capture segment normalised to "*" (see normalizePattern), so it matches what the gateway
+// capture segment normalised to "*" (see normalisePattern), so it matches what the gateway
 // middleware computes from the matched pattern at request time. A drift-guard test asserts every
 // RPC in the service descriptor has an entry here.
 var policies = map[string]rpcPolicy{
@@ -104,7 +104,7 @@ var policies = map[string]rpcPolicy{
 	"GetMemories":                {TierReader, http.MethodGet, "/v1/memories"},
 	"RecallMemories":             {TierReader, http.MethodPost, "/v1/memories/recall"},
 	"SearchMemories":             {TierReader, http.MethodPost, "/v1/memories/search"},
-	"GetSummarizationCandidates": {TierReader, http.MethodGet, "/v1/summarization/candidates"},
+	"GetSummarisationCandidates": {TierReader, http.MethodGet, "/v1/summarisation/candidates"},
 
 	// writes
 	"StoreEvent":                 {TierWriter, http.MethodPost, "/v1/events"},
@@ -129,34 +129,34 @@ var policies = map[string]rpcPolicy{
 }
 
 // captureSegment matches a grpc-gateway path capture as Pattern.String renders it (e.g. "{id=*}"),
-// so normalizePattern can reduce it to the placeholder the policy table uses.
+// so normalisePattern can reduce it to the placeholder the policy table uses.
 var captureSegment = regexp.MustCompile(`\{[^}]*\}`)
 
-// normalizePattern reduces a google.api.http path template to the form used as a gateway policy
+// normalisePattern reduces a google.api.http path template to the form used as a gateway policy
 // key: every capture segment ("{id=*}", "{event_id=*}") becomes "*". This keeps the policy keys
 // independent of capture variable names and of grpc-gateway's exact rendering, while staying unique
 // per route (no two RPCs share a verb and normalised path).
-func normalizePattern(pattern string) string {
+func normalisePattern(pattern string) string {
 	return captureSegment.ReplaceAllString(pattern, "*")
 }
 
-// Authorizer decides whether an authenticated caller may invoke a given RPC. It holds the derived
+// Authoriser decides whether an authenticated caller may invoke a given RPC. It holds the derived
 // per-method and per-route tier maps plus the role-name -> tier resolution, and exposes the two
 // enforcement adapters (gRPC interceptor, gateway middleware). It is immutable after construction,
 // so a single instance is shared by both transports.
-type Authorizer struct {
+type Authoriser struct {
 	methodTiers  map[string]Tier // "/proto.Hippocampus/<Method>" -> required tier
 	gatewayTiers map[string]Tier // "<VERB> <normalised path>"    -> required tier
 	roleTiers    map[string]Tier // role name (lower-cased)        -> granted tier
 }
 
-// NewAuthorizer builds an Authorizer. The role->tier resolution starts from the identity mapping
+// NewAuthoriser builds an Authoriser. The role->tier resolution starts from the identity mapping
 // (reader/writer/admin name themselves), which roleMapping then extends: an identity provider that
 // tags tokens with its own group names (e.g. "hippo-ops": "admin") maps them onto tiers here. A
 // mapping whose target is not a known tier fails construction rather than silently denying every
 // bearer of that group.
-func NewAuthorizer(roleMapping map[string]string) (*Authorizer, error) {
-	log.Trace("func() auth.NewAuthorizer")
+func NewAuthoriser(roleMapping map[string]string) (*Authoriser, error) {
+	log.Trace("func() auth.NewAuthoriser")
 
 	roleTiers := map[string]Tier{
 		"reader": TierReader,
@@ -181,7 +181,7 @@ func NewAuthorizer(roleMapping map[string]string) (*Authorizer, error) {
 		gatewayTiers[p.httpMethod+" "+p.httpPath] = p.tier
 	}
 
-	return &Authorizer{
+	return &Authoriser{
 		methodTiers:  methodTiers,
 		gatewayTiers: gatewayTiers,
 		roleTiers:    roleTiers,
@@ -191,7 +191,7 @@ func NewAuthorizer(roleMapping map[string]string) (*Authorizer, error) {
 // effectiveTier resolves a token's roles to the highest tier they grant. The bool is false when no
 // role resolves to a known tier (including a nil claims or an empty roles list), which the callers
 // treat as denied - the default-closed posture.
-func (a *Authorizer) effectiveTier(claims *Claims) (Tier, bool) {
+func (a *Authoriser) effectiveTier(claims *Claims) (Tier, bool) {
 	if claims == nil {
 		return tierNone, false
 	}
@@ -215,12 +215,12 @@ func (a *Authorizer) effectiveTier(claims *Claims) (Tier, bool) {
 	return best, found
 }
 
-// UnaryServerInterceptor returns the gRPC authorization interceptor. It must run after
+// UnaryServerInterceptor returns the gRPC authorisation interceptor. It must run after
 // UnaryServerInterceptor (authentication) so the verified claims are on the context; it scopes
 // itself to Hippocampus RPCs exactly as the auth interceptor does, leaving the health service
 // reachable without a role. On success it stashes the resolved tier on the context so the
 // reinforcement gate downstream can read it without re-resolving roles.
-func (a *Authorizer) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
+func (a *Authoriser) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context,
 		req any,
 		info *grpc.UnaryServerInfo,
@@ -241,12 +241,12 @@ func (a *Authorizer) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
-// GatewayMiddleware returns the grpc-gateway authorization middleware. It runs after routing (so
+// GatewayMiddleware returns the grpc-gateway authorisation middleware. It runs after routing (so
 // runtime.HTTPPattern is populated) and inside HTTPMiddleware (so the verified claims are on the
 // request context). The matched pattern plus the HTTP verb identify the RPC, which the derived
 // gatewayTiers map turns into a required tier. On success it stashes the resolved tier on the
 // request context for the reinforcement gate, mirroring the gRPC interceptor.
-func (a *Authorizer) GatewayMiddleware() runtime.Middleware {
+func (a *Authoriser) GatewayMiddleware() runtime.Middleware {
 	return func(next runtime.HandlerFunc) runtime.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request, pathParams map[string]string) {
 			pattern, ok := runtime.HTTPPattern(r.Context())
@@ -259,7 +259,7 @@ func (a *Authorizer) GatewayMiddleware() runtime.Middleware {
 				return
 			}
 
-			key := r.Method + " " + normalizePattern(pattern.String())
+			key := r.Method + " " + normalisePattern(pattern.String())
 
 			required, known := a.gatewayTiers[key]
 
@@ -280,7 +280,7 @@ func (a *Authorizer) GatewayMiddleware() runtime.Middleware {
 // known Hippocampus RPC (known), the token resolves to some tier (found), and that tier meets the
 // route's requirement. It returns the resolved tier so a successful caller's tier can be stashed on
 // the context.
-func (a *Authorizer) allow(required Tier, known bool, claims *Claims) (Tier, bool) {
+func (a *Authoriser) allow(required Tier, known bool, claims *Claims) (Tier, bool) {
 	tier, found := a.effectiveTier(claims)
 
 	if !known || !found || tier < required {

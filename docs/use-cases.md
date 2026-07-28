@@ -22,7 +22,7 @@ important for a long time, and which is which is not known up front. Some shapes
   compliance window applies, a retention floor guarantees nothing is dropped before it elapses.
 - **Agent / assistant memory** — a bounded long-term memory for an LLM agent: store observations as
   memories, group them into events, recall the relevant ones on each interaction (which reinforces
-  them), and let the unused ones fade. Summarization condenses a pile of related-but-quiet memories
+  them), and let the unused ones fade. Summarisation condenses a pile of related-but-quiet memories
   into a single "gist" memory rather than dropping the detail outright.
 - **Per-device / edge telemetry** — retain a device's own significant history locally within a fixed
   storage budget, and periodically transfer it to a central store.
@@ -62,7 +62,7 @@ Provided compose stacks: `docker/docker-compose.postgres.yaml`, `docker/docker-c
 
 Because decay, capacity pressure, and eviction are **global** dynamics over a store, tenancy is _not_
 built into the service — one noisy tenant sharing a store would make everyone else forget faster.
-Instead, run **one instance per tenant** (or per subsystem, per environment). Containerization makes
+Instead, run **one instance per tenant** (or per subsystem, per environment). Containerisation makes
 one container + one SQLite volume (or one Postgres database) per tenant trivial, and it gives perfect
 isolation of the memory dynamics, per-tenant capacity/decay tuning, and clean per-tenant deletion
 (drop the volume). This is also horizontal scaling by sharding, without leader election.

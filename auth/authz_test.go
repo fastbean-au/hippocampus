@@ -18,12 +18,12 @@ import (
 )
 
 // TestPoliciesCoverEveryRPC is the drift guard: every RPC in the generated service descriptor must
-// have an authorization policy, so a newly added RPC without a tier fails the build's tests rather
+// have an authorisation policy, so a newly added RPC without a tier fails the build's tests rather
 // than silently defaulting to deny (or, worse, slipping through).
 func TestPoliciesCoverEveryRPC(t *testing.T) {
 	for _, m := range contract.Hippocampus_ServiceDesc.Methods {
 		if _, ok := policies[m.MethodName]; !ok {
-			t.Errorf("RPC %q has no authorization policy in policies", m.MethodName)
+			t.Errorf("RPC %q has no authorisation policy in policies", m.MethodName)
 		}
 	}
 
@@ -55,9 +55,9 @@ func TestParseTier(t *testing.T) {
 }
 
 func TestEffectiveTier(t *testing.T) {
-	a, err := NewAuthorizer(map[string]string{"hippo-ops": "admin"})
+	a, err := NewAuthoriser(map[string]string{"hippo-ops": "admin"})
 	if err != nil {
-		t.Fatalf("NewAuthorizer: %s", err)
+		t.Fatalf("NewAuthoriser: %s", err)
 	}
 
 	cases := []struct {
@@ -88,18 +88,18 @@ func TestEffectiveTier(t *testing.T) {
 	}
 }
 
-func TestNewAuthorizerRejectsUnknownMappingTier(t *testing.T) {
-	if _, err := NewAuthorizer(map[string]string{"group": "superuser"}); err == nil {
+func TestNewAuthoriserRejectsUnknownMappingTier(t *testing.T) {
+	if _, err := NewAuthoriser(map[string]string{"group": "superuser"}); err == nil {
 		t.Fatalf("expected an error for an unknown mapped tier")
 	}
 }
 
-// TestInterceptorTierMatrix drives the gRPC authorization interceptor with a representative RPC of
+// TestInterceptorTierMatrix drives the gRPC authorisation interceptor with a representative RPC of
 // each tier under each role, asserting the reader<writer<admin nesting is enforced.
 func TestInterceptorTierMatrix(t *testing.T) {
-	a, err := NewAuthorizer(nil)
+	a, err := NewAuthoriser(nil)
 	if err != nil {
-		t.Fatalf("NewAuthorizer: %s", err)
+		t.Fatalf("NewAuthoriser: %s", err)
 	}
 
 	interceptor := a.UnaryServerInterceptor()
@@ -148,12 +148,12 @@ func TestInterceptorTierMatrix(t *testing.T) {
 	}
 }
 
-// TestInterceptorStashesTier confirms a successful authorization puts the resolved tier on the
+// TestInterceptorStashesTier confirms a successful authorisation puts the resolved tier on the
 // context, which the reinforcement gate downstream relies on.
 func TestInterceptorStashesTier(t *testing.T) {
-	a, err := NewAuthorizer(nil)
+	a, err := NewAuthoriser(nil)
 	if err != nil {
-		t.Fatalf("NewAuthorizer: %s", err)
+		t.Fatalf("NewAuthoriser: %s", err)
 	}
 
 	var seen Tier
@@ -180,9 +180,9 @@ func TestInterceptorStashesTier(t *testing.T) {
 // TestInterceptorIgnoresNonHippocampus confirms the interceptor leaves the health service (and
 // anything outside the Hippocampus prefix) untouched, so probes need no role.
 func TestInterceptorIgnoresNonHippocampus(t *testing.T) {
-	a, err := NewAuthorizer(nil)
+	a, err := NewAuthoriser(nil)
 	if err != nil {
-		t.Fatalf("NewAuthorizer: %s", err)
+		t.Fatalf("NewAuthoriser: %s", err)
 	}
 
 	reached := false
@@ -205,20 +205,20 @@ func TestInterceptorIgnoresNonHippocampus(t *testing.T) {
 
 // stubHippocampusServer satisfies contract.HippocampusServer with every method returning
 // Unimplemented, so the gateway routes resolve without needing real handlers. A request that
-// passes authorization reaches such a handler and returns 501; a denied one is stopped at 403.
+// passes authorisation reaches such a handler and returns 501; a denied one is stopped at 403.
 type stubHippocampusServer struct {
 	contract.UnimplementedHippocampusServer
 }
 
 // TestGatewayMiddlewareEndToEnd registers the real gateway (so the real google.api.http patterns
-// drive routing) with the authorization middleware installed, and asserts each representative route
+// drive routing) with the authorisation middleware installed, and asserts each representative route
 // is allowed or denied per the caller's role. This also validates the core assumption that
-// runtime.HTTPPattern is populated at middleware time and that normalizePattern matches the real
+// runtime.HTTPPattern is populated at middleware time and that normalisePattern matches the real
 // route templates.
 func TestGatewayMiddlewareEndToEnd(t *testing.T) {
-	a, err := NewAuthorizer(nil)
+	a, err := NewAuthoriser(nil)
 	if err != nil {
-		t.Fatalf("NewAuthorizer: %s", err)
+		t.Fatalf("NewAuthoriser: %s", err)
 	}
 
 	mux := runtime.NewServeMux(runtime.WithMiddlewares(a.GatewayMiddleware()))
@@ -232,7 +232,7 @@ func TestGatewayMiddlewareEndToEnd(t *testing.T) {
 	}
 
 	// One representative route per tier, including a capture-bearing path to exercise
-	// normalizePattern ("/v1/events/{id}").
+	// normalisePattern ("/v1/events/{id}").
 	reads := req{http.MethodGet, "/v1/memories"}
 	writes := req{http.MethodPost, "/v1/memories"}
 	admin := req{http.MethodPost, "/v1/purge"}
@@ -293,9 +293,9 @@ func TestTierString(t *testing.T) {
 // TestGatewayMiddlewareMissingPattern covers the fail-closed branch: a matched-looking request that
 // somehow carries no route pattern on its context is forbidden rather than allowed by default.
 func TestGatewayMiddlewareMissingPattern(t *testing.T) {
-	a, err := NewAuthorizer(nil)
+	a, err := NewAuthoriser(nil)
 	if err != nil {
-		t.Fatalf("NewAuthorizer: %s", err)
+		t.Fatalf("NewAuthoriser: %s", err)
 	}
 
 	reached := false

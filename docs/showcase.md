@@ -7,7 +7,7 @@ generators:
 
 | Stack    | Shape                                                                 | Generator                                                                   |
 | -------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| **book** | _Great Expectations_ reloaded daily, summarised, decaying             | `cmd/book --loop --period 24h --reset --live --pace-window <w> --summarize` |
+| **book** | _Great Expectations_ reloaded daily, summarised, decaying             | `cmd/book --loop --period 24h --reset --live --pace-window <w> --summarise` |
 | **logs** | a continuous log trickle, reaped by consolidation + capacity eviction | `cmd/logs --live --rate <n>`                                                |
 
 The service configs are [`docker/config.showcase-book.json`](../docker/config.showcase-book.json) and
@@ -28,7 +28,7 @@ Both configs use `auth.method: idp` and a **compressed decay clock**
 summarisation, and (for logs) capacity eviction all play out within a session rather than over real
 days. They differ where the two shapes differ:
 
-- **book** enables summarisation (`summarizationMinMemories: 20`, `summarizationMinAgeInDays: 0`) and
+- **book** enables summarisation (`summarisationMinMemories: 20`, `summarisationMinAgeInDays: 0`) and
   leaves capacity uncapped — the store is small and purged each day.
 - **logs** disables summarisation and caps the store (`capacityBytes`/`capacityMemories`) so eviction
   keeps the ever-growing trickle bounded.
@@ -57,7 +57,7 @@ A ready-to-import realm lives at
 [`docker/keycloak/realm-hippocampus.json`](../docker/keycloak/realm-hippocampus.json). It defines:
 
 - realm roles `reader` / `writer` / `admin` (mapped straight onto Hippocampus's tiers);
-- a **public SPA client** `hippocampus-console` (Authorization Code + PKCE, no secret) for the `/ui`
+- a **public SPA client** `hippocampus-console` (Authorisation Code + PKCE, no secret) for the `/ui`
   console — set its `redirectUris` to your console URLs (the file ships localhost plus
   `https://book.hippocampus.example/ui` / `https://logs.hippocampus.example/ui` placeholders);
 - a **confidential client** `hippocampus-gen` (client-credentials, `serviceAccountsEnabled`) with the
@@ -67,7 +67,7 @@ A ready-to-import realm lives at
 
 Keycloak publishes roles under the nested `realm_access.roles` claim, which is why the configs set
 `auth.roleClaim: "realm_access.roles"` (resolved via the dotted-path lookup — see
-[Authorization](configuration.md#authorization)). Keycloak's access token has no `aud` for these
+[Authorisation](configuration.md#authorisation)). Keycloak's access token has no `aud` for these
 clients, so `auth.audience` is left empty (unenforced).
 
 Run it (dev mode, importing the realm):
@@ -121,7 +121,7 @@ HIPPOCAMPUS_AUTH_ROLECLAIM=https://hippocampus.example/roles     # matched liter
 
 Because the role claim is a URI-shaped **top-level** key, the resolver matches it literally; the
 nested dotted-path lookup is what makes Keycloak's `realm_access.roles` work. One resolver, both
-providers — see [Authorization](configuration.md#authorization).
+providers — see [Authorisation](configuration.md#authorisation).
 
 The generators authenticate to Auth0 with the same flags plus `--oidc-audience <API Identifier>`.
 
@@ -175,7 +175,7 @@ point them at the published gRPC port, authenticating to Keycloak as the `hippoc
 ```sh
 # book: reload + summarise every 24h, spread across 2h, ageing live
 go run ./cmd/book -s <vm>:50051 \
-  --loop --period 24h --reset --pace-window 2h --live --summarize \
+  --loop --period 24h --reset --pace-window 2h --live --summarise \
   --oidc-issuer https://auth.book.example/realms/hippocampus \
   --oidc-client-id hippocampus-gen --oidc-client-secret "$GEN_SECRET"
 

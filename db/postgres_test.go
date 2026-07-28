@@ -606,11 +606,11 @@ func TestPostgres_MemoryAndEventRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPostgres_ConsolidationAndSummarization drives the sleep-cycle scan surface on Postgres:
+// TestPostgres_ConsolidationAndSummarisation drives the sleep-cycle scan surface on Postgres:
 // the loose-memory and evented-memory consolidation passes (including the atomic
-// re-check-before-delete primitives), the summarization candidate query (which uses the
+// re-check-before-delete primitives), the summarisation candidate query (which uses the
 // GREATEST dialect branch), and summary replacement.
-func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
+func TestPostgres_ConsolidationAndSummarisation(t *testing.T) {
 	database := newPostgresTestDB(t)
 
 	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "quiet event", TimeStart: 100, Significance: 5}); err != nil {
@@ -627,9 +627,9 @@ func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 		t.Fatalf("CreateMemory(loose): %s", err)
 	}
 
-	candidates, err := database.FindSummarizationCandidates(context.Background(), 3, time.Now().UnixNano(), 10)
+	candidates, err := database.FindSummarisationCandidates(context.Background(), 3, time.Now().UnixNano(), 10)
 	if err != nil {
-		t.Fatalf("FindSummarizationCandidates: %s", err)
+		t.Fatalf("FindSummarisationCandidates: %s", err)
 	}
 
 	if len(candidates) != 1 || candidates[0].EventId != "e1" || candidates[0].MemoryCount != 3 {
@@ -646,13 +646,13 @@ func TestPostgres_ConsolidationAndSummarization(t *testing.T) {
 	}
 
 	// The summary memory is flagged is_summary, so the event must no longer be a candidate.
-	candidates, err = database.FindSummarizationCandidates(context.Background(), 1, time.Now().UnixNano(), 10)
+	candidates, err = database.FindSummarisationCandidates(context.Background(), 1, time.Now().UnixNano(), 10)
 	if err != nil {
-		t.Fatalf("FindSummarizationCandidates after replacement: %s", err)
+		t.Fatalf("FindSummarisationCandidates after replacement: %s", err)
 	}
 
 	if len(candidates) != 0 {
-		t.Errorf("summarized event should not reappear as a candidate, got %+v", candidates)
+		t.Errorf("summarised event should not reappear as a candidate, got %+v", candidates)
 	}
 
 	// Consolidate everything: the loose pass deletes 'loose', the evented pass deletes 'sum' and

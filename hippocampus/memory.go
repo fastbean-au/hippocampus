@@ -251,7 +251,7 @@ func (s *Server) RecallMemories(ctx context.Context, in *contract.RecallMemories
 // ReplaceMemoriesWithSummary deletes every memory associated with an event and replaces them
 // with a single caller-supplied summary memory, in one transaction. The service has no
 // visibility into memory content (bodies are opaque), so it cannot generate the summary itself —
-// the caller must supply it, typically after reviewing the event via GetSummarizationCandidates
+// the caller must supply it, typically after reviewing the event via GetSummarisationCandidates
 // or GetEventById. The summary is validated and checked against the minimum significance before
 // anything is deleted, so a rejected summary leaves the original memories untouched.
 func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.ReplaceMemoriesWithSummaryRequest) (*contract.ReplaceMemoriesWithSummaryResponse, error) {
@@ -328,7 +328,7 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 		return "", 0, mapError(err)
 	}
 
-	tel.memoriesSummarized.Add(ctx, int64(replaced))
+	tel.memoriesSummarised.Add(ctx, int64(replaced))
 	tel.summariesCreated.Add(ctx, 1)
 
 	// The single FIFO worker guarantees the event-scoped delete lands before the summary's
@@ -339,20 +339,20 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 	return summary.Id, replaced, nil
 }
 
-// GetSummarizationCandidates returns the events identified by the most recent sleep cycle as
-// having accumulated enough quiet, unsummarized memories to be worth condensing via
+// GetSummarisationCandidates returns the events identified by the most recent sleep cycle as
+// having accumulated enough quiet, unsummarised memories to be worth condensing via
 // ReplaceMemoriesWithSummary. The list is a point-in-time snapshot: it is only refreshed when
-// consolidation.summarizationMinMemories is configured, and may include events that have since
+// consolidation.summarisationMinMemories is configured, and may include events that have since
 // changed.
-func (s *Server) GetSummarizationCandidates(ctx context.Context, in *contract.EmptyRequest) (*contract.GetSummarizationCandidatesResponse, error) {
-	var res contract.GetSummarizationCandidatesResponse
+func (s *Server) GetSummarisationCandidates(ctx context.Context, in *contract.EmptyRequest) (*contract.GetSummarisationCandidatesResponse, error) {
+	var res contract.GetSummarisationCandidatesResponse
 
-	s.summarizationCandidatesMu.RLock()
-	defer s.summarizationCandidatesMu.RUnlock()
+	s.summarisationCandidatesMu.RLock()
+	defer s.summarisationCandidatesMu.RUnlock()
 
-	cs := make([]*contract.SummarizationCandidate, len(s.summarizationCandidates))
-	for i, c := range s.summarizationCandidates {
-		cs[i] = &contract.SummarizationCandidate{
+	cs := make([]*contract.SummarisationCandidate, len(s.summarisationCandidates))
+	for i, c := range s.summarisationCandidates {
+		cs[i] = &contract.SummarisationCandidate{
 			EventId:     c.EventId,
 			EventName:   c.EventName,
 			MemoryCount: int32(c.MemoryCount),

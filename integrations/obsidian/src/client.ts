@@ -9,7 +9,7 @@ import type {
 	StoreEventInput,
 	StoreMemoryInput,
 	StoreResult,
-	SummarizationCandidate,
+	SummarisationCandidate,
 } from "./types";
 
 // HippocampusError carries the HTTP status so callers can distinguish, e.g., a 404 (a memory the
@@ -163,8 +163,8 @@ export class HippocampusClient {
 		return { events: eventsFrom(json), totalCount: toNumber(json.totalCount) };
 	}
 
-	async getSummarizationCandidates(): Promise<SummarizationCandidate[]> {
-		const json = await this.request("GET", "/v1/summarization/candidates");
+	async getSummarisationCandidates(): Promise<SummarisationCandidate[]> {
+		const json = await this.request("GET", "/v1/summarisation/candidates");
 
 		return candidatesFrom(json);
 	}

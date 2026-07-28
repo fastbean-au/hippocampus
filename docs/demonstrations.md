@@ -43,8 +43,8 @@ with timestamps stepping forward across a ~2-year window (the book's internal ti
 dates). A clean run stores **59 events and ~3,850 memories**.
 
 Because the memories carry genuine prose, this is the demonstration to use when showing **content
-search** (OpenSearch, below) or **summarization** — an event's paragraphs are exactly the kind of
-piled-up, gone-quiet detail the sleep cycle surfaces as a summarization candidate.
+search** (OpenSearch, below) or **summarisation** — an event's paragraphs are exactly the kind of
+piled-up, gone-quiet detail the sleep cycle surfaces as a summarisation candidate.
 
 **The recall-reinforcement wrinkle.** Recalling a memory reinforces it (resets its decay clock,
 raises its effective significance), which is right for episodic/operational memory where "what you

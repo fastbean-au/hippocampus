@@ -9,7 +9,7 @@ import (
 )
 
 // TestWhoAmI_AuthDisabled reports an unrestricted admin tier when no tier is on the context, which
-// is how a request looks when authorization never ran (authentication disabled).
+// is how a request looks when authorisation never ran (authentication disabled).
 func TestWhoAmI_AuthDisabled(t *testing.T) {
 	s := newTestServer(t)
 
@@ -23,7 +23,7 @@ func TestWhoAmI_AuthDisabled(t *testing.T) {
 	}
 }
 
-// TestWhoAmI_Authenticated reports the tier and client id the authorization layer stashed.
+// TestWhoAmI_Authenticated reports the tier and client id the authorisation layer stashed.
 func TestWhoAmI_Authenticated(t *testing.T) {
 	s := newTestServer(t)
 

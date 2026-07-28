@@ -1,4 +1,4 @@
-package summarize
+package summarise
 
 import (
 	"bytes"
@@ -61,7 +61,7 @@ type Config struct {
 	Temperature float64
 }
 
-// Ollama is a Summarizer backed by a running Ollama server, reached over its /api/generate HTTP
+// Ollama is a Summariser backed by a running Ollama server, reached over its /api/generate HTTP
 // endpoint. It holds no state beyond the resolved config and an http.Client; a single instance is
 // safe for concurrent use.
 type Ollama struct {
@@ -140,11 +140,11 @@ func NewOllama(cfg Config) (*Ollama, error) {
 	return o, nil
 }
 
-// Summarize sends the request's bodies to the Ollama server and returns the generated summary. It
+// Summarise sends the request's bodies to the Ollama server and returns the generated summary. It
 // bounds the prompt by MaxBodies and PromptCharLimit, and returns an error when there is nothing to
 // summarise, when the server is unreachable/returns a non-2xx status, or when the model reports an
 // error or an empty response.
-func (o *Ollama) Summarize(ctx context.Context, req Request) (string, error) {
+func (o *Ollama) Summarise(ctx context.Context, req Request) (string, error) {
 	if len(req.Bodies) == 0 {
 		return "", fmt.Errorf("no memory bodies to summarise")
 	}
@@ -246,5 +246,5 @@ func (o *Ollama) Enabled() bool {
 	return true
 }
 
-// Compile-time check that *Ollama satisfies Summarizer.
-var _ Summarizer = (*Ollama)(nil)
+// Compile-time check that *Ollama satisfies Summariser.
+var _ Summariser = (*Ollama)(nil)

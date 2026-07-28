@@ -75,8 +75,8 @@
         "capacityBytes": 0,
         "capacityBytesFloor": 0,
         "walTriggerBytes": 0,
-        "summarizationMinMemories": 20,
-        "summarizationMinAgeInDays": 30,
-        "summarizationMaxCandidates": 100
+        "summarisationMinMemories": 20,
+        "summarisationMinAgeInDays": 30,
+        "summarisationMaxCandidates": 100
     }
 }

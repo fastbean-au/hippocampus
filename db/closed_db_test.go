@@ -77,7 +77,7 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 		{"ConsolidateEventMemories", func() error { _, _, _, err := db.ConsolidateEventMemories(ctx, server); return err }},
 		{"ConsolidateEvents", func() error { _, err := db.ConsolidateEvents(ctx, server); return err }},
 		{"EvictMemories", func() error { _, _, _, err := db.EvictMemories(ctx, server, 1024); return err }},
-		{"FindSummarizationCandidates", func() error { _, err := db.FindSummarizationCandidates(ctx, 1, 1, 0); return err }},
+		{"FindSummarisationCandidates", func() error { _, err := db.FindSummarisationCandidates(ctx, 1, 1, 0); return err }},
 		{"GetMemoriesPage", func() error { _, err := db.GetMemoriesPage(ctx, "", 10); return err }},
 		{"GetEventsPage", func() error { _, err := db.GetEventsPage(ctx, "", 10); return err }},
 		{"ImportMemories", func() error { _, err := db.ImportMemories(ctx, []types.Memory{memory}); return err }},

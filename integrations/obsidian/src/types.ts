@@ -33,7 +33,7 @@ export interface StoreResult {
 	rejected: boolean;
 }
 
-export interface SummarizationCandidate {
+export interface SummarisationCandidate {
 	eventId: string;
 	eventName: string;
 	memoryCount: number;

@@ -279,7 +279,7 @@
     },
     "/v1/events/{eventId}/summary": {
       "post": {
-        "summary": "Summarization\nReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single\ncaller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.",
+        "summary": "Summarisation\nReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single\ncaller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.",
         "operationId": "Hippocampus_ReplaceMemoriesWithSummary",
         "responses": {
           "200": {
@@ -890,15 +890,15 @@
         ]
       }
     },
-    "/v1/summarization/candidates": {
+    "/v1/summarisation/candidates": {
       "get": {
-        "summary": "GetSummarizationCandidates returns events identified by the most recent sleep cycle as having\naccumulated enough quiet, unsummarized memories to be worth condensing via\nReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when\nconsolidation.summarizationMinMemories is configured.",
-        "operationId": "Hippocampus_GetSummarizationCandidates",
+        "summary": "GetSummarisationCandidates returns events identified by the most recent sleep cycle as having\naccumulated enough quiet, unsummarised memories to be worth condensing via\nReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when\nconsolidation.summarisationMinMemories is configured.",
+        "operationId": "Hippocampus_GetSummarisationCandidates",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGetSummarizationCandidatesResponse"
+              "$ref": "#/definitions/protoGetSummarisationCandidatesResponse"
             }
           },
           "default": {
@@ -1267,14 +1267,14 @@
         }
       }
     },
-    "protoGetSummarizationCandidatesResponse": {
+    "protoGetSummarisationCandidatesResponse": {
       "type": "object",
       "properties": {
         "candidates": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoSummarizationCandidate"
+            "$ref": "#/definitions/protoSummarisationCandidate"
           }
         }
       }
@@ -1535,6 +1535,22 @@
       },
       "description": "StoreMemoryResponse carries the stored memory's id. A memory whose significance is below\nmemory.minimumSignificance is quietly forgotten, like a brain that simply does not retain the\ninsignificant: no error is returned, id is empty, and rejected is true."
     },
+    "protoSummarisationCandidate": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "eventName": {
+          "type": "string"
+        },
+        "memoryCount": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "SummarisationCandidate identifies an event whose memories have accumulated enough, and gone\nquiet for long enough, to be worth condensing into a single summary memory via\nReplaceMemoriesWithSummary."
+    },
     "protoSummariseMemoriesResponse": {
       "type": "object",
       "properties": {
@@ -1552,22 +1568,6 @@
           "title": "the LLM-generated summary text stored in the new memory"
         }
       }
-    },
-    "protoSummarizationCandidate": {
-      "type": "object",
-      "properties": {
-        "eventId": {
-          "type": "string"
-        },
-        "eventName": {
-          "type": "string"
-        },
-        "memoryCount": {
-          "type": "integer",
-          "format": "int32"
-        }
-      },
-      "description": "SummarizationCandidate identifies an event whose memories have accumulated enough, and gone\nquiet for long enough, to be worth condensing into a single summary memory via\nReplaceMemoriesWithSummary."
     },
     "protoTransferRequest": {
       "type": "object",

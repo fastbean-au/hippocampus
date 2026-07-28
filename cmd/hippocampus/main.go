@@ -35,7 +35,7 @@ import (
 	"github.com/fastbean-au/hippocampus/hippocampus"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/stats"
-	"github.com/fastbean-au/hippocampus/summarize"
+	"github.com/fastbean-au/hippocampus/summarise"
 )
 
 func main() {
@@ -55,7 +55,7 @@ func execute(args []string) {
 	flags.Bool("version", false, "print the build version and exit")
 	flags.Bool("mint-token", false, "mint a signed auth token from the configured signing secret and exit")
 	flags.String("client-id", "", "client_id claim to embed in a minted token (used with --mint-token)")
-	flags.StringSlice("role", nil, "authorization role(s) to embed in a minted token: reader, writer, and/or admin (repeatable or comma-separated; used with --mint-token)")
+	flags.StringSlice("role", nil, "authorisation role(s) to embed in a minted token: reader, writer, and/or admin (repeatable or comma-separated; used with --mint-token)")
 	flags.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
 	flags.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
 	flags.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
@@ -132,7 +132,7 @@ func execute(args []string) {
 
 		roles := viper.GetStringSlice("role")
 
-		// A token with no role authorizes no Hippocampus RPC under the default-closed policy, so
+		// A token with no role authorises no Hippocampus RPC under the default-closed policy, so
 		// minting one is almost certainly a mistake - fail loudly rather than hand back a dead token.
 		if len(roles) == 0 {
 			log.Fatal("--mint-token requires at least one --role (reader, writer, and/or admin); a role-less token is denied every RPC")
@@ -345,12 +345,12 @@ func run(ctx context.Context, version versionInfo) error {
 	// auto-summarisation a no-op, so the service behaves exactly as it did before. Construction
 	// only fails on unusable configuration (a missing address/model) - an unreachable Ollama server
 	// must not prevent startup, since summarisation is optional and best-effort.
-	summariser := summarize.NewNoop()
+	summariser := summarise.NewNoop()
 
 	if viper.GetBool("ollama.enabled") {
 		log.Debug("initialising ollama summariser")
 
-		s, err := summarize.NewOllama(summarize.Config{
+		s, err := summarise.NewOllama(summarise.Config{
 			Address:         viper.GetString("ollama.address"),
 			Model:           viper.GetString("ollama.model"),
 			Timeout:         time.Duration(viper.GetInt("ollama.timeoutSeconds")) * time.Second,
@@ -510,12 +510,12 @@ func run(ctx context.Context, version versionInfo) error {
 			"plaintext unless TLS is terminated upstream (e.g. by a proxy or service mesh)")
 	}
 
-	// Authorization rides on top of authentication: it maps each RPC to a required role tier
+	// Authorisation rides on top of authentication: it maps each RPC to a required role tier
 	// (reader/writer/admin) and rejects an authenticated caller whose token does not grant it. Built
-	// only when auth is enabled - with auth off there is no principal to authorize, so the service
+	// only when auth is enabled - with auth off there is no principal to authorise, so the service
 	// behaves as it always has. auth.roleMapping translates an identity provider's own group names
 	// onto the tiers (empty for hmac, where --mint-token stamps the tier names directly).
-	var authorizer *auth.Authorizer
+	var authoriser *auth.Authoriser
 
 	if authEnabled {
 		var roleMapping map[string]string
@@ -524,12 +524,12 @@ func run(ctx context.Context, version versionInfo) error {
 			return fmt.Errorf("failed to read auth.roleMapping: %w", err)
 		}
 
-		a, err := auth.NewAuthorizer(roleMapping)
+		a, err := auth.NewAuthoriser(roleMapping)
 		if err != nil {
-			return fmt.Errorf("failed to initialise authorization: %w", err)
+			return fmt.Errorf("failed to initialise authorisation: %w", err)
 		}
 
-		authorizer = a
+		authoriser = a
 	}
 
 	// initialise the gRPC server
@@ -544,11 +544,11 @@ func run(ctx context.Context, version versionInfo) error {
 	interceptors := []grpc.UnaryServerInterceptor{InterceptorRecoverPanic}
 
 	if authEnabled {
-		// Authentication first (rejects an invalid/absent token), then authorization (rejects a
+		// Authentication first (rejects an invalid/absent token), then authorisation (rejects a
 		// valid token whose role does not grant the RPC), both ahead of the purge gate and logger.
 		interceptors = append(interceptors,
 			auth.UnaryServerInterceptor(verifier),
-			authorizer.UnaryServerInterceptor(),
+			authoriser.UnaryServerInterceptor(),
 		)
 	}
 
@@ -649,14 +649,14 @@ func run(ctx context.Context, version versionInfo) error {
 	if gatewayPort := viper.GetInt("gateway.port"); gatewayPort > 0 {
 		log.Debug("initialising HTTP gateway")
 
-		// Authorization on the gateway runs as a post-routing middleware (so the matched route -
+		// Authorisation on the gateway runs as a post-routing middleware (so the matched route -
 		// hence the RPC's required tier - is known) rather than an outer HTTP wrapper. It reads the
 		// claims stashed by auth.HTTPMiddleware below, so it enforces the same policy as the gRPC
 		// interceptor from the same table. Added only when auth is enabled, mirroring the gRPC side.
 		var muxOpts []runtime.ServeMuxOption
 
 		if authEnabled {
-			muxOpts = append(muxOpts, runtime.WithMiddlewares(authorizer.GatewayMiddleware()))
+			muxOpts = append(muxOpts, runtime.WithMiddlewares(authoriser.GatewayMiddleware()))
 		}
 
 		gwMux := runtime.NewServeMux(muxOpts...)

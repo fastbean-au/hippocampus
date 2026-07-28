@@ -71,11 +71,11 @@ recurring **sleep** cycle consolidates (deletes) memories and events whose compu
 below a threshold, then persists the survivors to disk. Recalling a memory (`RecallMemories` RPC)
 reinforces it: the decay clock resets and each recall raises its effective significance. The sleep
 cycle can also identify events worth condensing into a single **summary** memory
-(`GetSummarizationCandidates`); by default the service has no visibility into memory content, so a
+(`GetSummarisationCandidates`); by default the service has no visibility into memory content, so a
 client performs the actual replacement (`ReplaceMemoriesWithSummary`). An optional embedded LLM
-(Ollama, `ollama.enabled`, off by default — the `summarize` package) lets the service author the
+(Ollama, `ollama.enabled`, off by default — the `summarise` package) lets the service author the
 summary itself: the `SummariseMemories` RPC generates and replaces in one call, and
-`ollama.autoSummarize` does it automatically for the scan's candidates during sleep. Every RPC is
+`ollama.autoSummarise` does it automatically for the scan's candidates during sleep. Every RPC is
 also reachable as a
 JSON/HTTP endpoint under `/v1` via an in-process grpc-gateway (`gateway.port`, 0 disables). Both
 transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`idp`) and TLS
@@ -155,10 +155,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     (`Server.sleepGroup`) keyed on a constant, so a caller landing while a cycle is already running
     joins that in-flight call instead of starting a second, overlapping one.
   - `sleep()` = `consolidate()` (delete memories/events below threshold) +
-    `scanSummarizationCandidates()` (when `consolidation.summarizationMinMemories` is positive, find
+    `scanSummarisationCandidates()` (when `consolidation.summarisationMinMemories` is positive, find
     events with at least that many memories that have all gone quiet — no creation or recall —
-    for `summarizationMinAgeInDays`, cache up to `summarizationMaxCandidates` of them for
-    `GetSummarizationCandidates` to serve; best-effort, never fails the cycle) + `evict()` (when
+    for `summarisationMinAgeInDays`, cache up to `summarisationMaxCandidates` of them for
+    `GetSummarisationCandidates` to serve; best-effort, never fails the cycle) + `evict()` (when
     `consolidation.capacityBytes` is positive and the store's used bytes still exceed it, delete
     memories in ascending value order until back at the eviction floor —
     `consolidation.capacityBytesFloor`, hysteresis headroom below the target; ignores
@@ -171,7 +171,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   - `ReplaceMemoriesWithSummary` (in `memory.go`) deletes every memory for an event and inserts a
     single caller-supplied summary memory in their place, in one transaction; the summary is
     validated before anything is deleted. The new memory is flagged `is_summary` so it doesn't
-    recount towards a future candidate scan until fresh, unsummarized memories accumulate again.
+    recount towards a future candidate scan until fresh, unsummarised memories accumulate again.
   - `ShouldConsolidateMemory` / `ShouldConsolidateEvent` (taking candidate structs defined in
     `db/db.go`) share `shouldConsolidate` / `calculateValue`, which implement the six
     configurable deletion algorithms (`consolidation.method` 1–6: power law, two linear variants,
@@ -243,9 +243,9 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   probe with SQLite via `information_schema`).
 - `contract/` — the gRPC contract (`hippocampus.proto`) and generated code. RPCs cover
   event/memory CRUD plus `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
-  `ReplaceMemoriesWithSummary`, `GetSummarizationCandidates`, `SummariseMemories` (the embedded-LLM
+  `ReplaceMemoriesWithSummary`, `GetSummarisationCandidates`, `SummariseMemories` (the embedded-LLM
   generate-and-replace), `WhoAmI` (reports the caller's
-  effective authorization tier, so the web console can adapt), and the transfer/archive surface
+  effective authorisation tier, so the web console can adapt), and the transfer/archive surface
   (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see
   [Configurability](docs/configuration.md#configurability) for the full mapping); `go generate
@@ -262,7 +262,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `search/opensearch.go` turn it into a cloned default transport with a `*tls.Config`, and a
   malformed block fails startup. Strictly secondary: all mutations propagate primary→index
   asynchronously (bounded queue, one
-  FIFO worker — ordering matters for summarization's delete-then-index; overflow drops, never
+  FIFO worker — ordering matters for summarisation's delete-then-index; overflow drops, never
   blocks), and `SearchMemories` results are always re-read from the primary store so stale index
   entries drop out. The worker retries a transient cluster failure (bounded attempts with jittered
   backoff in `applyWithRetry`) before dropping an operation; its four timing constants
@@ -286,15 +286,15 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `Preserve` a no-op — so it never writes DDL or checkpoints the database the service owns),
   Postgres/MySQL via `db.NewPostgresReadOnly`/`NewMySQLReadOnly` (skipping the instance lock). Integration tests skip unless `HIPPOCAMPUS_TEST_OPENSEARCH_URL` is set;
   `docker/docker-compose.opensearch.yaml` runs the full stack.
-- `summarize/` — the optional embedded-LLM summariser (`ollama.enabled`, off by default;
-  `summarize.Summarizer` interface with a no-op and an `Ollama` implementation). The `Ollama`
+- `summarise/` — the optional embedded-LLM summariser (`ollama.enabled`, off by default;
+  `summarise.Summariser` interface with a no-op and an `Ollama` implementation). The `Ollama`
   impl is a small hand-rolled HTTP client to Ollama's `POST /api/generate` (`stream:false`, no new
   module dependency), bounding the prompt by body count and total characters and never sending
   binary bodies. It is the one component with visibility into memory content. Wired into
-  `hippocampus.Server` via the `summarize.Summarizer` field (nil-safe through `summariser()`, like
+  `hippocampus.Server` via the `summarise.Summariser` field (nil-safe through `summariser()`, like
   `searchIdx()`): the `SummariseMemories` RPC reads an event's memories, generates a summary, and
   replaces them through the same `insertSummary` path `ReplaceMemoriesWithSummary` uses; the sleep
-  cycle's `autoSummarizeCandidates` (gated on `ollama.autoSummarize`, off by default) does the same
+  cycle's `autoSummariseCandidates` (gated on `ollama.autoSummarise`, off by default) does the same
   for the scan's candidates, best-effort. All viper reads stay in main.go, which builds the no-op or
   `Ollama` from the `ollama.*` keys. An optional `ollama` compose profile ships it alongside the
   service. Deliberately off the MCP tool surface (it deletes memories, like the omitted
@@ -359,7 +359,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   update anything). On a successful verify both adapters stash the `*Claims` in the request context
   (`context.go`: `ContextWithClaims`/`ClaimsFromContext`/`ClientIDFromContext`), which the two
   loggers read to attach a `client_id` to request logs (a per-client audit trail).
-  Authorization (`authz.go`) layers roles on top of that authentication: a `Tier` hierarchy
+  Authorisation (`authz.go`) layers roles on top of that authentication: a `Tier` hierarchy
   (`reader` ⊂ `writer` ⊂ `admin`) and a single `policies` table assigning every RPC a minimum
   tier, from which `NewAuthorizer` derives both a gRPC method map and a gateway verb+path map — so
   the two transports enforce one policy from one source (a drift-guard test asserts every RPC in
@@ -390,7 +390,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   forced to stderr so stdout carries only the MCP JSON-RPC stream) or streamable HTTP
   (`--transport http`). The tool surface is the per-item memory/event operations — `store_memory`,
   `update_memory`, `delete_memories` (a by-id scalpel), `recall_memories`, `search_memories`,
-  `list_memories`, `create_event`, `list_events`, `get_summarization_candidates` — deliberately
+  `list_memories`, `create_event`, `list_events`, `get_summarisation_candidates` — deliberately
   excluding the admin/destructive and bulk data-movement RPCs (Purge, Sleep,
   Export/Import/Transfer/Clear, event delete/merge) so a model can't wipe or exfiltrate a store. The
   mutating tools are all writer-tier, so what a token may actually do is enforced by the service's

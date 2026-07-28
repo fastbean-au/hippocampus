@@ -75,7 +75,7 @@ marking the consolidation passes. Domain metrics cover stored/rejected/recalled/
 counts for memories and events, consolidation deletions, capacity evictions (row counts and the
 estimated bytes reclaimed), a histogram of stored memory-body sizes, sleep cycle count
 and duration, capacity pressure, the store's used bytes, gauges of the current event and
-memory counts, the number of summarization candidates found by the most recent sleep cycle, and
+memory counts, the number of summarisation candidates found by the most recent sleep cycle, and
 memories/summaries created via `ReplaceMemoriesWithSummary`. All metric attributes are bounded
 (booleans or small enumerations) to keep cardinality low.
 
@@ -105,7 +105,7 @@ gRPC. The gateway is **off by default**; set `gateway.port` to a port to enable 
 [grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway) reverse proxy (0, the default,
 disables it). **8080** is the conventional port, and the Docker configurations use it. The gateway
 calls straight into the same server instance gRPC uses, so there is no extra network hop, dial, or
-serialization round trip between the two. An OpenAPI/Swagger description of the mapping below is
+serialisation round trip between the two. An OpenAPI/Swagger description of the mapping below is
 served at `/v1/openapi.json`.
 
 ```json
@@ -177,7 +177,7 @@ a JSON body:
 | `GetMemories`                | GET    | `/v1/memories`                    |
 | `DeleteMemories`             | POST   | `/v1/memories/delete`             |
 | `RecallMemories`             | POST   | `/v1/memories/recall`             |
-| `GetSummarizationCandidates` | GET    | `/v1/summarization/candidates`    |
+| `GetSummarisationCandidates` | GET    | `/v1/summarisation/candidates`    |
 | `SummariseMemories`          | POST   | `/v1/events/{event_id}/summarise` |
 | `Export`                     | POST   | `/v1/export`                      |
 | `Import`                     | POST   | `/v1/import`                      |
@@ -290,7 +290,7 @@ token. `auth.method` selects the scheme:
 ```
 
 `auth.roleClaim`, `auth.roleMapping`, and `auth.readerRecallReinforces` drive
-[authorization](#authorization) and are only consulted when authentication is enabled.
+[authorisation](#authorisation) and are only consulted when authentication is enabled.
 
 `auth.ui` is the **front-channel** configuration the embedded web console (`/ui`) reads — from the
 unauthenticated `GET /ui/config` endpoint — to start a browser OIDC login under `auth.method: idp`.
@@ -306,7 +306,7 @@ box.
 
 #### Server-side sign-in (`auth.oauth2`)
 
-`auth.ui` above runs the OIDC Authorization Code + PKCE flow **in the browser** as a public client
+`auth.ui` above runs the OIDC Authorisation Code + PKCE flow **in the browser** as a public client
 (no secret; the token lives in the page's `sessionStorage`). `auth.oauth2` is the alternative: the
 **service itself** runs the flow as a **confidential client** — the code-for-token exchange happens
 on the server with a client secret, and the resulting session rides an `HttpOnly` cookie the page
@@ -378,8 +378,8 @@ This prints a signed token to **stdout** and exits without starting the server (
 database); it also prints the token's `jti` (its unique id), client, and roles to **stderr**, so
 `token=$(hippocampus --mint-token ...)` still captures only the token while an operator can record
 the `jti` for later [revocation](#revocation). `--role` is **required** and names one or more
-[authorization](#authorization) tiers — `reader`, `writer`, and/or `admin` (repeatable, or
-comma-separated: `--role reader,writer`); a role-less token authorizes nothing under the
+[authorisation](#authorisation) tiers — `reader`, `writer`, and/or `admin` (repeatable, or
+comma-separated: `--role reader,writer`); a role-less token authorises nothing under the
 default-closed policy, so minting one is refused. `--ttl` accepts any Go duration (`1h`, `24h`,
 `720h`, ...); `--signing-secret` can override the config's secret for minting on a host that only
 has the secret and not the full deployed config. When `auth.signingKeys` is configured, the token
@@ -392,9 +392,9 @@ implementations, and the interceptor/middleware call sites are identical for bot
 
 The verified `client_id` is logged on every failing request (and, on the HTTP gateway, every
 request), so a leaked token can be traced to the client it was issued to. What each token may *do*
-is governed by [authorization](#authorization) below.
+is governed by [authorisation](#authorisation) below.
 
-### Authorization
+### Authorisation
 
 When authentication is enabled, each RPC also requires a minimum **role tier**, carried in the
 token's `roles` claim. The tiers nest — `reader` ⊂ `writer` ⊂ `admin` — so a higher tier can do
@@ -402,7 +402,7 @@ everything a lower one can:
 
 | Tier     | May call                                                                                                                                                                  |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarizationCandidates`, `WhoAmI`                                                    |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `WhoAmI`                                                    |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `Export`, `Transfer`, `Clear`                                                                                              |
 
@@ -414,11 +414,11 @@ an archive faithfully. A caller whose token grants a tier below the RPC's requir
 *unauthenticated* request gets). The same policy governs both transports from one table, so gRPC
 and the gateway can never diverge.
 
-Authorization is **default-closed**: a token whose roles resolve to no known tier is denied every
+Authorisation is **default-closed**: a token whose roles resolve to no known tier is denied every
 RPC. Because tokens minted before this release carry no `roles` claim, **enabling a newer build
 against existing tokens requires re-minting them with a `--role`** (or, under `idp`, adding roles
 to the provider's token). With `auth.method: none` there is no authenticated principal, so
-authorization is off and every RPC is reachable, exactly as before.
+authorisation is off and every RPC is reachable, exactly as before.
 
 Under `hmac`, `--mint-token --role` stamps the tier names (`reader`/`writer`/`admin`) directly.
 Under `idp`, the provider supplies them: by default they are read from a top-level `roles` claim;
@@ -627,7 +627,7 @@ OpenSearch is strictly a **secondary index** — the primary store remains the s
 for every existence, consolidation, and recall decision:
 
 - Writes and deletes (including the sleep cycle's consolidation and eviction, purges, event
-  merges, and summarization) propagate to the index asynchronously and best-effort: an
+  merges, and summarisation) propagate to the index asynchronously and best-effort: an
   unreachable or lagging cluster never fails or slows a primary operation. The worker retries a
   transient cluster failure a few times with backoff before giving up, so a brief blip does not
   lose a write. A full propagation queue (`opensearch.queueSize`) still drops operations with a
@@ -729,15 +729,15 @@ a live run is that a memory deleted by the service mid-backfill can be re-indexe
 deletion propagated, leaving a stale document — harmless for reads (results are re-verified
 against the primary store) and cleared by the next `--reindex` run.
 
-### Summarization (embedded LLM / Ollama)
+### Summarisation (embedded LLM / Ollama)
 
 By default summaries are authored by the client (`ReplaceMemoriesWithSummary`, see
-[Summarization](consolidation.md#summarization)). Enabling the optional embedded LLM — an
+[Summarisation](consolidation.md#summarisation)). Enabling the optional embedded LLM — an
 [Ollama](https://github.com/ollama/ollama) server — lets the service author them itself: the
 `SummariseMemories` RPC (`POST /v1/events/{event_id}/summarise`) reads an event's memories,
-generates a summary via the model, and replaces them with it; and `ollama.autoSummarize` makes the
+generates a summary via the model, and replaces them with it; and `ollama.autoSummarise` makes the
 sleep cycle do the same for each scan candidate. Off by default; when disabled `SummariseMemories`
-returns `FAILED_PRECONDITION` and auto-summarization is a no-op. The summariser is the one component
+returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. The summariser is the one component
 that reads memory content, and it sends memory bodies to the Ollama server — see the
 [operations security note](operations.md#security).
 
@@ -746,7 +746,7 @@ that reads memory content, and it sends memory bodies to the Ollama server — s
     "enabled": false,
     "address": "http://localhost:11434",
     "model": "llama3.2",
-    "autoSummarize": false,
+    "autoSummarise": false,
     "timeoutSeconds": 120,
     "maxMemories": 200,
     "promptCharLimit": 32000,
@@ -761,7 +761,7 @@ and `promptCharLimit` bound the prompt so a large event cannot overrun a small m
 model default). Binary memories are excluded from the prompt (their bodies are opaque). Deploy
 Ollama with the optional `ollama` compose profile (see `docker-compose.yaml`), with the configured
 model pulled (`docker compose exec ollama ollama pull <model>`). For the full behaviour, see
-[Summarization → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
+[Summarisation → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
 
 ### Transfer and archive
 
@@ -829,7 +829,7 @@ set, the connection verifies against the system certificate pool. The legacy sca
 `"tls": true` still works as a shorthand for `{ "enabled": true }`.
 
 `transfer.maxBatchBytes` (0 → an internal 3 MiB default) additionally bounds each `ImportBatch`
-message's serialized size during a `Transfer`: a page of large memory bodies is split into
+message's serialised size during a `Transfer`: a page of large memory bodies is split into
 byte-bounded sub-batches so no message overflows the receiver's gRPC max-receive-message size
 (otherwise the transfer fails permanently, every retry hitting the same oversized deterministic
 page). A single memory larger than the budget is sent alone. If your bodies can exceed the default

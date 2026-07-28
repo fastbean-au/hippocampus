@@ -952,13 +952,13 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 	return int(replaced), nil
 }
 
-// FindSummarizationCandidates returns events whose memory count is at least minMemories and
+// FindSummarisationCandidates returns events whose memory count is at least minMemories and
 // whose most recently touched memory (by creation or recall) is older than maxTimestamp, ordered
 // by memory count descending. limit caps the number of rows returned; 0 leaves it unbounded.
-// is_summary memories are excluded, so an event only reappears once fresh, unsummarized memories
+// is_summary memories are excluded, so an event only reappears once fresh, unsummarised memories
 // have accumulated again.
-func (d *DB) FindSummarizationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarizationCandidate, error) {
-	log.Trace("func() db.FindSummarizationCandidates")
+func (d *DB) FindSummarisationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarisationCandidate, error) {
+	log.Trace("func() db.FindSummarisationCandidates")
 
 	// SQLite's two-argument MAX is a scalar function; Postgres and MySQL spell the same thing
 	// GREATEST (their MAX is aggregate-only).
@@ -991,10 +991,10 @@ func (d *DB) FindSummarizationCandidates(ctx context.Context, minMemories int, m
 	}
 	defer func() { _ = rows.Close() }()
 
-	var candidates []SummarizationCandidate
+	var candidates []SummarisationCandidate
 
 	for rows.Next() {
-		var c SummarizationCandidate
+		var c SummarisationCandidate
 
 		if err := rows.Scan(&c.EventId, &c.EventName, &c.MemoryCount); err != nil {
 			return nil, err

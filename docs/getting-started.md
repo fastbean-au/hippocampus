@@ -80,7 +80,7 @@ The gateway also serves a self-contained browser console at [`/ui`](http://local
 browsing, searching, and editing memories and events — it drives the same `/v1` endpoints the curl
 examples below use, so it is the quickest way to explore a running instance without writing a
 client. (When `auth.method` is enabled, paste a bearer token into the field at the top right; the
-console adapts to the token's [role](configuration.md#authorization), hiding write controls for a
+console adapts to the token's [role](configuration.md#authorisation), hiding write controls for a
 `reader`.)
 
 ## First requests (HTTP gateway)
@@ -167,5 +167,5 @@ See [Authentication](configuration.md#authentication) and [TLS](configuration.md
 - [Use cases & deployment modes](use-cases.md) — embedded vs. centralised topologies.
 - [Configurability](configuration.md#configurability) — the exhaustive configuration reference.
 - [Memory consolidation](consolidation.md#memory-consolidation) — the decay algorithms, capacity target,
-  and summarization.
+  and summarisation.
 - [MCP server](mcp.md) — expose the store to an LLM host (Claude Desktop/Code) as memory tools.

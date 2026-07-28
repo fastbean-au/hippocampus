@@ -30,14 +30,14 @@ import (
 // defaultTransferBatchSize is the page size used when transfer.batchSize is not configured.
 const defaultTransferBatchSize = 500
 
-// defaultTransferMaxBatchBytes bounds the serialized size of one ImportBatch message Transfer sends
+// defaultTransferMaxBatchBytes bounds the serialised size of one ImportBatch message Transfer sends
 // when transfer.maxBatchBytes is not configured. It sits under the receiver's default gRPC
 // max-receive-message size (4 MiB) with headroom for proto framing, so a page of large memory
 // bodies is split across several calls instead of overflowing a single message and failing the
 // whole transfer permanently (every retry hits the same oversized, deterministic page).
 const defaultTransferMaxBatchBytes = 3 * 1024 * 1024
 
-// transferMemoryOverheadBytes approximates a memory's serialized proto size beyond its body (id and
+// transferMemoryOverheadBytes approximates a memory's serialised proto size beyond its body (id and
 // group strings are added explicitly; this covers the fixed numeric fields and the field tags) when
 // byte-budgeting a Transfer batch. It only needs to be a safe over-estimate: the budget already
 // leaves ~1 MiB of headroom under the frame.
@@ -577,13 +577,13 @@ func (s *Server) ingestMemories(ctx context.Context, protos []*contract.Memory) 
 	return count, nil
 }
 
-// memoryTransferSize estimates a memory's serialized proto size for byte-budgeting a Transfer
+// memoryTransferSize estimates a memory's serialised proto size for byte-budgeting a Transfer
 // batch: the body plus the id/group strings plus a fixed allowance for the remaining fields.
 func memoryTransferSize(memory types.Memory) int {
 	return len(memory.Body) + len(memory.Id) + len(memory.Group) + transferMemoryOverheadBytes
 }
 
-// batchMemoriesByBytes splits a page of memories into sub-batches each estimated to serialize
+// batchMemoriesByBytes splits a page of memories into sub-batches each estimated to serialise
 // within maxBytes, so no ImportBatch message Transfer sends exceeds the receiver's gRPC
 // max-receive-message size. transfer.batchSize bounds a page's row count; this bounds each call's
 // byte size. A single memory larger than the budget is sent alone in its own batch rather than

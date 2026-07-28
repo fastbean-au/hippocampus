@@ -9,10 +9,10 @@ import (
 	"github.com/fastbean-au/hippocampus/contract"
 )
 
-// WhoAmI reports the caller's identity and effective authorization tier so a client (the web
+// WhoAmI reports the caller's identity and effective authorisation tier so a client (the web
 // console) can tailor what it offers rather than guessing at the token's roles. The tier and
-// client id are read from the request context, where the authorization layer stashed them on a
-// successful check; their absence means authorization never ran (authentication is disabled), which
+// client id are read from the request context, where the authorisation layer stashed them on a
+// successful check; their absence means authorisation never ran (authentication is disabled), which
 // is reported as an unrestricted admin tier with auth_enabled false so the client shows everything.
 func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contract.WhoAmIResponse, error) {
 	log.Trace("func() WhoAmI")

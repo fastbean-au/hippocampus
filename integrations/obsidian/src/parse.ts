@@ -2,7 +2,7 @@
 // free of any Obsidian import so it can be unit-tested directly. The gateway emits camelCase field
 // names, int64 fields as JSON *strings*, and enums as their string names.
 
-import type { EventView, MemoryView, SummarizationCandidate } from "./types";
+import type { EventView, MemoryView, SummarisationCandidate } from "./types";
 
 // toNumber parses the gateway's string-encoded int64 fields (and tolerates already-numeric input).
 export function toNumber(value: unknown): number {
@@ -59,7 +59,7 @@ export function eventsFrom(json: Record<string, unknown>): EventView[] {
 	return rows.map((row) => toEventView(row as Record<string, unknown>));
 }
 
-export function candidatesFrom(json: Record<string, unknown>): SummarizationCandidate[] {
+export function candidatesFrom(json: Record<string, unknown>): SummarisationCandidate[] {
 	const rows = Array.isArray(json.candidates) ? json.candidates : [];
 
 	return rows.map((row) => {

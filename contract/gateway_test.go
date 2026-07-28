@@ -278,7 +278,7 @@ func exerciseGatewayRPCs(t *testing.T, server *httptest.Server) {
 		t.Errorf("SearchMemories: expected an error status (search index not configured), got 200: %s", body)
 	}
 
-	// --- Summarization ---
+	// --- Summarisation ---
 
 	var summaryRes contract.ReplaceMemoriesWithSummaryResponse
 
@@ -293,10 +293,10 @@ func exerciseGatewayRPCs(t *testing.T, server *httptest.Server) {
 		t.Error("ReplaceMemoriesWithSummary: expected a non-empty summary memory id")
 	}
 
-	var candidatesRes contract.GetSummarizationCandidatesResponse
+	var candidatesRes contract.GetSummarisationCandidatesResponse
 
-	if status, _ := doJSON(t, server, http.MethodGet, "/v1/summarization/candidates", nil, &candidatesRes); status != http.StatusOK {
-		t.Fatalf("GetSummarizationCandidates: status = %d", status)
+	if status, _ := doJSON(t, server, http.MethodGet, "/v1/summarisation/candidates", nil, &candidatesRes); status != http.StatusOK {
+		t.Fatalf("GetSummarisationCandidates: status = %d", status)
 	}
 
 	// --- Delete / cleanup RPCs ---

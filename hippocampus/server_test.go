@@ -90,7 +90,7 @@ func TestSleepOnce_ConcurrentCallersShareOneExecution(t *testing.T) {
 // TestPurgeInProgress_ConcurrentAccess drives concurrent Purge calls and interceptor checks at
 // the race detector. purgeInProgress is written by Purge and read by
 // InterceptorBlockWhenPurgeInProgress from every RPC's own goroutine; before it became an
-// atomic.Bool this was an unsynchronized read/write of a plain bool across goroutines.
+// atomic.Bool this was an unsynchronised read/write of a plain bool across goroutines.
 func TestPurgeInProgress_ConcurrentAccess(t *testing.T) {
 	database, err := db.New("")
 	if err != nil {

@@ -10,23 +10,23 @@ import (
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
-	"github.com/fastbean-au/hippocampus/summarize"
+	"github.com/fastbean-au/hippocampus/summarise"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
-// fakeSummarizer is a test double for summarize.Summarizer. It records the last request and
+// fakeSummariser is a test double for summarise.Summariser. It records the last request and
 // returns a canned summary or a canned error. failNames lets a test fail only for specific events
 // (matched on the request's EventName), so a mixed success/failure batch can be exercised.
-type fakeSummarizer struct {
+type fakeSummariser struct {
 	enabled   bool
 	reply     string
 	err       error
 	failNames map[string]bool
-	lastReq   summarize.Request
+	lastReq   summarise.Request
 	calls     int
 }
 
-func (f *fakeSummarizer) Summarize(ctx context.Context, req summarize.Request) (string, error) {
+func (f *fakeSummariser) Summarise(ctx context.Context, req summarise.Request) (string, error) {
 	f.calls++
 	f.lastReq = req
 
@@ -41,7 +41,7 @@ func (f *fakeSummarizer) Summarize(ctx context.Context, req summarize.Request) (
 	return f.reply, nil
 }
 
-func (f *fakeSummarizer) Enabled() bool {
+func (f *fakeSummariser) Enabled() bool {
 	return f.enabled
 }
 
@@ -71,7 +71,7 @@ func (f summariseFaultStore) GetMemoriesByEventId(ctx context.Context, eventId s
 }
 
 // newSummariseTestServer builds a Server over an in-memory database wired to the given summariser.
-func newSummariseTestServer(t *testing.T, summariser summarize.Summarizer) *Server {
+func newSummariseTestServer(t *testing.T, summariser summarise.Summariser) *Server {
 	t.Helper()
 
 	database, err := db.New("")
@@ -81,7 +81,7 @@ func newSummariseTestServer(t *testing.T, summariser summarize.Summarizer) *Serv
 
 	t.Cleanup(func() { _ = database.Close() })
 
-	return &Server{db: database, summarizer: summariser}
+	return &Server{db: database, summarise: summariser}
 }
 
 // seedEvent creates an event with the given memories for the summarisation tests.
@@ -102,7 +102,7 @@ func seedEvent(t *testing.T, s *Server, eventId string, memories []types.Memory)
 // TestSummariseMemories_HappyPath verifies the RPC reads the event's text memories, sends them to
 // the summariser with event context, and replaces them with the generated summary.
 func TestSummariseMemories_HappyPath(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, reply: "the gist of the trip"}
+	f := &fakeSummariser{enabled: true, reply: "the gist of the trip"}
 	s := newSummariseTestServer(t, f)
 
 	seedEvent(t, s, "e1", []types.Memory{
@@ -156,7 +156,7 @@ func TestSummariseMemories_HappyPath(t *testing.T) {
 // TestSummariseMemories_Disabled verifies the RPC fails with FAILED_PRECONDITION when no summariser
 // is configured.
 func TestSummariseMemories_Disabled(t *testing.T) {
-	s := newSummariseTestServer(t, &fakeSummarizer{enabled: false})
+	s := newSummariseTestServer(t, &fakeSummariser{enabled: false})
 
 	seedEvent(t, s, "e1", []types.Memory{{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "x"}})
 
@@ -166,9 +166,9 @@ func TestSummariseMemories_Disabled(t *testing.T) {
 	}
 }
 
-// TestSummariseMemories_NilSummarizer verifies a Server built without a summariser (nil field, as
+// TestSummariseMemories_NilSummariser verifies a Server built without a summariser (nil field, as
 // in most tests) behaves as disabled rather than panicking.
-func TestSummariseMemories_NilSummarizer(t *testing.T) {
+func TestSummariseMemories_NilSummariser(t *testing.T) {
 	s := newTestServer(t)
 
 	_, err := s.SummariseMemories(context.Background(), &contract.SummariseMemoriesRequest{EventId: "e1"})
@@ -179,7 +179,7 @@ func TestSummariseMemories_NilSummarizer(t *testing.T) {
 
 // TestSummariseMemories_EmptyEventId verifies an empty event_id is rejected with InvalidArgument.
 func TestSummariseMemories_EmptyEventId(t *testing.T) {
-	s := newSummariseTestServer(t, &fakeSummarizer{enabled: true})
+	s := newSummariseTestServer(t, &fakeSummariser{enabled: true})
 
 	_, err := s.SummariseMemories(context.Background(), &contract.SummariseMemoriesRequest{})
 	if status.Code(err) != codes.InvalidArgument {
@@ -189,7 +189,7 @@ func TestSummariseMemories_EmptyEventId(t *testing.T) {
 
 // TestSummariseMemories_UnknownEvent verifies an unknown event returns NotFound.
 func TestSummariseMemories_UnknownEvent(t *testing.T) {
-	s := newSummariseTestServer(t, &fakeSummarizer{enabled: true})
+	s := newSummariseTestServer(t, &fakeSummariser{enabled: true})
 
 	_, err := s.SummariseMemories(context.Background(), &contract.SummariseMemoriesRequest{EventId: "nope"})
 	if status.Code(err) != codes.NotFound {
@@ -200,7 +200,7 @@ func TestSummariseMemories_UnknownEvent(t *testing.T) {
 // TestSummariseMemories_OnlyBinaryMemories verifies an event whose memories are all binary (opaque
 // bodies) has nothing to summarise and fails with FAILED_PRECONDITION, leaving the memories intact.
 func TestSummariseMemories_OnlyBinaryMemories(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, reply: "unused"}
+	f := &fakeSummariser{enabled: true, reply: "unused"}
 	s := newSummariseTestServer(t, f)
 
 	seedEvent(t, s, "e1", []types.Memory{
@@ -225,7 +225,7 @@ func TestSummariseMemories_OnlyBinaryMemories(t *testing.T) {
 // TestSummariseMemories_SummariserError verifies a summariser failure surfaces as UNAVAILABLE and
 // leaves the original memories untouched.
 func TestSummariseMemories_SummariserError(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, err: errors.New("model unreachable")}
+	f := &fakeSummariser{enabled: true, err: errors.New("model unreachable")}
 	s := newSummariseTestServer(t, f)
 
 	seedEvent(t, s, "e1", []types.Memory{{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "x"}})
@@ -241,21 +241,21 @@ func TestSummariseMemories_SummariserError(t *testing.T) {
 	}
 }
 
-// TestAutoSummarizeCandidates_Summarises verifies the sleep-cycle auto path condenses the cached
+// TestAutoSummariseCandidates_Summarises verifies the sleep-cycle auto path condenses the cached
 // candidates and removes them from the candidate list.
-func TestAutoSummarizeCandidates_Summarises(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, reply: "auto summary"}
+func TestAutoSummariseCandidates_Summarises(t *testing.T) {
+	f := &fakeSummariser{enabled: true, reply: "auto summary"}
 	s := newSummariseTestServer(t, f)
-	s.consolidation.autoSummarize = true
+	s.consolidation.autoSummarise = true
 
 	seedEvent(t, s, "e1", []types.Memory{
 		{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "a"},
 		{Id: "m2", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "b"},
 	})
 
-	s.summarizationCandidates = []db.SummarizationCandidate{{EventId: "e1", EventName: "trip", MemoryCount: 2}}
+	s.summarisationCandidates = []db.SummarisationCandidate{{EventId: "e1", EventName: "trip", MemoryCount: 2}}
 
-	s.autoSummarizeCandidates(context.Background())
+	s.autoSummariseCandidates(context.Background())
 
 	if f.calls != 1 {
 		t.Errorf("expected 1 summariser call, got %d", f.calls)
@@ -266,30 +266,30 @@ func TestAutoSummarizeCandidates_Summarises(t *testing.T) {
 		t.Errorf("expected the event condensed to one summary, got %+v", memories)
 	}
 
-	if len(s.summarizationCandidates) != 0 {
-		t.Errorf("summarised candidate should be dropped from the list, got %+v", s.summarizationCandidates)
+	if len(s.summarisationCandidates) != 0 {
+		t.Errorf("summarised candidate should be dropped from the list, got %+v", s.summarisationCandidates)
 	}
 }
 
-// TestAutoSummarizeCandidates_DisabledByDefault verifies the auto path is a no-op when
-// autoSummarize is off, even with a working summariser and candidates present.
-func TestAutoSummarizeCandidates_DisabledByDefault(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, reply: "auto summary"}
+// TestAutoSummariseCandidates_DisabledByDefault verifies the auto path is a no-op when
+// autoSummarise is off, even with a working summariser and candidates present.
+func TestAutoSummariseCandidates_DisabledByDefault(t *testing.T) {
+	f := &fakeSummariser{enabled: true, reply: "auto summary"}
 	s := newSummariseTestServer(t, f)
-	// autoSummarize defaults to false.
+	// autoSummarise defaults to false.
 
 	seedEvent(t, s, "e1", []types.Memory{{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "a"}})
 
-	s.summarizationCandidates = []db.SummarizationCandidate{{EventId: "e1", EventName: "trip", MemoryCount: 1}}
+	s.summarisationCandidates = []db.SummarisationCandidate{{EventId: "e1", EventName: "trip", MemoryCount: 1}}
 
-	s.autoSummarizeCandidates(context.Background())
+	s.autoSummariseCandidates(context.Background())
 
 	if f.calls != 0 {
-		t.Errorf("summariser must not be called when autoSummarize is off, calls=%d", f.calls)
+		t.Errorf("summariser must not be called when autoSummarise is off, calls=%d", f.calls)
 	}
 
-	if len(s.summarizationCandidates) != 1 {
-		t.Errorf("candidate list must be untouched, got %+v", s.summarizationCandidates)
+	if len(s.summarisationCandidates) != 1 {
+		t.Errorf("candidate list must be untouched, got %+v", s.summarisationCandidates)
 	}
 }
 
@@ -304,8 +304,8 @@ func TestSummariseMemories_GetEventError(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	s := &Server{
-		db:         summariseFaultStore{Store: database, getEventErr: errors.New("db down")},
-		summarizer: &fakeSummarizer{enabled: true, reply: "x"},
+		db:        summariseFaultStore{Store: database, getEventErr: errors.New("db down")},
+		summarise: &fakeSummariser{enabled: true, reply: "x"},
 	}
 
 	_, err = s.SummariseMemories(context.Background(), &contract.SummariseMemoriesRequest{EventId: "e1"})
@@ -329,8 +329,8 @@ func TestSummariseMemories_GetMemoriesError(t *testing.T) {
 	}
 
 	s := &Server{
-		db:         summariseFaultStore{Store: database, getMemoriesByEventIdErr: errors.New("read failed")},
-		summarizer: &fakeSummarizer{enabled: true, reply: "x"},
+		db:        summariseFaultStore{Store: database, getMemoriesByEventIdErr: errors.New("read failed")},
+		summarise: &fakeSummariser{enabled: true, reply: "x"},
 	}
 
 	_, err = s.SummariseMemories(context.Background(), &contract.SummariseMemoriesRequest{EventId: "e1"})
@@ -343,7 +343,7 @@ func TestSummariseMemories_GetMemoriesError(t *testing.T) {
 // (here, its defaulted significance is below the configured minimum) the RPC returns the
 // InvalidArgument insertSummary raises and the original memories survive.
 func TestSummariseMemories_InsertRejected(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, reply: "the gist"}
+	f := &fakeSummariser{enabled: true, reply: "the gist"}
 	s := newSummariseTestServer(t, f)
 	s.minimumMemorySignificance = 100
 
@@ -363,27 +363,27 @@ func TestSummariseMemories_InsertRejected(t *testing.T) {
 	}
 }
 
-// TestAutoSummarizeCandidates_EmptyList verifies the auto path returns early (no summariser call)
+// TestAutoSummariseCandidates_EmptyList verifies the auto path returns early (no summariser call)
 // when there are no cached candidates, even with auto-summarisation enabled.
-func TestAutoSummarizeCandidates_EmptyList(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, reply: "x"}
+func TestAutoSummariseCandidates_EmptyList(t *testing.T) {
+	f := &fakeSummariser{enabled: true, reply: "x"}
 	s := newSummariseTestServer(t, f)
-	s.consolidation.autoSummarize = true
+	s.consolidation.autoSummarise = true
 
 	// No candidates set.
-	s.autoSummarizeCandidates(context.Background())
+	s.autoSummariseCandidates(context.Background())
 
 	if f.calls != 0 {
 		t.Errorf("summariser must not be called with an empty candidate list, calls=%d", f.calls)
 	}
 }
 
-// TestAutoSummarizeCandidates_MixedSuccessFailure verifies that when some candidates summarise and
+// TestAutoSummariseCandidates_MixedSuccessFailure verifies that when some candidates summarise and
 // others fail, the successes are condensed and dropped from the list while the failures are kept.
-func TestAutoSummarizeCandidates_MixedSuccessFailure(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, reply: "auto summary", failNames: map[string]bool{"bad": true}}
+func TestAutoSummariseCandidates_MixedSuccessFailure(t *testing.T) {
+	f := &fakeSummariser{enabled: true, reply: "auto summary", failNames: map[string]bool{"bad": true}}
 	s := newSummariseTestServer(t, f)
-	s.consolidation.autoSummarize = true
+	s.consolidation.autoSummarise = true
 
 	// e1 ("trip") summarises; e2 ("bad") fails.
 	seedEvent(t, s, "e1", []types.Memory{{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "a"}})
@@ -396,12 +396,12 @@ func TestAutoSummarizeCandidates_MixedSuccessFailure(t *testing.T) {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	s.summarizationCandidates = []db.SummarizationCandidate{
+	s.summarisationCandidates = []db.SummarisationCandidate{
 		{EventId: "e1", EventName: "trip", MemoryCount: 1},
 		{EventId: "e2", EventName: "bad", MemoryCount: 1},
 	}
 
-	s.autoSummarizeCandidates(context.Background())
+	s.autoSummariseCandidates(context.Background())
 
 	// e1 condensed, e2 untouched.
 	e1mems, _ := s.db.GetMemoriesByEventId(context.Background(), "e1")
@@ -415,30 +415,30 @@ func TestAutoSummarizeCandidates_MixedSuccessFailure(t *testing.T) {
 	}
 
 	// Only the failed candidate remains in the list.
-	if len(s.summarizationCandidates) != 1 || s.summarizationCandidates[0].EventId != "e2" {
-		t.Errorf("only the failed candidate should remain, got %+v", s.summarizationCandidates)
+	if len(s.summarisationCandidates) != 1 || s.summarisationCandidates[0].EventId != "e2" {
+		t.Errorf("only the failed candidate should remain, got %+v", s.summarisationCandidates)
 	}
 }
 
-// TestAutoSummarizeCandidates_SkipsFailingEvent verifies a per-event failure is skipped (logged),
+// TestAutoSummariseCandidates_SkipsFailingEvent verifies a per-event failure is skipped (logged),
 // leaves that event's memories intact, and keeps it in the candidate list, without failing.
-func TestAutoSummarizeCandidates_SkipsFailingEvent(t *testing.T) {
-	f := &fakeSummarizer{enabled: true, err: errors.New("boom")}
+func TestAutoSummariseCandidates_SkipsFailingEvent(t *testing.T) {
+	f := &fakeSummariser{enabled: true, err: errors.New("boom")}
 	s := newSummariseTestServer(t, f)
-	s.consolidation.autoSummarize = true
+	s.consolidation.autoSummarise = true
 
 	seedEvent(t, s, "e1", []types.Memory{{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "a"}})
 
-	s.summarizationCandidates = []db.SummarizationCandidate{{EventId: "e1", EventName: "trip", MemoryCount: 1}}
+	s.summarisationCandidates = []db.SummarisationCandidate{{EventId: "e1", EventName: "trip", MemoryCount: 1}}
 
-	s.autoSummarizeCandidates(context.Background())
+	s.autoSummariseCandidates(context.Background())
 
 	memories, _ := s.db.GetMemoriesByEventId(context.Background(), "e1")
 	if len(*memories) != 1 || (*memories)[0].Id != "m1" {
 		t.Error("a failed auto-summarisation must leave the memories intact")
 	}
 
-	if len(s.summarizationCandidates) != 1 {
-		t.Errorf("a failed candidate must remain in the list, got %+v", s.summarizationCandidates)
+	if len(s.summarisationCandidates) != 1 {
+		t.Errorf("a failed candidate must remain in the list, got %+v", s.summarisationCandidates)
 	}
 }

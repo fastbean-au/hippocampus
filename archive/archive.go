@@ -3,7 +3,7 @@
 // Length-delimited protobuf rather than JSON lines keeps the object compact, streams both ways
 // without holding the store in memory, and reuses the exact proto messages the API speaks — the
 // same records travel the direct Transfer path as ImportBatch requests, so the two paths share
-// one serialization.
+// one serialisation.
 package archive
 
 import (

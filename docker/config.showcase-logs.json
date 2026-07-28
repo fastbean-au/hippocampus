@@ -88,8 +88,8 @@
         "capacityBytes": 200000000,
         "capacityBytesFloor": 180000000,
         "walTriggerBytes": 0,
-        "summarizationMinMemories": 0,
-        "summarizationMinAgeInDays": 0,
-        "summarizationMaxCandidates": 0
+        "summarisationMinMemories": 0,
+        "summarisationMinAgeInDays": 0,
+        "summarisationMaxCandidates": 0
     }
 }

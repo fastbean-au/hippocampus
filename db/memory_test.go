@@ -606,7 +606,7 @@ func TestDeleteMemories_Chunked(t *testing.T) {
 func TestReplaceMemoriesWithSummary(t *testing.T) {
 	db := newTestDB(t)
 
-	if _, err := db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "summarized", TimeStart: 100, Significance: 1}); err != nil {
+	if _, err := db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "summarised", TimeStart: 100, Significance: 1}); err != nil {
 		t.Fatalf("CreateEvent(e1): %s", err)
 	}
 
@@ -655,17 +655,17 @@ func TestReplaceMemoriesWithSummary(t *testing.T) {
 	}
 }
 
-// TestFindSummarizationCandidates verifies the candidate scan: an event only qualifies once it
+// TestFindSummarisationCandidates verifies the candidate scan: an event only qualifies once it
 // has at least minMemories memories that are all older than the age threshold, is_summary
 // memories do not count towards the threshold, and results respect the row limit.
-func TestFindSummarizationCandidates(t *testing.T) {
+func TestFindSummarisationCandidates(t *testing.T) {
 	db := newTestDB(t)
 
 	events := []types.Event{
 		{Id: "quiet", Name: "quiet event", TimeStart: 100, Significance: 1},
 		{Id: "active", Name: "active event", TimeStart: 100, Significance: 1},
 		{Id: "small", Name: "too few memories", TimeStart: 100, Significance: 1},
-		{Id: "already-summarized", Name: "already summarized", TimeStart: 100, Significance: 1},
+		{Id: "already-summarised", Name: "already summarised", TimeStart: 100, Significance: 1},
 	}
 
 	for _, e := range events {
@@ -693,10 +693,10 @@ func TestFindSummarizationCandidates(t *testing.T) {
 		{Id: "s1", TimeStamp: old, Significance: 1, EventId: "small", Body: "x"},
 		{Id: "s2", TimeStamp: old, Significance: 1, EventId: "small", Body: "x"},
 
-		// "already-summarized": 3 old memories, but they are already summaries and must not count.
-		{Id: "as1", TimeStamp: old, Significance: 1, EventId: "already-summarized", Body: "x", IsSummary: true},
-		{Id: "as2", TimeStamp: old, Significance: 1, EventId: "already-summarized", Body: "x", IsSummary: true},
-		{Id: "as3", TimeStamp: old, Significance: 1, EventId: "already-summarized", Body: "x", IsSummary: true},
+		// "already-summarised": 3 old memories, but they are already summaries and must not count.
+		{Id: "as1", TimeStamp: old, Significance: 1, EventId: "already-summarised", Body: "x", IsSummary: true},
+		{Id: "as2", TimeStamp: old, Significance: 1, EventId: "already-summarised", Body: "x", IsSummary: true},
+		{Id: "as3", TimeStamp: old, Significance: 1, EventId: "already-summarised", Body: "x", IsSummary: true},
 	}
 
 	for _, m := range memories {
@@ -705,9 +705,9 @@ func TestFindSummarizationCandidates(t *testing.T) {
 		}
 	}
 
-	candidates, err := db.FindSummarizationCandidates(context.Background(), 3, threshold, 0)
+	candidates, err := db.FindSummarisationCandidates(context.Background(), 3, threshold, 0)
 	if err != nil {
-		t.Fatalf("FindSummarizationCandidates: %s", err)
+		t.Fatalf("FindSummarisationCandidates: %s", err)
 	}
 
 	if len(candidates) != 1 {
@@ -724,9 +724,9 @@ func TestFindSummarizationCandidates(t *testing.T) {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	candidates, err = db.FindSummarizationCandidates(context.Background(), 3, threshold, 0)
+	candidates, err = db.FindSummarisationCandidates(context.Background(), 3, threshold, 0)
 	if err != nil {
-		t.Fatalf("FindSummarizationCandidates after recall: %s", err)
+		t.Fatalf("FindSummarisationCandidates after recall: %s", err)
 	}
 
 	if len(candidates) != 0 {
@@ -734,9 +734,9 @@ func TestFindSummarizationCandidates(t *testing.T) {
 	}
 }
 
-// TestFindSummarizationCandidates_Limit verifies that a positive limit caps the number of rows
+// TestFindSummarisationCandidates_Limit verifies that a positive limit caps the number of rows
 // returned, keeping the most populous events.
-func TestFindSummarizationCandidates_Limit(t *testing.T) {
+func TestFindSummarisationCandidates_Limit(t *testing.T) {
 	db := newTestDB(t)
 
 	for _, id := range []string{"e1", "e2"} {
@@ -760,9 +760,9 @@ func TestFindSummarizationCandidates_Limit(t *testing.T) {
 		}
 	}
 
-	candidates, err := db.FindSummarizationCandidates(context.Background(), 3, 1_000_000, 1)
+	candidates, err := db.FindSummarisationCandidates(context.Background(), 3, 1_000_000, 1)
 	if err != nil {
-		t.Fatalf("FindSummarizationCandidates: %s", err)
+		t.Fatalf("FindSummarisationCandidates: %s", err)
 	}
 
 	if len(candidates) != 1 {

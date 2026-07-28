@@ -41,7 +41,7 @@ type fakeClient struct {
 	getEventsReq *contract.GetEventsRequest
 	getEventsRes *contract.GetEventsResponse
 
-	candidatesRes *contract.GetSummarizationCandidatesResponse
+	candidatesRes *contract.GetSummarisationCandidatesResponse
 
 	err error
 }
@@ -94,7 +94,7 @@ func (f *fakeClient) GetEvents(_ context.Context, in *contract.GetEventsRequest,
 	return f.getEventsRes, f.err
 }
 
-func (f *fakeClient) GetSummarizationCandidates(_ context.Context, _ *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetSummarizationCandidatesResponse, error) {
+func (f *fakeClient) GetSummarisationCandidates(_ context.Context, _ *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetSummarisationCandidatesResponse, error) {
 
 	return f.candidatesRes, f.err
 }
@@ -140,8 +140,8 @@ func TestHandlers_PropagateRPCError(t *testing.T) {
 		t.Error("listEvents should propagate the RPC error")
 	}
 
-	if _, _, err := b.getSummarizationCandidates(ctx, nil, struct{}{}); err == nil {
-		t.Error("getSummarizationCandidates should propagate the RPC error")
+	if _, _, err := b.getSummarisationCandidates(ctx, nil, struct{}{}); err == nil {
+		t.Error("getSummarisationCandidates should propagate the RPC error")
 	}
 }
 
@@ -434,17 +434,17 @@ func TestListEvents_MapsResponse(t *testing.T) {
 	}
 }
 
-func TestGetSummarizationCandidates_MapsResponse(t *testing.T) {
-	f := &fakeClient{candidatesRes: &contract.GetSummarizationCandidatesResponse{
-		Candidates: []*contract.SummarizationCandidate{
+func TestGetSummarisationCandidates_MapsResponse(t *testing.T) {
+	f := &fakeClient{candidatesRes: &contract.GetSummarisationCandidatesResponse{
+		Candidates: []*contract.SummarisationCandidate{
 			{EventId: "e1", EventName: "n1", MemoryCount: 12},
 		},
 	}}
 	b := newBridge(f)
 
-	_, out, err := b.getSummarizationCandidates(context.Background(), nil, struct{}{})
+	_, out, err := b.getSummarisationCandidates(context.Background(), nil, struct{}{})
 	if err != nil {
-		t.Fatalf("getSummarizationCandidates returned error: %v", err)
+		t.Fatalf("getSummarisationCandidates returned error: %v", err)
 	}
 
 	if len(out.Candidates) != 1 || out.Candidates[0].EventId != "e1" || out.Candidates[0].MemoryCount != 12 {
@@ -491,7 +491,7 @@ func TestServer_EndToEnd(t *testing.T) {
 		"list_memories":                false,
 		"create_event":                 false,
 		"list_events":                  false,
-		"get_summarization_candidates": false,
+		"get_summarisation_candidates": false,
 	}
 
 	for _, v := range tools.Tools {

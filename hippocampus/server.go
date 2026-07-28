@@ -24,7 +24,7 @@ import (
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
-	"github.com/fastbean-au/hippocampus/summarize"
+	"github.com/fastbean-au/hippocampus/summarise"
 )
 
 // sleepSingleflightKey is the sole key used with Server.sleepGroup: every caller wanting a sleep
@@ -135,17 +135,17 @@ type Consolidation struct {
 	// singleflight serialises, so it needs no lock.
 	lastUsedBytes              int64
 	walTriggerBytes            int64
-	summarizationMinMemories   int
-	summarizationMinAgeInDays  int
-	summarizationMaxCandidates int
+	summarisationMinMemories   int
+	summarisationMinAgeInDays  int
+	summarisationMaxCandidates int
 
-	// autoSummarize (ollama.autoSummarize) makes the sleep cycle summarise the candidates the scan
+	// autoSummarise (ollama.autoSummarise) makes the sleep cycle summarise the candidates the scan
 	// identifies with the embedded LLM, instead of only surfacing them via
-	// GetSummarizationCandidates for a client to summarise. It has effect only when a real
+	// GetSummarisationCandidates for a client to summarise. It has effect only when a real
 	// summariser is configured (ollama.enabled) and the candidate scan is enabled
-	// (summarizationMinMemories > 0). Off by default: enabling the LLM must not silently start
+	// (summarisationMinMemories > 0). Off by default: enabling the LLM must not silently start
 	// rewriting stored memories.
-	autoSummarize bool
+	autoSummarise bool
 }
 
 type Server struct {
@@ -156,10 +156,10 @@ type Server struct {
 	// Server directly) behaves as the disabled no-op via searchIdx().
 	search search.Index
 
-	// summarizer is the optional embedded-LLM summariser backing SummariseMemories and the sleep
+	// summarise is the optional embedded-LLM summariser backing SummariseMemories and the sleep
 	// cycle's auto-summarisation; nil (as in tests constructing a Server directly) behaves as the
 	// disabled no-op via summariser().
-	summarizer summarize.Summarizer
+	summarise summarise.Summariser
 
 	// purgeInProgress is written by Purge and read by InterceptorBlockWhenPurgeInProgress from
 	// every RPC's own goroutine, so it must be an atomic rather than a plain bool.
@@ -173,7 +173,7 @@ type Server struct {
 
 	// readerRecallReinforces (auth.readerRecallReinforces) decides whether a reader-tier caller's
 	// RecallMemories / reinforcing SearchMemories actually reinforces the memories or is downgraded
-	// to a plain read. Writer/admin callers always reinforce; when authorization is not in effect
+	// to a plain read. Writer/admin callers always reinforce; when authorisation is not in effect
 	// (auth disabled) recall reinforces as it always has. See mayReinforce.
 	readerRecallReinforces bool
 
@@ -197,10 +197,10 @@ type Server struct {
 	sleepStopped chan struct{}
 	stopOnce     sync.Once
 
-	// summarizationCandidates is refreshed by the sleep cycle and read by
-	// GetSummarizationCandidates, so access is guarded by summarizationCandidatesMu.
-	summarizationCandidates   []db.SummarizationCandidate
-	summarizationCandidatesMu sync.RWMutex
+	// summarisationCandidates is refreshed by the sleep cycle and read by
+	// GetSummarisationCandidates, so access is guarded by summarisationCandidatesMu.
+	summarisationCandidates   []db.SummarisationCandidate
+	summarisationCandidatesMu sync.RWMutex
 
 	// reconcileInterval / reconcileBatchSize configure the periodic search-index reconciliation
 	// sweep (reconcile.go): the sweep re-indexes the primary store so any document a dropped,
@@ -267,7 +267,7 @@ func transferTLSEnabled() bool {
 
 // mayReinforce reports whether the caller behind ctx may reinforce recalled memories (reset the
 // decay clock, raise the recall count). Writer and admin tiers always may; a reader may only when
-// auth.readerRecallReinforces is set. When no tier is on the context - authorization is not in
+// auth.readerRecallReinforces is set. When no tier is on the context - authorisation is not in
 // effect because authentication is disabled - recall reinforces as it always has, so an unsecured
 // instance is unchanged.
 func (s *Server) mayReinforce(ctx context.Context) bool {
@@ -284,17 +284,17 @@ func (s *Server) mayReinforce(ctx context.Context) bool {
 	return s.readerRecallReinforces
 }
 
-func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore, summarizer summarize.Summarizer) *Server {
+func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore, summariser summarise.Summariser) *Server {
 	log.Trace("func() hippocampus.New()")
 
 	reset := make(chan bool, 1)
 
 	s := &Server{
-		db:         db,
-		search:     searchIndex,
-		summarizer: summarizer,
-		objects:    objects,
-		manifests:  make(map[string]*transferManifest),
+		db:        db,
+		search:    searchIndex,
+		summarise: summariser,
+		objects:   objects,
+		manifests: make(map[string]*transferManifest),
 		transfer: Transfer{
 			targetAddress:         viper.GetString("transfer.targetAddress"),
 			token:                 viper.GetString("transfer.token"),
@@ -330,10 +330,10 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore, sum
 			capacityBytes:                      viper.GetInt64("consolidation.capacityBytes"),
 			capacityBytesFloor:                 viper.GetInt64("consolidation.capacityBytesFloor"),
 			walTriggerBytes:                    viper.GetInt64("consolidation.walTriggerBytes"),
-			summarizationMinMemories:           viper.GetInt("consolidation.summarizationMinMemories"),
-			summarizationMinAgeInDays:          viper.GetInt("consolidation.summarizationMinAgeInDays"),
-			summarizationMaxCandidates:         viper.GetInt("consolidation.summarizationMaxCandidates"),
-			autoSummarize:                      viper.GetBool("ollama.autoSummarize"),
+			summarisationMinMemories:           viper.GetInt("consolidation.summarisationMinMemories"),
+			summarisationMinAgeInDays:          viper.GetInt("consolidation.summarisationMinAgeInDays"),
+			summarisationMaxCandidates:         viper.GetInt("consolidation.summarisationMaxCandidates"),
+			autoSummarise:                      viper.GetBool("ollama.autoSummarise"),
 		},
 	}
 

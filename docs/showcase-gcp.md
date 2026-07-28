@@ -127,7 +127,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/etc/hippocampus-gen/showcase.env
 ExecStart=/usr/local/bin/hippocampus-gen-book -s localhost:50051 \
-  --loop --period 24h --reset --pace-window 2h --live --summarize \
+  --loop --period 24h --reset --pace-window 2h --live --summarise \
   --oidc-issuer https://auth.book.example/realms/hippocampus \
   --oidc-client-id hippocampus-gen --oidc-client-secret ${GEN_SECRET}
 Restart=always
@@ -258,7 +258,7 @@ In the [Auth0 dashboard](https://manage.auth0.com):
 4. **Console app (SPA).** Applications → **Create Application** → _Single Page Web Application_. Set
    _Allowed Callback URLs_ to `https://DOMAIN/ui`, and _Allowed Web Origins_ + _Allowed Logout URLs_
    to `https://DOMAIN`. Copy its **Client ID** → `AUTH0_CLIENT_ID`.
-5. **Generator app (M2M).** Applications → **Create Application** → _Machine to Machine_, authorized
+5. **Generator app (M2M).** Applications → **Create Application** → _Machine to Machine_, authorised
    for the API from step 1. Copy its **Client ID** + **Client Secret** → `GEN_CLIENT_ID` / `GEN_SECRET`.
 
 > **Checkpoint:** you now hold `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, `AUTH0_ROLES_CLAIM`,
@@ -381,7 +381,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/etc/hippocampus-gen/lite.env
 ExecStart=/usr/local/bin/hippocampus-gen-book -s localhost:50051 \
-  --loop --period 24h --reset --pace-window 6h --live --summarize \
+  --loop --period 24h --reset --pace-window 6h --live --summarise \
   --oidc-issuer https://AUTH0_DOMAIN/ \
   --oidc-audience AUTH0_AUDIENCE \
   --oidc-client-id ${GEN_CLIENT_ID} --oidc-client-secret ${GEN_SECRET}

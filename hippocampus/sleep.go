@@ -30,9 +30,9 @@ func (s *Server) sleep() error {
 
 	e1 := s.consolidate(ctx)
 
-	s.scanSummarizationCandidates(ctx)
+	s.scanSummarisationCandidates(ctx)
 
-	s.autoSummarizeCandidates(ctx)
+	s.autoSummariseCandidates(ctx)
 
 	e2 := s.evict(ctx)
 
@@ -169,34 +169,34 @@ func (s *Server) consolidate(ctx context.Context) error {
 	return errors.Join(e1, e2, e3)
 }
 
-// scanSummarizationCandidates identifies events whose memories have accumulated enough
-// (consolidation.summarizationMinMemories) and gone quiet for long enough
-// (consolidation.summarizationMinAgeInDays, measured from each memory's own decay timestamp) to
+// scanSummarisationCandidates identifies events whose memories have accumulated enough
+// (consolidation.summarisationMinMemories) and gone quiet for long enough
+// (consolidation.summarisationMinAgeInDays, measured from each memory's own decay timestamp) to
 // be worth condensing into a single summary memory. The service has no visibility into memory
 // content, so it cannot generate the summary itself: this only surfaces candidates via
-// GetSummarizationCandidates, leaving the actual summarization (ReplaceMemoriesWithSummary) to
-// the caller. A non-positive summarizationMinMemories disables the scan. Failure is logged and
+// GetSummarisationCandidates, leaving the actual summarisation (ReplaceMemoriesWithSummary) to
+// the caller. A non-positive summarisationMinMemories disables the scan. Failure is logged and
 // otherwise ignored, matching the best-effort treatment of the percentile calculation above — a
 // stale or empty candidate list must not fail the sleep cycle.
-func (s *Server) scanSummarizationCandidates(ctx context.Context) {
-	log.Debug("scanSummarizationCandidates()")
+func (s *Server) scanSummarisationCandidates(ctx context.Context) {
+	log.Debug("scanSummarisationCandidates()")
 
-	if s.consolidation.summarizationMinMemories <= 0 {
+	if s.consolidation.summarisationMinMemories <= 0 {
 		return
 	}
 
-	_, span := tel.tracer.Start(ctx, "scan_summarization_candidates")
+	_, span := tel.tracer.Start(ctx, "scan_summarisation_candidates")
 	defer span.End()
 
-	maxTimestamp := time.Now().UnixNano() - int64(s.consolidation.summarizationMinAgeInDays)*DAY_IN_NANOSECONDS
+	maxTimestamp := time.Now().UnixNano() - int64(s.consolidation.summarisationMinAgeInDays)*DAY_IN_NANOSECONDS
 
-	candidates, err := s.db.FindSummarizationCandidates(ctx,
-		s.consolidation.summarizationMinMemories,
+	candidates, err := s.db.FindSummarisationCandidates(ctx,
+		s.consolidation.summarisationMinMemories,
 		maxTimestamp,
-		s.consolidation.summarizationMaxCandidates,
+		s.consolidation.summarisationMaxCandidates,
 	)
 	if err != nil {
-		log.Errorf("failed to scan for summarization candidates: %s", err.Error())
+		log.Errorf("failed to scan for summarisation candidates: %s", err.Error())
 
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -204,14 +204,14 @@ func (s *Server) scanSummarizationCandidates(ctx context.Context) {
 		return
 	}
 
-	s.summarizationCandidatesMu.Lock()
-	s.summarizationCandidates = candidates
-	s.summarizationCandidatesMu.Unlock()
+	s.summarisationCandidatesMu.Lock()
+	s.summarisationCandidates = candidates
+	s.summarisationCandidatesMu.Unlock()
 
-	log.Infof("identified %d summarization candidates", len(candidates))
+	log.Infof("identified %d summarisation candidates", len(candidates))
 
-	tel.summarizationCandidates.Record(ctx, int64(len(candidates)))
-	span.AddEvent("summarization_candidates_identified", trace.WithAttributes(
+	tel.summarisationCandidates.Record(ctx, int64(len(candidates)))
+	span.AddEvent("summarisation_candidates_identified", trace.WithAttributes(
 		attribute.Int("candidates", len(candidates)),
 	))
 }

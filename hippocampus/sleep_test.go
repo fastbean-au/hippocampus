@@ -817,9 +817,9 @@ func TestConsolidate_PercentileWithNoEvents(t *testing.T) {
 	}
 }
 
-// TestScanSummarizationCandidates_PopulatesList verifies that the scan finds a quiet, populous
-// event and stores it as a candidate, ready for GetSummarizationCandidates to serve.
-func TestScanSummarizationCandidates_PopulatesList(t *testing.T) {
+// TestScanSummarisationCandidates_PopulatesList verifies that the scan finds a quiet, populous
+// event and stores it as a candidate, ready for GetSummarisationCandidates to serve.
+func TestScanSummarisationCandidates_PopulatesList(t *testing.T) {
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("failed to create in-memory DB: %s", err)
@@ -829,9 +829,9 @@ func TestScanSummarizationCandidates_PopulatesList(t *testing.T) {
 	s := &Server{
 		db: database,
 		consolidation: Consolidation{
-			summarizationMinMemories:   3,
-			summarizationMinAgeInDays:  1,
-			summarizationMaxCandidates: 10,
+			summarisationMinMemories:   3,
+			summarisationMinAgeInDays:  1,
+			summarisationMaxCandidates: 10,
 		},
 	}
 
@@ -847,21 +847,21 @@ func TestScanSummarizationCandidates_PopulatesList(t *testing.T) {
 		}
 	}
 
-	s.scanSummarizationCandidates(context.Background())
+	s.scanSummarisationCandidates(context.Background())
 
-	if len(s.summarizationCandidates) != 1 {
-		t.Fatalf("expected 1 candidate, got %d: %+v", len(s.summarizationCandidates), s.summarizationCandidates)
+	if len(s.summarisationCandidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d: %+v", len(s.summarisationCandidates), s.summarisationCandidates)
 	}
 
-	if s.summarizationCandidates[0].EventId != "e1" || s.summarizationCandidates[0].MemoryCount != 3 {
-		t.Errorf("unexpected candidate: %+v", s.summarizationCandidates[0])
+	if s.summarisationCandidates[0].EventId != "e1" || s.summarisationCandidates[0].MemoryCount != 3 {
+		t.Errorf("unexpected candidate: %+v", s.summarisationCandidates[0])
 	}
 }
 
-// TestScanSummarizationCandidates_DisabledByDefault verifies that a non-positive
-// summarizationMinMemories (the shipped default) disables the scan entirely, leaving the
+// TestScanSummarisationCandidates_DisabledByDefault verifies that a non-positive
+// summarisationMinMemories (the shipped default) disables the scan entirely, leaving the
 // candidate list untouched even when qualifying events exist.
-func TestScanSummarizationCandidates_DisabledByDefault(t *testing.T) {
+func TestScanSummarisationCandidates_DisabledByDefault(t *testing.T) {
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("failed to create in-memory DB: %s", err)
@@ -870,7 +870,7 @@ func TestScanSummarizationCandidates_DisabledByDefault(t *testing.T) {
 
 	s := &Server{
 		db:            database,
-		consolidation: Consolidation{summarizationMinMemories: 0},
+		consolidation: Consolidation{summarisationMinMemories: 0},
 	}
 
 	tenDaysAgo := time.Now().UnixNano() - int64(10*DAY_IN_NANOSECONDS)
@@ -885,27 +885,27 @@ func TestScanSummarizationCandidates_DisabledByDefault(t *testing.T) {
 		}
 	}
 
-	s.scanSummarizationCandidates(context.Background())
+	s.scanSummarisationCandidates(context.Background())
 
-	if s.summarizationCandidates != nil {
-		t.Errorf("expected the candidate list to remain untouched when disabled, got %+v", s.summarizationCandidates)
+	if s.summarisationCandidates != nil {
+		t.Errorf("expected the candidate list to remain untouched when disabled, got %+v", s.summarisationCandidates)
 	}
 }
 
-// failFindCandidatesStore wraps a real db.Store but forces FindSummarizationCandidates to fail, so
-// scanSummarizationCandidates' error-logging arm can be exercised without a broken database.
+// failFindCandidatesStore wraps a real db.Store but forces FindSummarisationCandidates to fail, so
+// scanSummarisationCandidates' error-logging arm can be exercised without a broken database.
 type failFindCandidatesStore struct {
 	db.Store
 	err error
 }
 
-func (f failFindCandidatesStore) FindSummarizationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]db.SummarizationCandidate, error) {
+func (f failFindCandidatesStore) FindSummarisationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]db.SummarisationCandidate, error) {
 	return nil, f.err
 }
 
-// TestScanSummarizationCandidates_PropagatesScanError verifies a failing scan is logged and leaves
+// TestScanSummarisationCandidates_PropagatesScanError verifies a failing scan is logged and leaves
 // the previously cached candidate list untouched, rather than panicking or clearing it.
-func TestScanSummarizationCandidates_PropagatesScanError(t *testing.T) {
+func TestScanSummarisationCandidates_PropagatesScanError(t *testing.T) {
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -914,14 +914,14 @@ func TestScanSummarizationCandidates_PropagatesScanError(t *testing.T) {
 
 	s := &Server{
 		db:                      failFindCandidatesStore{Store: database, err: errors.New("scan boom")},
-		consolidation:           Consolidation{summarizationMinMemories: 1},
-		summarizationCandidates: []db.SummarizationCandidate{{EventId: "stale"}},
+		consolidation:           Consolidation{summarisationMinMemories: 1},
+		summarisationCandidates: []db.SummarisationCandidate{{EventId: "stale"}},
 	}
 
-	s.scanSummarizationCandidates(context.Background())
+	s.scanSummarisationCandidates(context.Background())
 
-	if len(s.summarizationCandidates) != 1 || s.summarizationCandidates[0].EventId != "stale" {
-		t.Errorf("expected the stale candidate list left untouched on scan failure, got %+v", s.summarizationCandidates)
+	if len(s.summarisationCandidates) != 1 || s.summarisationCandidates[0].EventId != "stale" {
+		t.Errorf("expected the stale candidate list left untouched on scan failure, got %+v", s.summarisationCandidates)
 	}
 }
 

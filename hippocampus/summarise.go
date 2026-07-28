@@ -14,17 +14,17 @@ import (
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
-	"github.com/fastbean-au/hippocampus/summarize"
+	"github.com/fastbean-au/hippocampus/summarise"
 )
 
 // summariser returns the configured embedded-LLM summariser, or the disabled no-op when none was
 // injected (as in tests constructing a Server directly), so callers never need a nil check.
-func (s *Server) summariser() summarize.Summarizer {
-	if s.summarizer == nil {
-		return summarize.NewNoop()
+func (s *Server) summariser() summarise.Summariser {
+	if s.summarise == nil {
+		return summarise.NewNoop()
 	}
 
-	return s.summarizer
+	return s.summarise
 }
 
 // SummariseMemories generates a summary of an event's memories with the embedded LLM
@@ -44,7 +44,7 @@ func (s *Server) SummariseMemories(ctx context.Context, in *contract.SummariseMe
 	}
 
 	if !s.summariser().Enabled() {
-		return &res, status.Error(codes.FailedPrecondition, summarize.ErrDisabled.Error())
+		return &res, status.Error(codes.FailedPrecondition, summarise.ErrDisabled.Error())
 	}
 
 	id, replaced, summary, err := s.summariseEvent(ctx, eventId, in.GetSignificance(), in.GetPlacement())
@@ -112,7 +112,7 @@ func (s *Server) summariseEvent(ctx context.Context, eventId string, significanc
 	))
 	defer span.End()
 
-	summary, err := s.summariser().Summarize(ctx, summarize.Request{
+	summary, err := s.summariser().Summarise(ctx, summarise.Request{
 		EventName: event.Name,
 		Group:     event.Group,
 		Bodies:    bodies,
@@ -149,29 +149,29 @@ func (s *Server) summariseEvent(ctx context.Context, eventId string, significanc
 	return id, replaced, summary, nil
 }
 
-// autoSummarizeCandidates summarises the candidates the most recent scan identified, using the
-// embedded LLM, when ollama.autoSummarize is on. It runs inside the sleep cycle after
-// scanSummarizationCandidates, so it condenses exactly the events the scan surfaced. It is
+// autoSummariseCandidates summarises the candidates the most recent scan identified, using the
+// embedded LLM, when ollama.autoSummarise is on. It runs inside the sleep cycle after
+// scanSummarisationCandidates, so it condenses exactly the events the scan surfaced. It is
 // best-effort: a disabled summariser, a disabled auto flag, or an empty candidate list makes it a
 // no-op, and a per-event failure (unreachable model, an event that changed since the scan) is
 // logged and skipped without failing the sleep cycle - matching the best-effort treatment of the
 // scan itself. Each summarised event is removed from the cached candidate list so
-// GetSummarizationCandidates does not keep offering an event already condensed.
-func (s *Server) autoSummarizeCandidates(ctx context.Context) {
-	if !s.consolidation.autoSummarize || !s.summariser().Enabled() {
+// GetSummarisationCandidates does not keep offering an event already condensed.
+func (s *Server) autoSummariseCandidates(ctx context.Context) {
+	if !s.consolidation.autoSummarise || !s.summariser().Enabled() {
 		return
 	}
 
-	s.summarizationCandidatesMu.RLock()
-	candidates := make([]db.SummarizationCandidate, len(s.summarizationCandidates))
-	copy(candidates, s.summarizationCandidates)
-	s.summarizationCandidatesMu.RUnlock()
+	s.summarisationCandidatesMu.RLock()
+	candidates := make([]db.SummarisationCandidate, len(s.summarisationCandidates))
+	copy(candidates, s.summarisationCandidates)
+	s.summarisationCandidatesMu.RUnlock()
 
 	if len(candidates) == 0 {
 		return
 	}
 
-	ctx, span := tel.tracer.Start(ctx, "auto_summarize_candidates", trace.WithAttributes(
+	ctx, span := tel.tracer.Start(ctx, "auto_summarise_candidates", trace.WithAttributes(
 		attribute.Int("candidates", len(candidates)),
 	))
 	defer span.End()
@@ -196,23 +196,23 @@ func (s *Server) autoSummarizeCandidates(ctx context.Context) {
 		summarised++
 	}
 
-	// Drop the events we condensed from the cached list so GetSummarizationCandidates stops
+	// Drop the events we condensed from the cached list so GetSummarisationCandidates stops
 	// offering an event that no longer has unsummarised memories to condense.
 	if summarised > 0 {
-		s.summarizationCandidatesMu.Lock()
+		s.summarisationCandidatesMu.Lock()
 
-		kept := s.summarizationCandidates[:0]
+		kept := s.summarisationCandidates[:0]
 
-		for i := range s.summarizationCandidates {
-			if summarisedIds[s.summarizationCandidates[i].EventId] {
+		for i := range s.summarisationCandidates {
+			if summarisedIds[s.summarisationCandidates[i].EventId] {
 				continue
 			}
 
-			kept = append(kept, s.summarizationCandidates[i])
+			kept = append(kept, s.summarisationCandidates[i])
 		}
 
-		s.summarizationCandidates = kept
-		s.summarizationCandidatesMu.Unlock()
+		s.summarisationCandidates = kept
+		s.summarisationCandidatesMu.Unlock()
 	}
 
 	span.AddEvent("events_auto_summarised", trace.WithAttributes(attribute.Int("summarised", summarised)))

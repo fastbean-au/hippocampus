@@ -196,8 +196,8 @@ func exerciseGRPCRPCs(t *testing.T, client contract.HippocampusClient) {
 		t.Error("ReplaceMemoriesWithSummary: expected a non-empty summary memory id")
 	}
 
-	if _, err := client.GetSummarizationCandidates(ctx, &contract.EmptyRequest{}); err != nil {
-		t.Fatalf("GetSummarizationCandidates: %s", err)
+	if _, err := client.GetSummarisationCandidates(ctx, &contract.EmptyRequest{}); err != nil {
+		t.Fatalf("GetSummarisationCandidates: %s", err)
 	}
 
 	if _, err := client.DeleteMemories(ctx, &contract.DeleteMemoriesRequest{Ids: []string{secondMemoryID}}); err != nil {
@@ -440,8 +440,8 @@ func TestUnimplementedHippocampusServer(t *testing.T) {
 	_, err = srv.ReplaceMemoriesWithSummary(ctx, &contract.ReplaceMemoriesWithSummaryRequest{})
 	assertUnimplemented(t, "ReplaceMemoriesWithSummary", err)
 
-	_, err = srv.GetSummarizationCandidates(ctx, &contract.EmptyRequest{})
-	assertUnimplemented(t, "GetSummarizationCandidates", err)
+	_, err = srv.GetSummarisationCandidates(ctx, &contract.EmptyRequest{})
+	assertUnimplemented(t, "GetSummarisationCandidates", err)
 
 	_, err = srv.Export(ctx, &contract.ExportRequest{})
 	assertUnimplemented(t, "Export", err)
@@ -580,8 +580,8 @@ func TestGRPCClientTransportError(t *testing.T) {
 	_, err = client.ReplaceMemoriesWithSummary(ctx, &contract.ReplaceMemoriesWithSummaryRequest{})
 	assertTransportErr(t, "ReplaceMemoriesWithSummary", err)
 
-	_, err = client.GetSummarizationCandidates(ctx, &contract.EmptyRequest{})
-	assertTransportErr(t, "GetSummarizationCandidates", err)
+	_, err = client.GetSummarisationCandidates(ctx, &contract.EmptyRequest{})
+	assertTransportErr(t, "GetSummarisationCandidates", err)
 
 	_, err = client.Export(ctx, &contract.ExportRequest{})
 	assertTransportErr(t, "Export", err)

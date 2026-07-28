@@ -139,7 +139,7 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			group_name    = new.group_name`
 	}
 
-	// The registry lock serializes level find-or-create against concurrent writers on the server
+	// The registry lock serialises level find-or-create against concurrent writers on the server
 	// drivers (a no-op on SQLite's single connection).
 	releaseLock, err := d.acquireRegistryLock(ctx)
 	if err != nil {

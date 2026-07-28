@@ -1637,10 +1637,10 @@ func (x *ReplaceMemoriesWithSummaryResponse) GetMemoriesReplaced() int32 {
 	return 0
 }
 
-// SummarizationCandidate identifies an event whose memories have accumulated enough, and gone
+// SummarisationCandidate identifies an event whose memories have accumulated enough, and gone
 // quiet for long enough, to be worth condensing into a single summary memory via
 // ReplaceMemoriesWithSummary.
-type SummarizationCandidate struct {
+type SummarisationCandidate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
 	EventName     string                 `protobuf:"bytes,2,opt,name=event_name,json=eventName,proto3" json:"event_name,omitempty"`
@@ -1649,20 +1649,20 @@ type SummarizationCandidate struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SummarizationCandidate) Reset() {
-	*x = SummarizationCandidate{}
+func (x *SummarisationCandidate) Reset() {
+	*x = SummarisationCandidate{}
 	mi := &file_hippocampus_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SummarizationCandidate) String() string {
+func (x *SummarisationCandidate) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SummarizationCandidate) ProtoMessage() {}
+func (*SummarisationCandidate) ProtoMessage() {}
 
-func (x *SummarizationCandidate) ProtoReflect() protoreflect.Message {
+func (x *SummarisationCandidate) ProtoReflect() protoreflect.Message {
 	mi := &file_hippocampus_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1674,53 +1674,53 @@ func (x *SummarizationCandidate) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SummarizationCandidate.ProtoReflect.Descriptor instead.
-func (*SummarizationCandidate) Descriptor() ([]byte, []int) {
+// Deprecated: Use SummarisationCandidate.ProtoReflect.Descriptor instead.
+func (*SummarisationCandidate) Descriptor() ([]byte, []int) {
 	return file_hippocampus_proto_rawDescGZIP(), []int{21}
 }
 
-func (x *SummarizationCandidate) GetEventId() string {
+func (x *SummarisationCandidate) GetEventId() string {
 	if x != nil {
 		return x.EventId
 	}
 	return ""
 }
 
-func (x *SummarizationCandidate) GetEventName() string {
+func (x *SummarisationCandidate) GetEventName() string {
 	if x != nil {
 		return x.EventName
 	}
 	return ""
 }
 
-func (x *SummarizationCandidate) GetMemoryCount() int32 {
+func (x *SummarisationCandidate) GetMemoryCount() int32 {
 	if x != nil {
 		return x.MemoryCount
 	}
 	return 0
 }
 
-type GetSummarizationCandidatesResponse struct {
+type GetSummarisationCandidatesResponse struct {
 	state         protoimpl.MessageState    `protogen:"open.v1"`
-	Candidates    []*SummarizationCandidate `protobuf:"bytes,1,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	Candidates    []*SummarisationCandidate `protobuf:"bytes,1,rep,name=candidates,proto3" json:"candidates,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetSummarizationCandidatesResponse) Reset() {
-	*x = GetSummarizationCandidatesResponse{}
+func (x *GetSummarisationCandidatesResponse) Reset() {
+	*x = GetSummarisationCandidatesResponse{}
 	mi := &file_hippocampus_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetSummarizationCandidatesResponse) String() string {
+func (x *GetSummarisationCandidatesResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetSummarizationCandidatesResponse) ProtoMessage() {}
+func (*GetSummarisationCandidatesResponse) ProtoMessage() {}
 
-func (x *GetSummarizationCandidatesResponse) ProtoReflect() protoreflect.Message {
+func (x *GetSummarisationCandidatesResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_hippocampus_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1732,12 +1732,12 @@ func (x *GetSummarizationCandidatesResponse) ProtoReflect() protoreflect.Message
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetSummarizationCandidatesResponse.ProtoReflect.Descriptor instead.
-func (*GetSummarizationCandidatesResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetSummarisationCandidatesResponse.ProtoReflect.Descriptor instead.
+func (*GetSummarisationCandidatesResponse) Descriptor() ([]byte, []int) {
 	return file_hippocampus_proto_rawDescGZIP(), []int{22}
 }
 
-func (x *GetSummarizationCandidatesResponse) GetCandidates() []*SummarizationCandidate {
+func (x *GetSummarisationCandidatesResponse) GetCandidates() []*SummarisationCandidate {
 	if x != nil {
 		return x.Candidates
 	}
@@ -2863,14 +2863,14 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\"ReplaceMemoriesWithSummaryResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12+\n" +
 	"\x11memories_replaced\x18\x02 \x01(\x05R\x10memoriesReplaced\"u\n" +
-	"\x16SummarizationCandidate\x12\x19\n" +
+	"\x16SummarisationCandidate\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
 	"event_name\x18\x02 \x01(\tR\teventName\x12!\n" +
 	"\fmemory_count\x18\x03 \x01(\x05R\vmemoryCount\"c\n" +
-	"\"GetSummarizationCandidatesResponse\x12=\n" +
+	"\"GetSummarisationCandidatesResponse\x12=\n" +
 	"\n" +
-	"candidates\x18\x01 \x03(\v2\x1d.proto.SummarizationCandidateR\n" +
+	"candidates\x18\x01 \x03(\v2\x1d.proto.SummarisationCandidateR\n" +
 	"candidates\"\x95\x01\n" +
 	"\x18SummariseMemoriesRequest\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\"\n" +
@@ -2967,7 +2967,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x0eRecallMemories\x12\x1c.proto.RecallMemoriesRequest\x1a\x1a.proto.GetMemoriesResponse\"\x1e\x82\xd3\xe4\x93\x02\x18:\x01*\"\x13/v1/memories/recall\x12j\n" +
 	"\x0eSearchMemories\x12\x1c.proto.SearchMemoriesRequest\x1a\x1a.proto.GetMemoriesResponse\"\x1e\x82\xd3\xe4\x93\x02\x18:\x01*\"\x13/v1/memories/search\x12\xa1\x01\n" +
 	"\x1aReplaceMemoriesWithSummary\x12(.proto.ReplaceMemoriesWithSummaryRequest\x1a).proto.ReplaceMemoriesWithSummaryResponse\".\x82\xd3\xe4\x93\x02(:\asummary\"\x1d/v1/events/{event_id}/summary\x12\x82\x01\n" +
-	"\x1aGetSummarizationCandidates\x12\x13.proto.EmptyRequest\x1a).proto.GetSummarizationCandidatesResponse\"$\x82\xd3\xe4\x93\x02\x1e\x12\x1c/v1/summarization/candidates\x12\x82\x01\n" +
+	"\x1aGetSummarisationCandidates\x12\x13.proto.EmptyRequest\x1a).proto.GetSummarisationCandidatesResponse\"$\x82\xd3\xe4\x93\x02\x1e\x12\x1c/v1/summarisation/candidates\x12\x82\x01\n" +
 	"\x11SummariseMemories\x12\x1f.proto.SummariseMemoriesRequest\x1a .proto.SummariseMemoriesResponse\"*\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/v1/events/{event_id}/summarise\x12L\n" +
 	"\x06Export\x12\x14.proto.ExportRequest\x1a\x15.proto.ExportResponse\"\x15\x82\xd3\xe4\x93\x02\x0f:\x01*\"\n" +
 	"/v1/export\x12L\n" +
@@ -3016,8 +3016,8 @@ var file_hippocampus_proto_goTypes = []any{
 	(*SearchMemoriesRequest)(nil),              // 21: proto.SearchMemoriesRequest
 	(*ReplaceMemoriesWithSummaryRequest)(nil),  // 22: proto.ReplaceMemoriesWithSummaryRequest
 	(*ReplaceMemoriesWithSummaryResponse)(nil), // 23: proto.ReplaceMemoriesWithSummaryResponse
-	(*SummarizationCandidate)(nil),             // 24: proto.SummarizationCandidate
-	(*GetSummarizationCandidatesResponse)(nil), // 25: proto.GetSummarizationCandidatesResponse
+	(*SummarisationCandidate)(nil),             // 24: proto.SummarisationCandidate
+	(*GetSummarisationCandidatesResponse)(nil), // 25: proto.GetSummarisationCandidatesResponse
 	(*SummariseMemoriesRequest)(nil),           // 26: proto.SummariseMemoriesRequest
 	(*SummariseMemoriesResponse)(nil),          // 27: proto.SummariseMemoriesResponse
 	(*ArchiveHeader)(nil),                      // 28: proto.ArchiveHeader
@@ -3050,7 +3050,7 @@ var file_hippocampus_proto_depIdxs = []int32{
 	1,  // 10: proto.GetMemoriesRequest.significance_extremum:type_name -> proto.SignificanceExtremum
 	6,  // 11: proto.GetMemoriesResponse.memories:type_name -> proto.Memory
 	6,  // 12: proto.ReplaceMemoriesWithSummaryRequest.summary:type_name -> proto.Memory
-	24, // 13: proto.GetSummarizationCandidatesResponse.candidates:type_name -> proto.SummarizationCandidate
+	24, // 13: proto.GetSummarisationCandidatesResponse.candidates:type_name -> proto.SummarisationCandidate
 	3,  // 14: proto.SummariseMemoriesRequest.placement:type_name -> proto.SignificancePlacement
 	28, // 15: proto.ArchiveRecord.header:type_name -> proto.ArchiveHeader
 	4,  // 16: proto.ArchiveRecord.event:type_name -> proto.Event
@@ -3074,7 +3074,7 @@ var file_hippocampus_proto_depIdxs = []int32{
 	20, // 34: proto.Hippocampus.RecallMemories:input_type -> proto.RecallMemoriesRequest
 	21, // 35: proto.Hippocampus.SearchMemories:input_type -> proto.SearchMemoriesRequest
 	22, // 36: proto.Hippocampus.ReplaceMemoriesWithSummary:input_type -> proto.ReplaceMemoriesWithSummaryRequest
-	42, // 37: proto.Hippocampus.GetSummarizationCandidates:input_type -> proto.EmptyRequest
+	42, // 37: proto.Hippocampus.GetSummarisationCandidates:input_type -> proto.EmptyRequest
 	26, // 38: proto.Hippocampus.SummariseMemories:input_type -> proto.SummariseMemoriesRequest
 	32, // 39: proto.Hippocampus.Export:input_type -> proto.ExportRequest
 	34, // 40: proto.Hippocampus.Import:input_type -> proto.ImportRequest
@@ -3098,7 +3098,7 @@ var file_hippocampus_proto_depIdxs = []int32{
 	17, // 58: proto.Hippocampus.RecallMemories:output_type -> proto.GetMemoriesResponse
 	17, // 59: proto.Hippocampus.SearchMemories:output_type -> proto.GetMemoriesResponse
 	23, // 60: proto.Hippocampus.ReplaceMemoriesWithSummary:output_type -> proto.ReplaceMemoriesWithSummaryResponse
-	25, // 61: proto.Hippocampus.GetSummarizationCandidates:output_type -> proto.GetSummarizationCandidatesResponse
+	25, // 61: proto.Hippocampus.GetSummarisationCandidates:output_type -> proto.GetSummarisationCandidatesResponse
 	27, // 62: proto.Hippocampus.SummariseMemories:output_type -> proto.SummariseMemoriesResponse
 	33, // 63: proto.Hippocampus.Export:output_type -> proto.ExportResponse
 	35, // 64: proto.Hippocampus.Import:output_type -> proto.ImportResponse

@@ -319,7 +319,7 @@ func (d *DB) ResolveSignificanceLevel(ctx context.Context, spec SignificanceSpec
 		}
 
 		// Fast path: a level for an already-known rank needs no lock, so ordinary writes (which
-		// reuse existing ranks) never serialize on the registry lock - only creating a new rank or a
+		// reuse existing ranks) never serialise on the registry lock - only creating a new rank or a
 		// placement gap-open does.
 		id, found, err := d.findLevel(ctx, spec.Value)
 		if err != nil {
@@ -567,14 +567,14 @@ func nullInt64(id int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: id, Valid: true}
 }
 
-// registryAdvisoryLockKey is the Postgres advisory-lock key serializing registry renumbering,
+// registryAdvisoryLockKey is the Postgres advisory-lock key serialising registry renumbering,
 // distinct from the single-consolidator instance lock (advisoryLockKey) so the two never contend.
 const registryAdvisoryLockKey = advisoryLockKey + 1
 
-// acquireRegistryLock serializes registry renumbering across instances on the server drivers, so
+// acquireRegistryLock serialises registry renumbering across instances on the server drivers, so
 // two replicas cannot open a gap (shift ranks) at the same time. It holds the lock on a dedicated
 // connection and returns a release function. SQLite needs none - its single connection already
-// serializes every writer - so it returns a no-op.
+// serialises every writer - so it returns a no-op.
 func (d *DB) acquireRegistryLock(ctx context.Context) (func(), error) {
 	if d.driver == driverSQLite {
 		return func() {}, nil

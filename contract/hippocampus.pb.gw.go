@@ -616,7 +616,7 @@ func local_request_Hippocampus_ReplaceMemoriesWithSummary_0(ctx context.Context,
 	return msg, metadata, err
 }
 
-func request_Hippocampus_GetSummarizationCandidates_0(ctx context.Context, marshaler runtime.Marshaler, client HippocampusClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+func request_Hippocampus_GetSummarisationCandidates_0(ctx context.Context, marshaler runtime.Marshaler, client HippocampusClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var (
 		protoReq EmptyRequest
 		metadata runtime.ServerMetadata
@@ -624,16 +624,16 @@ func request_Hippocampus_GetSummarizationCandidates_0(ctx context.Context, marsh
 	if req.Body != nil {
 		_, _ = io.Copy(io.Discard, req.Body)
 	}
-	msg, err := client.GetSummarizationCandidates(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.GetSummarisationCandidates(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 }
 
-func local_request_Hippocampus_GetSummarizationCandidates_0(ctx context.Context, marshaler runtime.Marshaler, server HippocampusServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+func local_request_Hippocampus_GetSummarisationCandidates_0(ctx context.Context, marshaler runtime.Marshaler, server HippocampusServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var (
 		protoReq EmptyRequest
 		metadata runtime.ServerMetadata
 	)
-	msg, err := server.GetSummarizationCandidates(ctx, &protoReq)
+	msg, err := server.GetSummarisationCandidates(ctx, &protoReq)
 	return msg, metadata, err
 }
 
@@ -1163,25 +1163,25 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_Hippocampus_ReplaceMemoriesWithSummary_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
-	mux.Handle(http.MethodGet, pattern_Hippocampus_GetSummarizationCandidates_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle(http.MethodGet, pattern_Hippocampus_GetSummarisationCandidates_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/GetSummarizationCandidates", runtime.WithHTTPPathPattern("/v1/summarization/candidates"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/GetSummarisationCandidates", runtime.WithHTTPPathPattern("/v1/summarisation/candidates"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_Hippocampus_GetSummarizationCandidates_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_Hippocampus_GetSummarisationCandidates_0(annotatedContext, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		forward_Hippocampus_GetSummarizationCandidates_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_Hippocampus_GetSummarisationCandidates_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
 	mux.Handle(http.MethodPost, pattern_Hippocampus_SummariseMemories_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
@@ -1632,22 +1632,22 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_Hippocampus_ReplaceMemoriesWithSummary_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
-	mux.Handle(http.MethodGet, pattern_Hippocampus_GetSummarizationCandidates_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle(http.MethodGet, pattern_Hippocampus_GetSummarisationCandidates_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/GetSummarizationCandidates", runtime.WithHTTPPathPattern("/v1/summarization/candidates"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/GetSummarisationCandidates", runtime.WithHTTPPathPattern("/v1/summarisation/candidates"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_Hippocampus_GetSummarizationCandidates_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_Hippocampus_GetSummarisationCandidates_0(annotatedContext, inboundMarshaler, client, req, pathParams)
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		forward_Hippocampus_GetSummarizationCandidates_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_Hippocampus_GetSummarisationCandidates_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
 	mux.Handle(http.MethodPost, pattern_Hippocampus_SummariseMemories_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
@@ -1772,7 +1772,7 @@ var (
 	pattern_Hippocampus_RecallMemories_0             = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "memories", "recall"}, ""))
 	pattern_Hippocampus_SearchMemories_0             = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "memories", "search"}, ""))
 	pattern_Hippocampus_ReplaceMemoriesWithSummary_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3}, []string{"v1", "events", "event_id", "summary"}, ""))
-	pattern_Hippocampus_GetSummarizationCandidates_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "summarization", "candidates"}, ""))
+	pattern_Hippocampus_GetSummarisationCandidates_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "summarisation", "candidates"}, ""))
 	pattern_Hippocampus_SummariseMemories_0          = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3}, []string{"v1", "events", "event_id", "summarise"}, ""))
 	pattern_Hippocampus_Export_0                     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "export"}, ""))
 	pattern_Hippocampus_Import_0                     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "import"}, ""))
@@ -1799,7 +1799,7 @@ var (
 	forward_Hippocampus_RecallMemories_0             = runtime.ForwardResponseMessage
 	forward_Hippocampus_SearchMemories_0             = runtime.ForwardResponseMessage
 	forward_Hippocampus_ReplaceMemoriesWithSummary_0 = runtime.ForwardResponseMessage
-	forward_Hippocampus_GetSummarizationCandidates_0 = runtime.ForwardResponseMessage
+	forward_Hippocampus_GetSummarisationCandidates_0 = runtime.ForwardResponseMessage
 	forward_Hippocampus_SummariseMemories_0          = runtime.ForwardResponseMessage
 	forward_Hippocampus_Export_0                     = runtime.ForwardResponseMessage
 	forward_Hippocampus_Import_0                     = runtime.ForwardResponseMessage

@@ -36,7 +36,7 @@ const (
 	Hippocampus_RecallMemories_FullMethodName             = "/proto.Hippocampus/RecallMemories"
 	Hippocampus_SearchMemories_FullMethodName             = "/proto.Hippocampus/SearchMemories"
 	Hippocampus_ReplaceMemoriesWithSummary_FullMethodName = "/proto.Hippocampus/ReplaceMemoriesWithSummary"
-	Hippocampus_GetSummarizationCandidates_FullMethodName = "/proto.Hippocampus/GetSummarizationCandidates"
+	Hippocampus_GetSummarisationCandidates_FullMethodName = "/proto.Hippocampus/GetSummarisationCandidates"
 	Hippocampus_SummariseMemories_FullMethodName          = "/proto.Hippocampus/SummariseMemories"
 	Hippocampus_Export_FullMethodName                     = "/proto.Hippocampus/Export"
 	Hippocampus_Import_FullMethodName                     = "/proto.Hippocampus/Import"
@@ -117,15 +117,15 @@ type HippocampusClient interface {
 	// SearchMemories finds memories via the optional content-search index; see
 	// SearchMemoriesRequest.
 	SearchMemories(ctx context.Context, in *SearchMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
-	// Summarization
+	// Summarisation
 	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
 	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
 	ReplaceMemoriesWithSummary(ctx context.Context, in *ReplaceMemoriesWithSummaryRequest, opts ...grpc.CallOption) (*ReplaceMemoriesWithSummaryResponse, error)
-	// GetSummarizationCandidates returns events identified by the most recent sleep cycle as having
-	// accumulated enough quiet, unsummarized memories to be worth condensing via
+	// GetSummarisationCandidates returns events identified by the most recent sleep cycle as having
+	// accumulated enough quiet, unsummarised memories to be worth condensing via
 	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
-	// consolidation.summarizationMinMemories is configured.
-	GetSummarizationCandidates(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetSummarizationCandidatesResponse, error)
+	// consolidation.summarisationMinMemories is configured.
+	GetSummarisationCandidates(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetSummarisationCandidatesResponse, error)
 	// SummariseMemories condenses an event's memories into a single summary using the optional
 	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
 	// does - so the service generates the summary the caller would otherwise have to supply. Fails
@@ -330,10 +330,10 @@ func (c *hippocampusClient) ReplaceMemoriesWithSummary(ctx context.Context, in *
 	return out, nil
 }
 
-func (c *hippocampusClient) GetSummarizationCandidates(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetSummarizationCandidatesResponse, error) {
+func (c *hippocampusClient) GetSummarisationCandidates(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetSummarisationCandidatesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetSummarizationCandidatesResponse)
-	err := c.cc.Invoke(ctx, Hippocampus_GetSummarizationCandidates_FullMethodName, in, out, cOpts...)
+	out := new(GetSummarisationCandidatesResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetSummarisationCandidates_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -472,15 +472,15 @@ type HippocampusServer interface {
 	// SearchMemories finds memories via the optional content-search index; see
 	// SearchMemoriesRequest.
 	SearchMemories(context.Context, *SearchMemoriesRequest) (*GetMemoriesResponse, error)
-	// Summarization
+	// Summarisation
 	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
 	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
 	ReplaceMemoriesWithSummary(context.Context, *ReplaceMemoriesWithSummaryRequest) (*ReplaceMemoriesWithSummaryResponse, error)
-	// GetSummarizationCandidates returns events identified by the most recent sleep cycle as having
-	// accumulated enough quiet, unsummarized memories to be worth condensing via
+	// GetSummarisationCandidates returns events identified by the most recent sleep cycle as having
+	// accumulated enough quiet, unsummarised memories to be worth condensing via
 	// ReplaceMemoriesWithSummary. A point-in-time snapshot, refreshed only when
-	// consolidation.summarizationMinMemories is configured.
-	GetSummarizationCandidates(context.Context, *EmptyRequest) (*GetSummarizationCandidatesResponse, error)
+	// consolidation.summarisationMinMemories is configured.
+	GetSummarisationCandidates(context.Context, *EmptyRequest) (*GetSummarisationCandidatesResponse, error)
 	// SummariseMemories condenses an event's memories into a single summary using the optional
 	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
 	// does - so the service generates the summary the caller would otherwise have to supply. Fails
@@ -566,8 +566,8 @@ func (UnimplementedHippocampusServer) SearchMemories(context.Context, *SearchMem
 func (UnimplementedHippocampusServer) ReplaceMemoriesWithSummary(context.Context, *ReplaceMemoriesWithSummaryRequest) (*ReplaceMemoriesWithSummaryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReplaceMemoriesWithSummary not implemented")
 }
-func (UnimplementedHippocampusServer) GetSummarizationCandidates(context.Context, *EmptyRequest) (*GetSummarizationCandidatesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetSummarizationCandidates not implemented")
+func (UnimplementedHippocampusServer) GetSummarisationCandidates(context.Context, *EmptyRequest) (*GetSummarisationCandidatesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSummarisationCandidates not implemented")
 }
 func (UnimplementedHippocampusServer) SummariseMemories(context.Context, *SummariseMemoriesRequest) (*SummariseMemoriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SummariseMemories not implemented")
@@ -914,20 +914,20 @@ func _Hippocampus_ReplaceMemoriesWithSummary_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Hippocampus_GetSummarizationCandidates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Hippocampus_GetSummarisationCandidates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(EmptyRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(HippocampusServer).GetSummarizationCandidates(ctx, in)
+		return srv.(HippocampusServer).GetSummarisationCandidates(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Hippocampus_GetSummarizationCandidates_FullMethodName,
+		FullMethod: Hippocampus_GetSummarisationCandidates_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HippocampusServer).GetSummarizationCandidates(ctx, req.(*EmptyRequest))
+		return srv.(HippocampusServer).GetSummarisationCandidates(ctx, req.(*EmptyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1116,8 +1116,8 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Hippocampus_ReplaceMemoriesWithSummary_Handler,
 		},
 		{
-			MethodName: "GetSummarizationCandidates",
-			Handler:    _Hippocampus_GetSummarizationCandidates_Handler,
+			MethodName: "GetSummarisationCandidates",
+			Handler:    _Hippocampus_GetSummarisationCandidates_Handler,
 		},
 		{
 			MethodName: "SummariseMemories",

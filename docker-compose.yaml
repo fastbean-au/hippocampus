@@ -30,13 +30,13 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
       # Embedded-LLM summarisation (optional). Off unless OLLAMA=true, which also requires the
-      # `ollama` profile (below). When on, SummariseMemories and (with OLLAMA_AUTOSUMMARIZE=true)
+      # `ollama` profile (below). When on, SummariseMemories and (with OLLAMA_AUTOSUMMARISE=true)
       # the sleep cycle condense an event's memories via the ollama service. Pull the model first:
       #   docker compose exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"
       HIPPOCAMPUS_OLLAMA_ENABLED: "${OLLAMA:-false}"
       HIPPOCAMPUS_OLLAMA_ADDRESS: "http://ollama:11434"
       HIPPOCAMPUS_OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
-      HIPPOCAMPUS_OLLAMA_AUTOSUMMARIZE: "${OLLAMA_AUTOSUMMARIZE:-false}"
+      HIPPOCAMPUS_OLLAMA_AUTOSUMMARISE: "${OLLAMA_AUTOSUMMARISE:-false}"
 
   # Optional MCP bridge over the streamable-HTTP transport, so an MCP host (Claude Desktop/Code) can
   # reach this embedded instance's memory tools over the network. Off by default; started only with

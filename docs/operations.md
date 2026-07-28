@@ -358,10 +358,10 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
   service warns at startup — enable `transfer.tls` unless TLS to the target is terminated by a mesh.
 - **Scope each token to a role tier.** Every RPC requires a minimum tier — `reader`, `writer`, or
   `admin` (nesting, `reader ⊂ writer ⊂ admin`) — carried in the token's `roles` claim and enforced
-  on both transports; see [Authorization](configuration.md#authorization). Issue `reader` tokens to
+  on both transports; see [Authorisation](configuration.md#authorisation). Issue `reader` tokens to
   read-only consumers and reserve `admin` (which alone may `Purge`/`Sleep`/`Clear`/`Transfer`/
   `Export`) for operators. `Import`/`ImportBatch` are `writer`-tier and still bypass write-path
-  validation to restore archives faithfully, so grant `writer` only to trusted loaders. Authorization
+  validation to restore archives faithfully, so grant `writer` only to trusted loaders. Authorisation
   is default-closed: a token whose roles resolve to no tier is denied everything, so **on upgrade,
   re-mint pre-existing tokens with a `--role`**. The verified `client_id` is logged on every failing
   request (and, on the HTTP gateway, every request), so a leaked or misbehaving token can be traced
@@ -376,7 +376,7 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
 - **Web console (`/ui`).** The HTTP gateway serves an embedded single-page console at `/ui`. The
   static page loads without a token (it carries none — the operator pastes the bearer token into it,
   which is then kept in the browser's `localStorage` and sent with each `/v1` call), but every action
-  it performs still goes through auth, [authorization](configuration.md#authorization), and the purge
+  it performs still goes through auth, [authorisation](configuration.md#authorisation), and the purge
   gate like any other request. On the token you paste it calls `GET /v1/whoami` and adapts what it
   offers to the effective role — hiding the write controls for a `reader` and showing the role in the
   header — but that is a convenience only; the server still enforces the tier on every RPC, so a
@@ -390,9 +390,9 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
   ceiling above your largest legitimate `ImportBatch`/`Transfer` body.
 - **Embedded LLM summariser (`ollama.enabled`).** Off by default; when on, the summariser is the one
   component that reads memory content, and it sends the text bodies of an event's memories to the
-  configured Ollama server (`SummariseMemories`, and — with `ollama.autoSummarize` — the sleep
+  configured Ollama server (`SummariseMemories`, and — with `ollama.autoSummarise` — the sleep
   cycle). Treat that as memory content leaving the process: run Ollama on a private network or the
   same host (`http://localhost:11434`), not a shared or third-party endpoint, and reach it over TLS
-  if it is remote. `ollama.autoSummarize` rewrites stored memories automatically during sleep, so
+  if it is remote. `ollama.autoSummarise` rewrites stored memories automatically during sleep, so
   leave it off unless that behaviour is intended. See
-  [Summarization → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
+  [Summarisation → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).

@@ -15,13 +15,13 @@ import (
 )
 
 // ErrWriteConflict wraps the error returned when a single-statement write could not complete
-// because of repeated storage-level serialization conflicts - a MySQL InnoDB deadlock or a
+// because of repeated storage-level serialisation conflicts - a MySQL InnoDB deadlock or a
 // lock-wait timeout - that survived the transparent retries below. Callers map it (with errors.Is)
 // to a gRPC Aborted status so a client sees a retryable conflict rather than an opaque Unknown, and
 // the write is not silently lost.
 var ErrWriteConflict = errors.New("write conflict")
 
-// MySQL server error numbers for the two transient, retry-safe serialization conflicts: a detected
+// MySQL server error numbers for the two transient, retry-safe serialisation conflicts: a detected
 // deadlock (InnoDB rolls the losing transaction back whole) and a lock-wait timeout. Both leave no
 // partial effect on an autocommit statement, so re-running it is safe. Under concurrency these
 // surfaced as a gRPC Unknown, losing the write; see isRetryableWriteError.
@@ -48,7 +48,7 @@ const (
 	writeRetryBaseBackoff = 2 * time.Millisecond
 )
 
-// IsWriteConflict reports whether err represents a transient storage-level serialization conflict
+// IsWriteConflict reports whether err represents a transient storage-level serialisation conflict
 // that a client can safely retry, so the RPC layer can map it to a gRPC Aborted status. It matches
 // both the ErrWriteConflict wrapper (a single-statement write whose transparent retries were
 // exhausted) and a raw retryable MySQL deadlock/lock-wait error - the latter surfaces unwrapped from
@@ -87,7 +87,7 @@ func IsDuplicateKey(err error) bool {
 	return false
 }
 
-// isRetryableWriteError reports whether err is a transient MySQL serialization conflict that is safe
+// isRetryableWriteError reports whether err is a transient MySQL serialisation conflict that is safe
 // to retry. Only MySQL errors match, so it is a no-op for the SQLite and Postgres drivers (SQLite is
 // single-connection and Postgres's default READ COMMITTED does not deadlock a single INSERT).
 func isRetryableWriteError(err error) bool {
@@ -100,7 +100,7 @@ func isRetryableWriteError(err error) bool {
 	return myErr.Number == mysqlErrDeadlock || myErr.Number == mysqlErrLockWaitTimeout
 }
 
-// withWriteRetry runs fn, retrying it on a transient MySQL serialization conflict up to
+// withWriteRetry runs fn, retrying it on a transient MySQL serialisation conflict up to
 // writeRetryMaxAttempts times with a short jittered backoff between attempts. It is a no-op wrapper
 // for any driver other than MySQL. When the attempts are exhausted the final conflict is wrapped in
 // ErrWriteConflict so the RPC layer can surface it as a retryable Aborted rather than an Unknown.

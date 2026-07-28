@@ -27,7 +27,7 @@ type MintRequest struct {
 	ClientID string
 
 	// Roles are stamped into the token's roles claim, granting the bearer the corresponding
-	// authorization tiers (reader/writer/admin). An empty Roles mints a token that authorizes no
+	// authorisation tiers (reader/writer/admin). An empty Roles mints a token that authorises no
 	// Hippocampus RPC under the default-closed policy.
 	Roles []string
 
@@ -79,7 +79,7 @@ func MintToken(req MintRequest) (string, error) {
 
 // TokenID reports the jti of a minted token by parsing it without verifying its signature. The
 // --mint-token CLI uses it to print the jti alongside the token so an operator can record it for
-// later revocation. It never trusts the token - the id is opaque metadata, not an authorization
+// later revocation. It never trusts the token - the id is opaque metadata, not an authorisation
 // decision - so skipping verification here is safe.
 func TokenID(token string) (string, error) {
 	var claims Claims

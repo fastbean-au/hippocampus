@@ -1,4 +1,4 @@
-package summarize
+package summarise
 
 import (
 	"context"
@@ -38,9 +38,9 @@ func TestNewOllama_RequiresAddressAndModel(t *testing.T) {
 	}
 }
 
-// TestOllamaSummarize_HappyPath verifies the request shape and that the response's summary is
+// TestOllamaSummarise_HappyPath verifies the request shape and that the response's summary is
 // returned, using a fake Ollama server.
-func TestOllamaSummarize_HappyPath(t *testing.T) {
+func TestOllamaSummarise_HappyPath(t *testing.T) {
 	var gotReq generateRequest
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,13 +64,13 @@ func TestOllamaSummarize_HappyPath(t *testing.T) {
 		t.Fatalf("NewOllama: %s", err)
 	}
 
-	summary, err := o.Summarize(context.Background(), Request{
+	summary, err := o.Summarise(context.Background(), Request{
 		EventName: "deploy",
 		Group:     "svc-a",
 		Bodies:    []string{"first line", "second line"},
 	})
 	if err != nil {
-		t.Fatalf("Summarize: %s", err)
+		t.Fatalf("Summarise: %s", err)
 	}
 
 	if summary != "a concise summary" {
@@ -90,8 +90,8 @@ func TestOllamaSummarize_HappyPath(t *testing.T) {
 	}
 }
 
-// TestOllamaSummarize_ServerError verifies a non-2xx status becomes an error.
-func TestOllamaSummarize_ServerError(t *testing.T) {
+// TestOllamaSummarise_ServerError verifies a non-2xx status becomes an error.
+func TestOllamaSummarise_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
@@ -100,13 +100,13 @@ func TestOllamaSummarize_ServerError(t *testing.T) {
 
 	o, _ := NewOllama(Config{Address: srv.URL, Model: "m"})
 
-	if _, err := o.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected error on 500")
 	}
 }
 
-// TestOllamaSummarize_ModelError verifies an Ollama-side error field becomes an error even on 200.
-func TestOllamaSummarize_ModelError(t *testing.T) {
+// TestOllamaSummarise_ModelError verifies an Ollama-side error field becomes an error even on 200.
+func TestOllamaSummarise_ModelError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(generateResponse{Error: "model 'nope' not found"})
 	}))
@@ -115,14 +115,14 @@ func TestOllamaSummarize_ModelError(t *testing.T) {
 
 	o, _ := NewOllama(Config{Address: srv.URL, Model: "nope"})
 
-	if _, err := o.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected error when response carries an error field")
 	}
 }
 
-// TestOllamaSummarize_EmptyResponse verifies an empty response is rejected rather than returned as
+// TestOllamaSummarise_EmptyResponse verifies an empty response is rejected rather than returned as
 // a valid (empty) summary.
-func TestOllamaSummarize_EmptyResponse(t *testing.T) {
+func TestOllamaSummarise_EmptyResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(generateResponse{Response: "   ", Done: true})
 	}))
@@ -131,17 +131,17 @@ func TestOllamaSummarize_EmptyResponse(t *testing.T) {
 
 	o, _ := NewOllama(Config{Address: srv.URL, Model: "m"})
 
-	if _, err := o.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected error on empty response")
 	}
 }
 
-// TestOllamaSummarize_NoBodies verifies a request with nothing to summarise fails before any HTTP
+// TestOllamaSummarise_NoBodies verifies a request with nothing to summarise fails before any HTTP
 // call.
-func TestOllamaSummarize_NoBodies(t *testing.T) {
+func TestOllamaSummarise_NoBodies(t *testing.T) {
 	o, _ := NewOllama(Config{Address: "http://127.0.0.1:0", Model: "m"})
 
-	if _, err := o.Summarize(context.Background(), Request{}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{}); err == nil {
 		t.Error("expected error with no bodies")
 	}
 }
@@ -171,13 +171,13 @@ func TestNoop(t *testing.T) {
 		t.Error("noop should not be enabled")
 	}
 
-	if _, err := n.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err != ErrDisabled {
+	if _, err := n.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err != ErrDisabled {
 		t.Errorf("expected ErrDisabled, got %v", err)
 	}
 }
 
-// TestOllamaSummarize_InvalidJSON verifies an undecodable response body becomes an error.
-func TestOllamaSummarize_InvalidJSON(t *testing.T) {
+// TestOllamaSummarise_InvalidJSON verifies an undecodable response body becomes an error.
+func TestOllamaSummarise_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("this is not json"))
 	}))
@@ -186,24 +186,24 @@ func TestOllamaSummarize_InvalidJSON(t *testing.T) {
 
 	o, _ := NewOllama(Config{Address: srv.URL, Model: "m"})
 
-	if _, err := o.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected error decoding a non-JSON response")
 	}
 }
 
-// TestOllamaSummarize_MarshalError verifies an unmarshalable request (a non-finite temperature,
+// TestOllamaSummarise_MarshalError verifies an unmarshalable request (a non-finite temperature,
 // which reaches the options map) surfaces the marshal error rather than being sent.
-func TestOllamaSummarize_MarshalError(t *testing.T) {
+func TestOllamaSummarise_MarshalError(t *testing.T) {
 	o, _ := NewOllama(Config{Address: "http://127.0.0.1:0", Model: "m", Temperature: math.Inf(1)})
 
-	if _, err := o.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected marshal error for a non-finite temperature")
 	}
 }
 
-// TestOllamaSummarize_BadAddress verifies an address carrying an invalid control character fails
+// TestOllamaSummarise_BadAddress verifies an address carrying an invalid control character fails
 // when the request is built, before any network call.
-func TestOllamaSummarize_BadAddress(t *testing.T) {
+func TestOllamaSummarise_BadAddress(t *testing.T) {
 	o := &Ollama{
 		address:         "http://ex\x7fample",
 		model:           "m",
@@ -212,7 +212,7 @@ func TestOllamaSummarize_BadAddress(t *testing.T) {
 		client:          &http.Client{},
 	}
 
-	if _, err := o.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected error building a request with a bad address")
 	}
 }
@@ -235,18 +235,18 @@ func (errRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-// TestOllamaSummarize_BodyReadError verifies a failure reading the response body becomes an error.
-func TestOllamaSummarize_BodyReadError(t *testing.T) {
+// TestOllamaSummarise_BodyReadError verifies a failure reading the response body becomes an error.
+func TestOllamaSummarise_BodyReadError(t *testing.T) {
 	o, _ := NewOllama(Config{Address: "http://ollama", Model: "m"})
 	o.client = &http.Client{Transport: errRoundTripper{}}
 
-	if _, err := o.Summarize(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(context.Background(), Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected error reading a broken response body")
 	}
 }
 
-// TestOllamaSummarize_ContextDeadline verifies the caller's context deadline aborts the call.
-func TestOllamaSummarize_ContextDeadline(t *testing.T) {
+// TestOllamaSummarise_ContextDeadline verifies the caller's context deadline aborts the call.
+func TestOllamaSummarise_ContextDeadline(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		_ = json.NewEncoder(w).Encode(generateResponse{Response: "late", Done: true})
@@ -259,7 +259,7 @@ func TestOllamaSummarize_ContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
-	if _, err := o.Summarize(ctx, Request{Bodies: []string{"x"}}); err == nil {
+	if _, err := o.Summarise(ctx, Request{Bodies: []string{"x"}}); err == nil {
 		t.Error("expected context-deadline error")
 	}
 }

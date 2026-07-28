@@ -21,7 +21,7 @@ Hippocampus applies principles from human memory consolidation to solve long-ter
 * **Relative Significance & Ranking:** Insert events dynamically relative to adjacent records (`ABOVE`, `BELOW`, or `BETWEEN`) without enforcing rigid, static importance scales.
 * **Reinforcement through Recall:** Accessing or querying a record strengthens its retention weight, protecting high-demand operational data from decay.
 * **Sleep & Consolidation:** Runs periodic background consolidation cycles to apply decay models, compact space, and distill clusters of episodic details into compact semantic summaries.
-* **Durable & Compliance-Safe:** Embedded or centralized deployment backed by SQLite (WAL mode), PostgreSQL, or MySQL. Includes configurable minimum retention floors to guarantee compliance windows regardless of storage pressure.
+* **Durable & Compliance-Safe:** Embedded or centralised deployment backed by SQLite (WAL mode), PostgreSQL, or MySQL. Includes configurable minimum retention floors to guarantee compliance windows regardless of storage pressure.
 
 ---
 
@@ -46,7 +46,7 @@ cd hippocampus
 
 ## 🚀 Docker Setup
 
-Run Hippocampus in containerized environments with pre-configured compose files:
+Run Hippocampus in containerised environments with pre-configured compose files:
 
 ```bash
 # Embedded SQLite (Stateless binary, volume-backed DB)
@@ -55,7 +55,7 @@ docker compose up --build
 # PostgreSQL Backed
 docker compose -f docker/docker-compose.postgres.yaml up --build
 
-# Centralized Setup (PostgreSQL + OpenSearch Content Indexing)
+# Centralised Setup (PostgreSQL + OpenSearch Content Indexing)
 docker compose -f docker/docker-compose.corporate.yaml up --build
 
 # Add an MCP-over-HTTP endpoint to the embedded stack (opt-in profile, publishes :8090)
@@ -69,7 +69,7 @@ docker compose --profile mcp up --build
 Hippocampus scales cleanly using two primary deployment patterns depending on store ownership:
 
 ```
-[ Isolated Multi-Tenant / Embedded ]        [ High-Throughput Centralized ]
+[ Isolated Multi-Tenant / Embedded ]        [ High-Throughput Centralised ]
 
 +----------------------+                  +-------------------------+
 |  Tenant A / Device   |                  |   Consolidating Node    |
@@ -87,7 +87,7 @@ Hippocampus scales cleanly using two primary deployment patterns depending on st
 ```
 
 1. **One Instance per Store (Recommended):** Run independent, lightweight Hippocampus instances per subsystem, client tenant, or edge node using SQLite or dedicated databases.
-2. **Shared Store with Replicas:** Scale centralized stores by running **one** consolidating instance (`consolidation.enabled: true`) alongside any number of stateless read/write HTTP/gRPC replicas (`consolidation.enabled: false`).
+2. **Shared Store with Replicas:** Scale centralised stores by running **one** consolidating instance (`consolidation.enabled: true`) alongside any number of stateless read/write HTTP/gRPC replicas (`consolidation.enabled: false`).
 
 ---
 
@@ -149,10 +149,10 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | :--- | :--- |
 | 🎬 **[Getting Started](docs/getting-started.md)** | Step-by-step build, initial config, and first gRPC/HTTP requests. |
 | ⚙️ **[Configurability](docs/configuration.md)** | Exhaustive key reference for TLS, auth, storage drivers, and listeners. |
-| 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarization. |
+| 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarisation. |
 | 🛠️ **[Operations & Deployment](docs/operations.md)** | Sizing storage, PostgreSQL/MySQL tuning, backups, and security hardening. |
 | 📊 **[Performance Benchmarks](docs/performance.md)** | Throughput sweeps across SQLite, Postgres, and MySQL under heavy loads. |
-| 📐 **[Use Cases & Patterns](docs/use-cases.md)** | Embedded vs. centralized topologies and data transfer strategies. |
+| 📐 **[Use Cases & Patterns](docs/use-cases.md)** | Embedded vs. centralised topologies and data transfer strategies. |
 | 🧪 **[Demonstrations](docs/demonstrations.md)** | Worked scenarios using real-world data shapes and data generators. |
 | 🤖 **[MCP Server](docs/mcp.md)** | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol. |
 | 📓 **[Obsidian Integration](docs/obsidian.md)** | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge. |
@@ -164,7 +164,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 Hippocampus is production-hardened out of the box:
 * **Built-in Authentication:** JWT bearer tokens with mandatory expiration (`exp`) and zero-downtime rotation via `auth.signingKeys`, or RS256/JWKS verification against any OIDC identity provider (`auth.method: idp`).
 * **Single Sign-On (SSO):** OpenID Connect login for the web console — an in-browser PKCE flow, or a server-side [confidential-client flow](docs/configuration.md#server-side-sign-in-authoauth2) (`auth.oauth2`) that keeps the token in an `HttpOnly` session cookie.
-* **Role-Based Authorization:** Per-RPC `reader`/`writer`/`admin` tiers carried in the token, enforced identically on gRPC and the HTTP gateway.
+* **Role-Based Authorisation:** Per-RPC `reader`/`writer`/`admin` tiers carried in the token, enforced identically on gRPC and the HTTP gateway.
 * **Transport Security:** Pinned TLS 1.2+ floor for both internal and external communication.
 * **Storage Isolation:** Driver error masking behind standard gRPC status codes to prevent database schema leaks.
 * **Client Isolation:** Per-client request attribution, execution query timeouts, and stream concurrency limits.
@@ -176,7 +176,7 @@ Hippocampus is production-hardened out of the box:
 ## ⚠️ Key Limitations
 
 * **Single Consolidator Rule:** Only one instance may perform consolidation/decay tasks per store to prevent race conditions during database compaction.
-* **Opaque Payloads:** Memory payloads are stored as raw bytes; by default summaries must be constructed upstream by client applications and submitted via `ReplaceMemoriesWithSummary`. An optional embedded LLM (Ollama, `ollama.enabled`) lets the service author summaries itself — via the `SummariseMemories` RPC or automatically during the sleep cycle — see [Summarization](docs/consolidation.md#summarization).
+* **Opaque Payloads:** Memory payloads are stored as raw bytes; by default summaries must be constructed upstream by client applications and submitted via `ReplaceMemoriesWithSummary`. An optional embedded LLM (Ollama, `ollama.enabled`) lets the service author summaries itself — via the `SummariseMemories` RPC or automatically during the sleep cycle — see [Summarisation](docs/consolidation.md#summarisation).
 * **Eventually Consistent Search:** The OpenSearch index is secondary and asynchronous. Primary database reads remain strictly consistent, while background sweeps handle reconciliation for content search.
 
 ---

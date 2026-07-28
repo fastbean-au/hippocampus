@@ -57,7 +57,7 @@ short:
 If your assistant already speaks MCP, point it at `integrations/hippocampus-mcp` instead of (or alongside)
 the plugin. The bridge exposes a curated, safe tool subset — `store_memory`, `recall_memories`,
 `search_memories`, `list_memories`, `create_event`, `list_events`,
-`get_summarization_candidates` — and deliberately omits the destructive/admin RPCs, so a model
+`get_summarisation_candidates` — and deliberately omits the destructive/admin RPCs, so a model
 cannot wipe or exfiltrate the store. See the [MCP server guide](mcp.md) for the tool reference,
 transports (stdio/HTTP), auth, and TLS.
 
