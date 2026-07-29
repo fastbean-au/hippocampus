@@ -46,6 +46,28 @@ writes. This is the default (`storage.driver: sqlite`).
 
 Ideal where each producer keeps its _own_ bounded memory — one instance per device or per process.
 
+```mermaid
+flowchart LR
+  Client["Client / Agent<br/>gRPC · HTTP · MCP"]
+
+  subgraph inst["Hippocampus instance"]
+    direction TB
+    H["Hippocampus<br/>consolidation.enabled: true"]
+    OS[("OpenSearch<br/>content search")]
+    L["Ollama LLM<br/>summarisation"]
+    H -. "opt" .-> OS
+    H -. "opt" .-> L
+  end
+
+  DB[("SQLite<br/>WAL")]
+
+  Client -->|"JWT · TLS"| H
+  H --> DB
+
+  class OS,L opt
+  classDef opt stroke-dasharray:4 3,opacity:0.75
+```
+
 ### Centralised / corporate (Postgres or MySQL, optional OpenSearch)
 
 A server-backed deployment: `storage.driver: postgres` or `mysql`, typically behind TLS with
@@ -54,6 +76,38 @@ gRPC. Add the optional OpenSearch secondary index (`opensearch.enabled`) for con
 memory bodies (`SearchMemories`) — the primary store stays authoritative and the index is
 best-effort and rebuildable. See the [Operations guide](operations.md) for driver selection and
 sizing (notably the MySQL InnoDB buffer-pool note).
+
+One instance runs consolidation (`consolidation.enabled: true`, the single owner of Sleep and
+eviction); any number of stateless read/write replicas (`consolidation.enabled: false`) share the
+same database to scale request throughput horizontally.
+
+```mermaid
+flowchart TB
+  Clients["Clients / Agents<br/>gRPC · HTTP · MCP"]
+  IdP["OIDC IdP · JWKS"]
+
+  subgraph tier["Hippocampus tier — JWT · TLS"]
+    direction LR
+    C["Consolidating node<br/>enabled: true<br/>Sleep · Eviction"]
+    R1["R/W replica<br/>enabled: false"]
+    R2["R/W replica<br/>enabled: false"]
+  end
+
+  DB[("Shared DB<br/>PostgreSQL / MySQL")]
+  OS[("OpenSearch<br/>content search")]
+  L["Ollama LLM<br/>summarisation"]
+
+  Clients --> tier
+  IdP -. "verify" .-> tier
+  C --> DB
+  R1 --> DB
+  R2 --> DB
+  tier -. "opt" .-> OS
+  C -. "opt" .-> L
+
+  class OS,L,IdP opt
+  classDef opt stroke-dasharray:4 3,opacity:0.75
+```
 
 Provided compose stacks: `docker/docker-compose.postgres.yaml`, `docker/docker-compose.mysql.yaml`, and
 `docker/docker-compose.opensearch.yaml`.
@@ -72,6 +126,32 @@ isolation of the memory dynamics, per-tenant capacity/decay tuning, and clean pe
 The transfer/archive RPCs exist for a common pattern: many **embedded** instances (edge/IoT) that
 periodically ship their accumulated memories to a **centralised** instance for aggregation and
 longer retention.
+
+```mermaid
+flowchart LR
+  subgraph edge["Embedded instances (edge / IoT)"]
+    direction TB
+    E1["Hippocampus + SQLite"]
+    E2["Hippocampus + SQLite"]
+    E3["Hippocampus + SQLite"]
+  end
+
+  S3[("S3 archive")]
+
+  subgraph centre["Centralised instance"]
+    Central["Hippocampus"]
+    CDB[("PostgreSQL / MySQL")]
+    Central --> CDB
+  end
+
+  E1 -. "Export" .-> S3
+  S3 -. "Import" .-> Central
+  E2 -->|"Transfer → ImportBatch"| Central
+  E3 -->|"Transfer → ImportBatch"| Central
+
+  class S3 opt
+  classDef opt stroke-dasharray:4 3,opacity:0.75
+```
 
 - On the edge: `Export` (to S3) or `Transfer` (direct gRPC to the central instance's `ImportBatch`),
   each capturing a point-in-time snapshot and, optionally, clearing exactly what it captured (records
