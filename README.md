@@ -66,28 +66,71 @@ docker compose --profile mcp up --build
 
 ## 🏗️ Deployment Topology & Scaling
 
-Hippocampus scales cleanly using two primary deployment patterns depending on store ownership:
+Hippocampus scales cleanly using two primary deployment patterns depending on store ownership. Both
+support the same optional components — OpenSearch content search, the embedded Ollama summariser, and
+JWT/TLS — shown dashed below.
 
+### Embedded / Edge
+
+Run an independent, lightweight instance per subsystem, tenant, or edge node, each owning an embedded
+**SQLite** database (WAL mode). One process consolidates its own store — no coordination needed.
+
+```mermaid
+flowchart LR
+  Client["Client / Agent<br/>gRPC · HTTP · MCP"]
+
+  subgraph inst["Hippocampus instance"]
+    direction TB
+    H["Hippocampus<br/>consolidation.enabled: true"]
+    OS[("OpenSearch<br/>content search")]
+    L["Ollama LLM<br/>summarisation"]
+    H -. "opt" .-> OS
+    H -. "opt" .-> L
+  end
+
+  DB[("SQLite<br/>WAL")]
+
+  Client -->|"JWT · TLS"| H
+  H --> DB
+
+  class OS,L opt
+  classDef opt stroke-dasharray:4 3,opacity:0.75
 ```
-[ Isolated Multi-Tenant / Embedded ]        [ High-Throughput Centralised ]
 
-+----------------------+                  +-------------------------+
-|  Tenant A / Device   |                  |   Consolidating Node    |
-| (1 Instance = 1 DB)  |                  |  (Runs Sleep/Eviction)  |
-+----------------------+                  +-----------+-------------+
-                                                      |
-+----------------------+                 +------------+--------------+
-|  Tenant B / Device   |                 | Shared DB (Postgres/MySQL)|
-| (1 Instance = 1 DB)  |                 +------------+--------------+
-+----------------------+                              |
-                                         +------------+--------------+
-                                         |   Read / Write Replicas   |
-                                         | (consolidation.enabled=f) |
-                                         +---------------------------+
+### Centralised / Scaled
+
+Point one **consolidating** instance (`consolidation.enabled: true` — the only process that runs
+Sleep/eviction) and any number of stateless read/write **replicas** (`consolidation.enabled: false`)
+at a shared **PostgreSQL** or **MySQL** database. Replicas scale request throughput horizontally
+while a single consolidator owns decay and compaction.
+
+```mermaid
+flowchart TB
+  Clients["Clients / Agents<br/>gRPC · HTTP · MCP"]
+  IdP["OIDC IdP · JWKS"]
+
+  subgraph tier["Hippocampus tier — JWT · TLS"]
+    direction LR
+    C["Consolidating node<br/>enabled: true<br/>Sleep · Eviction"]
+    R1["R/W replica<br/>enabled: false"]
+    R2["R/W replica<br/>enabled: false"]
+  end
+
+  DB[("Shared DB<br/>PostgreSQL / MySQL")]
+  OS[("OpenSearch<br/>content search")]
+  L["Ollama LLM<br/>summarisation"]
+
+  Clients --> tier
+  IdP -. "verify" .-> tier
+  C --> DB
+  R1 --> DB
+  R2 --> DB
+  tier -. "opt" .-> OS
+  C -. "opt" .-> L
+
+  class OS,L,IdP opt
+  classDef opt stroke-dasharray:4 3,opacity:0.75
 ```
-
-1. **One Instance per Store (Recommended):** Run independent, lightweight Hippocampus instances per subsystem, client tenant, or edge node using SQLite or dedicated databases.
-2. **Shared Store with Replicas:** Scale centralised stores by running **one** consolidating instance (`consolidation.enabled: true`) alongside any number of stateless read/write HTTP/gRPC replicas (`consolidation.enabled: false`).
 
 ---
 
