@@ -10,6 +10,22 @@ this only covers the VM.
 > the Grafana dashboards, jump to [A lite stack for an e2-micro](#a-lite-stack-for-an-e2-micro): the
 > same console and Auth0 sign-in, trimmed to fit a 0.25 vCPU / 1 GiB machine.
 
+> **One domain instead of two?** Steps 1–7 stand up the two stacks on two domains, each with its own
+> Caddy and Keycloak. To serve **both examples under one parent domain** — one shared Caddy, Keycloak,
+> and Grafana (slightly lighter, and no `:80`/`:443` contention between two Caddys) — use the merged
+> stack instead. Two changes to this runbook: in [step 2](#2-dns) create **four** subdomains of one
+> domain (`book.`, `logs.`, `auth.`, `grafana.`) or a single wildcard rather than the six records
+> below; and in [step 5](#5-bring-up-the-stacks) run one command:
+>
+> ```sh
+> BASE_DOMAIN=hippocampus.example ACME_EMAIL=you@example.com \
+>   docker compose -f docker/docker-compose.showcase-combined.yaml up --build -d
+> ```
+>
+> The generators (step 6) then both authenticate to the one shared issuer
+> `https://auth.${BASE_DOMAIN}/realms/hippocampus`. See
+> [Both examples on one domain](showcase.md#both-examples-on-one-domain-a-single-merged-stack).
+
 ## 1. Sizing
 
 Each stack runs Postgres + OpenSearch (1 GiB heap) + Keycloak (JVM) + an otel-lgtm bundle

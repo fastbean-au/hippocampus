@@ -14,8 +14,8 @@ The service configs are [`docker/config.showcase-book.json`](../docker/config.sh
 [`docker/config.showcase-logs.json`](../docker/config.showcase-logs.json); the compose stacks are
 [`docker/docker-compose.showcase-book.yaml`](../docker/docker-compose.showcase-book.yaml) and
 [`…-logs.yaml`](../docker/docker-compose.showcase-logs.yaml). This document covers the
-identity-provider setup and how to run the stacks; the GCP VM provisioning is a separate
-[runbook](showcase-gcp.md).
+identity-provider setup and how to run the stacks; the per-cloud VM provisioning is a separate
+runbook — [GCP](showcase-gcp.md) or [OCI](showcase-oci.md).
 
 > **Tight on resources?** There is also a **lite** single stack that trades OpenSearch content search
 > and the Grafana/OTEL telemetry for a footprint that fits a 0.25 vCPU / 1 GiB VM — see
@@ -185,8 +185,57 @@ go run ./cmd/logs -s <vm>:50052 --live --rate 120 \
   --oidc-client-id hippocampus-gen --oidc-client-secret "$GEN_SECRET"
 ```
 
-Running these unattended (a systemd unit per stack) is covered in the [GCP deployment
-runbook](showcase-gcp.md).
+Running these unattended (a systemd unit per stack) is covered in the per-cloud deployment runbooks
+([GCP](showcase-gcp.md), [OCI](showcase-oci.md)).
+
+### Both examples on one domain (a single merged stack)
+
+The book and logs compose files above each ship their _own_ Caddy binding `:80`/`:443` and their own
+Keycloak on an `auth.` subdomain — two of everything, across two domains. When you want **both
+examples under one parent domain on one host**, the merged stack
+[`docker/docker-compose.showcase-combined.yaml`](../docker/docker-compose.showcase-combined.yaml)
+(Caddyfile [`docker/caddy/Caddyfile.combined`](../docker/caddy/Caddyfile.combined)) folds them into a
+single compose project: **one Caddy** (two Caddys cannot share the host ports), **one shared
+Keycloak**, and **one shared Grafana**, with the two data stores kept isolated. Everything hangs off a
+single `BASE_DOMAIN`:
+
+```sh
+BASE_DOMAIN=hippocampus.example ACME_EMAIL=you@example.com \
+  docker compose -f docker/docker-compose.showcase-combined.yaml up --build -d
+```
+
+That serves four subdomains of the one domain — point A/AAAA records for each (or a single
+`*.${BASE_DOMAIN}` wildcard) at the host:
+
+| Subdomain                | Serves                                                      |
+| ------------------------ | ----------------------------------------------------------- |
+| `book.${BASE_DOMAIN}`    | the book console (`/ui`), gRPC on `:50051`                  |
+| `logs.${BASE_DOMAIN}`    | the logs console (`/ui`), gRPC on `:50052`                  |
+| `auth.${BASE_DOMAIN}`    | Keycloak — **shared**, one realm serving both consoles      |
+| `grafana.${BASE_DOMAIN}` | Grafana — **shared**, both services' telemetry in one place |
+
+Why this works with no config-file changes:
+
+- **Shared Keycloak, one issuer.** Both services set
+  `HIPPOCAMPUS_AUTH_ISSUER`/`_UI_ISSUER` to `https://auth.${BASE_DOMAIN}/realms/hippocampus`, and the
+  shipped realm's console client already lists **both** `book.`/`logs.` `/ui` redirect URIs and one
+  `hippocampus-gen` client — so a single Keycloak covers both. The [split-issuer](#the-split-issuer-fix)
+  Caddy alias for `auth.${BASE_DOMAIN}` is what lets the containers reach it at the browser's URL.
+- **Isolated stores, reused configs.** Each example keeps its own Postgres + OpenSearch on its own
+  private compose network, where the alias `postgres`/`opensearch` resolves to that stack's
+  containers — so [`config.showcase-book.json`](../docker/config.showcase-book.json) and
+  [`…-logs.json`](../docker/config.showcase-logs.json) are reused **verbatim**, unaware they are
+  co-tenants.
+
+The generators are unchanged except that **both now authenticate to the shared issuer**
+`https://auth.${BASE_DOMAIN}/realms/hippocampus` (only `-s localhost:50051` vs `50052` and the config
+differ). For a real domain, set `BASE_DOMAIN` and change the console client's `redirectUris`/
+`webOrigins` in the realm to match, along with the demo secrets.
+
+> **Shared identity is the trade-off.** One realm means one set of users and one signing key across
+> both examples, so a token minted by signing in to the book console is also accepted by the logs
+> service. That is fine for a demo; if you need the two examples to be security-isolated, keep the two
+> separate stacks (and two domains) instead.
 
 ### A lite single stack (e2-micro)
 
