@@ -178,6 +178,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # QEMU emulates the target arch for the small alpine RUN steps (adduser, mkdir/chown) in the
+      # final image stages; the heavy Go compile is cross-compiled natively via BUILDPLATFORM. Buildx
+      # (docker-container driver) is what lets build-push-action produce a multi-platform manifest.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -200,6 +209,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             VERSION=${{ github.ref_name }}
@@ -223,6 +233,7 @@ jobs:
         with:
           context: .
           target: mcp
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             VERSION=${{ github.ref_name }}
@@ -247,6 +258,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # See the publish job: QEMU for the alpine RUN steps, Buildx for the multi-platform manifest.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -268,6 +286,7 @@ jobs:
         with:
           context: .
           file: integrations/otel/collector/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             VERSION=${{ github.ref_name }}

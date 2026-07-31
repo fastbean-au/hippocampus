@@ -1,7 +1,14 @@
 # All three storage drivers (modernc.org/sqlite, jackc/pgx, and go-sql-driver/mysql) are pure
 # Go, so the binary builds with CGO disabled and runs on a minimal base image with no C library.
 
-FROM golang:1.25-alpine AS build
+# Build on the native BUILDPLATFORM and cross-compile to TARGETOS/TARGETARCH so a multi-arch build
+# (linux/amd64 + linux/arm64) compiles each target natively rather than emulating the toolchain -
+# CGO is off, so cross-compilation is just a GOARCH switch. TARGETOS/TARGETARCH are supplied by
+# buildx; they must be re-declared as ARGs in this stage to be referenced.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -14,13 +21,13 @@ RUN go mod download
 ARG VERSION=dev
 
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X main.buildVersion=${VERSION}" \
     -o /hippocampus ./cmd/hippocampus
 
 # The MCP bridge (integrations/hippocampus-mcp) is a separate binary and a separate image (the `mcp`
 # stage below). Its version var is main.version, not main.buildVersion.
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
     -o /hippocampus-mcp ./integrations/hippocampus-mcp
 

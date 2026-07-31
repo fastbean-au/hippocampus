@@ -6,7 +6,14 @@
 #
 #   docker build -f integrations/otel/collector/Dockerfile -t hippocampus-otel-collector .
 
-FROM golang:1.25-alpine AS build
+# Build on the native BUILDPLATFORM and cross-compile the collector to TARGETOS/TARGETARCH (CGO off),
+# so a multi-arch build never emulates the OCB toolchain under QEMU. TARGETOS/TARGETARCH come from
+# buildx and must be re-declared as ARGs in this stage to be referenced. OCB itself (go install
+# below) is left native to the build host - only the collector it compiles is cross-targeted.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # Must track otelcol_version in builder-config.yaml.
 ARG OCB_VERSION=0.157.0
@@ -24,7 +31,7 @@ COPY . .
 # resolve against that generated go.mod, so it must run from the collector directory. CGO is off so
 # the binary runs on a minimal base image with no C library.
 WORKDIR /src/integrations/otel/collector
-RUN CGO_ENABLED=0 builder --config builder-config.yaml
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} builder --config builder-config.yaml
 
 FROM alpine:3.22 AS otel-collector
 
