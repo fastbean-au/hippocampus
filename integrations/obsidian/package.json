@@ -1,6 +1,6 @@
 {
 	"name": "hippocampus-obsidian",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Obsidian plugin bridging a vault to a Hippocampus memory service over its HTTP/JSON gateway.",
 	"main": "main.js",
 	"scripts": {
