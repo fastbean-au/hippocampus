@@ -29,7 +29,7 @@ plain gRPC with no auth, so point them at a demonstration instance, not a secure
 
 Start a local instance with a minimal SQLite config (see
 [Getting started](getting-started.md#a-minimal-configuration)); the examples below assume gRPC on
-`:50051` and the HTTP gateway on `:8081`.
+`:50051` and the HTTP gateway on `:8080`.
 
 ### Narrative — the book
 

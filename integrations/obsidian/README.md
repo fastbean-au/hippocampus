@@ -53,7 +53,7 @@ the **bare** version (`0.2.0`), which is what Obsidian's updater and BRAT key on
 ### From a release (recommended)
 
 Each plugin release publishes `main.js`, `manifest.json`, and `styles.css` as assets on a GitHub
-release tagged with the bare plugin version (e.g. `0.1.0`). Either:
+release tagged with the bare plugin version (e.g. `0.1.1`). Either:
 
 - **[BRAT](https://github.com/TfTHacker/obsidian42-brat)** — add `fastbean-au/hippocampus` as a beta
   plugin; BRAT tracks the releases and updates automatically. (Point BRAT at this repo; it reads the

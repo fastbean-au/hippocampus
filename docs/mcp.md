@@ -105,6 +105,7 @@ stores.
 | `--tls-insecure-skip-verify` | `false` | Skip certificate verification (dev only). |
 | `--call-timeout-seconds` | `30` | Per-tool-call timeout bounding each gRPC request. |
 | `--log-level` | `info` | Logging level (written to stderr). |
+| `--version` | — | Print the version and exit. |
 
 ## Host configuration
 

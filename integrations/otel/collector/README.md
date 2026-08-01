@@ -11,9 +11,17 @@ first and keeps errors.
 Each tagged release publishes this collector to GHCR, so you can run it without building anything:
 
 ```sh
-docker run --rm -v "$(pwd)/config.yaml:/etc/otelcol/config.yaml" \
+docker run --rm --network host \
+  -v "$(pwd)/config.yaml:/etc/otelcol/config.yaml" \
   ghcr.io/fastbean-au/hippocampus-otel-collector:latest
 ```
+
+The bundled config's `endpoint` is `localhost:50051`, so the collector must be able to reach the
+Hippocampus instance on the host. `--network host` (Linux) is the simplest way; on Docker Desktop
+(macOS/Windows) drop `--network host` and instead point `exporters.hippocampus.endpoint` at
+`host.docker.internal:50051` in your mounted `config.yaml`. Against a containerised Hippocampus on a
+shared compose/user-defined network, use its service name (and drop the mount to keep the demo
+config, or set the endpoint accordingly).
 
 The image bundles a runnable demo `config.yaml`/`sample.log` at `/etc/otelcol/`; mount your own
 `config.yaml` over it for a real deployment. It is tagged with the release version, the rolling
@@ -50,20 +58,20 @@ lines are included, alongside a `debug` exporter so you can watch records flow.
 
 ## End-to-end demonstration
 
-With a local SQLite Hippocampus running (gRPC `:50051`, gateway `:8081` — see
+With a local SQLite Hippocampus running (gRPC `:50051`, gateway `:8080` — see
 [getting started](../../../docs/getting-started.md)) and decay tuned to bite:
 
 1. Run the collector over `sample.log`; the 12 lines become 12 memories, one event for the day.
    Confirm via the gateway:
 
    ```sh
-   curl -s 'http://localhost:8081/v1/memories?page_size=100'
+   curl -s 'http://localhost:8080/v1/memories?page_size=100'
    ```
 
    Significance rises monotonically with severity (`DEBUG` lowest … `FATAL` highest), the `group`
    is taken from `service.name` (or `default_group`), and each memory carries the day's `eventId`.
 
-2. Trigger a consolidation cycle (`curl -s -X POST http://localhost:8081/v1/sleep -d '{}'`) and
+2. Trigger a consolidation cycle (`curl -s -X POST http://localhost:8080/v1/sleep -d '{}'`) and
    list again: the lowest-severity memories are forgotten first while the errors and fatals
    survive — significance-by-severity survival, driven by a real OTel pipeline. (In a live
    deployment this plays out over days as logs age; the demonstration compresses the decay clock —

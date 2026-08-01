@@ -10,7 +10,7 @@ by the host.
 
 ```sh
 go build -o hippocampus-mcp ./integrations/hippocampus-mcp
-hippocampus-mcp --address localhost:50051
+./hippocampus-mcp --address localhost:50051
 ```
 
 The full guide — tool reference, stdio/HTTP transports, auth/TLS, and Claude Desktop / Claude Code
