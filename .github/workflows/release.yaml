@@ -144,7 +144,9 @@ jobs:
 
             # Root-module binaries.
             go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o "stage/hippocampus${ext}" ./cmd/hippocampus
-            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "stage/hippocampus-mcp${ext}" ./integrations/mcp
+
+            # MCP bridge (separate module; build from its directory into the shared stage).
+            ( cd integrations/mcp && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-mcp${ext}" . )
 
             # Event-sourcing bridges (separate module; build from its directory into the shared stage).
             for broker in nats mqtt rabbitmq kafka; do

@@ -141,7 +141,7 @@ Give an AI agent a long-term memory that forgets like a human one. `integrations
 **Claude Desktop, Claude Code, or any MCP host** — a thin gRPC-client bridge, no extra service to run.
 
 ```bash
-go build -o hippocampus-mcp ./integrations/mcp
+go build -C integrations/mcp -o "$PWD/hippocampus-mcp" .
 claude mcp add hippocampus -- ./hippocampus-mcp --address localhost:50051
 ```
 

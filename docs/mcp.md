@@ -21,10 +21,11 @@ Grab a pre-built binary for your platform from the
 `hippocampus-mcp` archives for Linux, macOS, and Windows on amd64/arm64, with a `checksums.txt` to
 verify them. This is the easiest path for the local stdio use case: no Go toolchain required.
 
-Or build from source:
+Or build from source (the bridge is its own Go module, so build it with `-C` — the binary lands in
+the current directory):
 
 ```sh
-go build -o hippocampus-mcp ./integrations/mcp
+go build -C integrations/mcp -o "$PWD/hippocampus-mcp" .
 ```
 
 Or, for the HTTP transport, pull the image (see [Running with Docker](#running-with-docker)):
@@ -151,7 +152,7 @@ on the host machine — dials it exactly as it would a local process. Nothing ex
 
 ```sh
 docker compose up --build                       # Hippocampus in a container, :50051 published
-go build -o hippocampus-mcp ./integrations/mcp
+go build -C integrations/mcp -o "$PWD/hippocampus-mcp" .
 claude mcp add hippocampus -- ./hippocampus-mcp --address localhost:50051
 ```
 

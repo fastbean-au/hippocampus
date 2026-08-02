@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Build: `go build ./...`
 - Run: `go run ./cmd/hippocampus -c config.json` (the `-c`/`--config_file` flag defaults to `./config.json`)
-- Run the MCP server: `go run ./integrations/mcp --address localhost:50051` (a standalone MCP
+- Run the MCP server (separate module — run from its directory):
+  `cd integrations/mcp && go run . --address localhost:50051` (a standalone MCP
   bridge that dials a running service; stdio by default, `--transport http` for streamable HTTP;
   see `docs/mcp.md`)
 - Run an event-sourcing bridge (separate module — run from its directory):
@@ -391,8 +392,11 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   the decay clock (`unitsOfAgeInDays` 0.002 ≈ one age unit per 3 minutes) so forgetting,
   recall reinforcement, and the byte capacity target all play out within a session instead of
   over real days.
-- `integrations/mcp/` — a standalone Model Context Protocol server (its own `package main`, like
-  `demo/generator`) that bridges an LLM host (Claude Desktop/Code, any MCP client) to a running
+- `integrations/mcp/` — a standalone Model Context Protocol server (its own Go module, module path
+  `github.com/fastbean-au/hippocampus/integrations/mcp`; `replace
+  github.com/fastbean-au/hippocampus => ../..`, so the modelcontextprotocol/go-sdk dependency tree
+  stays out of the root build — **the root module does not import it**) that bridges an LLM host
+  (Claude Desktop/Code, any MCP client) to a running
   Hippocampus instance. A thin gRPC-client bridge, not an in-service transport: it holds no state,
   dials the service at `--address`, and turns each MCP tool call into an RPC (`main.go` wires the
   dial/transport, `tools.go` registers the tools and handlers). Serves stdio by default (logging
@@ -412,14 +416,16 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   interface so `tools_test.go` drives them with a fake, plus an end-to-end test over the SDK's
   in-memory transport (`main_test.go` covers the flag/transport/credential wiring — the package
   sits ~94%, only the thin `main` shell uncovered). Built on
-  `github.com/modelcontextprotocol/go-sdk/mcp`. Ships as its own image (`Dockerfile` `target: mcp`),
+  `github.com/modelcontextprotocol/go-sdk/mcp`. Built/vetted/tested by its own `mcp-bridge` CI job
+  (like `otel-exporter`), since the root module's `go build/test ./...` no longer descends into it.
+  Ships as its own image (`Dockerfile` `target: mcp`, built from within the module directory),
   reachable over HTTP via the opt-in `mcp` compose profile; the release workflow cross-compiles the
   binary for every OS/arch onto the GitHub release and publishes the image to
   `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
 - `integrations/` — self-contained client/edge subprojects, each a thin bridge rather than part of
-  the core service. Some are separate Go modules whose heavy dependency trees stay out of the root
-  build (`otel/hippocampusexporter`, `eventsource`), one is a TypeScript project (`obsidian`), and
-  one is a thin `package main` in the root module (`hippocampus-mcp`).
+  the core service. Each Go integration is a separate module whose dependency tree stays out of the
+  root build (`mcp`, `otel/hippocampusexporter`, `eventsource`), and one is a TypeScript project
+  (`obsidian`).
   - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
     top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace

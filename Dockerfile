@@ -26,10 +26,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -o /hippocampus ./cmd/hippocampus
 
 # The MCP bridge (integrations/mcp) is a separate binary and a separate image (the `mcp`
-# stage below). Its version var is main.version, not main.buildVersion.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
+# stage below). It is also its own Go module (its `replace => ../..` reaches this same checkout),
+# so it is built from within its module directory rather than as a package of the root module. Its
+# version var is main.version, not main.buildVersion.
+RUN cd integrations/mcp \
+    && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
-    -o /hippocampus-mcp ./integrations/mcp
+    -o /hippocampus-mcp .
 
 # The MCP-server image. Selected with `target: mcp` (see the profile-gated `mcp` service in
 # docker-compose.yaml); it runs the streamable-HTTP transport so an MCP host can reach it over the

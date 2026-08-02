@@ -8,8 +8,10 @@ It is a thin **bridge**: every tool call is turned into a gRPC request against t
 service named by `--address`, so it holds no state and can be spawned, killed, and restarted freely
 by the host.
 
+This bridge is its own Go module, so build it from this directory:
+
 ```sh
-go build -o hippocampus-mcp ./integrations/mcp
+go build -o hippocampus-mcp .
 ./hippocampus-mcp --address localhost:50051
 ```
 

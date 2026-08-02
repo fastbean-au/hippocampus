@@ -85,8 +85,9 @@ jobs:
       # Coverage is reported to Coveralls only on a push to main, never on a PR: fork PRs cannot see
       # the token secret, and PR coverage must not overwrite the mainline badge. This is what keeps
       # the README's ?branch=main badge fresh - the tag-triggered release runs report under the tag
-      # ref, so they never update main. Everything hand-written is reported, including cmd/ and the
-      # relocated integrations/mcp; only the generated protobuf/gateway code
+      # ref, so they never update main. Everything hand-written in the root module is reported,
+      # including cmd/; the separate integration modules (integrations/mcp, otel, eventsource) are
+      # tested in their own jobs and not reported here. Only the generated protobuf/gateway code
       # (contract/hippocampus*.pb*.go and *_grpc.pb.go) is filtered out, because coverage of
       # generated getters is noise rather than a signal about our code.
       - name: Report coverage to Coveralls
@@ -195,6 +196,27 @@ jobs:
 
       - name: Build, vet, and test the exporter module
         working-directory: integrations/otel/hippocampusexporter
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  # The MCP bridge under integrations/mcp is a SEPARATE Go module (the modelcontextprotocol/go-sdk
+  # dependency tree is kept out of the root module), so the test job's `go build/test ./...` never
+  # descends into it - it would rot undetected. Build, vet, and test it here on its own. It has a
+  # `replace => ../..` back to the repo root, so the full checkout is required.
+  mcp-bridge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: integrations/mcp/go.mod
+
+      - name: Build, vet, and test the MCP bridge module
+        working-directory: integrations/mcp
         run: |
           go build ./...
           go vet ./...
