@@ -252,12 +252,39 @@ jobs:
           docker run -d --name rabbitmq -p 5672:5672 \
             -e RABBITMQ_DEFAULT_USER=hippo -e RABBITMQ_DEFAULT_PASS=hippo \
             rabbitmq:3
+
+          # Gate on the AMQP listener actually accepting connections, not just the node being up:
+          # rabbitmq-diagnostics ping reports the Erlang node is alive, which can be true before the
+          # 5672 listener is bound, so the integration test would then dial into a refused connection.
+          # check_port_connectivity verifies the configured listeners are open. Fail the step loudly
+          # if the broker never becomes ready, so a startup problem surfaces here rather than as a
+          # confusing "connection refused" inside the test run.
           for i in $(seq 1 40); do
-            if docker exec rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+            if docker exec rabbitmq rabbitmq-diagnostics -q check_port_connectivity >/dev/null 2>&1; then
               echo "rabbitmq ready"
               break
             fi
+            if [ "$i" -eq 40 ]; then
+              echo "rabbitmq did not become ready in time; recent logs:" >&2
+              docker logs --tail 50 rabbitmq >&2 || true
+              exit 1
+            fi
             sleep 3
+          done
+
+          # mosquitto has no diagnostics CLI, so gate on the host-mapped port accepting a TCP
+          # connection - which is exactly what the integration test needs to reach it.
+          for i in $(seq 1 20); do
+            if timeout 1 bash -c '</dev/tcp/localhost/1883' >/dev/null 2>&1; then
+              echo "mosquitto ready"
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              echo "mosquitto did not become ready in time; recent logs:" >&2
+              docker logs --tail 50 mosquitto >&2 || true
+              exit 1
+            fi
+            sleep 1
           done
 
       - name: Build, vet, and test the eventsource module
