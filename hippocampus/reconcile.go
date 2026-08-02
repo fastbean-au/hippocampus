@@ -82,7 +82,6 @@ func (s *Server) reconcileOnce() {
 			return
 
 		default:
-
 		}
 
 		memories, err := s.db.GetMemoriesPage(ctx, afterId, s.reconcileBatchSize)
@@ -115,7 +114,6 @@ func (s *Server) reconcileOnce() {
 			return
 
 		case <-time.After(reconcilePageDelay):
-
 		}
 	}
 

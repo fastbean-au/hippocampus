@@ -168,6 +168,17 @@ jobs:
             -d "{\"query\":\"fox\"}" | jq -e ".memories[] | select(.id == \"'"$id"'\")" > /dev/null; do sleep 2; done'
           docker compose -f docker/docker-compose.opensearch.yaml down
 
+      # The four event-sourcing bridge images share one parameterised Dockerfile (BROKER build-arg)
+      # built with the repo root as context. Build each on the native platform (no push) so a broken
+      # Dockerfile or module build fails CI; the release workflow does the multi-arch push.
+      - name: Event-sourcing bridge images build
+        run: |
+          for broker in nats mqtt rabbitmq kafka; do
+            docker build -f integrations/eventsource/Dockerfile \
+              --build-arg BROKER="$broker" \
+              -t "hippocampus-${broker}-bridge:ci" .
+          done
+
   # The OTEL collector exporter under integrations/otel is a SEPARATE Go module (its dependency tree
   # is large and kept out of the root module), so the test job's `go build/test ./...` never
   # descends into it - it would rot undetected. Build, vet, and test it here on its own. It has a
@@ -188,6 +199,54 @@ jobs:
           go build ./...
           go vet ./...
           go test ./...
+
+  # The event-sourcing broker bridges under integrations/eventsource are a SEPARATE Go module (their
+  # broker-client dependency trees are kept out of the root module), so the test job's
+  # `go build/test ./...` never descends into them. Build, vet, and test the module on its own. The
+  # NATS adapter's coverage uses an embedded in-process server (no container), but the MQTT and
+  # RabbitMQ adapters' real-connect paths need a live broker, so mosquitto and rabbitmq are started
+  # here and the matching HIPPOCAMPUS_TEST_* env vars point the (otherwise-skipped) integration tests
+  # at them - keeping the suite's coverage of those adapters honest, the same way the postgres/mysql/
+  # opensearch service containers do for the root module. The module has a `replace => ../..` back to
+  # the repo root, so the full checkout is required.
+  eventsource-bridges:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: integrations/eventsource/go.mod
+
+      # Started as docker-run steps rather than `services:` because mosquitto needs a mounted config
+      # to listen on all interfaces and allow anonymous connections (a default-config mosquitto binds
+      # localhost-only), and services start before the checkout that provides that config.
+      - name: Start MQTT and RabbitMQ brokers
+        run: |
+          docker run -d --name mosquitto -p 1883:1883 \
+            -v "$PWD/integrations/eventsource/testdata/mosquitto.conf:/mosquitto/config/mosquitto.conf" \
+            eclipse-mosquitto:2
+          docker run -d --name rabbitmq -p 5672:5672 \
+            -e RABBITMQ_DEFAULT_USER=hippo -e RABBITMQ_DEFAULT_PASS=hippo \
+            rabbitmq:3
+          for i in $(seq 1 40); do
+            if docker exec rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+              echo "rabbitmq ready"
+              break
+            fi
+            sleep 3
+          done
+
+      - name: Build, vet, and test the eventsource module
+        working-directory: integrations/eventsource
+        env:
+          HIPPOCAMPUS_TEST_MQTT_BROKER: tcp://localhost:1883
+          HIPPOCAMPUS_TEST_RABBITMQ_URL: amqp://hippo:hippo@localhost:5672/
+        run: |
+          go build ./...
+          go vet ./...
+          go test -race ./...
 
   # The Obsidian plugin under integrations/obsidian is a TypeScript project outside the Go module, so
   # nothing in the Go jobs exercises it. Typecheck+bundle and run its unit tests here - this is the

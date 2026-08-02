@@ -83,7 +83,6 @@ type Config struct {
 // Validate checks the configuration for internal consistency.
 func (c *Config) Validate() error {
 	if c.Endpoint == "" {
-
 		return fmt.Errorf("endpoint must be set to the Hippocampus gRPC address (e.g. localhost:50051)")
 	}
 
@@ -93,28 +92,23 @@ func (c *Config) Validate() error {
 		// ok
 
 	default:
-
 		return fmt.Errorf("event_bucket must be one of %q, %q, %q; got %q", eventBucketNone, eventBucketHour, eventBucketDay, c.EventBucket)
 	}
 
 	if c.CreateEvents && len(c.EventKeyFrom) == 0 {
-
 		return fmt.Errorf("event_key_from must name at least one attribute when create_events is true")
 	}
 
 	s := c.Significance
 	if s.Min < 0 || s.Max < 0 {
-
 		return fmt.Errorf("significance.min and significance.max must be non-negative")
 	}
 
 	if s.Min > s.Max {
-
 		return fmt.Errorf("significance.min (%d) must not exceed significance.max (%d)", s.Min, s.Max)
 	}
 
 	if s.Jitter < 0 {
-
 		return fmt.Errorf("significance.jitter must be non-negative")
 	}
 

@@ -93,12 +93,12 @@ jobs:
         # the changelog from merged PRs since the previous tag.
         run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
 
-  # Cross-compile both binaries and attach them to the release, so an end user can grab a runnable
-  # tool without a Go toolchain - most valuable for integrations/hippocampus-mcp, which an MCP host (Claude
-  # Desktop/Code) spawns locally over stdio. Everything is pure Go with CGO disabled, so the whole
-  # OS/arch matrix cross-compiles from one runner with no cross toolchain. Gated on `release` so the
-  # release the assets attach to already exists. A single job (rather than a build matrix) keeps the
-  # checksums in one file; the builds are seconds each.
+  # Cross-compile every binary and attach them to the release, so an end user can grab a runnable
+  # tool without a Go toolchain - most valuable for integrations/hippocampus-mcp, which an MCP host
+  # (Claude Desktop/Code) spawns locally over stdio, and the event-sourcing broker bridges. Everything
+  # is pure Go with CGO disabled, so the whole OS/arch matrix cross-compiles from one runner with no
+  # cross toolchain. Gated on `release` so the release the assets attach to already exists. A single
+  # job (rather than a build matrix) keeps the checksums in one file; the builds are seconds each.
   binaries:
     needs: release
     runs-on: ubuntu-latest
@@ -114,9 +114,11 @@ jobs:
           go-version-file: go.mod
 
       # The tag is stamped into each binary via -ldflags -X, matching the Dockerfile: the service
-      # binary reads main.buildVersion, the MCP bridge reads main.version. Each platform archive
-      # bundles the binary plus LICENSE; Windows gets a .zip, everything else a .tar.gz. A single
-      # checksums.txt over all archives lets a downloader verify integrity.
+      # binary reads main.buildVersion, every other tool reads main.version. The four event-sourcing
+      # bridges live in the separate integrations/eventsource module (its own go.mod), so they are
+      # built from that directory but staged into the same stage/ dir and archived uniformly with the
+      # rest. Each platform archive bundles one binary plus LICENSE; Windows gets a .zip, everything
+      # else a .tar.gz. A single checksums.txt over all archives lets a downloader verify integrity.
       - name: Cross-compile and archive
         env:
           VERSION: ${{ github.ref_name }}
@@ -132,27 +134,35 @@ jobs:
           # stage/ once so each archive can be built from a single directory.
           cp LICENSE stage/LICENSE
 
+          repo_root="$PWD"
+
           for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             export GOOS="${platform%/*}" GOARCH="${platform#*/}"
 
             ext=""
             if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
 
+            # Root-module binaries.
             go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o "stage/hippocampus${ext}" ./cmd/hippocampus
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "stage/hippocampus-mcp${ext}" ./integrations/hippocampus-mcp
 
+            # Event-sourcing bridges (separate module; build from its directory into the shared stage).
+            for broker in nats mqtt rabbitmq kafka; do
+              ( cd integrations/eventsource && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-${broker}-bridge${ext}" "./cmd/${broker}" )
+            done
+
             plat="${GOOS}_${GOARCH}"
 
-            if [ "$GOOS" = "windows" ]; then
-              # -j junks the stage/ path so the archive entries are just the binary and LICENSE.
-              zip -j -q "dist/hippocampus_${VERSION}_${plat}.zip" "stage/hippocampus${ext}" stage/LICENSE
-              zip -j -q "dist/hippocampus-mcp_${VERSION}_${plat}.zip" "stage/hippocampus-mcp${ext}" stage/LICENSE
-            else
-              tar -czf "dist/hippocampus_${VERSION}_${plat}.tar.gz" -C stage "hippocampus${ext}" LICENSE
-              tar -czf "dist/hippocampus-mcp_${VERSION}_${plat}.tar.gz" -C stage "hippocampus-mcp${ext}" LICENSE
-            fi
+            for binary in hippocampus hippocampus-mcp hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
+              if [ "$GOOS" = "windows" ]; then
+                # -j junks the stage/ path so the archive entries are just the binary and LICENSE.
+                zip -j -q "dist/${binary}_${VERSION}_${plat}.zip" "stage/${binary}${ext}" stage/LICENSE
+              else
+                tar -czf "dist/${binary}_${VERSION}_${plat}.tar.gz" -C stage "${binary}${ext}" LICENSE
+              fi
 
-            rm -f "stage/hippocampus${ext}" "stage/hippocampus-mcp${ext}"
+              rm -f "stage/${binary}${ext}"
+            done
           done
 
           ( cd dist && sha256sum ./* > checksums.txt )
@@ -292,3 +302,60 @@ jobs:
             VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta-otel.outputs.tags }}
           labels: ${{ steps.meta-otel.outputs.labels }}
+
+  # Build and push the four event-sourcing broker bridge images to GHCR - one per broker, from the
+  # shared integrations/eventsource/Dockerfile selected by the BROKER build-arg. Each publishes to its
+  # own package (<repo>-<broker>-bridge, e.g. hippocampus-nats-bridge). The build context is the repo
+  # root because the module's `replace => ../..` reaches the root contract; the root module never
+  # imports it, so it stays decoupled from the service build. A matrix keeps the four builds parallel
+  # and the Dockerfile single. Same tag scheme as the other images.
+  publish-eventsource-bridges:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+
+    strategy:
+      matrix:
+        broker: [nats, mqtt, rabbitmq, kafka]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # See the publish job: QEMU for the alpine RUN steps, Buildx for the multi-platform manifest.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive bridge image tags
+        id: meta-bridge
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.broker }}-bridge
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push bridge image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: integrations/eventsource/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            BROKER=${{ matrix.broker }}
+          tags: ${{ steps.meta-bridge.outputs.tags }}
+          labels: ${{ steps.meta-bridge.outputs.labels }}

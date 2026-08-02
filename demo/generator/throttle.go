@@ -49,7 +49,6 @@ func (l *byteLimiter) enabled() bool {
 // cancelled first. A request larger than the burst is clamped to the burst so it can still proceed.
 func (l *byteLimiter) wait(ctx context.Context, n int) bool {
 	if !l.enabled() {
-
 		return ctx.Err() == nil
 	}
 
@@ -88,7 +87,6 @@ func (l *byteLimiter) wait(ctx context.Context, n int) bool {
 			return false
 
 		case <-time.After(sleep):
-
 		}
 	}
 }

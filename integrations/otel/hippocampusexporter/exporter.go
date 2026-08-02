@@ -70,7 +70,6 @@ func newExporter(cfg *Config, set exporter.Settings) *hippoExporter {
 // defaultJitter returns a random offset in [-spread, +spread].
 func defaultJitter(spread int32) int32 {
 	if spread <= 0 {
-
 		return 0
 	}
 
@@ -85,7 +84,6 @@ func (e *hippoExporter) start(ctx context.Context, host component.Host) error {
 
 	conn, err := e.cfg.ToClientConn(ctx, host.GetExtensions(), e.set.TelemetrySettings, opts...)
 	if err != nil {
-
 		return fmt.Errorf("dialling Hippocampus at %q: %w", e.cfg.Endpoint, err)
 	}
 
@@ -113,7 +111,6 @@ func (e *hippoExporter) shutdown(ctx context.Context) error {
 	}
 
 	if e.conn != nil {
-
 		return e.conn.Close()
 	}
 
@@ -165,7 +162,6 @@ func (e *hippoExporter) storeRecord(ctx context.Context, resAttrs pcommon.Map, l
 
 	resp, err := e.client.StoreMemory(ctx, mem)
 	if err != nil {
-
 		return fmt.Errorf("storing memory: %w", err)
 	}
 
@@ -188,13 +184,11 @@ func (e *hippoExporter) recordTime(lr plog.LogRecord) time.Time {
 
 	now := e.nowFn()
 	if ts == 0 {
-
 		return now
 	}
 
 	t := ts.AsTime()
 	if t.After(now) {
-
 		return now
 	}
 
@@ -295,7 +289,6 @@ func (e *hippoExporter) eventID(ctx context.Context, resAttrs pcommon.Map, lr pl
 	}
 
 	if resp.GetId() == "" {
-
 		return ""
 	}
 
@@ -334,14 +327,12 @@ func (e *hippoExporter) lookup(resAttrs pcommon.Map, recAttrs pcommon.Map, name 
 	if name != "" {
 		if v, ok := recAttrs.Get(name); ok {
 			if s := v.AsString(); s != "" {
-
 				return s
 			}
 		}
 
 		if v, ok := resAttrs.Get(name); ok {
 			if s := v.AsString(); s != "" {
-
 				return s
 			}
 		}
@@ -365,15 +356,12 @@ func timeBucket(ts time.Time, mode string) string {
 	switch mode {
 
 	case eventBucketDay:
-
 		return ts.UTC().Format("2006-01-02")
 
 	case eventBucketHour:
-
 		return ts.UTC().Format("2006-01-02T15")
 
 	default:
-
 		return ""
 	}
 }
@@ -384,27 +372,21 @@ func severityBucket(n plog.SeverityNumber, text string) plog.SeverityNumber {
 	switch {
 
 	case n >= plog.SeverityNumberTrace && n <= plog.SeverityNumberTrace4:
-
 		return plog.SeverityNumberTrace
 
 	case n >= plog.SeverityNumberDebug && n <= plog.SeverityNumberDebug4:
-
 		return plog.SeverityNumberDebug
 
 	case n >= plog.SeverityNumberInfo && n <= plog.SeverityNumberInfo4:
-
 		return plog.SeverityNumberInfo
 
 	case n >= plog.SeverityNumberWarn && n <= plog.SeverityNumberWarn4:
-
 		return plog.SeverityNumberWarn
 
 	case n >= plog.SeverityNumberError && n <= plog.SeverityNumberError4:
-
 		return plog.SeverityNumberError
 
 	case n >= plog.SeverityNumberFatal && n <= plog.SeverityNumberFatal4:
-
 		return plog.SeverityNumberFatal
 	}
 
@@ -415,27 +397,21 @@ func severityFromText(text string) plog.SeverityNumber {
 	switch strings.ToUpper(strings.TrimSpace(text)) {
 
 	case "TRACE":
-
 		return plog.SeverityNumberTrace
 
 	case "DEBUG":
-
 		return plog.SeverityNumberDebug
 
 	case "INFO", "INFORMATION", "NOTICE":
-
 		return plog.SeverityNumberInfo
 
 	case "WARN", "WARNING":
-
 		return plog.SeverityNumberWarn
 
 	case "ERROR", "ERR", "CRITICAL", "CRIT":
-
 		return plog.SeverityNumberError
 
 	case "FATAL", "EMERGENCY", "ALERT", "PANIC":
-
 		return plog.SeverityNumberFatal
 	}
 
@@ -445,34 +421,27 @@ func severityFromText(text string) plog.SeverityNumber {
 // severityLabel is the uppercase level name used when PrefixSeverity is set.
 func severityLabel(lr plog.LogRecord) string {
 	if t := strings.TrimSpace(lr.SeverityText()); t != "" {
-
 		return strings.ToUpper(t)
 	}
 
 	switch severityBucket(lr.SeverityNumber(), "") {
 
 	case plog.SeverityNumberTrace:
-
 		return "TRACE"
 
 	case plog.SeverityNumberDebug:
-
 		return "DEBUG"
 
 	case plog.SeverityNumberInfo:
-
 		return "INFO"
 
 	case plog.SeverityNumberWarn:
-
 		return "WARN"
 
 	case plog.SeverityNumberError:
-
 		return "ERROR"
 
 	case plog.SeverityNumberFatal:
-
 		return "FATAL"
 	}
 
@@ -481,12 +450,10 @@ func severityLabel(lr plog.LogRecord) string {
 
 func clamp(v int32, lo int32, hi int32) int32 {
 	if v < lo {
-
 		return lo
 	}
 
 	if v > hi {
-
 		return hi
 	}
 

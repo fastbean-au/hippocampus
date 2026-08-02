@@ -95,12 +95,10 @@ func (f *fakeClient) GetEvents(_ context.Context, in *contract.GetEventsRequest,
 }
 
 func (f *fakeClient) GetSummarisationCandidates(_ context.Context, _ *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetSummarisationCandidatesResponse, error) {
-
 	return f.candidatesRes, f.err
 }
 
 func newBridge(client hippoClient) *bridge {
-
 	return &bridge{client: client, callTimeout: time.Second}
 }
 

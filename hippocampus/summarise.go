@@ -70,7 +70,6 @@ func (s *Server) summariseEvent(ctx context.Context, eventId string, significanc
 	event, err := s.db.GetEvent(ctx, eventId)
 	if err != nil {
 		if errors.Is(err, db.ErrEventNotFound) {
-
 			return "", 0, "", status.Errorf(codes.NotFound, "event '%s' not found", eventId)
 		}
 

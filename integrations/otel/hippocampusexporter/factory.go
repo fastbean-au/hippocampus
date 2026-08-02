@@ -69,7 +69,6 @@ func createDefaultConfig() component.Config {
 func createLogsExporter(ctx context.Context, set exporter.Settings, config component.Config) (exporter.Logs, error) {
 	cfg, ok := config.(*Config)
 	if !ok {
-
 		return nil, errors.New("invalid configuration type; can't cast to hippocampusexporter.Config")
 	}
 

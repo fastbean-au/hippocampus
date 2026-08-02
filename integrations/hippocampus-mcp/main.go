@@ -68,7 +68,6 @@ func serve(ctx context.Context) error {
 	// MCP JSON-RPC stream. Set the level, keep the stream.
 	level, err := log.ParseLevel(viper.GetString("log-level"))
 	if err != nil {
-
 		return fmt.Errorf("invalid log level '%s': %w", viper.GetString("log-level"), err)
 	}
 
@@ -97,12 +96,10 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
-
 		return fmt.Errorf("failed to parse command line flags: %w", err)
 	}
 
 	if err := viper.BindPFlags(fs); err != nil {
-
 		return fmt.Errorf("failed to bind command line flags: %w", err)
 	}
 
@@ -119,7 +116,6 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 func run(ctx context.Context) error {
 	creds, err := transportCredentials()
 	if err != nil {
-
 		return fmt.Errorf("failed to build transport credentials: %w", err)
 	}
 
@@ -136,7 +132,6 @@ func run(ctx context.Context) error {
 
 	conn, err := grpc.NewClient(address, dialOpts...)
 	if err != nil {
-
 		return fmt.Errorf("failed to create gRPC client for '%s': %w", address, err)
 	}
 
@@ -157,18 +152,15 @@ func run(ctx context.Context) error {
 		log.Info("serving MCP over stdio")
 
 		if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
-
 			return fmt.Errorf("stdio transport failed: %w", err)
 		}
 
 		return nil
 
 	case "http":
-
 		return serveHTTP(ctx, server, viper.GetString("http-address"))
 
 	default:
-
 		return fmt.Errorf("unknown transport '%s' (expected 'stdio' or 'http')", transport)
 	}
 }
@@ -178,7 +170,6 @@ func run(ctx context.Context) error {
 // stateless, so one server can back concurrent sessions.
 func serveHTTP(ctx context.Context, server *mcp.Server, httpAddress string) error {
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-
 		return server
 	}, nil)
 
@@ -207,7 +198,6 @@ func serveHTTP(ctx context.Context, server *mcp.Server, httpAddress string) erro
 		return httpServer.Shutdown(shutdownCtx)
 
 	case err := <-serveErr:
-
 		return fmt.Errorf("http transport failed: %w", err)
 	}
 }
@@ -236,7 +226,6 @@ func bearerTokenInterceptor(token string) grpc.UnaryClientInterceptor {
 // mutual TLS, and an insecureSkipVerify escape hatch.
 func transportCredentials() (credentials.TransportCredentials, error) {
 	if !viper.GetBool("tls") {
-
 		return insecure.NewCredentials(), nil
 	}
 
@@ -244,7 +233,6 @@ func transportCredentials() (credentials.TransportCredentials, error) {
 	keyFile := viper.GetString("tls-key")
 
 	if (certFile == "") != (keyFile == "") {
-
 		return nil, fmt.Errorf("mutual TLS requires both --tls-cert and --tls-key, or neither")
 	}
 
@@ -256,13 +244,11 @@ func transportCredentials() (credentials.TransportCredentials, error) {
 	if caCertFile := viper.GetString("tls-ca-cert"); caCertFile != "" {
 		pem, err := os.ReadFile(caCertFile)
 		if err != nil {
-
 			return nil, fmt.Errorf("reading CA cert file %q: %w", caCertFile, err)
 		}
 
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-
 			return nil, fmt.Errorf("CA cert file %q contained no valid certificates", caCertFile)
 		}
 
@@ -272,7 +258,6 @@ func transportCredentials() (credentials.TransportCredentials, error) {
 	if certFile != "" {
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {
-
 			return nil, fmt.Errorf("loading client certificate: %w", err)
 		}
 

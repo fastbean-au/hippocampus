@@ -40,19 +40,15 @@ func (t Tier) String() string {
 	switch t {
 
 	case TierReader:
-
 		return "reader"
 
 	case TierWriter:
-
 		return "writer"
 
 	case TierAdmin:
-
 		return "admin"
 
 	default:
-
 		return "none"
 	}
 }
@@ -64,19 +60,15 @@ func parseTier(name string) (Tier, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 
 	case "reader":
-
 		return TierReader, true
 
 	case "writer":
-
 		return TierWriter, true
 
 	case "admin":
-
 		return TierAdmin, true
 
 	default:
-
 		return tierNone, false
 	}
 }
@@ -361,7 +353,6 @@ func coerceRoles(value any) []string {
 	switch v := value.(type) {
 
 	case string:
-
 		return []string{v}
 
 	case []any:
@@ -376,7 +367,6 @@ func coerceRoles(value any) []string {
 		return roles
 
 	default:
-
 		return nil
 	}
 }

@@ -42,7 +42,6 @@ func (f *fakeClient) StoreMemory(_ context.Context, in *contract.Memory, _ ...gr
 	defer f.mu.Unlock()
 
 	if f.storeMemErr != nil {
-
 		return nil, f.storeMemErr
 	}
 
@@ -56,14 +55,12 @@ func (f *fakeClient) StoreEvent(_ context.Context, in *contract.Event, _ ...grpc
 	defer f.mu.Unlock()
 
 	if f.storeEvtErr != nil {
-
 		return nil, f.storeEvtErr
 	}
 
 	f.events = append(f.events, in)
 
 	if f.emptyEvtID {
-
 		return &contract.StoreEventResponse{}, nil
 	}
 

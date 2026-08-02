@@ -171,6 +171,33 @@ cd integrations/otel/collector && builder --config builder-config.yaml   # filel
 
 ---
 
+## 🔌 Event Sourcing — Broker Bridges
+
+Bridge a message broker into Hippocampus so a stream of events decays and consolidates like any other
+memory. [`integrations/eventsource`](integrations/eventsource) ships a bridge for **NATS, MQTT,
+RabbitMQ, and Kafka**: each consumes a subject/topic/queue and stores every message as a memory
+(payload → body, subject → group, configurable significance).
+
+```bash
+cd integrations/eventsource
+go run ./cmd/kafka --brokers localhost:9092 --topic events --consumer-group hippocampus
+# or, without a Go toolchain, the published image:
+docker run --rm ghcr.io/fastbean-au/hippocampus-kafka-bridge:latest \
+  --brokers kafka:9092 --topic events --consumer-group hippocampus --address hippocampus:50051
+```
+
+* **One reusable core:** a shared `bridge` package with a `Transformer` callback seam — ship the
+  default one-message-one-memory mapping, or embed an adapter with your own transform.
+* **Broker-native delivery:** manual ack/commit for at-least-once (MQTT/RabbitMQ/Kafka); queue
+  groups/consumer groups for horizontal scale.
+* **Prebuilt binaries and images:** each release attaches `hippocampus-<broker>-bridge` binaries and
+  publishes a multi-arch image per broker to GHCR.
+
+*See the **[Event sourcing guide](docs/eventsource.md)** and the
+**[module README](integrations/eventsource/README.md)**.*
+
+---
+
 ## 📓 Obsidian — Memory Layer for Your Vault
 
 Use Hippocampus as a bounded, self-consolidating memory layer for an Obsidian vault, so an AI
@@ -198,6 +225,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | 📐 **[Use Cases & Patterns](docs/use-cases.md)** | Embedded vs. centralised topologies and data transfer strategies. |
 | 🧪 **[Demonstrations](docs/demonstrations.md)** | Worked scenarios using real-world data shapes and data generators. |
 | 🤖 **[MCP Server](docs/mcp.md)** | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol. |
+| 🔌 **[Event Sourcing](docs/eventsource.md)** | Bridge NATS, MQTT, RabbitMQ, or Kafka into Hippocampus, storing each message as a memory. |
 | 📓 **[Obsidian Integration](docs/obsidian.md)** | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge. |
 
 ---

@@ -9,6 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Run the MCP server: `go run ./integrations/hippocampus-mcp --address localhost:50051` (a standalone MCP
   bridge that dials a running service; stdio by default, `--transport http` for streamable HTTP;
   see `docs/mcp.md`)
+- Run an event-sourcing bridge (separate module — run from its directory):
+  `cd integrations/eventsource && go run ./cmd/nats --subject 'events.>' --address localhost:50051`
+  (one `cmd/<broker>` each for `nats`/`mqtt`/`rabbitmq`/`kafka`; consumes from the broker and stores
+  each message as a memory; `go test ./...` in that dir, with `HIPPOCAMPUS_TEST_MQTT_BROKER`/
+  `HIPPOCAMPUS_TEST_RABBITMQ_URL` set to run the broker integration tests; see `docs/eventsource.md`)
 - Test: `go test ./...` (single test: `go test ./hippocampus -run TestName`)
 - Benchmarks: `go test ./db -bench . -run XXX` (`db/bench_test.go`; run on demand — deliberately
   not CI-gated — and compare with benchstat when touching `hippocampus/sleep.go`, the db scans,
@@ -36,7 +41,11 @@ up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up
   `docker/`, image config baked from `docker/config.sqlite.json`. The `Dockerfile` is multi-stage:
   one build stage compiles both binaries, then an `mcp` stage (the `hippocampus-mcp` image) precedes
   the default `hippocampus` stage — the mcp stage is placed first so a no-`target` build still selects
-  hippocampus, keeping every existing compose file unchanged
+  hippocampus, keeping every existing compose file unchanged. The event-sourcing broker bridges have
+  their own `integrations/eventsource/Dockerfile` (parameterised by a `BROKER` build-arg, built from
+  the repo root): `docker build -f integrations/eventsource/Dockerfile --build-arg BROKER=nats -t
+  hippocampus-nats-bridge .` — the release publishes one image per broker to
+  `ghcr.io/fastbean-au/hippocampus-<broker>-bridge`
 - MCP-over-HTTP endpoint (SQLite compose only): `docker compose --profile mcp up --build` adds an
   opt-in `mcp` service (streamable-HTTP transport, `Dockerfile` `target: mcp`) that dials the
   `hippocampus` service over the compose network and publishes the MCP endpoint on `:8090`; off by
@@ -407,8 +416,10 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   reachable over HTTP via the opt-in `mcp` compose profile; the release workflow cross-compiles the
   binary for every OS/arch onto the GitHub release and publishes the image to
   `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
-- `integrations/` — non-Go client/edge subprojects, each self-contained (mirroring how
-  `integrations/hippocampus-mcp` is a thin bridge, not part of the core service).
+- `integrations/` — self-contained client/edge subprojects, each a thin bridge rather than part of
+  the core service. Some are separate Go modules whose heavy dependency trees stay out of the root
+  build (`otel/hippocampusexporter`, `eventsource`), one is a TypeScript project (`obsidian`), and
+  one is a thin `package main` in the root module (`hippocampus-mcp`).
   - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
     top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace
@@ -425,6 +436,35 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
     `mapping.ts` note→memory mapping) is split out from the Obsidian-dependent modules so it is
     unit-testable without a running app. Requires Node.js to build (`npm install && npm run build`);
     there is no JS runtime in the default dev image. See `docs/obsidian.md` and the plugin README.
+  - `integrations/eventsource/` — event-sourcing broker bridges: consume from a message broker and
+    store each message as a memory. Its own Go module (module path
+    `github.com/fastbean-au/hippocampus/integrations/eventsource`; `replace
+    github.com/fastbean-au/hippocampus => ../..`) so the four broker-client dependency trees
+    (`nats.go`, `paho.mqtt.golang`, `amqp091-go`, `segmentio/kafka-go`) stay out of the root build —
+    **the root module does not import it**. A shared `bridge/` core carries the reusable pieces: a
+    broker-agnostic `Message`, the `Transformer` callback seam (`Transform(Message) ([]*contract.Memory,
+    error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer` (payload→body,
+    subject→group, fixed/header significance, optional base64/binary + truncation, future-timestamp
+    clamping), `Store.Handle` (transform then `StoreMemory` each memory; a `Rejected` below-threshold
+    memory is a success, a transform/transport failure is the adapter's cue to nack/redeliver), the
+    gRPC `Dial` (bearer-token + TLS trust options, mirroring the MCP bridge), and `RegisterCommonFlags`
+    (pflag only — each `cmd/*` main owns its viper reads, per the convention). Four adapters
+    (`nats/`, `mqtt/`, `rabbitmq/`, `kafka/`), each a library `Bridge` (`New(Config, *bridge.Store)` +
+    `Run(ctx)`) plus a `cmd/<broker>` runnable, with a broker-connection seam injected so `Run` is
+    unit-testable with fakes; delivery semantics match each broker (NATS at-most-once; MQTT/RabbitMQ/
+    Kafka at-least-once via manual ack/commit). Tests are broker-free by default (NATS uses an
+    embedded in-process server; MQTT/RabbitMQ real-connect paths are env-gated integration tests —
+    `HIPPOCAMPUS_TEST_MQTT_BROKER`/`HIPPOCAMPUS_TEST_RABBITMQ_URL` — that CI runs against mosquitto/
+    rabbitmq containers), every package ≥95% covered. Built/vetted/tested by the `eventsource-bridges`
+    CI job (like `otel-exporter`; the `docker` CI job also smoke-builds the four images). The release
+    workflow cross-compiles all four `cmd` binaries (`hippocampus-<broker>-bridge`) onto the GitHub
+    release and publishes one multi-arch image per broker to GHCR
+    (`ghcr.io/fastbean-au/hippocampus-<broker>-bridge`) via a matrix over the one parameterised
+    `integrations/eventsource/Dockerfile` (the `BROKER` build-arg selects `cmd/<broker>`; built with
+    the repo root as context since the module's `replace` reaches the root contract). A bridge is an
+    outbound client (dials broker + service, listens on no port), so the image exposes nothing and has
+    no default CMD — each broker's required flags are passed after the image name. See
+    `docs/eventsource.md` and the module README.
 
 ## Conventions in this repo
 

@@ -114,7 +114,6 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 	var res contract.GeneralResponse
 
 	if in.GetId() == "" {
-
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
 	}
 
@@ -136,7 +135,6 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 		}
 
 		if !exists {
-
 			return &res, status.Errorf(codes.FailedPrecondition, "event '%s' does not exist", memory.EventId)
 		}
 	}
@@ -145,7 +143,6 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 	// (UpdateMemory), and an absent one leaves significance unchanged.
 	if err := s.resolveMemorySignificance(ctx, in, &memory); err != nil {
 		if errors.Is(err, db.ErrInvalidPlacement) {
-
 			return &res, status.Error(codes.InvalidArgument, err.Error())
 		}
 
@@ -154,12 +151,10 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 
 	ok, err := s.db.UpdateMemory(ctx, memory)
 	if err != nil {
-
 		return &res, mapError(err)
 	}
 
 	if !ok {
-
 		return &res, status.Errorf(codes.NotFound, "memory '%s' not found", in.GetId())
 	}
 
@@ -264,7 +259,6 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 
 	if _, err := s.db.GetEvent(ctx, eventId); err != nil {
 		if errors.Is(err, db.ErrEventNotFound) {
-
 			return &res, status.Errorf(codes.NotFound, "event '%s' not found", eventId)
 		}
 
@@ -314,7 +308,6 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 	// Resolve the summary's significance/placement to a registry level before it is inserted.
 	if err := s.resolveMemorySignificance(ctx, summaryProto, &summary); err != nil {
 		if errors.Is(err, db.ErrInvalidPlacement) {
-
 			return "", 0, status.Error(codes.InvalidArgument, err.Error())
 		}
 

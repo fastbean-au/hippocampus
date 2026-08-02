@@ -93,7 +93,6 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 			}
 
 			if mres.GetRejected() || mres.GetId() == "" {
-
 				continue
 			}
 
@@ -109,7 +108,6 @@ func (s *Server) EndEvent(ctx context.Context, in *contract.EndEventRequest) (*c
 	var res contract.GeneralResponse
 
 	if in.GetId() == "" {
-
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
 	}
 
@@ -125,12 +123,10 @@ func (s *Server) EndEvent(ctx context.Context, in *contract.EndEventRequest) (*c
 
 	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
-
 		return &res, mapError(err)
 	}
 
 	if !ok {
-
 		return &res, status.Errorf(codes.NotFound, "event '%s' not found", in.GetId())
 	}
 
@@ -143,7 +139,6 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 	var res contract.GeneralResponse
 
 	if in.GetId() == "" {
-
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
 	}
 
@@ -156,7 +151,6 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 	// neither leaves the event's significance unchanged.
 	if err := s.resolveEventSignificance(ctx, in.GetSignificance(), in.GetPlacement(), &e); err != nil {
 		if errors.Is(err, db.ErrInvalidPlacement) {
-
 			return &res, status.Error(codes.InvalidArgument, err.Error())
 		}
 
@@ -165,12 +159,10 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 
 	ok, err := s.db.UpdateEvent(ctx, e)
 	if err != nil {
-
 		return &res, mapError(err)
 	}
 
 	if !ok {
-
 		return &res, status.Errorf(codes.NotFound, "event '%s' not found", in.GetId())
 	}
 
@@ -199,7 +191,6 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 	}
 
 	if !exists {
-
 		return &res, status.Errorf(codes.FailedPrecondition, "merge_to event '%s' does not exist", tid)
 	}
 
@@ -223,7 +214,6 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	// DELETE FROM memories WHERE event_id = '', deleting every memory not associated with any event
 	// (and mirroring that wipe into the search index).
 	if eid == "" {
-
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
 	}
 
@@ -235,7 +225,6 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	// An unknown id deletes nothing; report NotFound rather than success, matching EndEvent and
 	// UpdateEventSignificance. The memory cleanup below is skipped for a nonexistent event.
 	if !deleted {
-
 		return &res, status.Errorf(codes.NotFound, "event '%s' not found", eid)
 	}
 
@@ -251,7 +240,6 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 		s.searchIdx().DeleteByEventId(eid)
 	} else {
 		if _, err := s.db.UnsetMemoriesEventId(ctx, eid); err != nil {
-
 			return &res, mapError(err)
 		}
 
@@ -271,7 +259,6 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 	event, err := s.db.GetEvent(ctx, eid)
 	if err != nil {
 		if errors.Is(err, db.ErrEventNotFound) {
-
 			return &res, status.Errorf(codes.NotFound, "event '%s' not found", eid)
 		}
 

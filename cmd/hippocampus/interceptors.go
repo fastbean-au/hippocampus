@@ -152,7 +152,6 @@ func isClientFaultCode(code codes.Code) bool {
 		return true
 
 	default:
-
 		return false
 
 	}

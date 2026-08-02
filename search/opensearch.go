@@ -112,12 +112,10 @@ type TLSConfig struct {
 // key pair.
 func (c TLSConfig) build() (*tls.Config, error) {
 	if c.CACertFile == "" && c.CertFile == "" && c.KeyFile == "" && !c.InsecureSkipVerify {
-
 		return nil, nil
 	}
 
 	if (c.CertFile == "") != (c.KeyFile == "") {
-
 		return nil, fmt.Errorf("opensearch tls client certificate requires both certFile and keyFile, or neither")
 	}
 
@@ -129,13 +127,11 @@ func (c TLSConfig) build() (*tls.Config, error) {
 	if c.CACertFile != "" {
 		pem, err := os.ReadFile(c.CACertFile)
 		if err != nil {
-
 			return nil, fmt.Errorf("reading opensearch CA cert file %q: %w", c.CACertFile, err)
 		}
 
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-
 			return nil, fmt.Errorf("opensearch CA cert file %q contained no valid certificates", c.CACertFile)
 		}
 
@@ -145,7 +141,6 @@ func (c TLSConfig) build() (*tls.Config, error) {
 	if c.CertFile != "" {
 		cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
 		if err != nil {
-
 			return nil, fmt.Errorf("loading opensearch client certificate: %w", err)
 		}
 
@@ -162,18 +157,15 @@ func (c TLSConfig) build() (*tls.Config, error) {
 // so the client keeps its own default transport, exactly as before.
 func buildTransport(cfg Config) (http.RoundTripper, error) {
 	if cfg.Transport != nil {
-
 		return cfg.Transport, nil
 	}
 
 	tlsConfig, err := cfg.TLS.build()
 	if err != nil {
-
 		return nil, err
 	}
 
 	if tlsConfig == nil {
-
 		return nil, nil
 	}
 
@@ -438,7 +430,6 @@ RETRY:
 			break RETRY
 
 		case <-time.After(backoff):
-
 		}
 	}
 

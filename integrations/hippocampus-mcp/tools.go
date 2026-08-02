@@ -40,7 +40,6 @@ type bridge struct {
 // stalling the MCP session. A non-positive timeout leaves the parent context unbounded.
 func (b *bridge) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if b.callTimeout <= 0 {
-
 		return context.WithCancel(ctx)
 	}
 
@@ -212,7 +211,6 @@ type storeMemoryOutput struct {
 
 func (b *bridge) storeMemory(ctx context.Context, _ *mcp.CallToolRequest, in storeMemoryInput) (*mcp.CallToolResult, storeMemoryOutput, error) {
 	if in.Body == "" {
-
 		return nil, storeMemoryOutput{}, fmt.Errorf("body is required")
 	}
 
@@ -226,7 +224,6 @@ func (b *bridge) storeMemory(ctx context.Context, _ *mcp.CallToolRequest, in sto
 		EventId:      in.EventId,
 	})
 	if err != nil {
-
 		return nil, storeMemoryOutput{}, fmt.Errorf("StoreMemory failed: %w", err)
 	}
 
@@ -249,12 +246,10 @@ type updateMemoryOutput struct {
 
 func (b *bridge) updateMemory(ctx context.Context, _ *mcp.CallToolRequest, in updateMemoryInput) (*mcp.CallToolResult, updateMemoryOutput, error) {
 	if in.Id == "" {
-
 		return nil, updateMemoryOutput{}, fmt.Errorf("id is required")
 	}
 
 	if in.Body == "" && in.Significance == 0 && in.Group == "" && in.EventId == "" {
-
 		return nil, updateMemoryOutput{}, fmt.Errorf("at least one field (body, significance, group, event_id) must be set to update")
 	}
 
@@ -269,7 +264,6 @@ func (b *bridge) updateMemory(ctx context.Context, _ *mcp.CallToolRequest, in up
 		EventId:      in.EventId,
 	})
 	if err != nil {
-
 		return nil, updateMemoryOutput{}, fmt.Errorf("UpdateMemory failed: %w", err)
 	}
 
@@ -288,7 +282,6 @@ type deleteMemoriesOutput struct {
 
 func (b *bridge) deleteMemories(ctx context.Context, _ *mcp.CallToolRequest, in deleteMemoriesInput) (*mcp.CallToolResult, deleteMemoriesOutput, error) {
 	if len(in.Ids) == 0 {
-
 		return nil, deleteMemoriesOutput{}, fmt.Errorf("ids is required")
 	}
 
@@ -297,7 +290,6 @@ func (b *bridge) deleteMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 
 	res, err := b.client.DeleteMemories(callCtx, &contract.DeleteMemoriesRequest{Ids: in.Ids})
 	if err != nil {
-
 		return nil, deleteMemoriesOutput{}, fmt.Errorf("DeleteMemories failed: %w", err)
 	}
 
@@ -316,7 +308,6 @@ type memoriesOutput struct {
 
 func (b *bridge) recallMemories(ctx context.Context, _ *mcp.CallToolRequest, in recallMemoriesInput) (*mcp.CallToolResult, memoriesOutput, error) {
 	if len(in.Ids) == 0 {
-
 		return nil, memoriesOutput{}, fmt.Errorf("ids is required")
 	}
 
@@ -325,7 +316,6 @@ func (b *bridge) recallMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 
 	res, err := b.client.RecallMemories(callCtx, &contract.RecallMemoriesRequest{Ids: in.Ids})
 	if err != nil {
-
 		return nil, memoriesOutput{}, fmt.Errorf("RecallMemories failed: %w", err)
 	}
 
@@ -344,7 +334,6 @@ type searchMemoriesInput struct {
 
 func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in searchMemoriesInput) (*mcp.CallToolResult, memoriesOutput, error) {
 	if in.Query == "" {
-
 		return nil, memoriesOutput{}, fmt.Errorf("query is required")
 	}
 
@@ -359,7 +348,6 @@ func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 		Reinforce: in.Reinforce,
 	})
 	if err != nil {
-
 		return nil, memoriesOutput{}, fmt.Errorf("SearchMemories failed: %w", err)
 	}
 
@@ -395,7 +383,6 @@ func (b *bridge) listMemories(ctx context.Context, _ *mcp.CallToolRequest, in li
 		Offset:          in.Offset,
 	})
 	if err != nil {
-
 		return nil, memoriesPageOutput{}, fmt.Errorf("GetMemories failed: %w", err)
 	}
 
@@ -421,7 +408,6 @@ type createEventOutput struct {
 
 func (b *bridge) createEvent(ctx context.Context, _ *mcp.CallToolRequest, in createEventInput) (*mcp.CallToolResult, createEventOutput, error) {
 	if in.Name == "" {
-
 		return nil, createEventOutput{}, fmt.Errorf("name is required")
 	}
 
@@ -435,7 +421,6 @@ func (b *bridge) createEvent(ctx context.Context, _ *mcp.CallToolRequest, in cre
 		Group:        in.Group,
 	})
 	if err != nil {
-
 		return nil, createEventOutput{}, fmt.Errorf("StoreEvent failed: %w", err)
 	}
 
@@ -471,7 +456,6 @@ func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in list
 		Offset:          in.Offset,
 	})
 	if err != nil {
-
 		return nil, eventsPageOutput{}, fmt.Errorf("GetEvents failed: %w", err)
 	}
 
@@ -502,7 +486,6 @@ func (b *bridge) getSummarisationCandidates(ctx context.Context, _ *mcp.CallTool
 
 	res, err := b.client.GetSummarisationCandidates(callCtx, &contract.EmptyRequest{})
 	if err != nil {
-
 		return nil, summarisationCandidatesOutput{}, fmt.Errorf("GetSummarisationCandidates failed: %w", err)
 	}
 

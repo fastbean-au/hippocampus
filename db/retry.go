@@ -141,7 +141,6 @@ func (d *DB) withWriteRetry(ctx context.Context, fn func() error) error {
 			return ctx.Err()
 
 		case <-time.After(backoff):
-
 		}
 	}
 

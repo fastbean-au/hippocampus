@@ -126,7 +126,6 @@ func (g *Generator) Run(ctx context.Context) {
 // cancellation) and the limiter alone governs the offered load.
 func (g *Generator) paceIdle(ctx context.Context, rng *rand.Rand, lo time.Duration, hi time.Duration) bool {
 	if g.limiter.enabled() {
-
 		return ctx.Err() == nil
 	}
 
@@ -429,7 +428,6 @@ func (g *Generator) storeMemory(ctx context.Context, rng *rand.Rand, memory *con
 	// Pace against the throughput target (a no-op when unset). Charged on the same bytes counted in
 	// bytesStored so the achieved rate the sampler reports matches what the limiter admits.
 	if !g.limiter.wait(ctx, len(memory.Body)) {
-
 		return
 	}
 

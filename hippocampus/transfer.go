@@ -627,12 +627,10 @@ func batchMemoriesByBytes(memories []types.Memory, maxBytes int) [][]types.Memor
 // client certificate pair or an unreadable/empty CA bundle.
 func (t Transfer) clientCredentials() (credentials.TransportCredentials, error) {
 	if !t.tls {
-
 		return insecure.NewCredentials(), nil
 	}
 
 	if (t.tlsCertFile == "") != (t.tlsKeyFile == "") {
-
 		return nil, fmt.Errorf("transfer tls client certificate requires both certFile and keyFile, or neither")
 	}
 
@@ -644,13 +642,11 @@ func (t Transfer) clientCredentials() (credentials.TransportCredentials, error) 
 	if t.tlsCACertFile != "" {
 		pem, err := os.ReadFile(t.tlsCACertFile)
 		if err != nil {
-
 			return nil, fmt.Errorf("reading transfer CA cert file %q: %w", t.tlsCACertFile, err)
 		}
 
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-
 			return nil, fmt.Errorf("transfer CA cert file %q contained no valid certificates", t.tlsCACertFile)
 		}
 
@@ -660,7 +656,6 @@ func (t Transfer) clientCredentials() (credentials.TransportCredentials, error) 
 	if t.tlsCertFile != "" {
 		cert, err := tls.LoadX509KeyPair(t.tlsCertFile, t.tlsKeyFile)
 		if err != nil {
-
 			return nil, fmt.Errorf("loading transfer client certificate: %w", err)
 		}
 

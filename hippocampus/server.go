@@ -64,11 +64,9 @@ func mapError(err error) error {
 	switch {
 
 	case errors.Is(err, context.Canceled):
-
 		return status.Error(codes.Canceled, "request canceled")
 
 	case errors.Is(err, context.DeadlineExceeded):
-
 		return status.Error(codes.DeadlineExceeded, "request deadline exceeded")
 
 	case db.IsDuplicateKey(err):
@@ -77,7 +75,6 @@ func mapError(err error) error {
 		return status.Error(codes.AlreadyExists, "a record with that id already exists")
 
 	case db.IsWriteConflict(err):
-
 		return status.Error(codes.Aborted, "write conflict, retry the request")
 
 	default:
@@ -255,11 +252,9 @@ func transferTLSEnabled() bool {
 	switch v := viper.Get("transfer.tls").(type) {
 
 	case bool:
-
 		return v
 
 	default:
-
 		return viper.GetBool("transfer.tls.enabled")
 
 	}
@@ -461,7 +456,6 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 				select {
 
 				case <-timer.C:
-
 				default:
 				}
 			}
@@ -551,7 +545,6 @@ func (s *Server) Sleep(ctx context.Context, in *contract.EmptyRequest) (*contrac
 	// shared data. Reject the RPC rather than silently no-op, so a misdirected call is
 	// visible to the caller.
 	if !s.consolidationEnabled {
-
 		return &res, status.Error(codes.FailedPrecondition, "consolidation is disabled on this instance")
 	}
 
