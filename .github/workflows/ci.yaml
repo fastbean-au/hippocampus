@@ -249,7 +249,14 @@ jobs:
           docker run -d --name mosquitto -p 1883:1883 \
             -v "$PWD/integrations/eventsource/testdata/mosquitto.conf:/mosquitto/config/mosquitto.conf" \
             eclipse-mosquitto:2
-          docker run -d --name rabbitmq -p 5672:5672 \
+          # Run as the image's rabbitmq user (uid:gid 999:999) to avoid the container failing to
+          # start with "Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces". As root the
+          # entrypoint does `chown -R rabbitmq /var/lib/rabbitmq` then drops to that user via gosu;
+          # when the daemon remaps uids (rootless / userns-remap) that chown cannot take effect, so
+          # the dropped-to user can no longer read its own cookie. Starting as 999:999 makes the
+          # entrypoint skip the chown/gosu path entirely (id -u != 0) - the process already is the
+          # rabbitmq user and the image files already belong to it.
+          docker run -d --name rabbitmq --user 999:999 -p 5672:5672 \
             -e RABBITMQ_DEFAULT_USER=hippo -e RABBITMQ_DEFAULT_PASS=hippo \
             rabbitmq:3
 
