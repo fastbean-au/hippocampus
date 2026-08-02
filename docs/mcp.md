@@ -1,6 +1,6 @@
 # MCP server
 
-`integrations/hippocampus-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that
+`integrations/mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that
 gives an LLM host — Claude Desktop, Claude Code, or any other MCP client — tools for storing and
 recalling memories in a running Hippocampus instance.
 
@@ -24,7 +24,7 @@ verify them. This is the easiest path for the local stdio use case: no Go toolch
 Or build from source:
 
 ```sh
-go build -o hippocampus-mcp ./integrations/hippocampus-mcp
+go build -o hippocampus-mcp ./integrations/mcp
 ```
 
 Or, for the HTTP transport, pull the image (see [Running with Docker](#running-with-docker)):
@@ -151,7 +151,7 @@ on the host machine — dials it exactly as it would a local process. Nothing ex
 
 ```sh
 docker compose up --build                       # Hippocampus in a container, :50051 published
-go build -o hippocampus-mcp ./integrations/hippocampus-mcp
+go build -o hippocampus-mcp ./integrations/mcp
 claude mcp add hippocampus -- ./hippocampus-mcp --address localhost:50051
 ```
 

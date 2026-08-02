@@ -94,7 +94,7 @@ jobs:
         run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
 
   # Cross-compile every binary and attach them to the release, so an end user can grab a runnable
-  # tool without a Go toolchain - most valuable for integrations/hippocampus-mcp, which an MCP host
+  # tool without a Go toolchain - most valuable for integrations/mcp, which an MCP host
   # (Claude Desktop/Code) spawns locally over stdio, and the event-sourcing broker bridges. Everything
   # is pure Go with CGO disabled, so the whole OS/arch matrix cross-compiles from one runner with no
   # cross toolchain. Gated on `release` so the release the assets attach to already exists. A single
@@ -144,7 +144,7 @@ jobs:
 
             # Root-module binaries.
             go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o "stage/hippocampus${ext}" ./cmd/hippocampus
-            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "stage/hippocampus-mcp${ext}" ./integrations/hippocampus-mcp
+            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "stage/hippocampus-mcp${ext}" ./integrations/mcp
 
             # Event-sourcing bridges (separate module; build from its directory into the shared stage).
             for broker in nats mqtt rabbitmq kafka; do

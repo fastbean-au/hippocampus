@@ -86,7 +86,7 @@ jobs:
       # the token secret, and PR coverage must not overwrite the mainline badge. This is what keeps
       # the README's ?branch=main badge fresh - the tag-triggered release runs report under the tag
       # ref, so they never update main. Everything hand-written is reported, including cmd/ and the
-      # relocated integrations/hippocampus-mcp; only the generated protobuf/gateway code
+      # relocated integrations/mcp; only the generated protobuf/gateway code
       # (contract/hippocampus*.pb*.go and *_grpc.pb.go) is filtered out, because coverage of
       # generated getters is noise rather than a signal about our code.
       - name: Report coverage to Coveralls

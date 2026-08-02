@@ -66,7 +66,7 @@ func Dial(cfg ClientConfig) (*grpc.ClientConn, contract.HippocampusClient, error
 }
 
 // bearerTokenInterceptor stamps "authorization: Bearer <token>" onto every RPC's outgoing metadata,
-// matching integrations/hippocampus-mcp and the OTEL exporter.
+// matching integrations/mcp and the OTEL exporter.
 func bearerTokenInterceptor(token string) grpc.UnaryClientInterceptor {
 	return func(
 		ctx context.Context,

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Build: `go build ./...`
 - Run: `go run ./cmd/hippocampus -c config.json` (the `-c`/`--config_file` flag defaults to `./config.json`)
-- Run the MCP server: `go run ./integrations/hippocampus-mcp --address localhost:50051` (a standalone MCP
+- Run the MCP server: `go run ./integrations/mcp --address localhost:50051` (a standalone MCP
   bridge that dials a running service; stdio by default, `--transport http` for streamable HTTP;
   see `docs/mcp.md`)
 - Run an event-sourcing bridge (separate module — run from its directory):
@@ -391,7 +391,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   the decay clock (`unitsOfAgeInDays` 0.002 ≈ one age unit per 3 minutes) so forgetting,
   recall reinforcement, and the byte capacity target all play out within a session instead of
   over real days.
-- `integrations/hippocampus-mcp/` — a standalone Model Context Protocol server (its own `package main`, like
+- `integrations/mcp/` — a standalone Model Context Protocol server (its own `package main`, like
   `demo/generator`) that bridges an LLM host (Claude Desktop/Code, any MCP client) to a running
   Hippocampus instance. A thin gRPC-client bridge, not an in-service transport: it holds no state,
   dials the service at `--address`, and turns each MCP tool call into an RPC (`main.go` wires the

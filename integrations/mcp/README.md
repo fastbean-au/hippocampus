@@ -9,7 +9,7 @@ service named by `--address`, so it holds no state and can be spawned, killed, a
 by the host.
 
 ```sh
-go build -o hippocampus-mcp ./integrations/hippocampus-mcp
+go build -o hippocampus-mcp ./integrations/mcp
 ./hippocampus-mcp --address localhost:50051
 ```
 

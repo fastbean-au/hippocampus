@@ -11,7 +11,7 @@ There are two ways to connect a vault, and they compose:
 1. **The Obsidian plugin** (`integrations/obsidian/`) — a first-party plugin that talks directly to
    the HTTP/JSON gateway. Store notes/selections as memories, search and recall them, and optionally
    auto-sync a folder.
-2. **The MCP bridge** (`integrations/hippocampus-mcp`) — for AI assistants (Claude Desktop/Code, or an
+2. **The MCP bridge** (`integrations/mcp`) — for AI assistants (Claude Desktop/Code, or an
    MCP-capable Obsidian plugin) that already speak the Model Context Protocol and want Hippocampus as
    their bounded memory store.
 
@@ -54,7 +54,7 @@ short:
 
 ## 2. The MCP bridge
 
-If your assistant already speaks MCP, point it at `integrations/hippocampus-mcp` instead of (or alongside)
+If your assistant already speaks MCP, point it at `integrations/mcp` instead of (or alongside)
 the plugin. The bridge exposes a curated, safe tool subset — `store_memory`, `recall_memories`,
 `search_memories`, `list_memories`, `create_event`, `list_events`,
 `get_summarisation_candidates` — and deliberately omits the destructive/admin RPCs, so a model
