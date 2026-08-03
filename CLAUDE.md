@@ -36,14 +36,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on `:3000`); set
   `OBSERVABILITY=0` to skip it. The env overrides are exported by `run.sh`, not baked into
   `demo/config.json`
-- Docker: `docker compose up --build` (SQLite), `docker compose -f docker/docker-compose.postgres.yaml
-up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up --build` (MySQL), or
-  `docker compose -f docker/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content
+- Docker: `docker compose up --build` (SQLite), `docker compose -f deploy/compose/docker-compose.postgres.yaml
+up --build` (PostgreSQL), `docker compose -f deploy/compose/docker-compose.mysql.yaml up --build` (MySQL), or
+  `docker compose -f deploy/compose/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content
   search, security disabled — demo only) or `docker compose -f
-docker/docker-compose.opensearch-secured.yaml up --build` (the same with the OpenSearch security
+deploy/compose/docker-compose.opensearch-secured.yaml up --build` (the same with the OpenSearch security
   plugin enabled: HTTPS + basic auth, Hippocampus connecting over TLS via the `opensearch.tls`
   config block, credentials injected as `OPENSEARCH_ADMIN_PASSWORD`); container configs in
-  `docker/`, image config baked from `docker/config.sqlite.json`. The `Dockerfile` is multi-stage:
+  `deploy/compose/`, image config baked from `deploy/compose/config.sqlite.json`. The `Dockerfile` is multi-stage:
   one build stage compiles both binaries, then an `mcp` stage (the `hippocampus-mcp` image) precedes
   the default `hippocampus` stage — the mcp stage is placed first so a no-`target` build still selects
   hippocampus, keeping every existing compose file unchanged. The event-sourcing broker bridges have
@@ -62,7 +62,7 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   compose `observability` profile — off by default. The `hippocampus` service sets
   `HIPPOCAMPUS_OBSERVABILITY_*` env overrides (metrics/traces on from `${OBSERVABILITY:-false}`,
   endpoint `otel-lgtm:4317`), so metrics stay off (and never log an export failure) unless the
-  collector is up. A Hippocampus overview dashboard (`docker/observability/`) is bind-mounted into
+  collector is up. A Hippocampus overview dashboard (`deploy/compose/observability/`) is bind-mounted into
   Grafana's provisioning tree and set as the home page (`GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH`)
 - Kubernetes: `kubectl apply -k deploy/k8s/overlays/sqlite` (embedded SQLite: one `StatefulSet` +
   a PVC) or `kubectl apply -k deploy/k8s/overlays/postgres` (centralised: one consolidator
@@ -163,7 +163,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   the `sleep.duration` and `memory.body_bytes` histograms, and the `capacity_pressure`/`used_bytes`
   gauges) keep every attribute low-cardinality (bool or small enum), so it is safe to add attributes
   only within that constraint; an optional `grafana/otel-lgtm` compose profile with a provisioned
-  dashboard (`docker/observability/`) exists for local viewing.
+  dashboard (`deploy/compose/observability/`) exists for local viewing.
 - `hippocampus/` — the gRPC service implementation (`Server` in `server.go`). Reads its config
   from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   - `autoSleep` runs `sleep()` every `sleep.periodSeconds`; a manual `Sleep` RPC resets the timer
@@ -308,7 +308,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   can run beside a live service: SQLite via `db.NewSQLiteReadOnly` (`mode=ro`, no `initSchema`,
   `Preserve` a no-op — so it never writes DDL or checkpoints the database the service owns),
   Postgres/MySQL via `db.NewPostgresReadOnly`/`NewMySQLReadOnly` (skipping the instance lock). Integration tests skip unless `HIPPOCAMPUS_TEST_OPENSEARCH_URL` is set;
-  `docker/docker-compose.opensearch.yaml` runs the full stack.
+  `deploy/compose/docker-compose.opensearch.yaml` runs the full stack.
 - `summarise/` — the optional embedded-LLM summariser (`ollama.enabled`, off by default;
   `summarise.Summariser` interface with a no-op and an `Ollama` implementation). The `Ollama`
   impl is a small hand-rolled HTTP client to Ollama's `POST /api/generate` (`stream:false`, no new

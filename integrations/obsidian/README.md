@@ -14,7 +14,7 @@ is a separate route for MCP-capable AI plugins (see [`docs/mcp.md`](../../docs/m
 ## Requirements
 
 - A running Hippocampus instance with the HTTP gateway enabled — set `gateway.port` to a non-zero
-  value in its config (the shipped `docker/config.sqlite.json` uses `8080`; the root `config.json`
+  value in its config (the shipped `deploy/compose/config.sqlite.json` uses `8080`; the root `config.json`
   ships with the gateway **disabled** at `0`).
 - Node.js + npm to build the plugin from source (below).
 

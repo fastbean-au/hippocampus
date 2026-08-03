@@ -74,8 +74,8 @@ services:
     environment:
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json
     volumes:
-      - ./docker/observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
-      - ./docker/observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
+      - ./deploy/compose/observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
+      - ./deploy/compose/observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
 
   # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
   # (and set OLLAMA=true so the service actually uses it):

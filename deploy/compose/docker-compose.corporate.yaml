@@ -3,8 +3,8 @@
 # config is mounted over the image default; the hippocampus container is stateless (all state
 # lives in postgres and opensearch).
 #
-#   podman-compose -f docker/docker-compose.corporate.yaml up --build -d
-#   (or: docker compose -f docker/docker-compose.corporate.yaml up --build -d)
+#   podman-compose -f deploy/compose/docker-compose.corporate.yaml up --build -d
+#   (or: docker compose -f deploy/compose/docker-compose.corporate.yaml up --build -d)
 #
 # Ports published for local tooling:
 #   50051 gRPC, 8080 HTTP/JSON gateway (+ /healthz, + /ui console),
@@ -15,7 +15,7 @@
 
 services:
   hippocampus:
-    build: ..
+    build: ../..
     ports:
       - "50051:50051"
       - "8080:8080"
@@ -35,7 +35,7 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
       # Embedded-LLM summarisation (optional). Off unless OLLAMA=true and the `ollama` profile is
       # active. Pull the model once the stack is up:
-      #   docker compose -f docker/docker-compose.corporate.yaml exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"
+      #   docker compose -f deploy/compose/docker-compose.corporate.yaml exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"
       HIPPOCAMPUS_OLLAMA_ENABLED: "${OLLAMA:-false}"
       HIPPOCAMPUS_OLLAMA_ADDRESS: "http://ollama:11434"
       HIPPOCAMPUS_OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
@@ -77,7 +77,7 @@ services:
   # natural home for the centralised stack's dashboards. Off by default; started only with
   # `--profile observability`:
   #
-  #   OBSERVABILITY=true docker compose -f docker/docker-compose.corporate.yaml \
+  #   OBSERVABILITY=true docker compose -f deploy/compose/docker-compose.corporate.yaml \
   #     --profile observability up --build
   otel-lgtm:
     image: grafana/otel-lgtm:latest
@@ -94,8 +94,8 @@ services:
   # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
   # (and OLLAMA=true so the service uses it):
   #
-  #   OLLAMA=true docker compose -f docker/docker-compose.corporate.yaml --profile ollama up --build
-  #   docker compose -f docker/docker-compose.corporate.yaml exec ollama ollama pull llama3.2
+  #   OLLAMA=true docker compose -f deploy/compose/docker-compose.corporate.yaml --profile ollama up --build
+  #   docker compose -f deploy/compose/docker-compose.corporate.yaml exec ollama ollama pull llama3.2
   ollama:
     image: ollama/ollama:latest
     profiles: ["ollama"]

@@ -24,7 +24,7 @@ The plugin lives at [`integrations/obsidian/`](../integrations/obsidian/); its
 short:
 
 - It calls the Hippocampus **HTTP gateway** (`gateway.port` must be non-zero on the service — the
-  `docker/config.sqlite.json` demo uses `8080`; the root `config.json` ships with it disabled). It
+  `deploy/compose/config.sqlite.json` demo uses `8080`; the root `config.json` ships with it disabled). It
   uses Obsidian's `requestUrl`, so it is not blocked by renderer CORS and needs no server-side
   changes.
 - Bearer-token auth and OS-trusted TLS are supported; `requestUrl` has no

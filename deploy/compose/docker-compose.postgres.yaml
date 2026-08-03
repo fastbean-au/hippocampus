@@ -2,7 +2,7 @@
 # default SQLite config; persistence lives in the postgres volume, so the hippocampus container
 # itself is stateless and needs no data volume.
 #
-#   docker compose -f docker/docker-compose.postgres.yaml up --build
+#   docker compose -f deploy/compose/docker-compose.postgres.yaml up --build
 #
 # Note consolidation.walTriggerBytes is not supported with the Postgres driver (it measures
 # SQLite's on-disk WAL file, which has no Postgres counterpart) — the service refuses to start
@@ -10,7 +10,7 @@
 
 services:
   hippocampus:
-    build: ..
+    build: ../..
     ports:
       - "50051:50051" # gRPC
       - "8080:8080" # HTTP/JSON gateway (+ /healthz)

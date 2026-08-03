@@ -55,10 +55,10 @@ Run Hippocampus in containerised environments with pre-configured compose files:
 docker compose up --build
 
 # PostgreSQL Backed
-docker compose -f docker/docker-compose.postgres.yaml up --build
+docker compose -f deploy/compose/docker-compose.postgres.yaml up --build
 
 # Centralised Setup (PostgreSQL + OpenSearch Content Indexing)
-docker compose -f docker/docker-compose.corporate.yaml up --build
+docker compose -f deploy/compose/docker-compose.corporate.yaml up --build
 
 # Add an MCP-over-HTTP endpoint to the embedded stack (opt-in profile, publishes :8090)
 docker compose --profile mcp up --build

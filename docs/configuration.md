@@ -647,7 +647,7 @@ for every existence, consolidation, and recall decision:
 
 The index is fully rebuildable from the primary store (re-storing memories re-indexes them), so
 losing it costs search availability, nothing more.
-Try it with `docker compose -f docker/docker-compose.opensearch.yaml up --build` (security disabled —
+Try it with `docker compose -f deploy/compose/docker-compose.opensearch.yaml up --build` (security disabled —
 demo only). Integration tests run against any disposable cluster via
 `HIPPOCAMPUS_TEST_OPENSEARCH_URL=http://localhost:9200 go test ./search`.
 
@@ -679,7 +679,7 @@ store. Treat the cluster as needing the same protection as the primary store, no
   applies to the `--backfill-search` CLI mode.
 
 For a secured reference stack — security plugin enabled, HTTPS, credentials via the environment —
-use `docker compose -f docker/docker-compose.opensearch-secured.yaml up --build` (it uses
+use `docker compose -f deploy/compose/docker-compose.opensearch-secured.yaml up --build` (it uses
 `insecureSkipVerify` only because the demo image's certificates are self-signed; the file's header
 comment explains the `caCertFile` swap for production).
 

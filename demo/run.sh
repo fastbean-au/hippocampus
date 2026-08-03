@@ -151,7 +151,7 @@ fi
 if [[ -n ${OBSERVABILITY_RUNTIME_AVAILABLE} ]]; then
     echo "starting the otel-lgtm collector (${CONTAINER_RUNTIME})"
     "${CONTAINER_RUNTIME}" rm -f "${OTEL_CONTAINER}" > /dev/null 2>&1 || true
-    DASHBOARD_DIR="${PWD}/docker/observability"
+    DASHBOARD_DIR="${PWD}/deploy/compose/observability"
     PROVISION_DIR="/otel-lgtm/grafana/conf/provisioning/dashboards/custom"
     "${CONTAINER_RUNTIME}" run -d --rm --name "${OTEL_CONTAINER}" \
         -p 3000:3000 -p 4317:4317 \

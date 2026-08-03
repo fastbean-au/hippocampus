@@ -121,7 +121,7 @@ The same generators drive a centralised deployment unchanged — only the target
 OTEL collector:
 
 ```sh
-docker compose -f docker/docker-compose.corporate.yaml up --build
+docker compose -f deploy/compose/docker-compose.corporate.yaml up --build
 ```
 
 It exposes gRPC on `:50051` and the gateway on `:8080`. Load either generator against it:

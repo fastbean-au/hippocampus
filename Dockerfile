@@ -74,7 +74,7 @@ RUN adduser -D -H -u 1000 hippocampus \
     && chown hippocampus /data
 
 COPY --from=build /hippocampus /usr/local/bin/hippocampus
-COPY docker/config.sqlite.json /etc/hippocampus/config.json
+COPY deploy/compose/config.sqlite.json /etc/hippocampus/config.json
 
 USER hippocampus
 

@@ -1,4 +1,4 @@
-# Keep the build context to what `go build .` needs plus the docker/ configs.
+# Keep the build context to what `go build .` needs plus the deploy/compose configs.
 .git
 .trunk
 .vscode
@@ -9,7 +9,8 @@ demo
 soak-notes.md
 *.md
 docker-compose*.yaml
-docker/docker-compose*.yaml
+deploy/compose/docker-compose*.yaml
+deploy/k8s
 Dockerfile
 .dockerignore
 config.json

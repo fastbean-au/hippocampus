@@ -109,8 +109,8 @@ flowchart TB
   classDef opt stroke-dasharray:4 3,opacity:0.75
 ```
 
-Provided compose stacks: `docker/docker-compose.postgres.yaml`, `docker/docker-compose.mysql.yaml`, and
-`docker/docker-compose.opensearch.yaml`.
+Provided compose stacks: `deploy/compose/docker-compose.postgres.yaml`, `deploy/compose/docker-compose.mysql.yaml`, and
+`deploy/compose/docker-compose.opensearch.yaml`.
 
 ### Instance per tenant / subsystem
 

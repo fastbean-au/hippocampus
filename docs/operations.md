@@ -276,7 +276,7 @@ OBSERVABILITY=true docker compose --profile observability up --build
 ```
 
 Grafana is then at `http://localhost:3000`, opening on a pre-built **Hippocampus** dashboard
-(provisioned from `docker/observability/`, set as the home page) that charts ingest, forgetting
+(provisioned from `deploy/compose/observability/`, set as the home page) that charts ingest, forgetting
 (consolidation/eviction volume and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration
 from the metrics above. The demo soak harness has the same switch: `OBSERVABILITY=1 ./demo/run.sh`
 launches the collector (via docker or podman) with the same dashboard and points the service at it. Metrics stay off unless the collector is present,

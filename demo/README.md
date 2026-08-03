@@ -54,7 +54,7 @@ By default `run.sh` also launches an all-in-one `grafana/otel-lgtm` collector (n
 `podman`), enables the service's OTLP metrics and traces (via `HIPPOCAMPUS_*` env overrides, so
 `demo/config.json` is untouched), and points them at the collector. Grafana comes up at
 [http://localhost:3000](http://localhost:3000) with a pre-built **Hippocampus** dashboard already
-provisioned as the home page (`docker/observability/`); the collector is stopped on Ctrl-C. Set
+provisioned as the home page (`deploy/compose/observability/`); the collector is stopped on Ctrl-C. Set
 `OBSERVABILITY=0 ./demo/run.sh` to skip it; if no container runtime is found the demo still runs
 without metrics/traces. This is the recommended way to watch a soak run — the consolidation and
 eviction volume, `hippocampus.sleep.duration`, `hippocampus.used_bytes`, and

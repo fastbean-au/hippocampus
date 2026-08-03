@@ -112,10 +112,10 @@ jobs:
       - name: Compose config check
         run: |
           docker compose config -q
-          docker compose -f docker/docker-compose.postgres.yaml config -q
-          docker compose -f docker/docker-compose.mysql.yaml config -q
-          docker compose -f docker/docker-compose.opensearch.yaml config -q
-          docker compose -f docker/docker-compose.corporate.yaml config -q
+          docker compose -f deploy/compose/docker-compose.postgres.yaml config -q
+          docker compose -f deploy/compose/docker-compose.mysql.yaml config -q
+          docker compose -f deploy/compose/docker-compose.opensearch.yaml config -q
+          docker compose -f deploy/compose/docker-compose.corporate.yaml config -q
 
       # VERSION is passed as a build arg so the -ldflags injection (Dockerfile -> version.go) is
       # exercised on every push, not only at release time: /healthz must echo back the version we
@@ -135,31 +135,31 @@ jobs:
 
       - name: Postgres stack smoke test
         run: |
-          docker compose -f docker/docker-compose.postgres.yaml up --build -d
+          docker compose -f deploy/compose/docker-compose.postgres.yaml up --build -d
           timeout 60 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
           id=$(curl -sf -X POST http://localhost:8080/v1/memories \
             -H 'Content-Type: application/json' \
             -d '{"body":"ci postgres","significance":5}' | jq -r .id)
-          docker compose -f docker/docker-compose.postgres.yaml exec -T postgres \
+          docker compose -f deploy/compose/docker-compose.postgres.yaml exec -T postgres \
             psql -U hippocampus -d hippocampus -t -c "SELECT id FROM memories" | grep -q "$id"
-          docker compose -f docker/docker-compose.postgres.yaml down
+          docker compose -f deploy/compose/docker-compose.postgres.yaml down
 
       - name: MySQL stack smoke test
         run: |
-          docker compose -f docker/docker-compose.mysql.yaml up --build -d
+          docker compose -f deploy/compose/docker-compose.mysql.yaml up --build -d
           timeout 120 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
           id=$(curl -sf -X POST http://localhost:8080/v1/memories \
             -H 'Content-Type: application/json' \
             -d '{"body":"ci mysql","significance":5}' | jq -r .id)
-          docker compose -f docker/docker-compose.mysql.yaml exec -T mysql \
+          docker compose -f deploy/compose/docker-compose.mysql.yaml exec -T mysql \
             mysql -uhippocampus -phippocampus hippocampus -N -e "SELECT id FROM memories" | grep -q "$id"
-          docker compose -f docker/docker-compose.mysql.yaml down
+          docker compose -f deploy/compose/docker-compose.mysql.yaml down
 
       # Write-through indexing is asynchronous and OpenSearch refreshes are near-real-time, so
       # the search assertion polls rather than expecting the memory immediately.
       - name: OpenSearch stack smoke test
         run: |
-          docker compose -f docker/docker-compose.opensearch.yaml up --build -d
+          docker compose -f deploy/compose/docker-compose.opensearch.yaml up --build -d
           timeout 60 sh -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
           id=$(curl -sf -X POST http://localhost:8080/v1/memories \
             -H 'Content-Type: application/json' \
@@ -167,7 +167,7 @@ jobs:
           timeout 60 sh -c 'until curl -sf -X POST http://localhost:8080/v1/memories/search \
             -H "Content-Type: application/json" \
             -d "{\"query\":\"fox\"}" | jq -e ".memories[] | select(.id == \"'"$id"'\")" > /dev/null; do sleep 2; done'
-          docker compose -f docker/docker-compose.opensearch.yaml down
+          docker compose -f deploy/compose/docker-compose.opensearch.yaml down
 
       # The four event-sourcing bridge images share one parameterised Dockerfile (BROKER build-arg)
       # built with the repo root as context. Build each on the native platform (no push) so a broken
