@@ -1,0 +1,119 @@
+# The single consolidating instance. It holds the Postgres session-scoped advisory lock and is the
+# ONLY instance that runs the sleep cycle (consolidation/eviction/summarisation). There must be
+# exactly one — keep replicas at 1. See docs/operations.md → Horizontal scaling and TODO #11.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hippocampus-consolidator
+  labels:
+    app.kubernetes.io/name: hippocampus
+    app.kubernetes.io/part-of: hippocampus
+    app.kubernetes.io/component: consolidator
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: two consolidators must never overlap. The advisory lock would make
+  # a second one fail fast anyway, but Recreate avoids the failed-startup noise during a rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus
+      app.kubernetes.io/component: consolidator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hippocampus
+        app.kubernetes.io/part-of: hippocampus
+        app.kubernetes.io/component: consolidator
+    spec:
+      serviceAccountName: hippocampus
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17-alpine
+          command:
+            - sh
+            - -c
+            - until pg_isready -h hippocampus-postgres -U hippocampus -d hippocampus; do echo waiting for postgres; sleep 2; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      containers:
+        - name: hippocampus
+          image: ghcr.io/fastbean-au/hippocampus:latest
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/etc/hippocampus/config.json"]
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: http
+              containerPort: 8080
+          env:
+            # consolidation.enabled: true → this instance takes the lock and runs the sleep cycle.
+            - name: HIPPOCAMPUS_CONSOLIDATION_ENABLED
+              value: "true"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hippocampus-secrets
+                  key: postgres-password
+            # Composed from the shared password so there is one place to rotate it. $(VAR) is
+            # interpolated by the kubelet because POSTGRES_PASSWORD is declared earlier in this list.
+            - name: HIPPOCAMPUS_STORAGE_POSTGRES_DSN
+              value: postgres://hippocampus:$(POSTGRES_PASSWORD)@hippocampus-postgres:5432/hippocampus?sslmode=disable
+            # Inert until auth.method is "hmac" (see README → Authentication).
+            - name: HIPPOCAMPUS_AUTH_SIGNINGSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hippocampus-secrets
+                  key: signing-secret
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/hippocampus
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: hippocampus-config

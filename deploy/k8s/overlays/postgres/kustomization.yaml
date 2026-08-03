@@ -1,0 +1,29 @@
+# Centralised PostgreSQL deployment: one consolidator + N read/write replicas over a shared
+# database (horizontal scaling, TODO #11). Apply with:
+#
+#   kubectl apply -k deploy/k8s/overlays/postgres
+#
+# For production, remove postgres.yaml from `resources` below and point the deployments' DSN at a
+# managed PostgreSQL, and replace secret.yaml with a real secret (see README).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: hippocampus
+
+resources:
+  - ../../base
+  - secret.yaml
+  - postgres.yaml # DEMO Postgres — drop this line to use an external database
+  - deployment-consolidator.yaml
+  - deployment-replica.yaml
+  - pdb.yaml
+
+# Content-hashed ConfigMap: editing config.json rolls both deployments automatically.
+configMapGenerator:
+  - name: hippocampus-config
+    files:
+      - config.json
+
+images:
+  - name: ghcr.io/fastbean-au/hippocampus
+    newTag: latest

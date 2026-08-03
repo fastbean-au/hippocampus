@@ -1,0 +1,25 @@
+# Embedded SQLite deployment. Apply with:
+#
+#   kubectl apply -k deploy/k8s/overlays/sqlite
+#
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: hippocampus
+
+resources:
+  - ../../base
+  - service-headless.yaml
+  - statefulset.yaml
+
+# Content-hashed ConfigMap: editing config.json changes the generated name, so kubectl apply rolls
+# the StatefulSet automatically instead of leaving it running the old config.
+configMapGenerator:
+  - name: hippocampus-config
+    files:
+      - config.json
+
+# Pin the image tag here (or with `kustomize edit set image`) instead of tracking :latest.
+images:
+  - name: ghcr.io/fastbean-au/hippocampus
+    newTag: latest

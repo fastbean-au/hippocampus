@@ -1,0 +1,24 @@
+# Stable in-cluster endpoint for clients. The selector matches every Hippocampus pod carrying
+# app.kubernetes.io/name: hippocampus — in the postgres overlay that is both the consolidator and
+# the replicas (both serve the full read/write RPC surface), so traffic load-balances across all of
+# them. In the sqlite overlay it is the single StatefulSet pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hippocampus
+  labels:
+    app.kubernetes.io/name: hippocampus
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hippocampus
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,106 @@
+# DEMO-GRADE in-cluster PostgreSQL so the overlay works end to end with a single `apply`. It is a
+# single-replica StatefulSet with a modest volume and no backups/HA — fine for evaluation, NOT for
+# production. In production, delete this file from the kustomization's resources and point the DSN
+# (the deployments' env) at a managed/HA PostgreSQL instead.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hippocampus-postgres
+  labels:
+    app.kubernetes.io/name: hippocampus-postgres
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  # Headless: gives the single pod a stable DNS name the DSN can target.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: hippocampus-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: hippocampus-postgres
+  labels:
+    app.kubernetes.io/name: hippocampus-postgres
+    app.kubernetes.io/part-of: hippocampus
+    app.kubernetes.io/component: database
+spec:
+  serviceName: hippocampus-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hippocampus-postgres
+        app.kubernetes.io/part-of: hippocampus
+        app.kubernetes.io/component: database
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70 # the postgres user in the alpine image
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: hippocampus
+            - name: POSTGRES_DB
+              value: hippocampus
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hippocampus-secrets
+                  key: postgres-password
+            # The default mount is the volume root; point PGDATA at a subdirectory so initdb does
+            # not trip over the volume's lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          livenessProbe:
+            tcpSocket:
+              port: postgres
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "hippocampus", "-d", "hippocampus"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

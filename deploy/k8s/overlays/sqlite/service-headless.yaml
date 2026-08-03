@@ -1,0 +1,21 @@
+# Headless service backing the StatefulSet's stable network identity (spec.serviceName). Clients
+# use the regular `hippocampus` Service from the base; this one exists only so the pod gets a
+# predictable DNS name (hippocampus-0.hippocampus-headless.hippocampus.svc).
+apiVersion: v1
+kind: Service
+metadata:
+  name: hippocampus-headless
+  labels:
+    app.kubernetes.io/name: hippocampus
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: hippocampus
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+    - name: http
+      port: 8080
+      targetPort: http

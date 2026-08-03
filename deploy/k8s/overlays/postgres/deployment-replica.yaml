@@ -1,0 +1,113 @@
+# Read/write replicas. They serve the full RPC surface (reads AND writes) but never consolidate:
+# consolidation.enabled: false, so they skip the advisory lock and the Sleep RPC returns
+# FailedPrecondition. Scale `replicas` freely for throughput; the base Service load-balances across
+# these and the consolidator. See docs/operations.md → Horizontal scaling.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hippocampus-replica
+  labels:
+    app.kubernetes.io/name: hippocampus
+    app.kubernetes.io/part-of: hippocampus
+    app.kubernetes.io/component: replica
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus
+      app.kubernetes.io/component: replica
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hippocampus
+        app.kubernetes.io/part-of: hippocampus
+        app.kubernetes.io/component: replica
+    spec:
+      serviceAccountName: hippocampus
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17-alpine
+          command:
+            - sh
+            - -c
+            - until pg_isready -h hippocampus-postgres -U hippocampus -d hippocampus; do echo waiting for postgres; sleep 2; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      containers:
+        - name: hippocampus
+          image: ghcr.io/fastbean-au/hippocampus:latest
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/etc/hippocampus/config.json"]
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: http
+              containerPort: 8080
+          env:
+            # consolidation.enabled: false → replica: no lock, no sleep cycle, Sleep RPC refused.
+            - name: HIPPOCAMPUS_CONSOLIDATION_ENABLED
+              value: "false"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hippocampus-secrets
+                  key: postgres-password
+            - name: HIPPOCAMPUS_STORAGE_POSTGRES_DSN
+              value: postgres://hippocampus:$(POSTGRES_PASSWORD)@hippocampus-postgres:5432/hippocampus?sslmode=disable
+            - name: HIPPOCAMPUS_AUTH_SIGNINGSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hippocampus-secrets
+                  key: signing-secret
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/hippocampus
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: hippocampus-config

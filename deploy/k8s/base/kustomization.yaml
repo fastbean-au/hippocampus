@@ -1,0 +1,13 @@
+# Base shared by both deployment overlays (sqlite, postgres). It carries only the pieces that are
+# identical between them: the namespace, the (token-less) ServiceAccount, and the client-facing
+# Service. The workload (StatefulSet vs. Deployments), its storage, and the config live in the
+# overlays, because those genuinely differ between the embedded and centralised models.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: hippocampus
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - service.yaml

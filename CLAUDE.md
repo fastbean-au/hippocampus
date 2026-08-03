@@ -40,7 +40,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up --build` (MySQL), or
   `docker compose -f docker/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content
   search, security disabled — demo only) or `docker compose -f
-  docker/docker-compose.opensearch-secured.yaml up --build` (the same with the OpenSearch security
+docker/docker-compose.opensearch-secured.yaml up --build` (the same with the OpenSearch security
   plugin enabled: HTTPS + basic auth, Hippocampus connecting over TLS via the `opensearch.tls`
   config block, credentials injected as `OPENSEARCH_ADMIN_PASSWORD`); container configs in
   `docker/`, image config baked from `docker/config.sqlite.json`. The `Dockerfile` is multi-stage:
@@ -49,7 +49,7 @@ up --build` (PostgreSQL), `docker compose -f docker/docker-compose.mysql.yaml up
   hippocampus, keeping every existing compose file unchanged. The event-sourcing broker bridges have
   their own `integrations/eventsource/Dockerfile` (parameterised by a `BROKER` build-arg, built from
   the repo root): `docker build -f integrations/eventsource/Dockerfile --build-arg BROKER=nats -t
-  hippocampus-nats-bridge .` — the release publishes one image per broker to
+hippocampus-nats-bridge .` — the release publishes one image per broker to
   `ghcr.io/fastbean-au/hippocampus-<broker>-bridge`
 - MCP-over-HTTP endpoint (SQLite compose only): `docker compose --profile mcp up --build` adds an
   opt-in `mcp` service (streamable-HTTP transport, `Dockerfile` `target: mcp`) that dials the
@@ -64,6 +64,15 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   endpoint `otel-lgtm:4317`), so metrics stay off (and never log an export failure) unless the
   collector is up. A Hippocampus overview dashboard (`docker/observability/`) is bind-mounted into
   Grafana's provisioning tree and set as the home page (`GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH`)
+- Kubernetes: `kubectl apply -k deploy/k8s/overlays/sqlite` (embedded SQLite: one `StatefulSet` +
+  a PVC) or `kubectl apply -k deploy/k8s/overlays/postgres` (centralised: one consolidator
+  `Deployment` + N replica `Deployment`s over a shared Postgres, mirroring the horizontal-scaling
+  model). Kustomize base+overlays under `deploy/k8s/` — no Helm; a shared `base/` (namespace,
+  token-less ServiceAccount, Service) plus per-overlay `config.json` wired through a
+  `configMapGenerator` (content-hashed → auto-rolls on edit). Secrets (DSN, signing key) and the
+  consolidator/replica split are injected as `HIPPOCAMPUS_*` env overrides, not baked into the
+  ConfigMap; probes hit `/healthz`/`/readyz`; pods run non-root/read-only-rootfs. See
+  `deploy/k8s/README.md`
 - CI: `.github/workflows/ci.yaml` — build/vet/gofmt/tests (with postgres and mysql service
   containers so the `db/postgres_test.go` and `db/mysql_test.go` integration tests run instead
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
@@ -398,7 +407,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   over real days.
 - `integrations/mcp/` — a standalone Model Context Protocol server (its own Go module, module path
   `github.com/fastbean-au/hippocampus/integrations/mcp`; `replace
-  github.com/fastbean-au/hippocampus => ../..`, so the modelcontextprotocol/go-sdk dependency tree
+github.com/fastbean-au/hippocampus => ../..`, so the modelcontextprotocol/go-sdk dependency tree
   stays out of the root build — **the root module does not import it**) that bridges an LLM host
   (Claude Desktop/Code, any MCP client) to a running
   Hippocampus instance. A thin gRPC-client bridge, not an in-service transport: it holds no state,
@@ -432,7 +441,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   project (`obsidian`).
   - `integrations/cli/` — the `hippo` command-line client (its own Go module, module path
     `github.com/fastbean-au/hippocampus/integrations/cli`; `replace
-    github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stays out of the
+github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stays out of the
     root build — **the root module does not import it**). A thin, stateless client exposing the
     **full** RPC surface as noun-verb subcommands (`memory`/`event`/`summary` plus the admin
     `whoami`/`sleep`/`purge` and the data-movement `export`/`import`/`import-batch`/`transfer`/`clear`
@@ -460,7 +469,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
     top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace
-    github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter turning each log
+github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter turning each log
     record into a `StoreMemory` call (severity→significance, `service.name`→`group`); `collector/`
     is the OCB builder manifest (`builder-config.yaml`) that links it into a runnable collector. See
     the two READMEs and `otel/collector`'s walkthrough. **NB the root module does not import this
@@ -476,11 +485,11 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   - `integrations/eventsource/` — event-sourcing broker bridges: consume from a message broker and
     store each message as a memory. Its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/eventsource`; `replace
-    github.com/fastbean-au/hippocampus => ../..`) so the four broker-client dependency trees
+github.com/fastbean-au/hippocampus => ../..`) so the four broker-client dependency trees
     (`nats.go`, `paho.mqtt.golang`, `amqp091-go`, `segmentio/kafka-go`) stay out of the root build —
     **the root module does not import it**. A shared `bridge/` core carries the reusable pieces: a
     broker-agnostic `Message`, the `Transformer` callback seam (`Transform(Message) ([]*contract.Memory,
-    error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer` (payload→body,
+error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer` (payload→body,
     subject→group, fixed/header significance, optional base64/binary + truncation, future-timestamp
     clamping), `Store.Handle` (transform then `StoreMemory` each memory; a `Rejected` below-threshold
     memory is a success, a transform/transport failure is the adapter's cue to nack/redeliver), the
