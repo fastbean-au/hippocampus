@@ -10,6 +10,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `cd integrations/mcp && go run . --address localhost:50051` (a standalone MCP
   bridge that dials a running service; stdio by default, `--transport http` for streamable HTTP;
   see `docs/mcp.md`)
+- Run the `hippo` CLI (separate module — run from its directory):
+  `cd integrations/cli && go run . whoami` (a stateless command-line client exposing the full RPC
+  surface; gRPC by default, `--transport http` for the `/v1` gateway; `go test ./...` in that dir;
+  see `docs/cli.md`)
 - Run an event-sourcing bridge (separate module — run from its directory):
   `cd integrations/eventsource && go run ./cmd/nats --subject 'events.>' --address localhost:50051`
   (one `cmd/<broker>` each for `nats`/`mqtt`/`rabbitmq`/`kafka`; consumes from the broker and stores
@@ -424,8 +428,35 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
 - `integrations/` — self-contained client/edge subprojects, each a thin bridge rather than part of
   the core service. Each Go integration is a separate module whose dependency tree stays out of the
-  root build (`mcp`, `otel/hippocampusexporter`, `eventsource`), and one is a TypeScript project
-  (`obsidian`).
+  root build (`mcp`, `cli`, `otel/hippocampusexporter`, `eventsource`), and one is a TypeScript
+  project (`obsidian`).
+  - `integrations/cli/` — the `hippo` command-line client (its own Go module, module path
+    `github.com/fastbean-au/hippocampus/integrations/cli`; `replace
+    github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stays out of the
+    root build — **the root module does not import it**). A thin, stateless client exposing the
+    **full** RPC surface as noun-verb subcommands (`memory`/`event`/`summary` plus the admin
+    `whoami`/`sleep`/`purge` and the data-movement `export`/`import`/`import-batch`/`transfer`/`clear`
+    — unlike the MCP bridge it deliberately includes the destructive/bulk RPCs, since it is an
+    operator tool and the service's auth tiers gate what a token may actually do). It talks to the
+    service over **either** transport, selected by `--transport`: native gRPC (default) via
+    `contract.NewHippocampusClient`, or the JSON/HTTP `/v1` gateway (`--transport http`) via
+    `httpClient`, a hand-rolled implementation of the same generated `contract.HippocampusClient`
+    interface (each method maps its RPC onto the gateway's method/path/body binding exactly as the
+    `google.api.http` annotations declare, with protojson (un)marshalling and a generic
+    protojson→query-param helper for the GET/DELETE routes; a non-2xx gateway body is turned back
+    into a gRPC `status` error so codes/messages match across transports). Because both transports
+    satisfy one interface, every command handler is written once. `main.go` holds the subcommand
+    dispatch (a probe flag set with interspersing disabled locates the command so global flags may
+    appear on either side of it) and the single viper read of the global connection flags
+    (`HIPPOCAMPUS_*` env overridable — token, TLS trust options mirroring the MCP bridge, timeout,
+    `--output text|json`); `commands.go` is the command registry + handlers, `output.go` the
+    text/protojson renderer. Shell completion (`completion.go`) is driven off the same `commands()`
+    registry so it never drifts: `hippo completion <bash|zsh|fish>` emits a script that calls a
+    hidden `hippo __complete` at completion time (special-cased in `run()`, needs no service
+    connection), computing subcommand/flag/enum-value candidates from the registry. Built/vetted/
+    tested by its own `cli` CI job (self-contained: fake gRPC client plus an httptest gateway, no
+    service container); the release cross-compiles the `hippo` binary for every OS/arch onto the
+    GitHub release. See `docs/cli.md` and the module README.
   - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
     top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace

@@ -134,6 +134,28 @@ flowchart TB
 
 ---
 
+## 💻 Command-line client (`hippo`)
+
+Drive a running service from the shell. [`integrations/cli`](integrations/cli) builds `hippo`, a
+thin, stateless client exposing the **full** RPC surface as noun-verb subcommands, over **either**
+transport — native gRPC (default) or the JSON/HTTP `/v1` gateway (`--transport http`).
+
+```bash
+go build -C integrations/cli -o "$PWD/hippo" .
+./hippo memory store --body "remember this" --significance 6 --group svc-a
+./hippo --transport http --address localhost:8080 -o json memory list --group svc-a | jq
+```
+
+* **Operator tool:** memory/event CRUD, recall/search, summarisation, plus admin
+  (`whoami`/`sleep`/`purge`) and data movement (`export`/`import`/`transfer`/`clear`). Auth tiers,
+  not tool omission, gate what a token may do.
+* **Identical across transports:** one client interface backs both, down to the error codes; bearer
+  token, TLS, and `HIPPOCAMPUS_*` env overrides mirror the service's own clients.
+
+*See **[CLI guide](docs/cli.md)** for the command reference.*
+
+---
+
 ## 🤖 MCP Server — Memory for LLMs
 
 Give an AI agent a long-term memory that forgets like a human one. `integrations/mcp` is a

@@ -222,6 +222,28 @@ jobs:
           go vet ./...
           go test ./...
 
+  # The command-line client under integrations/cli is a SEPARATE Go module (its client dependency
+  # tree stays out of the root module), so the test job's `go build/test ./...` never descends into
+  # it. Build, vet, and test the module on its own. It has a `replace => ../..` back to the repo
+  # root, so the full checkout is required. Its tests are self-contained (fake gRPC client plus an
+  # httptest gateway), so no service container is needed.
+  cli:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: integrations/cli/go.mod
+
+      - name: Build, vet, and test the CLI module
+        working-directory: integrations/cli
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
   # The event-sourcing broker bridges under integrations/eventsource are a SEPARATE Go module (their
   # broker-client dependency trees are kept out of the root module), so the test job's
   # `go build/test ./...` never descends into them. Build, vet, and test the module on its own. The

@@ -148,6 +148,9 @@ jobs:
             # MCP bridge (separate module; build from its directory into the shared stage).
             ( cd integrations/mcp && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-mcp${ext}" . )
 
+            # Command-line client (separate module; build from its directory into the shared stage).
+            ( cd integrations/cli && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippo${ext}" . )
+
             # Event-sourcing bridges (separate module; build from its directory into the shared stage).
             for broker in nats mqtt rabbitmq kafka; do
               ( cd integrations/eventsource && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-${broker}-bridge${ext}" "./cmd/${broker}" )
@@ -155,7 +158,7 @@ jobs:
 
             plat="${GOOS}_${GOARCH}"
 
-            for binary in hippocampus hippocampus-mcp hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
+            for binary in hippocampus hippo hippocampus-mcp hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
               if [ "$GOOS" = "windows" ]; then
                 # -j junks the stage/ path so the archive entries are just the binary and LICENSE.
                 zip -j -q "dist/${binary}_${VERSION}_${plat}.zip" "stage/${binary}${ext}" stage/LICENSE
