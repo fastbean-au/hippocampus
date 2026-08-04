@@ -207,6 +207,67 @@ jobs:
         # --clobber so re-running the workflow on the same tag replaces assets rather than failing.
         run: gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
 
+  # Point the Homebrew tap at this release: bump the version + sha256s in the three formulae
+  # (fastbean-au/homebrew-tap) from the checksums.txt the binaries job just published, then commit
+  # and push to the tap repo. Gated on `binaries` so the assets and their checksums exist first.
+  # Skipped automatically when the HOMEBREW_TAP_TOKEN secret is absent, so a fork or a repo without
+  # the tap configured does not fail the release - the token is a cross-repo PAT/deploy key with
+  # write access to the tap repo (the default GITHUB_TOKEN cannot push to another repository).
+  bump-homebrew:
+    needs: binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check for tap token
+        id: gate
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "${TAP_TOKEN}" ]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::HOMEBREW_TAP_TOKEN not set - skipping Homebrew tap bump."
+          fi
+
+      # The bump script lives in this repo; the tap repo is checked out beside it as the write target.
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
+
+      - name: Checkout the tap repo
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: fastbean-au/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Bump, commit, and push the formulae
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # The checksums.txt attached to this release covers every archive (the source of the
+          # per-arch sha256s the formulae pin).
+          gh release download "${VERSION}" --repo "${GITHUB_REPOSITORY}" --pattern checksums.txt --output checksums.txt
+
+          python3 deploy/homebrew/bump-formulae.py "${VERSION}" checksums.txt homebrew-tap/Formula
+
+          cd homebrew-tap
+
+          if git diff --quiet; then
+            echo "Formulae already current for ${VERSION}; nothing to push."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "hippocampus ${VERSION}"
+          git push
+
   # Build and push the container image to GitHub Container Registry, gated behind the release job
   # so a failing test suite or coverage run publishes nothing. Auth is the built-in GITHUB_TOKEN
   # (no extra secrets); the image name is ghcr.io/<owner>/<repo>. The tag is passed as VERSION so

@@ -15,6 +15,27 @@ pre-flight plus the one command that starts all of that.
 - **`COVERALLS_TOKEN` repository secret** — the CI workflow reports coverage to Coveralls with it on
   every push to `main`. Set it under **Settings → Secrets and variables → Actions** (or
   `gh secret set COVERALLS_TOKEN --repo fastbean-au/hippocampus`). No token is ever committed.
+- **`HOMEBREW_TAP_TOKEN` repository secret** — a cross-repo credential with write access to
+  [`fastbean-au/homebrew-tap`](https://github.com/fastbean-au/homebrew-tap), used by the
+  `bump-homebrew` job to push the updated formulae. The built-in `GITHUB_TOKEN` cannot push to
+  another repository, so this is required for the tap to auto-update. Its only actions are cloning
+  the tap and pushing a commit, so it needs exactly one permission — **repository contents,
+  read/write** — and nothing more:
+  - **Fine-grained PAT (recommended):** resource owner `fastbean-au`, *Only select repositories* →
+    `homebrew-tap`, permissions **Contents: Read and write** (Metadata: Read-only is mandatory and
+    auto-added). Grant nothing else — in particular **not** _Workflows_: the bump only edits
+    `Formula/*.rb`, never `.github/workflows/`, and a fine-grained token is rejected on a push that
+    touches workflow files, so omitting it is both sufficient and a guard. Set an expiry and rotate
+    it. (If `fastbean-au` is an org, fine-grained PATs may need org approval.)
+  - **Classic PAT:** `public_repo` scope suffices for the public tap (`repo` if it is ever private) —
+    broader, since classic tokens cannot be scoped to a single repository.
+  - **Deploy key alternative:** a per-repo SSH key with write access added to the tap's *Settings →
+    Deploy keys* is the tightest scope, but the `bump-homebrew` checkout step must then use
+    `ssh-key:` instead of `token:`.
+
+  **Optional** — when the secret is absent the job self-skips (it does not fail the release), so a
+  fork or a repo without the tap configured is unaffected. If the tap's `main` is branch-protected to
+  require PRs, exempt this credential or the direct push will fail.
 - **Git hooks** — point git at the tracked hooks once per clone: `git config core.hooksPath hooks`.
 - GHCR publishing needs no secret: the workflow authenticates with the built-in `GITHUB_TOKEN`.
 
@@ -65,24 +86,41 @@ fixes, minor for backward-compatible features, major for breaking changes.
 2. **`binaries` job** (gated on `release`) — cross-compiles `hippocampus`, the `hippo` command-line
    client, and `hippocampus-mcp` (plus the four event-sourcing bridges) for `linux`, `darwin`, and
    `windows` on `amd64` and `arm64` (pure Go, CGO disabled, so the whole matrix builds on one
-   runner), archives each with `LICENSE` (`.tar.gz`, or `.zip` for Windows), and attaches them plus
-   a `checksums.txt` to the release. This is what lets someone run the CLI or the MCP bridge —
-   which an MCP host spawns locally over stdio — without a Go toolchain.
+   runner), archives each with `LICENSE` (`.tar.gz`, or `.zip` for Windows), then repackages the
+   Linux `hippocampus` binary into `.deb`/`.rpm` packages (via nfpm, `amd64`/`arm64` — carrying the
+   systemd unit and a default config, see [`deploy/nfpm/`](deploy/nfpm/)), and attaches every archive
+   and package plus a `checksums.txt` (generated last, so it covers the packages too) to the release.
+   This is what lets someone run the CLI or the MCP bridge — which an MCP host spawns locally over
+   stdio — without a Go toolchain, and install the service natively without a container.
 3. **`publish` job** (gated on `release` succeeding, so a red build publishes nothing) — builds two
    images and pushes them to GHCR, each tagged with the full version (`1.2.3`), the rolling
    `major.minor` (`1.2`), and `latest` for non-prerelease tags: the service image at
    **`ghcr.io/fastbean-au/hippocampus`** and the MCP-bridge image (Dockerfile `target: mcp`) at
    **`ghcr.io/fastbean-au/hippocampus-mcp`**. The tag is passed as `--build-arg VERSION=v1.2.3`, so
    each published binary reports the release version.
+4. **`bump-homebrew` job** (gated on `binaries`, so the assets and `checksums.txt` exist first) —
+   updates the [`fastbean-au/homebrew-tap`](https://github.com/fastbean-au/homebrew-tap) formulae to
+   the new release: it downloads the release's `checksums.txt`, runs
+   [`deploy/homebrew/bump-formulae.py`](deploy/homebrew/bump-formulae.py) to rewrite the version and
+   per-arch `sha256`s in `hippocampus`, `hippocampus-cli`, and `hippocampus-mcp`, then commits and
+   pushes to the tap. Requires the `HOMEBREW_TAP_TOKEN` secret above; **self-skips** when it is
+   absent (so the release still succeeds). The parallel `publish-otel-collector` and
+   `publish-eventsource-bridges` jobs (also gated on `release`) publish the collector and the four
+   per-broker bridge images to GHCR.
 
 ## After the release
 
-- Verify the GitHub release page, its generated notes, and the attached binary archives +
-  `checksums.txt`.
+- Verify the GitHub release page, its generated notes, and the attached binary archives, `.deb`/
+  `.rpm` packages, and `checksums.txt`.
 - Verify the service image: `docker pull ghcr.io/fastbean-au/hippocampus:1.2.3` and
   `docker run --rm ghcr.io/fastbean-au/hippocampus:1.2.3 --version` should print `v1.2.3`.
 - Verify the MCP image: `docker run --rm ghcr.io/fastbean-au/hippocampus-mcp:1.2.3 --version` should
   print `v1.2.3`.
+- Verify the Homebrew tap updated: the `bump-homebrew` job should have pushed a `hippocampus v1.2.3`
+  commit to [`fastbean-au/homebrew-tap`](https://github.com/fastbean-au/homebrew-tap), and
+  `brew update && brew install fastbean-au/tap/hippocampus-cli` should install `v1.2.3` (the tap's
+  own CI also re-runs `brew style`/`brew audit` on that push). Skip this check if
+  `HOMEBREW_TAP_TOKEN` is not configured.
 - Confirm the coverage update on Coveralls — it lands from the CI run for the merge to `main`, not
   from the tag push.
 

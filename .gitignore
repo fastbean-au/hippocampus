@@ -40,3 +40,7 @@ integrations/mcp/mcp
 
 TODO.md
 .claude/
+
+# Python bytecode
+__pycache__/
+*.pyc

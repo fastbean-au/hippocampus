@@ -86,6 +86,22 @@ secrets (DB DSN, signing key) as `HIPPOCAMPUS_*` env overrides. See
 
 ---
 
+## 🍺 Homebrew
+
+On macOS or Linux, install from the tap — the quickest path to a running instance or just the
+client tools:
+
+```bash
+brew install fastbean-au/tap/hippocampus       # the service (+ `brew services start hippocampus`)
+brew install fastbean-au/tap/hippocampus-cli   # the `hippo` command-line client
+brew install fastbean-au/tap/hippocampus-mcp   # the Model Context Protocol bridge
+```
+
+The service formula installs a default embedded-SQLite config (preserved across upgrades) and a
+`brew services` definition. See the [tap repo](https://github.com/fastbean-au/homebrew-tap).
+
+---
+
 ## 📦 Native (systemd) Install
 
 For a single VM or bare metal with no container runtime — the embedded-SQLite single-instance model

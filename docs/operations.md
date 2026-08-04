@@ -73,6 +73,11 @@ the sections above assume. Point the supervisor's liveness check at `GET /health
 below run the compiled binary directly; the containerised path is instead any of the
 [Docker compose stacks](../README.md) with a `restart:` policy.
 
+On macOS or Linux the quickest supervised setup is Homebrew — `brew install
+fastbean-au/tap/hippocampus` then `brew services start hippocampus`, which generates and manages the
+launchd/systemd definition for you (the manual equivalents below are for a non-Homebrew install, or
+when you want the full systemd hardening).
+
 ### macOS (launchd)
 
 The repo ships a ready-to-use per-user LaunchAgent and macOS config under
