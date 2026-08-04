@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Native macOS deployment: run the single-binary service as a per-user LaunchAgent (starts at login,
+  restarts on exit) — the macOS counterpart to deploy/systemd/hippocampus.service. This is the
+  embedded-SQLite single-instance model without a container runtime. Paths follow the Homebrew
+  layout (/usr/local on Intel; on Apple Silicon substitute /opt/homebrew, or any absolute path).
+  Install to ~/Library/LaunchAgents/ and load with:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/au.fastbean.hippocampus.plist
+  launchd sends SIGTERM on bootout/kickstart, which the service handles as a graceful shutdown.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>au.fastbean.hippocampus</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/hippocampus</string>
+        <string>-c</string>
+        <string>/usr/local/etc/hippocampus/config.json</string>
+    </array>
+
+    <!-- Start at login and restart if the process exits; ThrottleInterval bounds respawn churn. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/hippocampus/out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/hippocampus/err.log</string>
+</dict>
+</plist>

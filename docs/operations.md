@@ -75,7 +75,9 @@ below run the compiled binary directly; the containerised path is instead any of
 
 ### macOS (launchd)
 
-A per-user LaunchAgent at `~/Library/LaunchAgents/au.example.hippocampus.plist`:
+The repo ships a ready-to-use per-user LaunchAgent and macOS config under
+[`deploy/launchd/`](../deploy/launchd/) (see its README for the install/manage commands). The
+annotated version below shows the shape:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
