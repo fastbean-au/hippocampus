@@ -86,6 +86,27 @@ secrets (DB DSN, signing key) as `HIPPOCAMPUS_*` env overrides. See
 
 ---
 
+## 📦 Native (systemd) Install
+
+For a single VM or bare metal with no container runtime — the embedded-SQLite single-instance model
+as a hardened systemd service. The release publishes `.deb`/`.rpm` packages that install the binary,
+a [hardened unit](deploy/systemd/hippocampus.service) (`DynamicUser`, dropped capabilities,
+`ProtectSystem=strict` — the native analogue of the k8s security posture), and a default config:
+
+```bash
+sudo dpkg -i hippocampus_<version>_amd64.deb      # Debian/Ubuntu
+sudo rpm -i  hippocampus-<version>.x86_64.rpm     # RHEL/Fedora/SUSE
+
+sudoedit /etc/hippocampus/config.json             # review before first start
+sudo systemctl enable --now hippocampus
+```
+
+The package never auto-enables the service and preserves your config edits across upgrades. See
+[`deploy/systemd/README.md`](deploy/systemd/README.md) and
+[Operations · Running as a service](docs/operations.md#running-as-a-service).
+
+---
+
 ## 🏗️ Deployment Topology & Scaling
 
 Hippocampus scales cleanly using two primary deployment patterns depending on store ownership. Both

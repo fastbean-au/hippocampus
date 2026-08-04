@@ -1,0 +1,64 @@
+# Native (non-container) deployment: run the single-binary service as a hardened systemd unit on a
+# VM or bare metal. This is the embedded-SQLite single-instance model (see TODO #9,
+# docs/use-cases.md) without a container runtime or an orchestrator — the sweet spot the compose and
+# k8s overlays both feel heavyweight for. Install the binary at /usr/bin/hippocampus and the config
+# at /etc/hippocampus/config.json (the nfpm package in deploy/nfpm/ does both), then:
+#   systemctl daemon-reload && systemctl enable --now hippocampus
+[Unit]
+Description=Hippocampus — memory service with intentional forgetting
+Documentation=https://github.com/fastbean-au/hippocampus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/hippocampus -c /etc/hippocampus/config.json
+
+# Run as a transient, unprivileged system user; systemd creates and owns the state and configuration
+# directories for us — the native analogue of the k8s pod's non-root/read-only-rootfs securityContext.
+DynamicUser=yes
+StateDirectory=hippocampus
+ConfigurationDirectory=hippocampus
+# The SQLite database and its WAL live here; config.json's storage.directory must match this path.
+WorkingDirectory=/var/lib/hippocampus
+
+# Graceful shutdown: the service drains the HTTP gateway then the gRPC server on SIGTERM, each phase
+# bounded by shutdown.timeoutSeconds (default 10). Give the combined drain some headroom.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+# Hardening — the systemd counterpart to the k8s securityContext (drop ALL caps, no privilege
+# escalation, read-only system, private tmp/devices). The binary is pure Go with CGO disabled, so
+# MemoryDenyWriteExecute is safe (no JIT, no cgo). storage.directory and /etc/hippocampus stay
+# writable/readable via StateDirectory/ConfigurationDirectory above.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# gRPC + HTTP/JSON gateway over IPv4/IPv6; AF_UNIX for internal use.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

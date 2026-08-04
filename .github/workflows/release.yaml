@@ -170,7 +170,36 @@ jobs:
             done
           done
 
-          ( cd dist && sha256sum ./* > checksums.txt )
+      # Native OS packages: repackage the just-built linux hippocampus binary into .deb/.rpm carrying
+      # the systemd unit and a default config (deploy/nfpm/nfpm.yaml). This is a repackage, not a
+      # second build - the same CGO-disabled binary the archive step produced. nfpm translates the
+      # GOARCH-style arch (amd64/arm64) to each format's convention (deb amd64/arm64, rpm
+      # x86_64/aarch64) itself, and version_schema: semver strips the tag's leading "v" so the deb
+      # version is Debian-legal. The raw binary is built into dist/ only as nfpm's input and removed
+      # before checksums/upload, so only the archives and packages ship.
+      - name: Package .deb and .rpm (nfpm)
+        env:
+          VERSION: ${{ github.ref_name }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+          for GOARCH in amd64 arm64; do
+            export GOARCH ARCH="${GOARCH}" GOOS=linux
+
+            go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o dist/hippocampus ./cmd/hippocampus
+
+            nfpm package -f deploy/nfpm/nfpm.yaml -p deb -t dist/
+            nfpm package -f deploy/nfpm/nfpm.yaml -p rpm -t dist/
+
+            rm -f dist/hippocampus
+          done
+
+      # One checksums file over every archive and package, generated last so it covers the nfpm output.
+      - name: Checksums
+        run: ( cd dist && sha256sum ./* > checksums.txt )
 
       - name: Upload binaries to the release
         env:

@@ -1,0 +1,50 @@
+# nfpm (https://nfpm.goreleaser.com) config that turns the prebuilt hippocampus binary into a .deb
+# and .rpm carrying the systemd unit and a default config — the native-install counterpart to the
+# GHCR image. The binaries CI already cross-compiles (release.yaml) are the inputs, so packaging is
+# just a repackage step, not a second build.
+#
+# Build (one arch per invocation; ARCH is a Debian-style arch name — amd64/arm64):
+#   go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o dist/hippocampus ./cmd/hippocampus
+#   VERSION=1.2.3 ARCH=amd64 nfpm package -f deploy/nfpm/nfpm.yaml -p deb -t dist/
+#   VERSION=1.2.3 ARCH=amd64 nfpm package -f deploy/nfpm/nfpm.yaml -p rpm -t dist/
+name: hippocampus
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+section: net
+priority: optional
+maintainer: fastbean-au <https://github.com/fastbean-au>
+description: |
+  Memory service with intentional forgetting.
+  A gRPC/HTTP service that emulates human memory: finite storage where less-significant data is
+  consolidated (forgotten) over time, and recalling a memory reinforces it.
+vendor: fastbean-au
+homepage: https://github.com/fastbean-au/hippocampus
+license: MIT
+
+# The default embedded-SQLite package pulls in no database engine (the driver is pure Go). For the
+# postgres/mysql drivers the operator supplies the DSN in config.json; no package dependency.
+contents:
+  - src: dist/hippocampus
+    dst: /usr/bin/hippocampus
+    file_info:
+      mode: 0755
+
+  - src: deploy/systemd/hippocampus.service
+    dst: /usr/lib/systemd/system/hippocampus.service
+
+  # Marked config|noreplace so an operator's edits survive package upgrades (the new default lands
+  # alongside as config.json.rpmnew / .dpkg-dist rather than clobbering).
+  - src: deploy/systemd/config.json
+    dst: /etc/hippocampus/config.json
+    type: config|noreplace
+
+  - src: LICENSE
+    dst: /usr/share/doc/hippocampus/LICENSE
+
+# daemon-reload on install/upgrade; stop+disable on final removal. The unit is not auto-enabled —
+# the operator runs `systemctl enable --now hippocampus` after reviewing the config.
+scripts:
+  postinstall: deploy/nfpm/scripts/postinstall.sh
+  preremove: deploy/nfpm/scripts/preremove.sh

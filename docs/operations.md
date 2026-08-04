@@ -108,7 +108,28 @@ launchctl bootout   gui/$(id -u) ~/Library/LaunchAgents/au.example.hippocampus.p
 
 ### Linux (systemd)
 
-A unit at `/etc/systemd/system/hippocampus.service`:
+The release publishes `.deb`/`.rpm` packages (built from [`deploy/nfpm/`](../deploy/nfpm/)) that
+install the binary, a hardened unit, and a default config in one step — the recommended path:
+
+```sh
+sudo dpkg -i hippocampus_<version>_amd64.deb      # Debian/Ubuntu
+sudo rpm -i  hippocampus-<version>.x86_64.rpm     # RHEL/Fedora/SUSE
+
+sudoedit /etc/hippocampus/config.json             # review before first start
+sudo systemctl enable --now hippocampus
+```
+
+The package never auto-enables the service (you review the config first) and marks the config a
+conffile, so your edits survive upgrades. The shipped unit
+([`deploy/systemd/hippocampus.service`](../deploy/systemd/hippocampus.service)) runs under a
+transient unprivileged user (`DynamicUser`, with `StateDirectory` owning `/var/lib/hippocampus`) and
+carries the full sandbox — dropped capabilities, `NoNewPrivileges`, `ProtectSystem=strict`, private
+tmp/devices, a `@system-service` syscall filter — the systemd counterpart to the k8s pod
+`securityContext`. See [`deploy/systemd/README.md`](../deploy/systemd/README.md).
+
+To install by hand instead, or on a distro without the packages, a minimal unit at
+`/etc/systemd/system/hippocampus.service` is enough to get started (the shipped unit adds the
+hardening above):
 
 ```ini
 [Unit]
