@@ -98,6 +98,9 @@
   }
   .row { display: flex; flex-wrap: wrap; gap: 12px; }
   .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; flex: 1 1 180px; }
+  /* The author `display: flex` above beats the UA stylesheet's `[hidden] { display: none }`, so a
+     hidden field would otherwise still render - as an empty control with a label. */
+  .field[hidden] { display: none; }
   .field.wide { flex-basis: 100%; }
   label { color: var(--muted); font-size: 12px; }
   input, textarea, select {
@@ -205,15 +208,21 @@
   <!-- ===================== SEARCH ===================== -->
   <section id="tab-search" class="tab active">
     <div class="card">
-      <h2>Content search (OpenSearch)</h2>
-      <p class="muted" style="margin-top:-6px">Queries the optional secondary content-search index
-        (<code class="inline">POST /v1/memories/search</code>). Requires <code class="inline">opensearch.enabled</code>.
+      <h2>Content search</h2>
+      <p class="muted" style="margin-top:-6px">Queries the secondary content-search index
+        (<code class="inline">POST /v1/memories/search</code>).
         Leave the query blank and give just an event id to list that event's memories instead.
         Event ids in the results are clickable and open the whole event.</p>
       <div class="row">
         <div class="field wide">
           <label for="s-query">Query</label>
           <input id="s-query" placeholder="free-text query against memory bodies">
+        </div>
+        <!-- Populated from whoami's search_modes and hidden when this deployment offers only
+             keyword, so the console never presents a mode the server would reject. -->
+        <div class="field" id="s-mode-field" hidden>
+          <label for="s-mode">Mode</label>
+          <select id="s-mode"></select>
         </div>
       </div>
       <div class="row">
@@ -533,7 +542,7 @@ $("token").addEventListener("change", () => {
 // write-oriented controls in the UI (a convenience only - the server enforces authorization on
 // every RPC regardless of what the console shows). canWrite defaults to true so the UI is usable
 // before the first whoami resolves and when authentication is disabled.
-let caps = { canWrite: true, role: null, authEnabled: false };
+let caps = { canWrite: true, role: null, authEnabled: false, searchModes: [] };
 
 // refreshCaps asks the server who the current token is and applies the result. A 401 (no/invalid
 // token while auth is on) or 403 (valid token, but a role that grants nothing) both mean "cannot
@@ -544,18 +553,81 @@ async function refreshCaps() {
     const role = who.role || null;
     const authEnabled = !!who.authEnabled;
 
-    caps = { role, authEnabled, canWrite: !authEnabled || role === "writer" || role === "admin" };
+    caps = {
+      role,
+      authEnabled,
+      canWrite: !authEnabled || role === "writer" || role === "admin",
+      // Which search modes this deployment can serve - a property of the server, not the token.
+      searchModes: who.searchModes || [],
+    };
   } catch (e) {
-    caps = { role: null, authEnabled: true, canWrite: false };
+    caps = { role: null, authEnabled: true, canWrite: false, searchModes: [] };
   }
 
   applyCaps();
+}
+
+// SEARCH_MODE_LABELS names the modes for the picker, and its key order is the order they appear in.
+// Hybrid is marked recommended because it usually is: semantic alone misses exact terms (error
+// codes, identifiers, names) and keyword alone misses paraphrase.
+const SEARCH_MODE_LABELS = {
+  SEARCH_MODE_KEYWORD: "Keyword \u2014 match the words in the body",
+  SEARCH_MODE_SEMANTIC: "Semantic \u2014 match by meaning",
+  SEARCH_MODE_HYBRID: "Hybrid \u2014 both, fused (recommended)",
+};
+
+// applySearchModes fills the mode picker from what the server said it can serve, and hides it
+// entirely when there is nothing to choose between. Offering a mode this deployment cannot serve
+// would only produce a FAILED_PRECONDITION the user could do nothing about, which is why whoami
+// reports the modes at all.
+function applySearchModes() {
+  const field = $("s-mode-field");
+  const select = $("s-mode");
+
+  if (!field || !select) return;
+
+  const modes = (caps.searchModes || []).filter((m) => SEARCH_MODE_LABELS[m]);
+
+  // One mode (or none reported, e.g. an older server) means no choice worth presenting.
+  if (modes.length < 2) {
+    field.hidden = true;
+    select.innerHTML = "";
+
+    return;
+  }
+
+  const previous = select.value;
+
+  select.innerHTML = "";
+
+  for (const mode of Object.keys(SEARCH_MODE_LABELS)) {
+    if (!modes.includes(mode)) continue;
+
+    const option = document.createElement("option");
+
+    option.value = mode;
+    option.textContent = SEARCH_MODE_LABELS[mode];
+
+    select.appendChild(option);
+  }
+
+  // Default to hybrid where available - it is the best of the three - but keep whatever the user
+  // had already chosen across a token change.
+  if (previous && modes.includes(previous)) {
+    select.value = previous;
+  } else if (modes.includes("SEARCH_MODE_HYBRID")) {
+    select.value = "SEARCH_MODE_HYBRID";
+  }
+
+  field.hidden = false;
 }
 
 // applyCaps toggles the read-only body class (which hides .writer-only controls) and updates the
 // role pill in the header.
 function applyCaps() {
   document.body.classList.toggle("readonly", !caps.canWrite);
+
+  applySearchModes();
 
   const pill = $("role-pill");
 
@@ -1083,6 +1155,11 @@ async function doSearch() {
   if (group) body.group = group;
 
   if ($("s-reinforce").checked) body.reinforce = true;
+
+  // Only sent when the deployment offers a choice; otherwise the server's own default (keyword)
+  // applies and the request looks exactly as it did before modes existed.
+  const mode = $("s-mode").value;
+  if (mode) body.mode = mode;
 
   try {
     const data = await api("POST", "/v1/memories/search", body);
