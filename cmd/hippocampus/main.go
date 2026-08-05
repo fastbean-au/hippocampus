@@ -32,6 +32,7 @@ import (
 	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
+	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/hippocampus"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/stats"
@@ -183,6 +184,14 @@ func execute(args []string) {
 	viper.SetDefault("opensearch.reconcileBatchSize", 500)
 	viper.SetDefault("ollama.address", "http://localhost:11434")
 	viper.SetDefault("ollama.model", "llama3.2")
+
+	// Semantic-search embedding. Off by default and, unlike the summariser, gated on OpenSearch:
+	// the k-NN index is the only vector store this service has.
+	viper.SetDefault("ollama.embedding.address", "http://localhost:11434")
+	viper.SetDefault("ollama.embedding.model", "nomic-embed-text")
+	viper.SetDefault("ollama.embedding.timeoutSeconds", 30)
+	viper.SetDefault("ollama.embedding.batchSize", 32)
+	viper.SetDefault("ollama.embedding.dimensions", 768)
 	viper.SetDefault("ollama.timeoutSeconds", 120)
 
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
@@ -205,6 +214,7 @@ func execute(args []string) {
 			Search:           searchConfigFromViper(),
 			Reindex:          viper.GetBool("reindex"),
 			BatchSize:        viper.GetInt("backfill-batch-size"),
+			Embed:            backfillEmbedderFromViper(),
 		})
 
 		return
@@ -413,6 +423,38 @@ func run(ctx context.Context, version versionInfo) error {
 		log.Debug("ollama summariser initialised")
 	}
 
+	// initialise the optional text embedder backing semantic search. Disabled by default, and
+	// refused outright without OpenSearch: the embedder only produces vectors, and OpenSearch's
+	// k-NN index is the only place this service can put them, so enabling one without the other
+	// would cost every write an embedding call whose result nothing could ever search. Failing at
+	// startup says that once, where a warning would leave it to be inferred from search results
+	// that never improve.
+	embedder := embed.NewNoop()
+
+	if viper.GetBool("ollama.embedding.enabled") {
+		if !viper.GetBool("opensearch.enabled") {
+			return fmt.Errorf("ollama.embedding.enabled requires opensearch.enabled: semantic search stores its vectors in the OpenSearch k-NN index, and no other backend provides one")
+		}
+
+		log.Debug("initialising ollama embedder")
+
+		e, err := embed.NewOllama(embed.Config{
+			Address:      viper.GetString("ollama.embedding.address"),
+			Model:        viper.GetString("ollama.embedding.model"),
+			Timeout:      time.Duration(viper.GetInt("ollama.embedding.timeoutSeconds")) * time.Second,
+			BatchSize:    viper.GetInt("ollama.embedding.batchSize"),
+			MaxTextBytes: viper.GetInt("ollama.embedding.maxTextBytes"),
+			Dimensions:   viper.GetInt("ollama.embedding.dimensions"),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialise ollama embedder: %w", err)
+		}
+
+		embedder = e
+
+		log.Infof("semantic search enabled, embedding with model '%s'", embedder.Model())
+	}
+
 	// initialise the optional S3 object store backing the Export/Import RPCs. Nil when no bucket
 	// is configured, which makes those RPCs fail with FAILED_PRECONDITION rather than at startup:
 	// most deployments never touch the archive surface. Credentials come from the standard AWS
@@ -580,7 +622,13 @@ func run(ctx context.Context, version versionInfo) error {
 	// initialise the gRPC server
 	log.Debug("initialising gRPC server")
 
-	hipo := hippocampus.New(database, searchIndex, objects, summariser)
+	hipo := hippocampus.New(hippocampus.Dependencies{
+		DB:         database,
+		Search:     searchIndex,
+		Objects:    objects,
+		Summariser: summariser,
+		Embedder:   embedder,
+	})
 
 	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
 	// interceptor and returns codes.Internal rather than letting it crash the process. Auth runs
@@ -931,6 +979,46 @@ func run(ctx context.Context, version versionInfo) error {
 // viper access here (per the project convention that all viper reads live in main) means the
 // --mint-token CLI and the running verifier share one interpretation of signingSecret, signingKeys,
 // and activeKid.
+// backfillEmbedderFromViper builds the embedder the --backfill-search mode re-embeds with, or the
+// no-op when semantic search is not configured.
+//
+// It fails the run rather than degrading to a keyword-only rebuild: a backfill is the tool an
+// operator reaches for precisely when the index is wrong, and one that silently produced an index
+// without vectors would look like it had fixed things.
+func backfillEmbedderFromViper() embed.Embedder {
+	if !viper.GetBool("ollama.embedding.enabled") {
+		return embed.NewNoop()
+	}
+
+	embedder, err := embed.NewOllama(embed.Config{
+		Address:      viper.GetString("ollama.embedding.address"),
+		Model:        viper.GetString("ollama.embedding.model"),
+		Timeout:      time.Duration(viper.GetInt("ollama.embedding.timeoutSeconds")) * time.Second,
+		BatchSize:    viper.GetInt("ollama.embedding.batchSize"),
+		MaxTextBytes: viper.GetInt("ollama.embedding.maxTextBytes"),
+		Dimensions:   viper.GetInt("ollama.embedding.dimensions"),
+	})
+	if err != nil {
+		log.Fatalf("failed to initialise the embedder for the backfill: %s", err.Error())
+	}
+
+	log.Infof("backfill will re-embed with model '%s'", embedder.Model())
+
+	return embedder
+}
+
+// vectorDimensionFromViper reports the embedding width to map the k-NN field with, or 0 when
+// semantic search is not configured. It reads ollama.embedding.* rather than opensearch.* because
+// the width is a property of the model, not of the cluster - the cluster merely has to be told it
+// before the first vector arrives, since a k-NN mapping fixes its dimension at index creation.
+func vectorDimensionFromViper() int {
+	if !viper.GetBool("ollama.embedding.enabled") {
+		return 0
+	}
+
+	return viper.GetInt("ollama.embedding.dimensions")
+}
+
 // searchConfigFromViper builds the OpenSearch client config from the opensearch.* viper keys,
 // including the opensearch.tls.* transport-security block. Both the server bootstrap and the
 // --backfill-search CLI mode use it, so the two paths stay in step.
@@ -942,6 +1030,10 @@ func searchConfigFromViper() search.Config {
 		Password:  viper.GetString("opensearch.password"),
 		Index:     viper.GetString("opensearch.index"),
 		QueueSize: viper.GetInt("opensearch.queueSize"),
+
+		// The k-NN field is only mapped when semantic search is on, so an index built for a
+		// deployment without an embedder is exactly the index it always was.
+		VectorDimension: vectorDimensionFromViper(),
 
 		// Worker tuning; each 0 (the default) falls back to the search package's own default.
 		ApplyTimeout:          time.Duration(viper.GetInt("opensearch.applyTimeoutSeconds")) * time.Second,

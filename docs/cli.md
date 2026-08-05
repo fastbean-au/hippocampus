@@ -36,18 +36,18 @@ For HTTP, a bare `host:port` gains an `http://` (or `https://` under `--tls`) sc
 
 These apply to every command and may appear on either side of the subcommand:
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `-t`, `--transport` | `grpc` | transport to the service: `grpc` or `http` |
-| `-a`, `--address` | (per transport) | service address |
-| `--token` | | bearer token sent on every request |
-| `--tls` | `false` | connect over TLS |
-| `--tls-ca-cert` | | PEM CA bundle to verify the service certificate against |
-| `--tls-cert` / `--tls-key` | | client certificate/key for mutual TLS |
-| `--tls-insecure-skip-verify` | `false` | skip certificate verification (dev only) |
-| `--timeout-seconds` | `30` | per-request timeout (`0` disables) |
-| `-o`, `--output` | `text` | output format: `text` or `json` |
-| `--log-level` | `warn` | logging level written to stderr |
+| Flag                         | Default         | Description                                             |
+| ---------------------------- | --------------- | ------------------------------------------------------- |
+| `-t`, `--transport`          | `grpc`          | transport to the service: `grpc` or `http`              |
+| `-a`, `--address`            | (per transport) | service address                                         |
+| `--token`                    |                 | bearer token sent on every request                      |
+| `--tls`                      | `false`         | connect over TLS                                        |
+| `--tls-ca-cert`              |                 | PEM CA bundle to verify the service certificate against |
+| `--tls-cert` / `--tls-key`   |                 | client certificate/key for mutual TLS                   |
+| `--tls-insecure-skip-verify` | `false`         | skip certificate verification (dev only)                |
+| `--timeout-seconds`          | `30`            | per-request timeout (`0` disables)                      |
+| `-o`, `--output`             | `text`          | output format: `text` or `json`                         |
+| `--log-level`                | `warn`          | logging level written to stderr                         |
 
 Every global flag can also be set via a `HIPPOCAMPUS_<FLAG>` environment variable, so a secret need
 not appear in the argv:
@@ -73,6 +73,7 @@ Whether a token is needed depends on the service's `auth.method`
   `--role` stamps the [tier](configuration.md#authorisation) the token carries; give it the tier the
   commands you run require (`reader` for the read-only ones, `writer` to store/update, `admin` for
   `purge`/`sleep`/data movement). `--mint-token` is HMAC-only.
+
 - **`idp`** — the service verifies tokens issued by your identity provider, so obtain the bearer
   token from the IdP (the OAuth2/OIDC flow your organisation uses); the service cannot mint it.
 
@@ -122,52 +123,52 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 
 ### Memories
 
-| Command | Purpose |
-| --- | --- |
-| `memory store` | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--timestamp`, `--binary`) |
-| `memory update` | partial update of an existing memory (`--id` plus any content fields) |
-| `memory delete` | delete memories by id (`--id` repeatable, or positional ids) |
-| `memory list` | list memories with filters (`--group`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
-| `memory recall` | recall memories by id (reinforces them) |
-| `memory search` | content-search the index (`--query`, `--limit`, `--event-id`, `--group`, `--reinforce`) |
+| Command         | Purpose                                                                                                                                      |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory store`  | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--timestamp`, `--binary`)                            |
+| `memory update` | partial update of an existing memory (`--id` plus any content fields)                                                                        |
+| `memory delete` | delete memories by id (`--id` repeatable, or positional ids)                                                                                 |
+| `memory list`   | list memories with filters (`--group`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
+| `memory recall` | recall memories by id (reinforces them)                                                                                                      |
+| `memory search` | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--reinforce`)                  |
 
 ### Events
 
-| Command | Purpose |
-| --- | --- |
-| `event create` | create an event (`--name`, `--description`, `--significance`, `--group`, `--time-start`, `--time-end`, `--relationship eventID:sig`) |
-| `event end` | set an event's end time (`--id`, `--time-end`) |
-| `event significance` | change an event's significance (`--id`, `--significance` or placement) |
-| `event merge` | re-point one event's memories onto another (`--from`, `--to`) |
-| `event delete` | delete an event, optionally its memories (`--id`, `--memories`) |
-| `event get` | fetch a single event (`--id`, `--memories`) |
-| `event list` | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`) |
+| Command              | Purpose                                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `event create`       | create an event (`--name`, `--description`, `--significance`, `--group`, `--time-start`, `--time-end`, `--relationship eventID:sig`) |
+| `event end`          | set an event's end time (`--id`, `--time-end`)                                                                                       |
+| `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                               |
+| `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                        |
+| `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                                      |
+| `event get`          | fetch a single event (`--id`, `--memories`)                                                                                          |
+| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`)            |
 
 ### Summarisation
 
-| Command | Purpose |
-| --- | --- |
-| `summary candidates` | list events the last sleep cycle flagged as worth condensing |
-| `summary replace` | replace an event's memories with a caller-supplied summary (`--event-id` plus content fields) |
-| `summary summarise` | generate and store a summary with the embedded LLM (`--event-id`, `--significance`) |
+| Command              | Purpose                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------- |
+| `summary candidates` | list events the last sleep cycle flagged as worth condensing                                  |
+| `summary replace`    | replace an event's memories with a caller-supplied summary (`--event-id` plus content fields) |
+| `summary summarise`  | generate and store a summary with the embedded LLM (`--event-id`, `--significance`)           |
 
 ### Admin
 
-| Command | Purpose |
-| --- | --- |
-| `whoami` | report the caller's identity and effective tier |
-| `sleep` | trigger a consolidation cycle now |
-| `purge` | delete every event and memory (requires `--yes`) |
+| Command  | Purpose                                          |
+| -------- | ------------------------------------------------ |
+| `whoami` | report the caller's identity and effective tier  |
+| `sleep`  | trigger a consolidation cycle now                |
+| `purge`  | delete every event and memory (requires `--yes`) |
 
 ### Data movement
 
-| Command | Purpose |
-| --- | --- |
-| `export` | snapshot the store into an S3 archive object (`--clear`) |
-| `import` | import an archive object from S3 (`--object-key`) |
+| Command        | Purpose                                                                                |
+| -------------- | -------------------------------------------------------------------------------------- |
+| `export`       | snapshot the store into an S3 archive object (`--clear`)                               |
+| `import`       | import an archive object from S3 (`--object-key`)                                      |
 | `import-batch` | upsert full-state rows from a JSON `ImportBatchRequest` file (`--file`, `-` for stdin) |
-| `transfer` | stream the whole store into a centralised instance (`--clear`) |
-| `clear` | delete exactly the records captured by an export/transfer run (`--manifest-id`) |
+| `transfer`     | stream the whole store into a centralised instance (`--clear`)                         |
+| `clear`        | delete exactly the records captured by an export/transfer run (`--manifest-id`)        |
 
 ## Timestamps and significance placement
 

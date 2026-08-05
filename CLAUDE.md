@@ -371,6 +371,29 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
     recalls **only the returned page**, never the wider candidate set — hence `reinforceRanked`
     running after truncation rather than the old single `RecallMemories` over everything fetched,
     since recalling unseen candidates would reset decay clocks on the caller's behalf.
+  - **Semantic search** (`SearchMemories`' `mode`: `keyword`/`semantic`/`hybrid`, default keyword so
+    existing callers are unchanged) is **OpenSearch-only on every driver** — a deliberate trade, not
+    an oversight: the embedded deployment gives up feature parity for having nothing to run
+    alongside. `sqlite-vec` was rejected because it is cgo (costing the six-target single-runner
+    cross-compile and the pure-Go static binaries) and, as of its still-open ANN issue, is _also_
+    brute-force — so it would buy a constant factor, not scale. The two halves are independent and
+    neither implies the other: the `embed` package produces vectors, OpenSearch's k-NN index stores
+    and searches them; `main.go` **fails startup** if `ollama.embedding.enabled` is set without
+    `opensearch.enabled`. `search.Query` carries either `Text` or `Vector` (the RPC layer embeds the
+    query and passes it down, so `search/` never learns about an embedder), and `search.Doc` carries
+    the vector. Vectors live **only in the index, never the primary store** — ~3 KiB per memory
+    would compete for the capacity compression exists to save — so a rebuild re-embeds rather than
+    re-reads. `hippocampus/fusion.go` fuses hybrid by **Reciprocal Rank Fusion**, deliberately a
+    different technique from `ranking.go`'s max-normalised blend: a bm25 score and a cosine
+    similarity share no scale, so only the orderings can be combined. Three traps the code guards
+    and that must stay guarded: re-indexing without a vector **replaces** a document that had one
+    (so every write-through goes through `Server.indexMemory`, including the reconcile sweep, which
+    is why that sweep now re-embeds and is much more expensive); `index.knn` is a **static** setting,
+    so an index predating semantic search cannot gain the field in place (`checkVectorField` detects
+    it at startup and names `--backfill-search --reindex` as the fix); and the k-NN dimension is
+    fixed at index creation, so `ollama.embedding.dimensions` is validated in `embed/ollama.go`
+    against what the model actually returns. `WhoAmI` reports `search_modes` so clients feature-detect
+    rather than probe-and-fail.
   - The OpenSearch backend (`opensearch.enabled`, off by default) is unchanged by any of the above.
     Connection security: basic auth (`opensearch.username`/`password`, the password injectable via
     `HIPPOCAMPUS_OPENSEARCH_PASSWORD`) plus an optional `opensearch.tls` block for HTTPS clusters

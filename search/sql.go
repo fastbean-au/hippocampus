@@ -72,6 +72,13 @@ func (s *SQL) Purge() {}
 func (s *SQL) Search(ctx context.Context, query Query) ([]Hit, error) {
 	log.Trace("func() search.SQL.Search")
 
+	// Refused rather than silently answered as a keyword search: a caller who asked for meaning and
+	// got word matching would have no way to tell, and would conclude semantic search works badly
+	// rather than that it is absent.
+	if len(query.Vector) > 0 {
+		return nil, ErrSemanticUnavailable
+	}
+
 	found, err := s.store.SearchMemoryHits(ctx, db.ContentQuery{
 		Text:    query.Text,
 		EventId: query.EventId,
@@ -98,6 +105,15 @@ func (s *SQL) Rebuild(ctx context.Context) error {
 	log.Trace("func() search.SQL.Rebuild")
 
 	return s.store.RebuildContentSearch(ctx)
+}
+
+// SupportsVectors is false: this backend is an FTS5 keyword index with no vector support, and
+// adding one would mean either a cgo extension (which would cost the pure-Go build every
+// deployment target depends on) or a brute-force scan whose cost grows with the store. Semantic
+// search is therefore an OpenSearch capability - a deliberate trade of feature parity for the
+// embedded deployment having nothing to run alongside.
+func (s *SQL) SupportsVectors() bool {
+	return false
 }
 
 func (s *SQL) Enabled() bool {

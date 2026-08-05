@@ -13,7 +13,6 @@ import (
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
-	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -96,7 +95,7 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 
 		// Binary memories are never indexed - the body is opaque to content search.
 		if !memory.IsBinary {
-			s.searchIdx().IndexMemory(search.DocFromMemory(memory))
+			s.indexMemory(ctx, memory)
 		}
 	}
 
@@ -163,7 +162,7 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 	// RPC does not change - decides, so the caller's content must match it.
 	if updated, err := s.db.GetMemoriesByIds(ctx, []string{in.GetId()}); err == nil && len(*updated) == 1 {
 		if m := (*updated)[0]; !m.IsBinary {
-			s.searchIdx().IndexMemory(search.DocFromMemory(m))
+			s.indexMemory(ctx, m)
 		}
 	}
 
@@ -327,7 +326,7 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 	// The single FIFO worker guarantees the event-scoped delete lands before the summary's
 	// index write, so the replaced memories cannot outlive the summary in the index.
 	s.searchIdx().DeleteByEventId(eventId)
-	s.searchIdx().IndexMemory(search.DocFromMemory(summary))
+	s.indexMemory(ctx, summary)
 
 	return summary.Id, replaced, nil
 }

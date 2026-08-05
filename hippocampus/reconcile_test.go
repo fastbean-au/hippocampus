@@ -45,8 +45,10 @@ func (*recordingIndex) Purge()                                          {}
 func (*recordingIndex) Search(ctx context.Context, q search.Query) ([]search.Hit, error) {
 	return nil, nil
 }
-func (*recordingIndex) Enabled() bool { return true }
-func (*recordingIndex) Close() error  { return nil }
+
+func (*recordingIndex) SupportsVectors() bool { return false }
+func (*recordingIndex) Enabled() bool         { return true }
+func (*recordingIndex) Close() error          { return nil }
 
 // TestReconcileOnce_ReindexesNonBinaryMemories verifies a sweep re-indexes every non-binary memory
 // in the primary store - the self-healing that recovers documents a dropped index operation missed

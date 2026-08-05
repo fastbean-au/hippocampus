@@ -642,10 +642,10 @@ most relevant first, optionally restricted to one event and/or one `group` label
 
 There are two backends, and **you get one without configuring anything**:
 
-| Backend     | When it is used                          | Drivers       | Notes                                                                            |
-| ----------- | ---------------------------------------- | ------------- | -------------------------------------------------------------------------------- |
-| Store index | `opensearch.enabled` false (the default) | `sqlite` only | An FTS5 index inside the same database file. No cluster, no configuration.       |
-| OpenSearch  | `opensearch.enabled` true                | all           | A separate cluster. Scales further and is the only option on `postgres`/`mysql`. |
+| Backend     | When it is used                          | Drivers       | Modes                                                                                        |
+| ----------- | ---------------------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| Store index | `opensearch.enabled` false (the default) | `sqlite` only | Keyword. An FTS5 index inside the same database file — no cluster, no configuration.         |
+| OpenSearch  | `opensearch.enabled` true                | all           | Keyword, plus [semantic and hybrid](#semantic-search) when an embedding model is configured. |
 
 On the `postgres` and `mysql` drivers with OpenSearch disabled there is no content search at all,
 and `SearchMemories` returns `FAILED_PRECONDITION` saying so. A log line at startup reports which
@@ -653,6 +653,72 @@ backend was selected.
 
 Both backends are strictly **secondary**: the primary store remains the system of record, results
 are always re-read from it, and binary memories (`is_binary`) are never indexed by either.
+
+#### Semantic search
+
+Keyword search finds memories that used your words. Semantic search finds memories that meant what
+you meant — a search for "deployment problem" surfaces one that only ever said "the rollout broke".
+
+It needs two things keyword search does not, and **neither implies the other**: an embedding model
+to turn text into vectors, and OpenSearch's k-NN index to store and search them. There is no
+embedded equivalent — the SQLite backend is a keyword index, and giving it vectors would mean
+either a cgo extension (costing the pure-Go build every deployment target depends on) or a scan
+whose cost grows with the store. Semantic search is therefore an OpenSearch capability, on every
+driver.
+
+```json
+"ollama": {
+    "embedding": {
+        "enabled": false,
+        "address": "http://localhost:11434",
+        "model": "nomic-embed-text",
+        "dimensions": 768,
+        "timeoutSeconds": 30,
+        "batchSize": 32
+    }
+}
+```
+
+- `ollama.embedding.enabled` — off by default. Startup **fails** if this is on without
+  `opensearch.enabled`: the vectors would have nowhere to go, so every write would pay for an
+  embedding nothing could ever search.
+- `ollama.embedding.model` — must be an embedding model, not a generation model. It may share a
+  server with the [summariser](#summarisation-embedded-llm--ollama).
+- `ollama.embedding.dimensions` — must match the model (`nomic-embed-text` 768, `all-minilm` 384,
+  `mxbai-embed-large` 1024). A mismatch is rejected with both numbers named.
+
+Choose a mode per search with `SearchMemories`' `mode` field — `keyword` (the default, so existing
+callers are unchanged), `semantic`, or `hybrid`. **`WhoAmI` reports which modes the deployment can
+serve**, so a client can adapt rather than discover an unavailable one by having a search rejected.
+
+**Hybrid is usually the best of the three.** Semantic search alone misses exact terms — error
+codes, identifiers, names — and keyword search alone misses paraphrase. Hybrid runs both and fuses
+their _rankings_ (not their scores, which are a BM25 relevance and a cosine similarity and share no
+scale), so a memory found by both routes outranks one found by only one.
+
+**Semantic search has no relevance cutoff.** k-NN returns the _nearest_ `limit` memories, not the
+ones above some similarity bar, so a semantic search of a small store returns almost everything —
+correctly ordered, but with no "no matches" answer the way keyword search gives one. Use `hybrid`,
+or a smaller `limit`, where that matters.
+
+Three further consequences worth knowing before enabling it:
+
+- **The model server is on the write path.** Bodies are embedded as they are stored, so a slow one
+  adds latency to every write. A failure costs that memory its vector, never the memory itself —
+  it stays stored and keyword-searchable, and a rebuild can supply the vector later.
+- **Vectors are not kept in the primary store**, only in the index. At 768 dimensions an embedding
+  is ~3 KiB per memory, which would compete for the capacity [compression](#body-compression)
+  exists to save. The trade is that rebuilding the index **re-embeds** rather than re-reads, so
+  `--backfill-search` then needs the model server up.
+- **The reconciliation sweep re-embeds too.** It must, or it would replace documents with
+  vectorless copies and silently strip them from semantic search — but that makes it far more
+  expensive than the plain re-index it used to be. Raise
+  `opensearch.reconcileIntervalSeconds`, or rely on `--backfill-search` instead.
+
+**Enabling it on an existing OpenSearch deployment requires a rebuild.** `index.knn` is a static
+setting fixed at index creation, so an index built before semantic search cannot gain a vector
+field in place. The service detects this at startup and says so; run
+`--backfill-search --reindex` to rebuild. The same applies to changing the model or its dimensions.
 
 #### Ranking
 

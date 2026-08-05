@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -330,11 +331,27 @@ type searchMemoriesInput struct {
 	Group     string `json:"group,omitempty" jsonschema:"optional: restrict matches to memories carrying this group label"`
 	EventId   string `json:"event_id,omitempty" jsonschema:"optional: restrict matches to a single event"`
 	Reinforce bool   `json:"reinforce,omitempty" jsonschema:"when true, recall (reinforce) the matched memories rather than merely fetching them"`
+	Mode      string `json:"mode,omitempty" jsonschema:"how to match: keyword (the default) matches the words in the body; semantic matches by meaning; hybrid does both and fuses them. semantic and hybrid need the service to have an embedding model and OpenSearch configured, and are rejected otherwise"`
+}
+
+// searchModes maps the tool's mode string onto the RPC enum. An unknown value is an error rather
+// than a silent fall back to keyword: a model that asked for meaning and got word matching would
+// have no way to tell.
+var searchModes = map[string]contract.SearchMode{
+	"":         contract.SearchMode_SEARCH_MODE_UNSPECIFIED,
+	"keyword":  contract.SearchMode_SEARCH_MODE_KEYWORD,
+	"semantic": contract.SearchMode_SEARCH_MODE_SEMANTIC,
+	"hybrid":   contract.SearchMode_SEARCH_MODE_HYBRID,
 }
 
 func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in searchMemoriesInput) (*mcp.CallToolResult, memoriesOutput, error) {
 	if in.Query == "" {
 		return nil, memoriesOutput{}, fmt.Errorf("query is required")
+	}
+
+	mode, ok := searchModes[strings.ToLower(strings.TrimSpace(in.Mode))]
+	if !ok {
+		return nil, memoriesOutput{}, fmt.Errorf("unknown mode %q (expected keyword, semantic, or hybrid)", in.Mode)
 	}
 
 	callCtx, cancel := b.callContext(ctx)
@@ -346,6 +363,7 @@ func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 		Group:     in.Group,
 		EventId:   in.EventId,
 		Reinforce: in.Reinforce,
+		Mode:      mode,
 	})
 	if err != nil {
 		return nil, memoriesOutput{}, fmt.Errorf("SearchMemories failed: %w", err)

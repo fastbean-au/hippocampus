@@ -27,6 +27,17 @@ type Doc struct {
 	Timestamp    int64  `json:"timestamp"`
 	IsSummary    bool   `json:"is_summary"`
 	Group        string `json:"group"`
+
+	// Vector is the body's embedding, when semantic search is configured. It is omitted when
+	// absent so a deployment without an embedder indexes exactly the document it always did.
+	//
+	// Vectors live here and NOT in the primary store, deliberately. A 768-dimension embedding is
+	// around 3 KiB per memory, which on a store whose whole purpose is managing a bounded capacity
+	// would compete with the memories themselves for the space body compression exists to save.
+	// The cost of that choice is that rebuilding the index re-embeds rather than re-reads, so a
+	// rebuild needs the model server up - which is the same trade the index already makes by being
+	// rebuildable from the primary store rather than authoritative.
+	Vector []float32 `json:"vector,omitempty"`
 }
 
 // DocFromMemory maps a memory onto its indexed projection. Callers must not index binary
@@ -43,10 +54,21 @@ func DocFromMemory(in types.Memory) Doc {
 	}
 }
 
-// Query carries the parameters of one content search. Text is required; EventId and Group
-// restrict matches when non-empty.
+// ErrSemanticUnavailable is returned by Search when a vector query is asked of a backend that has
+// no vector index. Distinct from ErrDisabled, which means no content search at all: a caller
+// getting this one has search, just not by meaning.
+var ErrSemanticUnavailable = errors.New("semantic search is not available on this backend (it requires opensearch.enabled and an embedding model)")
+
+// Query carries the parameters of one content search. EventId and Group restrict matches when
+// non-empty.
+//
+// Text and Vector are the two ways of matching, and which is used is the caller's choice rather
+// than the backend's: a Vector runs a k-NN query, otherwise Text runs a keyword query. The caller
+// supplies the vector already computed, because embedding is a slow, fallible call to a model
+// server and this package deliberately knows nothing about one - see the embed package.
 type Query struct {
 	Text    string
+	Vector  []float32
 	EventId string
 	Group   string
 	Limit   int
@@ -106,6 +128,11 @@ type Index interface {
 	// false.
 	Enabled() bool
 
+	// SupportsVectors reports whether this backend can answer a Query carrying a Vector. It is a
+	// property of the deployment - the backend, its configuration, and the state of the live index
+	// - never of the caller, so it is safe to report to every client (see WhoAmI).
+	SupportsVectors() bool
+
 	// Close drains pending operations and releases resources.
 	Close() error
 }
@@ -134,6 +161,10 @@ func (noop) Search(ctx context.Context, query Query) ([]Hit, error) {
 }
 
 func (noop) Enabled() bool {
+	return false
+}
+
+func (noop) SupportsVectors() bool {
 	return false
 }
 

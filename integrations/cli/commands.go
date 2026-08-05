@@ -73,13 +73,14 @@ func commands() map[string]command {
 		},
 		"memory search": {
 			summary: "search memories via the content-search index",
-			hint:    "--query <text> [--limit N] [--event-id ID] [--reinforce]",
+			hint:    "--query <text> [--mode keyword|semantic|hybrid] [--limit N] [--event-id ID] [--reinforce]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("query", "", "search query (required)")
 				fs.Int32("limit", 0, "maximum results (0 selects the server default)")
 				fs.String("event-id", "", "restrict matches to a single event")
 				fs.String("group", "", "restrict matches to a group label")
 				fs.Bool("reinforce", false, "route matches through recall, reinforcing them")
+				fs.String("mode", "keyword", "how to match: keyword, semantic, or hybrid (semantic and hybrid need the service to have an embedding model and OpenSearch)")
 			},
 			run: runMemorySearch,
 		},
@@ -405,10 +406,25 @@ func runMemoryRecall(ctx context.Context, client contract.HippocampusClient, fs 
 	return r.render(resp)
 }
 
+// searchModes maps the --mode flag onto the RPC enum.
+var searchModes = map[string]contract.SearchMode{
+	"":         contract.SearchMode_SEARCH_MODE_UNSPECIFIED,
+	"keyword":  contract.SearchMode_SEARCH_MODE_KEYWORD,
+	"semantic": contract.SearchMode_SEARCH_MODE_SEMANTIC,
+	"hybrid":   contract.SearchMode_SEARCH_MODE_HYBRID,
+}
+
 func runMemorySearch(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
 	query := str(fs, "query")
 	if query == "" {
 		return fmt.Errorf("--query is required")
+	}
+
+	// An unknown mode is an error rather than a silent fall back to keyword: an operator who asked
+	// for meaning and got word matching would have no way to tell.
+	mode, ok := searchModes[strings.ToLower(strings.TrimSpace(str(fs, "mode")))]
+	if !ok {
+		return fmt.Errorf("--mode must be keyword, semantic, or hybrid")
 	}
 
 	req := &contract.SearchMemoriesRequest{
@@ -417,6 +433,7 @@ func runMemorySearch(ctx context.Context, client contract.HippocampusClient, fs 
 		EventId:   str(fs, "event-id"),
 		Reinforce: b(fs, "reinforce"),
 		Group:     str(fs, "group"),
+		Mode:      mode,
 	}
 
 	resp, err := client.SearchMemories(ctx, req)

@@ -23,7 +23,6 @@ import (
 	"github.com/fastbean-au/hippocampus/archive"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
-	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -569,7 +568,7 @@ func (s *Server) ingestMemories(ctx context.Context, protos []*contract.Memory) 
 			continue
 		}
 
-		s.searchIdx().IndexMemory(search.DocFromMemory(memory))
+		s.indexMemory(ctx, memory)
 	}
 
 	tel.recordsImported.Add(ctx, int64(count), metric.WithAttributes(attribute.String("kind", "memory")))

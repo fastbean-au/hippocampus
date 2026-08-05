@@ -17,15 +17,25 @@ import (
 func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contract.WhoAmIResponse, error) {
 	log.Trace("func() WhoAmI")
 
+	// The available search modes are a property of the deployment, not the caller, so they are
+	// reported identically on both paths - including the unauthenticated one, where there is no
+	// caller to describe.
+	modes := s.searchModes()
+
 	tier, ok := auth.TierFromContext(ctx)
 
 	if !ok {
-		return &contract.WhoAmIResponse{Role: auth.TierAdmin.String(), AuthEnabled: false}, nil
+		return &contract.WhoAmIResponse{
+			Role:        auth.TierAdmin.String(),
+			AuthEnabled: false,
+			SearchModes: modes,
+		}, nil
 	}
 
 	return &contract.WhoAmIResponse{
 		ClientId:    auth.ClientIDFromContext(ctx),
 		Role:        tier.String(),
 		AuthEnabled: true,
+		SearchModes: modes,
 	}, nil
 }

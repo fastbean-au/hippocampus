@@ -472,7 +472,7 @@ func TestNew_ConsolidationDisabledRunsNoTimedSleep(t *testing.T) {
 
 	rec := &recordingStore{Store: database}
 
-	s := New(rec, nil, nil, nil)
+	s := New(Dependencies{DB: rec})
 	t.Cleanup(s.Stop)
 
 	if s.consolidationEnabled {
@@ -678,7 +678,7 @@ func TestNew_StartsAndStopsReconcile(t *testing.T) {
 
 	idx := &fakeIndex{enabled: true}
 
-	s := New(database, idx, nil, nil)
+	s := New(Dependencies{DB: database, Search: idx})
 
 	if s.stopReconcile == nil || s.reconcileStopped == nil {
 		t.Fatal("expected startReconcile to launch the reconciliation sweep goroutine")
@@ -728,7 +728,7 @@ func TestNew_TransferTokenWithoutTLSWarns(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	s := New(database, nil, nil, nil)
+	s := New(Dependencies{DB: database})
 	t.Cleanup(s.Stop)
 
 	if !strings.Contains(buf.String(), "transfer.token is configured without transfer.tls") {

@@ -35,6 +35,11 @@ type fakeIndex struct {
 	// over-fetching the re-ranking does.
 	searchLimit int
 
+	// supportsVectors makes the fake claim a vector index, and queries records every Query it was
+	// given so a test can assert which of them carried a vector.
+	supportsVectors bool
+	queries         []search.Query
+
 	calls []string
 	docs  []search.Doc
 }
@@ -71,6 +76,7 @@ func (f *fakeIndex) Purge() {
 func (f *fakeIndex) Search(ctx context.Context, query search.Query) ([]search.Hit, error) {
 	f.calls = append(f.calls, "search:"+query.Text)
 	f.searchLimit = query.Limit
+	f.queries = append(f.queries, query)
 
 	if f.searchHits != nil {
 		return f.searchHits, f.searchErr
@@ -86,6 +92,10 @@ func (f *fakeIndex) Search(ctx context.Context, query search.Query) ([]search.Hi
 
 func (f *fakeIndex) Enabled() bool {
 	return f.enabled
+}
+
+func (f *fakeIndex) SupportsVectors() bool {
+	return f.supportsVectors
 }
 
 func (f *fakeIndex) Close() error {

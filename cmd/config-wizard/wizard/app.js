@@ -276,7 +276,7 @@ const STEPS = [
       {
         title: "Store",
         blurb:
-          "SQLite is embedded — one file, one instance, nothing to run alongside. PostgreSQL and MySQL let several instances share one store, of which exactly one may consolidate.",
+          "SQLite is embedded — one file, one instance, nothing to run alongside. PostgreSQL and MySQL let several instances share one store, of which exactly one may consolidate. The driver also decides what search you get: see the note under it.",
         fields: [
           {
             key: "storage.driver",
@@ -290,6 +290,7 @@ const STEPS = [
               ["postgres", "postgres — shared, horizontally scalable"],
               ["mysql", "mysql — shared, 8.0.20 or newer"],
             ],
+            help: "Search differs by driver, and it is worth knowing before you commit. SQLite has keyword content search built in — no cluster, no configuration. PostgreSQL and MySQL have none of their own, so they need OpenSearch for any content search at all. Semantic (meaning-based) search needs OpenSearch on every driver, so an embedded deployment trades it away for having nothing to run alongside.",
           },
           {
             key: "storage.directory",
@@ -928,6 +929,68 @@ const STEPS = [
     title: "Search & summaries",
     cards: [
       {
+        title: "Semantic search",
+        blurb:
+          "Finds memories by meaning rather than by the words they happen to use, so a search for 'deployment problem' can surface a memory that only ever said 'the rollout broke'. It needs two things that keyword search does not: an embedding model to turn text into vectors, and OpenSearch to index and search them. Both halves are required — without OpenSearch there is nowhere to put the vectors, whatever the driver.",
+        fields: [
+          {
+            key: "ollama.embedding.enabled",
+            label: "Enable semantic search",
+            type: "bool",
+            def: false,
+            help: (s) =>
+              value(s, "opensearch.enabled")
+                ? "Memory bodies are embedded as they are stored, so the model server is on the write path — a slow or unreachable one costs you the vector for that memory, never the memory itself."
+                : "Requires OpenSearch, which is off above. Turn it on first, or leave semantic search disabled — keyword search is unaffected either way.",
+          },
+          {
+            key: "ollama.embedding.address",
+            label: "Model server address",
+            type: "text",
+            def: "http://localhost:11434",
+            svc: "http://localhost:11434",
+            when: (s) => value(s, "ollama.embedding.enabled"),
+            help: "The Ollama server that produces the vectors. It may be the same one used for summarisation.",
+          },
+          {
+            key: "ollama.embedding.model",
+            label: "Embedding model",
+            type: "text",
+            def: "nomic-embed-text",
+            svc: "nomic-embed-text",
+            when: (s) => value(s, "ollama.embedding.enabled"),
+            help: "Must be an embedding model, not a generation model. Changing it later invalidates every stored vector — they are not comparable across models and rarely even share a dimension count — so a change means re-embedding the store.",
+          },
+          {
+            key: "ollama.embedding.dimensions",
+            label: "Vector dimensions",
+            type: "int",
+            def: 768,
+            svc: 768,
+            when: (s) => value(s, "ollama.embedding.enabled"),
+            help: "Must match the model: nomic-embed-text is 768, all-minilm 384, mxbai-embed-large 1024. The OpenSearch index fixes this at creation, so changing it later means rebuilding the index with --backfill-search --reindex.",
+          },
+          {
+            key: "ollama.embedding.timeoutSeconds",
+            label: "Timeout (seconds)",
+            type: "int",
+            def: 30,
+            svc: 30,
+            when: (s) => value(s, "ollama.embedding.enabled"),
+            help: "Bounds one embedding call. Much tighter than summarisation's, because this one sits on the write path.",
+          },
+          {
+            key: "ollama.embedding.batchSize",
+            label: "Batch size",
+            type: "int",
+            def: 32,
+            svc: 32,
+            when: (s) => value(s, "ollama.embedding.enabled"),
+            help: "Texts per request to the model server. Matters most for a backfill over a whole store, where one request per memory would be all round trip.",
+          },
+        ],
+      },
+      {
         title: "Search ranking",
         blurb:
           "How much the store's own view of a memory counts towards what a search returns first. Text relevance always leads; these decide how much significance and recall get to reorder results that matched about equally well. Set both to 0 for pure relevance order.",
@@ -953,13 +1016,17 @@ const STEPS = [
       {
         title: "Content search (OpenSearch)",
         blurb:
-          "A secondary index over memory bodies. On the SQLite driver content search is built in and needs none of this; enable OpenSearch to scale it out, or to get content search at all on PostgreSQL/MySQL. Either way it is strictly secondary: results are always re-read from the primary store, so a stale entry drops out rather than being served.",
+          "A secondary index over memory bodies. On the SQLite driver keyword content search is built in and needs none of this; enable OpenSearch to scale it out, to get content search at all on PostgreSQL/MySQL, or to unlock semantic search — which needs OpenSearch's vector index on every driver. Either way it is strictly secondary: results are always re-read from the primary store, so a stale entry drops out rather than being served.",
         fields: [
           {
             key: "opensearch.enabled",
             label: "Enable content search",
             type: "bool",
             def: false,
+            help: (s) =>
+              value(s, "storage.driver") === "sqlite"
+                ? "Your driver already has keyword search built in, so this is optional — turn it on to scale search out beyond one instance, or to add semantic search."
+                : "Your driver has no built-in content search, so without this SearchMemories is rejected outright.",
           },
           {
             key: "opensearch.addresses",
@@ -3019,9 +3086,13 @@ function renderField(field) {
     changed(field.key) ? el("span", { class: "key", text: "• changed" }) : null,
   );
 
-  const help = field.help
-    ? el("div", { class: "help", text: field.help })
-    : null;
+  // help may be a function of the current state, so a field whose advice depends on another
+  // answer — the search cards, where the driver decides what is even available — can say the
+  // right thing rather than hedging across every case.
+  const helpText =
+    typeof field.help === "function" ? field.help(state) : field.help;
+
+  const help = helpText ? el("div", { class: "help", text: helpText }) : null;
 
   if (field.type === "bool") {
     return el(

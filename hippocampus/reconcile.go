@@ -5,8 +5,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-
-	"github.com/fastbean-au/hippocampus/search"
 )
 
 // defaultReconcileBatchSize is the page size the reconciliation sweep reads the primary store in
@@ -70,7 +68,6 @@ func (s *Server) reconcileOnce() {
 
 	ctx := context.Background()
 
-	idx := s.searchIdx()
 	afterId := ""
 	reindexed := 0
 	started := time.Now()
@@ -101,7 +98,15 @@ func (s *Server) reconcileOnce() {
 				continue
 			}
 
-			idx.IndexMemory(search.DocFromMemory(memory))
+			// Through the embedding-aware helper, not idx.IndexMemory directly: a document
+			// re-indexed without its vector replaces one that had it, so a sweep meant to heal the
+			// index would strip semantic search from every memory it touched.
+			//
+			// The consequence is that with semantic search on, a sweep re-embeds every memory it
+			// visits, which is far more expensive than the plain re-index it used to be. Raise
+			// opensearch.reconcileIntervalSeconds accordingly, or rely on --backfill-search instead.
+			s.indexMemory(ctx, memory)
+
 			reindexed++
 		}
 

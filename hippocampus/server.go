@@ -23,6 +23,7 @@ import (
 	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
+	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/summarise"
 )
@@ -158,6 +159,10 @@ type Server struct {
 	// disabled no-op via summariser().
 	summarise summarise.Summariser
 
+	// embed is the optional text embedder backing semantic search; nil (as in tests constructing a
+	// Server directly) behaves as the disabled no-op via embedder().
+	embed embed.Embedder
+
 	// purgeInProgress is written by Purge and read by InterceptorBlockWhenPurgeInProgress from
 	// every RPC's own goroutine, so it must be an atomic rather than a plain bool.
 	purgeInProgress atomic.Bool
@@ -284,16 +289,44 @@ func (s *Server) mayReinforce(ctx context.Context) bool {
 	return s.readerRecallReinforces
 }
 
-func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore, summariser summarise.Summariser) *Server {
+// Dependencies carries the collaborators a Server is built over. It is a struct rather than a
+// parameter list because the optional ones only accumulate - a search index, an object store, a
+// summariser, an embedder - and each addition would otherwise lengthen a signature every call site
+// has to restate, including the ones that want none of them.
+//
+// Every field but DB is optional and nil-safe: the accessors (searchIdx, summariser, embedder)
+// substitute the package's no-op implementation, so a Server built with only a store behaves as a
+// deployment with none of the optional components configured. That is what lets tests construct
+// one with a single field set.
+type Dependencies struct {
+	// DB is the primary store, and the only required dependency.
+	DB db.Store
+
+	// Search is the secondary content-search index (nil -> disabled).
+	Search search.Index
+
+	// Objects is the archive object store backing Export/Import/Transfer (nil -> unconfigured).
+	Objects archive.ObjectStore
+
+	// Summariser is the optional embedded LLM used to condense an event's memories (nil ->
+	// disabled).
+	Summariser summarise.Summariser
+
+	// Embedder is the optional text embedder backing semantic search (nil -> disabled).
+	Embedder embed.Embedder
+}
+
+func New(deps Dependencies) *Server {
 	log.Trace("func() hippocampus.New()")
 
 	reset := make(chan bool, 1)
 
 	s := &Server{
-		db:        db,
-		search:    searchIndex,
-		summarise: summariser,
-		objects:   objects,
+		db:        deps.DB,
+		search:    deps.Search,
+		summarise: deps.Summariser,
+		embed:     deps.Embedder,
+		objects:   deps.Objects,
 		manifests: make(map[string]*transferManifest),
 		transfer: Transfer{
 			targetAddress:         viper.GetString("transfer.targetAddress"),
@@ -369,7 +402,7 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore, sum
 
 	s.autoSleep(reset, period)
 
-	s.startReconcile(searchIndex)
+	s.startReconcile(deps.Search)
 
 	return s
 }

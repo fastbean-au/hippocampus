@@ -425,17 +425,33 @@ message RecallMemoriesRequest {
 	repeated string                        ids                       = 1;
 }
 
-// SearchMemoriesRequest queries the optional secondary content-search index (opensearch.enabled)
-// for memories whose body matches the query. Results are always re-read from the primary store,
-// which remains authoritative; ids the index returns that the primary store no longer holds are
-// silently dropped. When reinforce is true the matched memories are recalled - resetting their
-// decay clocks and raising their effective significance - rather than merely fetched.
+// SearchMode selects how a search decides which memories match.
+//
+// Not every mode is available in every deployment, and which are is a property of the deployment
+// rather than of the caller: KEYWORD needs a content-search backend (built in on the sqlite driver,
+// OpenSearch otherwise), while SEMANTIC and HYBRID additionally need an embedding model and
+// OpenSearch's vector index. An unavailable mode is rejected with FAILED_PRECONDITION naming what
+// is missing; WhoAmI reports the available modes so a client can choose without probing.
+enum SearchMode {
+	SEARCH_MODE_UNSPECIFIED                                          = 0; // treated as KEYWORD, so an existing caller's behaviour is unchanged
+	SEARCH_MODE_KEYWORD                                              = 1; // match on the words in the body; exact terms, error codes, and identifiers
+	SEARCH_MODE_SEMANTIC                                             = 2; // match on meaning via embeddings; finds paraphrase the words would miss
+	SEARCH_MODE_HYBRID                                               = 3; // both, their rankings fused; usually the best of the three
+}
+
+// SearchMemoriesRequest queries the secondary content-search index for memories matching the
+// query. Results are always re-read from the primary store, which remains authoritative; ids the
+// index returns that the primary store no longer holds are silently dropped. When reinforce is
+// true the matched memories are recalled - resetting their decay clocks and raising their
+// effective significance - rather than merely fetched, and only the memories actually returned are
+// reinforced.
 message SearchMemoriesRequest {
 	string                                 query                     = 1;
 	int32                                  limit                     = 2; // maximum results; a value <= 0 selects the default (10)
 	string                                 event_id                  = 3; // optional: restrict matches to a single event
 	bool                                   reinforce                 = 4; // route matches through recall, reinforcing them
 	string                                 group                     = 5; // optional: restrict matches to memories carrying this group label
+	SearchMode                             mode                      = 6; // how to match; unset means KEYWORD
 }
 
 // ReplaceMemoriesWithSummaryRequest asks the service to delete every memory associated with an
@@ -576,6 +592,13 @@ message WhoAmIResponse {
 	string                                 client_id                 = 1;
 	string                                 role                      = 2;
 	bool                                   auth_enabled              = 3;
+
+	// search_modes lists the SearchMemories modes this deployment can serve, so a client can adapt
+	// rather than discover an unavailable mode by having a search rejected. It depends on the
+	// storage driver and on whether OpenSearch and an embedding model are configured - never on the
+	// caller - so it is the same for every caller of a given instance. An empty list means content
+	// search is unavailable entirely and SearchMemories is rejected in every mode.
+	repeated SearchMode                    search_modes              = 4;
 }
 
 message EmptyRequest {}

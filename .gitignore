@@ -37,6 +37,8 @@ demo/data/
 # Integration bridge build artifacts (`go build` in the module drops a binary named after the dir)
 hippocampus-mcp
 integrations/mcp/mcp
+integrations/cli/cli
+integrations/cli/hippo
 
 TODO.md
 .claude/

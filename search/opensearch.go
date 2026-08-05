@@ -55,6 +55,39 @@ const indexMapping = `{
 	}}
 }`
 
+// vectorIndexMapping is indexMapping plus the k-NN vector field, used when a vector dimension is
+// configured. It is a separate whole mapping rather than an addition to the one above because
+// "index.knn" is a STATIC index setting: it can only be set at creation. An index created without
+// it cannot be upgraded in place by putting a new field mapping, which is why ensureIndex detects
+// that case and reports it rather than half-succeeding (see there).
+//
+// The dimension is fixed at creation and comes from the model, so changing the embedding model
+// means recreating the index - the same constraint that makes the model tag worth recording.
+const vectorIndexMapping = `{
+	"settings": {
+		"number_of_shards": 1,
+		"number_of_replicas": 0,
+		"index.knn": true
+	},
+	"mappings": { "properties": {
+		"body":         { "type": "text" },
+		"event_id":     { "type": "keyword" },
+		"significance": { "type": "integer" },
+		"timestamp":    { "type": "long" },
+		"is_summary":   { "type": "boolean" },
+		"group":        { "type": "keyword" },
+		"vector":       {
+			"type": "knn_vector",
+			"dimension": %d,
+			"method": {
+				"name": "hnsw",
+				"space_type": "cosinesimil",
+				"engine": "lucene"
+			}
+		}
+	}}
+}`
+
 // groupMapping adds the group field to an index created before the field existed. Putting a
 // mapping for a new field is a legal, idempotent update; without it, dynamic mapping would type
 // the field as text and the term filter in Search would never match.
@@ -67,6 +100,11 @@ type Config struct {
 	Password  string
 	Index     string
 	QueueSize int
+
+	// VectorDimension is the embedding model's dimension count. Zero (the default) means no vector
+	// field is mapped and semantic queries are rejected, so a deployment without an embedder gets
+	// exactly the index it always had.
+	VectorDimension int
 
 	// Worker tuning. Each is optional: a zero value falls back to the package default
 	// (applyTimeout, applyMaxAttempts, applyRetryBaseBackoff, closeDrainTimeout). Raise them for a
@@ -243,6 +281,15 @@ type OpenSearch struct {
 	// indexReady records that ensureIndex has succeeded at least once, so a cluster that comes
 	// up after the service does still gets the explicit mapping before the first document lands.
 	indexReady atomic.Bool
+
+	// vectorDimension is the configured embedding dimension; 0 means no vector field.
+	vectorDimension int
+
+	// vectorReady records that the live index actually carries the vector field. It is distinct
+	// from vectorDimension being set, because an index created before semantic search was enabled
+	// has no vector field and cannot gain one in place - so configuration alone does not make
+	// k-NN queries answerable. Semantic search is refused until a --reindex rebuilds the index.
+	vectorReady atomic.Bool
 }
 
 // NewOpenSearch builds the client, best-effort creates the index, and starts the worker. It
@@ -307,6 +354,7 @@ func NewOpenSearch(cfg Config) (*OpenSearch, error) {
 		applyMaxAttempts:      cfg.ApplyMaxAttempts,
 		applyRetryBaseBackoff: cfg.ApplyRetryBaseBackoff,
 		closeDrainTimeout:     cfg.CloseDrainTimeout,
+		vectorDimension:       cfg.VectorDimension,
 	}
 
 	if err := o.ensureIndex(context.Background()); err != nil {
@@ -336,6 +384,10 @@ func (o *OpenSearch) ensureIndex(ctx context.Context) error {
 
 		o.indexReady.Store(true)
 
+		// The vector field is the one thing that cannot be added to an existing index, so an index
+		// that predates semantic search has to be detected rather than patched.
+		o.checkVectorField(ctx)
+
 		return nil
 	}
 
@@ -345,7 +397,7 @@ func (o *OpenSearch) ensureIndex(ctx context.Context) error {
 
 	if _, err := o.client.Indices.Create(ctx, opensearchapi.IndicesCreateReq{
 		Index: o.index,
-		Body:  strings.NewReader(indexMapping),
+		Body:  strings.NewReader(o.mapping()),
 	}); err != nil {
 		return fmt.Errorf("failed to create index '%s': %w", o.index, err)
 	}
@@ -353,8 +405,80 @@ func (o *OpenSearch) ensureIndex(ctx context.Context) error {
 	log.Infof("created opensearch index '%s'", o.index)
 
 	o.indexReady.Store(true)
+	o.vectorReady.Store(o.vectorDimension > 0)
 
 	return nil
+}
+
+// mapping returns the index mapping to create with: the vector-carrying one when a dimension is
+// configured, otherwise the original.
+func (o *OpenSearch) mapping() string {
+	if o.vectorDimension <= 0 {
+		return indexMapping
+	}
+
+	return fmt.Sprintf(vectorIndexMapping, o.vectorDimension)
+}
+
+// checkVectorField determines whether an EXISTING index actually carries the vector field, and
+// records the answer for Search to consult.
+//
+// This exists because "index.knn" is a static setting: an index created before semantic search was
+// configured cannot gain a k-NN field by any in-place update, so having a dimension configured is
+// not sufficient to answer a vector query. Discovering that at query time would mean a cluster
+// error per search; discovering it here means one clear log line at startup naming the fix.
+//
+// It never fails startup. A cluster that is unreachable or slow at boot must not stop the service,
+// and the same check runs again on the next ensureIndex.
+func (o *OpenSearch) checkVectorField(ctx context.Context) {
+	if o.vectorDimension <= 0 {
+		return
+	}
+
+	resp, err := o.client.Indices.Mapping.Get(ctx, &opensearchapi.MappingGetReq{Indices: []string{o.index}})
+	if err != nil {
+		log.Warnf("could not read the mapping of index '%s' to check for the vector field: %s", o.index, err.Error())
+
+		return
+	}
+
+	mapping, ok := resp.Indices[o.index]
+	if !ok {
+		log.Warnf("opensearch returned no mapping for index '%s'", o.index)
+
+		return
+	}
+
+	present := mappingHasVectorField(mapping.Mappings)
+
+	o.vectorReady.Store(present)
+
+	if !present {
+		log.Warnf(
+			"opensearch index '%s' has no vector field, so semantic search is unavailable: the index predates it and cannot gain one in place (index.knn is fixed at creation) - run --backfill-search --reindex to rebuild it",
+			o.index,
+		)
+	}
+}
+
+// mappingHasVectorField reports whether an index's mapping JSON describes a knn_vector "vector"
+// property. Split out so the parsing is testable without a cluster.
+//
+// It answers false on anything it cannot parse, which is the safe direction: refusing semantic
+// search on an index that does support it costs a clear log line and a --reindex, where allowing
+// it on one that does not would fail every query at the cluster.
+func mappingHasVectorField(raw json.RawMessage) bool {
+	var mapping struct {
+		Properties map[string]struct {
+			Type string `json:"type"`
+		} `json:"properties"`
+	}
+
+	if err := json.Unmarshal(raw, &mapping); err != nil {
+		return false
+	}
+
+	return mapping.Properties["vector"].Type == "knn_vector"
 }
 
 // enqueue adds an operation to the queue without ever blocking the caller: when the queue is
@@ -662,15 +786,15 @@ func (o *OpenSearch) RecreateIndex(ctx context.Context) error {
 func (o *OpenSearch) Search(ctx context.Context, query Query) ([]Hit, error) {
 	log.Trace("func() search.Search")
 
+	// A vector query needs the field to actually exist on the live index, which configuration alone
+	// does not guarantee - see checkVectorField.
+	if len(query.Vector) > 0 && !o.vectorReady.Load() {
+		return nil, ErrSemanticUnavailable
+	}
+
 	// Build the whole request as a map and marshal it once, so query.Text, EventId, and Group are
 	// all escaped correctly by json.Marshal - fmt's %q would emit escapes (\a, \v, \x07, ...) that
 	// JSON rejects, and a crafted value could otherwise alter the query structure.
-	boolQuery := map[string]any{
-		"must": []any{
-			map[string]any{"match": map[string]any{"body": query.Text}},
-		},
-	}
-
 	var filters []any
 
 	if query.EventId != "" {
@@ -681,12 +805,8 @@ func (o *OpenSearch) Search(ctx context.Context, query Query) ([]Hit, error) {
 		filters = append(filters, map[string]any{"term": map[string]any{"group": query.Group}})
 	}
 
-	if len(filters) > 0 {
-		boolQuery["filter"] = filters
-	}
-
 	body, err := json.Marshal(map[string]any{
-		"query":   map[string]any{"bool": boolQuery},
+		"query":   o.searchQuery(query, filters),
 		"size":    query.Limit,
 		"_source": false,
 	})
@@ -715,6 +835,46 @@ func (o *OpenSearch) Search(ctx context.Context, query Query) ([]Hit, error) {
 	}
 
 	return hits, nil
+}
+
+// searchQuery builds the query clause: a k-NN vector search when the caller supplied a vector,
+// otherwise the keyword match. The two are never combined into one clause - a bool query summing a
+// bm25 score and a cosine similarity would be adding numbers on unrelated scales - so hybrid search
+// runs both separately and fuses their rankings above this package.
+func (o *OpenSearch) searchQuery(query Query, filters []any) map[string]any {
+	if len(query.Vector) > 0 {
+		knn := map[string]any{
+			"vector": query.Vector,
+			"k":      query.Limit,
+		}
+
+		// The lucene engine supports filtering during the k-NN traversal, so the filter narrows the
+		// search rather than discarding results after it - which is what stops a group-scoped
+		// semantic search from returning fewer hits than asked for.
+		if len(filters) > 0 {
+			knn["filter"] = map[string]any{"bool": map[string]any{"filter": filters}}
+		}
+
+		return map[string]any{"knn": map[string]any{"vector": knn}}
+	}
+
+	boolQuery := map[string]any{
+		"must": []any{
+			map[string]any{"match": map[string]any{"body": query.Text}},
+		},
+	}
+
+	if len(filters) > 0 {
+		boolQuery["filter"] = filters
+	}
+
+	return map[string]any{"bool": boolQuery}
+}
+
+// SupportsVectors reports whether this index can answer a semantic query: a dimension is configured
+// AND the live index actually carries the vector field.
+func (o *OpenSearch) SupportsVectors() bool {
+	return o.vectorDimension > 0 && o.vectorReady.Load()
 }
 
 func (o *OpenSearch) Enabled() bool {

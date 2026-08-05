@@ -7,6 +7,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/fastbean-au/hippocampus/db"
+	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/search"
 )
 
@@ -20,6 +21,11 @@ type backfillConfig struct {
 	Search           search.Config
 	Reindex          bool
 	BatchSize        int
+
+	// Embed, when enabled, produces the vectors that make the rebuilt index searchable by meaning.
+	// A backfill that omitted them would produce a keyword-only index - silently, since a document
+	// without a vector is a perfectly valid document.
+	Embed embed.Embedder
 }
 
 // rebuildContentSearch rebuilds the primary store's own content-search index - the --backfill-search
@@ -131,7 +137,28 @@ func backfillSearch(cfg backfillConfig) {
 		}
 
 		for _, memory := range memories {
-			if err := idx.IndexMemorySync(ctx, search.DocFromMemory(memory)); err != nil {
+			doc := search.DocFromMemory(memory)
+
+			// Vectors are not stored in the primary store (see search.Doc), so a rebuild re-embeds
+			// rather than re-reads. That makes the model server a hard dependency of a backfill when
+			// semantic search is configured - and a failure here aborts rather than continues,
+			// because a half-embedded index is worse than no rebuild: it looks complete while
+			// answering semantic queries from a fraction of the store.
+			if cfg.Embed != nil && cfg.Embed.Enabled() && !memory.IsBinary && memory.Body != "" {
+				vectors, err := cfg.Embed.Embed(ctx, []string{memory.Body})
+				if err != nil {
+					log.Fatalf(
+						"failed to embed memory '%s' (%d indexed so far; the backfill is safe to rerun): %s",
+						memory.Id,
+						indexed,
+						err.Error(),
+					)
+				}
+
+				doc.Vector = vectors[0]
+			}
+
+			if err := idx.IndexMemorySync(ctx, doc); err != nil {
 				log.Fatalf(
 					"failed to index memory '%s' (%d indexed so far; the backfill is safe to rerun): %s",
 					memory.Id,
