@@ -1,0 +1,546 @@
+/* Hippocampus configuration wizard.
+   Dark-only, deliberately matching the service's embedded console (/ui) so the two read as one
+   product. No external fonts or assets - the page is served under a strict CSP that forbids them. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --panel-2: #1f2430;
+  --border: #2a303c;
+  --text: #e6e9ef;
+  --muted: #8a93a6;
+  --accent: #6ea8fe;
+  --accent-2: #4a7fd6;
+  --good: #4caf82;
+  --bad: #e0685f;
+  --warn: #d8a44a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    14px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* ---- chrome ------------------------------------------------------------------------------- */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+header h1 {
+  font-size: 16px;
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+header h1 span {
+  color: var(--accent);
+}
+
+header .tagline {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+header .actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+nav.steps {
+  flex: 0 0 210px;
+  position: sticky;
+  top: 70px;
+}
+
+nav.steps ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+nav.steps button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+nav.steps button:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+nav.steps button.active {
+  color: var(--text);
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+nav.steps .num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+nav.steps button.active .num {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+nav.steps .bad-dot {
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bad);
+}
+
+main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+footer.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+footer.bar .spacer {
+  margin-left: auto;
+}
+
+/* ---- cards and fields --------------------------------------------------------------------- */
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.card > h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.card > p.blurb {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field > label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 3px;
+}
+
+/* The config key sits on its own line under the label: inline it wraps mid-phrase, since a key like
+   consolidation.relationshipSignificanceWeight is longer than the label above it. */
+.field .key {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  margin-bottom: 3px;
+  word-break: break-all;
+}
+
+.field .key + .key {
+  color: var(--accent);
+  margin-top: -2px;
+}
+
+.field .help {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.field.inline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.field.inline > label {
+  margin-bottom: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 18px;
+}
+
+input,
+select,
+textarea {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font: inherit;
+  width: 100%;
+}
+
+input[type="checkbox"] {
+  width: auto;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  min-height: 84px;
+  resize: vertical;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+input.invalid {
+  border-color: var(--bad);
+}
+
+.btn {
+  white-space: nowrap;
+  background: var(--accent-2);
+  border: 1px solid var(--accent-2);
+  color: #fff;
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn.ghost {
+  background: none;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn.ghost:hover {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn.small {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+/* ---- choice tiles (preset / target pickers) ------------------------------------------------ */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.tile {
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 13px;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+}
+
+.tile:hover {
+  border-color: var(--accent-2);
+}
+
+.tile.selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tile strong {
+  display: block;
+  margin-bottom: 3px;
+  font-weight: 600;
+}
+
+.tile span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- issues, notes, pills ------------------------------------------------------------------ */
+
+.issue {
+  border-left: 3px solid var(--border);
+  background: var(--panel-2);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.issue.error {
+  border-left-color: var(--bad);
+}
+
+.issue.warn {
+  border-left-color: var(--warn);
+}
+
+.issue.info {
+  border-left-color: var(--accent);
+}
+
+.issue code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.pill {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pill.error {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.pill.ok {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- review step --------------------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 8px 13px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.tabs button:hover {
+  color: var(--text);
+}
+
+.tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+pre.output {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 0 12px;
+  max-height: 60vh;
+}
+
+.output-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+/* ---- decay preview -------------------------------------------------------------------------- */
+
+.preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.preview canvas {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  flex: 1 1 380px;
+  max-width: 100%;
+  height: auto;
+}
+
+.preview .lifetimes {
+  flex: 1 1 260px;
+}
+
+table.lifetimes-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+table.lifetimes-table th,
+table.lifetimes-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+table.lifetimes-table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+table.lifetimes-table td.num {
+  font-family: var(--mono);
+}
+
+/* ---- misc ------------------------------------------------------------------------------------ */
+
+.toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.toast.show {
+  opacity: 1;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 800px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  nav.steps {
+    position: static;
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  nav.steps ol {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  nav.steps button {
+    width: auto;
+  }
+}

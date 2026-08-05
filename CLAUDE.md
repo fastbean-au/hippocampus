@@ -78,6 +78,10 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN=<dsn>`/`HIPPOCAMPUS_TEST_MYSQL_DSN=<dsn>` `go test ./db`
   against any disposable database
+- Run the configuration wizard (root module, second binary):
+  `go run ./cmd/config-wizard` (serves the browser-based config/deployment builder on `:8091`;
+  static assets only, no service connection; `--port`/`--bind-address`/`--log-level`, all
+  `HIPPOCAMPUS_WIZARD_*` overridable; see `docs/config-wizard.md`)
 - Print the build version: `go run ./cmd/hippocampus --version` (module + VCS revision/time from
   `runtime/debug.ReadBuildInfo`; prints and exits before the config is read — see `version.go`)
 - Mint an auth token: `go run ./cmd/hippocampus --mint-token --client-id <id> --ttl 24h -c config.json` (prints the token and exits; see [Authentication](docs/configuration.md#authentication))
@@ -164,6 +168,23 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   gauges) keep every attribute low-cardinality (bool or small enum), so it is safe to add attributes
   only within that constraint; an optional `grafana/otel-lgtm` compose profile with a provisioned
   dashboard (`deploy/compose/observability/`) exists for local viewing.
+- `cmd/config-wizard/` — the configuration and deployment wizard: a second `package main` in the
+  root module (`main.go` plus the embedded `wizard/` assets). The Go side is a static file server
+  and nothing else — embedded `index.html`/`app.js`/`styles.css` behind a strict CSP (no
+  `unsafe-inline`, `connect-src 'none'`), plus `/healthz`. All the work is in `wizard/app.js`: a
+  schema (`STEPS` → cards → fields, indexed into `FIELDS`) that drives the form, the validation, and
+  the generated artefacts from one source. It builds a `config.json` plus an `HIPPOCAMPUS_*`
+  environment file for the secret-typed keys, and a Compose file / Kubernetes manifests / systemd
+  unit / launchd plist / `DEPLOY.md` runbook per deployment target, all in the browser (nothing is
+  transmitted, and secrets are kept out of `localStorage`). Validation mirrors `validateConfig` and
+  the driver switch in `cmd/hippocampus/main.go`; the decay preview mirrors `calculateValue` in
+  `hippocampus/sleep.go`. Each field records `def` (what the wizard suggests) and, where the service
+  has one of its own, `svc` (the `viper.SetDefault` value) — that distinction is what makes the
+  "minimal" config safe, since a key the service does not default reads as zero and several of those
+  are fatal; `defaults_test.go` cross-checks the two files so they cannot drift. Ships as its own
+  image (`Dockerfile` `target: config-wizard` → `ghcr.io/fastbean-au/hippocampus-config-wizard`) and
+  a per-OS/arch release binary; the hosted copy is `config-builder.hippocampus-demo.com`, a service
+  in the separate demo-site repo's combined showcase stack. See `docs/config-wizard.md`.
 - `hippocampus/` — the gRPC service implementation (`Server` in `server.go`). Reads its config
   from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   - `autoSleep` runs `sleep()` every `sleep.periodSeconds`; a manual `Sleep` RPC resets the timer

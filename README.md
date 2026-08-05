@@ -215,6 +215,30 @@ _See **[CLI guide](docs/cli.md)** for the command reference._
 
 ---
 
+## 🧙 Configuration wizard
+
+Not sure where to start with `config.json`? [`cmd/config-wizard`](cmd/config-wizard) builds one for
+you — a guided, browser-based builder that also emits the deployment artefacts to carry it (Compose,
+Kubernetes, systemd, launchd, or a plain binary runbook), and charts what each forgetting curve will
+actually keep before you commit to it.
+
+**Hosted:** <https://config-builder.hippocampus-demo.com> — or run it yourself:
+
+```bash
+go run ./cmd/config-wizard                  # http://localhost:8091
+docker run --rm -p 8091:8091 ghcr.io/fastbean-au/hippocampus-config-wizard:latest
+```
+
+- **Everything client-side:** it is a static page with no server side, so DSNs and signing secrets
+  never leave the browser — and secrets are written to a separate `HIPPOCAMPUS_*` environment file
+  rather than into `config.json`.
+- **Validates as you type:** the service's own startup rules, plus the warnings it would only give
+  you after it started.
+
+_See **[Configuration wizard](docs/config-wizard.md)** for the details._
+
+---
+
 ## 🤖 MCP Server — Memory for LLMs
 
 Give an AI agent a long-term memory that forgets like a human one. `integrations/mcp` is a
@@ -296,18 +320,19 @@ _See the **[Obsidian integration guide](docs/obsidian.md)** and the
 
 Detailed operational and architectural guides live under [`docs/`](docs/):
 
-| Guide                                                | Description                                                                               |
-| :--------------------------------------------------- | :---------------------------------------------------------------------------------------- |
-| 🎬 **[Getting Started](docs/getting-started.md)**    | Step-by-step build, initial config, and first gRPC/HTTP requests.                         |
-| ⚙️ **[Configurability](docs/configuration.md)**      | Exhaustive key reference for TLS, auth, storage drivers, and listeners.                   |
-| 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarisation.                       |
-| 🛠️ **[Operations & Deployment](docs/operations.md)** | Sizing storage, PostgreSQL/MySQL tuning, backups, and security hardening.                 |
-| 📊 **[Performance Benchmarks](docs/performance.md)** | Throughput sweeps across SQLite, Postgres, and MySQL under heavy loads.                   |
-| 📐 **[Use Cases & Patterns](docs/use-cases.md)**     | Embedded vs. centralised topologies and data transfer strategies.                         |
-| 🧪 **[Demonstrations](docs/demonstrations.md)**      | Worked scenarios using real-world data shapes and data generators.                        |
-| 🤖 **[MCP Server](docs/mcp.md)**                     | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol.       |
-| 🔌 **[Event Sourcing](docs/eventsource.md)**         | Bridge NATS, MQTT, RabbitMQ, or Kafka into Hippocampus, storing each message as a memory. |
-| 📓 **[Obsidian Integration](docs/obsidian.md)**      | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge. |
+| Guide                                                | Description                                                                                 |
+| :--------------------------------------------------- | :------------------------------------------------------------------------------------------ |
+| 🎬 **[Getting Started](docs/getting-started.md)**    | Step-by-step build, initial config, and first gRPC/HTTP requests.                           |
+| ⚙️ **[Configurability](docs/configuration.md)**      | Exhaustive key reference for TLS, auth, storage drivers, and listeners.                     |
+| 🧙 **[Configuration wizard](docs/config-wizard.md)** | Build a config and its deployment artefacts in the browser, with a live forgetting preview. |
+| 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarisation.                         |
+| 🛠️ **[Operations & Deployment](docs/operations.md)** | Sizing storage, PostgreSQL/MySQL tuning, backups, and security hardening.                   |
+| 📊 **[Performance Benchmarks](docs/performance.md)** | Throughput sweeps across SQLite, Postgres, and MySQL under heavy loads.                     |
+| 📐 **[Use Cases & Patterns](docs/use-cases.md)**     | Embedded vs. centralised topologies and data transfer strategies.                           |
+| 🧪 **[Demonstrations](docs/demonstrations.md)**      | Worked scenarios using real-world data shapes and data generators.                          |
+| 🤖 **[MCP Server](docs/mcp.md)**                     | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol.         |
+| 🔌 **[Event Sourcing](docs/eventsource.md)**         | Bridge NATS, MQTT, RabbitMQ, or Kafka into Hippocampus, storing each message as a memory.   |
+| 📓 **[Obsidian Integration](docs/obsidian.md)**      | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge.   |
 
 ---
 

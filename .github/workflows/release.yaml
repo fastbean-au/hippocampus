@@ -145,6 +145,9 @@ jobs:
             # Root-module binaries.
             go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o "stage/hippocampus${ext}" ./cmd/hippocampus
 
+            # Configuration wizard (root module; serves the browser-based config/deployment builder).
+            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "stage/hippocampus-config-wizard${ext}" ./cmd/config-wizard
+
             # MCP bridge (separate module; build from its directory into the shared stage).
             ( cd integrations/mcp && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-mcp${ext}" . )
 
@@ -158,7 +161,7 @@ jobs:
 
             plat="${GOOS}_${GOARCH}"
 
-            for binary in hippocampus hippo hippocampus-mcp hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
+            for binary in hippocampus hippocampus-config-wizard hippo hippocampus-mcp hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
               if [ "$GOOS" = "windows" ]; then
                 # -j junks the stage/ path so the archive entries are just the binary and LICENSE.
                 zip -j -q "dist/${binary}_${VERSION}_${plat}.zip" "stage/${binary}${ext}" stage/LICENSE
@@ -344,6 +347,30 @@ jobs:
             VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta-mcp.outputs.tags }}
           labels: ${{ steps.meta-mcp.outputs.labels }}
+
+      # The configuration wizard ships as its own image (Dockerfile `target: config-wizard`), so the
+      # hosted builder at config-builder.hippocampus-demo.com - and anyone who would rather run it
+      # themselves than trust a public site with their config - can pull it instead of building.
+      - name: Derive config-wizard image tags
+        id: meta-config-wizard
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-config-wizard
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push config-wizard image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: config-wizard
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          tags: ${{ steps.meta-config-wizard.outputs.tags }}
+          labels: ${{ steps.meta-config-wizard.outputs.labels }}
 
   # Build and push the OpenTelemetry Collector image that bundles the Hippocampus logs exporter, so
   # the integration ships as a runnable collector rather than only an OCB manifest a user must build

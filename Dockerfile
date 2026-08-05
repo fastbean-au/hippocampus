@@ -34,6 +34,12 @@ RUN cd integrations/mcp \
     -ldflags="-s -w -X main.version=${VERSION}" \
     -o /hippocampus-mcp .
 
+# The configuration wizard is a second binary of the ROOT module (its assets are embedded in it), so
+# it needs no separate module dance. Its version var is main.version, not main.buildVersion.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /hippocampus-config-wizard ./cmd/config-wizard
+
 # The MCP-server image. Selected with `target: mcp` (see the profile-gated `mcp` service in
 # docker-compose.yaml); it runs the streamable-HTTP transport so an MCP host can reach it over the
 # network. The stdio transport is not useful in a container - for local stdio use, build the binary
@@ -57,6 +63,31 @@ USER hippocampus
 EXPOSE 8090
 
 ENTRYPOINT ["hippocampus-mcp"]
+
+# The configuration-wizard image. Selected with `target: config-wizard`; it serves the browser-based
+# config and deployment builder over HTTP. Like the mcp stage it is placed before the default
+# hippocampus stage so a no-`target` build still selects hippocampus. The wizard is purely static -
+# it holds no state, talks to no Hippocampus instance, and makes no outbound requests - so this image
+# is safe to publish on the open internet behind a proxy.
+FROM alpine:3.22 AS config-wizard
+
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="hippocampus-config-wizard" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.source="https://github.com/fastbean-au/hippocampus"
+
+RUN adduser -D -H -u 1000 hippocampus
+
+COPY --from=build /hippocampus-config-wizard /usr/local/bin/hippocampus-config-wizard
+
+USER hippocampus
+
+EXPOSE 8091
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["wget", "-q", "--spider", "http://localhost:8091/healthz"]
+
+ENTRYPOINT ["hippocampus-config-wizard"]
 
 # Alpine rather than scratch/distroless: busybox wget enables the compose healthcheck against the
 # gateway's /healthz, which a shell-less image could not run.

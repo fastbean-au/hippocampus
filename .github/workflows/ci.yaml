@@ -169,6 +169,19 @@ jobs:
             -d "{\"query\":\"fox\"}" | jq -e ".memories[] | select(.id == \"'"$id"'\")" > /dev/null; do sleep 2; done'
           docker compose -f deploy/compose/docker-compose.opensearch.yaml down
 
+      # The configuration wizard ships as its own image (Dockerfile target). Build it and prove the
+      # embedded single-page app is actually served - the assets live in the binary, so a broken
+      # embed or a missing file is a runtime 404 rather than a build failure.
+      - name: Config-wizard image smoke test
+        run: |
+          docker build --target config-wizard -t hippocampus-config-wizard:ci .
+          docker run -d --name config-wizard -p 8091:8091 hippocampus-config-wizard:ci
+          timeout 60 sh -c 'until curl -sf http://localhost:8091/healthz; do sleep 2; done'
+          curl -sf http://localhost:8091/ | grep -q "Hippocampus configuration wizard"
+          curl -sf http://localhost:8091/app.js | grep -q "buildConfig"
+          curl -sf http://localhost:8091/styles.css > /dev/null
+          docker rm -f config-wizard
+
       # The four event-sourcing bridge images share one parameterised Dockerfile (BROKER build-arg)
       # built with the repo root as context. Build each on the native platform (no push) so a broken
       # Dockerfile or module build fails CI; the release workflow does the multi-arch push.

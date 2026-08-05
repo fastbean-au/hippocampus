@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hippocampus configuration wizard</title>
+    <meta
+      name="description"
+      content="Build a Hippocampus config.json and the deployment artefacts that carry it — Docker Compose, Kubernetes, systemd, launchd, or a plain binary run. Everything is generated in your browser; nothing is uploaded."
+    />
+    <!-- Inline SVG favicon (a data: URI, allowed by the page's img-src) so there is no extra route
+         and no 404 on /favicon.ico. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23181b22'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%236ea8fe' font-family='sans-serif' font-weight='700'>H</text></svg>"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Hippocampus <span>configuration wizard</span></h1>
+      <span class="tagline">every answer stays in your browser</span>
+      <div class="actions">
+        <button class="btn ghost small" id="import-config" type="button">
+          Import config.json
+        </button>
+        <button class="btn ghost small" id="reset-all" type="button">
+          Start over
+        </button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="steps" aria-label="Wizard steps">
+        <ol id="step-nav"></ol>
+      </nav>
+
+      <main>
+        <div id="panel"></div>
+
+        <footer class="bar">
+          <button class="btn ghost" id="prev-step" type="button">Back</button>
+          <button class="btn" id="next-step" type="button">Next</button>
+          <span class="spacer"></span>
+          <span class="pill" id="issue-pill">No problems</span>
+        </footer>
+      </main>
+    </div>
+
+    <!-- Hidden file input backing the "Import config.json" button. -->
+    <input
+      type="file"
+      id="import-file"
+      accept="application/json,.json"
+      class="hidden"
+    />
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
