@@ -40,8 +40,12 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 
 	idx := s.searchIdx()
 
+	// Reachable only where no backend could be built at all: the SQL backend covers the default
+	// (SQLite) deployment without any configuration, so this now means a driver that has no
+	// content search yet and no OpenSearch cluster configured either.
 	if !idx.Enabled() {
-		return &res, status.Error(codes.FailedPrecondition, "content search is not enabled (opensearch.enabled)")
+		return &res, status.Error(codes.FailedPrecondition,
+			"content search is not available: this storage driver has no built-in content search - enable opensearch.enabled")
 	}
 
 	if in.GetQuery() == "" {

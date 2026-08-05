@@ -172,15 +172,31 @@ func TestExecute_MintTokenIdpRejected(t *testing.T) {
 	})
 }
 
-// TestExecute_BackfillRequiresOpenSearch fails fast when --backfill-search runs without
-// opensearch.enabled, rather than silently doing nothing.
-func TestExecute_BackfillRequiresOpenSearch(t *testing.T) {
+// TestExecute_BackfillWithoutOpenSearchRebuildsTheStoreIndex covers the --backfill-search mode
+// when no OpenSearch cluster is configured: there is still an index to rebuild - the store's own -
+// so it runs it and exits rather than failing, which is what it did while OpenSearch was the only
+// backend.
+func TestExecute_BackfillWithoutOpenSearchRebuildsTheStoreIndex(t *testing.T) {
 	viper.Reset()
 	defer viper.Reset()
 
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	path := writeConfigFile(t, `{}`)
+	path := writeConfigFile(t, `{"storage": {"directory": "`+filepath.ToSlash(t.TempDir())+`"}}`)
+
+	execute([]string{"--backfill-search", "--config_file", path})
+}
+
+// TestExecute_BackfillWithoutAnyIndexFailsFast: on a driver that has no built-in content search,
+// --backfill-search without OpenSearch has nothing to rebuild at all, and saying so beats exiting
+// successfully having done nothing.
+func TestExecute_BackfillWithoutAnyIndexFailsFast(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	path := writeConfigFile(t, `{"storage": {"driver": "postgres"}}`)
 
 	withFatalPanic(t, func() {
 		execute([]string{"--backfill-search", "--config_file", path})

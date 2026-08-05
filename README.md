@@ -374,7 +374,7 @@ _Read the [Security Section in Operations](docs/operations.md#security) for deta
 
 - **Single Consolidator Rule:** Only one instance may perform consolidation/decay tasks per store to prevent race conditions during database compaction.
 - **Opaque Payloads:** Memory payloads are stored as raw bytes; by default summaries must be constructed upstream by client applications and submitted via `ReplaceMemoriesWithSummary`. An optional embedded LLM (Ollama, `ollama.enabled`) lets the service author summaries itself — via the `SummariseMemories` RPC or automatically during the sleep cycle — see [Summarisation](docs/consolidation.md#summarisation).
-- **Eventually Consistent Search:** The OpenSearch index is secondary and asynchronous. Primary database reads remain strictly consistent, while background sweeps handle reconciliation for content search.
+- **Eventually Consistent Search (OpenSearch only):** The OpenSearch index is secondary and asynchronous. Primary database reads remain strictly consistent, while background sweeps handle reconciliation for content search. The built-in SQLite content search used when OpenSearch is disabled is maintained inside the write itself, so it is not subject to this; `postgres`/`mysql` have no content search without OpenSearch. See [Content search](docs/configuration.md#content-search).
 
 ---
 

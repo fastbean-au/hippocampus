@@ -676,6 +676,12 @@ func (d *DB) initSchema() error {
 		return err
 	}
 
+	// Last, because it reads memory bodies to populate itself on a store that predates it, and so
+	// wants every column and index above it already in place.
+	if err := d.initContentSearch(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

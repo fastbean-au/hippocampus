@@ -159,8 +159,16 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 		memory.Group,
 		isCompressed,
 	)
+	if err != nil {
+		return memory.Id, err
+	}
 
-	return memory.Id, err
+	// The index is fed the plain body, not the (possibly compressed) bytes just written. A failure
+	// here does not fail the create: the memory is stored, and an unindexed memory is a
+	// rebuildable gap, not a lost write.
+	_ = d.indexMemoryContent(ctx, memory.Id, memory.Body, memory.IsBinary)
+
+	return memory.Id, nil
 }
 
 // UpdateMemory applies a partial update to an existing memory: only fields carrying a non-zero
@@ -213,6 +221,13 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 	// body - never left to describe the body it replaced. The decision needs to know whether the
 	// memory is binary, and is_binary is outside this partial-update surface (the caller's copy of
 	// it is not authoritative), so it is read from the stored row.
+	// bodyChanged also drives the content-search reindex below, which needs the same is_binary the
+	// compression decision needed.
+	var (
+		bodyChanged  bool
+		bodyIsBinary bool
+	)
+
 	if len(memory.Body) > 0 {
 		isBinary, err := d.memoryIsBinary(ctx, memory.Id)
 		if err != nil {
@@ -223,6 +238,9 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 
 		sets = append(sets, `body = ?`, `is_compressed = ?`)
 		args = append(args, body, isCompressed)
+
+		bodyChanged = true
+		bodyIsBinary = isBinary
 	}
 
 	if memory.Group != "" {
@@ -242,7 +260,18 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 		return false, err
 	}
 
-	return d.updatedRowExisted(ctx, res, "memories", memory.Id)
+	existed, err := d.updatedRowExisted(ctx, res, "memories", memory.Id)
+	if err != nil {
+		return existed, err
+	}
+
+	// Only once the row is known to exist: reindexing an id that matched nothing would delete
+	// whatever a memory of that id used to have and put nothing back.
+	if existed && bodyChanged {
+		_ = d.reindexMemoryContent(ctx, memory.Id, memory.Body, bodyIsBinary)
+	}
+
+	return existed, nil
 }
 
 // memoryIsBinary reports whether the stored memory is binary, which decides whether a body being
@@ -1009,6 +1038,10 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
+
+	// The replaced memories' index entries went with them inside the transaction, via the delete
+	// trigger; only the summary that took their place needs adding.
+	_ = d.indexMemoryContent(ctx, summary.Id, summary.Body, summary.IsBinary)
 
 	return int(replaced), nil
 }

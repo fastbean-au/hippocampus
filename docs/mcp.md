@@ -47,17 +47,17 @@ refused every mutation regardless of which tools are registered here. `delete_me
 scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear`,
 which stay `admin`-tier and off this surface.
 
-| Tool | Maps to | Notes |
-| :--- | :--- | :--- |
-| `store_memory` | `StoreMemory` | Store text with a significance; low-significance memories are forgotten over time. |
-| `update_memory` | `UpdateMemory` | Revise a memory by id; only fields you set change, significance `0` leaves it unchanged. |
-| `delete_memories` | `DeleteMemories` | Forget memories by id on demand (unknown ids ignored); a scalpel, not a bulk wipe. |
-| `recall_memories` | `RecallMemories` | Fetch by id **and reinforce** — resets the decay clock, raises effective significance. |
-| `search_memories` | `SearchMemories` | Content search (needs the service's OpenSearch index); `reinforce` off by default. |
-| `list_memories` | `GetMemories` | Read-only browse by group/significance; does **not** reinforce. |
-| `create_event` | `StoreEvent` | A named time span memories can be grouped under. |
-| `list_events` | `GetEvents` | Read-only browse of events. |
-| `get_summarisation_candidates` | `GetSummarisationCandidates` | Events the last consolidation cycle flagged as worth condensing. |
+| Tool                           | Maps to                      | Notes                                                                                                                 |
+| :----------------------------- | :--------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
+| `store_memory`                 | `StoreMemory`                | Store text with a significance; low-significance memories are forgotten over time.                                    |
+| `update_memory`                | `UpdateMemory`               | Revise a memory by id; only fields you set change, significance `0` leaves it unchanged.                              |
+| `delete_memories`              | `DeleteMemories`             | Forget memories by id on demand (unknown ids ignored); a scalpel, not a bulk wipe.                                    |
+| `recall_memories`              | `RecallMemories`             | Fetch by id **and reinforce** — resets the decay clock, raises effective significance.                                |
+| `search_memories`              | `SearchMemories`             | Content search (built in on the `sqlite` driver; needs OpenSearch on `postgres`/`mysql`); `reinforce` off by default. |
+| `list_memories`                | `GetMemories`                | Read-only browse by group/significance; does **not** reinforce.                                                       |
+| `create_event`                 | `StoreEvent`                 | A named time span memories can be grouped under.                                                                      |
+| `list_events`                  | `GetEvents`                  | Read-only browse of events.                                                                                           |
+| `get_summarisation_candidates` | `GetSummarisationCandidates` | Events the last consolidation cycle flagged as worth condensing.                                                      |
 
 Memories and events are returned as plain JSON objects (the read-only fields — `id`, `time_stamp`,
 `recall_count`, `is_summary`, and so on — included) so the model can reason about them and feed ids
@@ -94,19 +94,19 @@ stores.
 
 ### Flags
 
-| Flag | Default | Purpose |
-| :--- | :--- | :--- |
-| `-a`, `--address` | `localhost:50051` | Hippocampus gRPC address. |
-| `--transport` | `stdio` | `stdio` or `http`. |
-| `--http-address` | `:8090` | Listen address for `--transport http`. |
-| `--token` | — | Bearer token (or `HIPPOCAMPUS_MCP_TOKEN`). |
-| `--tls` | `false` | Dial over TLS. |
-| `--tls-ca-cert` | — | PEM CA bundle in place of the system pool. |
-| `--tls-cert` / `--tls-key` | — | Client certificate/key for mutual TLS. |
-| `--tls-insecure-skip-verify` | `false` | Skip certificate verification (dev only). |
-| `--call-timeout-seconds` | `30` | Per-tool-call timeout bounding each gRPC request. |
-| `--log-level` | `info` | Logging level (written to stderr). |
-| `--version` | — | Print the version and exit. |
+| Flag                         | Default           | Purpose                                           |
+| :--------------------------- | :---------------- | :------------------------------------------------ |
+| `-a`, `--address`            | `localhost:50051` | Hippocampus gRPC address.                         |
+| `--transport`                | `stdio`           | `stdio` or `http`.                                |
+| `--http-address`             | `:8090`           | Listen address for `--transport http`.            |
+| `--token`                    | —                 | Bearer token (or `HIPPOCAMPUS_MCP_TOKEN`).        |
+| `--tls`                      | `false`           | Dial over TLS.                                    |
+| `--tls-ca-cert`              | —                 | PEM CA bundle in place of the system pool.        |
+| `--tls-cert` / `--tls-key`   | —                 | Client certificate/key for mutual TLS.            |
+| `--tls-insecure-skip-verify` | `false`           | Skip certificate verification (dev only).         |
+| `--call-timeout-seconds`     | `30`              | Per-tool-call timeout bounding each gRPC request. |
+| `--log-level`                | `info`            | Logging level (written to stderr).                |
+| `--version`                  | —                 | Print the version and exit.                       |
 
 ## Host configuration
 

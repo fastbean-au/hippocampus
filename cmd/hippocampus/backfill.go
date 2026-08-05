@@ -22,6 +22,47 @@ type backfillConfig struct {
 	BatchSize        int
 }
 
+// rebuildContentSearch rebuilds the primary store's own content-search index - the --backfill-search
+// mode when OpenSearch is not configured.
+//
+// Unlike backfillSearch below, this one is rarely needed, and saying so is more useful than
+// offering it silently: the store's index is maintained inside the writes themselves and is
+// populated automatically at startup whenever it is found empty on a non-empty store (the upgrade
+// case). What it is for is the one drift this backend can suffer - an index write that failed and
+// was logged rather than failing its memory - which leaves gaps that the empty-index check will
+// never notice.
+//
+// It differs from backfillSearch in one way that matters operationally: it WRITES to the service's
+// own database, so unlike the OpenSearch backfill it must not be run beside a live instance. The
+// database is opened read-write for that reason, and the warning below says so.
+func rebuildContentSearch(storageDriver string, storageDirectory string) {
+	if storageDriver != "sqlite" {
+		log.Fatalf(
+			"--backfill-search has nothing to rebuild: storage.driver '%s' has no built-in content search, and opensearch.enabled is false",
+			storageDriver,
+		)
+	}
+
+	log.Warn("rebuilding the content search index writes to the database - stop the service first if it is running")
+
+	database, err := db.New(storageDirectory)
+	if err != nil {
+		log.Fatalf("failed to open database: %s", err.Error())
+	}
+
+	started := time.Now()
+
+	if err := database.RebuildContentSearch(context.Background()); err != nil {
+		_ = database.Close()
+
+		log.Fatalf("failed to rebuild the content search index: %s", err.Error())
+	}
+
+	log.Infof("content search index rebuilt in %s", time.Since(started).Round(time.Millisecond))
+
+	_ = database.Close()
+}
+
 // backfillSearch rebuilds the content-search index from the primary store: every non-binary
 // memory is re-indexed, keyed by id, so runs are idempotent (each write overwrites the same
 // document). With Reindex set the index is deleted and recreated first, which also removes stale

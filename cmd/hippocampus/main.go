@@ -179,8 +179,13 @@ func execute(args []string) {
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
 	// from the primary store and exits without starting the server (see backfill.go).
 	if viper.GetBool("backfill-search") {
+		// Without OpenSearch the index being rebuilt is the store's own, which is a different job
+		// with different constraints (it writes to the service's own database), so it has its own
+		// entry point rather than a flag inside this one.
 		if !viper.GetBool("opensearch.enabled") {
-			log.Fatal("--backfill-search requires opensearch.enabled to be true in the config")
+			rebuildContentSearch(viper.GetString("storage.driver"), viper.GetString("storage.directory"))
+
+			return
 		}
 
 		backfillSearch(backfillConfig{
@@ -329,13 +334,17 @@ func run(ctx context.Context, version versionInfo) error {
 
 	log.Debug("database initialised")
 
-	// initialise the optional secondary content-search index. Disabled by default: the no-op
-	// index keeps the service behaving exactly as it does without OpenSearch. Construction only
-	// fails on unusable configuration (e.g. a malformed address) - an unreachable cluster must
-	// not prevent startup, since the index is best-effort by design.
+	// initialise the secondary content-search index. OpenSearch when it is configured; otherwise
+	// the store's own index, which needs no configuration and no cluster, so SearchMemories works
+	// out of the box. Only a driver with neither leaves the no-op in place, and that is logged
+	// rather than left to be discovered through an empty search result. Construction of the
+	// OpenSearch client only fails on unusable configuration (e.g. a malformed address) - an
+	// unreachable cluster must not prevent startup, since that index is best-effort by design.
 	searchIndex := search.NewNoop()
 
-	if viper.GetBool("opensearch.enabled") {
+	switch {
+
+	case viper.GetBool("opensearch.enabled"):
 		log.Debug("initialising opensearch")
 
 		idx, err := search.NewOpenSearch(searchConfigFromViper())
@@ -346,6 +355,21 @@ func run(ctx context.Context, version versionInfo) error {
 		searchIndex = idx
 
 		log.Debug("opensearch initialised")
+
+	default:
+		idx, err := search.NewSQL(database)
+		if err != nil {
+			log.Warnf(
+				"content search is unavailable, so SearchMemories will be rejected: %s (enable opensearch.enabled to add it)",
+				err.Error(),
+			)
+
+			break
+		}
+
+		searchIndex = idx
+
+		log.Debug("content search initialised on the primary store")
 	}
 
 	// Consolidation and eviction delete memories inside the db layer, where the RPC-level

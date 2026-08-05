@@ -52,11 +52,16 @@ type Query struct {
 	Limit   int
 }
 
-// Index is the secondary content-search contract. Every mutating method enqueues and returns
-// immediately: it never fails, never blocks the caller, and is applied best-effort - a full
-// queue or an unreachable cluster drops the operation with a warning rather than surfacing an
-// error, since the index is rebuildable and stale entries are harmless (reads are re-verified
-// against the primary store).
+// Index is the secondary content-search contract. Every mutating method returns immediately and
+// reports no error: propagation is best-effort, since the index is rebuildable and stale entries
+// are harmless (reads are re-verified against the primary store).
+//
+// How that is honoured is the implementation's business, and the two real backends honour it
+// differently. OpenSearch enqueues to a worker, so a full queue or an unreachable cluster drops
+// the operation with a warning. SQL maintains its index inside the primary write itself and so
+// implements every mutator as a no-op - there is nothing left to propagate by the time one could
+// be called. Callers must therefore not read a mutator returning as evidence that anything was
+// queued, only that the index has been given whatever it needs.
 type Index interface {
 	// IndexMemory adds or replaces the document for a memory.
 	IndexMemory(doc Doc)

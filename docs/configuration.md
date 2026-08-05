@@ -634,12 +634,57 @@ on-disk WAL file, which has no server-driver counterpart) and is rejected at sta
 also no `Preserve` compaction step on the server drivers — their background reclamation already
 handles dead rows continuously.
 
-### Content search (OpenSearch)
+### Content search
 
-Recall is normally by id, event, or time/significance range — memory bodies are opaque to the
-service. Enabling the optional OpenSearch integration adds one more read path: `SearchMemories`
-(`POST /v1/memories/search`) finds memories whose body matches a query, most relevant first,
-optionally restricted to one event and/or one `group` label.
+Recall is normally by id, event, or time/significance range. `SearchMemories`
+(`POST /v1/memories/search`) adds one more read path: it finds memories whose body matches a query,
+most relevant first, optionally restricted to one event and/or one `group` label.
+
+There are two backends, and **you get one without configuring anything**:
+
+| Backend     | When it is used                          | Drivers       | Notes                                                                            |
+| ----------- | ---------------------------------------- | ------------- | -------------------------------------------------------------------------------- |
+| Store index | `opensearch.enabled` false (the default) | `sqlite` only | An FTS5 index inside the same database file. No cluster, no configuration.       |
+| OpenSearch  | `opensearch.enabled` true                | all           | A separate cluster. Scales further and is the only option on `postgres`/`mysql`. |
+
+On the `postgres` and `mysql` drivers with OpenSearch disabled there is no content search at all,
+and `SearchMemories` returns `FAILED_PRECONDITION` saying so. A log line at startup reports which
+backend was selected.
+
+Both backends are strictly **secondary**: the primary store remains the system of record, results
+are always re-read from it, and binary memories (`is_binary`) are never indexed by either.
+
+#### The store's own index (SQLite)
+
+The default. Ranking is FTS5's bm25, and matching is an OR over the query's words — the same
+semantics as the OpenSearch backend's, so moving between the two changes scale, not results.
+
+Query text is treated as **words, not as a query language**: FTS5 operators (`AND`, `NEAR`, `*`,
+`column:`) and quotes are neutralised rather than honoured, so no input is a syntax error and none
+can reach into the query's structure. Ranking still favours memories matching more of the words.
+
+What differs from OpenSearch, and mostly in this backend's favour:
+
+- **It cannot go stale.** The index is maintained inside the write itself, not by an asynchronous
+  worker, so there is no propagation queue to overflow and no reconciliation sweep to wait for. A
+  memory is findable as soon as `StoreMemory` returns.
+- **Deletes cannot drift.** They are handled by a database trigger, so every path that removes a
+  memory — consolidation, eviction, purge, summary replacement — is covered by construction.
+- **No second copy of your content.** The index is contentless: it holds the inverted index and
+  not the bodies, so unlike an OpenSearch deployment it neither duplicates your text nor gives
+  back the storage [body compression](#body-compression) saves.
+- **Upgrades populate it automatically.** A database written before this existed gains the index
+  on the next startup, and it is filled from the memories already stored — no backfill step.
+- It is bounded by the single SQLite instance, where OpenSearch scales independently and serves
+  the `postgres`/`mysql` deployments as well.
+
+The one drift it can suffer is an index write that failed and was logged rather than failing its
+memory, leaving a memory stored but unfindable.
+[`--backfill-search`](#backfill-and-reindex) rebuilds the index to repair that; with no OpenSearch
+configured, that flag rebuilds this index instead. It **writes to the database**, so stop the
+service first.
+
+#### OpenSearch
 
 **Enabling on a store that already has data:** the index starts empty and nothing already stored is
 retroactively indexed, so existing memories stay unsearchable until they are re-indexed. Run a
@@ -703,8 +748,9 @@ for every existence, consolidation, and recall decision:
   resetting their decay clocks and raising their effective significance, exactly as
   `RecallMemories` does.
 - Binary memories (`is_binary`) are never indexed; their bodies are opaque.
-- With `opensearch.enabled` false (the default) the service behaves exactly as before, and
-  `SearchMemories` fails with `FAILED_PRECONDITION`.
+- With `opensearch.enabled` false (the default) the `sqlite` driver falls back to
+  [the store's own index](#the-stores-own-index-sqlite); `postgres` and `mysql` have no content
+  search, and `SearchMemories` fails with `FAILED_PRECONDITION`.
 
 The index is fully rebuildable from the primary store (re-storing memories re-indexes them), so
 losing it costs search availability, nothing more.
@@ -789,6 +835,14 @@ and the Postgres open skips the single-instance advisory lock (it only reads). T
 a live run is that a memory deleted by the service mid-backfill can be re-indexed after its
 deletion propagated, leaving a stale document — harmless for reads (results are re-verified
 against the primary store) and cleared by the next `--reindex` run.
+
+**Without OpenSearch**, the same flag rebuilds
+[the store's own index](#the-stores-own-index-sqlite) instead, and behaves differently in two ways
+that matter. It is rarely needed — that index is populated automatically at startup and maintained
+inside every write — so reach for it only when a memory is stored but not findable, which means an
+index write failed and was logged. And it **writes to the service's own database**, so unlike the
+OpenSearch backfill it must not be run beside a live instance: stop the service first. `--reindex`
+and `--backfill-batch-size` do not apply; the rebuild always clears and repopulates.
 
 ### Summarisation (embedded LLM / Ollama)
 

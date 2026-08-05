@@ -191,6 +191,13 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 		return 0, err
 	}
 
+	// Reindex rather than index: an import is an upsert, so a memory being imported over one that
+	// is already here already has an index entry, and inserting a second for the same rowid would
+	// leave it matching both its old body and its new one.
+	for _, memory := range memories {
+		_ = d.reindexMemoryContent(ctx, memory.Id, memory.Body, memory.IsBinary)
+	}
+
 	return len(memories), nil
 }
 

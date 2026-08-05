@@ -311,39 +311,79 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   and `hippocampus.swagger.json` (the OpenAPI description, embedded via `swagger.go`).
   `contract/google/api/{annotations,http}.proto`
   are vendored copies of the googleapis definitions the annotations depend on.
-- `search/` — the optional OpenSearch secondary content-search index (`opensearch.enabled`,
-  off by default; `search.Index` interface with no-op and `opensearch-go/v4` implementations).
-  Connection security: basic auth (`opensearch.username`/`password`, the password injectable via
-  `HIPPOCAMPUS_OPENSEARCH_PASSWORD`) plus an optional `opensearch.tls` block for HTTPS clusters
-  (`caCertFile` to trust a private/self-signed CA, `certFile`/`keyFile` for mutual TLS,
-  `insecureSkipVerify` as a dev-only escape hatch) — `TLSConfig.build`/`buildTransport` in
-  `search/opensearch.go` turn it into a cloned default transport with a `*tls.Config`, and a
-  malformed block fails startup. Strictly secondary: all mutations propagate primary→index
-  asynchronously (bounded queue, one
-  FIFO worker — ordering matters for summarisation's delete-then-index; overflow drops, never
-  blocks), and `SearchMemories` results are always re-read from the primary store so stale index
-  entries drop out. The worker retries a transient cluster failure (bounded attempts with jittered
-  backoff in `applyWithRetry`) before dropping an operation; its four timing constants
-  (`applyTimeout`, `applyMaxAttempts`, `applyRetryBaseBackoff`, `closeDrainTimeout`) are package
-  defaults, each overridable per instance via the matching `opensearch.apply*`/`closeDrain*`
-  `search.Config` field (0 → the default), resolved onto the `OpenSearch` struct at construction.
-  Consolidation/eviction deletes reach it
-  via `db.SetMemoryDeleteObserver` (on the concrete `*db.DB`, not `db.Store`); RPC-layer hooks cover
-  the rest. Binary memories are never indexed. Because propagation is best-effort, the index can
-  still go sparse, so two recovery paths exist. The self-healing one is automatic: the consolidating
-  instance runs a periodic reconciliation sweep (`hippocampus/reconcile.go`, gated on
-  `consolidation.enabled` + a positive `opensearch.reconcileIntervalSeconds`, started/stopped alongside
-  `autoSleep`) that pages the primary store via `db.GetMemoriesPage` and re-indexes non-binary
-  memories through the normal async `IndexMemory`, healing missing documents (idempotent; heals
-  missing docs only — stale-doc removal stays a `--reindex` job). The manual one is the
-  `--backfill-search` CLI mode (`backfill.go`), which rebuilds it from the primary store via synchronous
-  `IndexMemorySync`/`RecreateIndex` calls that bypass the queue (safe: the tool has no worker or
-  live writes of its own) and `db.GetIndexableMemoriesPage` keyset pagination — with `--reindex`
-  it recreates the index first to clear stale documents. Each driver opens read-only so the tool
-  can run beside a live service: SQLite via `db.NewSQLiteReadOnly` (`mode=ro`, no `initSchema`,
-  `Preserve` a no-op — so it never writes DDL or checkpoints the database the service owns),
-  Postgres/MySQL via `db.NewPostgresReadOnly`/`NewMySQLReadOnly` (skipping the instance lock). Integration tests skip unless `HIPPOCAMPUS_TEST_OPENSEARCH_URL` is set;
-  `deploy/compose/docker-compose.opensearch.yaml` runs the full stack.
+- `search/` — the secondary content-search index (`search.Index` interface with three
+  implementations: no-op, `SQL`, and `opensearch-go/v4`). **Two backends, selected in main.go:**
+  OpenSearch when `opensearch.enabled`, otherwise `search.NewSQL` over the primary store — so
+  `SearchMemories` works out of the box on the default (SQLite) deployment instead of failing
+  closed, which is what it did while OpenSearch was the only backend. Only a driver with neither
+  (`postgres`/`mysql` without OpenSearch) leaves the no-op in place, logged at startup and
+  surfaced as `FailedPrecondition`.
+  - `search/sql.go` — the store-backed backend. A thin adapter: `Search` delegates to
+    `db.SearchMemoryIds`, and **every mutator is deliberately a no-op**, because the index is
+    maintained inside the primary write rather than propagated to afterwards (wiring them up would
+    double-index). It reaches the store through the `ContentStore` interface declared in the
+    package, so `db` is not imported for its concrete type and the adapter is fakeable. `Rebuild`
+    is a concrete method, not part of `Index`, like OpenSearch's `RecreateIndex`/`IndexMemorySync`.
+    The `Index` doc comment was amended when this landed: async best-effort propagation is the
+    OpenSearch implementation's _strategy_, not the contract, which promises only that mutators
+    return without error.
+  - The actual index lives in `db/search.go` (SQLite only — `ContentSearchAvailable` gates it):
+    an **FTS5 virtual table**, available with no cgo and no new dependency because
+    `modernc.org/sqlite` is built with `SQLITE_ENABLE_FTS5`. It is `content=''` +
+    `contentless_delete=1`, i.e. **contentless** — it holds the inverted index and not a second
+    copy of the bodies. That is load-bearing twice over: storing the text again would give back
+    much of what body compression exists to save, and the obvious alternative (an external-content
+    table over `memories.body`) is impossible since that column can hold a gzip stream. Every
+    write therefore feeds it the **plain** body from inside the storage boundary, before
+    `compressBody`. The FTS rowid is `memories.rowid`, which is what lets **deletes be handled by
+    a single `AFTER DELETE` trigger** on `memories` keyed on `OLD.rowid` — covering consolidation,
+    eviction, `DeleteMemories`, `DeleteEventMemories`, `Purge`, `Clear`, and import-replace with
+    no call-site hooks and no possibility of drift. Inserts/updates are hooked explicitly in
+    `CreateMemory`, `UpdateMemory`, `ReplaceMemoriesWithSummary`, and `ImportMemories` (the last
+    via `reindexMemoryContent`, since an import is an upsert and a plain insert would leave a row
+    matching both its old and new body); those are synchronous but **not** transactional, so a
+    failure is logged and never fails the write. `initContentSearch` populates the index at
+    startup when it is empty on a non-empty store, which is what makes an upgrade need no manual
+    step. Query text is sanitised by `ftsMatchExpression` into quoted tokens joined by `OR` —
+    never passed through, since FTS5's MATCH is a query language whose operators would otherwise
+    be a syntax error or a way to reach past the caller's intent; `OR` is chosen to match the
+    OpenSearch backend's `match` semantics so the two agree on which memories match, with bm25
+    ranking favouring those matching more tokens.
+  - `--backfill-search` without OpenSearch routes to `rebuildContentSearch` in `backfill.go`, a
+    separate entry point because it **writes to the service's own database** (so it must not run
+    beside a live instance, unlike the read-only OpenSearch backfill).
+  - The OpenSearch backend (`opensearch.enabled`, off by default) is unchanged by any of the above.
+    Connection security: basic auth (`opensearch.username`/`password`, the password injectable via
+    `HIPPOCAMPUS_OPENSEARCH_PASSWORD`) plus an optional `opensearch.tls` block for HTTPS clusters
+    (`caCertFile` to trust a private/self-signed CA, `certFile`/`keyFile` for mutual TLS,
+    `insecureSkipVerify` as a dev-only escape hatch) — `TLSConfig.build`/`buildTransport` in
+    `search/opensearch.go` turn it into a cloned default transport with a `*tls.Config`, and a
+    malformed block fails startup. Strictly secondary: all mutations propagate primary→index
+    asynchronously (bounded queue, one
+    FIFO worker — ordering matters for summarisation's delete-then-index; overflow drops, never
+    blocks), and `SearchMemories` results are always re-read from the primary store so stale index
+    entries drop out. The worker retries a transient cluster failure (bounded attempts with jittered
+    backoff in `applyWithRetry`) before dropping an operation; its four timing constants
+    (`applyTimeout`, `applyMaxAttempts`, `applyRetryBaseBackoff`, `closeDrainTimeout`) are package
+    defaults, each overridable per instance via the matching `opensearch.apply*`/`closeDrain*`
+    `search.Config` field (0 → the default), resolved onto the `OpenSearch` struct at construction.
+    Consolidation/eviction deletes reach it
+    via `db.SetMemoryDeleteObserver` (on the concrete `*db.DB`, not `db.Store`); RPC-layer hooks cover
+    the rest. Binary memories are never indexed. Because propagation is best-effort, the index can
+    still go sparse, so two recovery paths exist. The self-healing one is automatic: the consolidating
+    instance runs a periodic reconciliation sweep (`hippocampus/reconcile.go`, gated on
+    `consolidation.enabled` + a positive `opensearch.reconcileIntervalSeconds`, started/stopped alongside
+    `autoSleep`) that pages the primary store via `db.GetMemoriesPage` and re-indexes non-binary
+    memories through the normal async `IndexMemory`, healing missing documents (idempotent; heals
+    missing docs only — stale-doc removal stays a `--reindex` job). The manual one is the
+    `--backfill-search` CLI mode (`backfill.go`), which rebuilds it from the primary store via synchronous
+    `IndexMemorySync`/`RecreateIndex` calls that bypass the queue (safe: the tool has no worker or
+    live writes of its own) and `db.GetIndexableMemoriesPage` keyset pagination — with `--reindex`
+    it recreates the index first to clear stale documents. Each driver opens read-only so the tool
+    can run beside a live service: SQLite via `db.NewSQLiteReadOnly` (`mode=ro`, no `initSchema`,
+    `Preserve` a no-op — so it never writes DDL or checkpoints the database the service owns),
+    Postgres/MySQL via `db.NewPostgresReadOnly`/`NewMySQLReadOnly` (skipping the instance lock). Integration tests skip unless `HIPPOCAMPUS_TEST_OPENSEARCH_URL` is set;
+    `deploy/compose/docker-compose.opensearch.yaml` runs the full stack.
 - `summarise/` — the optional embedded-LLM summariser (`ollama.enabled`, off by default;
   `summarise.Summariser` interface with a no-op and an `Ollama` implementation). The `Ollama`
   impl is a small hand-rolled HTTP client to Ollama's `POST /api/generate` (`stream:false`, no new

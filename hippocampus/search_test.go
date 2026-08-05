@@ -361,3 +361,131 @@ func TestUpdateMemory_ReindexesNonBinary(t *testing.T) {
 		t.Errorf("expected the re-indexed doc to carry the updated body, got %+v", idx.docs)
 	}
 }
+
+// TestSearchMemories_WorksOnTheSQLBackend is the end-to-end check that the default deployment can
+// search at all: a SQLite store with no OpenSearch anywhere, driven through the RPC exactly as a
+// client would. Every other test in this file drives a fake index, so this is the one that would
+// catch the wiring between the RPC, the search adapter, and the store's own index coming apart.
+func TestSearchMemories_WorksOnTheSQLBackend(t *testing.T) {
+	ctx := context.Background()
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("failed to create test DB: %s", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	idx, err := search.NewSQL(database)
+	if err != nil {
+		t.Fatalf("search.NewSQL: %s", err)
+	}
+
+	s := &Server{db: database, search: idx}
+
+	bodies := map[string]string{
+		"m1": "the deployment failed on the staging cluster",
+		"m2": "lunch was quite good today",
+	}
+
+	for id, body := range bodies {
+		memory := types.Memory{Id: id, TimeStamp: 100, Significance: 5, Body: body}
+
+		if _, err := s.db.CreateMemory(ctx, memory); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "deployment"})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 1 || res.Memories[0].Id != "m1" {
+		t.Fatalf("SearchMemories returned %v, want just m1", res.Memories)
+	}
+
+	// The body must come back through the primary store's decompressing scanner, not from the
+	// index (which holds no body at all).
+	if res.Memories[0].Body != bodies["m1"] {
+		t.Errorf("returned body %q, want %q", res.Memories[0].Body, bodies["m1"])
+	}
+
+	if res.TotalCount != 1 {
+		t.Errorf("total_count %d, want 1", res.TotalCount)
+	}
+}
+
+// A reinforcing search must still reinforce on this backend: the recall goes through the primary
+// store, so nothing about it is index-specific, but it is the combination that a caller uses.
+func TestSearchMemories_ReinforcesOnTheSQLBackend(t *testing.T) {
+	ctx := context.Background()
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("failed to create test DB: %s", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	idx, err := search.NewSQL(database)
+	if err != nil {
+		t.Fatalf("search.NewSQL: %s", err)
+	}
+
+	s := &Server{db: database, search: idx}
+
+	memory := types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "the deployment failed"}
+	if _, err := s.db.CreateMemory(ctx, memory); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "deployment", Reinforce: true})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 1 {
+		t.Fatalf("SearchMemories returned %d memories, want 1", len(res.Memories))
+	}
+
+	if res.Memories[0].RecallCount != 1 {
+		t.Errorf("recall_count %d after a reinforcing search, want 1", res.Memories[0].RecallCount)
+	}
+}
+
+// A memory deleted by consolidation must stop being findable, and on this backend that is the
+// delete trigger's job rather than the delete observer's - so it holds even though nothing wires
+// an observer here.
+func TestSearchMemories_ConsolidationRemovesFromTheSQLBackend(t *testing.T) {
+	ctx := context.Background()
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("failed to create test DB: %s", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	idx, err := search.NewSQL(database)
+	if err != nil {
+		t.Fatalf("search.NewSQL: %s", err)
+	}
+
+	s := &Server{db: database, search: idx}
+
+	memory := types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "the deployment failed"}
+	if _, err := s.db.CreateMemory(ctx, memory); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if _, err := s.db.DeleteMemories(ctx, []string{"m1"}); err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "deployment"})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 0 {
+		t.Errorf("a deleted memory is still findable: %v", res.Memories)
+	}
+}
