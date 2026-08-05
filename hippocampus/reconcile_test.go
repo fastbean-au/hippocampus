@@ -42,7 +42,7 @@ func (*recordingIndex) DeleteMemories(ids []string)                     {}
 func (*recordingIndex) DeleteByEventId(eventId string)                  {}
 func (*recordingIndex) SetEventId(fromEventId string, toEventId string) {}
 func (*recordingIndex) Purge()                                          {}
-func (*recordingIndex) Search(ctx context.Context, q search.Query) ([]string, error) {
+func (*recordingIndex) Search(ctx context.Context, q search.Query) ([]search.Hit, error) {
 	return nil, nil
 }
 func (*recordingIndex) Enabled() bool { return true }

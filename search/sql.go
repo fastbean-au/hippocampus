@@ -12,9 +12,8 @@ import (
 // here as an interface rather than taking *db.DB keeps the SQL backend testable with a fake, the
 // same way db.Server inverts the dependency in the other direction.
 type ContentStore interface {
-	// SearchMemoryIds returns the ids of memories whose body matches the query, most relevant
-	// first.
-	SearchMemoryIds(ctx context.Context, query db.ContentQuery) ([]string, error)
+	// SearchMemoryHits returns the memories whose body matches the query, most relevant first.
+	SearchMemoryHits(ctx context.Context, query db.ContentQuery) ([]db.ContentHit, error)
 
 	// ContentSearchAvailable reports whether this store can answer content searches at all.
 	ContentSearchAvailable() bool
@@ -67,17 +66,29 @@ func (s *SQL) SetEventId(fromEventId string, toEventId string) {}
 
 func (s *SQL) Purge() {}
 
-// Search returns the ids of matching memories, most relevant first, for the caller to re-read from
-// the primary store.
-func (s *SQL) Search(ctx context.Context, query Query) ([]string, error) {
+// Search returns the matching memories, most relevant first, for the caller to re-read from the
+// primary store. The store already flips bm25's sign, so the scores arrive in Hit's
+// higher-is-better convention and pass straight through.
+func (s *SQL) Search(ctx context.Context, query Query) ([]Hit, error) {
 	log.Trace("func() search.SQL.Search")
 
-	return s.store.SearchMemoryIds(ctx, db.ContentQuery{
+	found, err := s.store.SearchMemoryHits(ctx, db.ContentQuery{
 		Text:    query.Text,
 		EventId: query.EventId,
 		Group:   query.Group,
 		Limit:   query.Limit,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	hits := make([]Hit, 0, len(found))
+
+	for _, hit := range found {
+		hits = append(hits, Hit{Id: hit.Id, Score: hit.Score})
+	}
+
+	return hits, nil
 }
 
 // Rebuild empties and repopulates the index from the primary store - what --backfill-search runs

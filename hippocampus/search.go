@@ -57,18 +57,26 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 		limit = defaultSearchLimit
 	}
 
-	ids, err := idx.Search(ctx, search.Query{
+	// When ranking is active the backend is asked for more candidates than the caller wanted, so
+	// significance and recall have room to promote a memory into the returned page; rankMemories
+	// truncates back to limit afterwards.
+	hits, err := idx.Search(ctx, search.Query{
 		Text:    in.GetQuery(),
 		EventId: in.GetEventId(),
 		Group:   in.GetGroup(),
-		Limit:   limit,
+		Limit:   s.ranking.candidateLimit(limit),
 	})
 	if err != nil {
 		return &res, mapError(err)
 	}
 
-	if len(ids) == 0 {
+	if len(hits) == 0 {
 		return &res, nil
+	}
+
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.Id)
 	}
 
 	// A reinforcing search is only honoured when the caller may reinforce: a reader for whom
@@ -76,45 +84,81 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 	// RecallMemories.
 	reinforce := in.GetReinforce() && s.mayReinforce(ctx)
 
-	// Both fetch paths return only rows the primary store still holds, so stale index entries
-	// drop out here without any special handling.
-	var memories *[]types.Memory
-
-	if reinforce {
-		memories, err = s.db.RecallMemories(ctx, ids)
-	} else {
-		memories, err = s.db.GetMemoriesByIds(ctx, ids)
-	}
-
+	// Read the candidates first, without reinforcing any of them. Ranking needs each candidate's
+	// significance and recall count to decide the order, and those have to be read before the
+	// winners are known - so a reinforcing search cannot simply recall what it fetched. Recalling
+	// the candidate set would reset the decay clock on memories the caller was never shown, which
+	// is a real change to what the store forgets, made on their behalf and without their knowledge.
+	// The rows the primary store no longer holds drop out here, so stale index entries need no
+	// special handling.
+	memories, err := s.db.GetMemoriesByIds(ctx, ids)
 	if err != nil {
 		return &res, mapError(err)
 	}
 
-	tel.memoriesSearched.Add(ctx, int64(len(*memories)), metric.WithAttributes(attribute.Bool("reinforce", reinforce)))
+	// Order by relevance blended with significance and recall, and truncate to what the caller
+	// asked for.
+	ranked := rankMemories(hits, *memories, s.ranking, limit)
+
+	// Only now, against exactly the memories being returned, is reinforcement applied. The recall
+	// re-reads them, so the response carries their updated recall state rather than the pre-recall
+	// snapshot fetched above.
+	if reinforce && len(ranked) > 0 {
+		ranked, err = s.reinforceRanked(ctx, ranked)
+		if err != nil {
+			return &res, mapError(err)
+		}
+	}
+
+	tel.memoriesSearched.Add(ctx, int64(len(ranked)), metric.WithAttributes(attribute.Bool("reinforce", reinforce)))
 
 	if reinforce {
-		tel.memoriesRecalled.Add(ctx, int64(len(*memories)))
+		tel.memoriesRecalled.Add(ctx, int64(len(ranked)))
 	}
 
-	// Return results in the index's relevance order, not the fetch order.
-	byId := make(map[string]types.Memory, len(*memories))
-	for _, memory := range *memories {
-		byId[memory.Id] = memory
-	}
+	ms := make([]*contract.Memory, 0, len(ranked))
 
-	ms := make([]*contract.Memory, 0, len(*memories))
-
-	for _, id := range ids {
-		m, ok := byId[id]
-		if !ok {
-			continue
-		}
-
-		ms = append(ms, m.ToProto())
+	for _, memory := range ranked {
+		ms = append(ms, memory.ToProto())
 	}
 
 	res.Memories = ms
 	res.TotalCount = int32(len(ms))
 
 	return &res, nil
+}
+
+// reinforceRanked recalls exactly the memories being returned, and rebuilds the result in the same
+// order with the recalled rows, so the caller sees the recall state their own call just produced.
+//
+// A memory that vanished between the ranking read and the recall is dropped rather than returned
+// with a stale body: RecallMemories only returns what it actually reinforced.
+func (s *Server) reinforceRanked(ctx context.Context, ranked []types.Memory) ([]types.Memory, error) {
+	ids := make([]string, 0, len(ranked))
+	for _, memory := range ranked {
+		ids = append(ids, memory.Id)
+	}
+
+	recalled, err := s.db.RecallMemories(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	byId := make(map[string]types.Memory, len(*recalled))
+	for _, memory := range *recalled {
+		byId[memory.Id] = memory
+	}
+
+	out := make([]types.Memory, 0, len(ranked))
+
+	for _, memory := range ranked {
+		updated, ok := byId[memory.Id]
+		if !ok {
+			continue
+		}
+
+		out = append(out, updated)
+	}
+
+	return out, nil
 }

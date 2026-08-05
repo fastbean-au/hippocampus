@@ -168,6 +168,15 @@ func execute(args []string) {
 	viper.SetDefault("storage.compression.enabled", true)
 	viper.SetDefault("storage.compression.minBytes", 512)
 	viper.SetDefault("shutdown.timeoutSeconds", 10)
+	// Search result ranking. Both default to a mild influence rather than off: a store that knows
+	// how significant each memory is, and how often it has been recalled, should use that when
+	// deciding what to show first - text relevance alone is what a search engine without those
+	// signals would do. Mild, because relevance still has to lead: at these weights significance
+	// and recall reorder near-equal matches rather than override a clearly better one. Set both to
+	// 0 for pure relevance order.
+	viper.SetDefault("search.significanceWeight", 0.3)
+	viper.SetDefault("search.recallWeight", 0.2)
+
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
 	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)

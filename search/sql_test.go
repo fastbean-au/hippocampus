@@ -12,7 +12,7 @@ import (
 // what it was asked for so the mapping from Query to db.ContentQuery can be asserted.
 type fakeContentStore struct {
 	available bool
-	ids       []string
+	hits      []db.ContentHit
 	err       error
 
 	gotQuery   db.ContentQuery
@@ -20,10 +20,10 @@ type fakeContentStore struct {
 	rebuildErr error
 }
 
-func (f *fakeContentStore) SearchMemoryIds(ctx context.Context, query db.ContentQuery) ([]string, error) {
+func (f *fakeContentStore) SearchMemoryHits(ctx context.Context, query db.ContentQuery) ([]db.ContentHit, error) {
 	f.gotQuery = query
 
-	return f.ids, f.err
+	return f.hits, f.err
 }
 
 func (f *fakeContentStore) ContentSearchAvailable() bool {
@@ -52,7 +52,10 @@ func TestNewSQLRequiresAnAvailableStore(t *testing.T) {
 }
 
 func TestSQLSearchPassesTheQueryThrough(t *testing.T) {
-	store := &fakeContentStore{available: true, ids: []string{"m1", "m2"}}
+	store := &fakeContentStore{
+		available: true,
+		hits:      []db.ContentHit{{Id: "m1", Score: 2.5}, {Id: "m2", Score: 1.25}},
+	}
 
 	idx, err := NewSQL(store)
 	if err != nil {
@@ -61,13 +64,19 @@ func TestSQLSearchPassesTheQueryThrough(t *testing.T) {
 
 	query := Query{Text: "deployment", EventId: "e1", Group: "ops", Limit: 7}
 
-	ids, err := idx.Search(context.Background(), query)
+	hits, err := idx.Search(context.Background(), query)
 	if err != nil {
 		t.Fatalf("Search: %s", err)
 	}
 
-	if len(ids) != 2 || ids[0] != "m1" {
-		t.Errorf("Search returned %v, want [m1 m2]", ids)
+	if len(hits) != 2 || hits[0].Id != "m1" || hits[1].Id != "m2" {
+		t.Errorf("Search returned %v, want [m1 m2]", hits)
+	}
+
+	// The store has already put the score into Hit's higher-is-better convention, so the adapter
+	// must pass it through untouched rather than flip it a second time.
+	if hits[0].Score != 2.5 || hits[1].Score != 1.25 {
+		t.Errorf("Search returned scores %v/%v, want 2.5/1.25", hits[0].Score, hits[1].Score)
 	}
 
 	want := db.ContentQuery{Text: "deployment", EventId: "e1", Group: "ops", Limit: 7}

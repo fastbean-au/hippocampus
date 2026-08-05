@@ -174,6 +174,11 @@ type Server struct {
 	// (auth disabled) recall reinforces as it always has. See mayReinforce.
 	readerRecallReinforces bool
 
+	// ranking (search.significanceWeight / search.recallWeight) blends the store's own view of a
+	// memory's worth into SearchMemories' result order. The zero value leaves the search backend's
+	// relevance order untouched, which is how a Server constructed directly in a test behaves.
+	ranking rankingWeights
+
 	// consolidationEnabled reflects consolidation.enabled: true (the default) means this instance
 	// runs the sleep cycle - the timed loop, the WAL trigger, and the manual Sleep RPC. False makes
 	// it a read/write replica in a horizontally scaled deployment: New starts no sleep
@@ -308,6 +313,10 @@ func New(db db.Store, searchIndex search.Index, objects archive.ObjectStore, sum
 		minimumMemorySignificance: viper.GetInt32("memory.minimumSignificance"),
 		maxMemoryBodyLength:       viper.GetInt("memory.limit.sizeBytes"),
 		readerRecallReinforces:    viper.GetBool("auth.readerRecallReinforces"),
+		ranking: rankingWeights{
+			significance: viper.GetFloat64("search.significanceWeight"),
+			recall:       viper.GetFloat64("search.recallWeight"),
+		},
 		consolidation: Consolidation{
 			defaultEventSignificanceValue:      viper.GetInt32("consolidation.defaultEventSignificanceValue"),
 			defaultEventSignificancePercentile: viper.GetFloat64("consolidation.defaultEventSignificancePercentile"),

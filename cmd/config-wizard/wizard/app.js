@@ -928,9 +928,32 @@ const STEPS = [
     title: "Search & summaries",
     cards: [
       {
+        title: "Search ranking",
+        blurb:
+          "How much the store's own view of a memory counts towards what a search returns first. Text relevance always leads; these decide how much significance and recall get to reorder results that matched about equally well. Set both to 0 for pure relevance order.",
+        fields: [
+          {
+            key: "search.significanceWeight",
+            label: "Significance weight",
+            type: "float",
+            def: 0.3,
+            svc: 0.3,
+            help: "How much a memory's significance promotes it among comparable matches.",
+          },
+          {
+            key: "search.recallWeight",
+            label: "Recall weight",
+            type: "float",
+            def: 0.2,
+            svc: 0.2,
+            help: "How much a memory being recalled often promotes it. Recall counts are damped, so the difference between never and once counts for more than between 500 and 1000.",
+          },
+        ],
+      },
+      {
         title: "Content search (OpenSearch)",
         blurb:
-          "An optional secondary index over memory bodies. It is strictly secondary: results are always re-read from the primary store, so a stale entry drops out rather than being served.",
+          "A secondary index over memory bodies. On the SQLite driver content search is built in and needs none of this; enable OpenSearch to scale it out, or to get content search at all on PostgreSQL/MySQL. Either way it is strictly secondary: results are always re-read from the primary store, so a stale entry drops out rather than being served.",
         fields: [
           {
             key: "opensearch.enabled",

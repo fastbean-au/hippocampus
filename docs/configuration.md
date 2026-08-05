@@ -654,6 +654,45 @@ backend was selected.
 Both backends are strictly **secondary**: the primary store remains the system of record, results
 are always re-read from it, and binary memories (`is_binary`) are never indexed by either.
 
+#### Ranking
+
+A search engine ranks by how well the text matched. This store knows two things a search engine
+does not — how significant each memory is, and how often it has been recalled — and by default it
+uses them, so that among memories that matched about equally well the ones the store rates higher
+come back first.
+
+```json
+"search": {
+    "significanceWeight": 0.3,
+    "recallWeight": 0.2
+}
+```
+
+- `search.significanceWeight` (default **0.3**) — how much a memory's significance promotes it.
+- `search.recallWeight` (default **0.2**) — how much being recalled often promotes it. Recall
+  counts are damped before use, so the difference between never recalled and recalled twice counts
+  for far more than the difference between 500 and 1000 — which matches how recall counts actually
+  distribute.
+- Set **both to 0** for pure text-relevance order.
+
+**Relevance still leads.** The three signals are scaled against the strongest in the result set and
+combined, with relevance weighted 1 — so at the default weights significance and recall reorder
+near-equal matches rather than displace a clearly better one. Raising a weight above 1 inverts
+that; a negative weight deliberately demotes.
+
+The ranking is applied by the service, above whichever backend served the query, so both backends
+order results identically and significance and recall are read from the primary store at query
+time — always current, never a stale copy propagated into an index.
+
+One consequence is worth knowing: the backend applies the limit, so re-ranking only sees the
+candidates the backend already chose. The service asks for several times the requested number when
+ranking is active, giving a significant memory ranked just outside your page room to be promoted
+into it, but a memory the text match ranked far down cannot be rescued by significance alone.
+
+A **reinforcing** search (`reinforce: true`) reinforces exactly the memories it returns, never the
+wider candidate set — the extra candidates are read but never recalled, so searching does not reset
+the decay clock on memories you were not shown.
+
 #### The store's own index (SQLite)
 
 The default. Ranking is FTS5's bm25, and matching is an OR over the query's words — the same

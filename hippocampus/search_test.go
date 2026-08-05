@@ -26,9 +26,14 @@ func testEvent(id string) types.Event {
 // fakeIndex implements search.Index, recording every call so tests can assert the write- and
 // delete-through hooks fire (and in what order).
 type fakeIndex struct {
-	enabled   bool
-	searchIds []string
-	searchErr error
+	enabled    bool
+	searchIds  []string
+	searchHits []search.Hit
+	searchErr  error
+
+	// searchLimit records the limit the index was actually asked for, so a test can assert on the
+	// over-fetching the re-ranking does.
+	searchLimit int
 
 	calls []string
 	docs  []search.Doc
@@ -60,10 +65,23 @@ func (f *fakeIndex) Purge() {
 	f.calls = append(f.calls, "purge")
 }
 
-func (f *fakeIndex) Search(ctx context.Context, query search.Query) ([]string, error) {
+// Search returns searchHits when a test set explicit scores, and otherwise synthesises strictly
+// decreasing scores from searchIds - so a test that only cares about ordering can keep expressing
+// it as a list of ids, and gets the relevance order it wrote.
+func (f *fakeIndex) Search(ctx context.Context, query search.Query) ([]search.Hit, error) {
 	f.calls = append(f.calls, "search:"+query.Text)
+	f.searchLimit = query.Limit
 
-	return f.searchIds, f.searchErr
+	if f.searchHits != nil {
+		return f.searchHits, f.searchErr
+	}
+
+	hits := make([]search.Hit, 0, len(f.searchIds))
+	for i, id := range f.searchIds {
+		hits = append(hits, search.Hit{Id: id, Score: float64(len(f.searchIds) - i)})
+	}
+
+	return hits, f.searchErr
 }
 
 func (f *fakeIndex) Enabled() bool {
@@ -488,4 +506,193 @@ func TestSearchMemories_ConsolidationRemovesFromTheSQLBackend(t *testing.T) {
 	if len(res.Memories) != 0 {
 		t.Errorf("a deleted memory is still findable: %v", res.Memories)
 	}
+}
+
+// TestSearchMemories_RankingReordersResults drives the blend through the RPC: two near-equal
+// textual matches, where the more significant memory should come out first.
+func TestSearchMemories_RankingReordersResults(t *testing.T) {
+	ctx := context.Background()
+
+	idx := &fakeIndex{
+		enabled: true,
+		searchHits: []search.Hit{
+			{Id: "ordinary", Score: 1.01},
+			{Id: "important", Score: 1.0},
+		},
+	}
+
+	s := newSearchTestServer(t, idx)
+	s.ranking = rankingWeights{significance: 0.3, recall: 0.2}
+
+	for id, significance := range map[string]int32{"ordinary": 1, "important": 20} {
+		memory := types.Memory{Id: id, TimeStamp: 100, Significance: significance, Body: "hello world"}
+
+		if _, err := s.db.CreateMemory(ctx, memory); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "hello"})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 2 || res.Memories[0].Id != "important" {
+		t.Errorf("got %v, want the significant memory first", memoryIds(res.Memories))
+	}
+}
+
+// With ranking off the backend's order must reach the caller untouched, and the index must be
+// asked for exactly the caller's limit rather than an over-fetched window.
+func TestSearchMemories_RankingOffPreservesBackendOrder(t *testing.T) {
+	ctx := context.Background()
+
+	idx := &fakeIndex{
+		enabled: true,
+		searchHits: []search.Hit{
+			{Id: "ordinary", Score: 1.01},
+			{Id: "important", Score: 1.0},
+		},
+	}
+
+	s := newSearchTestServer(t, idx)
+
+	for id, significance := range map[string]int32{"ordinary": 1, "important": 20} {
+		memory := types.Memory{Id: id, TimeStamp: 100, Significance: significance, Body: "hello world"}
+
+		if _, err := s.db.CreateMemory(ctx, memory); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "hello", Limit: 5})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 2 || res.Memories[0].Id != "ordinary" {
+		t.Errorf("got %v, want the backend order", memoryIds(res.Memories))
+	}
+
+	if idx.searchLimit != 5 {
+		t.Errorf("index was asked for %d candidates, want the caller's 5 with ranking off", idx.searchLimit)
+	}
+}
+
+// Ranking widens the candidate window so a significant memory just outside the caller's page can
+// still be promoted into it.
+func TestSearchMemories_RankingOverFetchesCandidates(t *testing.T) {
+	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
+
+	s := newSearchTestServer(t, idx)
+	s.ranking = rankingWeights{significance: 0.3}
+
+	if _, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "hello", Limit: 5}); err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if want := 5 * rankingOverFetch; idx.searchLimit != want {
+		t.Errorf("index was asked for %d candidates, want %d", idx.searchLimit, want)
+	}
+}
+
+// The result must still be truncated to the caller's limit, not to the over-fetched window.
+func TestSearchMemories_RankingTruncatesToTheRequestedLimit(t *testing.T) {
+	ctx := context.Background()
+
+	ids := []string{"m1", "m2", "m3", "m4", "m5"}
+
+	idx := &fakeIndex{enabled: true, searchIds: ids}
+
+	s := newSearchTestServer(t, idx)
+	s.ranking = rankingWeights{significance: 0.3}
+
+	for i, id := range ids {
+		memory := types.Memory{Id: id, TimeStamp: 100, Significance: int32(i + 1), Body: "hello world"}
+
+		if _, err := s.db.CreateMemory(ctx, memory); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "hello", Limit: 2})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 2 {
+		t.Errorf("got %d memories, want the requested 2", len(res.Memories))
+	}
+
+	if res.TotalCount != 2 {
+		t.Errorf("total_count %d, want 2", res.TotalCount)
+	}
+}
+
+// A reinforcing search must reinforce exactly what it returns. Over-fetching means the candidate
+// set is larger than the page, and recalling the candidates would reset the decay clock on
+// memories the caller was never shown - silently changing what the store forgets.
+func TestSearchMemories_ReinforceOnlyTouchesReturnedMemories(t *testing.T) {
+	ctx := context.Background()
+
+	ids := []string{"m1", "m2", "m3", "m4"}
+
+	idx := &fakeIndex{enabled: true, searchIds: ids}
+
+	s := newSearchTestServer(t, idx)
+	s.ranking = rankingWeights{significance: 0.3}
+
+	for _, id := range ids {
+		memory := types.Memory{Id: id, TimeStamp: 100, Significance: 5, Body: "hello world"}
+
+		if _, err := s.db.CreateMemory(ctx, memory); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "hello", Limit: 1, Reinforce: true})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.Memories) != 1 {
+		t.Fatalf("got %d memories, want 1", len(res.Memories))
+	}
+
+	returned := res.Memories[0].Id
+
+	// The returned memory carries the recall its own call produced, not the pre-recall snapshot.
+	if res.Memories[0].RecallCount != 1 {
+		t.Errorf("returned memory has recall_count %d, want 1", res.Memories[0].RecallCount)
+	}
+
+	// Every other candidate must be untouched.
+	stored, err := s.db.GetMemoriesByIds(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds: %s", err)
+	}
+
+	for _, memory := range *stored {
+		if memory.Id == returned {
+			continue
+		}
+
+		if memory.RecallCount != 0 {
+			t.Errorf("candidate %s was reinforced (recall_count %d) but never returned", memory.Id, memory.RecallCount)
+		}
+
+		if memory.TimeRecalled != 0 {
+			t.Errorf("candidate %s had its decay clock reset but was never returned", memory.Id)
+		}
+	}
+}
+
+// memoryIds reduces a response to its ids, for readable ordering assertions.
+func memoryIds(memories []*contract.Memory) []string {
+	ids := make([]string, 0, len(memories))
+	for _, memory := range memories {
+		ids = append(ids, memory.Id)
+	}
+
+	return ids
 }

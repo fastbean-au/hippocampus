@@ -52,6 +52,23 @@ type Query struct {
 	Limit   int
 }
 
+// Hit is one search match: the memory's id and how well its body matched.
+//
+// Score is normalised by each backend so that HIGHER IS ALWAYS MORE RELEVANT, because the two
+// backends disagree about that natively - FTS5's bm25 rank is negative and more negative is
+// better, OpenSearch's _score is positive and higher is better. Fixing the direction at the
+// backend boundary is what lets everything above it treat the two the same.
+//
+// What is deliberately NOT promised is that the values are comparable between backends, or
+// meaningful in absolute terms: bm25 raw scores and OpenSearch's are on unrelated scales. Only
+// the ORDER, and the relative gaps within one result set, carry meaning. Callers that combine
+// this with other signals must therefore normalise within the result set rather than assume a
+// range (see the re-ranking in the hippocampus package).
+type Hit struct {
+	Id    string
+	Score float64
+}
+
 // Index is the secondary content-search contract. Every mutating method returns immediately and
 // reports no error: propagation is best-effort, since the index is rebuildable and stale entries
 // are harmless (reads are re-verified against the primary store).
@@ -79,11 +96,11 @@ type Index interface {
 	// Purge removes every document.
 	Purge()
 
-	// Search returns the ids of memories whose body matches the query text, most relevant
-	// first, optionally restricted to a single event and/or group. The caller must fetch the
-	// returned ids from the primary store; ids that no longer exist there are stale index
-	// entries to be dropped.
-	Search(ctx context.Context, query Query) ([]string, error)
+	// Search returns the memories whose body matches the query text, most relevant first,
+	// optionally restricted to a single event and/or group. The caller must fetch the returned
+	// ids from the primary store; ids that no longer exist there are stale index entries to be
+	// dropped.
+	Search(ctx context.Context, query Query) ([]Hit, error)
 
 	// Enabled reports whether a real index is configured; the no-op implementation returns
 	// false.
@@ -112,7 +129,7 @@ func (noop) SetEventId(fromEventId string, toEventId string) {}
 
 func (noop) Purge() {}
 
-func (noop) Search(ctx context.Context, query Query) ([]string, error) {
+func (noop) Search(ctx context.Context, query Query) ([]Hit, error) {
 	return nil, ErrDisabled
 }
 

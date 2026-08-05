@@ -63,6 +63,10 @@
     "pingTimeoutSeconds": 0,
     "cacheSeconds": 0
   },
+  "search": {
+    "significanceWeight": 0.3,
+    "recallWeight": 0.2
+  },
   "opensearch": {
     "enabled": false,
     "addresses": ["http://localhost:9200"],

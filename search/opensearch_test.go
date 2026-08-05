@@ -66,7 +66,8 @@ func mustApply(t *testing.T, idx *OpenSearch, v op) {
 	}
 }
 
-// mustSearch refreshes the index then searches, failing the test on error.
+// mustSearch refreshes the index then searches, returning just the ids in relevance order and
+// failing the test on error.
 func mustSearch(t *testing.T, idx *OpenSearch, query Query) []string {
 	t.Helper()
 
@@ -77,9 +78,14 @@ func mustSearch(t *testing.T, idx *OpenSearch, query Query) []string {
 		t.Fatalf("refresh: %s", err)
 	}
 
-	ids, err := idx.Search(ctx, query)
+	hits, err := idx.Search(ctx, query)
 	if err != nil {
 		t.Fatalf("Search: %s", err)
+	}
+
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.Id)
 	}
 
 	return ids

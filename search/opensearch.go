@@ -659,7 +659,7 @@ func (o *OpenSearch) RecreateIndex(ctx context.Context) error {
 // Search returns the ids of memories whose body matches the query, most relevant first. This is
 // the only synchronous cluster call the service itself makes; the *Sync methods above exist only
 // for the backfill CLI mode.
-func (o *OpenSearch) Search(ctx context.Context, query Query) ([]string, error) {
+func (o *OpenSearch) Search(ctx context.Context, query Query) ([]Hit, error) {
 	log.Trace("func() search.Search")
 
 	// Build the whole request as a map and marshal it once, so query.Text, EventId, and Group are
@@ -707,12 +707,14 @@ func (o *OpenSearch) Search(ctx context.Context, query Query) ([]string, error) 
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
 
-	ids := make([]string, 0, len(resp.Hits.Hits))
+	// _score is already higher-is-better, which is Hit's convention, so it needs no adjustment -
+	// unlike the SQL backend's bm25 rank.
+	hits := make([]Hit, 0, len(resp.Hits.Hits))
 	for _, hit := range resp.Hits.Hits {
-		ids = append(ids, hit.ID)
+		hits = append(hits, Hit{Id: hit.ID, Score: float64(hit.Score)})
 	}
 
-	return ids, nil
+	return hits, nil
 }
 
 func (o *OpenSearch) Enabled() bool {

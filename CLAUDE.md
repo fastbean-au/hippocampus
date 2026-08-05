@@ -352,6 +352,25 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   - `--backfill-search` without OpenSearch routes to `rebuildContentSearch` in `backfill.go`, a
     separate entry point because it **writes to the service's own database** (so it must not run
     beside a live instance, unlike the read-only OpenSearch backfill).
+  - **Ranking** (`hippocampus/ranking.go`, `search.significanceWeight`/`search.recallWeight`,
+    defaulting to 0.3/0.2) blends the store's own view of a memory — significance and recall count
+    — into `SearchMemories`' result order, so the differentiator actually shapes retrieval instead
+    of relevance alone deciding. `search.Index.Search` therefore returns `[]search.Hit` (id +
+    score) rather than ids; **each backend normalises the score's direction** so higher is always
+    better (the SQL backend flips FTS5's negative bm25 rank in `SearchMemoryHits`, OpenSearch's
+    `_score` already is), while magnitudes stay incomparable between backends. The blend runs at
+    the RPC layer, above both backends, deliberately: pushing it down would need significance and
+    recall mirrored into the OpenSearch index (breaking one-way propagation, and ranking on a stale
+    copy of a number that changes on every recall) and would let the backends drift on ordering.
+    `normalise` divides by the set maximum rather than min-max rescaling — that is load-bearing,
+    not stylistic: min-max maps the weakest candidate to 0 whatever the real gap, so two matches
+    differing by one percent would look maximally different and significance would decide
+    everything. Recall counts are `log1p`-damped before normalising (they are heavily skewed).
+    Two consequences to preserve: the RPC **over-fetches** (`rankingOverFetch`) only when ranking
+    is active, so the weights-zero path is exactly the pre-ranking one; and a reinforcing search
+    recalls **only the returned page**, never the wider candidate set — hence `reinforceRanked`
+    running after truncation rather than the old single `RecallMemories` over everything fetched,
+    since recalling unseen candidates would reset decay clocks on the caller's behalf.
   - The OpenSearch backend (`opensearch.enabled`, off by default) is unchanged by any of the above.
     Connection security: basic auth (`opensearch.username`/`password`, the password injectable via
     `HIPPOCAMPUS_OPENSEARCH_PASSWORD`) plus an optional `opensearch.tls` block for HTTPS clusters

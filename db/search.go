@@ -86,6 +86,13 @@ type ContentQuery struct {
 	Limit   int
 }
 
+// ContentHit is one match: the memory's id and its relevance, with the sign flipped from FTS5's
+// convention so that higher is more relevant (see SearchMemoryHits).
+type ContentHit struct {
+	Id    string
+	Score float64
+}
+
 // ContentSearchAvailable reports whether this database can answer content searches. Only the
 // SQLite driver can, and only when it is not a read-only tool open (which never runs the DDL that
 // creates the index).
@@ -251,14 +258,17 @@ func (d *DB) reindexMemoryContent(ctx context.Context, id string, body string, i
 	return d.indexMemoryContent(ctx, id, body, isBinary)
 }
 
-// SearchMemoryIds returns the ids of memories whose body matches the query, most relevant first.
-// Like the OpenSearch path, it returns ids only: the caller re-reads them from the primary store,
-// which is what keeps the store authoritative.
+// SearchMemoryHits returns the memories whose body matches the query, most relevant first. Like
+// the OpenSearch path it returns ids and relevance only, never bodies: the caller re-reads the
+// rows from the primary store, which is what keeps the store authoritative.
 //
-// Ranking is FTS5's bm25, which is the same family as the OpenSearch index's, so result order is
-// comparable between the two backends rather than arbitrarily different.
-func (d *DB) SearchMemoryIds(ctx context.Context, query ContentQuery) ([]string, error) {
-	log.Trace("func() db.SearchMemoryIds")
+// Ranking is FTS5's bm25, the same family as the OpenSearch index's, so result order is comparable
+// between the two backends rather than arbitrarily different. The score's SIGN is flipped here:
+// FTS5's rank is negative and more negative is better, which is the opposite of every other
+// scoring convention including OpenSearch's, so the backend boundary is the right place to settle
+// it once (see search.Hit).
+func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]ContentHit, error) {
+	log.Trace("func() db.SearchMemoryHits")
 
 	if !d.ContentSearchAvailable() {
 		return nil, ErrContentSearchUnavailable
@@ -294,7 +304,7 @@ func (d *DB) SearchMemoryIds(ctx context.Context, query ContentQuery) ([]string,
 	args = append(args, limit)
 
 	rows, err := d.query(ctx,
-		`SELECT m.id FROM `+contentSearchTable+`
+		`SELECT m.id, `+contentSearchTable+`.rank FROM `+contentSearchTable+`
 		JOIN memories m ON m.rowid = `+contentSearchTable+`.rowid
 		WHERE `+strings.Join(clauses, " AND ")+`
 		ORDER BY `+contentSearchTable+`.rank
@@ -308,18 +318,21 @@ func (d *DB) SearchMemoryIds(ctx context.Context, query ContentQuery) ([]string,
 	}
 	defer func() { _ = rows.Close() }()
 
-	var ids []string
+	var hits []ContentHit
 
 	for rows.Next() {
-		var id string
+		var hit ContentHit
+		var rank float64
 
-		if err := rows.Scan(&id); err != nil {
+		if err := rows.Scan(&hit.Id, &rank); err != nil {
 			log.Errorf("failed to scan a content search result: %s", err.Error())
 
 			return nil, err
 		}
 
-		ids = append(ids, id)
+		hit.Score = -rank
+
+		hits = append(hits, hit)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -328,7 +341,7 @@ func (d *DB) SearchMemoryIds(ctx context.Context, query ContentQuery) ([]string,
 		return nil, err
 	}
 
-	return ids, nil
+	return hits, nil
 }
 
 // ftsMatchExpression turns a user's raw query text into an FTS5 MATCH expression.

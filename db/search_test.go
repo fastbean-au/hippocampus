@@ -26,7 +26,9 @@ func storeMemory(t *testing.T, d *DB, id string, body string, group string) {
 	}
 }
 
-// searchIds runs a content search and fails the test on error.
+// searchIds runs a content search and returns just the ids, in relevance order, failing the test
+// on error. Most tests care only about which memories matched and in what order; the ones about
+// scoring call SearchMemoryHits directly.
 func searchIds(t *testing.T, d *DB, query ContentQuery) []string {
 	t.Helper()
 
@@ -34,9 +36,14 @@ func searchIds(t *testing.T, d *DB, query ContentQuery) []string {
 		query.Limit = 10
 	}
 
-	ids, err := d.SearchMemoryIds(context.Background(), query)
+	hits, err := d.SearchMemoryHits(context.Background(), query)
 	if err != nil {
-		t.Fatalf("SearchMemoryIds(%q): %s", query.Text, err)
+		t.Fatalf("SearchMemoryHits(%q): %s", query.Text, err)
+	}
+
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.Id)
 	}
 
 	return ids
@@ -509,13 +516,13 @@ func TestContentSearchSanitisesHostileQueries(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			ids, err := d.SearchMemoryIds(context.Background(), ContentQuery{Text: test.query, Limit: 10})
+			hits, err := d.SearchMemoryHits(context.Background(), ContentQuery{Text: test.query, Limit: 10})
 			if err != nil {
 				t.Fatalf("query %q errored: %s", test.query, err)
 			}
 
-			if len(ids) != test.want {
-				t.Errorf("query %q: got %d results (%v), want %d", test.query, len(ids), ids, test.want)
+			if len(hits) != test.want {
+				t.Errorf("query %q: got %d results (%v), want %d", test.query, len(hits), hits, test.want)
 			}
 		})
 	}
@@ -586,7 +593,7 @@ func TestContentSearchUnavailableOnReadOnlyOpen(t *testing.T) {
 		t.Error("a read-only open should not report content search as available")
 	}
 
-	if _, err := readOnly.SearchMemoryIds(context.Background(), ContentQuery{Text: "content"}); !errors.Is(err, ErrContentSearchUnavailable) {
-		t.Errorf("SearchMemoryIds on a read-only open: got %v, want ErrContentSearchUnavailable", err)
+	if _, err := readOnly.SearchMemoryHits(context.Background(), ContentQuery{Text: "content"}); !errors.Is(err, ErrContentSearchUnavailable) {
+		t.Errorf("SearchMemoryHits on a read-only open: got %v, want ErrContentSearchUnavailable", err)
 	}
 }
