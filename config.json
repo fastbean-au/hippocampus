@@ -1,119 +1,121 @@
 {
-    "logging": {
-        "level": "info",
-        "json": false
+  "logging": {
+    "level": "info",
+    "json": false
+  },
+  "port": 50051,
+  "maxRecvMsgBytes": 0,
+  "gateway": {
+    "port": 0,
+    "maxRequestBytes": 0
+  },
+  "auth": {
+    "method": "none",
+    "signingSecret": "",
+    "signingKeys": [],
+    "activeKid": "",
+    "revocationFile": "",
+    "revocationRefreshSeconds": 30,
+    "jwksUrl": "",
+    "issuer": "",
+    "audience": "",
+    "jwksRefreshIntervalSeconds": 300
+  },
+  "tls": {
+    "enabled": false,
+    "certFile": "",
+    "keyFile": ""
+  },
+  "observability": {
+    "tracing": {
+      "enabled": false,
+      "samplingRatio": 1.0
     },
-    "port": 50051,
-    "maxRecvMsgBytes": 0,
-    "gateway": {
-        "port": 0,
-        "maxRequestBytes": 0
+    "metrics": {
+      "enabled": false,
+      "exportIntervalSeconds": 60
     },
-    "auth": {
-        "method": "none",
-        "signingSecret": "",
-        "signingKeys": [],
-        "activeKid": "",
-        "revocationFile": "",
-        "revocationRefreshSeconds": 30,
-        "jwksUrl": "",
-        "issuer": "",
-        "audience": "",
-        "jwksRefreshIntervalSeconds": 300
-    },
-    "tls": {
-        "enabled": false,
-        "certFile": "",
-        "keyFile": ""
-    },
-    "observability": {
-        "tracing": {
-            "enabled": false,
-            "samplingRatio": 1.0
-        },
-        "metrics": {
-            "enabled": false,
-            "exportIntervalSeconds": 60
-        },
-        "otlp": {
-            "endpoint": "localhost:4317",
-            "insecure": true
-        }
-    },
-    "storage": {
-        "driver": "sqlite",
-        "directory": "./data",
-        "queryTimeoutSeconds": 0,
-        "pool": {
-            "maxOpenConns": 25,
-            "maxIdleConns": 0
-        },
-        "postgres": {
-            "dsn": ""
-        },
-        "mysql": {
-            "dsn": ""
-        }
-    },
-    "readiness": {
-        "pingTimeoutSeconds": 0,
-        "cacheSeconds": 0
-    },
-    "opensearch": {
-        "enabled": false,
-        "addresses": [
-            "http://localhost:9200"
-        ],
-        "username": "",
-        "password": "",
-        "index": "hippocampus-memories",
-        "queueSize": 1024
-    },
-    "s3": {
-        "bucket": "",
-        "region": "",
-        "endpoint": "",
-        "usePathStyle": false,
-        "keyPrefix": "hippocampus/"
-    },
-    "transfer": {
-        "targetAddress": "",
-        "token": "",
-        "tls": false,
-        "batchSize": 500,
-        "maxBatchBytes": 0
-    },
-    "memory": {
-        "limit": {
-            "sizeBytes": 1048576
-        },
-        "minimumSignificance": 0
-    },
-    "event": {
-        "minimumSignificance": 0
-    },
-    "sleep": {
-        "periodSeconds": 3600
-    },
-    "consolidation": {
-        "enabled": true,
-        "defaultEventSignificanceValue": 0,
-        "defaultEventSignificancePercentile": 0,
-        "minimumAgeInDays": 14,
-        "minimumRetentionInDays": 0,
-        "aggressiveness": 1.0,
-        "deletionThreshold": 10,
-        "method": 1,
-        "unitsOfAgeInDays": 1.0,
-        "relationshipSignificanceWeight": 1.0,
-        "recallSignificanceWeight": 1.0,
-        "capacityMemories": 100000,
-        "capacityPressureExponent": 4.0,
-        "capacityBytes": 0,
-        "capacityBytesFloor": 0,
-        "walTriggerBytes": 0,
-        "summarisationMinMemories": 0,
-        "summarisationMinAgeInDays": 30,
-        "summarisationMaxCandidates": 100
+    "otlp": {
+      "endpoint": "localhost:4317",
+      "insecure": true
     }
+  },
+  "storage": {
+    "driver": "sqlite",
+    "directory": "./data",
+    "queryTimeoutSeconds": 0,
+    "compression": {
+      "enabled": true,
+      "minBytes": 512
+    },
+    "pool": {
+      "maxOpenConns": 25,
+      "maxIdleConns": 0
+    },
+    "postgres": {
+      "dsn": ""
+    },
+    "mysql": {
+      "dsn": ""
+    }
+  },
+  "readiness": {
+    "pingTimeoutSeconds": 0,
+    "cacheSeconds": 0
+  },
+  "opensearch": {
+    "enabled": false,
+    "addresses": ["http://localhost:9200"],
+    "username": "",
+    "password": "",
+    "index": "hippocampus-memories",
+    "queueSize": 1024
+  },
+  "s3": {
+    "bucket": "",
+    "region": "",
+    "endpoint": "",
+    "usePathStyle": false,
+    "keyPrefix": "hippocampus/"
+  },
+  "transfer": {
+    "targetAddress": "",
+    "token": "",
+    "tls": false,
+    "batchSize": 500,
+    "maxBatchBytes": 0
+  },
+  "memory": {
+    "limit": {
+      "sizeBytes": 1048576
+    },
+    "minimumSignificance": 0
+  },
+  "event": {
+    "minimumSignificance": 0
+  },
+  "sleep": {
+    "periodSeconds": 3600
+  },
+  "consolidation": {
+    "enabled": true,
+    "defaultEventSignificanceValue": 0,
+    "defaultEventSignificancePercentile": 0,
+    "minimumAgeInDays": 14,
+    "minimumRetentionInDays": 0,
+    "aggressiveness": 1.0,
+    "deletionThreshold": 10,
+    "method": 1,
+    "unitsOfAgeInDays": 1.0,
+    "relationshipSignificanceWeight": 1.0,
+    "recallSignificanceWeight": 1.0,
+    "capacityMemories": 100000,
+    "capacityPressureExponent": 4.0,
+    "capacityBytes": 0,
+    "capacityBytesFloor": 0,
+    "walTriggerBytes": 0,
+    "summarisationMinMemories": 0,
+    "summarisationMinAgeInDays": 30,
+    "summarisationMaxCandidates": 100
+  }
 }

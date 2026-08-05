@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -23,17 +24,21 @@ const evictionRowOverheadBytes = 256
 // memoryColumns is the read projection. significance is the level's rank, exposed by memoriesFrom's
 // join to the registry; scanMemory reads it into types.Memory.Significance. Use it with memoriesFrom
 // as the FROM source, never the bare memories table (which has no significance column).
-const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name`
+const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed`
 
 // memoryStoredColumns is the physical column list of the memories table (significance_level_id, not
 // the removed significance): used for INSERT and UPDATE ... RETURNING. scanMemoryStored reads it.
-const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name`
+const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed`
+
+// memoryValuePlaceholders is the VALUES list matching memoryStoredColumns, so an INSERT's
+// placeholder count cannot drift from the column list as columns are added.
+var memoryValuePlaceholders = `(` + placeholders(strings.Count(memoryStoredColumns, ",")+1) + `)`
 
 // memoriesFrom is the read source for memoryColumns: the memories table LEFT JOINed to the
 // significance registry and aliased back to "memories", so WHERE/ORDER clauses naming bare columns
 // (id, event_id, significance, ...) need no change. An unranked (NULL) level reads as significance 0.
 const memoriesFrom = `(SELECT m.id, m.timestamp, COALESCE(l.level_rank, 0) AS significance, m.event_id,
-	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name
+	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name, m.is_compressed
 	FROM memories m LEFT JOIN significance_levels l ON l.id = m.significance_level_id) AS memories`
 
 // placeholders returns a comma-separated list of n SQL parameter placeholders.
@@ -44,12 +49,23 @@ func placeholders(n int) string {
 func scanMemory(rows *sql.Rows) (types.Memory, error) {
 	var m types.Memory
 	var body []byte
+	var isCompressed bool
 
-	if err := rows.Scan(&m.Id, &m.TimeStamp, &m.Significance, &m.EventId, &body, &m.IsBinary, &m.TimeRecalled, &m.RecallCount, &m.IsSummary, &m.Group); err != nil {
+	if err := rows.Scan(&m.Id, &m.TimeStamp, &m.Significance, &m.EventId, &body, &m.IsBinary, &m.TimeRecalled, &m.RecallCount, &m.IsSummary, &m.Group, &isCompressed); err != nil {
 		return m, err
 	}
 
-	m.Body = string(body)
+	// Decompression is driven by the row's own flag, so a store holding a mix of compressed and
+	// uncompressed rows - which any store whose compression setting has ever changed will - reads
+	// back uniformly.
+	decompressed, err := decompressBody(body, isCompressed)
+	if err != nil {
+		log.Errorf("failed to decompress body of memory '%s': %s", m.Id, err.Error())
+
+		return m, err
+	}
+
+	m.Body = decompressed
 
 	return m, nil
 }
@@ -61,12 +77,20 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 	var m types.Memory
 	var body []byte
 	var levelID sql.NullInt64
+	var isCompressed bool
 
-	if err := rows.Scan(&m.Id, &m.TimeStamp, &levelID, &m.EventId, &body, &m.IsBinary, &m.TimeRecalled, &m.RecallCount, &m.IsSummary, &m.Group); err != nil {
+	if err := rows.Scan(&m.Id, &m.TimeStamp, &levelID, &m.EventId, &body, &m.IsBinary, &m.TimeRecalled, &m.RecallCount, &m.IsSummary, &m.Group, &isCompressed); err != nil {
 		return m, err
 	}
 
-	m.Body = string(body)
+	decompressed, err := decompressBody(body, isCompressed)
+	if err != nil {
+		log.Errorf("failed to decompress body of memory '%s': %s", m.Id, err.Error())
+
+		return m, err
+	}
+
+	m.Body = decompressed
 
 	if levelID.Valid {
 		id := levelID.Int64
@@ -119,18 +143,21 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 
 	memory.SignificanceLevelID = levelID
 
+	body, isCompressed := d.compressBody(memory.Body, memory.IsBinary)
+
 	_, err = d.exec(ctx,
-		`INSERT INTO memories (`+memoryStoredColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO memories (`+memoryStoredColumns+`) VALUES `+memoryValuePlaceholders,
 		memory.Id,
 		memory.TimeStamp,
 		levelIDArg(memory.SignificanceLevelID),
 		memory.EventId,
-		[]byte(memory.Body),
+		body,
 		memory.IsBinary,
 		memory.TimeRecalled,
 		memory.RecallCount,
 		memory.IsSummary,
 		memory.Group,
+		isCompressed,
 	)
 
 	return memory.Id, err
@@ -182,9 +209,20 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 		args = append(args, memory.EventId)
 	}
 
+	// A new body carries a new compression decision, so is_compressed is always written alongside
+	// body - never left to describe the body it replaced. The decision needs to know whether the
+	// memory is binary, and is_binary is outside this partial-update surface (the caller's copy of
+	// it is not authoritative), so it is read from the stored row.
 	if len(memory.Body) > 0 {
-		sets = append(sets, `body = ?`)
-		args = append(args, []byte(memory.Body))
+		isBinary, err := d.memoryIsBinary(ctx, memory.Id)
+		if err != nil {
+			return false, err
+		}
+
+		body, isCompressed := d.compressBody(memory.Body, isBinary)
+
+		sets = append(sets, `body = ?`, `is_compressed = ?`)
+		args = append(args, body, isCompressed)
 	}
 
 	if memory.Group != "" {
@@ -205,6 +243,26 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 	}
 
 	return d.updatedRowExisted(ctx, res, "memories", memory.Id)
+}
+
+// memoryIsBinary reports whether the stored memory is binary, which decides whether a body being
+// written over it may be compressed. A missing row reports false: the UPDATE that follows will
+// match nothing, and UpdateMemory reports the absence from the UPDATE itself.
+func (d *DB) memoryIsBinary(ctx context.Context, id string) (bool, error) {
+	var isBinary sql.NullBool
+
+	ctx, cancel := d.opContext(ctx)
+	defer cancel()
+
+	if err := d.queryRow(ctx, `SELECT is_binary FROM memories WHERE id = ?`, id).Scan(&isBinary); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	return isBinary.Bool, nil
 }
 
 // memoryExists reports whether a memory with the given id exists.
@@ -927,18 +985,21 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 		return 0, err
 	}
 
+	body, isCompressed := d.compressBody(summary.Body, summary.IsBinary)
+
 	if _, err := tx.Exec(
-		d.rebind(`INSERT INTO memories (`+memoryStoredColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		d.rebind(`INSERT INTO memories (`+memoryStoredColumns+`) VALUES `+memoryValuePlaceholders),
 		summary.Id,
 		summary.TimeStamp,
 		levelIDArg(summary.SignificanceLevelID),
 		summary.EventId,
-		[]byte(summary.Body),
+		body,
 		summary.IsBinary,
 		summary.TimeRecalled,
 		summary.RecallCount,
 		summary.IsSummary,
 		summary.Group,
+		isCompressed,
 	); err != nil {
 		_ = tx.Rollback()
 

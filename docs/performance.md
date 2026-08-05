@@ -147,6 +147,67 @@ Three distinct profiles emerge, all with reaping keeping the store bounded:
   latency that degrades badly under load**; tune the InnoDB buffer pool and flush settings before
   relying on it at rate.
 
+## Body compression
+
+[`storage.compression.enabled`](configuration.md#body-compression) is **on by default**, which is a
+claim about cost as much as about benefit. Both halves are pinned by microbenchmarks in
+`db/bench_test.go`, run the same way as the scan benchmarks:
+
+```sh
+go test ./db -bench 'CompressBody|DecompressBody|StoreAndReadMemory' -run XXX
+```
+
+**What it saves.** Ratios for the three body shapes the service is realistically given, bracketing
+the range from worst realistic case to best:
+
+| Body                         |   Size | Stored | Ratio | Saved |
+| ---------------------------- | -----: | -----: | ----: | ----: |
+| One structured JSON log line |  248 B |  215 B | 1.15× |   13% |
+| Four batched log lines       |  992 B |  228 B | 4.35× |   77% |
+| A prose note                 | 1296 B |  158 B | 8.20× |   88% |
+
+A lone short log line is the weak case — there is little redundancy to find and gzip's own header
+has to be paid — and it is exactly what the 512-byte `minBytes` default excludes. Anything that
+clears the threshold is in the 4–8× range, and it is the stored (compressed) size that
+`capacityBytes` and eviction count, so the saving becomes retention directly.
+
+**What it costs.** Apple M1, Go 1.25, `-benchtime 2s -count 3`, medians:
+
+| Operation                     | ns/op | allocs/op |
+| ----------------------------- | ----: | --------: |
+| `compressBody` (log line)     | 7,146 |         5 |
+| `compressBody` (4 log lines)  | 7,893 |         5 |
+| `compressBody` (prose note)   | 6,018 |         4 |
+| `decompressBody` (log line)   | 3,955 |         4 |
+| `decompressBody` (prose note) | 4,467 |         6 |
+
+In isolation those look meaningful; beside the database work they sit next to, they are not. The
+`StoreAndReadMemory` benchmark brackets a full `CreateMemory` + `GetMemoriesByIds` round trip with
+compression off and on, which is the number that actually decides affordability:
+
+| Round trip               |  ns/op |  Overhead |
+| ------------------------ | -----: | --------: |
+| Store + read, plain      | 62,912 |         — |
+| Store + read, compressed | 64,415 | **+2.4%** |
+
+Two implementation choices are what make it 2.4% rather than the ~60% a naïve version measured:
+
+- **Pooled compressors.** Constructing a `gzip.Writer` allocates flate's 32 KiB window and hash
+  tables — hundreds of kilobytes, regardless of body size — which dominated everything else.
+  Pooling and `Reset`ing them cut the write path 3–4× and the read path ~2×.
+- **`BestSpeed` rather than the default level.** On these body shapes the default level buys almost
+  nothing for roughly three times the CPU: 4.37× vs 4.35× on batched log lines, 8.47× vs 8.20× on
+  prose. The compression level only affects the encoder — any gzip reader decodes any level — so
+  unlike the algorithm it carries no compatibility commitment and can be revisited freely.
+
+The sleep cycle is deliberately unaffected: the consolidation scans read the covering index and
+never load a body, so compression adds nothing to reaping. A regression showing up in the scan
+benchmarks above would mean a scan had started reading bodies.
+
+The read cost does multiply with page size — a recall or search returning 500 memories pays ~2 ms of
+decompression — so a workload dominated by large-page reads of small, poorly-compressing bodies is
+the one case worth measuring before leaving it on.
+
 ## Reaping and the shape of the store through sleep cycles
 
 Across every backend, the sleep cycle held the store bounded even when the write rate exceeded the

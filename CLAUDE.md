@@ -246,7 +246,21 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   a filesystem stat, and `Close`), so an RPC's deadline/cancellation reaches the driver; the db
   layer wraps that ctx with the server-owned `storage.queryTimeoutSeconds` bound (default 60; 0
   disables) in `opContext`, so whichever fires first ends the operation. The sleep cycle passes its
-  own (tracing-span) context and stays server-owned, not tied to the `Sleep` RPC's deadline. SQLite
+  own (tracing-span) context and stays server-owned, not tied to the `Sleep` RPC's deadline. Memory
+  bodies are stored compressed (`compress.go`, `storage.compression.enabled`, **on** by default;
+  gzip, deliberately not configurable so an old body always stays readable — though the compression
+  _level_ is encoder-side only and so carries no such commitment, which is why it is `BestSpeed`):
+  the write helpers call `compressBody` and the row scanners `decompressBody`, so compression lives
+  entirely at the storage boundary and everything above the package — RPCs, search index, summariser,
+  archive — sees plain bodies. The `gzip.Writer`/`gzip.Reader` are pooled (`sync.Pool` + `Reset`)
+  because constructing one allocates flate's window and hash tables regardless of body size and
+  dominated everything else; pooling plus `BestSpeed` is what takes a store-and-read round trip from
+  ~60% overhead to ~2.4% (benchmarks in `db/bench_test.go`, written up in `docs/performance.md`). The decision is recorded per row (`memories.is_compressed`) and reads follow
+  that flag, never the current configuration, so the setting is safe to change on a live store and a
+  mixed store reads correctly. `compressBody` skips binary memories and bodies under
+  `storage.compression.minBytes`, and keeps a compressed body only when it actually came out smaller
+  — so the feature can cost CPU but never storage. `UsedBytes` therefore counts compressed bodies,
+  which is what makes compression translate into capacity-target headroom. SQLite
   (`modernc.org/sqlite`, pure Go): one database file (`hippocampus.db` in `storage.directory`)
   holding the `events` and `memories` tables; an empty directory (used by tests) selects an
   in-memory database. WAL mode makes every write durable as it happens — there is no snapshot

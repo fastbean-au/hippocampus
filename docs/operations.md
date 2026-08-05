@@ -165,8 +165,8 @@ reachable.
 
 Several independent stores can run side by side on one machine — each is its own process owning its
 own store (a demo instance beside a personal one, say). This is orthogonal to the
-single-consolidator rule above, which concerns two instances sharing *one* store; here each instance
-owns a *separate* store. Give **each its own `storage.directory` (SQLite) or DSN, its own `port`, and
+single-consolidator rule above, which concerns two instances sharing _one_ store; here each instance
+owns a _separate_ store. Give **each its own `storage.directory` (SQLite) or DSN, its own `port`, and
 its own `gateway.port`**: the defaults (`50051`/`8080`) collide, and the second instance to start
 fails to bind the port. An external content-search cluster likewise needs a distinct
 `opensearch.index` (or a separate cluster) per instance so their documents do not intermingle.
@@ -190,7 +190,7 @@ have no equivalent of; they reject the setting at startup rather than silently i
 
 ## Sizing and capacity tuning
 
-### `capacityBytes` is measured on _uncompressed logical_ bytes
+### `capacityBytes` is measured on _stored logical_ bytes
 
 The byte-capacity target (`consolidation.capacityBytes`, with hysteresis floor
 `consolidation.capacityBytesFloor` — see [Capacity target](consolidation.md#capacity-target)) is
@@ -204,14 +204,20 @@ compared against the store's **live logical size**, not the physical file size:
   file-size reading would plateau at its high-water mark and make eviction chase a figure that can
   never drop.
 
-Two consequences for sizing:
+Three consequences for sizing:
 
-1. `octet_length` counts **uncompressed** bytes. Postgres TOAST-compresses large values on disk, so
-   its **physical** file can be much smaller than the logical figure eviction targets; MySQL/InnoDB
-   stores bodies uncompressed, so its physical footprint is roughly the logical figure. For the same
-   data, expect the MySQL on-disk footprint to be **several times** the Postgres one.
-2. Budget disk and memory against the **physical** footprint of your chosen driver, but tune
-   `capacityBytes` against the logical size.
+1. The figure counts each body **as the service stored it**. With
+   [`storage.compression.enabled`](configuration.md#body-compression) on — the default — a compressed
+   body counts at its compressed size on all three drivers, so the saving shows up directly as
+   headroom: the same `capacityBytes` holds several times more memories, and eviction starts later.
+   Turning compression off makes the figure the body as the client sent it, which will make an
+   existing store's used bytes appear to jump as new writes land uncompressed.
+2. Postgres additionally TOAST-compresses large values on disk beneath `octet_length`, so its
+   **physical** file can be smaller again than the figure eviction targets; MySQL/InnoDB does not, so
+   its physical footprint is roughly the counted figure. For the same data with service-side
+   compression off, expect the MySQL on-disk footprint to be **several times** the Postgres one.
+3. Budget disk and memory against the **physical** footprint of your chosen driver, but tune
+   `capacityBytes` against the counted size.
 
 ### MySQL: size the InnoDB buffer pool to the working set
 
@@ -222,9 +228,15 @@ Raising the buffer pool to hold the working set restored read p95 to ~60 ms (in 
 Postgres).
 
 **Size `innodb_buffer_pool_size` at or above the physical dataset size.** Because InnoDB does not
-compress, that physical size is close to the uncompressed logical size — so budget the buffer pool
+compress, that physical size is close to the counted logical size — so budget the buffer pool
 against `capacityBytes` (plus index and overhead headroom), not against a Postgres-sized footprint.
 It can be resized online (`SET GLOBAL innodb_buffer_pool_size = …`) without a restart.
+
+[`storage.compression.enabled`](configuration.md#body-compression) is the other lever here, and the
+reason it is on by default matters most on MySQL: it shrinks the bodies InnoDB stores, so the same
+buffer pool covers a several-times-larger store. It is the closest MySQL gets to Postgres' TOAST
+behaviour, trading a little CPU for I/O that is far more expensive here. Leave it on before reaching
+for a bigger buffer pool.
 
 ### Postgres
 

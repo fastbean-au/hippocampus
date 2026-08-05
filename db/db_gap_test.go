@@ -320,9 +320,23 @@ func TestInitSchema_AddColumnIsSummaryError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-func TestInitSchema_AddColumnMemoriesGroupNameError(t *testing.T) {
+func TestInitSchema_AddColumnIsCompressedError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 	expectSQLiteInitSchemaThrough(mock, 2)
+
+	sqliteColumnAbsent(mock)
+	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN is_compressed`).WillReturnError(errors.New("boom"))
+
+	if err := d.initSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitSchema_AddColumnMemoriesGroupNameError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	expectSQLiteInitSchemaThrough(mock, 3)
 
 	sqliteColumnAbsent(mock)
 	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
@@ -336,7 +350,7 @@ func TestInitSchema_AddColumnMemoriesGroupNameError(t *testing.T) {
 
 func TestInitSchema_AddColumnEventsGroupNameError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 3)
+	expectSQLiteInitSchemaThrough(mock, 4)
 
 	sqliteColumnAbsent(mock)
 	mock.ExpectExec(`ALTER TABLE events ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
@@ -350,7 +364,7 @@ func TestInitSchema_AddColumnEventsGroupNameError(t *testing.T) {
 
 func TestInitSchema_AddColumnMemoriesSignificanceLevelIDError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 4)
+	expectSQLiteInitSchemaThrough(mock, 5)
 
 	sqliteColumnAbsent(mock)
 	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
@@ -364,7 +378,7 @@ func TestInitSchema_AddColumnMemoriesSignificanceLevelIDError(t *testing.T) {
 
 func TestInitSchema_AddColumnEventsSignificanceLevelIDError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 5)
+	expectSQLiteInitSchemaThrough(mock, 6)
 
 	sqliteColumnAbsent(mock)
 	mock.ExpectExec(`ALTER TABLE events ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
@@ -378,7 +392,7 @@ func TestInitSchema_AddColumnEventsSignificanceLevelIDError(t *testing.T) {
 
 func TestInitSchema_MigrateSignificanceError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 6)
+	expectSQLiteInitSchemaThrough(mock, 7)
 
 	// migrateSignificanceToLevels: its own columnExists probe fails.
 	mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
@@ -392,7 +406,7 @@ func TestInitSchema_MigrateSignificanceError(t *testing.T) {
 
 func TestInitSchema_EnsureCoveringIndexError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 6)
+	expectSQLiteInitSchemaThrough(mock, 7)
 
 	// migrateSignificanceToLevels: old column absent -> no-op.
 	sqliteColumnAbsent(mock)

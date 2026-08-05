@@ -10,6 +10,9 @@
 
 ![Hippocampus Architecture](docs/go-hippocampus.png)
 
+**🔭 See it running:** [**hippocampus-demo.com**](https://hippocampus-demo.com) — live consoles on a
+compressed decay clock, so memories visibly fade, reinforce, and consolidate while you watch.
+
 ---
 
 ## 💡 Why Hippocampus?
@@ -22,6 +25,22 @@ Hippocampus applies principles from human memory consolidation to solve long-ter
 - **Reinforcement through Recall:** Accessing or querying a record strengthens its retention weight, protecting high-demand operational data from decay.
 - **Sleep & Consolidation:** Runs periodic background consolidation cycles to apply decay models, compact space, and distill clusters of episodic details into compact semantic summaries.
 - **Durable & Compliance-Safe:** Embedded or centralised deployment backed by SQLite (WAL mode), PostgreSQL, or MySQL. Includes configurable minimum retention floors to guarantee compliance windows regardless of storage pressure.
+
+---
+
+## 🔭 Live Demo — [hippocampus-demo.com](https://hippocampus-demo.com)
+
+Decay, recall reinforcement, and consolidation are slow by design — they play out over days. The
+demo instances run the same build with the decay clock compressed, so the whole cycle happens in
+minutes and you can watch it. Both consoles take a read-only sign-in: **`demo` / `demo`**.
+
+- **[Book console](https://book.hippocampus-demo.com/ui)** — _Great Expectations_ re-read daily:
+  episodic detail distilled into semantic summaries as it ages, and recalled passages holding on.
+- **[Logs console](https://logs.hippocampus-demo.com/ui)** — a continuous log stream against a byte
+  capacity target: consolidation and eviction working under real storage pressure.
+- **[Grafana dashboard](https://grafana.hippocampus-demo.com)** — live telemetry from both stacks.
+- **[Config builder](https://config-builder.hippocampus-demo.com)** — build a `config.json` and its
+  deployment artefacts in the browser (see [below](#-configuration-wizard)).
 
 ---
 

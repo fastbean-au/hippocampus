@@ -312,7 +312,7 @@ box.
 on the server with a client secret, and the resulting session rides an `HttpOnly` cookie the page
 can never read. Prefer it when the identity provider requires a confidential client, or to keep the
 token out of page-readable storage (mitigating token theft via XSS). It is available only under
-`auth.method: idp`, and it does not change how tokens are *verified* — the cookie carries the same
+`auth.method: idp`, and it does not change how tokens are _verified_ — the cookie carries the same
 IdP access token, checked by the same `idp` verifier as a bearer header.
 
 ```jsonc
@@ -391,7 +391,7 @@ Verification is written behind an interface (`auth.Verifier`) — `hmac` and `id
 implementations, and the interceptor/middleware call sites are identical for both.
 
 The verified `client_id` is logged on every failing request (and, on the HTTP gateway, every
-request), so a leaked token can be traced to the client it was issued to. What each token may *do*
+request), so a leaked token can be traced to the client it was issued to. What each token may _do_
 is governed by [authorisation](#authorisation) below.
 
 ### Authorisation
@@ -400,18 +400,18 @@ When authentication is enabled, each RPC also requires a minimum **role tier**, 
 token's `roles` claim. The tiers nest — `reader` ⊂ `writer` ⊂ `admin` — so a higher tier can do
 everything a lower one can:
 
-| Tier     | May call                                                                                                                                                                  |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `WhoAmI`                                                    |
+| Tier     | May call                                                                                                                                                                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `WhoAmI`                                                                                                                       |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `Export`, `Transfer`, `Clear`                                                                                              |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `Export`, `Transfer`, `Clear`                                                                                                                                                                |
 
 `Export`/`Transfer` are `admin` because they read the whole store out; `Import`/`ImportBatch` are
 `writer` because they deliberately bypass the write-path validation `StoreMemory`/`StoreEvent`
 enforce (body-size limit, future-timestamp clock-skew guard, minimum-significance gate) to restore
 an archive faithfully. A caller whose token grants a tier below the RPC's requirement gets
 `codes.PermissionDenied` from gRPC, or `403` from the HTTP gateway (distinct from the `401` an
-*unauthenticated* request gets). The same policy governs both transports from one table, so gRPC
+_unauthenticated_ request gets). The same policy governs both transports from one table, so gRPC
 and the gateway can never diverge.
 
 Authorisation is **default-closed**: a token whose roles resolve to no known tier is denied every
@@ -430,7 +430,7 @@ dotted path through nested objects, so Keycloak's `realm_access.roles` also reso
 provider's own group names onto the tiers, e.g. `{ "hippo-ops": "admin", "hippo-app": "writer" }`;
 the tier names always map to themselves, so a mapping is only needed for other names.
 
-`RecallMemories` and `SearchMemories` are `reader`-tier: recall is a read as far as *access* goes,
+`RecallMemories` and `SearchMemories` are `reader`-tier: recall is a read as far as _access_ goes,
 even though it normally reinforces the memory (resets its decay clock, raises its recall count).
 Whether a **reader** actually triggers that reinforcement is controlled globally by
 `auth.readerRecallReinforces` (default `false`): left off, a reader's recall/search returns the
@@ -440,7 +440,7 @@ memories without the write side effect; turned on, readers reinforce like anyone
 #### Key rotation (hmac)
 
 `auth.signingKeys` lets several HS256 secrets be trusted at once, each tagged with a `kid` that is
-written into the header of every token it signs. Because the verifier trusts *every* listed key, a
+written into the header of every token it signs. Because the verifier trusts _every_ listed key, a
 new secret can be introduced and start signing while tokens signed by the previous secret keep
 verifying — so a rotation never has a flag day where outstanding tokens are abruptly rejected. The
 procedure:
@@ -469,11 +469,14 @@ Two mechanisms cut a credential off before its TTL expires:
 
   ```json
   {
-      "jtis": ["9fdec40d972eb3a4be7297c29ed95061"],
-      "clients": [
-          { "clientId": "decommissioned-batch-loader" },
-          { "clientId": "rotated-web-console", "issuedBefore": "2026-07-01T00:00:00Z" }
-      ]
+    "jtis": ["9fdec40d972eb3a4be7297c29ed95061"],
+    "clients": [
+      { "clientId": "decommissioned-batch-loader" },
+      {
+        "clientId": "rotated-web-console",
+        "issuedBefore": "2026-07-01T00:00:00Z"
+      }
+    ]
   }
   ```
 
@@ -482,8 +485,8 @@ Two mechanisms cut a credential off before its TTL expires:
   tokens issued before it — the per-client rotation move: set the cutoff to now, then mint the
   client a fresh token. Changes take effect within `auth.revocationRefreshSeconds`, on both the
   gRPC service and the HTTP gateway. A named-but-unreadable or malformed file **fails startup** (so
-  a typo can't silently revoke nothing); a bad file written *after* startup is ignored with an
-  error log, keeping the last good list in force. The check runs *after* signature verification and
+  a typo can't silently revoke nothing); a bad file written _after_ startup is ignored with an
+  error log, keeping the last good list in force. The check runs _after_ signature verification and
   works in front of `idp` as well as `hmac`, so a provider-issued token can be revoked locally even
   when the provider's own revocation lags.
 
@@ -519,6 +522,10 @@ and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver fo
     "driver": "sqlite",
     "directory": "./data",
     "queryTimeoutSeconds": 60,
+    "compression": {
+        "enabled": true,
+        "minBytes": 512
+    },
     "pool": {
         "maxOpenConns": 25,
         "maxIdleConns": 0
@@ -538,6 +545,60 @@ benchmarked sizes, so a hung or unreachable database fails an operation after a 
 of blocking the request goroutine — and its pooled connection — indefinitely. Raise it above the
 longest legitimate operation on a larger store, notably a full consolidation scan, or a sleep cycle
 could be aborted mid-scan; set it to 0 to disable the bound (reasonable for embedded SQLite).
+
+#### Body compression
+
+`storage.compression.enabled` (**default true**) stores memory bodies compressed. Storage is the
+resource the whole service manages to, so what it buys is retention: the same
+`consolidation.capacityBytes` target holds more memories, and forgetting starts later. What it costs
+is CPU on every operation that touches a body — writes compress, and reads of the body
+(`GetMemories`, `RecallMemories`, `SearchMemories`, export) decompress. Measured against the
+database work it sits beside, that is about **2.4%** on a store-and-read round trip, against
+savings of 4–8× on bodies that clear the size threshold; see
+[Body compression](performance.md#body-compression) in the performance notes for the benchmarks.
+The consolidation and eviction scans are unaffected: they read the covering index and never load a
+body at all.
+
+Set it to `false` for a workload that reads large pages of small, poorly-compressing bodies, where
+the per-memory decompression multiplies without much storage to show for it.
+
+The algorithm is gzip and is deliberately **not** configurable — a body written by one version of
+the service has to stay readable by every later one, which a configurable algorithm would make a
+matter of nobody ever changing the key. What is configurable is only whether new bodies are
+compressed on the way in. (The compression _level_ is an encoder-side choice that any gzip reader
+decodes regardless, so it carries no such commitment; the service uses the fastest one, which on
+realistic bodies gives up almost no ratio.)
+
+That setting can be changed at any point in a store's life. Each row records whether its own body
+was compressed, and reads are driven entirely by that flag rather than by the current configuration,
+so a store may hold a mix of both and every row still reads correctly. Turning compression on does
+not rewrite the bodies already stored (they are compressed if and when they are next updated);
+turning it off leaves every compressed row readable.
+
+One consequence worth anticipating when it changes on an existing store: because the capacity target
+counts stored bytes, the store's used figure — and with it the capacity pressure that scales the
+deletion threshold — moves as new writes land under the new setting. Turning compression on makes a
+store effectively larger, so it forgets **less** aggressively at the same `capacityBytes`; turning it
+off does the reverse. Re-check `capacityBytes` against the behaviour you want after either change.
+
+Three rules narrow what is actually compressed, so the feature cannot cost storage:
+
+- Bodies below `storage.compression.minBytes` (default 512) are stored verbatim — small bodies
+  compress poorly once gzip's own ~18-byte header and trailer are counted. A value below 64 is
+  raised to it, since a smaller threshold only buys compression attempts that the next rule rejects.
+- **Binary** memories are never compressed. Their bodies are client-encoded and as likely to be an
+  already-compressed payload as anything else.
+- A body that compression did not actually make smaller is stored verbatim. On incompressible
+  content the worst case is therefore the CPU of the attempt, never a body that grew.
+
+`UsedBytes` — and so the capacity target and eviction — accounts for what is really on disk, which
+is the compressed size. Sizes seen elsewhere are the logical ones: the `memory.body_bytes` histogram
+measures the body as the client sent it, and `memory.limit.sizeBytes` is likewise checked against the
+body as submitted, not against its stored size.
+
+Compression is confined to the storage layer. Everything above it — the RPCs, the OpenSearch index,
+the summariser, and the export/archive format — sees plain bodies, so an archive is portable between
+instances whatever either one's setting is; an import takes the receiving instance's policy.
 
 `storage.pool.maxOpenConns` (default 25) and `storage.pool.maxIdleConns` (0 → defaults to
 `maxOpenConns`) cap the connection pool on the `postgres`/`mysql` drivers, where `database/sql`
@@ -690,7 +751,7 @@ queue overflow, lost to a crash before the worker drained, or missed while the c
 unreachable long enough to exhaust the worker's retries. Rather than leave that gap open until an
 operator runs a manual backfill, the **consolidating instance** runs a periodic reconciliation
 sweep that re-indexes every non-binary memory from the primary store, keyed by id (idempotent, so
-it only ever *adds back* what was missing). It is controlled by two keys:
+it only ever _adds back_ what was missing). It is controlled by two keys:
 
 - `opensearch.reconcileIntervalSeconds` (default `3600`) — how often a sweep runs; the interval is
   measured from the end of one sweep to the start of the next. `0` (or negative) disables it.
@@ -699,7 +760,7 @@ it only ever *adds back* what was missing). It is controlled by two keys:
 
 The sweep runs only on the instance with `consolidation.enabled: true` (the single owner of index
 maintenance), so replicas never duplicate it, and it starts a short while after launch so a sparse
-index is healed soon after a restart rather than a whole interval later. It heals only *missing*
+index is healed soon after a restart rather than a whole interval later. It heals only _missing_
 documents: a stale document (one the primary store no longer holds) is already harmless — search
 results are re-verified against the primary store — and removing stale documents needs a full
 enumeration of the index, which remains the job of `--backfill-search --reindex` below.
@@ -708,7 +769,7 @@ enumeration of the index, which remains the job of `--backfill-search --reindex`
 
 The reconciliation sweep above heals a missing document on its own, but two cases still want an
 immediate, synchronous rebuild: enabling `opensearch.enabled` on an existing database (the whole
-index is empty and you do not want to wait for a sweep), and clearing *stale* documents the sweep
+index is empty and you do not want to wait for a sweep), and clearing _stale_ documents the sweep
 deliberately leaves behind. The backfill CLI mode covers both:
 
 ```sh

@@ -769,3 +769,40 @@ func TestNewPostgresReadOnly_UnreachableServerFailsFast(t *testing.T) {
 		t.Error("expected NewPostgresReadOnly to fail against an unreachable server")
 	}
 }
+
+// TestPostgres_CompressedBodyRoundTrip covers compression against the BYTEA column: a gzip stream
+// carries NUL and other bytes no text column would survive, so the round trip is worth pinning per
+// driver rather than assuming SQLite's BLOB behaviour carries over.
+func TestPostgres_CompressedBodyRoundTrip(t *testing.T) {
+	database := newPostgresTestDB(t)
+	database.SetCompression(true, compressionMinBytesFloor)
+
+	body := compressibleBody()
+
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: body}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if _, isCompressed := storedBody(t, database, "m1"); !isCompressed {
+		t.Fatal("the row was not flagged compressed")
+	}
+
+	memories, err := database.GetMemoriesByIds(context.Background(), []string{"m1"})
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds: %s", err)
+	}
+
+	if len(*memories) != 1 || (*memories)[0].Body != body {
+		t.Error("the body did not survive the round trip through a BYTEA column")
+	}
+
+	// The RETURNING-based recall path uses the other scanner.
+	recalled, err := database.RecallMemories(context.Background(), []string{"m1"})
+	if err != nil {
+		t.Fatalf("RecallMemories: %s", err)
+	}
+
+	if len(*recalled) != 1 || (*recalled)[0].Body != body {
+		t.Error("RecallMemories did not return the original body")
+	}
+}

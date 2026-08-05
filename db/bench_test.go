@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 // These benchmarks pin the cost of the sleep-cycle scans, whose acceptable performance rests on
@@ -46,7 +48,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 	levelID := seedBenchLevels(b, d, tx)
 
 	insertMemory, err := tx.Prepare(d.rebind(
-		`INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO memories (` + memoryStoredColumns + `) VALUES ` + memoryValuePlaceholders,
 	))
 	if err != nil {
 		b.Fatalf("Prepare (memories): %s", err)
@@ -79,7 +81,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 		}
 
 		if _, err := insertMemory.Exec(
-			fmt.Sprintf("bench-memory-%08d", i), now, levelID[1+i%100], eventId, body, false, 0, 0, false, "",
+			fmt.Sprintf("bench-memory-%08d", i), now, levelID[1+i%100], eventId, body, false, 0, 0, false, "", false,
 		); err != nil {
 			b.Fatalf("insert memory: %s", err)
 		}
@@ -372,6 +374,122 @@ func benchmarkUsedBytesServer(b *testing.B, open func() (*DB, error)) {
 			for i := 0; i < b.N; i++ {
 				if _, err := d.UsedBytes(context.Background()); err != nil {
 					b.Fatalf("UsedBytes: %s", err)
+				}
+			}
+		})
+	}
+}
+
+// --- memory-body compression (storage.compression.enabled) ---
+//
+// These pin the cost compression adds to the paths that touch a body, which is the whole of what
+// it trades for the storage it saves. The sleep-cycle scans above are deliberately unaffected: they
+// read the covering index and never load a body, so a regression showing up there would mean a scan
+// had started reading bodies.
+
+// benchCompressionBodies are the body shapes the service is realistically given, chosen to bracket
+// the ratio: a structured log line (the worst realistic case — short, and its JSON punctuation
+// leaves little to find), several of them batched, and a prose note (the best case).
+func benchCompressionBodies() []struct {
+	name string
+	body string
+} {
+	logLine := `{"ts":"2026-08-05T13:07:15.123456+10:00","level":"info","service":"payments-api",` +
+		`"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","msg":"request completed","method":"POST",` +
+		`"path":"/v1/charges","status":200,"duration_ms":42.7,"region":"ap-southeast-2"}`
+
+	note := strings.Repeat(
+		"Meeting notes: discussed the migration plan for the payments service. Agreed to move the "+
+			"read replicas first, then cut over writes during the maintenance window. ", 8)
+
+	return []struct {
+		name string
+		body string
+	}{
+		{"log-line", logLine},
+		{"log-lines-x4", strings.Repeat(logLine, 4)},
+		{"prose-note", note},
+	}
+}
+
+// BenchmarkCompressBody measures the write-side cost, through the policy (so the size threshold and
+// the "keep it only if it shrank" comparison are included, as they are in production).
+func BenchmarkCompressBody(b *testing.B) {
+	d := &DB{}
+	d.SetCompression(true, compressionMinBytesFloor)
+
+	for _, c := range benchCompressionBodies() {
+		b.Run(c.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(c.body)))
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				d.compressBody(c.body, false)
+			}
+		})
+	}
+}
+
+// BenchmarkDecompressBody measures the read-side cost. This is the one that multiplies: a recall or
+// search returning a page of memories pays it once per memory.
+func BenchmarkDecompressBody(b *testing.B) {
+	for _, c := range benchCompressionBodies() {
+		packed, err := gzipBytes([]byte(c.body))
+		if err != nil {
+			b.Fatalf("gzipBytes: %s", err)
+		}
+
+		b.Run(c.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(c.body)))
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				if _, err := decompressBody(packed, true); err != nil {
+					b.Fatalf("decompressBody: %s", err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkStoreAndReadMemory brackets the two above with the surrounding database work, which is
+// the number that actually decides whether compression is affordable: the question is not what
+// gzip costs in isolation but what it costs beside an insert and a read.
+func BenchmarkStoreAndReadMemory(b *testing.B) {
+	body := strings.Repeat("compressible body content for the storage path benchmark. ", 32)
+
+	for _, compression := range []bool{false, true} {
+		name := "plain"
+		if compression {
+			name = "compressed"
+		}
+
+		b.Run(name, func(b *testing.B) {
+			d, err := New("")
+			if err != nil {
+				b.Fatalf("New: %s", err)
+			}
+
+			b.Cleanup(func() { _ = d.Close() })
+
+			d.SetCompression(compression, compressionMinBytesFloor)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				id := fmt.Sprintf("bench-compress-%08d", i)
+
+				if _, err := d.CreateMemory(context.Background(), types.Memory{
+					Id: id, TimeStamp: 1, Significance: 5, Body: body,
+				}); err != nil {
+					b.Fatalf("CreateMemory: %s", err)
+				}
+
+				if _, err := d.GetMemoriesByIds(context.Background(), []string{id}); err != nil {
+					b.Fatalf("GetMemoriesByIds: %s", err)
 				}
 			}
 		})

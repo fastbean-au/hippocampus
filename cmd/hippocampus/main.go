@@ -165,6 +165,8 @@ func execute(args []string) {
 	viper.SetDefault("storage.driver", "sqlite")
 	viper.SetDefault("storage.pool.maxOpenConns", 25)
 	viper.SetDefault("storage.queryTimeoutSeconds", 60)
+	viper.SetDefault("storage.compression.enabled", true)
+	viper.SetDefault("storage.compression.minBytes", 512)
 	viper.SetDefault("shutdown.timeoutSeconds", 10)
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
@@ -314,6 +316,16 @@ func run(ctx context.Context, version versionInfo) error {
 	// benchmarked sizes); 0 disables it. When set it must exceed the longest legitimate operation
 	// (notably a full consolidation scan), or a cycle could be aborted mid-scan.
 	database.SetQueryTimeout(time.Duration(viper.GetInt("storage.queryTimeoutSeconds")) * time.Second)
+
+	// Store memory bodies compressed, trading CPU on the read/write paths for storage - which is the
+	// resource the whole service manages to, so it buys retention. On by default: measured against
+	// the surrounding database work it costs a few percent, well under what it saves. It governs
+	// writes only: each row records whether it was compressed, so enabling or disabling it on an
+	// existing store leaves every row already written perfectly readable.
+	database.SetCompression(
+		viper.GetBool("storage.compression.enabled"),
+		viper.GetInt("storage.compression.minBytes"),
+	)
 
 	log.Debug("database initialised")
 

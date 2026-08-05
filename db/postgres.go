@@ -214,12 +214,17 @@ func (d *DB) initPostgresSchema() error {
 		recall_count  INTEGER NOT NULL DEFAULT 0,
 		is_summary    BOOLEAN NOT NULL DEFAULT FALSE,
 		group_name    TEXT NOT NULL DEFAULT '',
+		is_compressed BOOLEAN NOT NULL DEFAULT FALSE,
 		body          BYTEA NOT NULL DEFAULT ''::bytea
 	);
 
 	-- Postgres supports ADD COLUMN IF NOT EXISTS natively, so columns added after a table's
 	-- original CREATE TABLE are migrated in place without SQLite's pragma_table_info probe.
 	ALTER TABLE memories ADD COLUMN IF NOT EXISTS is_summary BOOLEAN NOT NULL DEFAULT FALSE;
+
+	-- Bodies written before compression existed are all uncompressed, which is what the column's
+	-- default already says of them, so adding it is the whole migration.
+	ALTER TABLE memories ADD COLUMN IF NOT EXISTS is_compressed BOOLEAN NOT NULL DEFAULT FALSE;
 
 	-- The column is named group_name rather than group because GROUP is a reserved word.
 	ALTER TABLE memories ADD COLUMN IF NOT EXISTS group_name TEXT NOT NULL DEFAULT '';

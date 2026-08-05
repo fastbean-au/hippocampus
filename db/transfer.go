@@ -111,7 +111,7 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 	// The ELSE-less full overwrite still qualifies nothing but the excluded/new row, so both
 	// dialect arms stay unambiguous. significance travels as the rank on the wire and is resolved
 	// to a registry level id per row (find-or-create) below.
-	query := `INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	query := `INSERT INTO memories (` + memoryStoredColumns + `) VALUES ` + memoryValuePlaceholders + `
 		ON CONFLICT (id) DO UPDATE SET
 			timestamp     = excluded.timestamp,
 			significance_level_id = excluded.significance_level_id,
@@ -121,12 +121,13 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			time_recalled = excluded.time_recalled,
 			recall_count  = excluded.recall_count,
 			is_summary    = excluded.is_summary,
-			group_name    = excluded.group_name`
+			group_name    = excluded.group_name,
+			is_compressed = excluded.is_compressed`
 
 	// MySQL has no ON CONFLICT; ON DUPLICATE KEY UPDATE with the 8.0.20+ row alias is the same
 	// upsert, with 'new' standing in for 'excluded'.
 	if d.driver == driverMySQL {
-		query = `INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
+		query = `INSERT INTO memories (` + memoryStoredColumns + `) VALUES ` + memoryValuePlaceholders + ` AS new
 		ON DUPLICATE KEY UPDATE
 			timestamp     = new.timestamp,
 			significance_level_id = new.significance_level_id,
@@ -136,7 +137,8 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			time_recalled = new.time_recalled,
 			recall_count  = new.recall_count,
 			is_summary    = new.is_summary,
-			group_name    = new.group_name`
+			group_name    = new.group_name,
+			is_compressed = new.is_compressed`
 	}
 
 	// The registry lock serialises level find-or-create against concurrent writers on the server
@@ -161,18 +163,23 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			return 0, err
 		}
 
+		// An import carries plain bodies on the wire (the archive format is storage-agnostic), so
+		// each row takes this instance's compression policy rather than the source instance's.
+		body, isCompressed := d.compressBody(memory.Body, memory.IsBinary)
+
 		if _, err := tx.Exec(
 			d.rebind(query),
 			memory.Id,
 			memory.TimeStamp,
 			levelID,
 			memory.EventId,
-			[]byte(memory.Body),
+			body,
 			memory.IsBinary,
 			memory.TimeRecalled,
 			memory.RecallCount,
 			memory.IsSummary,
 			memory.Group,
+			isCompressed,
 		); err != nil {
 			_ = tx.Rollback()
 

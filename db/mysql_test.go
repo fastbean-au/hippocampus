@@ -847,3 +847,38 @@ func TestNewMySQLReadOnly_UnreachableServerFailsFast(t *testing.T) {
 		t.Error("expected NewMySQLReadOnly to fail against an unreachable server")
 	}
 }
+
+// TestMySQL_CompressedBodyRoundTrip covers compression against the LONGBLOB column, and the MySQL
+// arm of recall (UPDATE-then-SELECT rather than RETURNING), which reads through the joined view.
+func TestMySQL_CompressedBodyRoundTrip(t *testing.T) {
+	database := newMySQLTestDB(t)
+	database.SetCompression(true, compressionMinBytesFloor)
+
+	body := compressibleBody()
+
+	if _, err := database.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: body}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if _, isCompressed := storedBody(t, database, "m1"); !isCompressed {
+		t.Fatal("the row was not flagged compressed")
+	}
+
+	memories, err := database.GetMemoriesByIds(context.Background(), []string{"m1"})
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds: %s", err)
+	}
+
+	if len(*memories) != 1 || (*memories)[0].Body != body {
+		t.Error("the body did not survive the round trip through a LONGBLOB column")
+	}
+
+	recalled, err := database.RecallMemories(context.Background(), []string{"m1"})
+	if err != nil {
+		t.Fatalf("RecallMemories: %s", err)
+	}
+
+	if len(*recalled) != 1 || (*recalled)[0].Body != body {
+		t.Error("RecallMemories did not return the original body")
+	}
+}

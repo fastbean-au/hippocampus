@@ -195,6 +195,7 @@ func (d *DB) initMySQLSchema() error {
 			recall_count  INTEGER NOT NULL DEFAULT 0,
 			is_summary    BOOLEAN NOT NULL DEFAULT FALSE,
 			group_name    VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+			is_compressed BOOLEAN NOT NULL DEFAULT FALSE,
 			body          LONGBLOB NOT NULL
 		)`,
 
@@ -210,6 +211,12 @@ func (d *DB) initMySQLSchema() error {
 	}
 
 	if err := d.addColumnIfMissing("memories", "is_summary", "BOOLEAN NOT NULL DEFAULT FALSE"); err != nil {
+		return err
+	}
+
+	// Bodies written before compression existed are all uncompressed, which is what the column's
+	// default already says of them, so adding it is the whole migration.
+	if err := d.addColumnIfMissing("memories", "is_compressed", "BOOLEAN NOT NULL DEFAULT FALSE"); err != nil {
 		return err
 	}
 

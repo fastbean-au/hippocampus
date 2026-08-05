@@ -360,6 +360,28 @@ const STEPS = [
           },
         ],
       },
+      {
+        title: "Compression",
+        fields: [
+          {
+            key: "storage.compression.enabled",
+            label: "Compress memory bodies",
+            type: "bool",
+            def: true,
+            svc: true,
+            help: "Stores bodies gzip-compressed, trading a few percent of CPU on reads and writes for storage — which is the resource the capacity target manages, so it buys retention. Safe to change at any time: each row records how it was stored, so rows written either way stay readable.",
+          },
+          {
+            key: "storage.compression.minBytes",
+            label: "Minimum body size (bytes)",
+            type: "int",
+            def: 512,
+            svc: 512,
+            when: (s) => value(s, "storage.compression.enabled"),
+            help: "Bodies below this are stored verbatim — they compress poorly once gzip's own header is counted. Values under 64 are raised to it. Binary bodies are never compressed, and a body compression fails to shrink is stored verbatim whatever its size.",
+          },
+        ],
+      },
     ],
   },
   {

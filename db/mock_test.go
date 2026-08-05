@@ -425,8 +425,8 @@ func TestRecallMemoriesMySQL(t *testing.T) {
 	mock.ExpectQuery(`FROM .* WHERE id IN`).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "timestamp", "significance", "event_id", "body",
-			"is_binary", "time_recalled", "recall_count", "is_summary", "group_name",
-		}).AddRow("m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, ""))
+			"is_binary", "time_recalled", "recall_count", "is_summary", "group_name", "is_compressed",
+		}).AddRow("m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false))
 	mock.ExpectCommit()
 
 	memories, err := d.recallMemoriesMySQL(context.Background(), []string{"m1"}, 99)
@@ -523,7 +523,8 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	// addColumnIfMissing: is_summary, group_name (memories), group_name (events).
+	// addColumnIfMissing: is_summary, is_compressed, group_name (memories), group_name (events).
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()
@@ -577,6 +578,7 @@ func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()
@@ -1284,6 +1286,7 @@ func TestInitMySQLSchema_CollationError(t *testing.T) {
 	columnPresent()
 	columnPresent()
 	columnPresent()
+	columnPresent()
 
 	// First collation probe (events.id) reports a mismatch, and the MODIFY fails.
 	mock.ExpectQuery(`collation_name FROM information_schema`).
@@ -1314,6 +1317,7 @@ func TestInitMySQLSchema_SignificanceLevelIDColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()
@@ -1351,6 +1355,7 @@ func TestInitMySQLSchema_EnsureCoveringIndexError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()
@@ -1568,6 +1573,31 @@ func TestSetupMySQL_SchemaInitFailsReleasesLock(t *testing.T) {
 // exercised by TestInitMySQLSchema_AddColumnError (is_summary) or
 // TestInitMySQLSchema_SignificanceLevelIDColumnError (memories.significance_level_id). ---
 
+func TestInitMySQLSchema_IsCompressedColumnError(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	columnPresent := func() {
+		mock.ExpectQuery(`column_name FROM information_schema`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// is_summary present, then is_compressed reported missing and its ALTER fails.
+	columnPresent()
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN is_compressed`).WillReturnError(errors.New("boom"))
+
+	if err := d.initMySQLSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
 func TestInitMySQLSchema_MemoriesGroupNameColumnError(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
@@ -1581,6 +1611,7 @@ func TestInitMySQLSchema_MemoriesGroupNameColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	// is_summary present, then group_name(memories) reported missing and its ALTER fails.
+	columnPresent()
 	columnPresent()
 	mock.ExpectQuery(`column_name FROM information_schema`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
@@ -1606,6 +1637,7 @@ func TestInitMySQLSchema_EventsGroupNameColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	// is_summary and group_name(memories) present, group_name(events) missing and its ALTER fails.
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	mock.ExpectQuery(`column_name FROM information_schema`).
@@ -1636,6 +1668,7 @@ func TestInitMySQLSchema_EventsSignificanceLevelIDColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()

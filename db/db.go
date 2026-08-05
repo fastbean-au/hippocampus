@@ -93,6 +93,12 @@ type DB struct {
 	// after a bounded time rather than blocking the calling goroutine — and its pooled connection —
 	// indefinitely. Set once at startup via SetQueryTimeout, before serving, so it needs no lock.
 	queryTimeout time.Duration
+
+	// compression is the write-side memory-body compression policy (see compress.go). The zero
+	// value stores every body verbatim. It governs writes only — reads follow each row's own
+	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
+	// needs no lock.
+	compression compression
 }
 
 // SetQueryTimeout sets the per-operation timeout (see the queryTimeout field). Called once at
@@ -613,6 +619,7 @@ func (d *DB) initSchema() error {
 		recall_count  INTEGER NOT NULL DEFAULT 0,
 		is_summary    INTEGER NOT NULL DEFAULT 0,
 		group_name    TEXT NOT NULL DEFAULT '',
+		is_compressed INTEGER NOT NULL DEFAULT 0,
 		body          BLOB NOT NULL DEFAULT x''
 	);
 	`
@@ -634,6 +641,12 @@ func (d *DB) initSchema() error {
 	}
 
 	if err := d.addColumnIfMissing("memories", "is_summary", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// Bodies written before compression existed are all uncompressed, which is exactly what the
+	// column's default says of them, so no backfill is needed beyond adding the column.
+	if err := d.addColumnIfMissing("memories", "is_compressed", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 
