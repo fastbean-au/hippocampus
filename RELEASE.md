@@ -61,8 +61,30 @@ Run these before cutting a tag. Most of the mechanical checks are also enforced 
    release workflow — the main-package wiring is covered by the docker smoke tests in CI, not unit
    coverage.)
 
-6. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
+6. Update [`CHANGELOG.md`](CHANGELOG.md): rename the `[Unreleased]` heading to the version and its
+   date, open a fresh empty `[Unreleased]`, and add the two link references at the foot of the file.
+   Anything under **Breaking** must also be reflected in the release notes people actually read —
+   see [Compatibility](#compatibility) below.
+7. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
    to release.
+
+## Compatibility
+
+What a version number promises, and what is exempt, is stated once in
+[`CHANGELOG.md`](CHANGELOG.md#compatibility) rather than repeated here. Two parts of it are the
+release process's business:
+
+- **The contract is gated, not merely documented.** The `proto-breaking` CI job runs `buf breaking`
+  on `contract/hippocampus.proto` against the most recent release tag reachable from the commit, so
+  an accidental field renumbering or a removed RPC fails the build before it can ship. Configuration
+  and rationale live in [`contract/buf.yaml`](contract/buf.yaml).
+- **A deliberate break needs three things**, in this order: agreement that it is worth doing *now*
+  (pre-1.0 is far cheaper than after — every generated client is a copy of the contract, and there
+  are more of them each release); a **Breaking** entry in the changelog saying what a caller must
+  change, not merely what changed; and a major version bump, or — while the leading version
+  component is 0 — a minor one, which semver permits and this project has used. The gate does not
+  stand in the way: it compares against the previous release, so the first tag carrying the new
+  contract becomes the new baseline automatically.
 
 ## Cut the release
 
@@ -82,7 +104,9 @@ fixes, minor for backward-compatible features, major for breaking changes.
    containers (so the gate reflects the integration tests, not just the SQLite paths) as a gate,
    then `gh release create` builds the GitHub release with auto-generated notes from the tag.
    Coverage is not reported here — a tag-triggered run would file it under the tag ref, leaving the
-   `?branch=main` badge stale; the CI workflow reports coverage to Coveralls on push to `main`.
+   `?branch=main` badge stale; the CI workflow reports coverage to Coveralls on push to `main`. The
+   generated notes are a commit list, not the compatibility record; that is `CHANGELOG.md`, written
+   in the pre-flight above and already on the tagged commit.
 2. **`binaries` job** (gated on `release`) — cross-compiles `hippocampus`, the `hippo` command-line
    client, and `hippocampus-mcp` (plus the four event-sourcing bridges) for `linux`, `darwin`, and
    `windows` on `amd64` and `arm64` (pure Go, CGO disabled, so the whole matrix builds on one

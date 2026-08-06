@@ -100,6 +100,68 @@ jobs:
           go install github.com/mattn/goveralls@latest
           goveralls -coverprofile=coverage.filtered.out -service=github
 
+  # Every published client - the generated Go package, and anything anyone generates from
+  # contract/hippocampus.proto - breaks silently on an accidental field renumbering or a removed
+  # RPC. Nothing else in the repo catches it: `go generate ./contract` regenerates happily and the
+  # compiler only ever sees the new descriptor. `buf breaking` compares the contract against the
+  # last release tag, which is the version people actually have. Config and rationale in
+  # contract/buf.yaml; the compatibility policy it enforces is in RELEASE.md.
+  proto-breaking:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Full history and tags: the baseline is a tag, resolved below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
+      # The baseline is the most recent release tag reachable from HEAD - the released contract a
+      # client would have generated from. The obsidian plugin's own tags (obsidian-v*, and a bare
+      # 0.1.0) are excluded by the match pattern; they do not carry a contract.
+      #
+      # The skip exists for exactly one transition. Tags up to v0.23.0 declare `package proto;` and
+      # v0.24.0 renames it to `hippocampus.v1` (a deliberate break, taken before 1.0 - see
+      # CHANGELOG.md), so comparing against any of those tags reports a break that is the intended
+      # change rather than a regression, and the gate would be red until the next release. Testing
+      # the baseline's own package declaration makes that self-clearing: the first tag carrying the
+      # new namespace turns full enforcement on with no edit here.
+      - name: Resolve the baseline tag
+        id: baseline
+        run: |
+          set -euo pipefail
+
+          tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)"
+
+          if [ -z "${tag}" ]; then
+            echo "No release tag reachable from HEAD; nothing to compare against."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          package="$(sed -n 's/^package \(.*\);$/\1/p' contract/hippocampus.proto | head -1)"
+
+          if ! git show "${tag}:contract/hippocampus.proto" | grep -qx "package ${package};"; then
+            echo "Baseline ${tag} predates the ${package} package; skipping until the first tag that carries it."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Comparing the contract against ${tag}."
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # --path limits the report to our contract: the vendored googleapis definitions under
+      # contract/google/api/ are part of the module (they must resolve as imports) but are not ours
+      # to be compatible about.
+      - name: Check the contract for breaking changes
+        if: steps.baseline.outputs.skip != 'true'
+        working-directory: contract
+        run: buf breaking --against "../.git#tag=${{ steps.baseline.outputs.tag }},subdir=contract" --path hippocampus.proto
+
   # Build the image and smoke both compose stacks the same way the containerization work was
   # validated by hand: /healthz serves, a memory stores and reads back through the gateway, and
   # in the postgres stack the write demonstrably lands in the postgres service.

@@ -24,7 +24,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoClearResponse"
+              "$ref": "#/definitions/v1ClearResponse"
             }
           },
           "default": {
@@ -41,7 +41,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoClearRequest"
+              "$ref": "#/definitions/v1ClearRequest"
             }
           }
         ],
@@ -59,7 +59,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoExplainConsolidationResponse"
+              "$ref": "#/definitions/v1ExplainConsolidationResponse"
             }
           },
           "default": {
@@ -76,7 +76,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoExplainConsolidationRequest"
+              "$ref": "#/definitions/v1ExplainConsolidationRequest"
             }
           }
         ],
@@ -93,7 +93,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGetEventsResponse"
+              "$ref": "#/definitions/v1GetEventsResponse"
             }
           },
           "default": {
@@ -214,7 +214,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoStoreEventResponse"
+              "$ref": "#/definitions/v1StoreEventResponse"
             }
           },
           "default": {
@@ -231,7 +231,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoEvent"
+              "$ref": "#/definitions/v1Event"
             }
           }
         ],
@@ -248,7 +248,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -264,7 +264,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoMergeEventsRequest"
+              "$ref": "#/definitions/v1MergeEventsRequest"
             }
           }
         ],
@@ -281,7 +281,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoSummariseMemoriesResponse"
+              "$ref": "#/definitions/v1SummariseMemoriesResponse"
             }
           },
           "default": {
@@ -320,7 +320,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoReplaceMemoriesWithSummaryResponse"
+              "$ref": "#/definitions/v1ReplaceMemoriesWithSummaryResponse"
             }
           },
           "default": {
@@ -342,7 +342,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoMemory"
+              "$ref": "#/definitions/v1Memory"
             }
           }
         ],
@@ -359,7 +359,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGetEventResponse"
+              "$ref": "#/definitions/v1GetEventResponse"
             }
           },
           "default": {
@@ -396,7 +396,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -434,7 +434,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -474,7 +474,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -514,7 +514,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoExportResponse"
+              "$ref": "#/definitions/v1ExportResponse"
             }
           },
           "default": {
@@ -531,7 +531,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoExportRequest"
+              "$ref": "#/definitions/v1ExportRequest"
             }
           }
         ],
@@ -548,7 +548,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoImportResponse"
+              "$ref": "#/definitions/v1ImportResponse"
             }
           },
           "default": {
@@ -564,7 +564,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoImportRequest"
+              "$ref": "#/definitions/v1ImportRequest"
             }
           }
         ],
@@ -581,7 +581,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoImportBatchResponse"
+              "$ref": "#/definitions/v1ImportBatchResponse"
             }
           },
           "default": {
@@ -598,7 +598,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoImportBatchRequest"
+              "$ref": "#/definitions/v1ImportBatchRequest"
             }
           }
         ],
@@ -615,7 +615,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGetMemoriesResponse"
+              "$ref": "#/definitions/v1GetMemoriesResponse"
             }
           },
           "default": {
@@ -713,7 +713,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoStoreMemoryResponse"
+              "$ref": "#/definitions/v1StoreMemoryResponse"
             }
           },
           "default": {
@@ -730,7 +730,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoMemory"
+              "$ref": "#/definitions/v1Memory"
             }
           }
         ],
@@ -747,7 +747,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -763,7 +763,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoDeleteMemoriesRequest"
+              "$ref": "#/definitions/v1DeleteMemoriesRequest"
             }
           }
         ],
@@ -780,7 +780,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGetMemoriesResponse"
+              "$ref": "#/definitions/v1GetMemoriesResponse"
             }
           },
           "default": {
@@ -796,7 +796,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoRecallMemoriesRequest"
+              "$ref": "#/definitions/v1RecallMemoriesRequest"
             }
           }
         ],
@@ -813,7 +813,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGetMemoriesResponse"
+              "$ref": "#/definitions/v1GetMemoriesResponse"
             }
           },
           "default": {
@@ -830,7 +830,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoSearchMemoriesRequest"
+              "$ref": "#/definitions/v1SearchMemoriesRequest"
             }
           }
         ],
@@ -847,7 +847,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -887,7 +887,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -910,7 +910,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGeneralResponse"
+              "$ref": "#/definitions/v1GeneralResponse"
             }
           },
           "default": {
@@ -934,7 +934,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoPreviewConsolidationResponse"
+              "$ref": "#/definitions/v1PreviewConsolidationResponse"
             }
           },
           "default": {
@@ -967,7 +967,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoGetSummarisationCandidatesResponse"
+              "$ref": "#/definitions/v1GetSummarisationCandidatesResponse"
             }
           },
           "default": {
@@ -990,7 +990,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoTransferResponse"
+              "$ref": "#/definitions/v1TransferResponse"
             }
           },
           "default": {
@@ -1007,7 +1007,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/protoTransferRequest"
+              "$ref": "#/definitions/v1TransferRequest"
             }
           }
         ],
@@ -1024,7 +1024,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/protoWhoAmIResponse"
+              "$ref": "#/definitions/v1WhoAmIResponse"
             }
           },
           "default": {
@@ -1060,7 +1060,7 @@
           "title": "optional: significance for the resulting summary memory; 0 (and no placement) defaults to the highest significance among the replaced memories"
         },
         "placement": {
-          "$ref": "#/definitions/protoSignificancePlacement",
+          "$ref": "#/definitions/v1SignificancePlacement",
           "title": "optional: rank the summary relative to existing values (see SignificancePlacement); takes precedence over significance when set"
         }
       },
@@ -1075,7 +1075,7 @@
           "title": "the new absolute significance; must be \u003e= 1 to take effect. IMPORTANT: 0 with no placement is a no-op - it leaves the event's existing significance unchanged; there is no way to reset an event to unranked via this RPC"
         },
         "placement": {
-          "$ref": "#/definitions/protoSignificancePlacement",
+          "$ref": "#/definitions/v1SignificancePlacement",
           "title": "write-only: rank relative to existing values (see SignificancePlacement); takes precedence over significance when set"
         }
       }
@@ -1102,7 +1102,7 @@
           "title": "required (non-empty) on create; a proto3 string, so always valid UTF-8 on the wire - encode true binary payloads (e.g. base64) before setting is_binary; optionally capped by memory.limit.sizeBytes (0 = unlimited)"
         },
         "isBinary": {
-          "$ref": "#/definitions/protoBool",
+          "$ref": "#/definitions/v1Bool",
           "title": "set once at creation; not updatable via UpdateMemory. TRUE bodies are opaque and never indexed for content search (see SearchMemories)"
         },
         "timeRecalled": {
@@ -1124,7 +1124,7 @@
           "title": "optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters"
         },
         "placement": {
-          "$ref": "#/definitions/protoSignificancePlacement",
+          "$ref": "#/definitions/v1SignificancePlacement",
           "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       },
@@ -1141,7 +1141,35 @@
       "default": "UNSPECIFIED",
       "title": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
     },
-    "protoBool": {
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1Bool": {
       "type": "string",
       "enum": [
         "UNSPECIFIED",
@@ -1151,7 +1179,7 @@
       "default": "UNSPECIFIED",
       "description": "Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an\nexplicitly-set value from one left absent. Used for Memory.is_binary; UNSPECIFIED and FALSE are\ncurrently treated identically by the server (both mean not-binary) - only TRUE marks a memory\nas binary.\n\n - UNSPECIFIED: not set; the server currently treats this the same as FALSE\n - FALSE: explicitly not binary\n - TRUE: binary; the body is opaque and never indexed for content search"
     },
-    "protoClearRequest": {
+    "v1ClearRequest": {
       "type": "object",
       "properties": {
         "manifestId": {
@@ -1160,7 +1188,7 @@
       },
       "description": "Clear deletes exactly the records captured by the Export/Transfer run that produced the\nmanifest: memories are deleted only if neither created nor recalled since the snapshot, and\nevents only once they have no memories left. Manifests are held in memory - a restart discards\nthem."
     },
-    "protoClearResponse": {
+    "v1ClearResponse": {
       "type": "object",
       "properties": {
         "memoriesCleared": {
@@ -1173,7 +1201,7 @@
         }
       }
     },
-    "protoDecayCurve": {
+    "v1DecayCurve": {
       "type": "object",
       "properties": {
         "significance": {
@@ -1195,13 +1223,13 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoDecayPoint"
+            "$ref": "#/definitions/v1DecayPoint"
           }
         }
       },
       "description": "DecayCurve is the projected decay of one significance value under the current configuration,\nsampled evenly from just after age zero to max_age_days. It is computed by the same code that\ndecides consolidation, so a plot of it cannot drift from what the service will actually do."
     },
-    "protoDecayCurveRequest": {
+    "v1DecayCurveRequest": {
       "type": "object",
       "properties": {
         "significance": {
@@ -1222,7 +1250,7 @@
       },
       "description": "DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance\nvalue, so a client can plot it without reimplementing the maths (which is what\ndocs/consolidation.md's value tables describe, and what the config wizard's preview approximates).\nLeaving the field unset asks for no curve."
     },
-    "protoDecayPoint": {
+    "v1DecayPoint": {
       "type": "object",
       "properties": {
         "ageDays": {
@@ -1236,7 +1264,7 @@
       },
       "description": "DecayPoint is one sample of a decay curve: the value the configured algorithm gives an item of the\nrequested significance once its decay clock reads age_days."
     },
-    "protoDeleteMemoriesRequest": {
+    "v1DeleteMemoriesRequest": {
       "type": "object",
       "properties": {
         "ids": {
@@ -1247,7 +1275,7 @@
         }
       }
     },
-    "protoEvent": {
+    "v1Event": {
       "type": "object",
       "properties": {
         "id": {
@@ -1290,7 +1318,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoRelationship"
+            "$ref": "#/definitions/v1Relationship"
           },
           "title": "relationships to other events, weighted into this event's memories' value (see consolidation.relationshipSignificanceWeight)"
         },
@@ -1298,7 +1326,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoMemory"
+            "$ref": "#/definitions/v1Memory"
           },
           "title": "populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory"
         },
@@ -1307,13 +1335,13 @@
           "title": "optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters"
         },
         "placement": {
-          "$ref": "#/definitions/protoSignificancePlacement",
+          "$ref": "#/definitions/v1SignificancePlacement",
           "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       },
       "description": "Event is a named time span with its own significance, optionally carrying relationships to\nother events and/or nested memories. memories/relationships are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory."
     },
-    "protoExplainConsolidationRequest": {
+    "v1ExplainConsolidationRequest": {
       "type": "object",
       "properties": {
         "memoryIds": {
@@ -1324,13 +1352,13 @@
           "title": "the memories to value; at most 200 per call"
         },
         "curve": {
-          "$ref": "#/definitions/protoDecayCurveRequest",
+          "$ref": "#/definitions/v1DecayCurveRequest",
           "title": "optional projected curve for the current configuration"
         }
       },
       "description": "ExplainConsolidationRequest asks where the named memories stand against the consolidation rules,\nand optionally for the decay curve of the current configuration. Both parts are optional: ids\nwithout a curve values just those memories, a curve without ids reports the configuration and the\ncurrent capacity pressure alone. Ids that do not exist are simply absent from the response."
     },
-    "protoExplainConsolidationResponse": {
+    "v1ExplainConsolidationResponse": {
       "type": "object",
       "properties": {
         "capacityPressure": {
@@ -1389,17 +1417,17 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoMemoryValuation"
+            "$ref": "#/definitions/v1MemoryValuation"
           }
         },
         "curve": {
-          "$ref": "#/definitions/protoDecayCurve",
+          "$ref": "#/definitions/v1DecayCurve",
           "title": "absent when none was requested"
         }
       },
       "description": "ExplainConsolidationResponse carries the decision inputs, one valuation per memory found, and the\nrequested curve. The inputs are a snapshot: capacity pressure and used bytes are re-read\nperiodically rather than per call, so they may lag a cycle that has just run - by design, since\nthis is asked far more often than a preview and both readings cost a scan."
     },
-    "protoExportRequest": {
+    "v1ExportRequest": {
       "type": "object",
       "properties": {
         "clear": {
@@ -1408,7 +1436,7 @@
       },
       "description": "Export snapshots every event and memory into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted after a successful\nupload (writes and recalls landing mid-run survive, exactly as Clear does)."
     },
-    "protoExportResponse": {
+    "v1ExportResponse": {
       "type": "object",
       "properties": {
         "manifestId": {
@@ -1435,7 +1463,7 @@
         }
       }
     },
-    "protoForgetCandidate": {
+    "v1ForgetCandidate": {
       "type": "object",
       "properties": {
         "id": {
@@ -1469,7 +1497,7 @@
           "title": "stored size of the body, after compression - the same measure capacity accounting uses"
         },
         "rule": {
-          "$ref": "#/definitions/protoForgetRule"
+          "$ref": "#/definitions/v1ForgetRule"
         },
         "timeStamp": {
           "type": "string",
@@ -1488,7 +1516,7 @@
       },
       "description": "ForgetCandidate is one memory a cycle would delete, with the numbers behind the decision. value\nand threshold are the two sides of the comparison that decided it: a CONSOLIDATION candidate is\none whose value fell below the threshold. Bodies are never included - a preview reports what\nwould be lost, it is not a way to read the store."
     },
-    "protoForgetRule": {
+    "v1ForgetRule": {
       "type": "string",
       "enum": [
         "FORGET_RULE_UNSPECIFIED",
@@ -1498,7 +1526,7 @@
       "default": "FORGET_RULE_UNSPECIFIED",
       "description": "ForgetRule names why a memory appears in a consolidation preview - which of the two independent\ndeletion paths selected it. The distinction matters when tuning: a memory forgotten by\nCONSOLIDATION decayed below the threshold and is answered by the decay settings\n(aggressiveness, deletionThreshold, unitsOfAgeInDays), while one forgotten by EVICTION was\nstill valuable enough to keep and went only because the store is over its byte capacity - which\nis answered by capacityBytes, or by storing less.\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity"
     },
-    "protoGeneralResponse": {
+    "v1GeneralResponse": {
       "type": "object",
       "properties": {
         "ok": {
@@ -1506,22 +1534,22 @@
         }
       }
     },
-    "protoGetEventResponse": {
+    "v1GetEventResponse": {
       "type": "object",
       "properties": {
         "event": {
-          "$ref": "#/definitions/protoEvent"
+          "$ref": "#/definitions/v1Event"
         }
       }
     },
-    "protoGetEventsResponse": {
+    "v1GetEventsResponse": {
       "type": "object",
       "properties": {
         "events": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoEvent"
+            "$ref": "#/definitions/v1Event"
           }
         },
         "totalCount": {
@@ -1531,14 +1559,14 @@
         }
       }
     },
-    "protoGetMemoriesResponse": {
+    "v1GetMemoriesResponse": {
       "type": "object",
       "properties": {
         "memories": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoMemory"
+            "$ref": "#/definitions/v1Memory"
           }
         },
         "totalCount": {
@@ -1548,39 +1576,39 @@
         }
       }
     },
-    "protoGetSummarisationCandidatesResponse": {
+    "v1GetSummarisationCandidatesResponse": {
       "type": "object",
       "properties": {
         "candidates": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoSummarisationCandidate"
+            "$ref": "#/definitions/v1SummarisationCandidate"
           }
         }
       }
     },
-    "protoImportBatchRequest": {
+    "v1ImportBatchRequest": {
       "type": "object",
       "properties": {
         "events": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoEvent"
+            "$ref": "#/definitions/v1Event"
           }
         },
         "memories": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoMemory"
+            "$ref": "#/definitions/v1Memory"
           }
         }
       },
       "description": "ImportBatchRequest carries full-state rows (original timestamps, recall state, significance,\ngroup, event links) to be upserted by id into the store as-is - a data migration, not a fresh\nwrite. It is the ingest half of Transfer and is re-sendable: re-importing the same rows is\nidempotent."
     },
-    "protoImportBatchResponse": {
+    "v1ImportBatchResponse": {
       "type": "object",
       "properties": {
         "eventsImported": {
@@ -1593,7 +1621,7 @@
         }
       }
     },
-    "protoImportRequest": {
+    "v1ImportRequest": {
       "type": "object",
       "properties": {
         "objectKey": {
@@ -1601,7 +1629,7 @@
         }
       }
     },
-    "protoImportResponse": {
+    "v1ImportResponse": {
       "type": "object",
       "properties": {
         "eventsImported": {
@@ -1614,7 +1642,7 @@
         }
       }
     },
-    "protoMemory": {
+    "v1Memory": {
       "type": "object",
       "properties": {
         "id": {
@@ -1640,7 +1668,7 @@
           "title": "required (non-empty) on create; a proto3 string, so always valid UTF-8 on the wire - encode true binary payloads (e.g. base64) before setting is_binary; optionally capped by memory.limit.sizeBytes (0 = unlimited)"
         },
         "isBinary": {
-          "$ref": "#/definitions/protoBool",
+          "$ref": "#/definitions/v1Bool",
           "title": "set once at creation; not updatable via UpdateMemory. TRUE bodies are opaque and never indexed for content search (see SearchMemories)"
         },
         "timeRecalled": {
@@ -1662,13 +1690,13 @@
           "title": "optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters"
         },
         "placement": {
-          "$ref": "#/definitions/protoSignificancePlacement",
+          "$ref": "#/definitions/v1SignificancePlacement",
           "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       },
       "description": "Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to\nan event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective\nsignificance rises. is_binary controls whether the body is indexed for content search (see\nSearchMemories) - a binary body is never indexed."
     },
-    "protoMemoryValuation": {
+    "v1MemoryValuation": {
       "type": "object",
       "properties": {
         "id": {
@@ -1732,7 +1760,7 @@
       },
       "description": "MemoryValuation is where one memory stands against the consolidation rules right now: the value\nthe decay algorithm gives it, the threshold that value is measured against, and the flags that\noverride the comparison either way. Bodies are never included - this explains a memory, it is not\na way to read one."
     },
-    "protoMergeEventsRequest": {
+    "v1MergeEventsRequest": {
       "type": "object",
       "properties": {
         "mergeTo": {
@@ -1745,7 +1773,7 @@
         }
       }
     },
-    "protoPreviewConsolidationResponse": {
+    "v1PreviewConsolidationResponse": {
       "type": "object",
       "properties": {
         "memoriesConsolidated": {
@@ -1801,7 +1829,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/protoForgetCandidate"
+            "$ref": "#/definitions/v1ForgetCandidate"
           }
         },
         "truncated": {
@@ -1811,7 +1839,7 @@
       },
       "description": "PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are\nalways complete; candidates is a bounded sample of the individual memories, ordered by value\nascending so the least valuable - those furthest past the threshold - come first.\n\nThe preview accounts for the cycle's own ordering: consolidation runs first, so the memories it\nwould delete are excluded from the eviction pool and their bytes are already reclaimed before\neviction is considered at all. A memory therefore appears at most once, under the rule that\nwould actually claim it."
     },
-    "protoRecallMemoriesRequest": {
+    "v1RecallMemoriesRequest": {
       "type": "object",
       "properties": {
         "ids": {
@@ -1822,7 +1850,7 @@
         }
       }
     },
-    "protoRelationship": {
+    "v1Relationship": {
       "type": "object",
       "properties": {
         "eventId": {
@@ -1837,7 +1865,7 @@
       },
       "description": "Relationship is a directed reference from one event to another, carrying its own significance,\nwhich is weighted into the value calculation of the referencing event's memories (see\nconsolidation.relationshipSignificanceWeight)."
     },
-    "protoReplaceMemoriesWithSummaryResponse": {
+    "v1ReplaceMemoriesWithSummaryResponse": {
       "type": "object",
       "properties": {
         "id": {
@@ -1849,7 +1877,7 @@
         }
       }
     },
-    "protoSearchMemoriesRequest": {
+    "v1SearchMemoriesRequest": {
       "type": "object",
       "properties": {
         "query": {
@@ -1873,13 +1901,13 @@
           "title": "optional: restrict matches to memories carrying this group label"
         },
         "mode": {
-          "$ref": "#/definitions/protoSearchMode",
+          "$ref": "#/definitions/v1SearchMode",
           "title": "how to match; unset means KEYWORD"
         }
       },
       "description": "SearchMemoriesRequest queries the secondary content-search index for memories matching the\nquery. Results are always re-read from the primary store, which remains authoritative; ids the\nindex returns that the primary store no longer holds are silently dropped. When reinforce is\ntrue the matched memories are recalled - resetting their decay clocks and raising their\neffective significance - rather than merely fetched, and only the memories actually returned are\nreinforced."
     },
-    "protoSearchMode": {
+    "v1SearchMode": {
       "type": "string",
       "enum": [
         "SEARCH_MODE_UNSPECIFIED",
@@ -1890,7 +1918,7 @@
       "default": "SEARCH_MODE_UNSPECIFIED",
       "description": "SearchMode selects how a search decides which memories match.\n\nNot every mode is available in every deployment, and which are is a property of the deployment\nrather than of the caller: KEYWORD needs a content-search backend (built in on the sqlite driver,\nOpenSearch otherwise), while SEMANTIC and HYBRID additionally need an embedding model and\nOpenSearch's vector index. An unavailable mode is rejected with FAILED_PRECONDITION naming what\nis missing; WhoAmI reports the available modes so a client can choose without probing.\n\n - SEARCH_MODE_UNSPECIFIED: treated as KEYWORD, so an existing caller's behaviour is unchanged\n - SEARCH_MODE_KEYWORD: match on the words in the body; exact terms, error codes, and identifiers\n - SEARCH_MODE_SEMANTIC: match on meaning via embeddings; finds paraphrase the words would miss\n - SEARCH_MODE_HYBRID: both, their rankings fused; usually the best of the three"
     },
-    "protoSignificanceExtremum": {
+    "v1SignificanceExtremum": {
       "type": "string",
       "enum": [
         "SIGNIFICANCE_EXTREMUM_UNSPECIFIED",
@@ -1900,7 +1928,7 @@
       "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED",
       "description": "SignificanceExtremum selects \"all events tied at the highest (or lowest) significance value\"\ninstead of a min/max range - the tied set is computed dynamically from whichever events match\nGetEventsRequest's other filters (time range, group), not a fixed value the caller supplies.\nMutually exclusive with significance_min/significance_max (InvalidArgument if both are set).\n\n - SIGNIFICANCE_EXTREMUM_UNSPECIFIED: no extremum filtering; significance_min/significance_max (if set) apply as a normal range\n - SIGNIFICANCE_EXTREMUM_HIGHEST: return only events at the highest significance value among those matching the other filters\n - SIGNIFICANCE_EXTREMUM_LOWEST: return only events at the lowest significance value among those matching the other filters"
     },
-    "protoSignificancePlacement": {
+    "v1SignificancePlacement": {
       "type": "object",
       "properties": {
         "mode": {
@@ -1928,7 +1956,7 @@
       },
       "description": "SignificancePlacement positions an item's significance relative to existing values instead of\ntaking the absolute `significance` field. It exists because significance is a dense integer with\nno room between adjacent values: this lets a client say \"just above the 5s\" or \"between 5 and 6\"\nand have the server open a gap for it. Write-only on StoreEvent/StoreMemory/UpdateMemory and\nUpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the\nabsolute `significance` value is used as-is (0 meaning unranked)."
     },
-    "protoStoreEventResponse": {
+    "v1StoreEventResponse": {
       "type": "object",
       "properties": {
         "id": {
@@ -1947,7 +1975,7 @@
       },
       "description": "StoreEventResponse carries the stored event's id and how many of its nested memories were\nretained. An event whose significance is below event.minimumSignificance is quietly forgotten,\nlike a brain that simply does not retain the insignificant: no error is returned, id is empty,\nmemory_count is 0 (its nested memories are not stored either), and rejected is true.\n\nNested-memory creation is best-effort: the event is committed first, so a nested memory that\nfails validation, is dropped for insignificance, or hits a store error does not fail the event\ncreate and is not individually reported here - memory_count is only the count actually retained.\nStore memories individually if you need per-memory success/failure."
     },
-    "protoStoreMemoryResponse": {
+    "v1StoreMemoryResponse": {
       "type": "object",
       "properties": {
         "id": {
@@ -1961,7 +1989,7 @@
       },
       "description": "StoreMemoryResponse carries the stored memory's id. A memory whose significance is below\nmemory.minimumSignificance is quietly forgotten, like a brain that simply does not retain the\ninsignificant: no error is returned, id is empty, and rejected is true."
     },
-    "protoSummarisationCandidate": {
+    "v1SummarisationCandidate": {
       "type": "object",
       "properties": {
         "eventId": {
@@ -1977,7 +2005,7 @@
       },
       "description": "SummarisationCandidate identifies an event whose memories have accumulated enough, and gone\nquiet for long enough, to be worth condensing into a single summary memory via\nReplaceMemoriesWithSummary."
     },
-    "protoSummariseMemoriesResponse": {
+    "v1SummariseMemoriesResponse": {
       "type": "object",
       "properties": {
         "id": {
@@ -1995,7 +2023,7 @@
         }
       }
     },
-    "protoTransferRequest": {
+    "v1TransferRequest": {
       "type": "object",
       "properties": {
         "clear": {
@@ -2004,7 +2032,7 @@
       },
       "description": "Transfer streams every event and memory directly to a centralised instance's ImportBatch RPC\n(address from transfer.targetAddress); like Export it records a manifest, and with clear set\ndeletes the captured records once the target has accepted them all."
     },
-    "protoTransferResponse": {
+    "v1TransferResponse": {
       "type": "object",
       "properties": {
         "manifestId": {
@@ -2028,7 +2056,7 @@
         }
       }
     },
-    "protoWhoAmIResponse": {
+    "v1WhoAmIResponse": {
       "type": "object",
       "properties": {
         "clientId": {
@@ -2043,40 +2071,12 @@
         "searchModes": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/protoSearchMode"
+            "$ref": "#/definitions/v1SearchMode"
           },
           "description": "search_modes lists the SearchMemories modes this deployment can serve, so a client can adapt\nrather than discover an unavailable mode by having a search rejected. It depends on the\nstorage driver and on whether OpenSearch and an embedding model are configured - never on the\ncaller - so it is the same for every caller of a given instance. An empty list means content\nsearch is unavailable entirely and SearchMemories is rejected in every mode."
         }
       },
       "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."
-    },
-    "protobufAny": {
-      "type": "object",
-      "properties": {
-        "@type": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": {}
-    },
-    "rpcStatus": {
-      "type": "object",
-      "properties": {
-        "code": {
-          "type": "integer",
-          "format": "int32"
-        },
-        "message": {
-          "type": "string"
-        },
-        "details": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/protobufAny"
-          }
-        }
-      }
     }
   }
 }

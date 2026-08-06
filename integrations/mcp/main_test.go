@@ -145,7 +145,7 @@ func TestBearerTokenInterceptor_AttachesAuthorization(t *testing.T) {
 		return nil
 	}
 
-	if err := interceptor(context.Background(), "/proto.Hippocampus/StoreMemory", nil, nil, nil, invoker); err != nil {
+	if err := interceptor(context.Background(), "/hippocampus.v1.Hippocampus/StoreMemory", nil, nil, nil, invoker); err != nil {
 		t.Fatalf("interceptor returned error: %v", err)
 	}
 

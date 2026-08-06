@@ -354,6 +354,10 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | 🔌 **[Event Sourcing](docs/eventsource.md)**         | Bridge NATS, MQTT, RabbitMQ, or Kafka into Hippocampus, storing each message as a memory.   |
 | 📓 **[Obsidian Integration](docs/obsidian.md)**      | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge.   |
 
+What changed between releases — and what a version number does and does not promise — is in
+**[CHANGELOG.md](CHANGELOG.md)**. Hippocampus is pre-1.0, so read the **Breaking** section of any
+release you skip over.
+
 ---
 
 ## 🔒 Security & Hardening

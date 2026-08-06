@@ -1,5 +1,5 @@
 syntax = "proto3";
-package proto;
+package hippocampus.v1;
 option go_package = "github.com/fastbean-au/hippocampus/contract;contract";
 
 import "google/api/annotations.proto";

@@ -161,7 +161,7 @@ live in `contract/`. With [`grpcurl`](https://github.com/fullstorydev/grpcurl) a
 ```sh
 grpcurl -plaintext -proto contract/hippocampus.proto \
   -d '{"significance": 50, "body": "hello"}' \
-  localhost:50051 proto.Hippocampus/StoreMemory
+  localhost:50051 hippocampus.v1.Hippocampus/StoreMemory
 ```
 
 ## Enabling authentication

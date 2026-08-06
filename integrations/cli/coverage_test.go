@@ -211,7 +211,7 @@ func TestBearerTokenInterceptor(t *testing.T) {
 		return nil
 	}
 
-	if err := interceptor(context.Background(), "/proto.Hippocampus/WhoAmI", nil, nil, nil, invoker); err != nil {
+	if err := interceptor(context.Background(), "/hippocampus.v1.Hippocampus/WhoAmI", nil, nil, nil, invoker); err != nil {
 		t.Fatalf("interceptor: %v", err)
 	}
 

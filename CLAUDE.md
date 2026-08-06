@@ -31,6 +31,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (requires `protoc` plus the `protoc-gen-go`, `protoc-gen-go-grpc`, `protoc-gen-grpc-gateway`,
   and `protoc-gen-openapiv2` plugins, all `go install`-able; the `google/api` proto dependencies
   the gateway needs are vendored under `contract/google/api/`)
+- Check the contract for breaking changes: `cd contract && buf breaking --against
+'../.git#tag=<previous tag>,subdir=contract' --path hippocampus.proto` (config and rationale in
+  `contract/buf.yaml`; CI runs it as the `proto-breaking` job against the last release tag). The
+  proto package is `hippocampus.v1`, so every gRPC method is `/hippocampus.v1.Hippocampus/<Method>`
+  — three packages keep a hand-written copy of that prefix (`auth/grpc.go`,
+  `cmd/hippocampus/rpcmetrics.go`, `hippocampus/server.go`), each held to the generated descriptor
+  by a `TestServicePrefixMatchesDescriptor`, because a stale copy fails **open** in the auth
+  interceptor and the purge gate. `buf lint` is deliberately not wired up — see `contract/buf.yaml`
 - Demo/soak test: `./demo/run.sh` (builds and launches the service plus a load generator; see
   `demo/README.md`). By default it also launches a `grafana/otel-lgtm` collector (docker or
   podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on `:3000`); set
@@ -79,7 +87,12 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   containers so the `db/postgres_test.go` and `db/mysql_test.go` integration tests run instead
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN=<dsn>`/`HIPPOCAMPUS_TEST_MYSQL_DSN=<dsn>` `go test ./db`
-  against any disposable database
+  against any disposable database. The `proto-breaking` job gates the contract (above)
+- Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
+  list); its **Compatibility** section states what a version number covers — contract, config keys,
+  stored schema — and what is exempt. `RELEASE.md` carries the process, including the changelog step
+  in the pre-flight and what a deliberate break requires. Pre-1.0, a breaking change goes in a minor
+  release
 - Run the configuration wizard (root module, second binary):
   `go run ./cmd/config-wizard` (serves the browser-based config/deployment builder on `:8091`;
   static assets only, no service connection; `--port`/`--bind-address`/`--log-level`, all
@@ -202,7 +215,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   context, and an unrouted request is counted as `rpc="unknown"`. (4) Neither recording is deferred:
   panic recovery sits outside both, so a deferred record would count a panicking call as a success —
   panics stay `hippocampus.panics_recovered`'s to report. Both are scoped to the RPC surface (the
-  `/proto.Hippocampus/` prefix; `/v1` minus the OpenAPI doc), keeping probe, console and login
+  `/hippocampus.v1.Hippocampus/` prefix; `/v1` minus the OpenAPI doc), keeping probe, console and login
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
@@ -603,7 +616,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `UnaryServerInterceptor` and `HTTPMiddleware` are the two enforcement adapters — both are
   needed because the HTTP gateway calls `hipo` directly and never passes through the gRPC
   interceptor chain. Both scope themselves so Hippocampus RPCs require a token but health surfaces
-  (`grpc.health.v1.Health`, `/healthz`) never do — the gRPC side by a `/proto.Hippocampus/` prefix
+  (`grpc.health.v1.Health`, `/healthz`) never do — the gRPC side by a `/hippocampus.v1.Hippocampus/` prefix
   check (mirroring `InterceptorBlockWhenPurgeInProgress`), the HTTP side by an explicit open-path
   allow-list (closed by default, so newly added endpoints are protected without remembering to
   update anything). On a successful verify both adapters stash the `*Claims` in the request context

@@ -15,7 +15,7 @@ import (
 // InterceptorBlockWhenPurgeInProgress in hippocampus/server.go. Anything outside this prefix -
 // principally the gRPC health service - is never touched, so it stays reachable without a token
 // for orchestrator liveness/readiness probes.
-const hippocampusServicePrefix = "/proto.Hippocampus/"
+const hippocampusServicePrefix = "/hippocampus.v1.Hippocampus/"
 
 // UnaryServerInterceptor returns a gRPC interceptor that requires a valid bearer token, carried
 // in the "authorization" metadata key as "Bearer <token>", on every Hippocampus RPC. It is a free

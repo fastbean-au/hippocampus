@@ -32,6 +32,12 @@ import (
 // cycle joins the same in-flight call rather than starting a concurrent one.
 const sleepSingleflightKey = "sleep"
 
+// hippocampusServicePrefix scopes the purge gate to the Hippocampus service, mirroring the same
+// check in the auth interceptor and the RPC metrics: the health service must stay answerable while
+// a purge runs. It is the proto package plus the service name, so it changes whenever the proto's
+// package does - TestServicePrefixMatchesDescriptor holds it to the generated descriptor.
+const hippocampusServicePrefix = "/hippocampus.v1.Hippocampus/"
+
 // mapError is the RPC layer's final error-mapping seam: it turns a storage-layer error into an
 // appropriate gRPC status before it reaches a client on either transport. It is applied at handler
 // return sites (not as an interceptor) because the HTTP gateway calls these handlers directly and
@@ -660,7 +666,7 @@ func (s *Server) InterceptorBlockWhenPurgeInProgress(ctx context.Context,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
-	if s.purgeInProgress.Load() && strings.HasPrefix(info.FullMethod, "/proto.Hippocampus/") {
+	if s.purgeInProgress.Load() && strings.HasPrefix(info.FullMethod, hippocampusServicePrefix) {
 		log.Trace("ignoring request - purge in progress")
 
 		return nil, status.Error(codes.Unavailable, "purge in progress")

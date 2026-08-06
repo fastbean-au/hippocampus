@@ -891,7 +891,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/Purge", runtime.WithHTTPPathPattern("/v1/purge"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Purge", runtime.WithHTTPPathPattern("/v1/purge"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -911,7 +911,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/Sleep", runtime.WithHTTPPathPattern("/v1/sleep"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Sleep", runtime.WithHTTPPathPattern("/v1/sleep"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -931,7 +931,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/PreviewConsolidation", runtime.WithHTTPPathPattern("/v1/sleep/preview"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/PreviewConsolidation", runtime.WithHTTPPathPattern("/v1/sleep/preview"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -951,7 +951,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/ExplainConsolidation", runtime.WithHTTPPathPattern("/v1/consolidation/explain"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/ExplainConsolidation", runtime.WithHTTPPathPattern("/v1/consolidation/explain"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -971,7 +971,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/WhoAmI", runtime.WithHTTPPathPattern("/v1/whoami"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/WhoAmI", runtime.WithHTTPPathPattern("/v1/whoami"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -991,7 +991,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/StoreEvent", runtime.WithHTTPPathPattern("/v1/events"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/StoreEvent", runtime.WithHTTPPathPattern("/v1/events"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1011,7 +1011,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/EndEvent", runtime.WithHTTPPathPattern("/v1/events/{id}/end"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/EndEvent", runtime.WithHTTPPathPattern("/v1/events/{id}/end"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1031,7 +1031,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/UpdateEventSignificance", runtime.WithHTTPPathPattern("/v1/events/{id}/significance"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/UpdateEventSignificance", runtime.WithHTTPPathPattern("/v1/events/{id}/significance"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1051,7 +1051,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/MergeEvents", runtime.WithHTTPPathPattern("/v1/events/merge"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/MergeEvents", runtime.WithHTTPPathPattern("/v1/events/merge"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1071,7 +1071,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/DeleteEvent", runtime.WithHTTPPathPattern("/v1/events/{id}"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteEvent", runtime.WithHTTPPathPattern("/v1/events/{id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1091,7 +1091,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/GetEventById", runtime.WithHTTPPathPattern("/v1/events/{id}"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetEventById", runtime.WithHTTPPathPattern("/v1/events/{id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1111,7 +1111,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/GetEvents", runtime.WithHTTPPathPattern("/v1/events"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetEvents", runtime.WithHTTPPathPattern("/v1/events"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1131,7 +1131,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/StoreMemory", runtime.WithHTTPPathPattern("/v1/memories"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/StoreMemory", runtime.WithHTTPPathPattern("/v1/memories"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1151,7 +1151,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/UpdateMemory", runtime.WithHTTPPathPattern("/v1/memories/{id}"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/UpdateMemory", runtime.WithHTTPPathPattern("/v1/memories/{id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1171,7 +1171,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/DeleteMemories", runtime.WithHTTPPathPattern("/v1/memories/delete"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteMemories", runtime.WithHTTPPathPattern("/v1/memories/delete"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1191,7 +1191,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/GetMemories", runtime.WithHTTPPathPattern("/v1/memories"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetMemories", runtime.WithHTTPPathPattern("/v1/memories"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1211,7 +1211,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/RecallMemories", runtime.WithHTTPPathPattern("/v1/memories/recall"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/RecallMemories", runtime.WithHTTPPathPattern("/v1/memories/recall"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1231,7 +1231,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/SearchMemories", runtime.WithHTTPPathPattern("/v1/memories/search"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/SearchMemories", runtime.WithHTTPPathPattern("/v1/memories/search"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1251,7 +1251,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/ReplaceMemoriesWithSummary", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summary"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/ReplaceMemoriesWithSummary", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summary"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1271,7 +1271,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/GetSummarisationCandidates", runtime.WithHTTPPathPattern("/v1/summarisation/candidates"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetSummarisationCandidates", runtime.WithHTTPPathPattern("/v1/summarisation/candidates"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1291,7 +1291,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/SummariseMemories", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summarise"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/SummariseMemories", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summarise"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1311,7 +1311,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/Export", runtime.WithHTTPPathPattern("/v1/export"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Export", runtime.WithHTTPPathPattern("/v1/export"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1331,7 +1331,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/Import", runtime.WithHTTPPathPattern("/v1/import"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Import", runtime.WithHTTPPathPattern("/v1/import"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1351,7 +1351,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/ImportBatch", runtime.WithHTTPPathPattern("/v1/import/batch"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/ImportBatch", runtime.WithHTTPPathPattern("/v1/import/batch"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1371,7 +1371,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/Transfer", runtime.WithHTTPPathPattern("/v1/transfer"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Transfer", runtime.WithHTTPPathPattern("/v1/transfer"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1391,7 +1391,7 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/proto.Hippocampus/Clear", runtime.WithHTTPPathPattern("/v1/clear"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Clear", runtime.WithHTTPPathPattern("/v1/clear"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1449,7 +1449,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/Purge", runtime.WithHTTPPathPattern("/v1/purge"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Purge", runtime.WithHTTPPathPattern("/v1/purge"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1466,7 +1466,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/Sleep", runtime.WithHTTPPathPattern("/v1/sleep"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Sleep", runtime.WithHTTPPathPattern("/v1/sleep"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1483,7 +1483,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/PreviewConsolidation", runtime.WithHTTPPathPattern("/v1/sleep/preview"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/PreviewConsolidation", runtime.WithHTTPPathPattern("/v1/sleep/preview"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1500,7 +1500,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/ExplainConsolidation", runtime.WithHTTPPathPattern("/v1/consolidation/explain"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/ExplainConsolidation", runtime.WithHTTPPathPattern("/v1/consolidation/explain"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1517,7 +1517,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/WhoAmI", runtime.WithHTTPPathPattern("/v1/whoami"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/WhoAmI", runtime.WithHTTPPathPattern("/v1/whoami"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1534,7 +1534,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/StoreEvent", runtime.WithHTTPPathPattern("/v1/events"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/StoreEvent", runtime.WithHTTPPathPattern("/v1/events"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1551,7 +1551,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/EndEvent", runtime.WithHTTPPathPattern("/v1/events/{id}/end"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/EndEvent", runtime.WithHTTPPathPattern("/v1/events/{id}/end"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1568,7 +1568,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/UpdateEventSignificance", runtime.WithHTTPPathPattern("/v1/events/{id}/significance"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/UpdateEventSignificance", runtime.WithHTTPPathPattern("/v1/events/{id}/significance"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1585,7 +1585,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/MergeEvents", runtime.WithHTTPPathPattern("/v1/events/merge"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/MergeEvents", runtime.WithHTTPPathPattern("/v1/events/merge"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1602,7 +1602,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/DeleteEvent", runtime.WithHTTPPathPattern("/v1/events/{id}"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteEvent", runtime.WithHTTPPathPattern("/v1/events/{id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1619,7 +1619,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/GetEventById", runtime.WithHTTPPathPattern("/v1/events/{id}"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetEventById", runtime.WithHTTPPathPattern("/v1/events/{id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1636,7 +1636,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/GetEvents", runtime.WithHTTPPathPattern("/v1/events"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetEvents", runtime.WithHTTPPathPattern("/v1/events"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1653,7 +1653,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/StoreMemory", runtime.WithHTTPPathPattern("/v1/memories"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/StoreMemory", runtime.WithHTTPPathPattern("/v1/memories"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1670,7 +1670,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/UpdateMemory", runtime.WithHTTPPathPattern("/v1/memories/{id}"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/UpdateMemory", runtime.WithHTTPPathPattern("/v1/memories/{id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1687,7 +1687,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/DeleteMemories", runtime.WithHTTPPathPattern("/v1/memories/delete"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteMemories", runtime.WithHTTPPathPattern("/v1/memories/delete"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1704,7 +1704,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/GetMemories", runtime.WithHTTPPathPattern("/v1/memories"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetMemories", runtime.WithHTTPPathPattern("/v1/memories"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1721,7 +1721,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/RecallMemories", runtime.WithHTTPPathPattern("/v1/memories/recall"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/RecallMemories", runtime.WithHTTPPathPattern("/v1/memories/recall"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1738,7 +1738,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/SearchMemories", runtime.WithHTTPPathPattern("/v1/memories/search"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/SearchMemories", runtime.WithHTTPPathPattern("/v1/memories/search"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1755,7 +1755,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/ReplaceMemoriesWithSummary", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summary"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/ReplaceMemoriesWithSummary", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summary"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1772,7 +1772,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/GetSummarisationCandidates", runtime.WithHTTPPathPattern("/v1/summarisation/candidates"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetSummarisationCandidates", runtime.WithHTTPPathPattern("/v1/summarisation/candidates"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1789,7 +1789,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/SummariseMemories", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summarise"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/SummariseMemories", runtime.WithHTTPPathPattern("/v1/events/{event_id}/summarise"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1806,7 +1806,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/Export", runtime.WithHTTPPathPattern("/v1/export"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Export", runtime.WithHTTPPathPattern("/v1/export"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1823,7 +1823,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/Import", runtime.WithHTTPPathPattern("/v1/import"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Import", runtime.WithHTTPPathPattern("/v1/import"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1840,7 +1840,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/ImportBatch", runtime.WithHTTPPathPattern("/v1/import/batch"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/ImportBatch", runtime.WithHTTPPathPattern("/v1/import/batch"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1857,7 +1857,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/Transfer", runtime.WithHTTPPathPattern("/v1/transfer"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Transfer", runtime.WithHTTPPathPattern("/v1/transfer"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1874,7 +1874,7 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/proto.Hippocampus/Clear", runtime.WithHTTPPathPattern("/v1/clear"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/Clear", runtime.WithHTTPPathPattern("/v1/clear"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return

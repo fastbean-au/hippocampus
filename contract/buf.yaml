@@ -1,0 +1,32 @@
+# buf configuration for the gRPC contract.
+#
+# This exists for one command: `buf breaking`, run by the `proto-breaking` job in
+# .github/workflows/ci.yaml against the previous release tag. Published clients are generated from
+# contract/hippocampus.proto, so an accidental field renumbering or a removed RPC silently breaks
+# every one of them and is not caught by anything else in the repo - `go generate ./contract`
+# regenerates happily, and the Go compiler only ever sees the new descriptor.
+#
+# It lives in contract/ rather than the repo root so this directory is the module root, and the
+# vendored googleapis definitions under google/api/ resolve by their canonical import paths
+# (google/api/annotations.proto) exactly as protoc resolves them with -I=. from here. That also
+# makes the historical side of the comparison work: a tag predating this file has no buf.yaml at
+# all, so `--against '.git#tag=vX,subdir=contract'` roots the old tree at the same directory and
+# the same imports resolve there too.
+#
+# `buf lint` is deliberately NOT wired into CI. Its STANDARD category mandates conventions this
+# contract predates and would not benefit from renaming into - one request/response message per RPC
+# (EmptyRequest and GeneralResponse are shared by design) and a directory layout matching the
+# package (hippocampus/v1/hippocampus.proto). Enabling it would produce a permanent wall of failures
+# that says nothing about whether the contract is compatible, which is the question this file is
+# here to answer.
+version: v2
+
+modules:
+  - path: .
+
+breaking:
+  # FILE is buf's default and the right category here: it flags every change that breaks
+  # generated code, not merely the wire format. Clients regenerate from this file, so a renamed
+  # field or message breaks their compile even though the bytes on the wire would still parse.
+  use:
+    - FILE

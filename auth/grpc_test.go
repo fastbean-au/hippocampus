@@ -9,10 +9,24 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/fastbean-au/hippocampus/contract"
 )
 
 func stubHandler(ctx context.Context, req interface{}) (interface{}, error) {
 	return "ok", nil
+}
+
+// TestServicePrefixMatchesDescriptor holds hippocampusServicePrefix to the generated service
+// descriptor. The prefix is a hand-written copy of the proto package plus the service name, and
+// three packages keep one each; renaming the proto package (as the move from "proto" to
+// "hippocampus.v1" did) changes every FullMethod at once, and a stale copy fails open - the
+// interceptor would stop recognising Hippocampus RPCs and wave every one of them through
+// unauthenticated. `buf breaking` guards the contract; this guards the strings derived from it.
+func TestServicePrefixMatchesDescriptor(t *testing.T) {
+	if want := "/" + contract.Hippocampus_ServiceDesc.ServiceName + "/"; hippocampusServicePrefix != want {
+		t.Fatalf("hippocampusServicePrefix = %q, want %q", hippocampusServicePrefix, want)
+	}
 }
 
 // TestUnaryServerInterceptor_ValidToken verifies that a request carrying a valid bearer token in
@@ -31,7 +45,7 @@ func TestUnaryServerInterceptor_ValidToken(t *testing.T) {
 	interceptor := UnaryServerInterceptor(v)
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token))
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/GetEvents"}
 
 	res, err := interceptor(ctx, nil, info, stubHandler)
 	if err != nil {
@@ -59,7 +73,7 @@ func TestUnaryServerInterceptor_StashesClaims(t *testing.T) {
 	interceptor := UnaryServerInterceptor(v)
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token))
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/GetEvents"}
 
 	var seen string
 
@@ -87,7 +101,7 @@ func TestUnaryServerInterceptor_MissingToken(t *testing.T) {
 	}
 
 	interceptor := UnaryServerInterceptor(v)
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/GetEvents"}
 
 	if _, err := interceptor(context.Background(), nil, info, stubHandler); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("expected codes.Unauthenticated, got %v", err)
@@ -105,7 +119,7 @@ func TestUnaryServerInterceptor_InvalidToken(t *testing.T) {
 	interceptor := UnaryServerInterceptor(v)
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer not-a-token"))
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/GetEvents"}
 
 	if _, err := interceptor(ctx, nil, info, stubHandler); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("expected codes.Unauthenticated, got %v", err)
@@ -124,7 +138,7 @@ func TestUnaryServerInterceptor_MalformedAuthorizationMetadata(t *testing.T) {
 	interceptor := UnaryServerInterceptor(v)
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Basic dXNlcjpwYXNz"))
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/GetEvents"}
 
 	if _, err := interceptor(ctx, nil, info, stubHandler); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("expected codes.Unauthenticated for a malformed authorization scheme, got %v", err)
@@ -132,7 +146,7 @@ func TestUnaryServerInterceptor_MalformedAuthorizationMetadata(t *testing.T) {
 }
 
 // TestUnaryServerInterceptor_HealthCheckBypassesAuth verifies the critical scoping guarantee: a
-// call outside the /proto.Hippocampus/ prefix - the gRPC health service in particular - reaches
+// call outside the /hippocampus.v1.Hippocampus/ prefix - the gRPC health service in particular - reaches
 // the handler with no token at all, so orchestrator liveness/readiness probes are never blocked.
 func TestUnaryServerInterceptor_HealthCheckBypassesAuth(t *testing.T) {
 	v, err := NewHMACVerifier(HMACConfig{LegacySecret: "test-secret"})

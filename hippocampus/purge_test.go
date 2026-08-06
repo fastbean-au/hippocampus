@@ -73,7 +73,7 @@ func TestInterceptorBlockWhenPurgeInProgress_Code(t *testing.T) {
 		return "ok", nil
 	}
 
-	rpcInfo := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+	rpcInfo := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/GetEvents"}
 	healthInfo := &grpc.UnaryServerInfo{FullMethod: "/grpc.health.v1.Health/Check"}
 
 	// Purge in progress: a Hippocampus RPC is rejected with Unavailable and the handler never runs.

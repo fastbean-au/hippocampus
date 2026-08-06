@@ -19,32 +19,32 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Hippocampus_Purge_FullMethodName                      = "/proto.Hippocampus/Purge"
-	Hippocampus_Sleep_FullMethodName                      = "/proto.Hippocampus/Sleep"
-	Hippocampus_PreviewConsolidation_FullMethodName       = "/proto.Hippocampus/PreviewConsolidation"
-	Hippocampus_ExplainConsolidation_FullMethodName       = "/proto.Hippocampus/ExplainConsolidation"
-	Hippocampus_WhoAmI_FullMethodName                     = "/proto.Hippocampus/WhoAmI"
-	Hippocampus_StoreEvent_FullMethodName                 = "/proto.Hippocampus/StoreEvent"
-	Hippocampus_EndEvent_FullMethodName                   = "/proto.Hippocampus/EndEvent"
-	Hippocampus_UpdateEventSignificance_FullMethodName    = "/proto.Hippocampus/UpdateEventSignificance"
-	Hippocampus_MergeEvents_FullMethodName                = "/proto.Hippocampus/MergeEvents"
-	Hippocampus_DeleteEvent_FullMethodName                = "/proto.Hippocampus/DeleteEvent"
-	Hippocampus_GetEventById_FullMethodName               = "/proto.Hippocampus/GetEventById"
-	Hippocampus_GetEvents_FullMethodName                  = "/proto.Hippocampus/GetEvents"
-	Hippocampus_StoreMemory_FullMethodName                = "/proto.Hippocampus/StoreMemory"
-	Hippocampus_UpdateMemory_FullMethodName               = "/proto.Hippocampus/UpdateMemory"
-	Hippocampus_DeleteMemories_FullMethodName             = "/proto.Hippocampus/DeleteMemories"
-	Hippocampus_GetMemories_FullMethodName                = "/proto.Hippocampus/GetMemories"
-	Hippocampus_RecallMemories_FullMethodName             = "/proto.Hippocampus/RecallMemories"
-	Hippocampus_SearchMemories_FullMethodName             = "/proto.Hippocampus/SearchMemories"
-	Hippocampus_ReplaceMemoriesWithSummary_FullMethodName = "/proto.Hippocampus/ReplaceMemoriesWithSummary"
-	Hippocampus_GetSummarisationCandidates_FullMethodName = "/proto.Hippocampus/GetSummarisationCandidates"
-	Hippocampus_SummariseMemories_FullMethodName          = "/proto.Hippocampus/SummariseMemories"
-	Hippocampus_Export_FullMethodName                     = "/proto.Hippocampus/Export"
-	Hippocampus_Import_FullMethodName                     = "/proto.Hippocampus/Import"
-	Hippocampus_ImportBatch_FullMethodName                = "/proto.Hippocampus/ImportBatch"
-	Hippocampus_Transfer_FullMethodName                   = "/proto.Hippocampus/Transfer"
-	Hippocampus_Clear_FullMethodName                      = "/proto.Hippocampus/Clear"
+	Hippocampus_Purge_FullMethodName                      = "/hippocampus.v1.Hippocampus/Purge"
+	Hippocampus_Sleep_FullMethodName                      = "/hippocampus.v1.Hippocampus/Sleep"
+	Hippocampus_PreviewConsolidation_FullMethodName       = "/hippocampus.v1.Hippocampus/PreviewConsolidation"
+	Hippocampus_ExplainConsolidation_FullMethodName       = "/hippocampus.v1.Hippocampus/ExplainConsolidation"
+	Hippocampus_WhoAmI_FullMethodName                     = "/hippocampus.v1.Hippocampus/WhoAmI"
+	Hippocampus_StoreEvent_FullMethodName                 = "/hippocampus.v1.Hippocampus/StoreEvent"
+	Hippocampus_EndEvent_FullMethodName                   = "/hippocampus.v1.Hippocampus/EndEvent"
+	Hippocampus_UpdateEventSignificance_FullMethodName    = "/hippocampus.v1.Hippocampus/UpdateEventSignificance"
+	Hippocampus_MergeEvents_FullMethodName                = "/hippocampus.v1.Hippocampus/MergeEvents"
+	Hippocampus_DeleteEvent_FullMethodName                = "/hippocampus.v1.Hippocampus/DeleteEvent"
+	Hippocampus_GetEventById_FullMethodName               = "/hippocampus.v1.Hippocampus/GetEventById"
+	Hippocampus_GetEvents_FullMethodName                  = "/hippocampus.v1.Hippocampus/GetEvents"
+	Hippocampus_StoreMemory_FullMethodName                = "/hippocampus.v1.Hippocampus/StoreMemory"
+	Hippocampus_UpdateMemory_FullMethodName               = "/hippocampus.v1.Hippocampus/UpdateMemory"
+	Hippocampus_DeleteMemories_FullMethodName             = "/hippocampus.v1.Hippocampus/DeleteMemories"
+	Hippocampus_GetMemories_FullMethodName                = "/hippocampus.v1.Hippocampus/GetMemories"
+	Hippocampus_RecallMemories_FullMethodName             = "/hippocampus.v1.Hippocampus/RecallMemories"
+	Hippocampus_SearchMemories_FullMethodName             = "/hippocampus.v1.Hippocampus/SearchMemories"
+	Hippocampus_ReplaceMemoriesWithSummary_FullMethodName = "/hippocampus.v1.Hippocampus/ReplaceMemoriesWithSummary"
+	Hippocampus_GetSummarisationCandidates_FullMethodName = "/hippocampus.v1.Hippocampus/GetSummarisationCandidates"
+	Hippocampus_SummariseMemories_FullMethodName          = "/hippocampus.v1.Hippocampus/SummariseMemories"
+	Hippocampus_Export_FullMethodName                     = "/hippocampus.v1.Hippocampus/Export"
+	Hippocampus_Import_FullMethodName                     = "/hippocampus.v1.Hippocampus/Import"
+	Hippocampus_ImportBatch_FullMethodName                = "/hippocampus.v1.Hippocampus/ImportBatch"
+	Hippocampus_Transfer_FullMethodName                   = "/hippocampus.v1.Hippocampus/Transfer"
+	Hippocampus_Clear_FullMethodName                      = "/hippocampus.v1.Hippocampus/Clear"
 )
 
 // HippocampusClient is the client API for Hippocampus service.
@@ -1150,7 +1150,7 @@ func _Hippocampus_Clear_Handler(srv interface{}, ctx context.Context, dec func(i
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Hippocampus_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "proto.Hippocampus",
+	ServiceName: "hippocampus.v1.Hippocampus",
 	HandlerType: (*HippocampusServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

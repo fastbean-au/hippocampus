@@ -23,7 +23,7 @@ import (
 // same check in the auth interceptor and the purge gate: the health service is a probe surface, not
 // an RPC, and counting it would put a probe's steady tick in the denominator of every error-rate
 // query.
-const hippocampusServicePrefix = "/proto.Hippocampus/"
+const hippocampusServicePrefix = "/hippocampus.v1.Hippocampus/"
 
 // Attribute values for the RPC metrics. Every one is drawn from a fixed set - two transports, the
 // RPCs named in the service descriptor, the gRPC code names or HTTP status codes, three outcomes -

@@ -117,7 +117,7 @@ func TestInterceptorMetrics(t *testing.T) {
 	}{
 		{
 			name:        "success",
-			method:      "/proto.Hippocampus/StoreMemory",
+			method:      "/hippocampus.v1.Hippocampus/StoreMemory",
 			err:         nil,
 			wantRPC:     "StoreMemory",
 			wantCode:    "OK",
@@ -125,7 +125,7 @@ func TestInterceptorMetrics(t *testing.T) {
 		},
 		{
 			name:        "client fault",
-			method:      "/proto.Hippocampus/GetEventById",
+			method:      "/hippocampus.v1.Hippocampus/GetEventById",
 			err:         status.Error(codes.NotFound, "no such event"),
 			wantRPC:     "GetEventById",
 			wantCode:    "NotFound",
@@ -133,7 +133,7 @@ func TestInterceptorMetrics(t *testing.T) {
 		},
 		{
 			name:        "server fault",
-			method:      "/proto.Hippocampus/Sleep",
+			method:      "/hippocampus.v1.Hippocampus/Sleep",
 			err:         status.Error(codes.Internal, "boom"),
 			wantRPC:     "Sleep",
 			wantCode:    "Internal",
@@ -441,5 +441,15 @@ func TestGatewayRouteMiddleware_WithoutCapture(t *testing.T) {
 
 	if !served {
 		t.Errorf("expected the request to be served without a capture on the context, got %d", rec.Code)
+	}
+}
+
+// TestServicePrefixMatchesDescriptor holds hippocampusServicePrefix to the generated service
+// descriptor, mirroring the same guard in auth and hippocampus. A stale copy here fails quietly
+// rather than open: the RED metrics would stop counting every gRPC call, leaving the error-rate
+// alerts firing on nothing.
+func TestServicePrefixMatchesDescriptor(t *testing.T) {
+	if want := "/" + contract.Hippocampus_ServiceDesc.ServiceName + "/"; hippocampusServicePrefix != want {
+		t.Fatalf("hippocampusServicePrefix = %q, want %q", hippocampusServicePrefix, want)
 	}
 }

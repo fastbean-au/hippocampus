@@ -27,7 +27,7 @@ func TestInterceptorRecoverPanic(t *testing.T) {
 		panic("boom")
 	}
 
-	resp, err := InterceptorRecoverPanic(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Test"}, panicking)
+	resp, err := InterceptorRecoverPanic(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/Test"}, panicking)
 	if resp != nil {
 		t.Errorf("expected a nil response after a recovered panic, got %v", resp)
 	}
@@ -40,7 +40,7 @@ func TestInterceptorRecoverPanic(t *testing.T) {
 		return "ok", nil
 	}
 
-	resp, err = InterceptorRecoverPanic(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Test"}, okHandler)
+	resp, err = InterceptorRecoverPanic(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/Test"}, okHandler)
 	if err != nil {
 		t.Errorf("expected no error from a clean handler, got %v", err)
 	}
@@ -130,7 +130,7 @@ func TestInterceptorLogger_LogsFailures(t *testing.T) {
 				return nil, tc.err
 			}
 
-			_, err := InterceptorLogger(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Test"}, handler)
+			_, err := InterceptorLogger(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/Test"}, handler)
 			if (err != nil) != (tc.err != nil) {
 				t.Fatalf("unexpected error passthrough: got %v want %v", err, tc.err)
 			}
@@ -251,7 +251,7 @@ func TestInterceptorLogger_AttributesFailureToClient(t *testing.T) {
 
 		ctx := auth.ContextWithClaims(context.Background(), &auth.Claims{ClientID: "client-42"})
 
-		_, _ = InterceptorLogger(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Test"}, handler)
+		_, _ = InterceptorLogger(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/Test"}, handler)
 
 		entry := hook.LastEntry()
 		if entry == nil {
@@ -266,7 +266,7 @@ func TestInterceptorLogger_AttributesFailureToClient(t *testing.T) {
 	t.Run("no claims", func(t *testing.T) {
 		hook := logtest.NewGlobal()
 
-		_, _ = InterceptorLogger(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Test"}, handler)
+		_, _ = InterceptorLogger(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/Test"}, handler)
 
 		entry := hook.LastEntry()
 		if entry == nil {

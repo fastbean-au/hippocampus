@@ -91,7 +91,7 @@ func TestUIConfigHandlerNoAuth(t *testing.T) {
 // TestInterceptorLogger_PassesThrough verifies the logging interceptor returns the wrapped
 // handler's response and error unchanged.
 func TestInterceptorLogger_PassesThrough(t *testing.T) {
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/Ping"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/Ping"}
 
 	// Success path: the handler's response is returned verbatim.
 	resp, err := InterceptorLogger(context.Background(), "req", info, func(ctx context.Context, req any) (any, error) {

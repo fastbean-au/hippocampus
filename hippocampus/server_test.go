@@ -100,7 +100,7 @@ func TestPurgeInProgress_ConcurrentAccess(t *testing.T) {
 
 	s := &Server{db: database}
 
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/GetEvents"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/GetEvents"}
 	handler := func(ctx context.Context, req any) (any, error) { return nil, nil }
 
 	var wg sync.WaitGroup
@@ -767,5 +767,15 @@ func TestPurge_ErrorMapped(t *testing.T) {
 
 	if s.purgeInProgress.Load() {
 		t.Error("expected purgeInProgress cleared after a failed Purge")
+	}
+}
+
+// TestServicePrefixMatchesDescriptor holds hippocampusServicePrefix to the generated service
+// descriptor, mirroring the same guard in auth and cmd/hippocampus. A stale copy here fails open:
+// the purge gate would stop recognising Hippocampus RPCs and serve them from a store that is being
+// emptied underneath them.
+func TestServicePrefixMatchesDescriptor(t *testing.T) {
+	if want := "/" + contract.Hippocampus_ServiceDesc.ServiceName + "/"; hippocampusServicePrefix != want {
+		t.Fatalf("hippocampusServicePrefix = %q, want %q", hippocampusServicePrefix, want)
 	}
 }

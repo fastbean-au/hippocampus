@@ -182,7 +182,7 @@ func normalisePattern(pattern string) string {
 // enforcement adapters (gRPC interceptor, gateway middleware). It is immutable after construction,
 // so a single instance is shared by both transports.
 type Authoriser struct {
-	methodTiers  map[string]Tier // "/proto.Hippocampus/<Method>" -> required tier
+	methodTiers  map[string]Tier // "/hippocampus.v1.Hippocampus/<Method>" -> required tier
 	gatewayTiers map[string]Tier // "<VERB> <normalised path>"    -> required tier
 	roleTiers    map[string]Tier // role name (lower-cased)        -> granted tier
 }

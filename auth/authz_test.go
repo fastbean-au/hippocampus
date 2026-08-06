@@ -148,9 +148,9 @@ func TestInterceptorTierMatrix(t *testing.T) {
 
 	// method -> its required tier, one representative per tier.
 	methods := map[string]Tier{
-		"/proto.Hippocampus/GetMemories": TierReader,
-		"/proto.Hippocampus/StoreMemory": TierWriter,
-		"/proto.Hippocampus/Purge":       TierAdmin,
+		"/hippocampus.v1.Hippocampus/GetMemories": TierReader,
+		"/hippocampus.v1.Hippocampus/StoreMemory": TierWriter,
+		"/hippocampus.v1.Hippocampus/Purge":       TierAdmin,
 	}
 
 	roleTiers := map[string]Tier{"reader": TierReader, "writer": TierWriter, "admin": TierAdmin}
@@ -201,7 +201,7 @@ func TestInterceptorStashesTier(t *testing.T) {
 	}
 
 	ctx := ContextWithClaims(context.Background(), &Claims{Roles: []string{"writer"}})
-	info := &grpc.UnaryServerInfo{FullMethod: "/proto.Hippocampus/StoreMemory"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/hippocampus.v1.Hippocampus/StoreMemory"}
 
 	if _, err := a.UnaryServerInterceptor()(ctx, nil, info, handler); err != nil {
 		t.Fatalf("interceptor: %s", err)

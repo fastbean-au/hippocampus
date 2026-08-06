@@ -11,18 +11,18 @@ import (
 
 func TestRpcClass(t *testing.T) {
 	cases := map[string]string{
-		"/proto.Hippocampus/StoreMemory":             "write",
-		"/proto.Hippocampus/StoreEvent":              "write",
-		"/proto.Hippocampus/EndEvent":                "write",
-		"/proto.Hippocampus/UpdateEventSignificance": "write",
-		"/proto.Hippocampus/GetMemories":             "read",
-		"/proto.Hippocampus/GetEvents":               "read",
-		"/proto.Hippocampus/GetEventById":            "read",
-		"/proto.Hippocampus/SearchMemories":          "read",
-		"/proto.Hippocampus/RecallMemories":          "recall",
-		"/proto.Hippocampus/Sleep":                   "sleep",
-		"/proto.Hippocampus/Purge":                   "other",
-		"NoSlash":                                    "other",
+		"/hippocampus.v1.Hippocampus/StoreMemory":             "write",
+		"/hippocampus.v1.Hippocampus/StoreEvent":              "write",
+		"/hippocampus.v1.Hippocampus/EndEvent":                "write",
+		"/hippocampus.v1.Hippocampus/UpdateEventSignificance": "write",
+		"/hippocampus.v1.Hippocampus/GetMemories":             "read",
+		"/hippocampus.v1.Hippocampus/GetEvents":               "read",
+		"/hippocampus.v1.Hippocampus/GetEventById":            "read",
+		"/hippocampus.v1.Hippocampus/SearchMemories":          "read",
+		"/hippocampus.v1.Hippocampus/RecallMemories":          "recall",
+		"/hippocampus.v1.Hippocampus/Sleep":                   "sleep",
+		"/hippocampus.v1.Hippocampus/Purge":                   "other",
+		"NoSlash":                                             "other",
 	}
 
 	for method, want := range cases {
@@ -124,11 +124,11 @@ func TestUnaryLatencyInterceptor(t *testing.T) {
 		return failErr
 	}
 
-	if err := interceptor(context.Background(), "/proto.Hippocampus/StoreMemory", nil, nil, nil, okInvoker); err != nil {
+	if err := interceptor(context.Background(), "/hippocampus.v1.Hippocampus/StoreMemory", nil, nil, nil, okInvoker); err != nil {
 		t.Errorf("unexpected error: %s", err)
 	}
 
-	if err := interceptor(context.Background(), "/proto.Hippocampus/Sleep", nil, nil, nil, failInvoker); !errors.Is(err, failErr) {
+	if err := interceptor(context.Background(), "/hippocampus.v1.Hippocampus/Sleep", nil, nil, nil, failInvoker); !errors.Is(err, failErr) {
 		t.Errorf("expected failErr, got %v", err)
 	}
 
