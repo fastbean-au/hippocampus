@@ -233,6 +233,42 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     either a fixed value or computed each sleep cycle from a percentile of existing event
     significances (`consolidation.defaultEventSignificancePercentile`, which overrides the fixed
     value when non-zero).
+  - `PreviewConsolidation` (`hippocampus/preview.go` + `db/preview.go`) is the dry run: what a cycle
+    would forget, deleting nothing. It is a **separate RPC, not a `dry_run` flag on `Sleep`** —
+    `Sleep` takes `EmptyRequest`/`GeneralResponse`, and more to the point authorisation is per-RPC,
+    so a flag could never be tiered apart from the destructive cycle it rode on (it is `admin`
+    today, but separability is what leaves that free to change). Three things carry the design.
+    (1) It does **not** go through `sleepOnce`'s singleflight: joining an in-flight cycle would
+    describe a run that is at that moment deleting. (2) Standing outside that group means it cannot
+    read the two fields the sleep goroutine mutates (`capacityPressure`,
+    `defaultEventSignificanceValue`) — that would be a data race, and would also let one scan
+    evaluate its first rows against different numbers from its last. So `previewDecider` carries a
+    snapshot, and `shouldConsolidateUnder`/`memorySignificanceUnder`/`memoryValueUnder`/
+    `shouldConsolidateEventUnder` are the parameterised forms the existing methods now delegate to.
+    Every actual decision still goes through the server's own methods. (3) `db.PreviewConsolidation`
+    scans **once** and reimplements only the per-event bookkeeping rather than sharing the four real
+    passes' code — deliberately, to keep the most delicate code in the repo untouched — so
+    `TestPreviewMatchesASleepCycle` (preview, then run the real passes, then compare) is what stops
+    the two drifting. It applies the cycle's ordering (consolidation first, its memories excluded
+    from the eviction pool and its bytes already reclaimed), reads `group_name`/`length(body)` and
+    so leaves the covering index the real scans stay on, and never returns bodies. Concurrent
+    previews collapse onto one scan via `Server.previewGroup` — a **separate** singleflight from
+    `sleepGroup` (sharing one would defeat (1)), keyed on the `db.PreviewLimit`-normalised sample
+    size so a caller asking for more rows is never handed a shorter list. What the group shares is
+    `previewResult`, a plain struct, **not** the proto response: a proto message is not safe to
+    marshal concurrently (marshalling writes its internal size cache), so each caller builds its
+    own via `previewResponse`.
+  - `recordRetention` (`sleep.go`, called from `evict`) publishes the
+    `hippocampus.memories.retained`/`hippocampus.retained_bytes` gauges from `db.RetainedStats` —
+    one aggregate query (`MAX`/`GREATEST(timestamp, time_recalled) >= cutoff`, the same decay clock
+    consolidation ages from, plus the shared `evictionRowOverheadBytes` allowance so the figure is
+    comparable with `UsedBytes`). Gated on **both** `minimumRetentionInDays` and `capacityBytes`
+    being set: it costs an extra scan per cycle and means nothing without a capacity target, since
+    the pair exists to expose the one failure mode where retention (which overrides the capacity
+    target) holds so much that eviction can never bring the store back under it — also logged at
+    Warn for deployments without a metrics stack. Best-effort: a failure leaves the gauges stale and
+    never fails the cycle. `hippocampus.capacity_bytes` is exported beside `used_bytes` so a
+    dashboard need not hard-code the limit.
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.

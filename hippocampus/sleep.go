@@ -259,6 +259,9 @@ func (s *Server) evict(ctx context.Context) error {
 	s.consolidation.lastUsedBytes = used
 
 	tel.usedBytes.Record(ctx, used)
+	tel.capacityBytes.Record(ctx, s.consolidation.capacityBytes)
+
+	s.recordRetention(ctx)
 
 	if used <= s.consolidation.capacityBytes {
 		return nil
@@ -298,6 +301,47 @@ func (s *Server) evict(ctx context.Context) error {
 	return nil
 }
 
+// recordRetention publishes how much of the store the minimum retention floor is holding, as a
+// count and as bytes.
+//
+// It is called from evict, so it costs nothing unless a byte capacity is configured - and it is
+// skipped entirely without a retention floor, when the answer is always zero. That gate is the
+// point: the pair only means anything against a capacity target, because retention OVERRIDES that
+// target. Once retained_bytes approaches capacity_bytes the store cannot be brought back under its
+// capacity however hard eviction runs, and this is what makes that visible before it becomes a disk
+// problem rather than only when someone asks for a dry run.
+//
+// Best-effort: it is one extra aggregate scan per cycle, and a failure must not fail the cycle, so
+// it logs and moves on, leaving the gauges at their previous reading.
+func (s *Server) recordRetention(ctx context.Context) {
+	if s.consolidation.minimumRetentionInDays <= 0 {
+		return
+	}
+
+	cutoff := time.Now().UnixNano() - int64(s.consolidation.minimumRetentionInDays)*DAY_IN_NANOSECONDS
+
+	count, bytes, err := s.db.RetainedStats(ctx, cutoff)
+	if err != nil {
+		log.Warnf("failed to measure retained memories: %s", err.Error())
+
+		return
+	}
+
+	tel.memoriesRetained.Record(ctx, int64(count))
+	tel.retainedBytes.Record(ctx, bytes)
+
+	// Worth a log line, not only a metric: this is the condition under which the capacity target
+	// silently stops being achievable, and not every deployment runs the metrics stack.
+	if bytes >= s.consolidation.capacityBytes {
+		log.Warnf(
+			"minimum retention is holding %d bytes across %d memories, at or above the %d byte capacity target - eviction cannot bring the store under its capacity until this data ages out",
+			bytes,
+			count,
+			s.consolidation.capacityBytes,
+		)
+	}
+}
+
 func (s *Server) preserve(ctx context.Context) error {
 	log.Debug("preserve()")
 
@@ -323,6 +367,12 @@ func (s *Server) ShouldConsolidateMemory(candidate db.MemoryConsolidationCandida
 // algorithm. Capacity eviction uses it to rank memories from least to most valuable; a memory
 // with no age yet (or a future timestamp) ranks as maximally valuable.
 func (s *Server) MemoryValue(candidate db.MemoryConsolidationCandidate) float64 {
+	return s.memoryValueUnder(candidate, s.consolidation.defaultEventSignificanceValue)
+}
+
+// memoryValueUnder is MemoryValue against an explicitly supplied default event significance; see
+// memorySignificanceUnder.
+func (s *Server) memoryValueUnder(candidate db.MemoryConsolidationCandidate, defaultEventSignificance int32) float64 {
 	ageNanoSeconds := time.Now().UnixNano() - memoryDecayTimestamp(candidate)
 
 	ageUnits := (float64(ageNanoSeconds) / float64(DAY_IN_NANOSECONDS)) / s.consolidation.unitsOfAgeInDays
@@ -331,7 +381,7 @@ func (s *Server) MemoryValue(candidate db.MemoryConsolidationCandidate) float64 
 		return math.MaxFloat64
 	}
 
-	return s.calculateValue(s.memorySignificance(candidate), ageUnits)
+	return s.calculateValue(s.memorySignificanceUnder(candidate, defaultEventSignificance), ageUnits)
 }
 
 // MemoryRetained reports whether a memory is still within the configured minimum retention window
@@ -358,9 +408,17 @@ func memoryDecayTimestamp(candidate db.MemoryConsolidationCandidate) int64 {
 // memorySignificance combines the memory's own significance with its event's, the weighted
 // relationship significance, and the weighted recall count.
 func (s *Server) memorySignificance(candidate db.MemoryConsolidationCandidate) float64 {
+	return s.memorySignificanceUnder(candidate, s.consolidation.defaultEventSignificanceValue)
+}
+
+// memorySignificanceUnder is memorySignificance against an explicitly supplied default event
+// significance, for the same reason shouldConsolidateUnder takes a pressure: the field is
+// recomputed by each sleep cycle when consolidation.defaultEventSignificancePercentile is set, so
+// a preview running on an RPC goroutine must work from its own snapshot rather than read it.
+func (s *Server) memorySignificanceUnder(candidate db.MemoryConsolidationCandidate, defaultEventSignificance int32) float64 {
 	eventSignificance := candidate.EventSignificance
 	if eventSignificance == 0 {
-		eventSignificance = s.consolidation.defaultEventSignificanceValue
+		eventSignificance = defaultEventSignificance
 	}
 
 	return float64(eventSignificance+candidate.MemorySignificance) +
@@ -372,6 +430,12 @@ func (s *Server) memorySignificance(candidate db.MemoryConsolidationCandidate) f
 // the deletion threshold. The event's own significance and its relationship significance count
 // towards its value; its age is measured from the most recent of its start and end times.
 func (s *Server) ShouldConsolidateEvent(candidate db.EventConsolidationCandidate) bool {
+	return s.shouldConsolidateEventUnder(candidate, s.consolidation.capacityPressure)
+}
+
+// shouldConsolidateEventUnder is ShouldConsolidateEvent against an explicitly supplied capacity
+// pressure; see shouldConsolidateUnder.
+func (s *Server) shouldConsolidateEventUnder(candidate db.EventConsolidationCandidate, pressure float64) bool {
 
 	timestamp := candidate.TimeStart
 	if candidate.TimeEnd > timestamp {
@@ -381,7 +445,7 @@ func (s *Server) ShouldConsolidateEvent(candidate db.EventConsolidationCandidate
 	significance := float64(candidate.Significance) +
 		s.consolidation.relationshipSignificanceWeight*float64(candidate.RelationshipSignificance)
 
-	return s.shouldConsolidate(significance, timestamp)
+	return s.shouldConsolidateUnder(significance, timestamp, pressure)
 }
 
 // retained reports whether an item whose decay clock reads timestamp is still inside the configured
@@ -408,6 +472,16 @@ func (s *Server) retained(timestamp int64) bool {
 // otherwise the decayed value is compared against the deletion threshold scaled by the current
 // capacity pressure.
 func (s *Server) shouldConsolidate(significance float64, timestamp int64) bool {
+	return s.shouldConsolidateUnder(significance, timestamp, s.consolidation.capacityPressure)
+}
+
+// shouldConsolidateUnder is shouldConsolidate against an explicitly supplied capacity pressure,
+// rather than the server's current one. The sleep cycle passes its own live field (via
+// shouldConsolidate); PreviewConsolidation passes a snapshot it computed itself, because it runs
+// on an RPC goroutine while the sleep goroutine may be rewriting that field - and a preview must
+// in any case evaluate against one consistent pressure for the whole scan rather than whatever
+// happens to be stored as each row is considered.
+func (s *Server) shouldConsolidateUnder(significance float64, timestamp int64, pressure float64) bool {
 	if s.retained(timestamp) {
 		return false
 	}
@@ -426,7 +500,6 @@ func (s *Server) shouldConsolidate(significance float64, timestamp int64) bool {
 
 	val := s.calculateValue(significance, ageUnits)
 
-	pressure := s.consolidation.capacityPressure
 	if pressure <= 0 {
 		pressure = 1.0
 	}

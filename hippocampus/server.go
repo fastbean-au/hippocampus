@@ -196,6 +196,15 @@ type Server struct {
 	// its result instead of starting a second, overlapping cycle.
 	sleepGroup singleflight.Group
 
+	// previewGroup collapses concurrent PreviewConsolidation calls asking for the same sample size
+	// onto one scan. It is deliberately a SEPARATE group from sleepGroup: a preview must never join
+	// a real cycle (it would be describing a run that is at that moment deleting), so the two
+	// cannot share a key, and the preview's independence from the cycle is the whole design. What
+	// this group protects against is the other direction - a stream of concurrent previews each
+	// running its own full scan and, on SQLite's deliberately single connection, crowding the
+	// cycle's own queries.
+	previewGroup singleflight.Group
+
 	// stopSleep / sleepStopped / stopOnce coordinate shutdown of the autoSleep goroutine. Stop
 	// closes stopSleep and waits for sleepStopped; because the loop only re-enters its select
 	// between cycles, that wait also drains any in-flight cycle, so no consolidation is mid-scan

@@ -39,6 +39,9 @@ type telemetry struct {
 	sleepDuration    metric.Float64Histogram
 	capacityPressure metric.Float64Gauge
 	usedBytes        metric.Int64Gauge
+	capacityBytes    metric.Int64Gauge
+	memoriesRetained metric.Int64Gauge
+	retainedBytes    metric.Int64Gauge
 	purges           metric.Int64Counter
 
 	summarisationCandidates metric.Int64Gauge
@@ -81,6 +84,9 @@ func newTelemetry() *telemetry {
 		sleepDuration:    newFloat64Histogram(meter, "hippocampus.sleep.duration", "s", "Duration of a full sleep cycle in seconds."),
 		capacityPressure: newFloat64Gauge(meter, "hippocampus.capacity_pressure", "Deletion-threshold multiplier derived from store utilisation, recalculated each sleep cycle."),
 		usedBytes:        newInt64Gauge(meter, "hippocampus.used_bytes", "Bytes the store occupies excluding free pages, measured each sleep cycle when a capacity target is set."),
+		capacityBytes:    newInt64Gauge(meter, "hippocampus.capacity_bytes", "The configured byte capacity target, exported alongside used_bytes so a dashboard need not hard-code the limit."),
+		memoriesRetained: newInt64Gauge(meter, "hippocampus.memories.retained", "Memories inside the minimum retention window, and so exempt from both consolidation and eviction."),
+		retainedBytes:    newInt64Gauge(meter, "hippocampus.retained_bytes", "Stored bytes held by the minimum retention window. Approaching capacity_bytes means the capacity target has become unreachable, since retention overrides it."),
 		purges:           newInt64Counter(meter, "hippocampus.purges", "Number of purges performed."),
 
 		summarisationCandidates: newInt64Gauge(meter, "hippocampus.summarisation_candidates", "Number of events identified as summarisation candidates by the most recent sleep cycle."),

@@ -255,6 +255,41 @@ func TestPurgeNeedsConfirmation(t *testing.T) {
 	}
 }
 
+// TestSleepDryRunUsesThePreviewRPC pins the routing: --dry-run must reach PreviewConsolidation and
+// must NOT reach Sleep, because a dry run that triggered a real cycle would delete the very
+// memories the operator asked only to be shown.
+func TestSleepDryRunUsesThePreviewRPC(t *testing.T) {
+	req, _, err := runCommand(t, "sleep", []string{"--dry-run", "--limit", "25"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	preview, ok := req.(*contract.PreviewConsolidationRequest)
+	if !ok {
+		t.Fatalf("captured %T, want a PreviewConsolidationRequest", req)
+	}
+
+	if preview.GetLimit() != 25 {
+		t.Errorf("limit: got %d, want 25", preview.GetLimit())
+	}
+}
+
+// TestSleepWithoutDryRunTriggersACycle is the other half: the default is unchanged.
+func TestSleepWithoutDryRunTriggersACycle(t *testing.T) {
+	req, out, err := runCommand(t, "sleep", nil, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if _, ok := req.(*contract.EmptyRequest); !ok {
+		t.Fatalf("captured %T, want an EmptyRequest", req)
+	}
+
+	if !strings.Contains(out, "ok: true") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
 func TestSummaryReplace(t *testing.T) {
 	req, _, err := runCommand(t, "summary replace", []string{"--event-id", "e9", "--body", "sum", "--significance", "4"}, &fakeClient{})
 	if err != nil {

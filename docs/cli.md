@@ -156,9 +156,15 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 
 | Command  | Purpose                                          |
 | -------- | ------------------------------------------------ |
-| `whoami` | report the caller's identity and effective tier  |
-| `sleep`  | trigger a consolidation cycle now                |
-| `purge`  | delete every event and memory (requires `--yes`) |
+| `whoami` | report the caller's identity and effective tier                    |
+| `sleep`  | trigger a consolidation cycle now, or preview one (`--dry-run`)    |
+| `purge`  | delete every event and memory (requires `--yes`)                   |
+
+`sleep --dry-run` reports what a cycle would forget and deletes nothing — see
+[Previewing what would be forgotten](operations.md#previewing-what-would-be-forgotten). It calls a
+separate read-only RPC (`PreviewConsolidation`), so it cannot trigger a cycle by accident;
+`--limit` bounds how many individual memories are detailed (default 100, max 1000) without
+affecting the counts, which are always complete.
 
 ### Data movement
 

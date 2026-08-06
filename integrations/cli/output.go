@@ -134,12 +134,92 @@ func (r *renderer) renderText(msg proto.Message) error {
 		r.line("events_cleared:   %d", m.GetEventsCleared())
 		r.line("memories_cleared: %d", m.GetMemoriesCleared())
 
+	case *contract.PreviewConsolidationResponse:
+		r.renderPreview(m)
+
 	default:
 		// No bespoke text form: fall back to protojson so nothing is ever silently dropped.
 		return r.writeJSON(msg)
 	}
 
 	return nil
+}
+
+// renderPreview writes a dry run in the order an operator reads it: what would go, what is holding
+// data back, then which memories - because the counts are the answer and the sample is the
+// evidence.
+func (r *renderer) renderPreview(preview *contract.PreviewConsolidationResponse) {
+	r.line("would forget %d memory/memories and %d event(s), freeing ~%d bytes",
+		preview.GetMemoriesConsolidated()+preview.GetMemoriesEvicted(),
+		preview.GetEventsDeleted(),
+		preview.GetBytesFreed(),
+	)
+
+	r.line("  consolidated (decayed below the threshold): %d", preview.GetMemoriesConsolidated())
+	r.line("  evicted (over the byte capacity):           %d", preview.GetMemoriesEvicted())
+
+	// Flagged rather than merely reported: retention overrides the capacity target, so a retained
+	// set approaching the capacity is why a store can sit above its target indefinitely.
+	if preview.GetMemoriesRetained() > 0 {
+		r.line("  retained by the minimum retention floor:    %d (%d bytes)",
+			preview.GetMemoriesRetained(),
+			preview.GetRetainedBytes(),
+		)
+	}
+
+	r.line("")
+	r.line("capacity pressure:  %.3f", preview.GetCapacityPressure())
+	// Six significant figures, not %g: the threshold is a product of two floats, so the full
+	// precision shows arithmetic noise (10.000000000000004) that reads as a real number.
+	r.line("deletion threshold: %.6g (scaled by the pressure above)", preview.GetDeletionThreshold())
+
+	if preview.GetCapacityBytes() > 0 {
+		r.line("used / capacity:    %d / %d bytes", preview.GetUsedBytes(), preview.GetCapacityBytes())
+	} else {
+		r.line("used:               %d bytes (no byte capacity configured, so nothing is evicted)", preview.GetUsedBytes())
+	}
+
+	if len(preview.GetCandidates()) == 0 {
+		return
+	}
+
+	r.line("")
+	r.line("%d shown, least valuable first%s:", len(preview.GetCandidates()), truncatedNote(preview.GetTruncated()))
+
+	for _, candidate := range preview.GetCandidates() {
+		r.line("  %-24s  value %-11.4g  significance %-5d  %-8s  %s",
+			candidate.GetId(),
+			candidate.GetValue(),
+			candidate.GetSignificance(),
+			forgetRuleLabel(candidate.GetRule()),
+			orNone(candidate.GetGroup()),
+		)
+	}
+}
+
+// truncatedNote explains a short sample, so a truncated list is never mistaken for the whole of
+// what would be forgotten.
+func truncatedNote(truncated bool) string {
+	if truncated {
+		return " (truncated - raise --limit to see more)"
+	}
+
+	return ""
+}
+
+// forgetRuleLabel renders the rule compactly for the per-memory lines.
+func forgetRuleLabel(rule contract.ForgetRule) string {
+	switch rule {
+
+	case contract.ForgetRule_FORGET_RULE_CONSOLIDATION:
+		return "decayed"
+
+	case contract.ForgetRule_FORGET_RULE_EVICTION:
+		return "capacity"
+
+	default:
+		return "unknown"
+	}
 }
 
 func (r *renderer) renderEvent(event *contract.Event) {

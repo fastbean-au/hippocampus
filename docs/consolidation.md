@@ -5,6 +5,11 @@ byte-capacity target, checkpoint-triggered eviction, and summarisation. For the 
 drive these, see [Configurability](configuration.md); for operational tuning, the
 [Operations guide](operations.md).
 
+The tables below describe what the algorithms do in general. To see what they would do to **your**
+store under **your** configuration, ask it: `hippo sleep --dry-run` reports what the next cycle
+would forget, and deletes nothing — see
+[Previewing what would be forgotten](operations.md#previewing-what-would-be-forgotten).
+
 Memory consolidation is done through a process that runs regularly at a configured frequency, and which can also be run manually. Through this process when all of an event's memories are deleted, the event will be deleted. Events that have no memories age out independently under the same decay rules: an event's value is its own significance plus its weighted relationship significance, and its age is measured from the most recent of its start and end times. Memories without an associated event can be given a default event significance equivalence, this can either be an explicit value or set at the value for a specified percentile of the existing events.
 
 The frequency is set by `sleep.periodSeconds`. Setting it to `0` (or any non-positive value) disables the automatic timed cycle entirely: the service then only consolidates when the manual `Sleep` RPC is called, or when the WAL trigger fires (see [Checkpoint-triggered eviction](#checkpoint-triggered-eviction)). This suits an instance that should not forget on its own — for example one used purely for import/archival, or one whose sleep cadence is driven externally.

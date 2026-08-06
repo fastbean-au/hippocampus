@@ -26,6 +26,20 @@ service Hippocampus {
 		};
 	}
 
+	// PreviewConsolidation reports what a consolidation cycle would forget if one ran now, and
+	// deletes nothing. It is the dry run for Sleep: the same decision rules, applied to the same
+	// store, with the outcome returned instead of applied. Rejected with FailedPrecondition on a
+	// read/write replica (consolidation.enabled: false), which never runs a cycle of its own and so
+	// has nothing to preview.
+	//
+	// It is a separate RPC rather than a flag on Sleep so that the two can be authorised
+	// separately - previewing what would be forgotten is a read, triggering it is not.
+	rpc PreviewConsolidation(PreviewConsolidationRequest) returns (PreviewConsolidationResponse) {
+		option (google.api.http) = {
+			get: "/v1/sleep/preview"
+		};
+	}
+
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -582,6 +596,77 @@ message ClearResponse {
 
 message GeneralResponse {
 	bool                                   ok                        = 1;
+}
+
+// ForgetRule names why a memory appears in a consolidation preview - which of the two independent
+// deletion paths selected it. The distinction matters when tuning: a memory forgotten by
+// CONSOLIDATION decayed below the threshold and is answered by the decay settings
+// (aggressiveness, deletionThreshold, unitsOfAgeInDays), while one forgotten by EVICTION was
+// still valuable enough to keep and went only because the store is over its byte capacity - which
+// is answered by capacityBytes, or by storing less.
+enum ForgetRule {
+	FORGET_RULE_UNSPECIFIED                                          = 0;
+	FORGET_RULE_CONSOLIDATION                                        = 1; // decayed value fell below the capacity-pressure-scaled deletion threshold
+	FORGET_RULE_EVICTION                                             = 2; // still above the threshold, but evicted to bring the store back under its byte capacity
+}
+
+// PreviewConsolidationRequest asks what a consolidation cycle would forget. limit bounds only the
+// sample of individual memories returned - every count in the response is complete regardless, so
+// a truncated sample never understates how much would be forgotten.
+message PreviewConsolidationRequest {
+	int32                                  limit                     = 1; // memories to detail; <= 0 selects the default (100), values above the cap (1000) are clamped down to it
+}
+
+// ForgetCandidate is one memory a cycle would delete, with the numbers behind the decision. value
+// and threshold are the two sides of the comparison that decided it: a CONSOLIDATION candidate is
+// one whose value fell below the threshold. Bodies are never included - a preview reports what
+// would be lost, it is not a way to read the store.
+message ForgetCandidate {
+	string                                 id                        = 1;
+	string                                 event_id                  = 2;  // empty for a memory with no event
+	string                                 group                     = 3;
+	int32                                  significance              = 4;  // the memory's stored significance, as ranked
+	double                                 value                     = 5;  // the computed decayed value that decided it (see docs/consolidation.md)
+	double                                 threshold                 = 6;  // the capacity-pressure-scaled deletion threshold value was compared against
+	int64                                  body_bytes                = 7;  // stored size of the body, after compression - the same measure capacity accounting uses
+	ForgetRule                             rule                      = 8;
+	int64                                  time_stamp                = 9;  // UnixNano
+	int64                                  time_recalled             = 10; // UnixNano of the most recent recall; 0 if never recalled
+	int32                                  recall_count              = 11;
+}
+
+// PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are
+// always complete; candidates is a bounded sample of the individual memories, ordered by value
+// ascending so the least valuable - those furthest past the threshold - come first.
+//
+// The preview accounts for the cycle's own ordering: consolidation runs first, so the memories it
+// would delete are excluded from the eviction pool and their bytes are already reclaimed before
+// eviction is considered at all. A memory therefore appears at most once, under the rule that
+// would actually claim it.
+message PreviewConsolidationResponse {
+	int32                                  memories_consolidated     = 1;  // memories whose value fell below the threshold
+	int32                                  memories_evicted          = 2;  // memories capacity eviction would additionally delete
+	int32                                  events_deleted            = 3;  // events that would go: those left with no memories, plus empty events past their own threshold
+	int64                                  bytes_freed               = 4;  // estimated bytes reclaimed by both paths together, on the same basis as used_bytes
+
+	// memories_retained counts the memories that would otherwise have been forgotten but are held
+	// by consolidation.minimumRetentionInDays, with retained_bytes their stored size. Watch this
+	// against capacity_bytes: retention overrides the capacity target, so once retained_bytes
+	// approaches capacity_bytes the store cannot be brought back under its target however hard
+	// eviction runs. They are counted, never listed - on a healthy store almost everything is
+	// retained, so listing them would return the store.
+	int32                                  memories_retained         = 5;
+	int64                                  retained_bytes            = 6;
+
+	// The decision inputs as they stood for this preview, so the numbers above can be read against
+	// the configuration that produced them.
+	double                                 capacity_pressure         = 7;  // multiplier applied to the deletion threshold by how full the store is (1.0 = no effect)
+	double                                 deletion_threshold        = 8;  // the scaled threshold actually applied: deletionThreshold * capacity_pressure
+	int64                                  used_bytes                = 9;  // the store's current used bytes
+	int64                                  capacity_bytes            = 10; // consolidation.capacityBytes; 0 when no byte capacity is configured, in which case eviction never runs
+
+	repeated ForgetCandidate               candidates                = 11;
+	bool                                   truncated                 = 12; // true when more memories would be forgotten than limit returned
 }
 
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the

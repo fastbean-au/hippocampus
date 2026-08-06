@@ -149,8 +149,12 @@ func commands() map[string]command {
 		},
 		"sleep": {
 			summary: "trigger a consolidation cycle now",
-			flags:   func(*pflag.FlagSet) {},
-			run:     runSleep,
+			hint:    "[--dry-run]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.Bool("dry-run", false, "report what a cycle would forget without deleting anything")
+				fs.Int32("limit", 0, "with --dry-run: memories to detail (default 100, max 1000)")
+			},
+			run: runSleep,
 		},
 		"purge": {
 			summary: "delete every event and memory (destructive)",
@@ -636,7 +640,21 @@ func runWhoAmI(ctx context.Context, client contract.HippocampusClient, _ *pflag.
 	return r.render(resp)
 }
 
-func runSleep(ctx context.Context, client contract.HippocampusClient, _ *pflag.FlagSet, r *renderer) error {
+// runSleep triggers a cycle, or - with --dry-run - reports what one would forget. The dry run is a
+// separate RPC rather than a flag on Sleep (so the two can be authorised apart), but it reads
+// naturally as a flag on the command an operator already knows, so that is how the CLI spells it.
+func runSleep(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	if b(fs, "dry-run") {
+		resp, err := client.PreviewConsolidation(ctx, &contract.PreviewConsolidationRequest{
+			Limit: i32(fs, "limit"),
+		})
+		if err != nil {
+			return err
+		}
+
+		return r.render(resp)
+	}
+
 	resp, err := client.Sleep(ctx, &contract.EmptyRequest{})
 	if err != nil {
 		return err

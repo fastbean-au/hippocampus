@@ -113,8 +113,17 @@ var policies = map[string]rpcPolicy{
 	"ImportBatch":                {TierWriter, http.MethodPost, "/v1/import/batch"},
 
 	// admin
-	"Purge":    {TierAdmin, http.MethodPost, "/v1/purge"},
-	"Sleep":    {TierAdmin, http.MethodPost, "/v1/sleep"},
+	"Purge": {TierAdmin, http.MethodPost, "/v1/purge"},
+	"Sleep": {TierAdmin, http.MethodPost, "/v1/sleep"},
+
+	// A dry run deletes nothing, but it enumerates ids, groups and significances from across the
+	// whole store - more than a reader is otherwise shown by any single call - so it is assigned
+	// the admin tier alongside the cycle it describes rather than the reader tier its read-only
+	// nature would suggest. Being a separate RPC from Sleep is what leaves that free to be
+	// reconsidered: the preview can be lowered a tier without also handing out the ability to
+	// trigger a real cycle.
+	"PreviewConsolidation": {TierAdmin, http.MethodGet, "/v1/sleep/preview"},
+
 	"Export":   {TierAdmin, http.MethodPost, "/v1/export"},
 	"Transfer": {TierAdmin, http.MethodPost, "/v1/transfer"},
 	"Clear":    {TierAdmin, http.MethodPost, "/v1/clear"},

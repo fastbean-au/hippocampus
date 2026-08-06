@@ -187,6 +187,61 @@ func (SearchMode) EnumDescriptor() ([]byte, []int) {
 	return file_hippocampus_proto_rawDescGZIP(), []int{2}
 }
 
+// ForgetRule names why a memory appears in a consolidation preview - which of the two independent
+// deletion paths selected it. The distinction matters when tuning: a memory forgotten by
+// CONSOLIDATION decayed below the threshold and is answered by the decay settings
+// (aggressiveness, deletionThreshold, unitsOfAgeInDays), while one forgotten by EVICTION was
+// still valuable enough to keep and went only because the store is over its byte capacity - which
+// is answered by capacityBytes, or by storing less.
+type ForgetRule int32
+
+const (
+	ForgetRule_FORGET_RULE_UNSPECIFIED   ForgetRule = 0
+	ForgetRule_FORGET_RULE_CONSOLIDATION ForgetRule = 1 // decayed value fell below the capacity-pressure-scaled deletion threshold
+	ForgetRule_FORGET_RULE_EVICTION      ForgetRule = 2 // still above the threshold, but evicted to bring the store back under its byte capacity
+)
+
+// Enum value maps for ForgetRule.
+var (
+	ForgetRule_name = map[int32]string{
+		0: "FORGET_RULE_UNSPECIFIED",
+		1: "FORGET_RULE_CONSOLIDATION",
+		2: "FORGET_RULE_EVICTION",
+	}
+	ForgetRule_value = map[string]int32{
+		"FORGET_RULE_UNSPECIFIED":   0,
+		"FORGET_RULE_CONSOLIDATION": 1,
+		"FORGET_RULE_EVICTION":      2,
+	}
+)
+
+func (x ForgetRule) Enum() *ForgetRule {
+	p := new(ForgetRule)
+	*p = x
+	return p
+}
+
+func (x ForgetRule) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ForgetRule) Descriptor() protoreflect.EnumDescriptor {
+	return file_hippocampus_proto_enumTypes[3].Descriptor()
+}
+
+func (ForgetRule) Type() protoreflect.EnumType {
+	return &file_hippocampus_proto_enumTypes[3]
+}
+
+func (x ForgetRule) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ForgetRule.Descriptor instead.
+func (ForgetRule) EnumDescriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{3}
+}
+
 type SignificancePlacement_Mode int32
 
 const (
@@ -223,11 +278,11 @@ func (x SignificancePlacement_Mode) String() string {
 }
 
 func (SignificancePlacement_Mode) Descriptor() protoreflect.EnumDescriptor {
-	return file_hippocampus_proto_enumTypes[3].Descriptor()
+	return file_hippocampus_proto_enumTypes[4].Descriptor()
 }
 
 func (SignificancePlacement_Mode) Type() protoreflect.EnumType {
-	return &file_hippocampus_proto_enumTypes[3]
+	return &file_hippocampus_proto_enumTypes[4]
 }
 
 func (x SignificancePlacement_Mode) Number() protoreflect.EnumNumber {
@@ -2706,6 +2761,329 @@ func (x *GeneralResponse) GetOk() bool {
 	return false
 }
 
+// PreviewConsolidationRequest asks what a consolidation cycle would forget. limit bounds only the
+// sample of individual memories returned - every count in the response is complete regardless, so
+// a truncated sample never understates how much would be forgotten.
+type PreviewConsolidationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Limit         int32                  `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"` // memories to detail; <= 0 selects the default (100), values above the cap (1000) are clamped down to it
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreviewConsolidationRequest) Reset() {
+	*x = PreviewConsolidationRequest{}
+	mi := &file_hippocampus_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewConsolidationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewConsolidationRequest) ProtoMessage() {}
+
+func (x *PreviewConsolidationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hippocampus_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewConsolidationRequest.ProtoReflect.Descriptor instead.
+func (*PreviewConsolidationRequest) Descriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *PreviewConsolidationRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+// ForgetCandidate is one memory a cycle would delete, with the numbers behind the decision. value
+// and threshold are the two sides of the comparison that decided it: a CONSOLIDATION candidate is
+// one whose value fell below the threshold. Bodies are never included - a preview reports what
+// would be lost, it is not a way to read the store.
+type ForgetCandidate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	EventId       string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"` // empty for a memory with no event
+	Group         string                 `protobuf:"bytes,3,opt,name=group,proto3" json:"group,omitempty"`
+	Significance  int32                  `protobuf:"varint,4,opt,name=significance,proto3" json:"significance,omitempty"`            // the memory's stored significance, as ranked
+	Value         float64                `protobuf:"fixed64,5,opt,name=value,proto3" json:"value,omitempty"`                         // the computed decayed value that decided it (see docs/consolidation.md)
+	Threshold     float64                `protobuf:"fixed64,6,opt,name=threshold,proto3" json:"threshold,omitempty"`                 // the capacity-pressure-scaled deletion threshold value was compared against
+	BodyBytes     int64                  `protobuf:"varint,7,opt,name=body_bytes,json=bodyBytes,proto3" json:"body_bytes,omitempty"` // stored size of the body, after compression - the same measure capacity accounting uses
+	Rule          ForgetRule             `protobuf:"varint,8,opt,name=rule,proto3,enum=proto.ForgetRule" json:"rule,omitempty"`
+	TimeStamp     int64                  `protobuf:"varint,9,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`           // UnixNano
+	TimeRecalled  int64                  `protobuf:"varint,10,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"` // UnixNano of the most recent recall; 0 if never recalled
+	RecallCount   int32                  `protobuf:"varint,11,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForgetCandidate) Reset() {
+	*x = ForgetCandidate{}
+	mi := &file_hippocampus_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForgetCandidate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForgetCandidate) ProtoMessage() {}
+
+func (x *ForgetCandidate) ProtoReflect() protoreflect.Message {
+	mi := &file_hippocampus_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForgetCandidate.ProtoReflect.Descriptor instead.
+func (*ForgetCandidate) Descriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *ForgetCandidate) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ForgetCandidate) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *ForgetCandidate) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *ForgetCandidate) GetSignificance() int32 {
+	if x != nil {
+		return x.Significance
+	}
+	return 0
+}
+
+func (x *ForgetCandidate) GetValue() float64 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+func (x *ForgetCandidate) GetThreshold() float64 {
+	if x != nil {
+		return x.Threshold
+	}
+	return 0
+}
+
+func (x *ForgetCandidate) GetBodyBytes() int64 {
+	if x != nil {
+		return x.BodyBytes
+	}
+	return 0
+}
+
+func (x *ForgetCandidate) GetRule() ForgetRule {
+	if x != nil {
+		return x.Rule
+	}
+	return ForgetRule_FORGET_RULE_UNSPECIFIED
+}
+
+func (x *ForgetCandidate) GetTimeStamp() int64 {
+	if x != nil {
+		return x.TimeStamp
+	}
+	return 0
+}
+
+func (x *ForgetCandidate) GetTimeRecalled() int64 {
+	if x != nil {
+		return x.TimeRecalled
+	}
+	return 0
+}
+
+func (x *ForgetCandidate) GetRecallCount() int32 {
+	if x != nil {
+		return x.RecallCount
+	}
+	return 0
+}
+
+// PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are
+// always complete; candidates is a bounded sample of the individual memories, ordered by value
+// ascending so the least valuable - those furthest past the threshold - come first.
+//
+// The preview accounts for the cycle's own ordering: consolidation runs first, so the memories it
+// would delete are excluded from the eviction pool and their bytes are already reclaimed before
+// eviction is considered at all. A memory therefore appears at most once, under the rule that
+// would actually claim it.
+type PreviewConsolidationResponse struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	MemoriesConsolidated int32                  `protobuf:"varint,1,opt,name=memories_consolidated,json=memoriesConsolidated,proto3" json:"memories_consolidated,omitempty"` // memories whose value fell below the threshold
+	MemoriesEvicted      int32                  `protobuf:"varint,2,opt,name=memories_evicted,json=memoriesEvicted,proto3" json:"memories_evicted,omitempty"`                // memories capacity eviction would additionally delete
+	EventsDeleted        int32                  `protobuf:"varint,3,opt,name=events_deleted,json=eventsDeleted,proto3" json:"events_deleted,omitempty"`                      // events that would go: those left with no memories, plus empty events past their own threshold
+	BytesFreed           int64                  `protobuf:"varint,4,opt,name=bytes_freed,json=bytesFreed,proto3" json:"bytes_freed,omitempty"`                               // estimated bytes reclaimed by both paths together, on the same basis as used_bytes
+	// memories_retained counts the memories that would otherwise have been forgotten but are held
+	// by consolidation.minimumRetentionInDays, with retained_bytes their stored size. Watch this
+	// against capacity_bytes: retention overrides the capacity target, so once retained_bytes
+	// approaches capacity_bytes the store cannot be brought back under its target however hard
+	// eviction runs. They are counted, never listed - on a healthy store almost everything is
+	// retained, so listing them would return the store.
+	MemoriesRetained int32 `protobuf:"varint,5,opt,name=memories_retained,json=memoriesRetained,proto3" json:"memories_retained,omitempty"`
+	RetainedBytes    int64 `protobuf:"varint,6,opt,name=retained_bytes,json=retainedBytes,proto3" json:"retained_bytes,omitempty"`
+	// The decision inputs as they stood for this preview, so the numbers above can be read against
+	// the configuration that produced them.
+	CapacityPressure  float64            `protobuf:"fixed64,7,opt,name=capacity_pressure,json=capacityPressure,proto3" json:"capacity_pressure,omitempty"`    // multiplier applied to the deletion threshold by how full the store is (1.0 = no effect)
+	DeletionThreshold float64            `protobuf:"fixed64,8,opt,name=deletion_threshold,json=deletionThreshold,proto3" json:"deletion_threshold,omitempty"` // the scaled threshold actually applied: deletionThreshold * capacity_pressure
+	UsedBytes         int64              `protobuf:"varint,9,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`                          // the store's current used bytes
+	CapacityBytes     int64              `protobuf:"varint,10,opt,name=capacity_bytes,json=capacityBytes,proto3" json:"capacity_bytes,omitempty"`             // consolidation.capacityBytes; 0 when no byte capacity is configured, in which case eviction never runs
+	Candidates        []*ForgetCandidate `protobuf:"bytes,11,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	Truncated         bool               `protobuf:"varint,12,opt,name=truncated,proto3" json:"truncated,omitempty"` // true when more memories would be forgotten than limit returned
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *PreviewConsolidationResponse) Reset() {
+	*x = PreviewConsolidationResponse{}
+	mi := &file_hippocampus_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewConsolidationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewConsolidationResponse) ProtoMessage() {}
+
+func (x *PreviewConsolidationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hippocampus_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewConsolidationResponse.ProtoReflect.Descriptor instead.
+func (*PreviewConsolidationResponse) Descriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *PreviewConsolidationResponse) GetMemoriesConsolidated() int32 {
+	if x != nil {
+		return x.MemoriesConsolidated
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetMemoriesEvicted() int32 {
+	if x != nil {
+		return x.MemoriesEvicted
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetEventsDeleted() int32 {
+	if x != nil {
+		return x.EventsDeleted
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetBytesFreed() int64 {
+	if x != nil {
+		return x.BytesFreed
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetMemoriesRetained() int32 {
+	if x != nil {
+		return x.MemoriesRetained
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetRetainedBytes() int64 {
+	if x != nil {
+		return x.RetainedBytes
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetCapacityPressure() float64 {
+	if x != nil {
+		return x.CapacityPressure
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetDeletionThreshold() float64 {
+	if x != nil {
+		return x.DeletionThreshold
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetUsedBytes() int64 {
+	if x != nil {
+		return x.UsedBytes
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetCapacityBytes() int64 {
+	if x != nil {
+		return x.CapacityBytes
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetCandidates() []*ForgetCandidate {
+	if x != nil {
+		return x.Candidates
+	}
+	return nil
+}
+
+func (x *PreviewConsolidationResponse) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the
 // caller's effective authorization tier ("reader", "writer", or "admin"); auth_enabled is false
 // when the service runs without authentication, in which case role is "admin" (unrestricted) and
@@ -2727,7 +3105,7 @@ type WhoAmIResponse struct {
 
 func (x *WhoAmIResponse) Reset() {
 	*x = WhoAmIResponse{}
-	mi := &file_hippocampus_proto_msgTypes[38]
+	mi := &file_hippocampus_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2739,7 +3117,7 @@ func (x *WhoAmIResponse) String() string {
 func (*WhoAmIResponse) ProtoMessage() {}
 
 func (x *WhoAmIResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[38]
+	mi := &file_hippocampus_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2752,7 +3130,7 @@ func (x *WhoAmIResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WhoAmIResponse.ProtoReflect.Descriptor instead.
 func (*WhoAmIResponse) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{38}
+	return file_hippocampus_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *WhoAmIResponse) GetClientId() string {
@@ -2791,7 +3169,7 @@ type EmptyRequest struct {
 
 func (x *EmptyRequest) Reset() {
 	*x = EmptyRequest{}
-	mi := &file_hippocampus_proto_msgTypes[39]
+	mi := &file_hippocampus_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2803,7 +3181,7 @@ func (x *EmptyRequest) String() string {
 func (*EmptyRequest) ProtoMessage() {}
 
 func (x *EmptyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[39]
+	mi := &file_hippocampus_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2816,7 +3194,7 @@ func (x *EmptyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmptyRequest.ProtoReflect.Descriptor instead.
 func (*EmptyRequest) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{39}
+	return file_hippocampus_proto_rawDescGZIP(), []int{42}
 }
 
 var File_hippocampus_proto protoreflect.FileDescriptor
@@ -3013,7 +3391,42 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x10memories_cleared\x18\x01 \x01(\x05R\x0fmemoriesCleared\x12%\n" +
 	"\x0eevents_cleared\x18\x02 \x01(\x05R\reventsCleared\"!\n" +
 	"\x0fGeneralResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x9a\x01\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"3\n" +
+	"\x1bPreviewConsolidationRequest\x12\x14\n" +
+	"\x05limit\x18\x01 \x01(\x05R\x05limit\"\xd7\x02\n" +
+	"\x0fForgetCandidate\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
+	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\x14\n" +
+	"\x05group\x18\x03 \x01(\tR\x05group\x12\"\n" +
+	"\fsignificance\x18\x04 \x01(\x05R\fsignificance\x12\x14\n" +
+	"\x05value\x18\x05 \x01(\x01R\x05value\x12\x1c\n" +
+	"\tthreshold\x18\x06 \x01(\x01R\tthreshold\x12\x1d\n" +
+	"\n" +
+	"body_bytes\x18\a \x01(\x03R\tbodyBytes\x12%\n" +
+	"\x04rule\x18\b \x01(\x0e2\x11.proto.ForgetRuleR\x04rule\x12\x1d\n" +
+	"\n" +
+	"time_stamp\x18\t \x01(\x03R\ttimeStamp\x12#\n" +
+	"\rtime_recalled\x18\n" +
+	" \x01(\x03R\ftimeRecalled\x12!\n" +
+	"\frecall_count\x18\v \x01(\x05R\vrecallCount\"\x92\x04\n" +
+	"\x1cPreviewConsolidationResponse\x123\n" +
+	"\x15memories_consolidated\x18\x01 \x01(\x05R\x14memoriesConsolidated\x12)\n" +
+	"\x10memories_evicted\x18\x02 \x01(\x05R\x0fmemoriesEvicted\x12%\n" +
+	"\x0eevents_deleted\x18\x03 \x01(\x05R\reventsDeleted\x12\x1f\n" +
+	"\vbytes_freed\x18\x04 \x01(\x03R\n" +
+	"bytesFreed\x12+\n" +
+	"\x11memories_retained\x18\x05 \x01(\x05R\x10memoriesRetained\x12%\n" +
+	"\x0eretained_bytes\x18\x06 \x01(\x03R\rretainedBytes\x12+\n" +
+	"\x11capacity_pressure\x18\a \x01(\x01R\x10capacityPressure\x12-\n" +
+	"\x12deletion_threshold\x18\b \x01(\x01R\x11deletionThreshold\x12\x1d\n" +
+	"\n" +
+	"used_bytes\x18\t \x01(\x03R\tusedBytes\x12%\n" +
+	"\x0ecapacity_bytes\x18\n" +
+	" \x01(\x03R\rcapacityBytes\x126\n" +
+	"\n" +
+	"candidates\x18\v \x03(\v2\x16.proto.ForgetCandidateR\n" +
+	"candidates\x12\x1c\n" +
+	"\ttruncated\x18\f \x01(\bR\ttruncated\"\x9a\x01\n" +
 	"\x0eWhoAmIResponse\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12!\n" +
@@ -3033,10 +3446,16 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x17SEARCH_MODE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13SEARCH_MODE_KEYWORD\x10\x01\x12\x18\n" +
 	"\x14SEARCH_MODE_SEMANTIC\x10\x02\x12\x16\n" +
-	"\x12SEARCH_MODE_HYBRID\x10\x032\x94\x12\n" +
+	"\x12SEARCH_MODE_HYBRID\x10\x03*b\n" +
+	"\n" +
+	"ForgetRule\x12\x1b\n" +
+	"\x17FORGET_RULE_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19FORGET_RULE_CONSOLIDATION\x10\x01\x12\x18\n" +
+	"\x14FORGET_RULE_EVICTION\x10\x022\x90\x13\n" +
 	"\vHippocampus\x12G\n" +
 	"\x05Purge\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/purge\x12G\n" +
-	"\x05Sleep\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/sleep\x12H\n" +
+	"\x05Sleep\x12\x13.proto.EmptyRequest\x1a\x16.proto.GeneralResponse\"\x11\x82\xd3\xe4\x93\x02\v\"\t/v1/sleep\x12z\n" +
+	"\x14PreviewConsolidation\x12\".proto.PreviewConsolidationRequest\x1a#.proto.PreviewConsolidationResponse\"\x19\x82\xd3\xe4\x93\x02\x13\x12\x11/v1/sleep/preview\x12H\n" +
 	"\x06WhoAmI\x12\x13.proto.EmptyRequest\x1a\x15.proto.WhoAmIResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
 	"/v1/whoami\x12L\n" +
 	"\n" +
@@ -3078,130 +3497,138 @@ func file_hippocampus_proto_rawDescGZIP() []byte {
 	return file_hippocampus_proto_rawDescData
 }
 
-var file_hippocampus_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_hippocampus_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_hippocampus_proto_goTypes = []any{
 	(Bool)(0),                                  // 0: proto.Bool
 	(SignificanceExtremum)(0),                  // 1: proto.SignificanceExtremum
 	(SearchMode)(0),                            // 2: proto.SearchMode
-	(SignificancePlacement_Mode)(0),            // 3: proto.SignificancePlacement.Mode
-	(*SignificancePlacement)(nil),              // 4: proto.SignificancePlacement
-	(*Event)(nil),                              // 5: proto.Event
-	(*Relationship)(nil),                       // 6: proto.Relationship
-	(*Memory)(nil),                             // 7: proto.Memory
-	(*StoreEventResponse)(nil),                 // 8: proto.StoreEventResponse
-	(*EndEventRequest)(nil),                    // 9: proto.EndEventRequest
-	(*UpdateEventSignificanceRequest)(nil),     // 10: proto.UpdateEventSignificanceRequest
-	(*MergeEventsRequest)(nil),                 // 11: proto.MergeEventsRequest
-	(*DeleteEventRequest)(nil),                 // 12: proto.DeleteEventRequest
-	(*GetEventByIdRequest)(nil),                // 13: proto.GetEventByIdRequest
-	(*GetEventResponse)(nil),                   // 14: proto.GetEventResponse
-	(*GetEventsRequest)(nil),                   // 15: proto.GetEventsRequest
-	(*GetEventsResponse)(nil),                  // 16: proto.GetEventsResponse
-	(*GetMemoriesRequest)(nil),                 // 17: proto.GetMemoriesRequest
-	(*GetMemoriesResponse)(nil),                // 18: proto.GetMemoriesResponse
-	(*StoreMemoryResponse)(nil),                // 19: proto.StoreMemoryResponse
-	(*DeleteMemoriesRequest)(nil),              // 20: proto.DeleteMemoriesRequest
-	(*RecallMemoriesRequest)(nil),              // 21: proto.RecallMemoriesRequest
-	(*SearchMemoriesRequest)(nil),              // 22: proto.SearchMemoriesRequest
-	(*ReplaceMemoriesWithSummaryRequest)(nil),  // 23: proto.ReplaceMemoriesWithSummaryRequest
-	(*ReplaceMemoriesWithSummaryResponse)(nil), // 24: proto.ReplaceMemoriesWithSummaryResponse
-	(*SummarisationCandidate)(nil),             // 25: proto.SummarisationCandidate
-	(*GetSummarisationCandidatesResponse)(nil), // 26: proto.GetSummarisationCandidatesResponse
-	(*SummariseMemoriesRequest)(nil),           // 27: proto.SummariseMemoriesRequest
-	(*SummariseMemoriesResponse)(nil),          // 28: proto.SummariseMemoriesResponse
-	(*ArchiveHeader)(nil),                      // 29: proto.ArchiveHeader
-	(*ArchiveRecord)(nil),                      // 30: proto.ArchiveRecord
-	(*ImportBatchRequest)(nil),                 // 31: proto.ImportBatchRequest
-	(*ImportBatchResponse)(nil),                // 32: proto.ImportBatchResponse
-	(*ExportRequest)(nil),                      // 33: proto.ExportRequest
-	(*ExportResponse)(nil),                     // 34: proto.ExportResponse
-	(*ImportRequest)(nil),                      // 35: proto.ImportRequest
-	(*ImportResponse)(nil),                     // 36: proto.ImportResponse
-	(*TransferRequest)(nil),                    // 37: proto.TransferRequest
-	(*TransferResponse)(nil),                   // 38: proto.TransferResponse
-	(*ClearRequest)(nil),                       // 39: proto.ClearRequest
-	(*ClearResponse)(nil),                      // 40: proto.ClearResponse
-	(*GeneralResponse)(nil),                    // 41: proto.GeneralResponse
-	(*WhoAmIResponse)(nil),                     // 42: proto.WhoAmIResponse
-	(*EmptyRequest)(nil),                       // 43: proto.EmptyRequest
+	(ForgetRule)(0),                            // 3: proto.ForgetRule
+	(SignificancePlacement_Mode)(0),            // 4: proto.SignificancePlacement.Mode
+	(*SignificancePlacement)(nil),              // 5: proto.SignificancePlacement
+	(*Event)(nil),                              // 6: proto.Event
+	(*Relationship)(nil),                       // 7: proto.Relationship
+	(*Memory)(nil),                             // 8: proto.Memory
+	(*StoreEventResponse)(nil),                 // 9: proto.StoreEventResponse
+	(*EndEventRequest)(nil),                    // 10: proto.EndEventRequest
+	(*UpdateEventSignificanceRequest)(nil),     // 11: proto.UpdateEventSignificanceRequest
+	(*MergeEventsRequest)(nil),                 // 12: proto.MergeEventsRequest
+	(*DeleteEventRequest)(nil),                 // 13: proto.DeleteEventRequest
+	(*GetEventByIdRequest)(nil),                // 14: proto.GetEventByIdRequest
+	(*GetEventResponse)(nil),                   // 15: proto.GetEventResponse
+	(*GetEventsRequest)(nil),                   // 16: proto.GetEventsRequest
+	(*GetEventsResponse)(nil),                  // 17: proto.GetEventsResponse
+	(*GetMemoriesRequest)(nil),                 // 18: proto.GetMemoriesRequest
+	(*GetMemoriesResponse)(nil),                // 19: proto.GetMemoriesResponse
+	(*StoreMemoryResponse)(nil),                // 20: proto.StoreMemoryResponse
+	(*DeleteMemoriesRequest)(nil),              // 21: proto.DeleteMemoriesRequest
+	(*RecallMemoriesRequest)(nil),              // 22: proto.RecallMemoriesRequest
+	(*SearchMemoriesRequest)(nil),              // 23: proto.SearchMemoriesRequest
+	(*ReplaceMemoriesWithSummaryRequest)(nil),  // 24: proto.ReplaceMemoriesWithSummaryRequest
+	(*ReplaceMemoriesWithSummaryResponse)(nil), // 25: proto.ReplaceMemoriesWithSummaryResponse
+	(*SummarisationCandidate)(nil),             // 26: proto.SummarisationCandidate
+	(*GetSummarisationCandidatesResponse)(nil), // 27: proto.GetSummarisationCandidatesResponse
+	(*SummariseMemoriesRequest)(nil),           // 28: proto.SummariseMemoriesRequest
+	(*SummariseMemoriesResponse)(nil),          // 29: proto.SummariseMemoriesResponse
+	(*ArchiveHeader)(nil),                      // 30: proto.ArchiveHeader
+	(*ArchiveRecord)(nil),                      // 31: proto.ArchiveRecord
+	(*ImportBatchRequest)(nil),                 // 32: proto.ImportBatchRequest
+	(*ImportBatchResponse)(nil),                // 33: proto.ImportBatchResponse
+	(*ExportRequest)(nil),                      // 34: proto.ExportRequest
+	(*ExportResponse)(nil),                     // 35: proto.ExportResponse
+	(*ImportRequest)(nil),                      // 36: proto.ImportRequest
+	(*ImportResponse)(nil),                     // 37: proto.ImportResponse
+	(*TransferRequest)(nil),                    // 38: proto.TransferRequest
+	(*TransferResponse)(nil),                   // 39: proto.TransferResponse
+	(*ClearRequest)(nil),                       // 40: proto.ClearRequest
+	(*ClearResponse)(nil),                      // 41: proto.ClearResponse
+	(*GeneralResponse)(nil),                    // 42: proto.GeneralResponse
+	(*PreviewConsolidationRequest)(nil),        // 43: proto.PreviewConsolidationRequest
+	(*ForgetCandidate)(nil),                    // 44: proto.ForgetCandidate
+	(*PreviewConsolidationResponse)(nil),       // 45: proto.PreviewConsolidationResponse
+	(*WhoAmIResponse)(nil),                     // 46: proto.WhoAmIResponse
+	(*EmptyRequest)(nil),                       // 47: proto.EmptyRequest
 }
 var file_hippocampus_proto_depIdxs = []int32{
-	3,  // 0: proto.SignificancePlacement.mode:type_name -> proto.SignificancePlacement.Mode
-	6,  // 1: proto.Event.relationships:type_name -> proto.Relationship
-	7,  // 2: proto.Event.memories:type_name -> proto.Memory
-	4,  // 3: proto.Event.placement:type_name -> proto.SignificancePlacement
+	4,  // 0: proto.SignificancePlacement.mode:type_name -> proto.SignificancePlacement.Mode
+	7,  // 1: proto.Event.relationships:type_name -> proto.Relationship
+	8,  // 2: proto.Event.memories:type_name -> proto.Memory
+	5,  // 3: proto.Event.placement:type_name -> proto.SignificancePlacement
 	0,  // 4: proto.Memory.is_binary:type_name -> proto.Bool
-	4,  // 5: proto.Memory.placement:type_name -> proto.SignificancePlacement
-	4,  // 6: proto.UpdateEventSignificanceRequest.placement:type_name -> proto.SignificancePlacement
-	5,  // 7: proto.GetEventResponse.event:type_name -> proto.Event
+	5,  // 5: proto.Memory.placement:type_name -> proto.SignificancePlacement
+	5,  // 6: proto.UpdateEventSignificanceRequest.placement:type_name -> proto.SignificancePlacement
+	6,  // 7: proto.GetEventResponse.event:type_name -> proto.Event
 	1,  // 8: proto.GetEventsRequest.significance_extremum:type_name -> proto.SignificanceExtremum
-	5,  // 9: proto.GetEventsResponse.events:type_name -> proto.Event
+	6,  // 9: proto.GetEventsResponse.events:type_name -> proto.Event
 	1,  // 10: proto.GetMemoriesRequest.significance_extremum:type_name -> proto.SignificanceExtremum
-	7,  // 11: proto.GetMemoriesResponse.memories:type_name -> proto.Memory
+	8,  // 11: proto.GetMemoriesResponse.memories:type_name -> proto.Memory
 	2,  // 12: proto.SearchMemoriesRequest.mode:type_name -> proto.SearchMode
-	7,  // 13: proto.ReplaceMemoriesWithSummaryRequest.summary:type_name -> proto.Memory
-	25, // 14: proto.GetSummarisationCandidatesResponse.candidates:type_name -> proto.SummarisationCandidate
-	4,  // 15: proto.SummariseMemoriesRequest.placement:type_name -> proto.SignificancePlacement
-	29, // 16: proto.ArchiveRecord.header:type_name -> proto.ArchiveHeader
-	5,  // 17: proto.ArchiveRecord.event:type_name -> proto.Event
-	7,  // 18: proto.ArchiveRecord.memory:type_name -> proto.Memory
-	5,  // 19: proto.ImportBatchRequest.events:type_name -> proto.Event
-	7,  // 20: proto.ImportBatchRequest.memories:type_name -> proto.Memory
-	2,  // 21: proto.WhoAmIResponse.search_modes:type_name -> proto.SearchMode
-	43, // 22: proto.Hippocampus.Purge:input_type -> proto.EmptyRequest
-	43, // 23: proto.Hippocampus.Sleep:input_type -> proto.EmptyRequest
-	43, // 24: proto.Hippocampus.WhoAmI:input_type -> proto.EmptyRequest
-	5,  // 25: proto.Hippocampus.StoreEvent:input_type -> proto.Event
-	9,  // 26: proto.Hippocampus.EndEvent:input_type -> proto.EndEventRequest
-	10, // 27: proto.Hippocampus.UpdateEventSignificance:input_type -> proto.UpdateEventSignificanceRequest
-	11, // 28: proto.Hippocampus.MergeEvents:input_type -> proto.MergeEventsRequest
-	12, // 29: proto.Hippocampus.DeleteEvent:input_type -> proto.DeleteEventRequest
-	13, // 30: proto.Hippocampus.GetEventById:input_type -> proto.GetEventByIdRequest
-	15, // 31: proto.Hippocampus.GetEvents:input_type -> proto.GetEventsRequest
-	7,  // 32: proto.Hippocampus.StoreMemory:input_type -> proto.Memory
-	7,  // 33: proto.Hippocampus.UpdateMemory:input_type -> proto.Memory
-	20, // 34: proto.Hippocampus.DeleteMemories:input_type -> proto.DeleteMemoriesRequest
-	17, // 35: proto.Hippocampus.GetMemories:input_type -> proto.GetMemoriesRequest
-	21, // 36: proto.Hippocampus.RecallMemories:input_type -> proto.RecallMemoriesRequest
-	22, // 37: proto.Hippocampus.SearchMemories:input_type -> proto.SearchMemoriesRequest
-	23, // 38: proto.Hippocampus.ReplaceMemoriesWithSummary:input_type -> proto.ReplaceMemoriesWithSummaryRequest
-	43, // 39: proto.Hippocampus.GetSummarisationCandidates:input_type -> proto.EmptyRequest
-	27, // 40: proto.Hippocampus.SummariseMemories:input_type -> proto.SummariseMemoriesRequest
-	33, // 41: proto.Hippocampus.Export:input_type -> proto.ExportRequest
-	35, // 42: proto.Hippocampus.Import:input_type -> proto.ImportRequest
-	31, // 43: proto.Hippocampus.ImportBatch:input_type -> proto.ImportBatchRequest
-	37, // 44: proto.Hippocampus.Transfer:input_type -> proto.TransferRequest
-	39, // 45: proto.Hippocampus.Clear:input_type -> proto.ClearRequest
-	41, // 46: proto.Hippocampus.Purge:output_type -> proto.GeneralResponse
-	41, // 47: proto.Hippocampus.Sleep:output_type -> proto.GeneralResponse
-	42, // 48: proto.Hippocampus.WhoAmI:output_type -> proto.WhoAmIResponse
-	8,  // 49: proto.Hippocampus.StoreEvent:output_type -> proto.StoreEventResponse
-	41, // 50: proto.Hippocampus.EndEvent:output_type -> proto.GeneralResponse
-	41, // 51: proto.Hippocampus.UpdateEventSignificance:output_type -> proto.GeneralResponse
-	41, // 52: proto.Hippocampus.MergeEvents:output_type -> proto.GeneralResponse
-	41, // 53: proto.Hippocampus.DeleteEvent:output_type -> proto.GeneralResponse
-	14, // 54: proto.Hippocampus.GetEventById:output_type -> proto.GetEventResponse
-	16, // 55: proto.Hippocampus.GetEvents:output_type -> proto.GetEventsResponse
-	19, // 56: proto.Hippocampus.StoreMemory:output_type -> proto.StoreMemoryResponse
-	41, // 57: proto.Hippocampus.UpdateMemory:output_type -> proto.GeneralResponse
-	41, // 58: proto.Hippocampus.DeleteMemories:output_type -> proto.GeneralResponse
-	18, // 59: proto.Hippocampus.GetMemories:output_type -> proto.GetMemoriesResponse
-	18, // 60: proto.Hippocampus.RecallMemories:output_type -> proto.GetMemoriesResponse
-	18, // 61: proto.Hippocampus.SearchMemories:output_type -> proto.GetMemoriesResponse
-	24, // 62: proto.Hippocampus.ReplaceMemoriesWithSummary:output_type -> proto.ReplaceMemoriesWithSummaryResponse
-	26, // 63: proto.Hippocampus.GetSummarisationCandidates:output_type -> proto.GetSummarisationCandidatesResponse
-	28, // 64: proto.Hippocampus.SummariseMemories:output_type -> proto.SummariseMemoriesResponse
-	34, // 65: proto.Hippocampus.Export:output_type -> proto.ExportResponse
-	36, // 66: proto.Hippocampus.Import:output_type -> proto.ImportResponse
-	32, // 67: proto.Hippocampus.ImportBatch:output_type -> proto.ImportBatchResponse
-	38, // 68: proto.Hippocampus.Transfer:output_type -> proto.TransferResponse
-	40, // 69: proto.Hippocampus.Clear:output_type -> proto.ClearResponse
-	46, // [46:70] is the sub-list for method output_type
-	22, // [22:46] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	8,  // 13: proto.ReplaceMemoriesWithSummaryRequest.summary:type_name -> proto.Memory
+	26, // 14: proto.GetSummarisationCandidatesResponse.candidates:type_name -> proto.SummarisationCandidate
+	5,  // 15: proto.SummariseMemoriesRequest.placement:type_name -> proto.SignificancePlacement
+	30, // 16: proto.ArchiveRecord.header:type_name -> proto.ArchiveHeader
+	6,  // 17: proto.ArchiveRecord.event:type_name -> proto.Event
+	8,  // 18: proto.ArchiveRecord.memory:type_name -> proto.Memory
+	6,  // 19: proto.ImportBatchRequest.events:type_name -> proto.Event
+	8,  // 20: proto.ImportBatchRequest.memories:type_name -> proto.Memory
+	3,  // 21: proto.ForgetCandidate.rule:type_name -> proto.ForgetRule
+	44, // 22: proto.PreviewConsolidationResponse.candidates:type_name -> proto.ForgetCandidate
+	2,  // 23: proto.WhoAmIResponse.search_modes:type_name -> proto.SearchMode
+	47, // 24: proto.Hippocampus.Purge:input_type -> proto.EmptyRequest
+	47, // 25: proto.Hippocampus.Sleep:input_type -> proto.EmptyRequest
+	43, // 26: proto.Hippocampus.PreviewConsolidation:input_type -> proto.PreviewConsolidationRequest
+	47, // 27: proto.Hippocampus.WhoAmI:input_type -> proto.EmptyRequest
+	6,  // 28: proto.Hippocampus.StoreEvent:input_type -> proto.Event
+	10, // 29: proto.Hippocampus.EndEvent:input_type -> proto.EndEventRequest
+	11, // 30: proto.Hippocampus.UpdateEventSignificance:input_type -> proto.UpdateEventSignificanceRequest
+	12, // 31: proto.Hippocampus.MergeEvents:input_type -> proto.MergeEventsRequest
+	13, // 32: proto.Hippocampus.DeleteEvent:input_type -> proto.DeleteEventRequest
+	14, // 33: proto.Hippocampus.GetEventById:input_type -> proto.GetEventByIdRequest
+	16, // 34: proto.Hippocampus.GetEvents:input_type -> proto.GetEventsRequest
+	8,  // 35: proto.Hippocampus.StoreMemory:input_type -> proto.Memory
+	8,  // 36: proto.Hippocampus.UpdateMemory:input_type -> proto.Memory
+	21, // 37: proto.Hippocampus.DeleteMemories:input_type -> proto.DeleteMemoriesRequest
+	18, // 38: proto.Hippocampus.GetMemories:input_type -> proto.GetMemoriesRequest
+	22, // 39: proto.Hippocampus.RecallMemories:input_type -> proto.RecallMemoriesRequest
+	23, // 40: proto.Hippocampus.SearchMemories:input_type -> proto.SearchMemoriesRequest
+	24, // 41: proto.Hippocampus.ReplaceMemoriesWithSummary:input_type -> proto.ReplaceMemoriesWithSummaryRequest
+	47, // 42: proto.Hippocampus.GetSummarisationCandidates:input_type -> proto.EmptyRequest
+	28, // 43: proto.Hippocampus.SummariseMemories:input_type -> proto.SummariseMemoriesRequest
+	34, // 44: proto.Hippocampus.Export:input_type -> proto.ExportRequest
+	36, // 45: proto.Hippocampus.Import:input_type -> proto.ImportRequest
+	32, // 46: proto.Hippocampus.ImportBatch:input_type -> proto.ImportBatchRequest
+	38, // 47: proto.Hippocampus.Transfer:input_type -> proto.TransferRequest
+	40, // 48: proto.Hippocampus.Clear:input_type -> proto.ClearRequest
+	42, // 49: proto.Hippocampus.Purge:output_type -> proto.GeneralResponse
+	42, // 50: proto.Hippocampus.Sleep:output_type -> proto.GeneralResponse
+	45, // 51: proto.Hippocampus.PreviewConsolidation:output_type -> proto.PreviewConsolidationResponse
+	46, // 52: proto.Hippocampus.WhoAmI:output_type -> proto.WhoAmIResponse
+	9,  // 53: proto.Hippocampus.StoreEvent:output_type -> proto.StoreEventResponse
+	42, // 54: proto.Hippocampus.EndEvent:output_type -> proto.GeneralResponse
+	42, // 55: proto.Hippocampus.UpdateEventSignificance:output_type -> proto.GeneralResponse
+	42, // 56: proto.Hippocampus.MergeEvents:output_type -> proto.GeneralResponse
+	42, // 57: proto.Hippocampus.DeleteEvent:output_type -> proto.GeneralResponse
+	15, // 58: proto.Hippocampus.GetEventById:output_type -> proto.GetEventResponse
+	17, // 59: proto.Hippocampus.GetEvents:output_type -> proto.GetEventsResponse
+	20, // 60: proto.Hippocampus.StoreMemory:output_type -> proto.StoreMemoryResponse
+	42, // 61: proto.Hippocampus.UpdateMemory:output_type -> proto.GeneralResponse
+	42, // 62: proto.Hippocampus.DeleteMemories:output_type -> proto.GeneralResponse
+	19, // 63: proto.Hippocampus.GetMemories:output_type -> proto.GetMemoriesResponse
+	19, // 64: proto.Hippocampus.RecallMemories:output_type -> proto.GetMemoriesResponse
+	19, // 65: proto.Hippocampus.SearchMemories:output_type -> proto.GetMemoriesResponse
+	25, // 66: proto.Hippocampus.ReplaceMemoriesWithSummary:output_type -> proto.ReplaceMemoriesWithSummaryResponse
+	27, // 67: proto.Hippocampus.GetSummarisationCandidates:output_type -> proto.GetSummarisationCandidatesResponse
+	29, // 68: proto.Hippocampus.SummariseMemories:output_type -> proto.SummariseMemoriesResponse
+	35, // 69: proto.Hippocampus.Export:output_type -> proto.ExportResponse
+	37, // 70: proto.Hippocampus.Import:output_type -> proto.ImportResponse
+	33, // 71: proto.Hippocampus.ImportBatch:output_type -> proto.ImportBatchResponse
+	39, // 72: proto.Hippocampus.Transfer:output_type -> proto.TransferResponse
+	41, // 73: proto.Hippocampus.Clear:output_type -> proto.ClearResponse
+	49, // [49:74] is the sub-list for method output_type
+	24, // [24:49] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_hippocampus_proto_init() }
@@ -3219,8 +3646,8 @@ func file_hippocampus_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hippocampus_proto_rawDesc), len(file_hippocampus_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   40,
+			NumEnums:      5,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

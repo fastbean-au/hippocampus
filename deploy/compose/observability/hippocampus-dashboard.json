@@ -101,13 +101,15 @@
     },
     {
       "type": "timeseries",
-      "title": "Used bytes",
-      "description": "Live bytes the store occupies, sampled each sleep cycle when a byte capacity is set.",
+      "title": "Used bytes vs capacity",
+      "description": "Live bytes the store occupies against its configured byte capacity, sampled each sleep cycle. retained_bytes is the portion held by the minimum retention floor: where it meets the capacity, eviction can no longer bring the store under its target.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
       "targets": [
-        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_used_bytes)", "legendFormat": "used_bytes" }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_used_bytes)", "legendFormat": "used_bytes" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_capacity_bytes)", "legendFormat": "capacity_bytes" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_retained_bytes)", "legendFormat": "retained_bytes" }
       ]
     },
     {

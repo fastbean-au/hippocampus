@@ -33,6 +33,12 @@ func (f *fakeClient) Sleep(_ context.Context, in *contract.EmptyRequest, _ ...gr
 	return &contract.GeneralResponse{Ok: true}, f.err
 }
 
+func (f *fakeClient) PreviewConsolidation(_ context.Context, in *contract.PreviewConsolidationRequest, _ ...grpc.CallOption) (*contract.PreviewConsolidationResponse, error) {
+	f.capture(in)
+
+	return &contract.PreviewConsolidationResponse{}, f.err
+}
+
 func (f *fakeClient) WhoAmI(_ context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.WhoAmIResponse, error) {
 	f.capture(in)
 

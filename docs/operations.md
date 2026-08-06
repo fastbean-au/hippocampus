@@ -260,6 +260,64 @@ holds the store above the target by design. Size `capacityBytes` (and the physic
 budget above) to fit `minimumRetentionInDays × peak write rate`, or the store can grow past the
 capacity target until retained data ages out.
 
+### Previewing what would be forgotten
+
+Tuning consolidation means choosing between six methods crossed with `aggressiveness`,
+`deletionThreshold`, `unitsOfAgeInDays`, `capacityPressureExponent` and two significance weights —
+and the only feedback used to be the data that had already gone. `PreviewConsolidation` closes that
+loop: it reports what a cycle **would** forget, against your store and your configuration, and
+deletes nothing.
+
+```bash
+hippo sleep --dry-run              # what would go
+hippo sleep --dry-run --limit 500  # ...detailing more of it
+```
+
+It answers three questions:
+
+- **How much.** `memories_consolidated`, `memories_evicted`, `events_deleted` and `bytes_freed` are
+  always complete counts, whatever `--limit` is set to.
+- **Which, and why.** A bounded sample of individual memories — id, group, event, significance, the
+  computed `value`, the `threshold` it was compared against, and the `rule` that claimed it. The
+  sample is ordered least-valuable-first, so a truncated one shows the memories furthest past the
+  threshold rather than an arbitrary slice. `rule` separates the two paths, which have different
+  answers: `CONSOLIDATION` means the memory decayed below the threshold (tune the decay settings),
+  while `EVICTION` means it was still valuable enough to keep and went only because the store is
+  over `capacityBytes` (raise the capacity, or store less).
+- **Against what.** `capacity_pressure`, the scaled `deletion_threshold`, `used_bytes` and
+  `capacity_bytes` — the inputs the decisions were made against, so the numbers can be read
+  alongside the configuration that produced them.
+
+**`memories_retained` / `retained_bytes` are the figures to watch** if you have set a retention
+floor. They count what is currently inside the retention window and therefore exempt from _both_
+paths. Because retention overrides the capacity target (above), `retained_bytes` approaching
+`capacity_bytes` is the early warning that the target is becoming unreachable — eviction will run,
+find nothing it is allowed to delete, and leave the store over its capacity. That is visible here
+before it becomes a disk problem. The same pair is exported continuously as the
+`hippocampus.retained_bytes` / `hippocampus.memories.retained`
+[metrics](#observability), so you can alert on it rather than only discover it by asking.
+
+Three properties worth knowing. The preview applies the cycle's own ordering — consolidation runs
+first, so its memories are excluded from the eviction pool and their bytes are already reclaimed
+before eviction is considered, and each memory therefore appears once under the rule that would
+actually claim it. It deliberately does **not** join an in-flight cycle: a preview that attached
+itself to a running `Sleep` would be describing a run that was at that moment deleting. The cost is
+that a cycle can start while the preview scans, so a preview describes the store as it was — which
+is why it reports the inputs it decided against.
+
+And **concurrent previews share one scan.** Calls arriving while a preview is already running join
+it rather than each starting a scan of their own, keyed on the sample size (so a caller asking for
+more rows is never handed a shorter list). This matters most on the `sqlite` driver, whose
+connection pool is a single connection by design: without it, a client polling the preview could
+crowd out the sleep cycle's own queries. It cannot block a cycle from _starting_ — the preview
+shares no lock with the cycle — but it does contend for that connection, bounded by
+`storage.queryTimeoutSeconds`. One consequence: if the caller whose scan the others joined
+disconnects, the callers waiting on it see that cancellation and should retry.
+
+Bodies are never returned; a dry run reports what would be lost, and is not a way to read the
+store. It is `admin`-tier for the same reason `Export` is: it enumerates ids, groups and
+significances from across the whole store.
+
 ## Backup, restore, and migration
 
 Two complementary approaches:
@@ -295,6 +353,18 @@ OpenTelemetry tracing and metrics are optional and exported over OTLP/gRPC (see
 
 - `hippocampus.capacity_pressure` and `hippocampus.used_bytes` — how full the store is; sustained
   high pressure means eviction is doing heavy work and the store is at its bound.
+  `hippocampus.capacity_bytes` carries the configured target alongside it, so an alert can compare
+  the two without hard-coding the limit in the query.
+- **`hippocampus.retained_bytes` against `hippocampus.capacity_bytes` — the one to alert on if you
+  set a retention floor.** Retention _overrides_ the capacity target, so once retained bytes reach
+  the capacity the store cannot be brought back under it however hard eviction runs; eviction will
+  keep running, find nothing it is allowed to delete, and the store will grow until the retained
+  data ages out. `hippocampus.memories.retained` is the same measure as a count. Both are recorded
+  once per sleep cycle, and **only when both `consolidation.minimumRetentionInDays` and
+  `consolidation.capacityBytes` are set** — the pair costs one aggregate scan per cycle and means
+  nothing without a capacity target to be measured against, so nothing else pays for it. The
+  service also logs a warning when retained bytes reach the capacity, for deployments not running a
+  metrics stack.
 - `hippocampus.sleeps` (with the `success` attribute) and `hippocampus.sleep_duration` — a run of
   `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
 - `hippocampus.memories_evicted` / `hippocampus.events_evicted` — eviction volume per cycle, with

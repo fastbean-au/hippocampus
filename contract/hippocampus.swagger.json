@@ -9,8 +9,12 @@
       "name": "Hippocampus"
     }
   ],
-  "consumes": ["application/json"],
-  "produces": ["application/json"],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
   "paths": {
     "/v1/clear": {
       "post": {
@@ -41,7 +45,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/events": {
@@ -162,7 +168,9 @@
             "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED"
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       },
       "post": {
         "summary": "Events\nStoreEvent creates an event, optionally with nested memories (each defaulted to the new\nevent's id when unset). An event below event.minimumSignificance is quietly dropped - see\nStoreEventResponse.",
@@ -192,7 +200,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/events/merge": {
@@ -223,7 +233,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/events/{eventId}/summarise": {
@@ -260,7 +272,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/events/{eventId}/summary": {
@@ -297,7 +311,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/events/{id}": {
@@ -334,7 +350,9 @@
             "type": "boolean"
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       },
       "delete": {
         "summary": "DeleteEvent deletes an event. When memories is true its memories are deleted too; otherwise\nthey are kept but detached (their event_id is cleared). NotFound if the event does not exist.",
@@ -368,7 +386,9 @@
             "type": "boolean"
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/events/{id}/end": {
@@ -406,7 +426,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/events/{id}/significance": {
@@ -444,7 +466,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/export": {
@@ -476,7 +500,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/import": {
@@ -507,7 +533,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/import/batch": {
@@ -539,7 +567,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/memories": {
@@ -637,7 +667,9 @@
             "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED"
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       },
       "post": {
         "summary": "Memories\nStoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -\nsee StoreMemoryResponse.",
@@ -667,7 +699,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/memories/delete": {
@@ -698,7 +732,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/memories/recall": {
@@ -729,7 +765,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/memories/search": {
@@ -761,7 +799,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/memories/{id}": {
@@ -799,7 +839,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/purge": {
@@ -820,7 +862,9 @@
             }
           }
         },
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/sleep": {
@@ -841,7 +885,43 @@
             }
           }
         },
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/sleep/preview": {
+      "get": {
+        "summary": "PreviewConsolidation reports what a consolidation cycle would forget if one ran now, and\ndeletes nothing. It is the dry run for Sleep: the same decision rules, applied to the same\nstore, with the outcome returned instead of applied. Rejected with FailedPrecondition on a\nread/write replica (consolidation.enabled: false), which never runs a cycle of its own and so\nhas nothing to preview.",
+        "description": "It is a separate RPC rather than a flag on Sleep so that the two can be authorised\nseparately - previewing what would be forgotten is a read, triggering it is not.",
+        "operationId": "Hippocampus_PreviewConsolidation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoPreviewConsolidationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "description": "memories to detail; \u003c= 0 selects the default (100), values above the cap (1000) are clamped down to it",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/summarisation/candidates": {
@@ -862,7 +942,9 @@
             }
           }
         },
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/transfer": {
@@ -894,7 +976,9 @@
             }
           }
         ],
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     },
     "/v1/whoami": {
@@ -915,7 +999,9 @@
             }
           }
         },
-        "tags": ["Hippocampus"]
+        "tags": [
+          "Hippocampus"
+        ]
       }
     }
   },
@@ -1011,13 +1097,22 @@
     },
     "SignificancePlacementMode": {
       "type": "string",
-      "enum": ["UNSPECIFIED", "ABOVE", "BELOW", "BETWEEN"],
+      "enum": [
+        "UNSPECIFIED",
+        "ABOVE",
+        "BELOW",
+        "BETWEEN"
+      ],
       "default": "UNSPECIFIED",
       "title": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
     },
     "protoBool": {
       "type": "string",
-      "enum": ["UNSPECIFIED", "FALSE", "TRUE"],
+      "enum": [
+        "UNSPECIFIED",
+        "FALSE",
+        "TRUE"
+      ],
       "default": "UNSPECIFIED",
       "description": "Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an\nexplicitly-set value from one left absent. Used for Memory.is_binary; UNSPECIFIED and FALSE are\ncurrently treated identically by the server (both mean not-binary) - only TRUE marks a memory\nas binary.\n\n - UNSPECIFIED: not set; the server currently treats this the same as FALSE\n - FALSE: explicitly not binary\n - TRUE: binary; the body is opaque and never indexed for content search"
     },
@@ -1155,6 +1250,69 @@
           "format": "int32"
         }
       }
+    },
+    "protoForgetCandidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string",
+          "title": "empty for a memory with no event"
+        },
+        "group": {
+          "type": "string"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32",
+          "title": "the memory's stored significance, as ranked"
+        },
+        "value": {
+          "type": "number",
+          "format": "double",
+          "title": "the computed decayed value that decided it (see docs/consolidation.md)"
+        },
+        "threshold": {
+          "type": "number",
+          "format": "double",
+          "title": "the capacity-pressure-scaled deletion threshold value was compared against"
+        },
+        "bodyBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "stored size of the body, after compression - the same measure capacity accounting uses"
+        },
+        "rule": {
+          "$ref": "#/definitions/protoForgetRule"
+        },
+        "timeStamp": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano"
+        },
+        "timeRecalled": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano of the most recent recall; 0 if never recalled"
+        },
+        "recallCount": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "ForgetCandidate is one memory a cycle would delete, with the numbers behind the decision. value\nand threshold are the two sides of the comparison that decided it: a CONSOLIDATION candidate is\none whose value fell below the threshold. Bodies are never included - a preview reports what\nwould be lost, it is not a way to read the store."
+    },
+    "protoForgetRule": {
+      "type": "string",
+      "enum": [
+        "FORGET_RULE_UNSPECIFIED",
+        "FORGET_RULE_CONSOLIDATION",
+        "FORGET_RULE_EVICTION"
+      ],
+      "default": "FORGET_RULE_UNSPECIFIED",
+      "description": "ForgetRule names why a memory appears in a consolidation preview - which of the two independent\ndeletion paths selected it. The distinction matters when tuning: a memory forgotten by\nCONSOLIDATION decayed below the threshold and is answered by the decay settings\n(aggressiveness, deletionThreshold, unitsOfAgeInDays), while one forgotten by EVICTION was\nstill valuable enough to keep and went only because the store is over its byte capacity - which\nis answered by capacityBytes, or by storing less.\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity"
     },
     "protoGeneralResponse": {
       "type": "object",
@@ -1338,6 +1496,72 @@
           "title": "the event whose memories are moved to merge_to; need not exist - an absent one simply matches no memories"
         }
       }
+    },
+    "protoPreviewConsolidationResponse": {
+      "type": "object",
+      "properties": {
+        "memoriesConsolidated": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories whose value fell below the threshold"
+        },
+        "memoriesEvicted": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories capacity eviction would additionally delete"
+        },
+        "eventsDeleted": {
+          "type": "integer",
+          "format": "int32",
+          "title": "events that would go: those left with no memories, plus empty events past their own threshold"
+        },
+        "bytesFreed": {
+          "type": "string",
+          "format": "int64",
+          "title": "estimated bytes reclaimed by both paths together, on the same basis as used_bytes"
+        },
+        "memoriesRetained": {
+          "type": "integer",
+          "format": "int32",
+          "description": "memories_retained counts the memories that would otherwise have been forgotten but are held\nby consolidation.minimumRetentionInDays, with retained_bytes their stored size. Watch this\nagainst capacity_bytes: retention overrides the capacity target, so once retained_bytes\napproaches capacity_bytes the store cannot be brought back under its target however hard\neviction runs. They are counted, never listed - on a healthy store almost everything is\nretained, so listing them would return the store."
+        },
+        "retainedBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "capacityPressure": {
+          "type": "number",
+          "format": "double",
+          "description": "The decision inputs as they stood for this preview, so the numbers above can be read against\nthe configuration that produced them.\n\nmultiplier applied to the deletion threshold by how full the store is (1.0 = no effect)"
+        },
+        "deletionThreshold": {
+          "type": "number",
+          "format": "double",
+          "title": "the scaled threshold actually applied: deletionThreshold * capacity_pressure"
+        },
+        "usedBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "the store's current used bytes"
+        },
+        "capacityBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "consolidation.capacityBytes; 0 when no byte capacity is configured, in which case eviction never runs"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoForgetCandidate"
+          }
+        },
+        "truncated": {
+          "type": "boolean",
+          "title": "true when more memories would be forgotten than limit returned"
+        }
+      },
+      "description": "PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are\nalways complete; candidates is a bounded sample of the individual memories, ordered by value\nascending so the least valuable - those furthest past the threshold - come first.\n\nThe preview accounts for the cycle's own ordering: consolidation runs first, so the memories it\nwould delete are excluded from the eviction pool and their bytes are already reclaimed before\neviction is considered at all. A memory therefore appears at most once, under the rule that\nwould actually claim it."
     },
     "protoRecallMemoriesRequest": {
       "type": "object",

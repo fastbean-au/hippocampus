@@ -185,6 +185,7 @@ a JSON body:
 | `Transfer`                   | POST   | `/v1/transfer`                    |
 | `Clear`                      | POST   | `/v1/clear`                       |
 | `Sleep`                      | POST   | `/v1/sleep`                       |
+| `PreviewConsolidation`       | GET    | `/v1/sleep/preview`               |
 | `Purge`                      | POST   | `/v1/purge`                       |
 | `WhoAmI`                     | GET    | `/v1/whoami`                      |
 
@@ -404,7 +405,7 @@ everything a lower one can:
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `WhoAmI`                                                                                                                       |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `Export`, `Transfer`, `Clear`                                                                                                                                                                |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `Export`, `Transfer`, `Clear`                                                                                                                                        |
 
 `Export`/`Transfer` are `admin` because they read the whole store out; `Import`/`ImportBatch` are
 `writer` because they deliberately bypass the write-path validation `StoreMemory`/`StoreEvent`

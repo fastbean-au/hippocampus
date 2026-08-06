@@ -449,6 +449,13 @@ type Store interface {
 	ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error)
 	ConsolidateEvents(ctx context.Context, s Server) (int, error)
 	EvictMemories(ctx context.Context, s Server, freeBytes int64) (int, int, int64, error)
+
+	// PreviewConsolidation reports what the four passes above would delete, and deletes nothing.
+	PreviewConsolidation(ctx context.Context, s Server, opts PreviewOptions) (ConsolidationPreview, error)
+
+	// RetainedStats counts the memories inside the minimum retention window, and their stored size.
+	RetainedStats(ctx context.Context, cutoff int64) (int, int64, error)
+
 	FindSummarisationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarisationCandidate, error)
 
 	// Export/transfer surface (see transfer.go): keyset pagination over the whole store,

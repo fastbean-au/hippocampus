@@ -70,6 +70,79 @@ func TestRenderTextMemories(t *testing.T) {
 	}
 }
 
+// TestRenderTextPreview covers the dry run's text form: the counts, the two rules named in terms
+// an operator can act on, and the truncation note that stops a short sample being read as the whole
+// of what would be forgotten.
+func TestRenderTextPreview(t *testing.T) {
+	var buf bytes.Buffer
+
+	r := &renderer{out: &buf}
+
+	preview := &contract.PreviewConsolidationResponse{
+		MemoriesConsolidated: 3,
+		MemoriesEvicted:      2,
+		EventsDeleted:        1,
+		BytesFreed:           4096,
+		MemoriesRetained:     7,
+		RetainedBytes:        8192,
+		CapacityPressure:     1.25,
+		DeletionThreshold:    12.5,
+		UsedBytes:            1000,
+		CapacityBytes:        2000,
+		Truncated:            true,
+		Candidates: []*contract.ForgetCandidate{
+			{Id: "m1", Value: 0.5, Significance: 1, Rule: contract.ForgetRule_FORGET_RULE_CONSOLIDATION, Group: "logs"},
+			{Id: "m2", Value: 9.5, Significance: 8, Rule: contract.ForgetRule_FORGET_RULE_EVICTION},
+		},
+	}
+
+	if err := r.render(preview); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	out := buf.String()
+
+	for _, want := range []string{
+		"would forget 5 memory/memories and 1 event(s)",
+		"consolidated (decayed below the threshold): 3",
+		"evicted (over the byte capacity):           2",
+		"retained by the minimum retention floor:    7 (8192 bytes)",
+		"used / capacity:    1000 / 2000 bytes",
+		"truncated",
+		"m1",
+		"decayed",
+		"m2",
+		"capacity",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderTextPreviewWithoutCapacity covers the other branch of the byte-capacity line, which
+// has to explain why nothing is evicted rather than print a bare zero.
+func TestRenderTextPreviewWithoutCapacity(t *testing.T) {
+	var buf bytes.Buffer
+
+	r := &renderer{out: &buf}
+
+	if err := r.render(&contract.PreviewConsolidationResponse{UsedBytes: 500}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	out := buf.String()
+
+	if !strings.Contains(out, "no byte capacity configured") {
+		t.Errorf("output = %q", out)
+	}
+
+	// Nothing to show, so no sample header either.
+	if strings.Contains(out, "least valuable first") {
+		t.Errorf("empty candidate list produced a sample header: %q", out)
+	}
+}
+
 func TestRenderTextWhoAmI(t *testing.T) {
 	var buf bytes.Buffer
 

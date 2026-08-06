@@ -116,6 +116,12 @@ func (c *httpClient) GetMemories(ctx context.Context, in *contract.GetMemoriesRe
 	return out, c.doQuery(ctx, http.MethodGet, "/v1/memories", in, nil, out)
 }
 
+func (c *httpClient) PreviewConsolidation(ctx context.Context, in *contract.PreviewConsolidationRequest, _ ...grpc.CallOption) (*contract.PreviewConsolidationResponse, error) {
+	out := &contract.PreviewConsolidationResponse{}
+
+	return out, c.doQuery(ctx, http.MethodGet, "/v1/sleep/preview", in, nil, out)
+}
+
 func (c *httpClient) RecallMemories(ctx context.Context, in *contract.RecallMemoriesRequest, _ ...grpc.CallOption) (*contract.GetMemoriesResponse, error) {
 	out := &contract.GetMemoriesResponse{}
 
