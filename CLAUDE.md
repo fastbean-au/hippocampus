@@ -138,7 +138,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   function rather than inline statements so a test can assert the defaults alone form a valid
   configuration, and it defaults the four keys `validateConfig` refuses at zero —
   `consolidation.method`/`aggressiveness`/`unitsOfAgeInDays` and `storage.directory` — without
-  relaxing item 19.1, since viper falls back to a default only for an *unset* key and a configured
+  relaxing item 19.1, since viper falls back to a default only for an _unset_ key and a configured
   0 still fails validation), initialises logging
   (logrus, `logging.go`; `logging.level` selects severity — default `info` — and `logging.json`
   toggles JSON-vs-text output to stdout) and observability (`observability.go`: optional OTEL
@@ -386,7 +386,17 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   holding the `events` and `memories` tables; an empty directory (used by tests) selects an
   in-memory database. WAL mode makes every write durable as it happens — there is no snapshot
   cycle. The pool is capped at one connection, so queries must not be nested (collect rows,
-  close, then act — the consolidation scans already work this way). Postgres (`jackc/pgx` via
+  close, then act — the consolidation scans already work this way); that cap is a _per-process_
+  pool limit and excludes nothing outside the process, which is what `lock.go` is for: a
+  file-backed open takes an exclusive OS lock (`flock`/`LockFileEx`, via `golang.org/x/sys` in the
+  two `lock_unix.go`/`lock_windows.go` files) on `hippocampus.lock` in `storage.directory` and
+  refuses to start when another process holds it — WAL mode permits multi-process writers, so
+  nothing in SQLite itself would stop a second instance running its own decay/eviction schedule
+  over one store. The lock is the kernel's, not the file's existence, so a crashed holder leaves
+  nothing to clear; the file's contents (pid/host/since) are diagnostics for the loser's error
+  message only. Deliberately on a separate file rather than the database, so the read-only opens
+  documented as safe beside a live service (`NewSQLiteReadOnly`, an operator's `sqlite3`) keep
+  working — they take no lock. Postgres (`jackc/pgx` via
   database/sql, `postgres.go`): when opened to consolidate (`NewPostgres(dsn, true)`) it takes a
   session-scoped advisory lock — the single-consolidator lock — on a dedicated pinned connection at
   startup so a second consolidating instance against the same database fails fast; opened with
@@ -757,7 +767,8 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
 - Logging is **logrus** (not zerolog), typically with a `log.Trace("func() ...")` entry line at the
   top of functions — match this existing style rather than global preferences.
 - Errors are logged where they occur and returned unwrapped with `fmt.Errorf`.
-- Exactly one instance may consolidate a given store. SQLite is single-instance (embedded DB); on
+- Exactly one instance may consolidate a given store. SQLite is single-instance (embedded DB),
+  enforced by the `hippocampus.lock` file lock described above; on
   the `postgres`/`mysql` drivers a shared database can have one consolidating instance
   (`consolidation.enabled: true`, holds the lock) plus read/write replicas
   (`consolidation.enabled: false`, skip the lock, reject the `Sleep` RPC) — horizontal scaling.

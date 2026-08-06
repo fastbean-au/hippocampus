@@ -56,8 +56,11 @@ cluster already uses (an `Ingress`/`Gateway`, a `LoadBalancer` Service, a mesh).
   each instance owns one database file and there must never be two writers of it. A `StatefulSet`
   with `replicas: 1` and a `volumeClaimTemplate` gives a stable identity, keeps the same
   `PersistentVolume` across restarts, and guarantees at most one pod per ordinal. **Do not scale it
-  past 1** — SQLite cannot be shared. To run several tenants, apply the overlay again into another
-  namespace (or with a different `namePrefix`); one hippocampus per mind.
+  past 1** — SQLite cannot be shared; a second pod sharing the volume would fail to start on the
+  storage lock (`hippocampus.lock` in `storage.directory`, see
+  [The SQLite storage lock](../../docs/operations.md#the-sqlite-storage-lock)) and crash-loop. To run
+  several tenants, apply the overlay again into another namespace (or with a different
+  `namePrefix`); one hippocampus per mind.
 
 - **PostgreSQL (`Deployment`s).** Horizontal scaling (TODO #11): the pods are stateless, so they are
   `Deployment`s. Exactly one — the **consolidator** — runs the sleep cycle and holds the Postgres

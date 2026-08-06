@@ -69,6 +69,11 @@ type DB struct {
 	// driver.
 	lockConn *sql.Conn
 
+	// lockFile is the SQLite driver's equivalent: the open handle holding the inter-process file
+	// lock on storage.directory (see lock.go), released by Close. Nil for the server drivers, for
+	// the in-memory database, and for the read-only opens, none of which take it.
+	lockFile *instanceLockFile
+
 	// memoryDeleteObserver, when set, is invoked after a consolidation/eviction transaction
 	// commits with the ids of the memory rows actually deleted, so the optional secondary search
 	// index can be told about deletions the RPC layer never sees. Nil means no propagation. Set
@@ -485,12 +490,20 @@ var _ Store = (*DB)(nil)
 // New opens (creating if necessary) the SQLite database in the given directory. An empty
 // directory selects an in-memory database, used by tests. The database runs in WAL mode, so
 // every acknowledged write is durable; there is no snapshot cycle.
+//
+// A file-backed open also takes the inter-process storage lock (see lock.go) and fails if another
+// process already holds it, so a second consolidating instance pointed at the same directory stops
+// at startup rather than running a second decay/eviction schedule against one store. The in-memory
+// database (an empty directory) has no file to guard and takes no lock.
 func New(directory string) (*DB, error) {
 	log.Trace("func() NewDB")
 
 	dsn := "file::memory:"
 
-	var walFilePath string
+	var (
+		walFilePath string
+		lockFile    *instanceLockFile
+	)
 
 	if directory != "" {
 		if _, err := os.Stat(directory); os.IsNotExist(err) {
@@ -503,6 +516,16 @@ func New(directory string) (*DB, error) {
 			}
 		}
 
+		// Not logged here: the refusal is already a complete, self-describing message, and main
+		// logs it fatally - matching NewPostgres/NewMySQL, which return their lock refusal
+		// unlogged for the same reason.
+		lock, err := acquireStorageLock(directory)
+		if err != nil {
+			return nil, err
+		}
+
+		lockFile = lock
+
 		dataFilePath := path.Join(directory, DataFile)
 		dsn = "file:" + dataFilePath
 		walFilePath = dataFilePath + "-wal"
@@ -514,19 +537,27 @@ func New(directory string) (*DB, error) {
 	if err != nil {
 		log.Errorf("failed to open database: %s", err.Error())
 
+		if lockFile != nil {
+			lockFile.release()
+		}
+
 		return nil, err
 	}
 
 	// A single connection keeps the in-memory database alive for its whole lifetime and, for the
-	// file-backed database, sidesteps writer contention entirely (the service is single-instance
-	// by design).
+	// file-backed database, sidesteps writer contention within this process (inter-process
+	// exclusion is the storage lock's job, not the pool's).
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 
-	d := &DB{sql: sqlDB, walFilePath: walFilePath}
+	d := &DB{sql: sqlDB, walFilePath: walFilePath, lockFile: lockFile}
 
 	if err := d.initSchema(); err != nil {
 		_ = sqlDB.Close()
+
+		if lockFile != nil {
+			lockFile.release()
+		}
 
 		return nil, err
 	}
@@ -892,7 +923,17 @@ func (d *DB) Close() error {
 		d.lockConn = nil
 	}
 
-	return d.sql.Close()
+	err := d.sql.Close()
+
+	// Released last, after every connection is gone: the storage lock must outlive the Preserve
+	// checkpoint above and the pool's own teardown, so no write of ours lands after another
+	// process has been let in. Cleared for the same reason as lockConn.
+	if d.lockFile != nil {
+		d.lockFile.release()
+		d.lockFile = nil
+	}
+
+	return err
 }
 
 // Purge deletes all events and memories in a single transaction, then compacts the database.

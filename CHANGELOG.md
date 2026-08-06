@@ -72,6 +72,12 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 - Shipped alert rules: `deploy/observability/prometheus-alerts.yaml` (portable Prometheus) and the
   same nine rules as Grafana-managed rules provisioned into the compose observability profile.
 
+- An inter-process storage lock on the `sqlite` driver: a `hippocampus.lock` file in
+  `storage.directory`, held exclusively for the process lifetime. A second instance pointed at the
+  same directory now refuses to start, naming the holder, instead of silently running a second
+  forgetting schedule against one store. Read-only opens (`--backfill-search` against OpenSearch, an
+  operator's `sqlite3` shell) take no lock and are unaffected.
+
 ### Changed
 
 - First run after a clone no longer needs a config file: an absent `./config.json` starts the

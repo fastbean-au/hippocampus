@@ -19,11 +19,51 @@ consolidating instance plus read/write replicas; see
 Single ownership is enforced at startup, and a second _consolidating_ instance pointed at the same
 store fails fast:
 
-| Driver     | Store                                    | Exclusion mechanism                                               |
-| ---------- | ---------------------------------------- | ----------------------------------------------------------------- |
-| `sqlite`   | one database file in `storage.directory` | single connection; the file is owned by the process               |
-| `postgres` | the database named in the DSN            | a session-scoped `pg_advisory_lock` held for the process lifetime |
-| `mysql`    | the schema named in the DSN              | a session-scoped `GET_LOCK` held for the process lifetime         |
+| Driver     | Store                                    | Exclusion mechanism                                                      |
+| ---------- | ---------------------------------------- | ------------------------------------------------------------------------ |
+| `sqlite`   | one database file in `storage.directory` | an exclusive OS lock on `hippocampus.lock` held for the process lifetime |
+| `postgres` | the database named in the DSN            | a session-scoped `pg_advisory_lock` held for the process lifetime        |
+| `mysql`    | the schema named in the DSN              | a session-scoped `GET_LOCK` held for the process lifetime                |
+
+### The SQLite storage lock
+
+SQLite's WAL mode deliberately permits several processes to write one database file, so nothing in
+the storage engine itself would stop a second instance from running its own decay and eviction
+schedule against the same store. A file-backed `sqlite` open therefore takes an exclusive operating
+system lock (`flock` on Linux/macOS, `LockFileEx` on Windows) on a `hippocampus.lock` file beside the
+database, and a second process pointed at the same `storage.directory` refuses to start, naming the
+holder:
+
+```text
+another hippocampus instance already holds the storage lock on './data'
+(held by pid 41207 host arrakis since 2026-08-06T05:59:08Z) - the sqlite driver is
+single-instance, so give this instance its own storage.directory or move the store to the
+postgres/mysql driver, which supports one consolidating instance plus replicas
+```
+
+Four things are worth knowing about it:
+
+- **There is no stale lock to clear.** The lock is held by the kernel for as long as the process has
+  the file open, so it is released the instant that process exits — including a `SIGKILL`, an OOM
+  kill, or a crash. The file is left behind and still names the dead process; that text is
+  diagnostics for the error message above and never the lock itself, so it can be ignored (and is
+  emptied on a clean shutdown). **Never delete `hippocampus.lock` to "release" a lock** — it does
+  nothing, and it removes the diagnostics.
+- **It applies to every `sqlite` instance, not only consolidating ones.** SQLite cannot be shared
+  between instances at all; `consolidation.enabled: false` on this driver means only that the one
+  instance never consolidates, not that a second may join it. Sharing one store between instances
+  requires `postgres` or `mysql` — see [Horizontal scaling with
+  replicas](#horizontal-scaling-with-replicas).
+- **Read-only tooling is exempt.** `--backfill-search` against an OpenSearch index, and an operator's
+  `sqlite3` shell, open the database read-only, take no lock, and are unaffected by one being held —
+  which is what keeps them safe to run beside a live service. The `--backfill-search` rebuild of the
+  _SQLite_ content index is the exception: it writes to the service's own database, so it opens
+  read-write, takes the lock, and now fails loudly instead of writing underneath a running instance.
+- **It guards a directory, not a host.** Two instances with different `storage.directory` values do
+  not contend; see [Running more than one instance on one
+  host](#running-more-than-one-instance-on-one-host). A network filesystem is a poor place for a
+  SQLite store for reasons that predate this lock, but note that the lock is only as reliable as
+  that filesystem's lock support.
 
 ### Horizontal scaling with replicas
 
@@ -181,6 +221,7 @@ binary is statically linked with CGO disabled.
 | Best for                           | embedded / edge / single-node | centralised, server-managed     | centralised, server-managed |
 | Dependencies                       | none (one file)               | a Postgres server               | a MySQL server              |
 | Durability                         | WAL mode, immediate           | server-managed                  | server-managed              |
+| Instances per store                | one (lockfile)                | one consolidator + replicas     | one consolidator + replicas |
 | `consolidation.capacityBytes`      | yes                           | yes                             | yes                         |
 | `consolidation.walTriggerBytes`    | yes                           | rejected at startup             | rejected at startup         |
 | On-disk footprint for large bodies | uncompressed                  | **TOAST-compressed** (smallest) | uncompressed (largest)      |

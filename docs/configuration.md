@@ -559,6 +559,13 @@ of blocking the request goroutine — and its pooled connection — indefinitely
 longest legitimate operation on a larger store, notably a full consolidation scan, or a sleep cycle
 could be aborted mid-scan; set it to 0 to disable the bound (reasonable for embedded SQLite).
 
+On the `sqlite` driver `storage.directory` holds the database (`hippocampus.db` and its WAL
+sidecars) plus a `hippocampus.lock` file. The service holds an exclusive operating system lock on
+that file for as long as it runs, so a second process pointed at the same directory refuses to start
+rather than run a second forgetting schedule over one store; there is no stale lock to clear, and
+deleting the file releases nothing. See [The SQLite storage
+lock](operations.md#the-sqlite-storage-lock).
+
 #### Body compression
 
 `storage.compression.enabled` (**default true**) stores memory bodies compressed. Storage is the
@@ -627,7 +634,9 @@ alias). One MySQL-specific bound: ids are `VARCHAR(255)` there (MySQL cannot ind
 by that driver; generated UUID ids are unaffected.
 
 Exactly one instance may run consolidation against a given store. With SQLite that is one instance
-full stop — the embedded database cannot be shared between processes. With PostgreSQL or MySQL the
+full stop — the embedded database cannot be shared between processes, and a second one pointed at
+the same `storage.directory` is refused at startup by [the storage
+lock](operations.md#the-sqlite-storage-lock). With PostgreSQL or MySQL the
 _consolidating_ instance takes a session-scoped advisory lock at startup (MySQL: a `GET_LOCK` lock
 scoped to the schema name); a second instance that also has `consolidation.enabled: true` refuses
 to start, rather than silently running concurrent consolidation cycles against shared data.
@@ -948,8 +957,10 @@ document) and abort on the first error, so a failed run is simply rerun. `--rein
 recreates the index before backfilling, which also removes stale documents for memories the
 primary store no longer holds; without it, existing documents are left in place and overwritten.
 
-The tool may run alongside a live service instance: SQLite's WAL admits cross-process readers,
-and the Postgres open skips the single-instance advisory lock (it only reads). The one caveat to
+The tool may run alongside a live service instance: it opens the store read-only, so SQLite's WAL
+admits it as a cross-process reader without taking [the storage
+lock](operations.md#the-sqlite-storage-lock), and the Postgres open skips the single-instance
+advisory lock. The one caveat to
 a live run is that a memory deleted by the service mid-backfill can be re-indexed after its
 deletion propagated, leaving a stale document — harmless for reads (results are re-verified
 against the primary store) and cleared by the next `--reindex` run.
@@ -959,7 +970,9 @@ against the primary store) and cleared by the next `--reindex` run.
 that matter. It is rarely needed — that index is populated automatically at startup and maintained
 inside every write — so reach for it only when a memory is stored but not findable, which means an
 index write failed and was logged. And it **writes to the service's own database**, so unlike the
-OpenSearch backfill it must not be run beside a live instance: stop the service first. `--reindex`
+OpenSearch backfill it must not be run beside a live instance: stop the service first — on the
+`sqlite` driver it opens read-write and so takes [the storage
+lock](operations.md#the-sqlite-storage-lock), refusing to start while a service holds it. `--reindex`
 and `--backfill-batch-size` do not apply; the rebuild always clears and repopulates.
 
 ### Summarisation (embedded LLM / Ollama)
