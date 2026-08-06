@@ -39,6 +39,12 @@ func (f *fakeClient) PreviewConsolidation(_ context.Context, in *contract.Previe
 	return &contract.PreviewConsolidationResponse{}, f.err
 }
 
+func (f *fakeClient) ExplainConsolidation(_ context.Context, in *contract.ExplainConsolidationRequest, _ ...grpc.CallOption) (*contract.ExplainConsolidationResponse, error) {
+	f.capture(in)
+
+	return &contract.ExplainConsolidationResponse{}, f.err
+}
+
 func (f *fakeClient) WhoAmI(_ context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.WhoAmIResponse, error) {
 	f.capture(in)
 

@@ -84,6 +84,17 @@ func commands() map[string]command {
 			},
 			run: runMemorySearch,
 		},
+		"memory explain": {
+			summary: "show where memories stand against the consolidation rules",
+			hint:    "--id ID [--id ID ...] | ID [ID ...] [--curve-significance N]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.StringSlice("id", nil, "memory id to explain (repeatable; ids may also be positional args)")
+				fs.Float64("curve-significance", 0, "also project the decay curve for this combined significance")
+				fs.Float64("curve-days", 0, "with --curve-significance: days to project over (0 lets the server choose a span that shows the crossing)")
+				fs.Int32("curve-points", 0, "with --curve-significance: samples to return (default 60, max 500)")
+			},
+			run: runMemoryExplain,
+		},
 		"event create": {
 			summary: "create a new event",
 			hint:    "--name <name> [--significance N] [--group G] [--time-start RFC3339]",
@@ -353,6 +364,36 @@ func runMemoryDelete(ctx context.Context, client contract.HippocampusClient, fs 
 	}
 
 	resp, err := client.DeleteMemories(ctx, &contract.DeleteMemoriesRequest{Ids: ids})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runMemoryExplain reports where memories stand against the consolidation rules, and optionally the
+// decay curve of the configuration deciding it. Either half may stand alone: ids without a curve
+// value just those memories, while --curve-significance with no ids asks only what the current
+// configuration does - which is how an operator tunes it without a store to try it on.
+func runMemoryExplain(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	ids := idArgs(fs)
+	significance := f64(fs, "curve-significance")
+
+	if len(ids) == 0 && significance <= 0 {
+		return fmt.Errorf("at least one memory id (--id or positional args) or a --curve-significance is required")
+	}
+
+	req := &contract.ExplainConsolidationRequest{MemoryIds: ids}
+
+	if significance > 0 {
+		req.Curve = &contract.DecayCurveRequest{
+			Significance: significance,
+			MaxAgeDays:   f64(fs, "curve-days"),
+			Points:       i32(fs, "curve-points"),
+		}
+	}
+
+	resp, err := client.ExplainConsolidation(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -1003,6 +1044,12 @@ func b(fs *pflag.FlagSet, name string) bool {
 
 func strs(fs *pflag.FlagSet, name string) []string {
 	value, _ := fs.GetStringSlice(name)
+
+	return value
+}
+
+func f64(fs *pflag.FlagSet, name string) float64 {
+	value, _ := fs.GetFloat64(name)
 
 	return value
 }

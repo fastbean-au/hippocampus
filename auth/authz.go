@@ -98,6 +98,14 @@ var policies = map[string]rpcPolicy{
 	"SearchMemories":             {TierReader, http.MethodPost, "/v1/memories/search"},
 	"GetSummarisationCandidates": {TierReader, http.MethodGet, "/v1/summarisation/candidates"},
 
+	// Explaining a memory is a read of that memory, not of the store: unlike the preview below it
+	// enumerates nothing, answering only about ids the caller already holds and could read in full
+	// through GetMemories at this same tier. What it adds beyond them is operational rather than
+	// content - the capacity pressure and the threshold it scales - and withholding those would
+	// leave a reader shown a value with nothing to measure it against, which is the whole point of
+	// asking.
+	"ExplainConsolidation": {TierReader, http.MethodPost, "/v1/consolidation/explain"},
+
 	// writes
 	"StoreEvent":                 {TierWriter, http.MethodPost, "/v1/events"},
 	"EndEvent":                   {TierWriter, http.MethodPost, "/v1/events/*/end"},

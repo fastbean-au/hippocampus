@@ -260,3 +260,34 @@ func TestHTTPClientImplementsInterface(t *testing.T) {
 	// Compile-time guarantee restated as a test hook so the assertion is visible in coverage.
 	var _ contract.HippocampusClient = (*httpClient)(nil)
 }
+
+// TestHTTPClientExplainConsolidation pins the gateway binding for the explanation: a POST whose
+// whole request travels in the body, matching the google.api.http annotation.
+func TestHTTPClientExplainConsolidation(t *testing.T) {
+	client, captured := newTestHTTPClient(t, http.StatusOK, &contract.ExplainConsolidationResponse{CapacityPressure: 1.5})
+
+	resp, err := client.ExplainConsolidation(context.Background(), &contract.ExplainConsolidationRequest{
+		MemoryIds: []string{"m1", "m2"},
+		Curve:     &contract.DecayCurveRequest{Significance: 10},
+	})
+	if err != nil {
+		t.Fatalf("ExplainConsolidation: %v", err)
+	}
+
+	if resp.GetCapacityPressure() != 1.5 {
+		t.Fatalf("capacity_pressure = %g", resp.GetCapacityPressure())
+	}
+
+	if captured.method != http.MethodPost || captured.path != "/v1/consolidation/explain" {
+		t.Fatalf("got %s %s, want POST /v1/consolidation/explain", captured.method, captured.path)
+	}
+
+	sent := &contract.ExplainConsolidationRequest{}
+	if err := protojson.Unmarshal(captured.body, sent); err != nil {
+		t.Fatalf("body was not valid protojson: %v", err)
+	}
+
+	if len(sent.GetMemoryIds()) != 2 || sent.GetCurve().GetSignificance() != 10 {
+		t.Fatalf("body round-trip mismatch: %+v", sent)
+	}
+}

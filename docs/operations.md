@@ -318,6 +318,42 @@ Bodies are never returned; a dry run reports what would be lost, and is not a wa
 store. It is `admin`-tier for the same reason `Export` is: it enumerates ids, groups and
 significances from across the whole store.
 
+### Where a memory stands
+
+A dry run answers "what goes next". `ExplainConsolidation` answers the other half — "where does
+_this_ memory stand, and how long has it got" — for memories you already have in hand:
+
+```bash
+hippo memory explain --id abc123 --id def456
+hippo memory explain --curve-significance 40        # no ids: just the curve and the current inputs
+```
+
+Per memory it reports the `value` the decay algorithm gives it, the `threshold` that value is
+measured against, its `effective_significance` (its own significance plus its event's, the weighted
+relationship significance and the weighted recall count — the number the decay actually acts on),
+and `days_until_forgotten`: how long it has at today's threshold and pressure, assuming it is not
+recalled again. Two flags override the value comparison and are reported separately, because a
+memory far below the threshold that is nonetheless safe is otherwise baffling: `retained` (inside
+`minimumRetentionInDays`, so neither path may take it) and `below_minimum_age` (younger than
+`minimumAgeInDays`, so value-based consolidation is deferred).
+
+With `--curve-significance` it also returns the **decay curve** for that significance — sampled from
+the same code that makes the decisions, so a plot of it cannot drift from what the service will do —
+along with the age at which the curve crosses the threshold. Left unbounded, the span is chosen to
+show that crossing rather than an arbitrary window.
+
+Unlike the preview it enumerates nothing, so it needs only the `reader` tier. Bodies are never
+returned. The decision inputs it reports (capacity pressure, used bytes) are refreshed periodically
+rather than per call — both cost a scan, and this is asked far more often — so they can lag a cycle
+that has just finished by a few seconds. And, like the preview, it is refused on a replica
+(`consolidation.enabled: false`), whose configuration is not the one its store is consolidated
+under.
+
+The embedded console's **Decay** tab is this RPC: a value column in the memory and search tables
+(with what is due now, what is held by retention, and how long the rest have), the current capacity
+pressure and threshold, and the plotted curve. Clicking a memory's value plots that memory's own
+curve. For an administrator the same tab also runs the dry run above.
+
 ## Backup, restore, and migration
 
 Two complementary approaches:

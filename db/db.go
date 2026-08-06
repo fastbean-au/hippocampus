@@ -456,6 +456,10 @@ type Store interface {
 	// RetainedStats counts the memories inside the minimum retention window, and their stored size.
 	RetainedStats(ctx context.Context, cutoff int64) (int, int64, error)
 
+	// GetMemoryConsolidationCandidates returns the consolidation decision inputs for named memories,
+	// so ExplainConsolidation can value them without scanning the store.
+	GetMemoryConsolidationCandidates(ctx context.Context, ids []string) ([]IdentifiedMemoryCandidate, error)
+
 	FindSummarisationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarisationCandidate, error)
 
 	// Export/transfer surface (see transfer.go): keyset pagination over the whole store,

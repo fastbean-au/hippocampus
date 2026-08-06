@@ -3,6 +3,7 @@ package hippocampus
 import (
 	"context"
 	"strconv"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -118,14 +119,14 @@ type previewResult struct {
 // callers who have all gone away, which is precisely the load this group exists to avoid.
 func (s *Server) previewOnce(ctx context.Context, limit int) (previewResult, error) {
 	shared, err, _ := s.previewGroup.Do(strconv.Itoa(limit), func() (any, error) {
-		decider, usedBytes, err := s.previewDecisionState(ctx)
+		state, err := s.decisionSnapshot(ctx)
 		if err != nil {
 			return previewResult{}, err
 		}
 
-		preview, err := s.db.PreviewConsolidation(ctx, decider, db.PreviewOptions{
+		preview, err := s.db.PreviewConsolidation(ctx, state.decider, db.PreviewOptions{
 			Limit:         limit,
-			UsedBytes:     usedBytes,
+			UsedBytes:     state.usedBytes,
 			CapacityBytes: s.consolidation.capacityBytes,
 			EvictionFloor: s.evictionFloor(),
 		})
@@ -135,8 +136,8 @@ func (s *Server) previewOnce(ctx context.Context, limit int) (previewResult, err
 
 		return previewResult{
 			preview:   preview,
-			pressure:  decider.capacityPressure,
-			usedBytes: usedBytes,
+			pressure:  state.decider.capacityPressure,
+			usedBytes: state.usedBytes,
 		}, nil
 	})
 	if err != nil {
@@ -198,27 +199,45 @@ var forgetRules = map[db.ForgetRule]contract.ForgetRule{
 	db.ForgetRuleEviction:      contract.ForgetRule_FORGET_RULE_EVICTION,
 }
 
-// previewDecisionState computes the inputs a cycle starting now would decide against, and returns
-// them alongside the store's current used bytes.
+// decisionState is what a consolidation cycle starting now would decide against: the decider
+// carrying the snapshot, alongside the two store readings that produced its capacity pressure.
+// PreviewConsolidation takes a fresh one per scan; ExplainConsolidation caches one briefly, being
+// asked far more often (see cachedDecisionSnapshot).
+type decisionState struct {
+	decider     previewDecider
+	usedBytes   int64
+	memoryCount int
+
+	// at is when the snapshot was computed, and is set only by cachedDecisionSnapshot - a zero
+	// value marks a snapshot that has never been cached rather than one cached at the epoch.
+	at time.Time
+}
+
+// decisionSnapshot computes the inputs a cycle starting now would decide against, and returns them
+// alongside the store readings behind them.
 //
-// Both are computed rather than read from the server's live fields. That is what keeps the preview
-// off the sleep goroutine's mutable state, and it also makes the preview more faithful than
-// reusing those fields would be: the cycle's pressure deliberately reuses the previous cycle's
-// byte reading to avoid a second scan, whereas a preview - being occasional and asked for
-// precisely when someone wants the truth - can afford a fresh one.
-func (s *Server) previewDecisionState(ctx context.Context) (previewDecider, int64, error) {
-	decider := previewDecider{
-		server:                   s,
-		capacityPressure:         1.0,
-		defaultEventSignificance: s.consolidation.defaultEventSignificanceValue,
+// Everything is computed rather than read from the server's live fields. That is what keeps a
+// preview off the sleep goroutine's mutable state, and it also makes it more faithful than reusing
+// those fields would be: the cycle's pressure deliberately reuses the previous cycle's byte reading
+// to avoid a second scan, whereas a preview - being occasional and asked for precisely when someone
+// wants the truth - can afford a fresh one.
+func (s *Server) decisionSnapshot(ctx context.Context) (decisionState, error) {
+	state := decisionState{
+		decider: previewDecider{
+			server:                   s,
+			capacityPressure:         1.0,
+			defaultEventSignificance: s.consolidation.defaultEventSignificanceValue,
+		},
 	}
 
 	usedBytes, err := s.db.UsedBytes(ctx)
 	if err != nil {
 		log.Errorf("failed to read used bytes for preview: %s", err.Error())
 
-		return decider, 0, err
+		return state, err
 	}
+
+	state.usedBytes = usedBytes
 
 	// Mirrors consolidate(): the byte axis contributes to pressure only when a byte capacity is
 	// configured, otherwise pressure rides on the row count alone.
@@ -229,10 +248,11 @@ func (s *Server) previewDecisionState(ctx context.Context) (previewDecider, int6
 
 	with, without := s.db.CountMemories(ctx)
 	if with < 0 || without < 0 {
-		return decider, 0, status.Error(grpccodes.Internal, "failed to count memories for the preview")
+		return state, status.Error(grpccodes.Internal, "failed to count memories for the preview")
 	}
 
-	decider.capacityPressure = s.calculateCapacityPressure(with+without, pressureBytes)
+	state.memoryCount = with + without
+	state.decider.capacityPressure = s.calculateCapacityPressure(state.memoryCount, pressureBytes)
 
 	// When the default event significance is derived from a percentile it is recomputed by every
 	// cycle, so the preview recomputes it too rather than reading the value the last cycle left
@@ -248,9 +268,9 @@ func (s *Server) previewDecisionState(ctx context.Context) (previewDecider, int6
 				err.Error(),
 			)
 		} else {
-			decider.defaultEventSignificance = int32(percentile)
+			state.decider.defaultEventSignificance = int32(percentile)
 		}
 	}
 
-	return decider, usedBytes, nil
+	return state, nil
 }

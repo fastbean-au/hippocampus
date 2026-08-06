@@ -236,7 +236,8 @@ func TestGatewayMiddlewareEndToEnd(t *testing.T) {
 	reads := req{http.MethodGet, "/v1/memories"}
 	writes := req{http.MethodPost, "/v1/memories"}
 	admin := req{http.MethodPost, "/v1/purge"}
-	capture := req{http.MethodGet, "/v1/events/some-id"} // GetEventById, reader
+	capture := req{http.MethodGet, "/v1/events/some-id"}         // GetEventById, reader
+	explain := req{http.MethodPost, "/v1/consolidation/explain"} // ExplainConsolidation, reader
 
 	cases := []struct {
 		role       string
@@ -245,6 +246,10 @@ func TestGatewayMiddlewareEndToEnd(t *testing.T) {
 	}{
 		{"reader", reads, false},
 		{"reader", capture, false},
+		// A reader may ask where a memory stands (it enumerates nothing) but not run the dry run,
+		// which does - so this pair pins the boundary between the two, and the policy's path with it.
+		{"reader", explain, false},
+		{"reader", req{http.MethodGet, "/v1/sleep/preview"}, true},
 		{"reader", writes, true},
 		{"reader", admin, true},
 		{"writer", writes, false},

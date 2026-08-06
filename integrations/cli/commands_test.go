@@ -357,3 +357,52 @@ func TestExportClearFlag(t *testing.T) {
 		t.Fatalf("output = %q", out)
 	}
 }
+
+// TestMemoryExplain covers the request shaping: ids from --id and positional args alike, and the
+// curve attached only when a significance was asked for.
+func TestMemoryExplain(t *testing.T) {
+	req, _, err := runCommand(t, "memory explain",
+		[]string{"--id", "m1", "--curve-significance", "40", "--curve-days", "90", "--curve-points", "20", "m2"},
+		&fakeClient{},
+	)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	explain, ok := req.(*contract.ExplainConsolidationRequest)
+	if !ok {
+		t.Fatalf("captured %T, want an ExplainConsolidationRequest", req)
+	}
+
+	if len(explain.GetMemoryIds()) != 2 || explain.GetMemoryIds()[1] != "m2" {
+		t.Errorf("memory_ids = %v", explain.GetMemoryIds())
+	}
+
+	curve := explain.GetCurve()
+
+	if curve.GetSignificance() != 40 || curve.GetMaxAgeDays() != 90 || curve.GetPoints() != 20 {
+		t.Errorf("curve = %+v", curve)
+	}
+}
+
+// TestMemoryExplainCurveOnly covers the other supported shape: no ids at all, asking only what the
+// current configuration does.
+func TestMemoryExplainCurveOnly(t *testing.T) {
+	req, _, err := runCommand(t, "memory explain", []string{"--curve-significance", "10"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if len(req.(*contract.ExplainConsolidationRequest).GetMemoryIds()) != 0 {
+		t.Error("expected no memory ids")
+	}
+}
+
+// TestMemoryExplainNeedsSomethingToExplain covers the one input rule: a call with neither ids nor a
+// curve has nothing to answer.
+func TestMemoryExplainNeedsSomethingToExplain(t *testing.T) {
+	_, _, err := runCommand(t, "memory explain", nil, &fakeClient{})
+	if err == nil || !strings.Contains(err.Error(), "curve-significance") {
+		t.Fatalf("err = %v", err)
+	}
+}

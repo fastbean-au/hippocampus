@@ -168,3 +168,88 @@ func TestFormatNanos(t *testing.T) {
 		t.Fatalf("formatNanos of a real timestamp should not be a dash")
 	}
 }
+
+// TestRenderTextExplanation covers the explanation's text form: the two sides of the comparison, the
+// projection, the override that would otherwise make a low value look like a contradiction, and the
+// curve's crossing.
+func TestRenderTextExplanation(t *testing.T) {
+	var buf bytes.Buffer
+
+	r := &renderer{out: &buf}
+
+	explanation := &contract.ExplainConsolidationResponse{
+		CapacityPressure:  1.5,
+		DeletionThreshold: 15,
+		UsedBytes:         1000,
+		CapacityBytes:     2000,
+		Method:            1,
+		Aggressiveness:    1,
+		UnitsOfAgeInDays:  1,
+		Valuations: []*contract.MemoryValuation{
+			{Id: "m1", Significance: 3, EffectiveSignificance: 4.5, Value: 0.5, Threshold: 15, AgeDays: 9, DaysUntilForgotten: 0, WouldConsolidate: true},
+			{Id: "m2", Significance: 8, EffectiveSignificance: 8, Value: 40, Threshold: 15, AgeDays: 0.2, DaysUntilForgotten: 3.5, Retained: true},
+		},
+		Curve: &contract.DecayCurve{
+			Significance:    10,
+			MaxAgeDays:      15,
+			CrossingAgeDays: 10,
+			Points:          []*contract.DecayPoint{{AgeDays: 1, Value: 10}, {AgeDays: 15, Value: 0.66}},
+		},
+	}
+
+	if err := r.render(explanation); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	out := buf.String()
+
+	for _, want := range []string{
+		"memory m1",
+		"value / threshold:  0.5 / 15",
+		"a cycle running now would forget it",
+		"forgotten in:       due now",
+		"3 stored, 4.5 effective",
+		"retained: inside the minimum retention window",
+		"~3.50 day(s)",
+		"capacity pressure:  1.500",
+		"used / capacity:    1000 / 2000 bytes",
+		"crosses the threshold at 10.00 day(s)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderTextExplanationEdges covers the branches the happy path does not reach: no byte
+// capacity, a curve that never crosses, and the deferred-by-minimum-age note.
+func TestRenderTextExplanationEdges(t *testing.T) {
+	var buf bytes.Buffer
+
+	r := &renderer{out: &buf}
+
+	explanation := &contract.ExplainConsolidationResponse{
+		UsedBytes: 500,
+		Valuations: []*contract.MemoryValuation{
+			{Id: "m1", Value: 0.1, Threshold: 1, BelowMinimumAge: true, DaysUntilForgotten: -1},
+		},
+		Curve: &contract.DecayCurve{Significance: 1e6, MaxAgeDays: 30, CrossingAgeDays: -1},
+	}
+
+	if err := r.render(explanation); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	out := buf.String()
+
+	for _, want := range []string{
+		"below the minimum age",
+		"not within any projected timeframe",
+		"no byte capacity configured",
+		"does not cross the threshold",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}

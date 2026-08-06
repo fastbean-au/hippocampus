@@ -40,6 +40,24 @@ service Hippocampus {
 		};
 	}
 
+	// ExplainConsolidation reports where individual memories stand against the consolidation rules -
+	// each one's computed value, the threshold it is measured against, and how long it has before it
+	// crosses - together with the capacity pressure scaling that threshold and, optionally, the decay
+	// curve the configured algorithm produces. It reads nothing but the memories named in the
+	// request and deletes nothing.
+	//
+	// Where PreviewConsolidation answers "what would a cycle forget now" across the whole store,
+	// this answers "where does this memory stand, and when is it due" for memories the caller
+	// already has in hand - which is why it needs only the reader tier: it enumerates nothing.
+	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
+	// whose configuration is not the one its store is consolidated under.
+	rpc ExplainConsolidation(ExplainConsolidationRequest) returns (ExplainConsolidationResponse) {
+		option (google.api.http) = {
+			post: "/v1/consolidation/explain"
+			body: "*"
+		};
+	}
+
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -667,6 +685,86 @@ message PreviewConsolidationResponse {
 
 	repeated ForgetCandidate               candidates                = 11;
 	bool                                   truncated                 = 12; // true when more memories would be forgotten than limit returned
+}
+
+// DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance
+// value, so a client can plot it without reimplementing the maths (which is what
+// docs/consolidation.md's value tables describe, and what the config wizard's preview approximates).
+// Leaving the field unset asks for no curve.
+message DecayCurveRequest {
+	double                                 significance              = 1; // the combined significance to project; must be > 0 - pass a memory's effective_significance to plot that memory's own curve
+	double                                 max_age_days              = 2; // the span to project over; <= 0 asks the server to choose a span that shows the threshold crossing
+	int32                                  points                    = 3; // samples to return; <= 0 selects the default (60), values above the cap (500) are clamped down to it
+}
+
+// DecayPoint is one sample of a decay curve: the value the configured algorithm gives an item of the
+// requested significance once its decay clock reads age_days.
+message DecayPoint {
+	double                                 age_days                  = 1;
+	double                                 value                     = 2;
+}
+
+// DecayCurve is the projected decay of one significance value under the current configuration,
+// sampled evenly from just after age zero to max_age_days. It is computed by the same code that
+// decides consolidation, so a plot of it cannot drift from what the service will actually do.
+message DecayCurve {
+	double                                 significance              = 1; // the combined significance projected, echoed back
+	double                                 max_age_days              = 2; // the span actually projected over, whether requested or chosen by the server
+	double                                 crossing_age_days         = 3; // the age at which the curve falls below deletion_threshold; -1 when it does not within the projected span
+	repeated DecayPoint                    points                    = 4;
+}
+
+// MemoryValuation is where one memory stands against the consolidation rules right now: the value
+// the decay algorithm gives it, the threshold that value is measured against, and the flags that
+// override the comparison either way. Bodies are never included - this explains a memory, it is not
+// a way to read one.
+message MemoryValuation {
+	string                                 id                        = 1;
+	string                                 event_id                  = 2;  // empty for a memory with no event (or one whose event no longer exists)
+	int32                                  significance              = 3;  // the memory's own stored significance, as ranked
+	double                                 effective_significance    = 4;  // what the decay actually acts on: the memory's own significance plus its event's, the weighted relationship significance, and the weighted recall count
+	double                                 value                     = 5;  // the computed decayed value (see docs/consolidation.md)
+	double                                 threshold                 = 6;  // the capacity-pressure-scaled deletion threshold value is compared against
+	double                                 age_days                  = 7;  // days since the memory's decay clock last reset - its creation, or its most recent recall
+	int32                                  recall_count              = 8;
+	int64                                  time_recalled             = 9;  // UnixNano of the most recent recall; 0 if never recalled
+	bool                                   would_consolidate         = 10; // a cycle running now would forget this memory
+	bool                                   retained                  = 11; // held by consolidation.minimumRetentionInDays, so neither consolidation nor capacity eviction may take it
+	bool                                   below_minimum_age         = 12; // younger than consolidation.minimumAgeInDays, so value-based consolidation is deferred whatever the value says
+	double                                 days_until_forgotten      = 13; // projected days until the memory would be consolidated, holding today's threshold and pressure and assuming no further recall; 0 when it is already due, -1 when it is not due within the projected horizon
+}
+
+// ExplainConsolidationRequest asks where the named memories stand against the consolidation rules,
+// and optionally for the decay curve of the current configuration. Both parts are optional: ids
+// without a curve values just those memories, a curve without ids reports the configuration and the
+// current capacity pressure alone. Ids that do not exist are simply absent from the response.
+message ExplainConsolidationRequest {
+	repeated string                        memory_ids                = 1; // the memories to value; at most 200 per call
+	DecayCurveRequest                      curve                     = 2; // optional projected curve for the current configuration
+}
+
+// ExplainConsolidationResponse carries the decision inputs, one valuation per memory found, and the
+// requested curve. The inputs are a snapshot: capacity pressure and used bytes are re-read
+// periodically rather than per call, so they may lag a cycle that has just run - by design, since
+// this is asked far more often than a preview and both readings cost a scan.
+message ExplainConsolidationResponse {
+	double                                 capacity_pressure         = 1;  // multiplier applied to the deletion threshold by how full the store is (1.0 = no effect)
+	double                                 deletion_threshold        = 2;  // the scaled threshold actually applied: deletionThreshold * capacity_pressure
+	int64                                  used_bytes                = 3;  // the store's current used bytes
+	int64                                  capacity_bytes            = 4;  // consolidation.capacityBytes; 0 when no byte capacity is configured
+	int32                                  memory_count              = 5;  // memories currently stored - the other axis capacity pressure rides on
+	int32                                  capacity_memories         = 6;  // consolidation.capacityMemories; 0 when no row capacity is configured
+
+	// The configured decay policy, so a client can label what it is showing without a second source
+	// of truth for it.
+	int32                                  method                    = 7;  // consolidation.method (1-6; see docs/consolidation.md)
+	double                                 aggressiveness            = 8;
+	double                                 units_of_age_in_days      = 9;  // days per unit of age fed to the decay algorithm
+	int32                                  minimum_age_in_days       = 10;
+	int32                                  minimum_retention_in_days = 11;
+
+	repeated MemoryValuation               valuations                = 12;
+	DecayCurve                             curve                     = 13; // absent when none was requested
 }
 
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the

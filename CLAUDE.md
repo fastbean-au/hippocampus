@@ -112,7 +112,12 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
 
 - `cmd/hippocampus/` — the `package main` entrypoint (`main.go` plus `backfill.go`,
   `interceptors.go`, `logging.go`, `observability.go`, and the `webui.go`/`webui/` embedded
-  console). `main.go` — bootstrap only: reads the JSON config file into viper, initialises logging
+  console — one self-contained HTML/CSS/JS page, no build step, whose **Decay** tab is the client
+  side of `ExplainConsolidation`: a per-row value column in the memory/search tables, the current
+  capacity pressure and threshold, an inline-SVG decay curve, and an `admin`-gated dry-run panel
+  over `PreviewConsolidation`. It computes **no** decay maths of its own — every number and every
+  curve point is served — which is the whole reason those RPCs report what they do). `main.go` —
+  bootstrap only: reads the JSON config file into viper, initialises logging
   (logrus, `logging.go`; `logging.level` selects severity — default `info` — and `logging.json`
   toggles JSON-vs-text output to stdout) and observability (`observability.go`: optional OTEL
   tracing/metrics over OTLP/gRPC,
@@ -258,6 +263,25 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     `previewResult`, a plain struct, **not** the proto response: a proto message is not safe to
     marshal concurrently (marshalling writes its internal size cache), so each caller builds its
     own via `previewResponse`.
+  - `ExplainConsolidation` (`hippocampus/explain.go` + `db/explain.go`) is the per-memory half of the
+    same transparency: given ids (at most `explainMaxMemoryIds`, 200) it reports each memory's
+    computed value, the pressure-scaled threshold, its effective significance, the `retained` /
+    `below_minimum_age` overrides, and `days_until_forgotten`; with a `curve` it also returns the
+    decay curve of the current configuration. Four things carry the design. (1) It is **`reader`**
+    tier while the preview is `admin` — it enumerates nothing, answering only about ids the caller
+    supplies and could already read in full via `GetMemories`. (2) It reuses the preview's snapshot
+    machinery (`decisionSnapshot`, which `previewDecisionState` became — now returning a
+    `decisionState` carrying the memory count as well), so both evaluate against one consistent set
+    of inputs and neither reads the sleep goroutine's live fields. (3) That snapshot is **cached**
+    for `explainStateTTL` behind `Server.explainGroup`/`explainStateMu`, because it costs a
+    `UsedBytes` plus a `CountMemories` — both full scans on the server drivers — and this RPC is
+    called once per console page rather than once per operator decision (item 25.9's lesson).
+    Capacity pressure moves over a cycle, not over seconds. (4) The curve and the
+    `days_until_forgotten` projection are found by **bisecting `calculateValue`** over
+    `curveHorizonUnits` rather than by inverting six curves, so a seventh method needs no new maths
+    here; a configuration that never crosses reports `-1` rather than a number that looks like an
+    answer. The projection includes the `minimumAgeInDays`/`minimumRetentionInDays` floors and
+    assumes no further recall. Not on the MCP surface, like the preview.
   - `recordRetention` (`sleep.go`, called from `evict`) publishes the
     `hippocampus.memories.retained`/`hippocampus.retained_bytes` gauges from `db.RetainedStats` —
     one aggregate query (`MAX`/`GREATEST(timestamp, time_recalled) >= cutoff`, the same decay clock
@@ -338,7 +362,9 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
 - `contract/` — the gRPC contract (`hippocampus.proto`) and generated code. RPCs cover
   event/memory CRUD plus `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
   `ReplaceMemoriesWithSummary`, `GetSummarisationCandidates`, `SummariseMemories` (the embedded-LLM
-  generate-and-replace), `WhoAmI` (reports the caller's
+  generate-and-replace), `PreviewConsolidation`/`ExplainConsolidation` (the forgetting-transparency
+  pair: what a cycle would forget, and where an individual memory stands), `WhoAmI` (reports the
+  caller's
   effective authorisation tier, so the web console can adapt), and the transfer/archive surface
   (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see

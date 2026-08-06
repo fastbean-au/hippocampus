@@ -137,6 +137,9 @@ func (r *renderer) renderText(msg proto.Message) error {
 	case *contract.PreviewConsolidationResponse:
 		r.renderPreview(m)
 
+	case *contract.ExplainConsolidationResponse:
+		r.renderExplanation(m)
+
 	default:
 		// No bespoke text form: fall back to protojson so nothing is ever silently dropped.
 		return r.writeJSON(msg)
@@ -194,6 +197,102 @@ func (r *renderer) renderPreview(preview *contract.PreviewConsolidationResponse)
 			forgetRuleLabel(candidate.GetRule()),
 			orNone(candidate.GetGroup()),
 		)
+	}
+}
+
+// renderExplanation writes where each memory stands, then the configuration deciding it - the
+// per-memory lines first because they are what was asked about, with the inputs underneath as the
+// context for reading them.
+func (r *renderer) renderExplanation(explanation *contract.ExplainConsolidationResponse) {
+	for _, valuation := range explanation.GetValuations() {
+		r.line("memory %s", valuation.GetId())
+		r.line("  value / threshold:  %.6g / %.6g%s",
+			valuation.GetValue(),
+			valuation.GetThreshold(),
+			valuationNote(valuation),
+		)
+		r.line("  significance:       %d stored, %.6g effective", valuation.GetSignificance(), valuation.GetEffectiveSignificance())
+		r.line("  age:                %.2f days, %d recall(s)", valuation.GetAgeDays(), valuation.GetRecallCount())
+		r.line("  forgotten in:       %s", forgottenIn(valuation.GetDaysUntilForgotten()))
+	}
+
+	if len(explanation.GetValuations()) > 0 {
+		r.line("")
+	}
+
+	r.line("method %d, aggressiveness %.6g, %.6g day(s) per age unit",
+		explanation.GetMethod(),
+		explanation.GetAggressiveness(),
+		explanation.GetUnitsOfAgeInDays(),
+	)
+
+	r.line("capacity pressure:  %.3f", explanation.GetCapacityPressure())
+	r.line("deletion threshold: %.6g (scaled by the pressure above)", explanation.GetDeletionThreshold())
+
+	if explanation.GetCapacityBytes() > 0 {
+		r.line("used / capacity:    %d / %d bytes", explanation.GetUsedBytes(), explanation.GetCapacityBytes())
+	} else {
+		r.line("used:               %d bytes (no byte capacity configured)", explanation.GetUsedBytes())
+	}
+
+	curve := explanation.GetCurve()
+	if curve == nil {
+		return
+	}
+
+	r.line("")
+	r.line("decay of significance %.6g over %.6g day(s), %d point(s):",
+		curve.GetSignificance(),
+		curve.GetMaxAgeDays(),
+		len(curve.GetPoints()),
+	)
+
+	if crossing := curve.GetCrossingAgeDays(); crossing >= 0 {
+		r.line("  crosses the threshold at %.2f day(s)", crossing)
+	} else {
+		r.line("  does not cross the threshold within the projected span")
+	}
+
+	for _, point := range curve.GetPoints() {
+		r.line("  %10.3f  %.6g", point.GetAgeDays(), point.GetValue())
+	}
+}
+
+// valuationNote names whichever rule is overriding the value comparison, since a memory well below
+// the threshold that is nonetheless safe (retained, or not yet old enough) otherwise reads as a
+// contradiction.
+func valuationNote(valuation *contract.MemoryValuation) string {
+	switch {
+
+	case valuation.GetRetained():
+		return "  (retained: inside the minimum retention window)"
+
+	case valuation.GetBelowMinimumAge():
+		return "  (below the minimum age, so consolidation is deferred)"
+
+	case valuation.GetWouldConsolidate():
+		return "  (a cycle running now would forget it)"
+
+	default:
+		return ""
+
+	}
+}
+
+// forgottenIn renders the projection, keeping the two sentinels readable: 0 means already due, and
+// -1 means no crossing within any span worth reporting.
+func forgottenIn(days float64) string {
+	switch {
+
+	case days < 0:
+		return "not within any projected timeframe"
+
+	case days == 0:
+		return "due now"
+
+	default:
+		return fmt.Sprintf("~%.2f day(s)", days)
+
 	}
 }
 

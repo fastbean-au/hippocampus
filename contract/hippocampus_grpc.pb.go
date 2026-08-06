@@ -22,6 +22,7 @@ const (
 	Hippocampus_Purge_FullMethodName                      = "/proto.Hippocampus/Purge"
 	Hippocampus_Sleep_FullMethodName                      = "/proto.Hippocampus/Sleep"
 	Hippocampus_PreviewConsolidation_FullMethodName       = "/proto.Hippocampus/PreviewConsolidation"
+	Hippocampus_ExplainConsolidation_FullMethodName       = "/proto.Hippocampus/ExplainConsolidation"
 	Hippocampus_WhoAmI_FullMethodName                     = "/proto.Hippocampus/WhoAmI"
 	Hippocampus_StoreEvent_FullMethodName                 = "/proto.Hippocampus/StoreEvent"
 	Hippocampus_EndEvent_FullMethodName                   = "/proto.Hippocampus/EndEvent"
@@ -71,6 +72,18 @@ type HippocampusClient interface {
 	// It is a separate RPC rather than a flag on Sleep so that the two can be authorised
 	// separately - previewing what would be forgotten is a read, triggering it is not.
 	PreviewConsolidation(ctx context.Context, in *PreviewConsolidationRequest, opts ...grpc.CallOption) (*PreviewConsolidationResponse, error)
+	// ExplainConsolidation reports where individual memories stand against the consolidation rules -
+	// each one's computed value, the threshold it is measured against, and how long it has before it
+	// crosses - together with the capacity pressure scaling that threshold and, optionally, the decay
+	// curve the configured algorithm produces. It reads nothing but the memories named in the
+	// request and deletes nothing.
+	//
+	// Where PreviewConsolidation answers "what would a cycle forget now" across the whole store,
+	// this answers "where does this memory stand, and when is it due" for memories the caller
+	// already has in hand - which is why it needs only the reader tier: it enumerates nothing.
+	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
+	// whose configuration is not the one its store is consolidated under.
+	ExplainConsolidation(ctx context.Context, in *ExplainConsolidationRequest, opts ...grpc.CallOption) (*ExplainConsolidationResponse, error)
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -194,6 +207,16 @@ func (c *hippocampusClient) PreviewConsolidation(ctx context.Context, in *Previe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PreviewConsolidationResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_PreviewConsolidation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) ExplainConsolidation(ctx context.Context, in *ExplainConsolidationRequest, opts ...grpc.CallOption) (*ExplainConsolidationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExplainConsolidationResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_ExplainConsolidation_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -445,6 +468,18 @@ type HippocampusServer interface {
 	// It is a separate RPC rather than a flag on Sleep so that the two can be authorised
 	// separately - previewing what would be forgotten is a read, triggering it is not.
 	PreviewConsolidation(context.Context, *PreviewConsolidationRequest) (*PreviewConsolidationResponse, error)
+	// ExplainConsolidation reports where individual memories stand against the consolidation rules -
+	// each one's computed value, the threshold it is measured against, and how long it has before it
+	// crosses - together with the capacity pressure scaling that threshold and, optionally, the decay
+	// curve the configured algorithm produces. It reads nothing but the memories named in the
+	// request and deletes nothing.
+	//
+	// Where PreviewConsolidation answers "what would a cycle forget now" across the whole store,
+	// this answers "where does this memory stand, and when is it due" for memories the caller
+	// already has in hand - which is why it needs only the reader tier: it enumerates nothing.
+	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
+	// whose configuration is not the one its store is consolidated under.
+	ExplainConsolidation(context.Context, *ExplainConsolidationRequest) (*ExplainConsolidationResponse, error)
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -552,6 +587,9 @@ func (UnimplementedHippocampusServer) Sleep(context.Context, *EmptyRequest) (*Ge
 }
 func (UnimplementedHippocampusServer) PreviewConsolidation(context.Context, *PreviewConsolidationRequest) (*PreviewConsolidationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewConsolidation not implemented")
+}
+func (UnimplementedHippocampusServer) ExplainConsolidation(context.Context, *ExplainConsolidationRequest) (*ExplainConsolidationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExplainConsolidation not implemented")
 }
 func (UnimplementedHippocampusServer) WhoAmI(context.Context, *EmptyRequest) (*WhoAmIResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WhoAmI not implemented")
@@ -690,6 +728,24 @@ func _Hippocampus_PreviewConsolidation_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HippocampusServer).PreviewConsolidation(ctx, req.(*PreviewConsolidationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_ExplainConsolidation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExplainConsolidationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).ExplainConsolidation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_ExplainConsolidation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).ExplainConsolidation(ctx, req.(*ExplainConsolidationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1108,6 +1164,10 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PreviewConsolidation",
 			Handler:    _Hippocampus_PreviewConsolidation_Handler,
+		},
+		{
+			MethodName: "ExplainConsolidation",
+			Handler:    _Hippocampus_ExplainConsolidation_Handler,
 		},
 		{
 			MethodName: "WhoAmI",

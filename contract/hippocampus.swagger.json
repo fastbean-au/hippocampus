@@ -50,6 +50,41 @@
         ]
       }
     },
+    "/v1/consolidation/explain": {
+      "post": {
+        "summary": "ExplainConsolidation reports where individual memories stand against the consolidation rules -\neach one's computed value, the threshold it is measured against, and how long it has before it\ncrosses - together with the capacity pressure scaling that threshold and, optionally, the decay\ncurve the configured algorithm produces. It reads nothing but the memories named in the\nrequest and deletes nothing.",
+        "description": "Where PreviewConsolidation answers \"what would a cycle forget now\" across the whole store,\nthis answers \"where does this memory stand, and when is it due\" for memories the caller\nalready has in hand - which is why it needs only the reader tier: it enumerates nothing.\nRejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),\nwhose configuration is not the one its store is consolidated under.",
+        "operationId": "Hippocampus_ExplainConsolidation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/protoExplainConsolidationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "ExplainConsolidationRequest asks where the named memories stand against the consolidation rules,\nand optionally for the decay curve of the current configuration. Both parts are optional: ids\nwithout a curve values just those memories, a curve without ids reports the configuration and the\ncurrent capacity pressure alone. Ids that do not exist are simply absent from the response.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/protoExplainConsolidationRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "summary": "GetEvents lists events filtered by time range, significance range, and group, paginated by\nlimit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max\nrange for \"only events tied at the highest (or lowest) significance value\" instead.",
@@ -1138,6 +1173,69 @@
         }
       }
     },
+    "protoDecayCurve": {
+      "type": "object",
+      "properties": {
+        "significance": {
+          "type": "number",
+          "format": "double",
+          "title": "the combined significance projected, echoed back"
+        },
+        "maxAgeDays": {
+          "type": "number",
+          "format": "double",
+          "title": "the span actually projected over, whether requested or chosen by the server"
+        },
+        "crossingAgeDays": {
+          "type": "number",
+          "format": "double",
+          "title": "the age at which the curve falls below deletion_threshold; -1 when it does not within the projected span"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoDecayPoint"
+          }
+        }
+      },
+      "description": "DecayCurve is the projected decay of one significance value under the current configuration,\nsampled evenly from just after age zero to max_age_days. It is computed by the same code that\ndecides consolidation, so a plot of it cannot drift from what the service will actually do."
+    },
+    "protoDecayCurveRequest": {
+      "type": "object",
+      "properties": {
+        "significance": {
+          "type": "number",
+          "format": "double",
+          "title": "the combined significance to project; must be \u003e 0 - pass a memory's effective_significance to plot that memory's own curve"
+        },
+        "maxAgeDays": {
+          "type": "number",
+          "format": "double",
+          "title": "the span to project over; \u003c= 0 asks the server to choose a span that shows the threshold crossing"
+        },
+        "points": {
+          "type": "integer",
+          "format": "int32",
+          "title": "samples to return; \u003c= 0 selects the default (60), values above the cap (500) are clamped down to it"
+        }
+      },
+      "description": "DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance\nvalue, so a client can plot it without reimplementing the maths (which is what\ndocs/consolidation.md's value tables describe, and what the config wizard's preview approximates).\nLeaving the field unset asks for no curve."
+    },
+    "protoDecayPoint": {
+      "type": "object",
+      "properties": {
+        "ageDays": {
+          "type": "number",
+          "format": "double"
+        },
+        "value": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "description": "DecayPoint is one sample of a decay curve: the value the configured algorithm gives an item of the\nrequested significance once its decay clock reads age_days."
+    },
     "protoDeleteMemoriesRequest": {
       "type": "object",
       "properties": {
@@ -1214,6 +1312,92 @@
         }
       },
       "description": "Event is a named time span with its own significance, optionally carrying relationships to\nother events and/or nested memories. memories/relationships are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory."
+    },
+    "protoExplainConsolidationRequest": {
+      "type": "object",
+      "properties": {
+        "memoryIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "the memories to value; at most 200 per call"
+        },
+        "curve": {
+          "$ref": "#/definitions/protoDecayCurveRequest",
+          "title": "optional projected curve for the current configuration"
+        }
+      },
+      "description": "ExplainConsolidationRequest asks where the named memories stand against the consolidation rules,\nand optionally for the decay curve of the current configuration. Both parts are optional: ids\nwithout a curve values just those memories, a curve without ids reports the configuration and the\ncurrent capacity pressure alone. Ids that do not exist are simply absent from the response."
+    },
+    "protoExplainConsolidationResponse": {
+      "type": "object",
+      "properties": {
+        "capacityPressure": {
+          "type": "number",
+          "format": "double",
+          "title": "multiplier applied to the deletion threshold by how full the store is (1.0 = no effect)"
+        },
+        "deletionThreshold": {
+          "type": "number",
+          "format": "double",
+          "title": "the scaled threshold actually applied: deletionThreshold * capacity_pressure"
+        },
+        "usedBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "the store's current used bytes"
+        },
+        "capacityBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "consolidation.capacityBytes; 0 when no byte capacity is configured"
+        },
+        "memoryCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories currently stored - the other axis capacity pressure rides on"
+        },
+        "capacityMemories": {
+          "type": "integer",
+          "format": "int32",
+          "title": "consolidation.capacityMemories; 0 when no row capacity is configured"
+        },
+        "method": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The configured decay policy, so a client can label what it is showing without a second source\nof truth for it.\n\nconsolidation.method (1-6; see docs/consolidation.md)"
+        },
+        "aggressiveness": {
+          "type": "number",
+          "format": "double"
+        },
+        "unitsOfAgeInDays": {
+          "type": "number",
+          "format": "double",
+          "title": "days per unit of age fed to the decay algorithm"
+        },
+        "minimumAgeInDays": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "minimumRetentionInDays": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "valuations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protoMemoryValuation"
+          }
+        },
+        "curve": {
+          "$ref": "#/definitions/protoDecayCurve",
+          "title": "absent when none was requested"
+        }
+      },
+      "description": "ExplainConsolidationResponse carries the decision inputs, one valuation per memory found, and the\nrequested curve. The inputs are a snapshot: capacity pressure and used bytes are re-read\nperiodically rather than per call, so they may lag a cycle that has just run - by design, since\nthis is asked far more often than a preview and both readings cost a scan."
     },
     "protoExportRequest": {
       "type": "object",
@@ -1483,6 +1667,70 @@
         }
       },
       "description": "Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to\nan event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective\nsignificance rises. is_binary controls whether the body is indexed for content search (see\nSearchMemories) - a binary body is never indexed."
+    },
+    "protoMemoryValuation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string",
+          "title": "empty for a memory with no event (or one whose event no longer exists)"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32",
+          "title": "the memory's own stored significance, as ranked"
+        },
+        "effectiveSignificance": {
+          "type": "number",
+          "format": "double",
+          "title": "what the decay actually acts on: the memory's own significance plus its event's, the weighted relationship significance, and the weighted recall count"
+        },
+        "value": {
+          "type": "number",
+          "format": "double",
+          "title": "the computed decayed value (see docs/consolidation.md)"
+        },
+        "threshold": {
+          "type": "number",
+          "format": "double",
+          "title": "the capacity-pressure-scaled deletion threshold value is compared against"
+        },
+        "ageDays": {
+          "type": "number",
+          "format": "double",
+          "title": "days since the memory's decay clock last reset - its creation, or its most recent recall"
+        },
+        "recallCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "timeRecalled": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano of the most recent recall; 0 if never recalled"
+        },
+        "wouldConsolidate": {
+          "type": "boolean",
+          "title": "a cycle running now would forget this memory"
+        },
+        "retained": {
+          "type": "boolean",
+          "title": "held by consolidation.minimumRetentionInDays, so neither consolidation nor capacity eviction may take it"
+        },
+        "belowMinimumAge": {
+          "type": "boolean",
+          "title": "younger than consolidation.minimumAgeInDays, so value-based consolidation is deferred whatever the value says"
+        },
+        "daysUntilForgotten": {
+          "type": "number",
+          "format": "double",
+          "title": "projected days until the memory would be consolidated, holding today's threshold and pressure and assuming no further recall; 0 when it is already due, -1 when it is not due within the projected horizon"
+        }
+      },
+      "description": "MemoryValuation is where one memory stands against the consolidation rules right now: the value\nthe decay algorithm gives it, the threshold that value is measured against, and the flags that\noverride the comparison either way. Bodies are never included - this explains a memory, it is not\na way to read one."
     },
     "protoMergeEventsRequest": {
       "type": "object",

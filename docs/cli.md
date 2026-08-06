@@ -131,6 +131,12 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 | `memory list`   | list memories with filters (`--group`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
 | `memory recall` | recall memories by id (reinforces them)                                                                                                      |
 | `memory search` | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--reinforce`)                  |
+| `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)      |
+
+`memory explain` reports each memory's computed value, the threshold it is measured against, and how
+long it has before it is forgotten; with `--curve-significance` it also returns the decay curve of
+the current configuration. Both halves stand alone — a curve with no ids asks only what the
+configuration does. See [Where a memory stands](operations.md#where-a-memory-stands).
 
 ### Events
 

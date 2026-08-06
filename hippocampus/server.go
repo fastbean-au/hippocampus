@@ -205,6 +205,15 @@ type Server struct {
 	// cycle's own queries.
 	previewGroup singleflight.Group
 
+	// explainState caches the decision snapshot ExplainConsolidation values memories against, and
+	// explainGroup collapses concurrent refreshes of it onto one. Unlike a preview - occasional, and
+	// asked precisely when someone wants the current truth - this RPC is called once per console
+	// page, and the snapshot costs two full scans to compute; see cachedDecisionSnapshot. Guarded by
+	// explainStateMu, since it is written from whichever RPC goroutine happens to find it stale.
+	explainState   decisionState
+	explainStateMu sync.Mutex
+	explainGroup   singleflight.Group
+
 	// stopSleep / sleepStopped / stopOnce coordinate shutdown of the autoSleep goroutine. Stop
 	// closes stopSleep and waits for sleepStopped; because the loop only re-enters its select
 	// between cycles, that wait also drains any in-flight cycle, so no consolidation is mid-scan

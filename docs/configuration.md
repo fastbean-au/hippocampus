@@ -186,6 +186,7 @@ a JSON body:
 | `Clear`                      | POST   | `/v1/clear`                       |
 | `Sleep`                      | POST   | `/v1/sleep`                       |
 | `PreviewConsolidation`       | GET    | `/v1/sleep/preview`               |
+| `ExplainConsolidation`       | POST   | `/v1/consolidation/explain`       |
 | `Purge`                      | POST   | `/v1/purge`                       |
 | `WhoAmI`                     | GET    | `/v1/whoami`                      |
 
@@ -403,11 +404,14 @@ everything a lower one can:
 
 | Tier     | May call                                                                                                                                                                                                                                     |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `WhoAmI`                                                                                                                       |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `ExplainConsolidation`, `WhoAmI`                                                                                               |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `Export`, `Transfer`, `Clear`                                                                                                                                        |
 
-`Export`/`Transfer` are `admin` because they read the whole store out; `Import`/`ImportBatch` are
+`ExplainConsolidation` is `reader` while the dry run beside it is `admin`, because the two differ in
+exactly that respect: the explanation answers only about memory ids the caller supplies — which a
+reader can already fetch in full — whereas the preview enumerates the store. `Export`/`Transfer` are
+`admin` because they read the whole store out; `Import`/`ImportBatch` are
 `writer` because they deliberately bypass the write-path validation `StoreMemory`/`StoreEvent`
 enforce (body-size limit, future-timestamp clock-skew guard, minimum-significance gate) to restore
 an archive faithfully. A caller whose token grants a tier below the RPC's requirement gets
