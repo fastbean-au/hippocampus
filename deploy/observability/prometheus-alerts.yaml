@@ -1,0 +1,174 @@
+# Hippocampus alert rules, in Prometheus rule-file format.
+#
+# Load it from a Prometheus configuration:
+#
+#   rule_files:
+#     - /etc/prometheus/hippocampus-alerts.yaml
+#
+# ...or lift the `groups:` block below into the `spec:` of a prometheus-operator PrometheusRule,
+# or into a Mimir/Grafana Cloud rule group (`mimirtool rules load`). Nothing here is
+# deployment-specific.
+#
+# The same rules are provisioned as Grafana-managed rules for the bundled otel-lgtm stack in
+# deploy/compose/observability/alerting-rules.yaml. The two files carry byte-identical PromQL and
+# `for:` durations, and cmd/hippocampus/alerts_test.go fails if they drift - or if either names a
+# metric the service does not export.
+#
+# Metric names are the Prometheus rendering of the OTLP instruments (dots become underscores, a
+# counter gains `_total`, a histogram in seconds gains `_seconds_bucket`); see
+# docs/operations.md#observability for what each one measures.
+#
+# Two things to adjust before using these as-is:
+#
+#   * Thresholds are starting points, not universal truths. In particular the latency budget in
+#     HippocampusRequestLatencyHigh and the ratio in HippocampusServerErrorRateHigh are whatever
+#     your SLO says they are.
+#   * Every expression aggregates over the whole datasource, which is right for the one-instance-
+#     per-store deployment model (docs/operations.md#deployment-model-one-consolidating-instance-per-store).
+#     If one Prometheus holds several Hippocampus deployments, add `by (job)` - or a matcher on
+#     whatever label separates them - to each expression, or an alert on one deployment will be
+#     diluted by the others' healthy traffic.
+
+groups:
+  - name: hippocampus
+    interval: 1m
+    rules:
+      # --- Requests (RED) -------------------------------------------------------------------
+
+      # Alerting on server_error alone is the whole reason `outcome` is three-valued rather than a
+      # success bool: a client sending malformed or unauthorised requests is not the service
+      # failing, and an SLO that cannot tell the two apart pages on traffic the operator cannot
+      # fix. The denominator is clamped so that no traffic at all reads as a 0 ratio rather than
+      # NaN.
+      - alert: HippocampusServerErrorRateHigh
+        expr: sum(rate(hippocampus_rpc_requests_total{outcome="server_error"}[5m])) / clamp_min(sum(rate(hippocampus_rpc_requests_total[5m])), 0.001) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is failing more than 1% of requests"
+          description: "Over 1% of RPCs are returning a server-fault code across both transports. Client faults (bad arguments, missing ids, rejected tokens) are excluded, so this is the service itself. Break it down by rpc and code on the Hippocampus dashboard's Failures by RPC and code panel, then check the service logs - a failing RPC logs at Warn with its method, code, and error."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#request-metrics-red"
+
+      # Deliberately excludes the RPCs that are legitimately long-running: a sleep cycle, a purge,
+      # and the bulk data-movement calls all scale with the store, so including them would make the
+      # quantile a measure of store size rather than of service health. A new long-running RPC
+      # needs adding to this matcher.
+      - alert: HippocampusRequestLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories"}[5m]))) > 1
+        for: 15m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus p95 request latency is above 1s"
+          description: "The 95th percentile of the interactive RPCs (long-running admin and bulk-transfer calls are excluded) has been above one second. On the server drivers check the connection pool and storage.queryTimeoutSeconds; on sqlite check whether a sleep cycle or a preview is contending for the single connection. The dashboard's p95 duration by RPC panel names the call."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#request-metrics-red"
+
+      # --- Forgetting ----------------------------------------------------------------------
+
+      # Consolidation is the only thing that bounds the store. A run of failing cycles means
+      # nothing is being forgotten, so the store grows until it hits its disk or capacity limit.
+      - alert: HippocampusSleepCycleFailing
+        expr: sum(rate(hippocampus_sleeps_total{success="false"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus sleep cycles are failing"
+          description: "Consolidation has been failing for at least 15 minutes, so nothing is being forgotten and the store is now unbounded. The cycle logs the failing pass; the usual causes are a database error, a store made unreachable mid-cycle, or a cycle exceeding storage.queryTimeoutSeconds on a store that has outgrown it."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # A process that has exited publishes nothing, so this asks the opposite question to the rule
+      # above: not "did a cycle fail" but "has any cycle succeeded at all". It is what catches the
+      # instance-lock keepalive exiting the consolidator (docs/operations.md#the-instance-lock-keepalive-server-drivers),
+      # a crash loop, and a deployment where every instance was left with consolidation.enabled:
+      # false. Absence is expressed in PromQL rather than left to the alerting engine's no-data
+      # policy, so Prometheus and Grafana behave identically.
+      #
+      # The 1h window must stay comfortably above sleep.periodSeconds, or a slow cycle reads as an
+      # absent one.
+      - alert: HippocampusConsolidatorAbsent
+        expr: absent_over_time(hippocampus_sleeps_total{success="true"}[1h])
+        for: 15m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "No Hippocampus instance has completed a sleep cycle in an hour"
+          description: "No successful consolidation has been reported for an hour, which usually means the consolidating instance is gone rather than slow - on postgres/mysql, most often the instance-lock keepalive exiting because the lock session died. Confirm exactly one instance is running with consolidation.enabled: true, and that its sleep.periodSeconds is below this rule's window."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#the-instance-lock-keepalive-server-drivers"
+
+      # --- Capacity ------------------------------------------------------------------------
+
+      # capacity_pressure is 1 + utilisation^capacityPressureExponent, and exactly 1.0 when no
+      # capacity target is configured - so this cannot fire on a deployment that has set none. At
+      # the default exponent of 1, 1.9 is 90% of the target.
+      - alert: HippocampusCapacityPressureHigh
+        expr: max(hippocampus_capacity_pressure) > 1.9
+        for: 30m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is running near its capacity target"
+          description: "Capacity pressure has been sustained near or above the configured target, so the decay threshold is being scaled up and memories are being forgotten sooner than the decay settings alone would forget them. Either raise consolidation.capacityBytes/capacityMemories, or accept the shorter retention. Note that the threshold maps to a different utilisation if consolidation.capacityPressureExponent is not 1."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # used_bytes and capacity_bytes are only published when a byte target is set, so this is
+      # inert without one.
+      - alert: HippocampusStoreOverCapacity
+        expr: max(hippocampus_used_bytes) > max(hippocampus_capacity_bytes)
+        for: 1h
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is above its byte capacity target"
+          description: "The store has been over consolidation.capacityBytes for an hour, so eviction is running every cycle and is not winning. Either the write rate exceeds what one cycle can reclaim (shorten sleep.periodSeconds), or retention is holding the bytes down - check HippocampusRetentionNearCapacity and the retained_bytes series."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # The failure mode worth paging for: minimumRetentionInDays overrides the capacity target, so
+      # once retained bytes reach capacity the target has become unreachable however hard eviction
+      # runs. Only published when both minimumRetentionInDays and capacityBytes are set.
+      - alert: HippocampusRetentionNearCapacity
+        expr: max(hippocampus_retained_bytes) / clamp_min(max(hippocampus_capacity_bytes), 1) > 0.9
+        for: 30m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus retention is consuming its capacity target"
+          description: "Memories inside consolidation.minimumRetentionInDays now hold over 90% of consolidation.capacityBytes. Retention overrides the capacity target, so eviction will keep running, find nothing it is allowed to delete, and the store will grow past its target until that data ages out. Shorten minimumRetentionInDays, raise capacityBytes, or reduce the ingest rate."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # --- Secondary index and process health ----------------------------------------------
+
+      # Index propagation is best-effort by design (the primary write never waits on it), so drops
+      # are survivable - but a sustained drop rate means the index is going sparse and searches are
+      # quietly missing memories that exist.
+      - alert: HippocampusSearchIndexDropping
+        expr: sum(rate(hippocampus_search_dropped_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is dropping search index operations"
+          description: "Index operations are being dropped - the apply queue is full, or every retry against the cluster failed - so the search index is going sparse and SearchMemories will miss memories that exist in the store. Check the OpenSearch cluster's health first. The periodic reconciliation sweep heals missing documents; --backfill-search --reindex rebuilds the index outright."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # Any non-zero value here is a bug: the request got Internal/500 and the process survived,
+      # but a handler reached a state it was not written to reach.
+      - alert: HippocampusPanicsRecovered
+        expr: sum(increase(hippocampus_panics_recovered_total[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus handler panicked and was recovered"
+          description: "A gRPC or gateway handler panicked; the caller received Internal/500 and the process survived. The stack trace is in the service logs. Any occurrence is worth investigating - please report it with the trace."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"

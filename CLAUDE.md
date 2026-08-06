@@ -63,7 +63,9 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   `HIPPOCAMPUS_OBSERVABILITY_*` env overrides (metrics/traces on from `${OBSERVABILITY:-false}`,
   endpoint `otel-lgtm:4317`), so metrics stay off (and never log an export failure) unless the
   collector is up. A Hippocampus overview dashboard (`deploy/compose/observability/`) is bind-mounted into
-  Grafana's provisioning tree and set as the home page (`GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH`)
+  Grafana's provisioning tree and set as the home page (`GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH`),
+  alongside `alerting-rules.yaml` (the shipped alerts as Grafana-managed rules) — see the alerting
+  note under Architecture
 - Kubernetes: `kubectl apply -k deploy/k8s/overlays/sqlite` (embedded SQLite: one `StatefulSet` +
   a PVC) or `kubectl apply -k deploy/k8s/overlays/postgres` (centralised: one consolidator
   `Deployment` + N replica `Deployment`s over a shared Postgres, mirroring the horizontal-scaling
@@ -191,7 +193,24 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   panic recovery sits outside both, so a deferred record would count a panicking call as a success —
   panics stay `hippocampus.panics_recovered`'s to report. Both are scoped to the RPC surface (the
   `/proto.Hippocampus/` prefix; `/v1` minus the OpenAPI doc), keeping probe, console and login
-  traffic out of the error-rate denominator.
+  traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
+  too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
+  Prometheus rule file — the artefact a real deployment loads) and
+  `deploy/compose/observability/alerting-rules.yaml` (the same nine rules as Grafana-managed rules,
+  provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
+  provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
+  expression that nothing in the repo executes is exactly what drifts, so the drift guard
+  (`cmd/hippocampus/alerts_test.go`) fails if the two disagree on any expression, `for:`, label or
+  annotation, if either
+  names a metric no instrument declares (matching the queried series name back to the instrument
+  through the OTLP `_total`/`_bucket`/`_seconds` suffixes), or if a Grafana rule's wiring is wrong in
+  a way that provisions cleanly and then fails every evaluation (dangling `condition`, wrong
+  datasource uid, a query window narrower than its own range selector). Two decisions carry the
+  pair: the comparison lives in the **PromQL** on both sides (Grafana adds only a `gt 0` threshold
+  over an instant query, hence `noDataState: OK` on every rule), so the two engines behave
+  identically; and absence — a consolidator that has exited publishes no counter to alert on — is
+  asked with `absent_over_time` inside the expression rather than through a no-data policy, for the
+  same reason. Neither file provisions a contact point.
 - `cmd/config-wizard/` — the configuration and deployment wizard: a second `package main` in the
   root module (`main.go` plus the embedded `wizard/` assets). The Go side is a static file server
   and nothing else — embedded `index.html`/`app.js`/`styles.css` behind a strict CSP (no

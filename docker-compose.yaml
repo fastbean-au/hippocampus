@@ -76,6 +76,10 @@ services:
     volumes:
       - ./deploy/compose/observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
       - ./deploy/compose/observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
+      # Alert rules, provisioned alongside the dashboard so the stack alerts as well as draws. No
+      # contact point is provisioned (there is nowhere to send them here), so firing rules are
+      # visible under Alerting > Alert rules. Same rules as deploy/observability/prometheus-alerts.yaml.
+      - ./deploy/compose/observability/alerting-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/hippocampus.yaml:ro
 
   # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
   # (and set OLLAMA=true so the service actually uses it):

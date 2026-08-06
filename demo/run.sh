@@ -13,7 +13,9 @@
 # By default the script also launches an all-in-one grafana/otel-lgtm collector (needs docker or
 # podman) and ships the service's metrics/traces to it, so a soak run can be watched in Grafana at
 # http://localhost:3000. Set OBSERVABILITY=0 to skip it, or the demo runs without observability if
-# no container runtime is found.
+# no container runtime is found. The shipped alert rules are provisioned alongside the dashboard;
+# note that this demo deliberately runs its store at the capacity cap, so the capacity alerts are
+# expected to fire during a soak - that is them working, not a fault.
 
 set -euo pipefail
 
@@ -158,6 +160,7 @@ if [[ -n ${OBSERVABILITY_RUNTIME_AVAILABLE} ]]; then
         -e "GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=${PROVISION_DIR}/hippocampus.json" \
         -v "${DASHBOARD_DIR}/hippocampus-dashboard.json:${PROVISION_DIR}/hippocampus.json:ro" \
         -v "${DASHBOARD_DIR}/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro" \
+        -v "${DASHBOARD_DIR}/alerting-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/hippocampus.yaml:ro" \
         grafana/otel-lgtm:latest > /dev/null
     OTEL_STARTED=1
 

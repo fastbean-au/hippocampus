@@ -1,0 +1,423 @@
+# Grafana alert-rule provisioning for the bundled otel-lgtm image, the sibling of
+# dashboards-provider.yaml: mounted into the image's provisioning tree so the demo stack alerts as
+# well as draws. See docker-compose.yaml (the `otel-lgtm` service under the `observability`
+# profile) and demo/run.sh.
+#
+# These are the same rules as deploy/observability/prometheus-alerts.yaml, which is the file to use
+# for a real deployment - this one exists because Grafana provisions Grafana-managed rules in its
+# own format and cannot read a Prometheus rule file. The PromQL and the `for:` durations are
+# byte-identical between the two, and cmd/hippocampus/alerts_test.go fails if they drift.
+#
+# Each rule is one instant query plus a threshold of `gt 0`, because the comparison lives in the
+# PromQL itself (exactly as Prometheus evaluates it): the query returns a value only while the
+# alert should fire, and nothing otherwise - which is why noDataState is OK on every rule. That
+# keeps the two engines' behaviour the same, including for absence, which the one rule that cares
+# about it expresses with absent_over_time rather than by leaning on a no-data policy.
+#
+# No contact point or notification policy is provisioned: where alerts should be delivered is
+# deployment-specific, and the demo stack has nowhere to send them. Firing rules are visible in
+# Grafana under Alerting > Alert rules. To notify, add a contact point (and a route) under
+# /otel-lgtm/grafana/conf/provisioning/alerting/ alongside this file.
+
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: hippocampus
+    folder: Hippocampus
+    interval: 1m
+    rules:
+      - uid: hippocampus-server-error-rate
+        title: HippocampusServerErrorRateHigh
+        condition: B
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is failing more than 1% of requests"
+          description: "Over 1% of RPCs are returning a server-fault code across both transports. Client faults (bad arguments, missing ids, rejected tokens) are excluded, so this is the service itself. Break it down by rpc and code on the Hippocampus dashboard's Failures by RPC and code panel, then check the service logs - a failing RPC logs at Warn with its method, code, and error."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#request-metrics-red"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_rpc_requests_total{outcome="server_error"}[5m])) / clamp_min(sum(rate(hippocampus_rpc_requests_total[5m])), 0.001) > 0.01
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-request-latency
+        title: HippocampusRequestLatencyHigh
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus p95 request latency is above 1s"
+          description: "The 95th percentile of the interactive RPCs (long-running admin and bulk-transfer calls are excluded) has been above one second. On the server drivers check the connection pool and storage.queryTimeoutSeconds; on sqlite check whether a sleep cycle or a preview is contending for the single connection. The dashboard's p95 duration by RPC panel names the call."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#request-metrics-red"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: histogram_quantile(0.95, sum by (le) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories"}[5m]))) > 1
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-sleep-cycle-failing
+        title: HippocampusSleepCycleFailing
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus sleep cycles are failing"
+          description: "Consolidation has been failing for at least 15 minutes, so nothing is being forgotten and the store is now unbounded. The cycle logs the failing pass; the usual causes are a database error, a store made unreachable mid-cycle, or a cycle exceeding storage.queryTimeoutSeconds on a store that has outgrown it."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_sleeps_total{success="false"}[15m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-consolidator-absent
+        title: HippocampusConsolidatorAbsent
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "No Hippocampus instance has completed a sleep cycle in an hour"
+          description: "No successful consolidation has been reported for an hour, which usually means the consolidating instance is gone rather than slow - on postgres/mysql, most often the instance-lock keepalive exiting because the lock session died. Confirm exactly one instance is running with consolidation.enabled: true, and that its sleep.periodSeconds is below this rule's window."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#the-instance-lock-keepalive-server-drivers"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 4200
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: absent_over_time(hippocampus_sleeps_total{success="true"}[1h])
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-capacity-pressure
+        title: HippocampusCapacityPressureHigh
+        condition: B
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is running near its capacity target"
+          description: "Capacity pressure has been sustained near or above the configured target, so the decay threshold is being scaled up and memories are being forgotten sooner than the decay settings alone would forget them. Either raise consolidation.capacityBytes/capacityMemories, or accept the shorter retention. Note that the threshold maps to a different utilisation if consolidation.capacityPressureExponent is not 1."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max(hippocampus_capacity_pressure) > 1.9
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-over-capacity
+        title: HippocampusStoreOverCapacity
+        condition: B
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is above its byte capacity target"
+          description: "The store has been over consolidation.capacityBytes for an hour, so eviction is running every cycle and is not winning. Either the write rate exceeds what one cycle can reclaim (shorten sleep.periodSeconds), or retention is holding the bytes down - check HippocampusRetentionNearCapacity and the retained_bytes series."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max(hippocampus_used_bytes) > max(hippocampus_capacity_bytes)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-retention-near-capacity
+        title: HippocampusRetentionNearCapacity
+        condition: B
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus retention is consuming its capacity target"
+          description: "Memories inside consolidation.minimumRetentionInDays now hold over 90% of consolidation.capacityBytes. Retention overrides the capacity target, so eviction will keep running, find nothing it is allowed to delete, and the store will grow past its target until that data ages out. Shorten minimumRetentionInDays, raise capacityBytes, or reduce the ingest rate."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max(hippocampus_retained_bytes) / clamp_min(max(hippocampus_capacity_bytes), 1) > 0.9
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-search-index-dropping
+        title: HippocampusSearchIndexDropping
+        condition: B
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is dropping search index operations"
+          description: "Index operations are being dropped - the apply queue is full, or every retry against the cluster failed - so the search index is going sparse and SearchMemories will miss memories that exist in the store. Check the OpenSearch cluster's health first. The periodic reconciliation sweep heals missing documents; --backfill-search --reindex rebuilds the index outright."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_search_dropped_total[10m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-panics-recovered
+        title: HippocampusPanicsRecovered
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus handler panicked and was recovered"
+          description: "A gRPC or gateway handler panicked; the caller received Internal/500 and the process survived. The stack trace is in the service logs. Any occurrence is worth investigating - please report it with the trace."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(increase(hippocampus_panics_recovered_total[15m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []

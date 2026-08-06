@@ -420,6 +420,38 @@ Two scoping decisions worth knowing:
 A recovered panic is _not_ counted here (the request unwinds with no status to classify); it appears
 as `hippocampus.panics_recovered` instead, which is the metric to alert on for that case.
 
+### Alert rules
+
+The alert set is shipped, not just described: `deploy/observability/prometheus-alerts.yaml` is a
+Prometheus rule file covering the failures below, ready to load with `rule_files:`, lift into a
+prometheus-operator `PrometheusRule` `spec:`, or `mimirtool rules load`. Nine rules — server error
+rate, request latency, sleep-cycle failures, no consolidator at all, capacity pressure, over
+capacity, retention consuming the capacity target, search-index drops, and recovered panics — each
+with a `description` saying what to do about it and a `runbook_url` back into this document.
+
+Three things to know before deploying them, and the file repeats each at the rule it applies to:
+
+- **The thresholds are starting points.** The 1% error ratio and the 1s p95 budget are whatever your
+  SLO says they are; the capacity thresholds depend on `consolidation.capacityPressureExponent`.
+- **A rule for a feature you have not configured stays silent rather than broken.** The capacity,
+  retention, and search rules read metrics the service only publishes when the corresponding setting
+  is on, and an expression over an absent metric returns nothing.
+- **Every expression aggregates over the whole datasource**, which is right for the
+  [one-instance-per-store model](#deployment-model-one-consolidating-instance-per-store). If one
+  Prometheus holds several Hippocampus deployments, add `by (job)` to each.
+
+The one rule that is _about_ absence is `HippocampusConsolidatorAbsent`, and it is how the
+[instance-lock keepalive](#the-instance-lock-keepalive-server-drivers) exiting the consolidator
+becomes visible: a process that has exited publishes nothing, so no counter of failures can catch
+it, and the question has to be asked the other way round — has _any_ instance completed a cycle in
+the last hour. Keep that window comfortably above `sleep.periodSeconds`. It asks in PromQL
+(`absent_over_time`) rather than through an alerting engine's no-data policy, so Prometheus and
+Grafana answer it identically.
+
+The same nine rules are provisioned into the bundled Grafana below, so the demo stack alerts as well
+as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
+provisions a contact point — where alerts should be delivered is deployment-specific.
+
 ### Domain metrics
 
 Metrics worth alerting on in production:
@@ -461,8 +493,13 @@ OBSERVABILITY=true docker compose --profile observability up --build
 Grafana is then at `http://localhost:3000`, opening on a pre-built **Hippocampus** dashboard
 (provisioned from `deploy/compose/observability/`, set as the home page) that charts request rate,
 error rate and latency (overall and per RPC), then ingest, forgetting (consolidation/eviction volume
-and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration from the metrics above. The demo soak harness has the same switch: `OBSERVABILITY=1 ./demo/run.sh`
-launches the collector (via docker or podman) with the same dashboard and points the service at it. Metrics stay off unless the collector is present,
+and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration from the metrics above. The alert
+rules above are provisioned with it (as Grafana-managed rules, since Grafana cannot read a Prometheus
+rule file), so firing rules appear under **Alerting → Alert rules**; nothing is notified, as the demo
+stack has nowhere to send it. The demo soak harness has the same switch: `OBSERVABILITY=1 ./demo/run.sh`
+launches the collector (via docker or podman) with the same dashboard and rules and points the
+service at it — note that the demo deliberately runs its store at the capacity cap, so the capacity
+alerts firing during a soak is them working. Metrics stay off unless the collector is present,
 which is what keeps a plain run quiet — enabling export without a reachable OTLP endpoint is the
 only thing that produces export-failure log lines.
 

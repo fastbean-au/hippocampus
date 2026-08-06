@@ -90,6 +90,9 @@ services:
     volumes:
       - ./observability/hippocampus-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json:ro
       - ./observability/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
+      # Alert rules, provisioned alongside the dashboard so the stack alerts as well as draws.
+      # No contact point is provisioned, so firing rules are visible under Alerting > Alert rules.
+      - ./observability/alerting-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/hippocampus.yaml:ro
 
   # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
   # (and OLLAMA=true so the service uses it):
