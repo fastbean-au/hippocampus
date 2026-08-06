@@ -8,10 +8,27 @@ name: Release
 # stamped into the binary at
 # build time via -ldflags (see the Dockerfile), so a running instance reports the release version
 # through --version and /healthz.
+# The manual trigger is the escape hatch for a tag push that never produced a run - a GitHub
+# Actions outage swallows the push event, and re-pushing an existing tag is a no-op, so without
+# this the only recovery is to delete and re-create the remote tag.
 on:
   push:
     tags:
       - "v*"
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.25.0)"
+        required: true
+        type: string
+
+# Every job resolves the release tag through this one variable rather than github.ref_name, which
+# is the branch (main) on a manual run and would stamp binaries "main", name the archives after it,
+# and hand `gh release create` a ref that is not a tag. Each checkout pins the same value, so a
+# dispatch builds the tagged commit and not whatever main has moved on to.
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
@@ -69,6 +86,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-go@v5
         with:
@@ -91,7 +110,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # --verify-tag refuses to release a ref that is not an existing tag; --generate-notes builds
         # the changelog from merged PRs since the previous tag.
-        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+        run: gh release create "${RELEASE_TAG}" --generate-notes --verify-tag
 
   # Cross-compile every binary and attach them to the release, so an end user can grab a runnable
   # tool without a Go toolchain - most valuable for integrations/mcp, which an MCP host
@@ -108,6 +127,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-go@v5
         with:
@@ -121,7 +142,7 @@ jobs:
       # else a .tar.gz. A single checksums.txt over all archives lets a downloader verify integrity.
       - name: Cross-compile and archive
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
@@ -182,7 +203,7 @@ jobs:
       # before checksums/upload, so only the archives and packages ship.
       - name: Package .deb and .rpm (nfpm)
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
@@ -208,7 +229,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # --clobber so re-running the workflow on the same tag replaces assets rather than failing.
-        run: gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+        run: gh release upload "${RELEASE_TAG}" dist/* --clobber
 
   # Point the Homebrew tap at this release: bump the version + sha256s in the three formulae
   # (fastbean-au/homebrew-tap) from the checksums.txt the binaries job just published, then commit
@@ -235,6 +256,8 @@ jobs:
 
       # The bump script lives in this repo; the tap repo is checked out beside it as the write target.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
         if: steps.gate.outputs.enabled == 'true'
 
       - name: Checkout the tap repo
@@ -249,7 +272,7 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
 
@@ -285,6 +308,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       # QEMU emulates the target arch for the small alpine RUN steps (adduser, mkdir/chown) in the
       # final image stages; the heavy Go compile is cross-compiled natively via BUILDPLATFORM. Buildx
@@ -310,8 +335,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -320,7 +345,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ env.RELEASE_TAG }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
@@ -333,8 +358,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-mcp
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
 
       - name: Build and push MCP image
         uses: docker/build-push-action@v6
@@ -344,7 +369,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ env.RELEASE_TAG }}
           tags: ${{ steps.meta-mcp.outputs.tags }}
           labels: ${{ steps.meta-mcp.outputs.labels }}
 
@@ -357,8 +382,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-config-wizard
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
 
       - name: Build and push config-wizard image
         uses: docker/build-push-action@v6
@@ -368,7 +393,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ env.RELEASE_TAG }}
           tags: ${{ steps.meta-config-wizard.outputs.tags }}
           labels: ${{ steps.meta-config-wizard.outputs.labels }}
 
@@ -389,6 +414,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       # See the publish job: QEMU for the alpine RUN steps, Buildx for the multi-platform manifest.
       - name: Set up QEMU
@@ -410,8 +437,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-otel-collector
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
 
       - name: Build and push collector image
         uses: docker/build-push-action@v6
@@ -421,7 +448,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ env.RELEASE_TAG }}
           tags: ${{ steps.meta-otel.outputs.tags }}
           labels: ${{ steps.meta-otel.outputs.labels }}
 
@@ -445,6 +472,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       # See the publish job: QEMU for the alpine RUN steps, Buildx for the multi-platform manifest.
       - name: Set up QEMU
@@ -466,8 +495,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-${{ matrix.broker }}-bridge
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
 
       - name: Build and push bridge image
         uses: docker/build-push-action@v6
@@ -477,7 +506,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ env.RELEASE_TAG }}
             BROKER=${{ matrix.broker }}
           tags: ${{ steps.meta-bridge.outputs.tags }}
           labels: ${{ steps.meta-bridge.outputs.labels }}
