@@ -10,23 +10,6 @@
 
 ![Hippocampus Architecture](docs/go-hippocampus.png)
 
-**🔭 See it running:** [**hippocampus-demo.com**](https://hippocampus-demo.com) — live consoles on a
-compressed decay clock, so memories visibly fade, reinforce, and consolidate while you watch.
-
----
-
-## 💡 Why Hippocampus?
-
-Traditional storage engines rely on **Time-To-Live (TTL)** or fixed FIFO queues to manage bounded disk space. But age alone is a poor indicator of value: critical system anomalies, high-impact audit events, and frequently referenced context often get purged simply because they crossed an arbitrary time threshold.
-
-Hippocampus applies principles from human memory consolidation to solve long-term data retention under finite capacity. Rather than indiscriminately truncating or expiring data, it continuously evaluates significance, access frequency, and relationships—retaining the **highest-value context** while gracefully degrading low-value noise.
-
-- **Relative Significance & Ranking:** Insert events dynamically relative to adjacent records (`ABOVE`, `BELOW`, or `BETWEEN`) without enforcing rigid, static importance scales.
-- **Reinforcement through Recall:** Accessing or querying a record strengthens its retention weight, protecting high-demand operational data from decay.
-- **Sleep & Consolidation:** Runs periodic background consolidation cycles to apply decay models, compact space, and distill clusters of episodic details into compact semantic summaries.
-- **Content Retrieval, Ranked by Value:** Search memory bodies out of the box on the default embedded install — no cluster to run — with significance and recall count blended into the result order, so the store's own view of what matters shapes what comes back first. Add OpenSearch and an embedding model for semantic and hybrid (meaning + keyword) retrieval. See [Content search](docs/configuration.md#content-search).
-- **Durable & Compliance-Safe:** Embedded or centralised deployment backed by SQLite (WAL mode), PostgreSQL, or MySQL. Includes configurable minimum retention floors to guarantee compliance windows regardless of storage pressure.
-
 ---
 
 ## 🔭 Live Demo — [hippocampus-demo.com](https://hippocampus-demo.com)
@@ -42,6 +25,20 @@ minutes and you can watch it. Both consoles take a read-only sign-in: **`demo` /
 - **[Grafana dashboard](https://grafana.hippocampus-demo.com)** — live telemetry from both stacks.
 - **[Config builder](https://config-builder.hippocampus-demo.com)** — build a `config.json` and its
   deployment artefacts in the browser (see [below](#-configuration-wizard)).
+
+---
+
+## 💡 Why Hippocampus?
+
+Traditional storage engines rely on **Time-To-Live (TTL)** or fixed FIFO queues to manage bounded disk space. But age alone is a poor indicator of value: critical system anomalies, high-impact audit events, and frequently referenced context often get purged simply because they crossed an arbitrary time threshold.
+
+Hippocampus applies principles from human memory consolidation to solve long-term data retention under finite capacity. Rather than indiscriminately truncating or expiring data, it continuously evaluates significance, access frequency, and relationships—retaining the **highest-value context** while gracefully degrading low-value noise.
+
+- **Relative Significance & Ranking:** Insert events dynamically relative to adjacent records (`ABOVE`, `BELOW`, or `BETWEEN`) without enforcing rigid, static importance scales.
+- **Reinforcement through Recall:** Accessing or querying a record strengthens its retention weight, protecting high-demand operational data from decay.
+- **Sleep & Consolidation:** Runs periodic background consolidation cycles to apply decay models, compact space, and distill clusters of episodic details into compact semantic summaries.
+- **Content Retrieval, Ranked by Value:** Search memory bodies out of the box on the default embedded install — no cluster to run — with significance and recall count blended into the result order, so the store's own view of what matters shapes what comes back first. Add OpenSearch and an embedding model for semantic and hybrid (meaning + keyword) retrieval. See [Content search](docs/configuration.md#content-search).
+- **Durable & Compliance-Safe:** Embedded or centralised deployment backed by SQLite (WAL mode), PostgreSQL, or MySQL. Includes configurable minimum retention floors to guarantee compliance windows regardless of storage pressure.
 
 ---
 

@@ -85,6 +85,11 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 - First run after a clone no longer needs a config file: an absent `./config.json` starts the
   service on built-in defaults (a `--config_file` given explicitly must still exist).
+- The web console presents a **sign-in card in place of the console** when authentication is on and
+  no session has resolved — on first load, after **Sign out**, and when a token is refused. The
+  header's always-present bearer-token box is gone; the token is entered on the card instead. Purely
+  a console change: the server enforced (and still enforces) authorisation on every RPC regardless of
+  what the page shows.
 
 ## [0.23.0] - 2026-08-05
 

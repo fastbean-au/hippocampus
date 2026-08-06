@@ -315,6 +315,14 @@ the tier still comes from `auth.roleClaim`/`auth.roleMapping`. When `auth.method
 `hmac`, `/ui/config` simply reports the method and the console falls back to its manual bearer-token
 box.
 
+Whichever it reports, the console uses it to decide what its **sign-in card** offers. Under `none` no
+card is shown at all; otherwise the page opens on the card in place of the tabs — the token box under
+`hmac`, a **Sign in** button under `idp` — and reveals the console only once `GET /v1/whoami` resolves
+a role. The card returns whenever the session does not: after **Sign out**, on a token the service
+refuses (401), and on one whose role grants no tier (403). A failure that is not credential-shaped —
+a 503 while a purge runs, say — deliberately leaves the console up rather than inviting the
+operator to replace a token that is perfectly good.
+
 #### Server-side sign-in (`auth.oauth2`)
 
 `auth.ui` above runs the OIDC Authorisation Code + PKCE flow **in the browser** as a public client

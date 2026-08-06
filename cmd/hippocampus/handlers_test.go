@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -33,6 +34,26 @@ func TestWebUIHandler(t *testing.T) {
 
 	if rec.Body.Len() == 0 {
 		t.Error("expected a non-empty console body")
+	}
+}
+
+// TestWebUIShipsGated verifies the console is served in its signed-out state: the body carries the
+// gated class from the markup rather than having it applied by script, and the login card it gates
+// behind is present. Those two together are what stop an unauthenticated load rendering a console
+// whose every call would be refused - a page that shipped ungated would flash one first, and boot()
+// only ever *lifts* the gate.
+func TestWebUIShipsGated(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ui", nil)
+
+	webUIHandler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+
+	for _, want := range []string{`<body class="gated">`, `id="gate"`, `id="gate-form"`, `id="gate-login"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected the console to contain %q", want)
+		}
 	}
 }
 

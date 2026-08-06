@@ -635,13 +635,16 @@ ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns`
 - Under `hmac`, use a long random `auth.signingSecret` — at least 32 bytes; a shorter secret is
   brute-forceable and the service warns at startup.
 - **Web console (`/ui`).** The HTTP gateway serves an embedded single-page console at `/ui`. The
-  static page loads without a token (it carries none — the operator pastes the bearer token into it,
-  which is then kept in the browser's `localStorage` and sent with each `/v1` call), but every action
-  it performs still goes through auth, [authorisation](configuration.md#authorisation), and the purge
-  gate like any other request. On the token you paste it calls `GET /v1/whoami` and adapts what it
-  offers to the effective role — hiding the write controls for a `reader` and showing the role in the
-  header — but that is a convenience only; the server still enforces the tier on every RPC, so a
-  hidden control is not a security boundary. Because the token lives in the browser, serve `/ui` only
+  static page loads without a token (it carries none), but when this deployment authenticates it
+  opens on a **sign-in card in place of the console** — a bearer-token box under `hmac`, a **Sign in**
+  button under `idp` — and reveals the tabs only once a session resolves. The pasted token is kept in
+  the browser's `localStorage` and sent with each `/v1` call; **Sign out** in the header discards it
+  (or ends the provider session). None of that is the security boundary: every action still goes
+  through auth, [authorisation](configuration.md#authorisation), and the purge gate like any other
+  request. On the credential it holds the console calls `GET /v1/whoami` and adapts what it offers to
+  the effective role — hiding the write controls for a `reader` and showing the role in the header —
+  but that too is a convenience; the server enforces the tier on every RPC, so a hidden control (or a
+  raised gate) is not a security boundary. Because the token lives in the browser, serve `/ui` only
   over TLS and treat it as a trusted-operator tool, not a public endpoint; put it behind your ingress'
   access controls if the gateway is internet-facing.
 - **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left

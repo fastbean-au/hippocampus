@@ -51,8 +51,19 @@
     align-items: center;
     gap: 8px;
   }
-  .token-box input { width: 260px; }
-  .manual-token { display: flex; align-items: center; gap: 8px; }
+  /* Login gate: when this deployment authenticates and no session has resolved, the sign-in card
+     stands in place of the console rather than a console loading empty behind a header token box.
+     The page ships gated (the body class is in the markup, not applied by script) so an
+     unauthenticated load never flashes a console whose every call would be refused; boot() lifts it
+     as soon as the session resolves. The header stays visible throughout — only its controls, the
+     tabs, and the console body are hidden — so the page never looks like it failed to load. */
+  #gate { display: none; }
+  body.gated #gate { display: block; max-width: 420px; margin: 48px auto; padding: 0 20px; }
+  body.gated nav, body.gated main, body.gated .token-box { display: none; }
+  #gate .card { margin: 0; }
+  #gate p { margin: 0 0 12px; }
+  #gate-error { color: var(--bad); }
+  #gate-hint { font-size: 12px; margin: 12px 0 0; }
   /* Read-only gating: when the caller's role is below writer, hide every write-oriented control.
      This is a UX convenience only - the server enforces authorization regardless of what is shown. */
   body.readonly .writer-only { display: none !important; }
@@ -206,19 +217,16 @@
   .chart text { fill: var(--muted); font-size: 11px; }
 </style>
 </head>
-<body>
+<!-- The page ships gated: the login card is what an unauthenticated load renders, and boot() lifts
+     the class once it knows either that this deployment does not authenticate or that the session
+     it holds is good. Starting ungated would mean every such load flashed a console first. -->
+<body class="gated">
 <header>
   <h1><span>&#129504;</span> Hippocampus Console</h1>
   <div class="token-box">
     <span id="role-pill" class="pill" title="your effective authorization role"></span>
-    <!-- Manual bearer-token entry: used when auth is off or hmac. Hidden in OIDC mode, where the
-         Sign in / Sign out buttons drive the login instead. -->
-    <span id="manual-token" class="manual-token">
-      <label for="token" style="margin:0">Bearer token</label>
-      <input id="token" type="password" placeholder="optional — only if auth enabled" autocomplete="off">
-    </span>
-    <!-- OIDC controls: shown only when /ui/config reports auth.method idp with a UI client. -->
-    <button id="login-btn" class="btn small" style="display:none">Sign in</button>
+    <!-- Sign out is the only auth control in the header; signing *in* happens on the gate below,
+         which is what stands here when there is no session. -->
     <button id="logout-btn" class="btn ghost small" style="display:none">Sign out</button>
   </div>
 </header>
@@ -229,6 +237,40 @@
   <button data-tab="events">Events</button>
   <button data-tab="decay">Decay</button>
 </nav>
+
+<!-- ===================== LOGIN GATE ===================== -->
+<!-- Rendered in place of the console whenever this deployment authenticates and no session has
+     resolved: on first load, after a sign-out, and when a token is refused or a session lapses.
+     It carries whichever sign-in affordance the deployment's auth.method calls for — the token box
+     under hmac, the provider button under idp — and boot() reveals exactly one of them. -->
+<section id="gate">
+  <div class="card">
+    <h2 id="gate-title">Checking access…</h2>
+    <p class="muted" id="gate-lede">Resolving this console's session.</p>
+
+    <!-- Manual bearer-token entry: the sign-in affordance under auth.method hmac, and the fallback
+         when /ui/config could not be read but a call came back refused. A form, so Enter submits. -->
+    <form id="gate-form" style="display:none">
+      <div class="field wide">
+        <label for="gate-token">Bearer token</label>
+        <input id="gate-token" type="password" autocomplete="off" placeholder="paste the token issued for this service">
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit" id="gate-submit">Sign in</button>
+      </div>
+    </form>
+
+    <!-- Provider sign-in: shown under idp in either login mode — the in-browser PKCE flow, or the
+         service-hosted flow at /auth/login. boot() wires the click to whichever is configured. -->
+    <div class="actions" id="gate-oidc" style="display:none">
+      <button class="btn" id="gate-login">Sign in</button>
+    </div>
+
+    <p id="gate-error" style="display:none"></p>
+    <p class="muted" id="gate-hint" style="display:none">Mint one with
+      <code class="inline">hippocampus --mint-token --client-id &lt;id&gt; --ttl 24h</code>.</p>
+  </div>
+</section>
 
 <main>
   <!-- ===================== SEARCH ===================== -->
@@ -554,7 +596,7 @@ const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "hippocampus_token";
 
 // oidc holds the browser login state used only when /ui/config reports auth.method "idp" with a UI
-// client. In every other mode it stays disabled and the manual bearer-token box below drives auth.
+// client. In every other mode it stays disabled and the login gate's token box drives auth instead.
 // The access token lives in sessionStorage (cleared when the tab closes) rather than localStorage,
 // and no client secret is ever involved - this is an Authorization Code + PKCE public client.
 const OIDC_ACCESS_KEY = "hippocampus_oidc_access";
@@ -570,15 +612,28 @@ const oidc = {
   refreshTimer: null,
 };
 
+// authCfg records what /ui/config said about this deployment: whether it authenticates at all, and
+// therefore whether the login gate is ever raised. It is deliberately the *configured* answer rather
+// than "did the last call fail", so a refusal that has nothing to do with credentials — a purge, a
+// network blip — never presents a sign-in card to an operator whose token is perfectly good. The one
+// exception is in refreshCaps: a 401/403 promotes it, so a deployment whose /ui/config is unreachable
+// still gets a way to enter a token.
+const authCfg = { enabled: false, method: "none" };
+
+// manualToken is the pasted bearer token in the non-OIDC modes. It lives in localStorage (so it
+// survives a reload, as it always has) and is read from there rather than from a DOM input, because
+// the input it is typed into only exists while the gate is up.
+let manualToken = localStorage.getItem(TOKEN_KEY) || "";
+
 // server holds the state for the server-side login mode (/ui/config loginMode "server"): the service
 // hosts the OIDC flow at /auth/login and sets an HttpOnly session cookie, so this page never sees or
-// stores a token. The Sign in / Sign out buttons simply navigate to /auth/login and /auth/logout,
-// and every /v1 call is authenticated by the cookie the browser sends automatically.
+// stores a token. The gate's Sign in and the header's Sign out simply navigate to /auth/login and
+// /auth/logout, and every /v1 call is authenticated by the cookie the browser sends automatically.
 const server = { enabled: false };
 
 // getToken returns the bearer sent on every /v1 call: nothing in server-login mode (the HttpOnly
 // cookie carries auth and is not script-readable), the OIDC access token when the in-browser flow is
-// active, otherwise whatever is typed into the manual token box.
+// active, otherwise the token entered on the login gate.
 function getToken() {
   if (server.enabled) {
     return "";
@@ -588,7 +643,22 @@ function getToken() {
     return oidc.accessToken || "";
   }
 
-  return $("token").value.trim();
+  return manualToken;
+}
+
+// haveCredential reports whether this page holds something to authenticate with. Under the
+// server-hosted login the session is an HttpOnly cookie no script can read, so it answers true and
+// leaves the verdict to what whoami returned.
+function haveCredential() {
+  if (server.enabled) {
+    return true;
+  }
+
+  if (oidc.enabled) {
+    return !!oidc.accessToken;
+  }
+
+  return !!manualToken;
 }
 
 // serverRefresh asks the service to swap the refresh cookie for a fresh access token (204 on
@@ -603,30 +673,142 @@ async function serverRefresh() {
   }
 }
 
-// applyServerButtons shows Sign in when there is no active session and Sign out when there is,
-// deciding from whether whoami resolved a role.
-function applyServerButtons() {
-  const signedIn = !!caps.role;
+// ------------------------------------------------------------------ login gate
+// The gate is the console's signed-out state: it stands in place of the tabs whenever this
+// deployment authenticates and no session has resolved. It is raised and lifted from applyCaps, so
+// every route into a signed-out state — first load, sign-out, a refused token, a lapsed session
+// surfaced by any failing call — goes through the same decision.
 
-  $("login-btn").style.display = signedIn ? "none" : "inline-block";
-  $("logout-btn").style.display = signedIn ? "inline-block" : "none";
+// gateNeeded reports whether the login card should stand in front of the console: this deployment
+// authenticates, no role resolved, and the reason is credential-shaped — nothing held at all, or a
+// call the server refused as unauthenticated (401) or unauthorised (403). A whoami that failed for
+// any other reason (a purge returns 503) deliberately leaves the console up: inviting an operator to
+// replace a good token would not fix anything.
+function gateNeeded() {
+  if (!authCfg.enabled || caps.role) {
+    return false;
+  }
+
+  return !haveCredential() || caps.status === 401 || caps.status === 403;
 }
 
-$("token").value = localStorage.getItem(TOKEN_KEY) || "";
-$("token").addEventListener("change", () => {
-  localStorage.setItem(TOKEN_KEY, getToken());
+// gateMessage explains a refusal, and only a refusal: an operator who has just signed out, or who
+// has never signed in, is shown the plain card with no error on it. A 403 is called out separately
+// from a 401 because the remedy differs — the token is fine, the role it carries is not.
+function gateMessage() {
+  if (caps.status === 403) {
+    return "That sign-in is valid, but its role grants no access to this console.";
+  }
+
+  // In server-login mode the cookie is unreadable, so "held a credential" cannot be told apart from
+  // "just signed out" — the card simply offers Sign in rather than claiming an expiry.
+  if (caps.status === 401 && !server.enabled && haveCredential()) {
+    return oidc.enabled
+      ? "Your session has ended. Sign in again to continue."
+      : "That token was not accepted. Check it, or mint a new one.";
+  }
+
+  return "";
+}
+
+// setGateError shows or clears the line under the sign-in control.
+function setGateError(msg) {
+  const el = $("gate-error");
+
+  el.textContent = msg || "";
+  el.style.display = msg ? "block" : "none";
+}
+
+// applyGate raises or lifts the gate and fills it in for the active sign-in mode. Called from
+// applyCaps on every capability refresh; when the gate is not needed it only drops the body class,
+// leaving the card's contents alone since nothing renders them.
+function applyGate() {
+  const gated = gateNeeded();
+
+  document.body.classList.toggle("gated", gated);
+
+  if (!gated) {
+    return;
+  }
+
+  const manual = !oidc.enabled && !server.enabled;
+
+  $("gate-title").textContent = "Sign in";
+  $("gate-lede").textContent = manual
+    ? "This service requires a bearer token. It is kept in this browser and sent with every request the console makes."
+    : "This service authenticates through your identity provider.";
+
+  $("gate-form").style.display = manual ? "block" : "none";
+  $("gate-oidc").style.display = manual ? "none" : "block";
+  $("gate-hint").style.display = manual ? "block" : "none";
+
+  setGateError(gateMessage());
+
+  if (manual) {
+    $("gate-token").focus();
+  }
+}
+
+// signInManual takes the pasted token, keeps it for subsequent calls, and re-resolves capabilities.
+// A token the server refuses leaves the gate up with the reason on it, rather than dropping the
+// operator into a console where every action would fail.
+async function signInManual(ev) {
+  ev.preventDefault();
+
+  const value = $("gate-token").value.trim();
+
+  if (!value) {
+    setGateError("Paste the bearer token issued for this service.");
+
+    return;
+  }
+
+  manualToken = value;
+  localStorage.setItem(TOKEN_KEY, manualToken);
+
+  $("gate-submit").disabled = true;
+
+  try {
+    await refreshCaps();
+  } finally {
+    $("gate-submit").disabled = false;
+  }
+}
+
+// signOut ends the current session by whichever route this deployment's login mode calls for, and
+// so puts the gate back. Under the two OIDC modes it goes through the provider so the provider's
+// own session ends too; in manual mode it forgets the token this browser stored.
+function signOut() {
+  if (server.enabled) {
+    window.location.assign("/auth/logout");
+
+    return;
+  }
+
+  if (oidc.enabled) {
+    logout();
+
+    return;
+  }
+
+  manualToken = "";
+  localStorage.removeItem(TOKEN_KEY);
+  $("gate-token").value = "";
+
   refreshCaps();
-});
+}
 
 // caps holds what the current token is allowed to do, as reported by GET /v1/whoami. It gates the
 // write-oriented controls in the UI (a convenience only - the server enforces authorization on
 // every RPC regardless of what the console shows). canWrite defaults to true so the UI is usable
 // before the first whoami resolves and when authentication is disabled.
-let caps = { canWrite: true, isAdmin: true, role: null, authEnabled: false, searchModes: [] };
+let caps = { canWrite: true, isAdmin: true, role: null, authEnabled: false, searchModes: [], status: 0 };
 
 // refreshCaps asks the server who the current token is and applies the result. A 401 (no/invalid
 // token while auth is on) or 403 (valid token, but a role that grants nothing) both mean "cannot
-// write", handled without a toast since this runs on load and on every token change.
+// write", handled without a toast since this runs on load and on every sign-in. The status of a
+// failure is kept because the gate decides from it: only a credential-shaped refusal raises a
+// sign-in card.
 async function refreshCaps() {
   try {
     const who = await api("GET", "/v1/whoami");
@@ -640,9 +822,17 @@ async function refreshCaps() {
       isAdmin: !authEnabled || role === "admin",
       // Which search modes this deployment can serve - a property of the server, not the token.
       searchModes: who.searchModes || [],
+      status: 200,
     };
   } catch (e) {
-    caps = { role: null, authEnabled: true, canWrite: false, isAdmin: false, searchModes: [] };
+    caps = { role: null, authEnabled: true, canWrite: false, isAdmin: false, searchModes: [], status: e.status || 0 };
+
+    // A refused call is also how the console learns that auth is on when /ui/config could not be
+    // read (an old reverse proxy, a stripped route). Without this the gate would never be raised and
+    // the token box it carries — now the only one on the page — would be unreachable.
+    if (!authCfg.enabled && (e.status === 401 || e.status === 403)) {
+      authCfg.enabled = true;
+    }
   }
 
   applyCaps();
@@ -703,13 +893,18 @@ function applySearchModes() {
   field.hidden = false;
 }
 
-// applyCaps toggles the read-only body class (which hides .writer-only controls) and updates the
-// role pill in the header.
+// applyCaps toggles the read-only body class (which hides .writer-only controls), updates the role
+// pill and the Sign out button in the header, and raises or lifts the login gate.
 function applyCaps() {
   document.body.classList.toggle("readonly", !caps.canWrite);
   document.body.classList.toggle("admin", !!caps.isAdmin);
 
   applySearchModes();
+  applyGate();
+
+  // Sign out is offered only where there is a session to end: a deployment with authentication on
+  // and a role resolved for this caller.
+  $("logout-btn").style.display = (caps.authEnabled && caps.role) ? "inline-block" : "none";
 
   const pill = $("role-pill");
 
@@ -721,13 +916,7 @@ function applyCaps() {
 
   pill.style.display = "inline-block";
   pill.classList.toggle("ro", !caps.canWrite);
-  pill.textContent = caps.role ? ("role: " + caps.role) : (server.enabled ? "not signed in" : "no access — check token");
-
-  // In server-login mode the Sign in / Sign out buttons track the resolved session, so keep them in
-  // step with each capability refresh (login, logout, or an expiry surfaced by a failed call).
-  if (server.enabled) {
-    applyServerButtons();
-  }
+  pill.textContent = caps.role ? ("role: " + caps.role) : "not signed in";
 }
 
 // api issues a JSON request to the gateway (same origin). Returns parsed body,
@@ -769,7 +958,7 @@ async function api(method, path, body, _retried) {
 
     // Give the authorization failures a plain-language message rather than the terse server body:
     // 401 means the token is missing/invalid, 403 means it is valid but its role is insufficient.
-    if (res.status === 401) msg = (oidc.enabled || server.enabled) ? "Session expired — please sign in again." : "Unauthorized — set a valid bearer token above.";
+    if (res.status === 401) msg = (oidc.enabled || server.enabled) ? "Session expired — please sign in again." : "Unauthorized — the bearer token was not accepted.";
     if (res.status === 403) msg = "Forbidden — your token's role does not permit this action.";
 
     const err = new Error(msg);
@@ -1059,7 +1248,6 @@ function setSession(data) {
   sessionStorage.setItem(OIDC_EXPIRY_KEY, String(expiry));
 
   scheduleRefresh(expiry);
-  applyOidcButtons();
 }
 
 // scheduleRefresh arms a timer to refresh ~60s before expiry, but only when a refresh token is
@@ -1096,8 +1284,10 @@ async function refresh() {
     refreshCaps();
   } catch (e) {
     clearSession();
-    applyOidcButtons();
-    applyCaps();
+
+    // Re-resolving with no token is what raises the gate: it is the same signed-out state as a
+    // sign-out, and going through refreshCaps keeps that decision in one place.
+    refreshCaps();
   }
 }
 
@@ -1120,7 +1310,6 @@ function logout() {
   const end = oidc.endpoints && oidc.endpoints.end_session_endpoint;
 
   clearSession();
-  applyOidcButtons();
 
   if (end) {
     const p = new URLSearchParams({ client_id: oidc.cfg.clientId, post_logout_redirect_uri: redirectUri() });
@@ -1132,42 +1321,34 @@ function logout() {
   refreshCaps();
 }
 
-// applyOidcButtons shows Sign in when signed out and Sign out when signed in.
-function applyOidcButtons() {
-  const signedIn = !!oidc.accessToken;
-
-  $("login-btn").style.display = signedIn ? "none" : "inline-block";
-  $("logout-btn").style.display = signedIn ? "inline-block" : "none";
-}
-
-// boot reads /ui/config and, under idp, wires the login flow (processing a callback if the page was
-// loaded as one) before resolving capabilities. In every other mode it just resolves capabilities,
-// leaving the manual token box in place.
+// boot reads /ui/config, wires the login gate for whichever sign-in mode this deployment uses
+// (under idp processing a provider callback if the page was loaded as one), then resolves
+// capabilities — which is what lifts the gate, or leaves it standing with the right card on it.
 async function boot() {
   let cfg = { authMethod: "none" };
 
   try {
     cfg = await (await fetch("/ui/config")).json();
   } catch (e) {
-    // A missing/unreachable config endpoint leaves the console in manual-token mode.
+    // A missing/unreachable config endpoint leaves the console in manual-token mode; a refused /v1
+    // call then still raises the gate, since refreshCaps promotes authCfg on a 401/403.
   }
+
+  authCfg.method = cfg.authMethod || "none";
+  authCfg.enabled = authCfg.method !== "none";
 
   if (cfg.authMethod === "idp" && cfg.loginMode === "server") {
     // Server-hosted login: the service owns the OIDC flow and the session cookie, so the page only
     // navigates to its endpoints. refreshCaps() (at the end of boot) resolves whether a session
-    // exists and applyServerButtons (via applyCaps) shows the right control.
+    // exists, and applyGate (via applyCaps) presents the card if it does not.
     server.enabled = true;
-    $("manual-token").style.display = "none";
 
-    $("login-btn").addEventListener("click", () => window.location.assign("/auth/login"));
-    $("logout-btn").addEventListener("click", () => window.location.assign("/auth/logout"));
+    $("gate-login").addEventListener("click", () => window.location.assign("/auth/login"));
   } else if (cfg.authMethod === "idp" && cfg.clientId) {
     oidc.enabled = true;
     oidc.cfg = cfg;
-    $("manual-token").style.display = "none";
 
-    $("login-btn").addEventListener("click", login);
-    $("logout-btn").addEventListener("click", logout);
+    $("gate-login").addEventListener("click", login);
 
     try {
       oidc.endpoints = await discover(cfg.issuer);
@@ -1180,15 +1361,19 @@ async function boot() {
     if (oidc.accessToken) {
       scheduleRefresh(Number(sessionStorage.getItem(OIDC_EXPIRY_KEY)) || 0);
     }
-
-    applyOidcButtons();
   }
+
+  // The manual form and Sign out are wired in every mode: the form is only reachable when the gate
+  // presents it (including the idp deployment that configured no UI client, where pasting a token
+  // obtained elsewhere is the only way in), and signOut dispatches on the mode itself.
+  $("gate-form").addEventListener("submit", signInManual);
+  $("logout-btn").addEventListener("click", signOut);
 
   refreshCaps();
 }
 
-// Resolve config and the current token's capabilities on load so the write controls are gated and
-// the right auth affordance (manual box or Sign in) is shown before the operator interacts.
+// Resolve config and the current session on load: until it answers the page stays gated, so an
+// unauthenticated load presents a sign-in card rather than a console whose every call is refused.
 boot();
 
 // ------------------------------------------------------------------ search
