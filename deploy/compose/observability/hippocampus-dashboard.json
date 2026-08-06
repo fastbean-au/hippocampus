@@ -12,8 +12,72 @@
   "panels": [
     {
       "type": "row",
-      "title": "Ingest",
+      "title": "Requests (RED)",
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by RPC",
+      "description": "Hippocampus RPCs served per second, summed across the gRPC and HTTP transports. A request rejected before the gateway could route it (a bad token, an oversized body) is counted as \"unknown\", since naming it would mean labelling the metric with a path that carries ids.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (rpc) (rate(hippocampus_rpc_requests_total[$__rate_interval]))", "legendFormat": "{{rpc}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error rate",
+      "description": "Failing requests per second, split by fault. server_error is the SLO signal - the service failing. client_error is malformed, unauthorised or not-found traffic, which the operator cannot fix and which should not page.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [ { "matcher": { "id": "byName", "options": "error ratio" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_rpc_requests_total{outcome=\"server_error\"}[$__rate_interval]))", "legendFormat": "server_error" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_rpc_requests_total{outcome=\"client_error\"}[$__rate_interval]))", "legendFormat": "client_error" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_rpc_requests_total{outcome!=\"ok\"}[$__rate_interval])) / clamp_min(sum(rate(hippocampus_rpc_requests_total[$__rate_interval])), 0.0001)", "legendFormat": "error ratio" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request duration",
+      "description": "Server-side latency across all RPCs (histogram quantiles). This is the \"is it slow\" panel; the per-RPC breakdown below answers \"which call\".",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(hippocampus_rpc_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(hippocampus_rpc_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p95" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(hippocampus_rpc_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 duration by RPC",
+      "description": "Which call is slow: each series is one RPC's 95th-percentile server-side duration, summed across both transports.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(hippocampus_rpc_duration_seconds_bucket[$__rate_interval])) by (le, rpc))", "legendFormat": "{{rpc}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Failures by RPC and code",
+      "description": "Every non-ok response, labelled with the transport's own code - a gRPC code name on the gRPC port, an HTTP status on the gateway (the gateway maps several codes onto one status, so inverting it would report a code the service never returned). This is where an error-rate alert is drilled into.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (rpc, code) (rate(hippocampus_rpc_requests_total{outcome!=\"ok\"}[$__rate_interval]))", "legendFormat": "{{rpc}} {{code}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Ingest",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
     },
     {
       "type": "timeseries",
@@ -21,7 +85,7 @@
       "description": "Accepted writes per second.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_memories_stored_total[$__rate_interval]))", "legendFormat": "memories" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_events_stored_total[$__rate_interval]))", "legendFormat": "events" },
@@ -34,7 +98,7 @@
       "description": "Distribution of stored memory-body sizes (histogram quantiles).",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(hippocampus_memory_body_bytes_bucket[$__rate_interval])) by (le))", "legendFormat": "p50" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(hippocampus_memory_body_bytes_bucket[$__rate_interval])) by (le))", "legendFormat": "p95" },
@@ -47,7 +111,7 @@
       "description": "Bytes of memory body accepted per second (histogram sum rate).",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_memory_body_bytes_sum[$__rate_interval]))", "legendFormat": "bytes/s" }
       ]
@@ -55,7 +119,7 @@
     {
       "type": "row",
       "title": "Forgetting (reaping)",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }
     },
     {
       "type": "timeseries",
@@ -63,7 +127,7 @@
       "description": "Memories and events forgotten by the sleep cycle, per second.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 27 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_memories_consolidated_total[$__rate_interval]))", "legendFormat": "memories" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_events_consolidated_total[$__rate_interval]))", "legendFormat": "events" }
@@ -75,7 +139,7 @@
       "description": "Capacity-driven eviction: rows evicted per second and estimated bytes reclaimed per second.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [ { "matcher": { "id": "byName", "options": "bytes/s" }, "properties": [ { "id": "unit", "value": "Bps" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 27 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_memories_evicted_total[$__rate_interval]))", "legendFormat": "memories" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(hippocampus_events_evicted_total[$__rate_interval]))", "legendFormat": "events" },
@@ -88,7 +152,7 @@
       "description": "Writes rejected at storage time, split by reason.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 27 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (reason) (rate(hippocampus_memories_rejected_total[$__rate_interval]))", "legendFormat": "memory: {{reason}}" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (reason) (rate(hippocampus_events_rejected_total[$__rate_interval]))", "legendFormat": "event: {{reason}}" }
@@ -97,7 +161,7 @@
     {
       "type": "row",
       "title": "Capacity & store state",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 }
     },
     {
       "type": "timeseries",
@@ -105,7 +169,7 @@
       "description": "Live bytes the store occupies against its configured byte capacity, sampled each sleep cycle. retained_bytes is the portion held by the minimum retention floor: where it meets the capacity, eviction can no longer bring the store under its target.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 36 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_used_bytes)", "legendFormat": "used_bytes" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_capacity_bytes)", "legendFormat": "capacity_bytes" },
@@ -118,7 +182,7 @@
       "description": "Deletion-threshold multiplier derived from store utilisation; > 1 means forgetting is intensifying as the store fills.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 19 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 36 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_capacity_pressure)", "legendFormat": "pressure" }
       ]
@@ -129,7 +193,7 @@
       "description": "Current events and memories held, memories split by whether they belong to an event.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 36 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(hippocampus_events_count)", "legendFormat": "events" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(hippocampus_memories_count)", "legendFormat": "memories" }
@@ -138,7 +202,7 @@
     {
       "type": "row",
       "title": "Sleep cycle",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 44 }
     },
     {
       "type": "timeseries",
@@ -146,7 +210,7 @@
       "description": "Wall-clock duration of a full consolidate + evict + preserve cycle (histogram quantiles). A p95 climbing toward sleep.periodSeconds is a warning sign.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 45 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(hippocampus_sleep_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p50" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(hippocampus_sleep_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p95" },
@@ -159,7 +223,7 @@
       "description": "Sleep cycles per second, split by success. Any sustained success=false is trouble.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 45 },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (success) (rate(hippocampus_sleeps_total[$__rate_interval]))", "legendFormat": "success={{success}}" }
       ]

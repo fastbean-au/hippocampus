@@ -631,10 +631,11 @@ func run(ctx context.Context, version versionInfo) error {
 	})
 
 	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
-	// interceptor and returns codes.Internal rather than letting it crash the process. Auth runs
-	// next, so an unauthenticated request is still rejected before the purge check or the handler
-	// does any work on it.
-	interceptors := []grpc.UnaryServerInterceptor{InterceptorRecoverPanic}
+	// interceptor and returns codes.Internal rather than letting it crash the process. RPC metrics
+	// run next, so a request rejected by authentication still appears in the rate and error counts.
+	// Auth follows, so an unauthenticated request is still rejected before the purge check or the
+	// handler does any work on it.
+	interceptors := []grpc.UnaryServerInterceptor{InterceptorRecoverPanic, InterceptorMetrics}
 
 	if authEnabled {
 		// Authentication first (rejects an invalid/absent token), then authorisation (rejects a
@@ -746,7 +747,10 @@ func run(ctx context.Context, version versionInfo) error {
 		// hence the RPC's required tier - is known) rather than an outer HTTP wrapper. It reads the
 		// claims stashed by auth.HTTPMiddleware below, so it enforces the same policy as the gRPC
 		// interceptor from the same table. Added only when auth is enabled, mirroring the gRPC side.
-		var muxOpts []runtime.ServeMuxOption
+		// The route-capture middleware is registered first so it runs outermost of the gateway
+		// middlewares: it names the RPC for httpMetricsMiddleware, and running ahead of the authoriser
+		// means a request the authoriser rejects is still counted against the RPC it was aimed at.
+		muxOpts := []runtime.ServeMuxOption{runtime.WithMiddlewares(gatewayRouteMiddleware())}
 
 		if authEnabled {
 			muxOpts = append(muxOpts, runtime.WithMiddlewares(authoriser.GatewayMiddleware()))
@@ -856,6 +860,11 @@ func run(ctx context.Context, version versionInfo) error {
 		if maxRequestBytes := viper.GetInt64("gateway.maxRequestBytes"); maxRequestBytes > 0 {
 			handler = maxRequestBytesMiddleware(handler, maxRequestBytes)
 		}
+
+		// RPC metrics wrap auth and the body-size cap so a request rejected by either is still counted
+		// in the rate and error figures, matching the gRPC chain, where the metrics interceptor also
+		// sits outside authentication.
+		handler = httpMetricsMiddleware(handler)
 
 		// Panic recovery wraps everything (outermost) so a panic in any handler or middleware
 		// becomes a clean 500 rather than a dropped connection.

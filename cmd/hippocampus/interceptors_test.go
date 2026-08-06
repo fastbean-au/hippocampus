@@ -60,6 +60,12 @@ func (erroringMeter) Int64Counter(name string, _ ...metric.Int64CounterOption) (
 	return noop.Int64Counter{}, fmt.Errorf("injected instrument creation failure for %q", name)
 }
 
+// Float64Histogram fails the same way, so newRPCInstruments' second error branch can be exercised
+// alongside the counter's.
+func (erroringMeter) Float64Histogram(name string, _ ...metric.Float64HistogramOption) (metric.Float64Histogram, error) {
+	return noop.Float64Histogram{}, fmt.Errorf("injected instrument creation failure for %q", name)
+}
+
 // erroringMeterProvider embeds noop.MeterProvider so it satisfies metric.MeterProvider, overriding
 // only Meter to hand back erroringMeter.
 type erroringMeterProvider struct {

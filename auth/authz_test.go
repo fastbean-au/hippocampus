@@ -33,6 +33,41 @@ func TestPoliciesCoverEveryRPC(t *testing.T) {
 	}
 }
 
+// TestRouteRPC verifies the route -> RPC inversion the request metrics label gateway calls with:
+// every policy's own route must resolve back to its RPC (so the two transports report one vocabulary
+// and no route is silently unnamed), capture segments must be tolerated in the gateway's rendering
+// as well as the table's normalised form, and an unknown route must report itself unknown rather
+// than return a name.
+func TestRouteRPC(t *testing.T) {
+	for method, p := range policies {
+		rpc, ok := RouteRPC(p.httpMethod, p.httpPath)
+		if !ok {
+			t.Errorf("route %s %s does not resolve to an RPC", p.httpMethod, p.httpPath)
+
+			continue
+		}
+
+		if rpc != method {
+			t.Errorf("route %s %s resolved to %q, want %q", p.httpMethod, p.httpPath, rpc, method)
+		}
+	}
+
+	// The gateway renders a matched pattern with its capture variable names, not the "*" the table
+	// stores, so the lookup must normalise before matching.
+	if rpc, ok := RouteRPC(http.MethodPatch, "/v1/memories/{memory_id=*}"); !ok || rpc != "UpdateMemory" {
+		t.Errorf("expected a rendered capture pattern to resolve to UpdateMemory, got %q (found: %t)", rpc, ok)
+	}
+
+	if rpc, ok := RouteRPC(http.MethodGet, "/v1/not-an-rpc"); ok {
+		t.Errorf("expected an unknown route to report itself unknown, got %q", rpc)
+	}
+
+	// The verb is part of the key: the same path under a different method is a different route.
+	if rpc, ok := RouteRPC(http.MethodDelete, "/v1/memories"); ok {
+		t.Errorf("expected a known path under an unmapped verb to report itself unknown, got %q", rpc)
+	}
+}
+
 func TestParseTier(t *testing.T) {
 	cases := map[string]struct {
 		want Tier

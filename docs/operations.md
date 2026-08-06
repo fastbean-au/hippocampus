@@ -385,7 +385,44 @@ legitimately needs longer to finish.
 ## Observability
 
 OpenTelemetry tracing and metrics are optional and exported over OTLP/gRPC (see
-[Observability](configuration.md#observability)). Metrics worth alerting on in production:
+[Observability](configuration.md#observability)).
+
+### Request metrics (RED)
+
+Two instruments describe the request surface itself, and are what an SLO is built on:
+
+- **`hippocampus.rpc.requests`** — a counter of RPCs served. Rate and error rate both come from it.
+- **`hippocampus.rpc.duration`** — a histogram of server-side duration in seconds.
+
+Both carry the same four low-cardinality attributes, so a rate and a latency quantile for the same
+slice of traffic are filtered identically:
+
+| Attribute   | Values                                | Notes                                                                                                                                    |
+| ----------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `transport` | `grpc`, `http`                        | The gateway is instrumented separately, since it calls the service directly and never runs the gRPC interceptor chain.                   |
+| `rpc`       | the bare RPC name, e.g. `StoreMemory` | Named identically on both transports, so one query sums a call across them. `unknown` for a request rejected before routing.             |
+| `code`      | a gRPC code name, or an HTTP status   | The transport's own code. The gateway maps several gRPC codes onto one status, so it reports the status rather than a guessed-back code. |
+| `outcome`   | `ok`, `client_error`, `server_error`  | The uniform classification across transports — see below.                                                                                |
+
+`outcome` is three-valued rather than a success flag on purpose. A client sending malformed or
+unauthorised requests is not the service failing, so **alert on `outcome="server_error"`**; a rising
+`client_error` rate is worth looking at but is usually a caller to talk to, not a page.
+
+Two scoping decisions worth knowing:
+
+- **Only the RPC surface is counted.** The health and readiness probes, the console and its
+  front-channel config, the login endpoints, and the static OpenAPI document are excluded — a
+  probe's steady tick in the denominator would make every error-rate query meaningless.
+- **A request rejected before it could be routed** — a bad token, an oversized body, an unmatched
+  path — is counted with `rpc="unknown"`. It is deliberately not named from its path: a path carries
+  memory and event ids, and so unbounded metric cardinality.
+
+A recovered panic is _not_ counted here (the request unwinds with no status to classify); it appears
+as `hippocampus.panics_recovered` instead, which is the metric to alert on for that case.
+
+### Domain metrics
+
+Metrics worth alerting on in production:
 
 - `hippocampus.capacity_pressure` and `hippocampus.used_bytes` — how full the store is; sustained
   high pressure means eviction is doing heavy work and the store is at its bound.
@@ -422,9 +459,9 @@ OBSERVABILITY=true docker compose --profile observability up --build
 ```
 
 Grafana is then at `http://localhost:3000`, opening on a pre-built **Hippocampus** dashboard
-(provisioned from `deploy/compose/observability/`, set as the home page) that charts ingest, forgetting
-(consolidation/eviction volume and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration
-from the metrics above. The demo soak harness has the same switch: `OBSERVABILITY=1 ./demo/run.sh`
+(provisioned from `deploy/compose/observability/`, set as the home page) that charts request rate,
+error rate and latency (overall and per RPC), then ingest, forgetting (consolidation/eviction volume
+and bytes reclaimed), capacity/used-bytes, and sleep-cycle duration from the metrics above. The demo soak harness has the same switch: `OBSERVABILITY=1 ./demo/run.sh`
 launches the collector (via docker or podman) with the same dashboard and points the service at it. Metrics stay off unless the collector is present,
 which is what keeps a plain run quiet — enabling export without a reachable OTLP endpoint is the
 only thing that produces export-failure log lines.

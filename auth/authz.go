@@ -137,6 +137,34 @@ var policies = map[string]rpcPolicy{
 	"Clear":    {TierAdmin, http.MethodPost, "/v1/clear"},
 }
 
+// routeRPCs inverts the policy table: "<VERB> <normalised path>" -> bare gRPC method name. It is
+// derived at init from the same entries the tier maps are, so it can never name a different set of
+// RPCs than the service actually serves.
+var routeRPCs = func() map[string]string {
+	out := make(map[string]string, len(policies))
+
+	for method, p := range policies {
+		out[p.httpMethod+" "+p.httpPath] = method
+	}
+
+	return out
+}()
+
+// RouteRPC maps a matched gateway route - an HTTP verb plus the raw path template of the pattern the
+// mux matched - back to the bare gRPC method name serving it. It exists so per-request metrics can
+// label a gateway request with the same RPC name the gRPC interceptor uses, letting one dashboard
+// panel sum a call across both transports; the policy table is already the single, drift-guarded
+// source for the RPC <-> route correspondence, so deriving the name from it beats maintaining a
+// second copy that could disagree. Unlike the tier maps this says nothing about authorisation and is
+// safe to call whether or not auth is enabled. The bool is false for a route with no policy entry,
+// which callers must treat as an unknown RPC rather than inventing a label from the path (a raw path
+// carries ids, and so unbounded metric cardinality).
+func RouteRPC(httpMethod string, pattern string) (string, bool) {
+	rpc, ok := routeRPCs[httpMethod+" "+normalisePattern(pattern)]
+
+	return rpc, ok
+}
+
 // captureSegment matches a grpc-gateway path capture as Pattern.String renders it (e.g. "{id=*}"),
 // so normalisePattern can reduce it to the placeholder the policy table uses.
 var captureSegment = regexp.MustCompile(`\{[^}]*\}`)

@@ -172,7 +172,26 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   the `sleep.duration` and `memory.body_bytes` histograms, and the `capacity_pressure`/`used_bytes`
   gauges) keep every attribute low-cardinality (bool or small enum), so it is safe to add attributes
   only within that constraint; an optional `grafana/otel-lgtm` compose profile with a provisioned
-  dashboard (`deploy/compose/observability/`) exists for local viewing.
+  dashboard (`deploy/compose/observability/`) exists for local viewing. The **RED metrics** —
+  request rate, errors, duration — are separate, in `rpcmetrics.go`, because they belong to the
+  transport boundary rather than the domain: `hippocampus.rpc.requests` and
+  `hippocampus.rpc.duration` share one attribute set (`transport`, `rpc`, `code`, `outcome`) and are
+  recorded by `InterceptorMetrics` on gRPC and `httpMetricsMiddleware` on the gateway, both installed
+  inside panic recovery but **outside** authentication so a rejected request still appears in the
+  error rate. Four things carry the design. (1) `outcome` is three-valued
+  (`ok`/`client_error`/`server_error`, gRPC classifying via the existing `isClientFaultCode`) rather
+  than a success bool, so an SLO can alert on the service failing without also firing on clients
+  sending bad requests. (2) `rpc` names the same thing on both transports — the gateway resolves it
+  via `auth.RouteRPC`, an inversion of `auth/authz.go`'s already-drift-guarded `policies` table —
+  and **never** from the request path, which carries ids. (3) The gateway therefore needs _two_
+  middlewares: only a post-routing `runtime.Middleware` (`gatewayRouteMiddleware`, registered first
+  so it runs ahead of the authoriser) knows the matched route, but only the outer handler sees
+  requests rejected before routing, so the former fills in a `routeCapture` the latter placed on the
+  context, and an unrouted request is counted as `rpc="unknown"`. (4) Neither recording is deferred:
+  panic recovery sits outside both, so a deferred record would count a panicking call as a success —
+  panics stay `hippocampus.panics_recovered`'s to report. Both are scoped to the RPC surface (the
+  `/proto.Hippocampus/` prefix; `/v1` minus the OpenAPI doc), keeping probe, console and login
+  traffic out of the error-rate denominator.
 - `cmd/config-wizard/` — the configuration and deployment wizard: a second `package main` in the
   root module (`main.go` plus the embedded `wizard/` assets). The Go side is a static file server
   and nothing else — embedded `index.html`/`app.js`/`styles.css` behind a strict CSP (no
