@@ -119,7 +119,14 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   capacity pressure and threshold, an inline-SVG decay curve, and an `admin`-gated dry-run panel
   over `PreviewConsolidation`. It computes **no** decay maths of its own — every number and every
   curve point is served — which is the whole reason those RPCs report what they do). `main.go` —
-  bootstrap only: reads the JSON config file into viper, initialises logging
+  bootstrap only: reads the JSON config file into viper (**optional on the default path** — an
+  absent `./config.json` starts the service on `setStartupDefaults`' built-in defaults with a Warn
+  line naming them, while a `--config_file` given explicitly must exist; `setStartupDefaults` is a
+  function rather than inline statements so a test can assert the defaults alone form a valid
+  configuration, and it defaults the four keys `validateConfig` refuses at zero —
+  `consolidation.method`/`aggressiveness`/`unitsOfAgeInDays` and `storage.directory` — without
+  relaxing item 19.1, since viper falls back to a default only for an *unset* key and a configured
+  0 still fails validation), initialises logging
   (logrus, `logging.go`; `logging.level` selects severity — default `info` — and `logging.json`
   toggles JSON-vs-text output to stdout) and observability (`observability.go`: optional OTEL
   tracing/metrics over OTLP/gRPC,
@@ -150,7 +157,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   enforcement policy from `keepalive.minTimeSeconds`/`keepalive.permitWithoutStream`
   (`grpc.KeepaliveEnforcementPolicy`); each defaults to grpc-go's own default when unset. Both
   listeners bind all interfaces unless `bindAddress` (gRPC) / `gateway.bindAddress` (HTTP) restrict
-  the interface — e.g. `127.0.0.1` behind a TLS-terminating sidecar/mesh. When `gateway.port`
+  the interface — e.g. `127.0.0.1` behind a TLS-terminating sidecar/mesh. A zero `gateway.port` is
+  logged at Info naming what goes with it (console, OpenAPI doc, HTTP probes) and how to enable it,
+  since binding nothing was previously indistinguishable from binding something that failed. When
+  `gateway.port`
   is positive it also registers `contract.RegisterHippocampusHandlerServer` (the generated
   `hippocampus.pb.gw.go` reverse proxy) on a `runtime.NewServeMux()` and serves it over HTTP (TLS
   via `ListenAndServeTLS` when `tls.enabled`) — calling straight into the same `hipo` server

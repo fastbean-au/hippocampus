@@ -5,6 +5,11 @@ file (see [`config.json`](../config.json) for a complete example) loaded via vip
 guided first configuration, start with [Getting started](getting-started.md); for tuning in
 production, see the [Operations guide](operations.md).
 
+The config file itself is optional. If nothing exists at the default path (`./config.json`) the
+service starts on its built-in defaults and logs a warning naming them — enough to try it, never
+what a deployment wants. A `--config_file` you name explicitly must exist: pointing at a
+configuration and being given the defaults instead would be worse than failing.
+
 ## Environment variable overrides
 
 Any config key can be overridden by an environment variable named `HIPPOCAMPUS_<KEY>` with the
@@ -101,9 +106,12 @@ log line (the gauges still serve a cached count).
 ### HTTP gateway
 
 Every RPC is also reachable as a JSON/HTTP endpoint, for clients that would rather not speak
-gRPC. The gateway is **off by default**; set `gateway.port` to a port to enable an in-process
-[grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway) reverse proxy (0, the default,
-disables it). **8080** is the conventional port, and the Docker configurations use it. The gateway
+gRPC. The gateway is **off unless a port is configured**; set `gateway.port` to enable an in-process
+[grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway) reverse proxy (0 disables it).
+**8080** is the conventional port, and every configuration in this repository — the root
+`config.json`, the Docker and Kubernetes ones, the demo — uses it. Disabling it removes the web
+console, the OpenAPI document, and the HTTP health probes along with the JSON API, so the service
+logs a line at startup naming what is off when the port is 0. The gateway
 calls straight into the same server instance gRPC uses, so there is no extra network hop, dial, or
 serialisation round trip between the two. An OpenAPI/Swagger description of the mapping below is
 served at `/v1/openapi.json`.

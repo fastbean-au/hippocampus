@@ -297,6 +297,7 @@ const STEPS = [
             label: "Data directory",
             type: "text",
             def: "./data",
+            svc: "./data",
             always: true,
             when: (s) => value(s, "storage.driver") === "sqlite",
             help: "Where hippocampus.db and its WAL live. It must be writable by the service user; an empty value selects the test-only in-memory database and is refused at startup.",
@@ -776,6 +777,7 @@ const STEPS = [
             label: "Algorithm",
             type: "select",
             def: 1,
+            svc: 1,
             options: [
               [1, "1 — power law (human forgetting curve)"],
               [2, "2 — linear, e^a rate"],
@@ -791,6 +793,7 @@ const STEPS = [
             label: "Aggressiveness (a)",
             type: "float",
             def: 1.0,
+            svc: 1.0,
             help: "How fast value decays. For method 6 it is the window midpoint, in age units; for method 3 it must exceed 1/e (~0.368).",
           },
           {
@@ -805,6 +808,7 @@ const STEPS = [
             label: "Days per age unit",
             type: "float",
             def: 1.0,
+            svc: 1.0,
             help: "The clock's scale. Below 1 compresses it — 0.002 makes an age unit about three minutes, which is how the demo shows a week of forgetting in an afternoon.",
           },
           {

@@ -95,19 +95,37 @@ func execute(args []string) {
 		return
 	}
 
-	c, err := os.ReadFile(viper.GetString("config_file"))
-	if err != nil {
-		log.Panicf("failed to read config file '%s': %s", viper.GetString("config_file"), err.Error())
-	}
+	configFile := viper.GetString("config_file")
 
-	viper.SetConfigType("json")
+	// A config file missing from the *default* path is not an error: every key the service cannot
+	// run without now carries a viper.SetDefault (see setStartupDefaults), so `go run
+	// ./cmd/hippocampus` on a fresh clone starts rather than panicking on a file the newcomer has
+	// not written yet. A --config_file the operator named explicitly is still fatal when it is
+	// absent - they pointed at a configuration, and quietly starting on defaults instead of it
+	// would run a service that is not the one they configured. Every other read error (a
+	// directory, no permission) stays fatal on both paths.
+	configMissing := false
 
-	// A discarded parse error here would start the service with an all-zero config: auth off,
-	// storage.directory empty (an in-memory SQLite database — every write lost on restart), and
-	// consolidation.unitsOfAgeInDays 0. Fail fast, matching the os.ReadFile handling
-	// above.
-	if err := viper.ReadConfig(bytes.NewBuffer(c)); err != nil {
-		log.Panicf("failed to parse config file '%s': %s", viper.GetString("config_file"), err.Error())
+	c, err := os.ReadFile(configFile)
+
+	switch {
+
+	case err == nil:
+		viper.SetConfigType("json")
+
+		// A discarded parse error here would start the service with an all-zero config: auth off,
+		// storage.directory empty (an in-memory SQLite database — every write lost on restart), and
+		// consolidation.unitsOfAgeInDays 0. Fail fast, matching the os.ReadFile handling
+		// above.
+		if err := viper.ReadConfig(bytes.NewBuffer(c)); err != nil {
+			log.Panicf("failed to parse config file '%s': %s", configFile, err.Error())
+		}
+
+	case errors.Is(err, os.ErrNotExist) && !flags.Changed("config_file"):
+		configMissing = true
+
+	default:
+		log.Panicf("failed to read config file '%s': %s", configFile, err.Error())
 	}
 
 	// Let environment variables override the config file, so secrets (auth.signingSecret,
@@ -162,37 +180,20 @@ func execute(args []string) {
 		return
 	}
 
-	// Defaults shared by normal startup and the --backfill-search CLI mode.
-	viper.SetDefault("storage.driver", "sqlite")
-	viper.SetDefault("storage.pool.maxOpenConns", 25)
-	viper.SetDefault("storage.queryTimeoutSeconds", 60)
-	viper.SetDefault("storage.compression.enabled", true)
-	viper.SetDefault("storage.compression.minBytes", 512)
-	viper.SetDefault("shutdown.timeoutSeconds", 10)
-	// Search result ranking. Both default to a mild influence rather than off: a store that knows
-	// how significant each memory is, and how often it has been recalled, should use that when
-	// deciding what to show first - text relevance alone is what a search engine without those
-	// signals would do. Mild, because relevance still has to lead: at these weights significance
-	// and recall reorder near-equal matches rather than override a clearly better one. Set both to
-	// 0 for pure relevance order.
-	viper.SetDefault("search.significanceWeight", 0.3)
-	viper.SetDefault("search.recallWeight", 0.2)
+	setStartupDefaults()
 
-	viper.SetDefault("opensearch.index", "hippocampus-memories")
-	viper.SetDefault("opensearch.queueSize", 1024)
-	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
-	viper.SetDefault("opensearch.reconcileBatchSize", 500)
-	viper.SetDefault("ollama.address", "http://localhost:11434")
-	viper.SetDefault("ollama.model", "llama3.2")
-
-	// Semantic-search embedding. Off by default and, unlike the summariser, gated on OpenSearch:
-	// the k-NN index is the only vector store this service has.
-	viper.SetDefault("ollama.embedding.address", "http://localhost:11434")
-	viper.SetDefault("ollama.embedding.model", "nomic-embed-text")
-	viper.SetDefault("ollama.embedding.timeoutSeconds", 30)
-	viper.SetDefault("ollama.embedding.batchSize", 32)
-	viper.SetDefault("ollama.embedding.dimensions", 768)
-	viper.SetDefault("ollama.timeoutSeconds", 120)
+	// Said once, at Warn, and only here: it is after --mint-token has returned (logging writes to
+	// stdout, which that mode needs to itself) and after the defaults are set, so it can report the
+	// values actually in force. Running on defaults is supported, but it is never what a deployment
+	// wants, so it must not be silent.
+	if configMissing {
+		log.Warnf("no configuration file at '%s' - starting on built-in defaults: %s storage in '%s', gRPC on port %d, no authentication",
+			configFile,
+			viper.GetString("storage.driver"),
+			viper.GetString("storage.directory"),
+			viper.GetInt("port"),
+		)
+	}
 
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
 	// from the primary store and exits without starting the server (see backfill.go).
@@ -221,7 +222,7 @@ func execute(args []string) {
 	}
 
 	// Validate the consolidation and sleep config before touching the database or server. A
-	// missing consolidation.unitsOfAgeInDays (viper returns 0) makes the age term +Inf, which
+	// consolidation.unitsOfAgeInDays explicitly set to 0 makes the age term +Inf, which
 	// collapses every decay method to a value of 0 and deletes every memory and event past the
 	// minimum age on the first sleep cycle; the other checks guard against equally destructive or
 	// runaway configurations. Fail fast rather than start and forget
@@ -238,6 +239,56 @@ func execute(args []string) {
 	if err := run(ctx, version); err != nil {
 		log.Fatalf("hippocampus exited with an error: %s", err.Error())
 	}
+}
+
+// setStartupDefaults applies every built-in default shared by normal startup and the
+// --backfill-search CLI mode. It is a function rather than a run of statements inside execute so a
+// test can assert what the service does with no configuration file at all - which, since these
+// defaults are what makes that a supported way to start, is the property worth pinning.
+func setStartupDefaults() {
+	viper.SetDefault("storage.driver", "sqlite")
+	viper.SetDefault("storage.pool.maxOpenConns", 25)
+	viper.SetDefault("storage.queryTimeoutSeconds", 60)
+	viper.SetDefault("storage.compression.enabled", true)
+	viper.SetDefault("storage.compression.minBytes", 512)
+	viper.SetDefault("shutdown.timeoutSeconds", 10)
+
+	// The four keys validateConfig refuses at zero. They are defaulted so that a run with no
+	// configuration file at all - the first thing anyone does after cloning - starts on the same
+	// decay curve the documentation describes, rather than failing on four keys in turn. This is
+	// deliberately not a relaxation of item 19.1's guarantee: viper falls back to a default only
+	// for a key the configuration does not set, so an explicitly configured 0 still fails
+	// validation, which is the case that silently deleted everything. The values match the repo's
+	// own config.json, so reading that file changes nothing.
+	viper.SetDefault("consolidation.method", 1)
+	viper.SetDefault("consolidation.aggressiveness", 1.0)
+	viper.SetDefault("consolidation.unitsOfAgeInDays", 1.0)
+	viper.SetDefault("storage.directory", "./data")
+
+	// Search result ranking. Both default to a mild influence rather than off: a store that knows
+	// how significant each memory is, and how often it has been recalled, should use that when
+	// deciding what to show first - text relevance alone is what a search engine without those
+	// signals would do. Mild, because relevance still has to lead: at these weights significance
+	// and recall reorder near-equal matches rather than override a clearly better one. Set both to
+	// 0 for pure relevance order.
+	viper.SetDefault("search.significanceWeight", 0.3)
+	viper.SetDefault("search.recallWeight", 0.2)
+
+	viper.SetDefault("opensearch.index", "hippocampus-memories")
+	viper.SetDefault("opensearch.queueSize", 1024)
+	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
+	viper.SetDefault("opensearch.reconcileBatchSize", 500)
+	viper.SetDefault("ollama.address", "http://localhost:11434")
+	viper.SetDefault("ollama.model", "llama3.2")
+
+	// Semantic-search embedding. Off by default and, unlike the summariser, gated on OpenSearch:
+	// the k-NN index is the only vector store this service has.
+	viper.SetDefault("ollama.embedding.address", "http://localhost:11434")
+	viper.SetDefault("ollama.embedding.model", "nomic-embed-text")
+	viper.SetDefault("ollama.embedding.timeoutSeconds", 30)
+	viper.SetDefault("ollama.embedding.batchSize", 32)
+	viper.SetDefault("ollama.embedding.dimensions", 768)
+	viper.SetDefault("ollama.timeoutSeconds", 120)
 }
 
 // run builds the server (observability, database, the optional search/S3/auth/TLS surface, the gRPC
@@ -889,6 +940,12 @@ func run(ctx context.Context, version versionInfo) error {
 		}()
 
 		log.Debug("HTTP gateway initialised")
+	} else {
+		// Disabling the gateway removes far more than the JSON API - the web console, the OpenAPI
+		// document, and the HTTP health probes a container or Kubernetes deployment needs all live
+		// on it - and binding nothing looked identical to binding something that then failed. Say
+		// what is off, and how to turn it on.
+		log.Info("HTTP gateway disabled (gateway.port is 0): no JSON/HTTP API, no /ui console, no /v1/openapi.json, and no /healthz or /readyz probes. Set gateway.port (8080 is conventional) or pass --gateway-port to enable it")
 	}
 
 	// stats.intervalSeconds drives the periodic stats log line and bounds how often the shared count

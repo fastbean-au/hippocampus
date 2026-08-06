@@ -108,8 +108,9 @@ The **only keys the service does not already default** toggle writes the smaller
 key that would actually change behaviour, and nothing else.
 
 The distinction matters more than it looks. The service applies a built-in default to only a handful
-of keys; every other absent key reads as its zero value, and several of those are fatal
-(`consolidation.method`, `aggressiveness`, and `unitsOfAgeInDays` all refuse to start at 0). The
-minimal form therefore still writes those out. A test in `cmd/config-wizard` keeps the wizard's list
+of keys; every other absent key reads as its zero value, and several of those are fatal — a
+*present* `consolidation.method`, `aggressiveness`, or `unitsOfAgeInDays` of 0 still refuses to
+start, which is why the minimal form omits them only when they match the service's own default
+rather than writing a zero. A test in `cmd/config-wizard` keeps the wizard's list
 of service defaults in step with `viper.SetDefault` in `cmd/hippocampus/main.go`, so the two cannot
 drift into producing a config that looks right and will not start.

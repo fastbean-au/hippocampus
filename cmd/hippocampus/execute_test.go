@@ -98,14 +98,56 @@ func TestExecute_BadFlag(t *testing.T) {
 	})
 }
 
-// TestExecute_ConfigReadFailure panics when the config file cannot be read, rather than starting
-// with an all-zero config.
+// TestExecute_ConfigReadFailure panics when a config file the operator named explicitly cannot be
+// read. Absence is tolerated only on the default path (see TestExecute_MissingDefaultConfigFile):
+// a --config_file that was asked for and is not there must fail rather than silently run something
+// other than the configuration it points at.
 func TestExecute_ConfigReadFailure(t *testing.T) {
 	viper.Reset()
 	defer viper.Reset()
 
 	expectPanic(t, func() {
 		execute([]string{"--config_file", filepath.Join(t.TempDir(), "does-not-exist.json")})
+	})
+}
+
+// TestExecute_MissingDefaultConfigFile is the first-run path: no config.json anywhere, no flags
+// beyond the mode. It must get past the read, warn that it is running on defaults, and reach a CLI
+// mode that needs the defaults to be in force - --backfill-search resolves the sqlite store from
+// storage.directory, which only has a value because setStartupDefaults gave it one.
+func TestExecute_MissingDefaultConfigFile(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	// An empty working directory, so ./config.json genuinely does not exist and the ./data the
+	// defaults name is created under the temp directory rather than the repository.
+	t.Chdir(t.TempDir())
+
+	out := captureStdout(t, func() {
+		execute([]string{"--backfill-search"})
+	})
+
+	if !strings.Contains(out, "no configuration file") {
+		t.Errorf("running without a config file did not warn about it; log output was:\n%s", out)
+	}
+}
+
+// TestExecute_ExplicitZeroUnitsOfAgeInDaysStillFatal pins the half of item 19.1 that defaulting
+// consolidation.unitsOfAgeInDays must not undo. viper falls back to a default only for a key the
+// configuration does not set, so a file that sets it to 0 - the value that makes the age term +Inf
+// and deletes everything past the minimum age on the first cycle - must still refuse to start.
+func TestExecute_ExplicitZeroUnitsOfAgeInDaysStillFatal(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	path := writeConfigFile(t, `{"consolidation": {"unitsOfAgeInDays": 0}}`)
+
+	withFatalPanic(t, func() {
+		execute([]string{"--config_file", path})
 	})
 }
 
@@ -203,15 +245,17 @@ func TestExecute_BackfillWithoutAnyIndexFailsFast(t *testing.T) {
 	})
 }
 
-// TestExecute_InvalidConfig reaches validateConfig with an empty (all-default) config and fails
-// fast, covering the read/env/logging/defaults span between the CLI modes and the server start.
+// TestExecute_InvalidConfig reaches validateConfig with a present-but-invalid consolidation method
+// and fails fast, covering the read/env/logging/defaults span between the CLI modes and the server
+// start. An empty config no longer serves here: every key validateConfig checks is defaulted, so
+// `{}` is a valid configuration now and would start a server.
 func TestExecute_InvalidConfig(t *testing.T) {
 	viper.Reset()
 	defer viper.Reset()
 
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	path := writeConfigFile(t, `{}`)
+	path := writeConfigFile(t, `{"consolidation": {"method": 99}}`)
 
 	withFatalPanic(t, func() {
 		execute([]string{"--config_file", path})

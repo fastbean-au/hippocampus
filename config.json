@@ -6,7 +6,7 @@
   "port": 50051,
   "maxRecvMsgBytes": 0,
   "gateway": {
-    "port": 0,
+    "port": 8080,
     "maxRequestBytes": 0
   },
   "auth": {

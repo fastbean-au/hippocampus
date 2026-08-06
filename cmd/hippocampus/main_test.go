@@ -176,6 +176,22 @@ func validConsolidationConfig() {
 	viper.Set("storage.directory", "/var/lib/hippocampus")
 }
 
+// TestStartupDefaultsAreAValidConfiguration is what makes running with no config file at all a
+// supported mode rather than an accident: with nothing but the built-in defaults in force,
+// validateConfig must pass. Four keys used to read as zero here - consolidation.unitsOfAgeInDays,
+// method, aggressiveness, and storage.directory - and each was fatal in turn, so `go run
+// ./cmd/hippocampus` on a fresh clone could not start.
+func TestStartupDefaultsAreAValidConfiguration(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+
+	if err := validateConfig(); err != nil {
+		t.Fatalf("the built-in defaults do not form a valid configuration: %s", err.Error())
+	}
+}
+
 // TestValidateConfigRejectsMissingUnitsOfAgeInDays is a regression test: when
 // consolidation.unitsOfAgeInDays is absent, viper returns 0, the age term becomes +Inf, and the
 // first sleep cycle deletes every memory and event past the minimum age. Startup must reject it

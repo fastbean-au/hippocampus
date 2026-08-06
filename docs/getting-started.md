@@ -27,9 +27,27 @@ docker compose up --build         # SQLite, database persisted in a named volume
 The compose file exposes `50051` (gRPC) and `8080` (HTTP gateway). If you build from source, use the
 configuration below.
 
+## Run it with no configuration at all
+
+```sh
+./hippocampus
+```
+
+With no `config.json` on the default path, the service starts on its built-in defaults — SQLite in
+`./data`, gRPC on `50051`, the power-law decay algorithm, no authentication — and logs a warning
+saying so. That is enough to make requests against, and nothing to write first. The HTTP gateway is
+off unless a port is given, so add `--gateway-port 8080` to get the JSON API and the browser console
+as well.
+
+It is a starting point, not a deployment: there is no authentication, no TLS, no capacity target,
+and — because `sleep.periodSeconds` has no default, deliberately — no automatic consolidation cycle,
+so nothing is forgotten until you ask for it with the `Sleep` RPC. The configuration below is the
+one to grow from.
+
 ## A minimal configuration
 
-Create `config.json`:
+The repository ships a `config.json` that already runs both listeners, so `./hippocampus -c
+config.json` from a clone works as-is. To write your own:
 
 ```json
 {
@@ -49,10 +67,10 @@ Create `config.json`:
 
 This runs the gRPC service on 50051 and the JSON gateway on 8080, stores the SQLite database under
 `./data`, and runs a consolidation ("sleep") cycle every 60 seconds using the power-law decay
-algorithm. `unitsOfAgeInDays`, `method` (1–6), and `aggressiveness` must all be set to valid values
-or the service refuses to start — a guard against a misconfiguration that would silently forget
-everything. See [Memory consolidation](consolidation.md#memory-consolidation) for what these mean and how
-to tune them.
+algorithm. `unitsOfAgeInDays`, `method` (1–6), and `aggressiveness` each have a default, but a value
+that is present and invalid — a zero, a negative, a `method` outside 1–6 — makes the service refuse
+to start rather than run: at zero they would silently forget everything. See [Memory
+consolidation](consolidation.md#memory-consolidation) for what these mean and how to tune them.
 
 ## Run
 
@@ -60,9 +78,10 @@ to tune them.
 ./hippocampus -c config.json
 ```
 
-The gRPC port defaults to **50051**. The HTTP gateway is **off by default**; the config above enables
-it on **8080** (the conventional port) via `gateway.port`. Both ports can also be set on the command
-line, which takes precedence over the config file:
+The gRPC port defaults to **50051**. The HTTP gateway is **off unless a port is configured**; the
+config above (and the repository's own `config.json`) enables it on **8080**, the conventional port.
+When it is off the service says so at startup, since the console and the HTTP probes go with it.
+Both ports can also be set on the command line, which takes precedence over the config file:
 
 ```sh
 ./hippocampus -c config.json --gateway-port 8080   # enable the gateway on the conventional port
