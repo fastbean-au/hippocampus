@@ -147,7 +147,12 @@ func isClientFaultCode(code codes.Code) bool {
 		codes.Unauthenticated,
 		codes.FailedPrecondition,
 		codes.OutOfRange,
-		codes.Canceled:
+		codes.Canceled,
+		// A caller that has been rate limited, or has sent a message above the receive cap, is a
+		// caller sending too much - not the service failing. Classifying it as a server fault would
+		// page an operator with the error-rate alert every time the protection they configured did
+		// its job.
+		codes.ResourceExhausted:
 
 		return true
 

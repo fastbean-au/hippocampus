@@ -961,6 +961,16 @@ async function api(method, path, body, _retried) {
     if (res.status === 401) msg = (oidc.enabled || server.enabled) ? "Session expired — please sign in again." : "Unauthorized — the bearer token was not accepted.";
     if (res.status === 403) msg = "Forbidden — your token's role does not permit this action.";
 
+    // A 429 is the deployment's own rate limit, not a fault: say so, and say how long to wait,
+    // since the terse body ("rate limit exceeded") reads like a service failure otherwise. The
+    // scope names which level bit — a global ceiling is nothing this operator did.
+    if (res.status === 429) {
+      const after = res.headers.get("Retry-After");
+      const scope = data.scope ? " (" + data.scope + " limit)" : "";
+
+      msg = "Rate limited" + scope + " — try again" + (after ? " in " + after + "s." : " shortly.");
+    }
+
     const err = new Error(msg);
     err.status = res.status;
 

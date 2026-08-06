@@ -334,6 +334,50 @@ groups:
                     type: last
                     params: []
 
+      - uid: hippocampus-rate-limit-rejecting
+        title: HippocampusRateLimitRejecting
+        condition: B
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is rejecting more than one request per second on a rate limit"
+          description: "Requests are being refused with ResourceExhausted/429 by a configured rate limit. Break it down by the scope attribute to see which level is biting: global is the instance ceiling, client is one caller over its share, tier is a whole class of caller. Decide whether this is a caller to talk to or a limit to raise - and note that a global ceiling being hit affects every caller, including well-behaved ones."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#rate-limiting"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_ratelimit_rejected_total[5m])) > 1
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
       - uid: hippocampus-search-index-dropping
         title: HippocampusSearchIndexDropping
         condition: B

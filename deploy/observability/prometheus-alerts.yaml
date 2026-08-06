@@ -144,6 +144,25 @@ groups:
           description: "Memories inside consolidation.minimumRetentionInDays now hold over 90% of consolidation.capacityBytes. Retention overrides the capacity target, so eviction will keep running, find nothing it is allowed to delete, and the store will grow past its target until that data ages out. Shorten minimumRetentionInDays, raise capacityBytes, or reduce the ingest rate."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
 
+      # --- Rate limiting -------------------------------------------------------------------
+
+      # Rejections are the limit working, so this is not "something is broken" - it is "the limits
+      # you set are now shaping traffic", which is a thing to know about before a caller reports it
+      # as an outage. The scope attribute says which level is biting: `global` means the instance
+      # ceiling (raise it, or scale out), `client` means one caller is over its share, `tier` means
+      # a whole class of caller is. Silent unless rate limiting is configured, since nothing
+      # publishes the counter otherwise.
+      - alert: HippocampusRateLimitRejecting
+        expr: sum(rate(hippocampus_ratelimit_rejected_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is rejecting more than one request per second on a rate limit"
+          description: "Requests are being refused with ResourceExhausted/429 by a configured rate limit. Break it down by the scope attribute to see which level is biting: global is the instance ceiling, client is one caller over its share, tier is a whole class of caller. Decide whether this is a caller to talk to or a limit to raise - and note that a global ceiling being hit affects every caller, including well-behaved ones."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#rate-limiting"
+
       # --- Secondary index and process health ----------------------------------------------
 
       # Index propagation is best-effort by design (the primary write never waits on it), so drops

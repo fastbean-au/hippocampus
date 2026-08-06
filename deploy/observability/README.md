@@ -11,7 +11,7 @@ rule_files:
   - /etc/prometheus/hippocampus-alerts.yaml
 ```
 
-Nine rules, covering what actually goes wrong:
+Ten rules, covering what actually goes wrong:
 
 | Alert                              | Fires when                                                   | Severity |
 | ---------------------------------- | ------------------------------------------------------------ | -------- |
@@ -22,6 +22,7 @@ Nine rules, covering what actually goes wrong:
 | `HippocampusCapacityPressureHigh`  | capacity pressure sustained near or above the target for 30m | warning  |
 | `HippocampusStoreOverCapacity`     | used bytes above `capacityBytes` for an hour                 | warning  |
 | `HippocampusRetentionNearCapacity` | retained bytes exceed 90% of `capacityBytes` for 30m         | critical |
+| `HippocampusRateLimitRejecting`    | a rate limit is refusing >1 request/second for 10m           | warning  |
 | `HippocampusSearchIndexDropping`   | index operations are being dropped for 10m                   | warning  |
 | `HippocampusPanicsRecovered`       | a handler panicked and was recovered                         | warning  |
 
@@ -44,7 +45,7 @@ Three properties worth knowing before you deploy them:
 
 ## The Grafana copy
 
-`../compose/observability/alerting-rules.yaml` is the same nine rules as Grafana-managed rules,
+`../compose/observability/alerting-rules.yaml` is the same ten rules as Grafana-managed rules,
 provisioned into the bundled `grafana/otel-lgtm` stack (every compose file's `observability` profile,
 and `demo/run.sh`) so the demo stack alerts as well as draws. It exists as a second file only
 because Grafana provisions its own rule format and cannot read a Prometheus rule file.

@@ -215,6 +215,80 @@ lowest-significance set is exactly what the next sleep cycle forgets first, whic
 lens on consolidation (see [Demonstrations](demonstrations.md)). The full field-level request and
 response schema for every endpoint lives in the OpenAPI description at `/v1/openapi.json`.
 
+### Rate limiting
+
+Off by default. When `rateLimit.enabled` is set, requests are admitted through a hierarchy of token
+buckets, and a request must have a token to spend at **every level that is configured** — a level
+left at `0` requests per second imposes no limit at all, so the three are independently optional and
+compose:
+
+| Level         | Key                            | What it bounds                                                                                                     |
+| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| **global**    | `rateLimit.global`             | Everything the instance will serve, whoever is asking. The denial-of-service ceiling.                              |
+| **tier**      | `rateLimit.tiers.<tier>`       | All callers of one [authorisation tier](#authorisation) between them — "readers may poll, writers may not flood". |
+| **client**    | `rateLimit.perClient`          | One caller's own share, so a single client cannot consume the global allowance and starve everyone else.           |
+
+```json
+"rateLimit": {
+    "enabled": true,
+    "global":    { "requestsPerSecond": 500, "burst": 1000 },
+    "perClient": { "requestsPerSecond": 20,  "burst": 40 },
+    "tiers": {
+        "reader": { "requestsPerSecond": 400, "burst": 800 },
+        "writer": { "requestsPerSecond": 100, "burst": 200 }
+    },
+    "trustForwardedFor": false,
+    "maxClients": 0,
+    "clientIdleSeconds": 0
+}
+```
+
+`requestsPerSecond` is the sustained rate and `burst` is how much of it may be spent at once; a
+`burst` left at 0 means one second's worth of the rate (at least one request), and a `burst` set
+without a rate is refused at startup, since a bucket that never refills would admit the burst once
+and then reject for ever. **Both transports enforce the same buckets** — gRPC and the HTTP gateway
+share one limiter, so a caller cannot double its allowance by using both.
+
+Three things are worth knowing before setting a number:
+
+- **The global ceiling is checked before the token is verified**; the per-tier and per-client levels
+  necessarily after, because both need to know who is calling. That is what makes the global level
+  the one that protects against an unauthenticated flood — but also the one that, when hit, refuses
+  well-behaved callers along with the rest. Size it above your real peak and let the narrower levels
+  do the shaping.
+- **A request refused by a narrower level has still spent its global token.** The ceiling counts
+  arrivals — the only thing a limit standing in front of identification can count — so a caller
+  being throttled by its own bucket still consumes the instance's allowance. That is the reason for
+  the sizing advice above rather than an oversight; between the tier and client levels, where both
+  decisions are made together, a refusal _is_ refunded.
+- **A tier with no rule is unlimited**, which is why the example leaves `admin` out: an operator
+  answering an incident should not be queued behind a limit meant for application traffic. Per-tier
+  limits need [authentication](#authentication) — a tier comes from a token's roles, so with
+  `auth.method: none` no caller ever matches one.
+- **Only the RPC surface is limited.** `/healthz`, `/readyz`, the console and its front-channel
+  config, the login endpoints, and `/v1/openapi.json` are never throttled: rejecting a readiness
+  probe under load would get the instance restarted rather than protected.
+
+A refused request gets gRPC `ResourceExhausted` (a `retry-after` trailer, in seconds) or HTTP `429`
+(a `Retry-After` header and a JSON body naming the level that refused). It is classified as a
+_client_ fault in the [request metrics](operations.md#request-metrics-red), so your own protection
+working never fires the server-error alert.
+
+**Who is "a caller"** is the authenticated `client_id`, falling back to the token's `sub` and then to
+the caller's address. With authentication off the address is all there is, which is per-host rather
+than per-application — usable, but the reason per-client limits pair naturally with tokens.
+`rateLimit.trustForwardedFor` makes the fallback read the leftmost `X-Forwarded-For` entry instead
+of the connection's address, and is **off by default on purpose**: the header is caller-supplied, so
+believing it on a directly reachable listener lets any caller mint itself an unlimited number of
+buckets. Turn it on only behind a proxy that overwrites the header.
+
+`rateLimit.maxClients` (0 → 10000) and `rateLimit.clientIdleSeconds` (0 → 300) bound the per-client
+bucket table in size and age, so it cannot itself become the memory-exhaustion surface the feature
+exists to prevent. The least recently seen caller is dropped first, which is the right order: a
+caller being throttled is by definition the most recent, so it is never the one evicted.
+`hippocampus.ratelimit.clients` reports how many are tracked — see
+[Rate limiting](operations.md#rate-limiting) for what to watch.
+
 ### Health and readiness
 
 The gateway exposes two probe endpoints, both always open (no token) so orchestrators can reach

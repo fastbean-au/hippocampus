@@ -467,6 +467,124 @@ const STEPS = [
         ],
       },
       {
+        title: "Rate limiting",
+        blurb:
+          "A hierarchy of token buckets: a request must pass every level you configure. The instance ceiling is checked before a token is verified (so a flood is bounded before it costs anything); the per-tier and per-client levels are checked after, since both need to know who is calling. A level left at 0 requests/second imposes no limit.",
+        fields: [
+          {
+            key: "rateLimit.enabled",
+            label: "Enable rate limiting",
+            type: "bool",
+            def: false,
+          },
+          {
+            key: "rateLimit.global.requestsPerSecond",
+            label: "Instance ceiling (requests/second)",
+            type: "float",
+            def: 0,
+            when: (s) => value(s, "rateLimit.enabled"),
+            help: "Everything the instance will serve, whoever is asking. This is the denial-of-service ceiling; size it above your real peak, since hitting it affects well-behaved callers too.",
+          },
+          {
+            key: "rateLimit.global.burst",
+            label: "Instance burst",
+            type: "int",
+            def: 0,
+            when: (s) => value(s, "rateLimit.enabled"),
+            help: "How much of the rate may be spent at once. 0 means one second's worth.",
+          },
+          {
+            key: "rateLimit.perClient.requestsPerSecond",
+            label: "Per-client (requests/second)",
+            type: "float",
+            def: 0,
+            when: (s) => value(s, "rateLimit.enabled"),
+            help: "Each caller gets its own bucket, so one caller cannot consume the instance ceiling and starve the rest. Keyed on the authenticated client id, or on the caller's address when authentication is off.",
+          },
+          {
+            key: "rateLimit.perClient.burst",
+            label: "Per-client burst",
+            type: "int",
+            def: 0,
+            when: (s) => value(s, "rateLimit.enabled"),
+          },
+          {
+            key: "rateLimit.tiers.reader.requestsPerSecond",
+            label: "Reader tier (requests/second)",
+            type: "float",
+            def: 0,
+            when: (s) =>
+              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+            help: "A ceiling on everything readers do between them. Needs authentication: a tier comes from a token's roles.",
+          },
+          {
+            key: "rateLimit.tiers.reader.burst",
+            label: "Reader tier burst",
+            type: "int",
+            def: 0,
+            when: (s) =>
+              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+          },
+          {
+            key: "rateLimit.tiers.writer.requestsPerSecond",
+            label: "Writer tier (requests/second)",
+            type: "float",
+            def: 0,
+            when: (s) =>
+              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+          },
+          {
+            key: "rateLimit.tiers.writer.burst",
+            label: "Writer tier burst",
+            type: "int",
+            def: 0,
+            when: (s) =>
+              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+          },
+          {
+            key: "rateLimit.tiers.admin.requestsPerSecond",
+            label: "Admin tier (requests/second)",
+            type: "float",
+            def: 0,
+            when: (s) =>
+              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+            help: "Best left at 0. An operator answering an incident should not be queued behind a limit meant for application traffic.",
+          },
+          {
+            key: "rateLimit.tiers.admin.burst",
+            label: "Admin tier burst",
+            type: "int",
+            def: 0,
+            when: (s) =>
+              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+          },
+          {
+            key: "rateLimit.trustForwardedFor",
+            label: "Trust X-Forwarded-For",
+            type: "bool",
+            def: false,
+            when: (s) => value(s, "rateLimit.enabled"),
+            help: "Only behind a proxy that overwrites the header. On a directly reachable listener it lets any caller pick its own bucket, and so as many of them as it likes.",
+          },
+          {
+            key: "rateLimit.maxClients",
+            label: "Tracked callers",
+            type: "int",
+            def: 0,
+            when: (s) => value(s, "rateLimit.enabled"),
+            help: "0 uses the internal default (10000). Bounds the per-client bucket table, so it cannot become a memory-exhaustion surface of its own; the least recently seen caller is dropped first.",
+          },
+          {
+            key: "rateLimit.clientIdleSeconds",
+            label: "Caller idle window (seconds)",
+            type: "int",
+            def: 0,
+            when: (s) => value(s, "rateLimit.enabled"),
+            help: "0 uses the internal default (300). How long a caller's bucket is kept after its last request.",
+          },
+        ],
+      },
+      {
         title: "Health and logging",
         fields: [
           {
@@ -1712,6 +1830,54 @@ function validate() {
       "security",
       "Authentication is off: every RPC, including Purge, is open to anything that can reach the port. Bind to loopback or set auth.method for anything beyond a local instance.",
     );
+  }
+
+  if (val("rateLimit.enabled")) {
+    const rates = [
+      "rateLimit.global.requestsPerSecond",
+      "rateLimit.perClient.requestsPerSecond",
+      "rateLimit.tiers.reader.requestsPerSecond",
+      "rateLimit.tiers.writer.requestsPerSecond",
+      "rateLimit.tiers.admin.requestsPerSecond",
+    ];
+
+    if (!rates.some((key) => Number(val(key)) > 0)) {
+      add(
+        "warn",
+        "server",
+        "Rate limiting is enabled but no level has a rate, so nothing is limited. The service starts and logs the same warning.",
+      );
+    }
+
+    if (authMethod === "none") {
+      const tiers = rates
+        .filter((key) => key.startsWith("rateLimit.tiers."))
+        .some((key) => Number(val(key)) > 0);
+
+      if (tiers) {
+        add(
+          "error",
+          "server",
+          "Per-tier limits need authentication: a tier comes from a token's roles, so with auth.method 'none' no caller ever matches one.",
+        );
+      }
+
+      if (Number(val("rateLimit.perClient.requestsPerSecond")) > 0) {
+        add(
+          "info",
+          "server",
+          "With authentication off, the per-client limit is keyed on the caller's address rather than an identity — which is per-host, not per-application.",
+        );
+      }
+    }
+
+    if (val("rateLimit.trustForwardedFor")) {
+      add(
+        "warn",
+        "server",
+        "rateLimit.trustForwardedFor believes a caller-supplied header. Only set it behind a proxy that overwrites X-Forwarded-For, or a caller can mint itself an unlimited number of buckets.",
+      );
+    }
   }
 
   if (

@@ -21,6 +21,34 @@
     "audience": "",
     "jwksRefreshIntervalSeconds": 300
   },
+  "rateLimit": {
+    "enabled": false,
+    "trustForwardedFor": false,
+    "maxClients": 0,
+    "clientIdleSeconds": 0,
+    "global": {
+      "requestsPerSecond": 0,
+      "burst": 0
+    },
+    "perClient": {
+      "requestsPerSecond": 0,
+      "burst": 0
+    },
+    "tiers": {
+      "reader": {
+        "requestsPerSecond": 0,
+        "burst": 0
+      },
+      "writer": {
+        "requestsPerSecond": 0,
+        "burst": 0
+      },
+      "admin": {
+        "requestsPerSecond": 0,
+        "burst": 0
+      }
+    }
+  },
   "tls": {
     "enabled": false,
     "certFile": "",

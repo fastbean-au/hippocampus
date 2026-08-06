@@ -465,10 +465,11 @@ as `hippocampus.panics_recovered` instead, which is the metric to alert on for t
 
 The alert set is shipped, not just described: `deploy/observability/prometheus-alerts.yaml` is a
 Prometheus rule file covering the failures below, ready to load with `rule_files:`, lift into a
-prometheus-operator `PrometheusRule` `spec:`, or `mimirtool rules load`. Nine rules — server error
+prometheus-operator `PrometheusRule` `spec:`, or `mimirtool rules load`. Ten rules — server error
 rate, request latency, sleep-cycle failures, no consolidator at all, capacity pressure, over
-capacity, retention consuming the capacity target, search-index drops, and recovered panics — each
-with a `description` saying what to do about it and a `runbook_url` back into this document.
+capacity, retention consuming the capacity target, rate-limit rejections, search-index drops, and
+recovered panics — each with a `description` saying what to do about it and a `runbook_url` back
+into this document.
 
 Three things to know before deploying them, and the file repeats each at the rule it applies to:
 
@@ -489,7 +490,7 @@ the last hour. Keep that window comfortably above `sleep.periodSeconds`. It asks
 (`absent_over_time`) rather than through an alerting engine's no-data policy, so Prometheus and
 Grafana answer it identically.
 
-The same nine rules are provisioned into the bundled Grafana below, so the demo stack alerts as well
+The same ten rules are provisioned into the bundled Grafana below, so the demo stack alerts as well
 as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
 provisions a contact point — where alerts should be delivered is deployment-specific.
 
@@ -597,8 +598,63 @@ with Postgres's default `max_connections` of 100 and five instances, 25 each alr
 ceiling — lower `maxOpenConns` or raise `max_connections`. Keep `maxIdleConns` at (or near)
 `maxOpenConns` so steady load reuses connections instead of churning them open and closed.
 
+## Rate limiting
+
+Off by default; [Rate limiting](configuration.md#rate-limiting) has the keys. Three levels of token
+bucket — an instance-wide ceiling, one bucket per authorisation tier, one per caller — of which a
+request must pass every level that has a rate. Both transports share the buckets, so a caller cannot
+double its allowance by switching between gRPC and the gateway.
+
+**What to set first.** The two that earn their keep on almost any exposed deployment are the global
+ceiling and the per-client rule. The ceiling is a survivability bound: it is checked _before_ the
+bearer token is verified, so it is the only level that can bound a flood of requests carrying junk
+tokens (with an identity provider, that is an RS256 verify per request the service would otherwise
+pay). The per-client rule is the fairness one, and is what stops a single misbehaving integration
+consuming the ceiling and taking everyone else's service with it. Per-tier limits are the tuning
+layer on top — worth setting once you know which class of caller is the noisy one, and best left
+off `admin`, so an operator answering an incident is not queued behind a limit meant for
+application traffic.
+
+**Sizing.** Start from observed peak on `hippocampus.rpc.requests` and leave real headroom above it:
+a global ceiling that bites refuses well-behaved callers along with the rest, which is the one
+failure mode of this feature that looks like an outage. The per-client rule can be much tighter,
+since it only ever affects the caller that exceeded it. Bursts matter more than they look: a client
+that batches its writes needs a burst that covers a batch, or it will be throttled at a rate it is
+nowhere near on average.
+
+One consequence to hold in mind while sizing: a request the per-client rule refuses has already
+spent a token from the global ceiling, because the ceiling is checked first and counts arrivals. A
+single flooding client can therefore exhaust the instance's allowance even while every one of its
+own requests is being refused — which is another way of saying the ceiling is a survivability bound
+and not a fair-share allocator. (Between the tier and client levels, where both decisions are made
+together, a refusal _is_ refunded.)
+
+**Watching it.** `hippocampus.ratelimit.rejected` counts refusals by `transport` and by `scope`
+(`global` / `tier` / `client`) — the scope is the whole diagnosis, since `client` is a caller to
+talk to and `global` is a limit to raise or an instance to scale out. The shipped
+`HippocampusRateLimitRejecting` alert fires on a sustained rejection rate.
+`hippocampus.ratelimit.clients` reports how many callers currently hold a bucket; sitting at
+`rateLimit.maxClients` means the table is churning — either the deployment has more callers than the
+cap allows for, or something is minting identities — and a churning table hands each evicted caller
+a fresh full bucket on its next request. Raise the cap.
+
+**What is never limited**: `/healthz`, `/readyz`, the console and its front-channel config, the
+login endpoints, and `/v1/openapi.json`. Throttling a readiness probe under load would get the
+instance restarted rather than protected.
+
+**Identity, and the proxy caveat.** A caller is its authenticated `client_id` (then the token's
+`sub`, then its address). With authentication off, or for an unauthenticated request, the address is
+all there is — per-host rather than per-application. Behind a reverse proxy every request arrives
+from the proxy's address, which collapses every caller into one bucket; `rateLimit.trustForwardedFor`
+is the fix, and is **off by default** because believing a caller-supplied header on a directly
+reachable listener lets any caller mint itself an unlimited number of buckets. Set it only when a
+proxy you control overwrites `X-Forwarded-For` rather than appending to it.
+
 ## Security
 
+- **Rate limiting** (`rateLimit.enabled`) bounds how much any caller — or the instance as a whole —
+  can ask for. Off by default; see [Rate limiting](#rate-limiting) above, and set at least a global
+  ceiling on anything reachable beyond trusted callers.
 - **Authentication** (`auth.method`: `none` / `hmac` / `idp`) and **TLS** (`tls.enabled`) are both
   optional and off by default — see [Authentication](configuration.md#authentication) and
   [TLS](configuration.md#tls). Enable both for any deployment exposed beyond localhost.

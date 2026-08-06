@@ -70,7 +70,14 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 - RPC-level RED metrics — `hippocampus.rpc.requests` and `hippocampus.rpc.duration`, on both the
   gRPC and gateway transports — plus a **Requests (RED)** row on the dashboard.
 - Shipped alert rules: `deploy/observability/prometheus-alerts.yaml` (portable Prometheus) and the
-  same nine rules as Grafana-managed rules provisioned into the compose observability profile.
+  same ten rules as Grafana-managed rules provisioned into the compose observability profile.
+- Rate limiting (`rateLimit.*`, off by default): a hierarchy of token buckets — an instance-wide
+  ceiling, one bucket per authorisation tier, one per caller — of which a request must pass every
+  level that has a rate. Both transports share the buckets. The global ceiling is enforced ahead of
+  token verification; the tier and client levels after it, since both need to know who is calling. A
+  refused request gets `ResourceExhausted`/`429` with a retry-after, counted by
+  `hippocampus.ratelimit.rejected` and classified as a client fault so the server-error alert does
+  not fire on your own protection working.
 - `docs/clients.md` — how to generate a client in a language other than Go, from either the proto or
   the OpenAPI document, with the API behaviour (quiet rejection, recall-is-a-write, int64-as-string)
   a generated stub does not convey. No packages are published for other languages yet.

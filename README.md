@@ -366,6 +366,7 @@ Hippocampus is production-hardened out of the box:
 - **Single Sign-On (SSO):** OpenID Connect login for the web console — an in-browser PKCE flow, or a server-side [confidential-client flow](docs/configuration.md#server-side-sign-in-authoauth2) (`auth.oauth2`) that keeps the token in an `HttpOnly` session cookie.
 - **Role-Based Authorisation:** Per-RPC `reader`/`writer`/`admin` tiers carried in the token, enforced identically on gRPC and the HTTP gateway.
 - **Transport Security:** Pinned TLS 1.2+ floor for both internal and external communication.
+- **[Rate Limiting](docs/configuration.md#rate-limiting):** A hierarchy of token buckets — an instance-wide ceiling, a bucket per role tier, and one per caller — that a request must pass every configured level of. The ceiling is enforced ahead of token verification, so a flood is bounded before it costs a signature check; both transports share the buckets.
 - **Storage Isolation:** Driver error masking behind standard gRPC status codes to prevent database schema leaks.
 - **Client Isolation:** Per-client request attribution, execution query timeouts, and stream concurrency limits.
 

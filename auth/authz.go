@@ -53,6 +53,14 @@ func (t Tier) String() string {
 	}
 }
 
+// TierNames returns every tier name, lowest first, as it is written in a token's roles claim and in
+// configuration. It exists so configuration that is itself keyed by tier - the per-tier rate limits
+// are the first - can enumerate and validate against the same set the authoriser resolves from,
+// rather than against a second copy of the names that could fall out of step with it.
+func TierNames() []string {
+	return []string{TierReader.String(), TierWriter.String(), TierAdmin.String()}
+}
+
 // parseTier maps a role/tier name (as written in a token's roles claim or in auth.roleMapping) to a
 // Tier. The bool is false for any unrecognised name, so an unknown role never silently grants
 // access.

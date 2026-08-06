@@ -40,6 +40,7 @@ var metricSourceFiles = []string{
 	"../../search/telemetry.go",
 	"../../stats/stats.go",
 	"interceptors.go",
+	"ratelimit.go",
 	"rpcmetrics.go",
 }
 

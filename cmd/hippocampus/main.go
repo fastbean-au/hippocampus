@@ -34,6 +34,7 @@ import (
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/hippocampus"
+	"github.com/fastbean-au/hippocampus/ratelimit"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/stats"
 	"github.com/fastbean-au/hippocampus/summarise"
@@ -670,6 +671,24 @@ func run(ctx context.Context, version versionInfo) error {
 		authoriser = a
 	}
 
+	// Rate limiting: a hierarchy of token buckets (an instance-wide ceiling, a bucket per
+	// authorisation tier, and a bucket per principal) that a request must pass every configured
+	// level of. Off unless rateLimit.enabled, and a no-op even then until a level is given a rate.
+	limiter, err := rateLimiterFromViper()
+	if err != nil {
+		return fmt.Errorf("failed to initialise rate limiting: %w", err)
+	}
+
+	trustForwardedFor := viper.GetBool("rateLimit.trustForwardedFor")
+
+	if limiter.Active() {
+		registerRateLimitGauge(limiter)
+
+		if !authEnabled {
+			log.Info("rate limiting is enabled with authentication off: per-client limits are keyed on the caller's address, and no per-tier limit applies (a tier comes from a token's roles)")
+		}
+	}
+
 	// initialise the gRPC server
 	log.Debug("initialising gRPC server")
 
@@ -683,10 +702,17 @@ func run(ctx context.Context, version versionInfo) error {
 
 	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
 	// interceptor and returns codes.Internal rather than letting it crash the process. RPC metrics
-	// run next, so a request rejected by authentication still appears in the rate and error counts.
-	// Auth follows, so an unauthenticated request is still rejected before the purge check or the
-	// handler does any work on it.
+	// run next, so a request rejected by authentication or a rate limit still appears in the rate
+	// and error counts. Auth follows, so an unauthenticated request is still rejected before the
+	// purge check or the handler does any work on it.
 	interceptors := []grpc.UnaryServerInterceptor{InterceptorRecoverPanic, InterceptorMetrics}
+
+	// The instance-wide ceiling goes ahead of authentication: a flood of unauthenticated requests
+	// is exactly what it exists to bound, and behind the verifier it would only ever bound requests
+	// the service had already paid to verify.
+	if limiter.ArrivalActive() {
+		interceptors = append(interceptors, InterceptorRateLimitArrival(limiter))
+	}
 
 	if authEnabled {
 		// Authentication first (rejects an invalid/absent token), then authorisation (rejects a
@@ -695,6 +721,12 @@ func run(ctx context.Context, version versionInfo) error {
 			auth.UnaryServerInterceptor(verifier),
 			authoriser.UnaryServerInterceptor(),
 		)
+	}
+
+	// The per-client and per-tier levels go after both, since both of the things they key on - the
+	// verified client id and the resolved tier - are stashed on the context by those interceptors.
+	if limiter.PrincipalActive() {
+		interceptors = append(interceptors, InterceptorRateLimitPrincipal(limiter))
 	}
 
 	interceptors = append(interceptors,
@@ -807,6 +839,13 @@ func run(ctx context.Context, version versionInfo) error {
 			muxOpts = append(muxOpts, runtime.WithMiddlewares(authoriser.GatewayMiddleware()))
 		}
 
+		// The per-client/per-tier limit is a gateway middleware rather than an outer HTTP wrapper,
+		// and is registered after the authoriser, because the tier it reads is stashed on the
+		// request context by that middleware - an outer wrapper would run before the tier existed.
+		if limiter.PrincipalActive() {
+			muxOpts = append(muxOpts, runtime.WithMiddlewares(rateLimitGatewayMiddleware(limiter, trustForwardedFor)))
+		}
+
 		gwMux := runtime.NewServeMux(muxOpts...)
 		if err := contract.RegisterHippocampusHandlerServer(context.Background(), gwMux, hipo); err != nil {
 			return fmt.Errorf("failed to register HTTP gateway: %w", err)
@@ -902,6 +941,14 @@ func run(ctx context.Context, version versionInfo) error {
 		// order.
 		if authEnabled {
 			handler = auth.HTTPMiddleware(verifier, handler, authOpenPaths, sessionCookie)
+		}
+
+		// The instance-wide ceiling wraps auth here exactly as it precedes it in the gRPC chain, so
+		// a flood is bounded before the gateway verifies the tokens in it. It is scoped to the /v1
+		// RPC surface, so the probes, the console, and the login endpoints stay reachable while it
+		// is rejecting - throttling a probe would turn a busy instance into a restarted one.
+		if limiter.ArrivalActive() {
+			handler = rateLimitArrivalMiddleware(limiter, handler)
 		}
 
 		// Cap the request body the gateway will read when configured (0, the default, leaves it
@@ -1113,6 +1160,67 @@ func searchConfigFromViper() search.Config {
 			KeyFile:            viper.GetString("opensearch.tls.keyFile"),
 			InsecureSkipVerify: viper.GetBool("opensearch.tls.insecureSkipVerify"),
 		},
+	}
+}
+
+// rateLimiterFromViper assembles the rate-limit hierarchy from the rateLimit.* keys. All viper
+// reads stay here, per the repo convention; the limiter itself validates the rules and owns the
+// defaults for the per-client table's bounds, so there is one place each number is decided.
+//
+// A nil limiter (rateLimit.enabled false) is the disabled state, and every Limiter method is
+// nil-safe, so the call sites read the same whether or not it is configured.
+func rateLimiterFromViper() (*ratelimit.Limiter, error) {
+	if !viper.GetBool("rateLimit.enabled") {
+		return nil, nil
+	}
+
+	// The tier rules are read by enumerating the known tier names rather than whatever keys the
+	// config map holds, because viper resolves an environment override only for a key something
+	// asks for - iterating the map would leave HIPPOCAMPUS_RATELIMIT_TIERS_READER_REQUESTSPERSECOND
+	// silently ignored. The configured keys are then checked against the same list, so a misspelled
+	// tier is a startup error rather than a limit that never applies to anything.
+	tiers := make(map[string]ratelimit.Rule, len(auth.TierNames()))
+
+	for _, tier := range auth.TierNames() {
+		tiers[tier] = rateLimitRuleFromViper("rateLimit.tiers." + tier)
+	}
+
+	for configured := range viper.GetStringMap("rateLimit.tiers") {
+		if _, known := tiers[strings.ToLower(strings.TrimSpace(configured))]; !known {
+			return nil, fmt.Errorf("rateLimit.tiers.%s names an unknown tier (expected one of %s)",
+				configured,
+				strings.Join(auth.TierNames(), ", "),
+			)
+		}
+	}
+
+	limiter, err := ratelimit.New(ratelimit.Config{
+		Global:     rateLimitRuleFromViper("rateLimit.global"),
+		PerClient:  rateLimitRuleFromViper("rateLimit.perClient"),
+		Tiers:      tiers,
+		MaxClients: viper.GetInt("rateLimit.maxClients"),
+		ClientIdle: time.Duration(viper.GetInt("rateLimit.clientIdleSeconds")) * time.Second,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Enabled with every level left at zero is a configuration that reads as protected and is not.
+	// It is a warning rather than an error because it is also the shape of a config part-way
+	// through being written, and refusing to start on it would be the more annoying failure.
+	if !limiter.Active() {
+		log.Warn("rateLimit.enabled is true but no level has a requestsPerSecond, so nothing is limited; set rateLimit.global, rateLimit.perClient, or a rateLimit.tiers.<tier> rate")
+	}
+
+	return limiter, nil
+}
+
+// rateLimitRuleFromViper reads one level's rule. A zero requestsPerSecond leaves that level
+// unlimited, which is how each of the three is independently optional.
+func rateLimitRuleFromViper(key string) ratelimit.Rule {
+	return ratelimit.Rule{
+		RequestsPerSecond: viper.GetFloat64(key + ".requestsPerSecond"),
+		Burst:             viper.GetInt(key + ".burst"),
 	}
 }
 
