@@ -71,6 +71,9 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   gRPC and gateway transports — plus a **Requests (RED)** row on the dashboard.
 - Shipped alert rules: `deploy/observability/prometheus-alerts.yaml` (portable Prometheus) and the
   same nine rules as Grafana-managed rules provisioned into the compose observability profile.
+- `docs/clients.md` — how to generate a client in a language other than Go, from either the proto or
+  the OpenAPI document, with the API behaviour (quiet rejection, recall-is-a-write, int64-as-string)
+  a generated stub does not convey. No packages are published for other languages yet.
 
 - An inter-process storage lock on the `sqlite` driver: a `hippocampus.lock` file in
   `storage.directory`, held exclusively for the process lifetime. A second instance pointed at the

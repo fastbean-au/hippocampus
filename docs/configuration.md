@@ -114,7 +114,8 @@ console, the OpenAPI document, and the HTTP health probes along with the JSON AP
 logs a line at startup naming what is off when the port is 0. The gateway
 calls straight into the same server instance gRPC uses, so there is no extra network hop, dial, or
 serialisation round trip between the two. An OpenAPI/Swagger description of the mapping below is
-served at `/v1/openapi.json`.
+served at `/v1/openapi.json` — see [Clients in other languages](clients.md) for generating a client
+from it, or from the proto.
 
 ```json
 "gateway": {

@@ -343,6 +343,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | Guide                                                | Description                                                                                 |
 | :--------------------------------------------------- | :------------------------------------------------------------------------------------------ |
 | 🎬 **[Getting Started](docs/getting-started.md)**    | Step-by-step build, initial config, and first gRPC/HTTP requests.                           |
+| 🧬 **[Clients & Codegen](docs/clients.md)**          | Generate a Python, TypeScript, or any-language client from the proto or OpenAPI document.   |
 | ⚙️ **[Configurability](docs/configuration.md)**      | Exhaustive key reference for TLS, auth, storage drivers, and listeners.                     |
 | 🧙 **[Configuration wizard](docs/config-wizard.md)** | Build a config and its deployment artefacts in the browser, with a live forgetting preview. |
 | 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarisation.                         |

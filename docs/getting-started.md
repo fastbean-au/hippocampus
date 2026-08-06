@@ -164,6 +164,10 @@ grpcurl -plaintext -proto contract/hippocampus.proto \
   localhost:50051 hippocampus.v1.Hippocampus/StoreMemory
 ```
 
+The `-proto` flag is not optional: the service registers no gRPC reflection service, so a tool
+cannot discover the schema from a running instance. To generate stubs for a language other than Go —
+from either the proto or the OpenAPI document — see [Clients in other languages](clients.md).
+
 ## Enabling authentication
 
 Auth and TLS are off by default. To require a bearer token, set `auth.method` to `hmac` and mint a
@@ -181,6 +185,8 @@ See [Authentication](configuration.md#authentication) and [TLS](configuration.md
 
 ## Next steps
 
+- [Clients in other languages](clients.md) — generate a Python, TypeScript, or any-language client
+  from the proto or the OpenAPI document.
 - [Operations & deployment guide](operations.md) — driver choice, sizing/tuning, backup, shutdown,
   observability, security.
 - [Use cases & deployment modes](use-cases.md) — embedded vs. centralised topologies.
