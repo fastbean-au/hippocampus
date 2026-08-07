@@ -71,6 +71,33 @@ func commands() map[string]command {
 			},
 			run: runMemoryRecall,
 		},
+		"memory link": {
+			summary: "link a memory to other memories",
+			hint:    "--id ID --link TARGET:SIGNIFICANCE [--link TARGET:SIGNIFICANCE ...]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("id", "", "id of the memory the links start from (required)")
+				fs.StringSlice("link", nil, "linked memory as 'memoryID:significance' (repeatable)")
+			},
+			run: runMemoryLink,
+		},
+		"memory unlink": {
+			summary: "remove links between a memory and other memories",
+			hint:    "--id ID --target ID [--target ID ...] | --id ID TARGET [TARGET ...]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("id", "", "id of the memory the links start from (required)")
+				fs.StringSlice("target", nil, "memory id to unlink (repeatable; ids may also be positional args)")
+			},
+			run: runMemoryUnlink,
+		},
+		"memory links": {
+			summary: "list a memory's links",
+			hint:    "--id ID [--direction both|outbound|inbound]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("id", "", "id of the memory whose links to list (required)")
+				fs.String("direction", "", "which links to return: both (default), outbound, or inbound")
+			},
+			run: runMemoryLinks,
+		},
 		"memory search": {
 			summary: "search memories via the content-search index",
 			hint:    "--query <text> [--mode keyword|semantic|hybrid] [--limit N] [--event-id ID] [--reinforce]",
@@ -128,6 +155,33 @@ func commands() map[string]command {
 				fs.String("to", "", "surviving event; must already exist (required)")
 			},
 			run: runEventMerge,
+		},
+		"event link": {
+			summary: "link an event to other events",
+			hint:    "--id ID --link TARGET:SIGNIFICANCE [--link TARGET:SIGNIFICANCE ...]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("id", "", "id of the event the links start from (required)")
+				fs.StringSlice("link", nil, "linked event as 'eventID:significance' (repeatable)")
+			},
+			run: runEventLink,
+		},
+		"event unlink": {
+			summary: "remove links between an event and other events",
+			hint:    "--id ID --target ID [--target ID ...] | --id ID TARGET [TARGET ...]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("id", "", "id of the event the links start from (required)")
+				fs.StringSlice("target", nil, "event id to unlink (repeatable; ids may also be positional args)")
+			},
+			run: runEventUnlink,
+		},
+		"event links": {
+			summary: "list an event's links",
+			hint:    "--id ID [--direction both|outbound|inbound]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("id", "", "id of the event whose links to list (required)")
+				fs.String("direction", "", "which links to return: both (default), outbound, or inbound")
+			},
+			run: runEventLinks,
 		},
 		"event delete": {
 			summary: "delete an event (optionally its memories too)",
@@ -276,7 +330,7 @@ func eventWriteFlags(fs *pflag.FlagSet) {
 	fs.String("group", "", "freeform grouping/context label")
 	fs.String("time-start", "", "start time as RFC3339 (defaults to now)")
 	fs.String("time-end", "", "end time as RFC3339 (0/unset means not ended)")
-	fs.StringSlice("relationship", nil, "related event as 'eventID:significance' (repeatable)")
+	fs.StringSlice("link", nil, "linked event as 'eventID:significance' (repeatable)")
 	addPlacementFlags(fs)
 }
 
@@ -369,6 +423,158 @@ func runMemoryDelete(ctx context.Context, client contract.HippocampusClient, fs 
 	}
 
 	return r.render(resp)
+}
+
+// The link handlers. Memories and events take the same three shapes, so each pair differs only in
+// which RPC it calls - the parsing, validation and rendering are shared.
+
+func runMemoryLink(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	id, links, err := linkArgs(fs, "memory")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.LinkMemories(ctx, &contract.LinkMemoriesRequest{Id: id, Links: links})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+func runEventLink(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	id, links, err := linkArgs(fs, "event")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.LinkEvents(ctx, &contract.LinkEventsRequest{Id: id, Links: links})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+func runMemoryUnlink(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	id, targets, err := unlinkArgs(fs, "memory")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.UnlinkMemories(ctx, &contract.UnlinkMemoriesRequest{Id: id, Ids: targets})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+func runEventUnlink(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	id, targets, err := unlinkArgs(fs, "event")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.UnlinkEvents(ctx, &contract.UnlinkEventsRequest{Id: id, Ids: targets})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+func runMemoryLinks(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	id := str(fs, "id")
+	if id == "" {
+		return fmt.Errorf("--id is required")
+	}
+
+	direction, err := linkDirection(fs)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.GetMemoryLinks(ctx, &contract.GetMemoryLinksRequest{Id: id, Direction: direction})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+func runEventLinks(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	id := str(fs, "id")
+	if id == "" {
+		return fmt.Errorf("--id is required")
+	}
+
+	direction, err := linkDirection(fs)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.GetEventLinks(ctx, &contract.GetEventLinksRequest{Id: id, Direction: direction})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// linkArgs reads the near end and the link set shared by memory link and event link.
+func linkArgs(fs *pflag.FlagSet, kind string) (string, []*contract.Link, error) {
+	id := str(fs, "id")
+	if id == "" {
+		return "", nil, fmt.Errorf("--id is required")
+	}
+
+	links, err := linksFromFlags(fs)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if len(links) == 0 {
+		return "", nil, fmt.Errorf("at least one --link '%sID:significance' is required", kind)
+	}
+
+	return id, links, nil
+}
+
+// unlinkArgs reads the near end and the targets shared by memory unlink and event unlink. Targets
+// come from --target or positional args, matching how the delete commands take ids.
+func unlinkArgs(fs *pflag.FlagSet, kind string) (string, []string, error) {
+	id := str(fs, "id")
+	if id == "" {
+		return "", nil, fmt.Errorf("--id is required")
+	}
+
+	targets := append(strs(fs, "target"), fs.Args()...)
+	if len(targets) == 0 {
+		return "", nil, fmt.Errorf("at least one %s id to unlink is required (--target or positional args)", kind)
+	}
+
+	return id, targets, nil
+}
+
+// linkDirection maps the --direction flag onto the contract enum. An unset value means both, which
+// is what the graph being valued symmetrically makes the useful default.
+func linkDirection(fs *pflag.FlagSet) (contract.LinkDirection, error) {
+	switch value := strings.ToLower(str(fs, "direction")); value {
+
+	case "", "both":
+		return contract.LinkDirection_LINK_DIRECTION_BOTH, nil
+
+	case "outbound":
+		return contract.LinkDirection_LINK_DIRECTION_OUTBOUND, nil
+
+	case "inbound":
+		return contract.LinkDirection_LINK_DIRECTION_INBOUND, nil
+
+	default:
+		return 0, fmt.Errorf("invalid --direction %q (expected 'both', 'outbound' or 'inbound')", value)
+
+	}
 }
 
 // runMemoryExplain reports where memories stand against the consolidation rules, and optionally the
@@ -505,7 +711,7 @@ func runEventCreate(ctx context.Context, client contract.HippocampusClient, fs *
 		return err
 	}
 
-	rels, err := relationshipsFromFlags(fs)
+	links, err := linksFromFlags(fs)
 	if err != nil {
 		return err
 	}
@@ -516,15 +722,15 @@ func runEventCreate(ctx context.Context, client contract.HippocampusClient, fs *
 	}
 
 	event := &contract.Event{
-		Id:            str(fs, "id"),
-		Name:          name,
-		Description:   str(fs, "description"),
-		Significance:  i32(fs, "significance"),
-		Group:         str(fs, "group"),
-		TimeStart:     timeStart,
-		TimeEnd:       timeEnd,
-		Relationships: rels,
-		Placement:     place,
+		Id:           str(fs, "id"),
+		Name:         name,
+		Description:  str(fs, "description"),
+		Significance: i32(fs, "significance"),
+		Group:        str(fs, "group"),
+		TimeStart:    timeStart,
+		TimeEnd:      timeEnd,
+		Links:        links,
+		Placement:    place,
 	}
 
 	resp, err := client.StoreEvent(ctx, event)
@@ -945,27 +1151,34 @@ func extremumFromFlags(fs *pflag.FlagSet) (contract.SignificanceExtremum, error)
 	}
 }
 
-// relationshipsFromFlags parses the repeatable --relationship 'eventID:significance' flag.
-func relationshipsFromFlags(fs *pflag.FlagSet) ([]*contract.Relationship, error) {
-	raw := strs(fs, "relationship")
+// linksFromFlags parses the repeatable --link 'id:significance' flag, used by the create commands
+// and by memory/event link.
+func linksFromFlags(fs *pflag.FlagSet) ([]*contract.Link, error) {
+	return parseLinks(strs(fs, "link"))
+}
+
+// parseLinks turns 'id:significance' entries into Links. A missing significance is an error rather
+// than a default: a link's weight is what it does to the decay maths, and silently choosing one for
+// the caller would be choosing how hard something is to forget.
+func parseLinks(raw []string) ([]*contract.Link, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
 
-	out := make([]*contract.Relationship, 0, len(raw))
+	out := make([]*contract.Link, 0, len(raw))
 
 	for _, entry := range raw {
-		eventID, sigText, ok := strings.Cut(entry, ":")
-		if !ok || eventID == "" {
-			return nil, fmt.Errorf("invalid --relationship %q (want 'eventID:significance')", entry)
+		id, sigText, ok := strings.Cut(entry, ":")
+		if !ok || id == "" {
+			return nil, fmt.Errorf("invalid --link %q (want 'id:significance')", entry)
 		}
 
 		sig, err := strconv.Atoi(sigText)
 		if err != nil {
-			return nil, fmt.Errorf("invalid --relationship %q: significance %q is not an integer", entry, sigText)
+			return nil, fmt.Errorf("invalid --link %q: significance %q is not an integer", entry, sigText)
 		}
 
-		out = append(out, &contract.Relationship{EventId: eventID, Significance: int32(sig)})
+		out = append(out, &contract.Link{Id: id, Significance: int32(sig)})
 	}
 
 	return out, nil

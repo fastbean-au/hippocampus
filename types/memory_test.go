@@ -1,6 +1,7 @@
 package types
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +64,9 @@ func TestMemoryToProto_Binary(t *testing.T) {
 	}
 }
 
-// TestMemoryToProto_RoundTrip confirms every scalar field survives a struct->proto->struct trip.
+// TestMemoryToProto_RoundTrip confirms every field survives a struct->proto->struct trip,
+// including the links slice - which is why this compares with reflect.DeepEqual rather than ==:
+// a struct holding a slice is not comparable.
 func TestMemoryToProto_RoundTrip(t *testing.T) {
 	m := Memory{
 		Id:           "m2",
@@ -76,11 +79,19 @@ func TestMemoryToProto_RoundTrip(t *testing.T) {
 		RecallCount:  2,
 		IsSummary:    true,
 		Group:        "g2",
+		Links:        []Link{{Id: "m3", Significance: 7}},
 	}
 
 	back := MemoryFromProto(m.ToProto())
 
-	if back != m {
+	// LinkSignificance is store-maintained and never accepted from a client, so ToProto carries it
+	// out but FromProto deliberately does not read it back - assert that separately rather than
+	// letting the round trip claim a field it does not carry.
+	if got := m.ToProto().GetLinkSignificance(); got != m.LinkSignificance {
+		t.Errorf("ToProto dropped LinkSignificance: got %d, want %d", got, m.LinkSignificance)
+	}
+
+	if !reflect.DeepEqual(back, m) {
 		t.Errorf("round-trip mismatch:\n got %+v\nwant %+v", back, m)
 	}
 }

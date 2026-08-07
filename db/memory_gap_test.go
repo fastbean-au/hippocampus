@@ -75,6 +75,8 @@ func TestReplaceMemoriesWithSummary_DeleteExecError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM memories WHERE event_id`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`DELETE FROM memories WHERE event_id`).WillReturnError(errors.New("boom"))
 	mock.ExpectRollback()
 
@@ -89,6 +91,8 @@ func TestReplaceMemoriesWithSummary_DeleteRowsAffectedError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM memories WHERE event_id`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`DELETE FROM memories WHERE event_id`).WillReturnResult(sqlmock.NewErrorResult(errors.New("boom")))
 	mock.ExpectRollback()
 
@@ -103,6 +107,8 @@ func TestReplaceMemoriesWithSummary_CommitError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM memories WHERE event_id`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`DELETE FROM memories WHERE event_id`).WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(`INSERT INTO memories`).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit().WillReturnError(errors.New("boom"))
@@ -139,8 +145,8 @@ func TestConsolidateMemories_ScanError(t *testing.T) {
 	emptyRanksQuery(mock)
 
 	mock.ExpectQuery(`FROM memories WHERE event_id`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "timestamp", "significance_level_id", "time_recalled", "recall_count"}).
-			AddRow("m1", "not-an-int", nil, int64(0), int32(0)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "timestamp", "significance_level_id", "time_recalled", "recall_count", "link_significance"}).
+			AddRow("m1", "not-an-int", nil, int64(0), int32(0), int64(0)))
 
 	if _, err := d.ConsolidateMemories(context.Background(), &stubServer{}); err == nil {
 		t.Fatal("expected a scan error")
@@ -154,8 +160,8 @@ func TestConsolidateMemories_RowsIterationError(t *testing.T) {
 	emptyRanksQuery(mock)
 
 	mock.ExpectQuery(`FROM memories WHERE event_id`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "timestamp", "significance_level_id", "time_recalled", "recall_count"}).
-			AddRow("m1", int64(1), nil, int64(0), int32(0)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "timestamp", "significance_level_id", "time_recalled", "recall_count", "link_significance"}).
+			AddRow("m1", int64(1), nil, int64(0), int32(0), int64(0)).
 			RowError(0, errors.New("boom")))
 
 	if _, err := d.ConsolidateMemories(context.Background(), &stubServer{}); err == nil {
@@ -170,8 +176,8 @@ func TestConsolidateMemories_DeleteErrorPropagates(t *testing.T) {
 	emptyRanksQuery(mock)
 
 	mock.ExpectQuery(`FROM memories WHERE event_id`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "timestamp", "significance_level_id", "time_recalled", "recall_count"}).
-			AddRow("m1", int64(1), nil, int64(0), int32(0)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "timestamp", "significance_level_id", "time_recalled", "recall_count", "link_significance"}).
+			AddRow("m1", int64(1), nil, int64(0), int32(0), int64(0)))
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
 	if _, err := d.ConsolidateMemories(context.Background(), &stubServer{consolidateMemories: true}); err == nil {
@@ -188,7 +194,8 @@ func TestConsolidateMemories_DeleteErrorPropagates(t *testing.T) {
 // m.event_id, e.significance_level_id, relationship_significance, memories_consolidated, e.id.
 var consolidateEventMemoriesColumns = []string{
 	"id", "timestamp", "significance_level_id", "time_recalled", "recall_count",
-	"event_id", "e_significance_level_id", "relationship_significance", "memories_consolidated", "e_id",
+	"event_id", "e_significance_level_id", "e_link_significance", "m_link_significance",
+	"memories_consolidated", "e_id",
 }
 
 func TestConsolidateEventMemories_QueryError(t *testing.T) {
@@ -210,7 +217,7 @@ func TestConsolidateEventMemories_ScanError(t *testing.T) {
 
 	mock.ExpectQuery(`FROM memories m LEFT JOIN events e`).
 		WillReturnRows(sqlmock.NewRows(consolidateEventMemoriesColumns).
-			AddRow("m1", "not-an-int", nil, int64(0), int32(0), "e1", nil, int64(0), false, "e1"))
+			AddRow("m1", "not-an-int", nil, int64(0), int32(0), "e1", nil, int64(0), int64(0), false, "e1"))
 
 	if _, _, _, err := d.ConsolidateEventMemories(context.Background(), &stubServer{}); err == nil {
 		t.Fatal("expected a scan error")
@@ -225,7 +232,7 @@ func TestConsolidateEventMemories_RowsIterationError(t *testing.T) {
 
 	mock.ExpectQuery(`FROM memories m LEFT JOIN events e`).
 		WillReturnRows(sqlmock.NewRows(consolidateEventMemoriesColumns).
-			AddRow("m1", int64(1), nil, int64(0), int32(0), "e1", nil, int64(0), false, "e1").
+			AddRow("m1", int64(1), nil, int64(0), int32(0), "e1", nil, int64(0), int64(0), false, "e1").
 			RowError(0, errors.New("boom")))
 
 	if _, _, _, err := d.ConsolidateEventMemories(context.Background(), &stubServer{}); err == nil {
@@ -245,14 +252,17 @@ func TestConsolidateEventMemories_DeleteMemoriesErrorIsBestEffort(t *testing.T) 
 	// One memory on event e1, selected for deletion (ShouldConsolidateMemory true below).
 	mock.ExpectQuery(`FROM memories m LEFT JOIN events e`).
 		WillReturnRows(sqlmock.NewRows(consolidateEventMemoriesColumns).
-			AddRow("m1", int64(1), nil, int64(0), int32(0), "e1", nil, int64(0), false, "e1"))
+			AddRow("m1", int64(1), nil, int64(0), int32(0), "e1", nil, int64(0), int64(0), false, "e1"))
 
 	// deleteMemoriesIfUnrecalled's beginTx fails.
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
 	// The per-event cleanup still runs despite the delete failure: e1 has no undeleted memory, so
-	// DeleteEventIfEmpty is attempted and (here) succeeds with nothing to delete.
+	// DeleteEventIfEmpty is attempted and (here) succeeds with nothing to delete. Nothing was
+	// deleted, so no link prune follows.
+	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
 	mock.ExpectExec(`UPDATE events SET memories_consolidated`).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	_, events, _, err := d.ConsolidateEventMemories(context.Background(), &stubServer{consolidateMemories: true})
@@ -276,15 +286,21 @@ func TestConsolidateEventMemories_PerEventCleanupErrorsAreBestEffort(t *testing.
 
 	mock.ExpectQuery(`FROM memories m LEFT JOIN events e`).
 		WillReturnRows(sqlmock.NewRows(consolidateEventMemoriesColumns).
-			AddRow("m1", int64(1), nil, int64(0), int32(0), "e1", nil, int64(0), false, "e1"))
+			AddRow("m1", int64(1), nil, int64(0), int32(0), "e1", nil, int64(0), int64(0), false, "e1"))
 
 	// The bulk delete succeeds this time...
 	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM memories WHERE id`).WillReturnResult(sqlmock.NewResult(0, 1))
+	// ...and the link prune runs in the same transaction. The graph is empty here, which the
+	// existence probe answers in one query - the chunked read and delete are skipped entirely.
+	mock.ExpectQuery(`SELECT 1 FROM memory_links LIMIT 1`).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}))
 	mock.ExpectCommit()
 
 	// ...but both per-event cleanup steps fail.
+	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnError(errors.New("delete failed"))
+	mock.ExpectRollback()
 	mock.ExpectExec(`UPDATE events SET memories_consolidated`).WillReturnError(errors.New("consolidate failed"))
 
 	memories, events, eventsDeleted, err := d.ConsolidateEventMemories(context.Background(), &stubServer{consolidateMemories: true})

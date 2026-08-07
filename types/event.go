@@ -10,16 +10,16 @@ import (
 )
 
 type Event struct {
-	Id                       string // if not provided, will be a uuid
-	TimeStart                int64  // time.Time.Now().UnixNano()
-	TimeEnd                  int64  // time.Time.Now().UnixNano()
-	Significance             int32
-	Name                     string // limited to 256 characters
-	Description              string // limited to 1024 characters
-	Relationships            []Relationship
-	RelationshipSignificance int64  // Sum of the significances of all values of the Relationships. This is a calculated value.
-	MemoriesConsolidated     bool   // if true, some memories related to this event have been consolidated (deleted)
-	Group                    string // optional grouping/context label; limited to 128 characters
+	Id                   string // if not provided, will be a uuid
+	TimeStart            int64  // time.Time.Now().UnixNano()
+	TimeEnd              int64  // time.Time.Now().UnixNano()
+	Significance         int32
+	Name                 string // limited to 256 characters
+	Description          string // limited to 1024 characters
+	Links                []Link
+	LinkSignificance     int64  // Sum of the significances of this event's links, both directions. This is a calculated value, maintained by the store.
+	MemoriesConsolidated bool   // if true, some memories related to this event have been consolidated (deleted)
+	Group                string // optional grouping/context label; limited to 128 characters
 
 	// SignificanceLevelID is the resolved significance registry level id, set by the RPC layer via
 	// db.ResolveSignificanceLevel before a create/update reaches the store. nil means unranked on a
@@ -28,80 +28,32 @@ type Event struct {
 	SignificanceLevelID *int64
 }
 
-// Relationship validation bounds. Relationships are a client-supplied input into the decay math:
-// the summed relationship significance is weighted into every related memory's value. An uncapped
-// count would serialise an arbitrarily large blob read by every event scan, and an uncapped
-// per-relationship significance could make an event (and its memories) effectively immortal, so
-// both are bounded here.
-const (
-	maxEventRelationships       = 128
-	maxRelationshipSignificance = 1_000_000
-)
-
-type Relationship struct {
-	EventId      string
-	Significance int32
-}
-
-func (r *Relationship) ToProto() *contract.Relationship {
-	return &contract.Relationship{
-		EventId:      r.EventId,
-		Significance: r.Significance,
-	}
-}
-
 func EventFromProto(event *contract.Event) Event {
 	return Event{
-		Id:            event.GetId(),
-		TimeStart:     event.GetTimeStart(),
-		TimeEnd:       event.GetTimeEnd(),
-		Significance:  event.GetSignificance(),
-		Name:          event.GetName(),
-		Description:   event.GetDescription(),
-		Relationships: RelationshipsFromProto(event.GetRelationships()),
-		Group:         event.GetGroup(),
+		Id:           event.GetId(),
+		TimeStart:    event.GetTimeStart(),
+		TimeEnd:      event.GetTimeEnd(),
+		Significance: event.GetSignificance(),
+		Name:         event.GetName(),
+		Description:  event.GetDescription(),
+		Links:        LinksFromProto(event.GetLinks()),
+		Group:        event.GetGroup(),
 	}
-}
-
-func RelationshipsFromProto(relationships []*contract.Relationship) []Relationship {
-	rs := make([]Relationship, len(relationships))
-
-	for i, r := range relationships {
-		rs[i] = Relationship{
-			EventId:      r.GetEventId(),
-			Significance: r.GetSignificance(),
-		}
-	}
-
-	return rs
 }
 
 func (e *Event) ToProto() *contract.Event {
-	relationships := make([]*contract.Relationship, len(e.Relationships))
-	for i, r := range e.Relationships {
-		relationships[i] = r.ToProto()
-	}
-
 	return &contract.Event{
-		Id:                       e.Id,
-		TimeStart:                e.TimeStart,
-		TimeEnd:                  e.TimeEnd,
-		Significance:             e.Significance,
-		Name:                     e.Name,
-		Description:              e.Description,
-		MemoriesConsolidated:     e.MemoriesConsolidated,
-		RelationshipSignificance: e.RelationshipSignificance,
-		Relationships:            relationships,
-		Group:                    e.Group,
+		Id:                   e.Id,
+		TimeStart:            e.TimeStart,
+		TimeEnd:              e.TimeEnd,
+		Significance:         e.Significance,
+		Name:                 e.Name,
+		Description:          e.Description,
+		MemoriesConsolidated: e.MemoriesConsolidated,
+		LinkSignificance:     e.LinkSignificance,
+		Links:                LinksToProto(e.Links),
+		Group:                e.Group,
 	}
-}
-
-func (e *Event) CalculateRelationshipSignificance() int64 {
-	var t int64
-	for _, r := range e.Relationships {
-		t += int64(r.Significance)
-	}
-	return t
 }
 
 func (e *Event) Validate(update bool) error {
@@ -139,29 +91,7 @@ func (e *Event) Validate(update bool) error {
 		return fmt.Errorf("event not valid - TimeEnd must not be before TimeStart")
 	}
 
-	if len(e.Relationships) > maxEventRelationships {
-		return fmt.Errorf("event not valid - too many relationships (max %d)", maxEventRelationships)
-	}
-
-	for i, r := range e.Relationships {
-		switch {
-
-		case len(r.EventId) == 0:
-			return fmt.Errorf("event not valid - relationship %d has no event id", i)
-
-		case len(r.EventId) > 128:
-			return fmt.Errorf("event not valid - relationship %d event id too long", i)
-
-		case r.Significance < 0:
-			return fmt.Errorf("event not valid - relationship %d significance must not be < 0", i)
-
-		case r.Significance > maxRelationshipSignificance:
-			return fmt.Errorf("event not valid - relationship %d significance must not exceed %d", i, maxRelationshipSignificance)
-
-		}
-	}
-
-	return nil
+	return ValidateLinks(e.Links, e.Id, "event")
 }
 
 func (e *Event) SetDefaults() {

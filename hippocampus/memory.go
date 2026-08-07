@@ -86,12 +86,23 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 
 	memory.SetDefaults()
 
+	// Links are checked before the memory is written, so a create naming a target that does not
+	// exist fails without leaving the memory behind. They are written after, because the near end
+	// has to exist first.
+	if err := s.checkLinkTargets(ctx, s.memoryLinks(), memory.Id, memory.Links); err != nil {
+		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+		return &res, err
+	}
+
 	id, err := s.db.CreateMemory(ctx, memory)
 	res.Id = id
 
 	if err == nil {
 		tel.memoriesStored.Add(ctx, 1)
 		tel.memoryBodyBytes.Record(ctx, int64(len(memory.Body)))
+
+		s.storeLinks(ctx, s.memoryLinks(), memory.Id, memory.Links)
 
 		// Binary memories are never indexed - the body is opaque to content search.
 		if !memory.IsBinary {
@@ -231,10 +242,23 @@ func (s *Server) RecallMemories(ctx context.Context, in *contract.RecallMemories
 
 	if reinforce {
 		tel.memoriesRecalled.Add(ctx, int64(len(*memories)))
+
+		// Spreading activation: what the recalled memories are associated with is pulled back from
+		// the threshold a little too. Only on the reinforcing path - a read that deliberately did
+		// not reset the caller's own decay clock must not reset anyone else's.
+		s.reinforceLinked(ctx, ids)
 	}
 
-	ms := make([]*contract.Memory, len(*memories))
-	for i, m := range *memories {
+	recalled := *memories
+
+	// Associative recall: what these memories remind the store of. Appended after the memories
+	// actually asked for, and never reinforced by being returned - see linkedMemories.
+	if in.GetIncludeLinked() {
+		recalled = append(recalled, s.linkedMemories(ctx, ids)...)
+	}
+
+	ms := make([]*contract.Memory, len(recalled))
+	for i, m := range recalled {
 		ms[i] = m.ToProto()
 	}
 	res.Memories = ms
@@ -423,6 +447,32 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		Offset:               offset,
 	}
 
+	// linked_to narrows the listing to one memory's direct neighbours, resolved to ids and passed
+	// down as a filter so it composes with the time/significance/group filters and with pagination.
+	if linkedTo := in.GetLinkedTo(); linkedTo != "" {
+		missing, err := s.db.MissingMemoryIds(ctx, []string{linkedTo})
+		if err != nil {
+			return &res, mapError(err)
+		}
+
+		if len(missing) > 0 {
+			return &res, status.Errorf(codes.NotFound, "no such memory: %s", linkedTo)
+		}
+
+		linked, err := s.db.LinkedMemoryIds(ctx, []string{linkedTo})
+		if err != nil {
+			return &res, mapError(err)
+		}
+
+		// No neighbours is an empty page, not an unrestricted one: an empty id set left on the
+		// filter would read as "no id restriction" and return the whole store.
+		if len(linked) == 0 {
+			return &res, nil
+		}
+
+		filter.Ids = linked
+	}
+
 	total, err := s.db.CountMemoriesFiltered(ctx, filter)
 	if err != nil {
 		return &res, mapError(err)
@@ -431,6 +481,10 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 	memories, err := s.db.GetMemories(ctx, filter)
 	if err != nil {
 		return &res, mapError(err)
+	}
+
+	if in.GetLinks() {
+		s.attachMemoryLinks(ctx, *memories)
 	}
 
 	ms := make([]*contract.Memory, len(*memories))

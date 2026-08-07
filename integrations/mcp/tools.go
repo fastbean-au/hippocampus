@@ -26,6 +26,9 @@ type hippoClient interface {
 	StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error)
 	GetEvents(ctx context.Context, in *contract.GetEventsRequest, opts ...grpc.CallOption) (*contract.GetEventsResponse, error)
 	GetSummarisationCandidates(ctx context.Context, in *contract.EmptyRequest, opts ...grpc.CallOption) (*contract.GetSummarisationCandidatesResponse, error)
+	LinkMemories(ctx context.Context, in *contract.LinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
+	UnlinkMemories(ctx context.Context, in *contract.UnlinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
+	GetMemoryLinks(ctx context.Context, in *contract.GetMemoryLinksRequest, opts ...grpc.CallOption) (*contract.GetLinksResponse, error)
 }
 
 // bridge holds the gRPC client every tool handler dispatches through, plus the per-call timeout
@@ -107,6 +110,28 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 			"or timestamp, with paging. A read-only browse that does not reinforce anything - use " +
 			"recall_memories when you actually retrieve a memory.",
 	}, b.listMemories)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "link_memories",
+		Description: "Associate one memory with others, each link carrying a significance. Links are " +
+			"how memories remind the store of one another: a linked memory decays more slowly, and " +
+			"both ends of a link gain from it. Both memories must already exist. Linking the same " +
+			"pair again re-weights that link rather than adding a second one.",
+	}, b.linkMemories)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "unlink_memories",
+		Description: "Remove the links between one memory and the memories you name, in either " +
+			"direction. Unknown targets are silently ignored. Use this when an association no longer " +
+			"holds - the memories themselves are untouched.",
+	}, b.unlinkMemories)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_memory_links",
+		Description: "List what a memory is linked to, and its total link significance. By default " +
+			"both directions are returned; narrow with direction=outbound (links this memory declared) " +
+			"or inbound (links others declared to it). A read-only browse that reinforces nothing.",
+	}, b.getMemoryLinks)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "create_event",
@@ -300,7 +325,8 @@ func (b *bridge) deleteMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 // --- recall_memories ---
 
 type recallMemoriesInput struct {
-	Ids []string `json:"ids" jsonschema:"ids of the memories to recall and reinforce (required, non-empty)"`
+	Ids           []string `json:"ids" jsonschema:"ids of the memories to recall and reinforce (required, non-empty)"`
+	IncludeLinked bool     `json:"include_linked,omitempty" jsonschema:"also return the memories linked to those recalled, one hop away. They are returned as an associative recall and are not themselves reinforced by it"`
 }
 
 type memoriesOutput struct {
@@ -315,7 +341,10 @@ func (b *bridge) recallMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 	callCtx, cancel := b.callContext(ctx)
 	defer cancel()
 
-	res, err := b.client.RecallMemories(callCtx, &contract.RecallMemoriesRequest{Ids: in.Ids})
+	res, err := b.client.RecallMemories(callCtx, &contract.RecallMemoriesRequest{
+		Ids:           in.Ids,
+		IncludeLinked: in.IncludeLinked,
+	})
 	if err != nil {
 		return nil, memoriesOutput{}, fmt.Errorf("RecallMemories failed: %w", err)
 	}
@@ -332,6 +361,8 @@ type searchMemoriesInput struct {
 	EventId   string `json:"event_id,omitempty" jsonschema:"optional: restrict matches to a single event"`
 	Reinforce bool   `json:"reinforce,omitempty" jsonschema:"when true, recall (reinforce) the matched memories rather than merely fetching them"`
 	Mode      string `json:"mode,omitempty" jsonschema:"how to match: keyword (the default) matches the words in the body; semantic matches by meaning; hybrid does both and fuses them. semantic and hybrid need the service to have an embedding model and OpenSearch configured, and are rejected otherwise"`
+
+	IncludeLinked bool `json:"include_linked,omitempty" jsonschema:"also return the memories linked to each match, one hop away, appended after the ranked results"`
 }
 
 // searchModes maps the tool's mode string onto the RPC enum. An unknown value is an error rather
@@ -364,6 +395,8 @@ func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 		EventId:   in.EventId,
 		Reinforce: in.Reinforce,
 		Mode:      mode,
+
+		IncludeLinked: in.IncludeLinked,
 	})
 	if err != nil {
 		return nil, memoriesOutput{}, fmt.Errorf("SearchMemories failed: %w", err)
@@ -518,4 +551,157 @@ func (b *bridge) getSummarisationCandidates(ctx context.Context, _ *mcp.CallTool
 	}
 
 	return nil, summarisationCandidatesOutput{Candidates: out}, nil
+}
+
+// okOutput is the plain acknowledgement the link mutations return: they change the graph rather
+// than producing anything, so there is nothing else worth reporting.
+type okOutput struct {
+	Ok bool `json:"ok" jsonschema:"true when the change was applied"`
+}
+
+// --- link_memories / unlink_memories / get_memory_links ---
+//
+// Only the memory half of the link surface is exposed. Event links are an operator concern - the
+// bridge already omits the event delete/merge RPCs for the same reason - and a model given both
+// graphs would have to reason about which one it was editing on every call.
+
+type linkMemoriesInput struct {
+	Id    string          `json:"id" jsonschema:"the memory the links start from (required); it must already exist"`
+	Links []linkViewInput `json:"links" jsonschema:"the memories to link to and how strongly (required); each target must already exist"`
+}
+
+type linkViewInput struct {
+	Id           string `json:"id" jsonschema:"the memory to link to (required)"`
+	Significance int32  `json:"significance" jsonschema:"how strong the association is, 0 to 1000000; higher slows both memories' decay more"`
+}
+
+func (b *bridge) linkMemories(ctx context.Context, _ *mcp.CallToolRequest, in linkMemoriesInput) (*mcp.CallToolResult, okOutput, error) {
+	if in.Id == "" {
+		return nil, okOutput{}, fmt.Errorf("id is required")
+	}
+
+	if len(in.Links) == 0 {
+		return nil, okOutput{}, fmt.Errorf("links is required")
+	}
+
+	links := make([]*contract.Link, 0, len(in.Links))
+
+	for _, l := range in.Links {
+		if l.Id == "" {
+			return nil, okOutput{}, fmt.Errorf("every link needs an id")
+		}
+
+		links = append(links, &contract.Link{Id: l.Id, Significance: l.Significance})
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.LinkMemories(callCtx, &contract.LinkMemoriesRequest{Id: in.Id, Links: links})
+	if err != nil {
+		return nil, okOutput{}, fmt.Errorf("LinkMemories failed: %w", err)
+	}
+
+	return nil, okOutput{Ok: res.GetOk()}, nil
+}
+
+type unlinkMemoriesInput struct {
+	Id  string   `json:"id" jsonschema:"the memory the links start from (required)"`
+	Ids []string `json:"ids" jsonschema:"the memories to unlink from it (required); unknown ids are ignored"`
+}
+
+func (b *bridge) unlinkMemories(ctx context.Context, _ *mcp.CallToolRequest, in unlinkMemoriesInput) (*mcp.CallToolResult, okOutput, error) {
+	if in.Id == "" {
+		return nil, okOutput{}, fmt.Errorf("id is required")
+	}
+
+	if len(in.Ids) == 0 {
+		return nil, okOutput{}, fmt.Errorf("ids is required")
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.UnlinkMemories(callCtx, &contract.UnlinkMemoriesRequest{Id: in.Id, Ids: in.Ids})
+	if err != nil {
+		return nil, okOutput{}, fmt.Errorf("UnlinkMemories failed: %w", err)
+	}
+
+	return nil, okOutput{Ok: res.GetOk()}, nil
+}
+
+type getMemoryLinksInput struct {
+	Id        string `json:"id" jsonschema:"the memory whose links to list (required)"`
+	Direction string `json:"direction,omitempty" jsonschema:"which links to return: both (the default), outbound (links this memory declared), or inbound (links others declared to it)"`
+}
+
+// linkDirections maps the tool's direction string onto the RPC enum. An unknown value is an error
+// rather than a silent fall back to both: a caller that asked for one direction and got the other
+// would have no way to tell.
+var linkDirections = map[string]contract.LinkDirection{
+	"":         contract.LinkDirection_LINK_DIRECTION_BOTH,
+	"both":     contract.LinkDirection_LINK_DIRECTION_BOTH,
+	"outbound": contract.LinkDirection_LINK_DIRECTION_OUTBOUND,
+	"inbound":  contract.LinkDirection_LINK_DIRECTION_INBOUND,
+}
+
+// linkEdgeView is the plain-struct projection of a contract.LinkEdge, for the same reason
+// memoryView exists.
+type linkEdgeView struct {
+	Id           string `json:"id"`
+	Significance int32  `json:"significance"`
+	Direction    string `json:"direction"`
+	Created      int64  `json:"created"`
+}
+
+type linksOutput struct {
+	Links            []linkEdgeView `json:"links"`
+	LinkSignificance int64          `json:"link_significance"`
+}
+
+func (b *bridge) getMemoryLinks(ctx context.Context, _ *mcp.CallToolRequest, in getMemoryLinksInput) (*mcp.CallToolResult, linksOutput, error) {
+	if in.Id == "" {
+		return nil, linksOutput{}, fmt.Errorf("id is required")
+	}
+
+	direction, ok := linkDirections[strings.ToLower(in.Direction)]
+	if !ok {
+		return nil, linksOutput{}, fmt.Errorf("unknown direction %q (want both, outbound or inbound)", in.Direction)
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.GetMemoryLinks(callCtx, &contract.GetMemoryLinksRequest{Id: in.Id, Direction: direction})
+	if err != nil {
+		return nil, linksOutput{}, fmt.Errorf("GetMemoryLinks failed: %w", err)
+	}
+
+	links := make([]linkEdgeView, 0, len(res.GetLinks()))
+
+	for _, edge := range res.GetLinks() {
+		links = append(links, linkEdgeView{
+			Id:           edge.GetId(),
+			Significance: edge.GetSignificance(),
+			Direction:    linkDirectionName(edge.GetDirection()),
+			Created:      edge.GetCreated(),
+		})
+	}
+
+	return nil, linksOutput{Links: links, LinkSignificance: res.GetLinkSignificance()}, nil
+}
+
+func linkDirectionName(d contract.LinkDirection) string {
+	switch d {
+
+	case contract.LinkDirection_LINK_DIRECTION_OUTBOUND:
+		return "outbound"
+
+	case contract.LinkDirection_LINK_DIRECTION_INBOUND:
+		return "inbound"
+
+	default:
+		return "both"
+
+	}
 }

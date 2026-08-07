@@ -171,11 +171,17 @@ func (d *DB) usedBytesLiveRows(ctx context.Context) (int64, error) {
 
 	if err := d.queryRow(
 		ctx,
+		// Link rows are counted at the flat per-row overhead like everything else: an edge is two
+		// ids and two integers, with no variable payload of its own worth measuring.
 		`SELECT
 			(SELECT COUNT(*) * ? + COALESCE(SUM(octet_length(body)), 0) FROM memories)
 			+ (SELECT COUNT(*) * ? + COALESCE(SUM(
-				octet_length(name) + octet_length(description) + octet_length(relationships)
-			), 0) FROM events)`,
+				octet_length(name) + octet_length(description)
+			), 0) FROM events)
+			+ (SELECT COUNT(*) * ? FROM memory_links)
+			+ (SELECT COUNT(*) * ? FROM event_links)`,
+		evictionRowOverheadBytes,
+		evictionRowOverheadBytes,
 		evictionRowOverheadBytes,
 		evictionRowOverheadBytes,
 	).Scan(&used); err != nil {
@@ -199,8 +205,7 @@ func (d *DB) initPostgresSchema() error {
 		name                      TEXT NOT NULL DEFAULT '',
 		description               TEXT NOT NULL DEFAULT '',
 		memories_consolidated     BOOLEAN NOT NULL DEFAULT FALSE,
-		relationship_significance BIGINT NOT NULL DEFAULT 0,
-		relationships             TEXT NOT NULL DEFAULT '[]',
+		link_significance         BIGINT NOT NULL DEFAULT 0,
 		group_name                TEXT NOT NULL DEFAULT ''
 	);
 
@@ -215,6 +220,7 @@ func (d *DB) initPostgresSchema() error {
 		is_summary    BOOLEAN NOT NULL DEFAULT FALSE,
 		group_name    TEXT NOT NULL DEFAULT '',
 		is_compressed BOOLEAN NOT NULL DEFAULT FALSE,
+		link_significance BIGINT NOT NULL DEFAULT 0,
 		body          BYTEA NOT NULL DEFAULT ''::bytea
 	);
 
@@ -234,6 +240,11 @@ func (d *DB) initPostgresSchema() error {
 	-- significance column by migrateSignificanceToLevels below.
 	ALTER TABLE memories ADD COLUMN IF NOT EXISTS significance_level_id BIGINT;
 	ALTER TABLE events ADD COLUMN IF NOT EXISTS significance_level_id BIGINT;
+
+	-- The link graph's denormalised aggregate (see link.go). 0 is right for a database that
+	-- predates links: it has none, and initLinkTables creates the graph empty.
+	ALTER TABLE memories ADD COLUMN IF NOT EXISTS link_significance BIGINT NOT NULL DEFAULT 0;
+	ALTER TABLE events ADD COLUMN IF NOT EXISTS link_significance BIGINT NOT NULL DEFAULT 0;
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {
@@ -245,6 +256,14 @@ func (d *DB) initPostgresSchema() error {
 	if _, err := d.sql.Exec(d.significanceLevelsDDL()); err != nil {
 		log.Errorf("failed to initialise significance registry: %s", err.Error())
 
+		return err
+	}
+
+	if err := d.initLinkTables(); err != nil {
+		return err
+	}
+
+	if err := d.dropLegacyRelationshipColumns(); err != nil {
 		return err
 	}
 

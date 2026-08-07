@@ -43,7 +43,30 @@ type fakeClient struct {
 
 	candidatesRes *contract.GetSummarisationCandidatesResponse
 
+	linkReq   *contract.LinkMemoriesRequest
+	unlinkReq *contract.UnlinkMemoriesRequest
+	linksReq  *contract.GetMemoryLinksRequest
+	linksRes  *contract.GetLinksResponse
+
 	err error
+}
+
+func (f *fakeClient) LinkMemories(_ context.Context, in *contract.LinkMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.linkReq = in
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) UnlinkMemories(_ context.Context, in *contract.UnlinkMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.unlinkReq = in
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) GetMemoryLinks(_ context.Context, in *contract.GetMemoryLinksRequest, _ ...grpc.CallOption) (*contract.GetLinksResponse, error) {
+	f.linksReq = in
+
+	return f.linksRes, f.err
 }
 
 func (f *fakeClient) StoreMemory(_ context.Context, in *contract.Memory, _ ...grpc.CallOption) (*contract.StoreMemoryResponse, error) {
@@ -532,5 +555,135 @@ func TestServer_EndToEnd(t *testing.T) {
 
 	if f.storeMemoryReq.GetBody() != "hi" || f.storeMemoryReq.GetSignificance() != 5 {
 		t.Fatalf("request not mapped through the transport: %+v", f.storeMemoryReq)
+	}
+}
+
+// --- the link tools ---
+
+func TestLinkMemories(t *testing.T) {
+	fake := &fakeClient{}
+	b := &bridge{client: fake, callTimeout: time.Second}
+
+	_, out, err := b.linkMemories(context.Background(), nil, linkMemoriesInput{
+		Id: "m1",
+		Links: []linkViewInput{
+			{Id: "m2", Significance: 5},
+			{Id: "m3", Significance: 7},
+		},
+	})
+	if err != nil {
+		t.Fatalf("linkMemories: %s", err)
+	}
+
+	if !out.Ok {
+		t.Error("expected ok")
+	}
+
+	if fake.linkReq.GetId() != "m1" || len(fake.linkReq.GetLinks()) != 2 {
+		t.Fatalf("unexpected request: %+v", fake.linkReq)
+	}
+
+	if fake.linkReq.GetLinks()[1].GetId() != "m3" || fake.linkReq.GetLinks()[1].GetSignificance() != 7 {
+		t.Errorf("unexpected links: %+v", fake.linkReq.GetLinks())
+	}
+}
+
+func TestLinkMemoriesValidation(t *testing.T) {
+	b := &bridge{client: &fakeClient{}, callTimeout: time.Second}
+
+	cases := []struct {
+		name string
+		in   linkMemoriesInput
+	}{
+		{"no id", linkMemoriesInput{Links: []linkViewInput{{Id: "m2"}}}},
+		{"no links", linkMemoriesInput{Id: "m1"}},
+		{"link without an id", linkMemoriesInput{Id: "m1", Links: []linkViewInput{{Significance: 3}}}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, _, err := b.linkMemories(context.Background(), nil, c.in); err == nil {
+				t.Error("expected an error")
+			}
+		})
+	}
+}
+
+func TestUnlinkMemories(t *testing.T) {
+	fake := &fakeClient{}
+	b := &bridge{client: fake, callTimeout: time.Second}
+
+	if _, _, err := b.unlinkMemories(context.Background(), nil, unlinkMemoriesInput{Id: "m1", Ids: []string{"m2"}}); err != nil {
+		t.Fatalf("unlinkMemories: %s", err)
+	}
+
+	if fake.unlinkReq.GetId() != "m1" || len(fake.unlinkReq.GetIds()) != 1 {
+		t.Fatalf("unexpected request: %+v", fake.unlinkReq)
+	}
+
+	for _, in := range []unlinkMemoriesInput{{Ids: []string{"m2"}}, {Id: "m1"}} {
+		if _, _, err := b.unlinkMemories(context.Background(), nil, in); err == nil {
+			t.Errorf("expected an error for %+v", in)
+		}
+	}
+}
+
+func TestGetMemoryLinks(t *testing.T) {
+	fake := &fakeClient{linksRes: &contract.GetLinksResponse{
+		LinkSignificance: 12,
+		Links: []*contract.LinkEdge{
+			{Id: "m2", Significance: 5, Direction: contract.LinkDirection_LINK_DIRECTION_OUTBOUND, Created: 42},
+			{Id: "m3", Significance: 7, Direction: contract.LinkDirection_LINK_DIRECTION_INBOUND},
+		},
+	}}
+	b := &bridge{client: fake, callTimeout: time.Second}
+
+	_, out, err := b.getMemoryLinks(context.Background(), nil, getMemoryLinksInput{Id: "m1", Direction: "outbound"})
+	if err != nil {
+		t.Fatalf("getMemoryLinks: %s", err)
+	}
+
+	if fake.linksReq.GetDirection() != contract.LinkDirection_LINK_DIRECTION_OUTBOUND {
+		t.Errorf("direction not passed through: %v", fake.linksReq.GetDirection())
+	}
+
+	if out.LinkSignificance != 12 || len(out.Links) != 2 {
+		t.Fatalf("unexpected output: %+v", out)
+	}
+
+	if out.Links[0].Direction != "outbound" || out.Links[1].Direction != "inbound" {
+		t.Errorf("directions not projected: %+v", out.Links)
+	}
+}
+
+// TestGetMemoryLinksUnknownDirection pins that an unrecognised direction is refused rather than
+// quietly treated as "both" - a caller that asked for one direction and silently got the other
+// would have no way to tell.
+func TestGetMemoryLinksUnknownDirection(t *testing.T) {
+	b := &bridge{client: &fakeClient{}, callTimeout: time.Second}
+
+	if _, _, err := b.getMemoryLinks(context.Background(), nil, getMemoryLinksInput{Id: "m1", Direction: "sideways"}); err == nil {
+		t.Error("expected an error for an unknown direction")
+	}
+
+	if _, _, err := b.getMemoryLinks(context.Background(), nil, getMemoryLinksInput{Direction: "both"}); err == nil {
+		t.Error("expected an error when no id was given")
+	}
+}
+
+// TestRecallIncludeLinkedPassesThrough pins the associative-recall flag reaching the RPC.
+func TestRecallIncludeLinkedPassesThrough(t *testing.T) {
+	fake := &fakeClient{recallRes: &contract.GetMemoriesResponse{}}
+	b := &bridge{client: fake, callTimeout: time.Second}
+
+	if _, _, err := b.recallMemories(context.Background(), nil, recallMemoriesInput{
+		Ids:           []string{"m1"},
+		IncludeLinked: true,
+	}); err != nil {
+		t.Fatalf("recallMemories: %s", err)
+	}
+
+	if !fake.recallReq.GetIncludeLinked() {
+		t.Error("include_linked did not reach the RPC")
 	}
 }

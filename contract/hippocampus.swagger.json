@@ -9,12 +9,8 @@
       "name": "Hippocampus"
     }
   ],
-  "consumes": [
-    "application/json"
-  ],
-  "produces": [
-    "application/json"
-  ],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
   "paths": {
     "/v1/clear": {
       "post": {
@@ -45,9 +41,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/consolidation/explain": {
@@ -80,9 +74,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/events": {
@@ -203,9 +195,7 @@
             "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED"
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       },
       "post": {
         "summary": "Events\nStoreEvent creates an event, optionally with nested memories (each defaulted to the new\nevent's id when unset). An event below event.minimumSignificance is quietly dropped - see\nStoreEventResponse.",
@@ -227,7 +217,7 @@
         "parameters": [
           {
             "name": "body",
-            "description": "Event is a named time span with its own significance, optionally carrying relationships to\nother events and/or nested memories. memories/relationships are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory.",
+            "description": "Event is a named time span with its own significance, optionally carrying links to\nother events and/or nested memories. memories/links are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory.",
             "in": "body",
             "required": true,
             "schema": {
@@ -235,9 +225,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/events/merge": {
@@ -268,9 +256,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/events/{eventId}/summarise": {
@@ -307,9 +293,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/events/{eventId}/summary": {
@@ -346,9 +330,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/events/{id}": {
@@ -385,9 +367,7 @@
             "type": "boolean"
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       },
       "delete": {
         "summary": "DeleteEvent deletes an event. When memories is true its memories are deleted too; otherwise\nthey are kept but detached (their event_id is cleared). NotFound if the event does not exist.",
@@ -421,9 +401,7 @@
             "type": "boolean"
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/events/{id}/end": {
@@ -461,9 +439,125 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
+      }
+    },
+    "/v1/events/{id}/links": {
+      "get": {
+        "summary": "GetEventLinks is GetMemoryLinks for events; the same rules apply.",
+        "operationId": "Hippocampus_GetEventLinks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetLinksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "the event whose links to return; must exist",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "description": "which directions to return; unset means BOTH\n\n - LINK_DIRECTION_UNSPECIFIED: treated as BOTH\n - LINK_DIRECTION_BOTH: links in either direction\n - LINK_DIRECTION_OUTBOUND: only links this item declared, pointing away from it\n - LINK_DIRECTION_INBOUND: only links other items declared, pointing at it",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "LINK_DIRECTION_UNSPECIFIED",
+              "LINK_DIRECTION_BOTH",
+              "LINK_DIRECTION_OUTBOUND",
+              "LINK_DIRECTION_INBOUND"
+            ],
+            "default": "LINK_DIRECTION_UNSPECIFIED"
+          }
+        ],
+        "tags": ["Hippocampus"]
+      },
+      "post": {
+        "summary": "LinkEvents is LinkMemories for events; the same rules apply.",
+        "operationId": "Hippocampus_LinkEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "the event the links start from; must exist",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusLinkEventsBody"
+            }
+          }
+        ],
+        "tags": ["Hippocampus"]
+      }
+    },
+    "/v1/events/{id}/links/delete": {
+      "post": {
+        "summary": "UnlinkEvents is UnlinkMemories for events; the same rules apply.",
+        "operationId": "Hippocampus_UnlinkEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "the event the links start from; must exist",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusUnlinkEventsBody"
+            }
+          }
+        ],
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/events/{id}/significance": {
@@ -501,9 +595,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/export": {
@@ -535,9 +627,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/import": {
@@ -568,9 +658,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/import/batch": {
@@ -602,9 +690,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/memories": {
@@ -700,11 +786,23 @@
               "SIGNIFICANCE_EXTREMUM_LOWEST"
             ],
             "default": "SIGNIFICANCE_EXTREMUM_UNSPECIFIED"
+          },
+          {
+            "name": "linkedTo",
+            "description": "optional: restrict to memories linked to this memory id, in either direction (one hop). NotFound if that memory does not exist",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "links",
+            "description": "when true, populate each returned memory's links",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       },
       "post": {
         "summary": "Memories\nStoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -\nsee StoreMemoryResponse.",
@@ -734,9 +832,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/memories/delete": {
@@ -767,9 +863,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/memories/recall": {
@@ -800,9 +894,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/memories/search": {
@@ -834,9 +926,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/memories/{id}": {
@@ -874,9 +964,125 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
+      }
+    },
+    "/v1/memories/{id}/links": {
+      "get": {
+        "summary": "GetMemoryLinks returns a memory's links. By default both directions are returned (the graph is\nstored directed but valued symmetrically); set direction to narrow it. NotFound if the memory\ndoes not exist.",
+        "operationId": "Hippocampus_GetMemoryLinks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetLinksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "the memory whose links to return; must exist",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "description": "which directions to return; unset means BOTH\n\n - LINK_DIRECTION_UNSPECIFIED: treated as BOTH\n - LINK_DIRECTION_BOTH: links in either direction\n - LINK_DIRECTION_OUTBOUND: only links this item declared, pointing away from it\n - LINK_DIRECTION_INBOUND: only links other items declared, pointing at it",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "LINK_DIRECTION_UNSPECIFIED",
+              "LINK_DIRECTION_BOTH",
+              "LINK_DIRECTION_OUTBOUND",
+              "LINK_DIRECTION_INBOUND"
+            ],
+            "default": "LINK_DIRECTION_UNSPECIFIED"
+          }
+        ],
+        "tags": ["Hippocampus"]
+      },
+      "post": {
+        "summary": "LinkMemories adds or updates links from one memory to others. Re-linking an existing pair\noverwrites that link's significance rather than adding a second link. NotFound if the memory\nor any target does not exist; InvalidArgument on a self-link or once the memory would exceed\nthe per-item link limit.",
+        "operationId": "Hippocampus_LinkMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "the memory the links start from; must exist",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusLinkMemoriesBody"
+            }
+          }
+        ],
+        "tags": ["Hippocampus"]
+      }
+    },
+    "/v1/memories/{id}/links/delete": {
+      "post": {
+        "summary": "UnlinkMemories removes links from one memory to the named memories; unknown targets are\nsilently ignored. NotFound if the memory itself does not exist.",
+        "operationId": "Hippocampus_UnlinkMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "the memory the links start from; must exist",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusUnlinkMemoriesBody"
+            }
+          }
+        ],
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/purge": {
@@ -897,9 +1103,7 @@
             }
           }
         },
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/sleep": {
@@ -920,9 +1124,7 @@
             }
           }
         },
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/sleep/preview": {
@@ -954,9 +1156,7 @@
             "format": "int32"
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/summarisation/candidates": {
@@ -977,9 +1177,7 @@
             }
           }
         },
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/transfer": {
@@ -1011,9 +1209,7 @@
             }
           }
         ],
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     },
     "/v1/whoami": {
@@ -1034,9 +1230,7 @@
             }
           }
         },
-        "tags": [
-          "Hippocampus"
-        ]
+        "tags": ["Hippocampus"]
       }
     }
   },
@@ -1050,6 +1244,33 @@
           "title": "UnixNano; 0 (the default) uses the current server time"
         }
       }
+    },
+    "HippocampusLinkEventsBody": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Link"
+          },
+          "title": "the targets and their significances; each target must exist and must not be id itself"
+        }
+      }
+    },
+    "HippocampusLinkMemoriesBody": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Link"
+          },
+          "title": "the targets and their significances; each target must exist and must not be id itself"
+        }
+      },
+      "description": "LinkMemoriesRequest adds or updates links from one memory to others. It is an upsert per pair:\nre-linking an existing pair overwrites that link's significance rather than creating a duplicate."
     },
     "HippocampusSummariseMemoriesBody": {
       "type": "object",
@@ -1065,6 +1286,30 @@
         }
       },
       "description": "SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the\nembedded LLM (ollama.enabled) and replace them with it in one transaction, like\nReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are\nexcluded from the LLM prompt (their bodies are opaque, not text)."
+    },
+    "HippocampusUnlinkEventsBody": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target"
+        }
+      }
+    },
+    "HippocampusUnlinkMemoriesBody": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target"
+        }
+      }
     },
     "HippocampusUpdateEventSignificanceBody": {
       "type": "object",
@@ -1126,18 +1371,26 @@
         "placement": {
           "$ref": "#/definitions/v1SignificancePlacement",
           "title": "write-only: rank relative to existing values (see SignificancePlacement)"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Link"
+          },
+          "title": "associative links this memory declares, weighted into its value (see consolidation.linkSignificanceWeight). Outbound only - Link is a directed edge from the item carrying it, so this lists exactly the edges this memory owns and an export/import round trip reproduces them once each; ask GetMemoryLinks for both directions. Write-only on StoreMemory (targets must already exist) and populated on read only when requested; use LinkMemories/UnlinkMemories to edit them incrementally"
+        },
+        "linkSignificance": {
+          "type": "string",
+          "format": "int64",
+          "title": "read-only: sum of this memory's links' significance values, inbound and outbound, calculated by the server; ignored on write"
         }
       },
       "description": "Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to\nan event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective\nsignificance rises. is_binary controls whether the body is indexed for content search (see\nSearchMemories) - a binary body is never indexed."
     },
     "SignificancePlacementMode": {
       "type": "string",
-      "enum": [
-        "UNSPECIFIED",
-        "ABOVE",
-        "BELOW",
-        "BETWEEN"
-      ],
+      "enum": ["UNSPECIFIED", "ABOVE", "BELOW", "BETWEEN"],
       "default": "UNSPECIFIED",
       "title": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
     },
@@ -1171,11 +1424,7 @@
     },
     "v1Bool": {
       "type": "string",
-      "enum": [
-        "UNSPECIFIED",
-        "FALSE",
-        "TRUE"
-      ],
+      "enum": ["UNSPECIFIED", "FALSE", "TRUE"],
       "default": "UNSPECIFIED",
       "description": "Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an\nexplicitly-set value from one left absent. Used for Memory.is_binary; UNSPECIFIED and FALSE are\ncurrently treated identically by the server (both mean not-binary) - only TRUE marks a memory\nas binary.\n\n - UNSPECIFIED: not set; the server currently treats this the same as FALSE\n - FALSE: explicitly not binary\n - TRUE: binary; the body is opaque and never indexed for content search"
     },
@@ -1309,18 +1558,18 @@
           "type": "boolean",
           "title": "read-only: true once a sleep cycle has deleted (consolidated) some of this event's memories; ignored on write"
         },
-        "relationshipSignificance": {
+        "linkSignificance": {
           "type": "string",
           "format": "int64",
-          "title": "read-only: sum of relationships' significance values, calculated by the server; ignored on write"
+          "title": "read-only: sum of this event's links' significance values, inbound and outbound, calculated by the server; ignored on write"
         },
-        "relationships": {
+        "links": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/v1Relationship"
+            "$ref": "#/definitions/v1Link"
           },
-          "title": "relationships to other events, weighted into this event's memories' value (see consolidation.relationshipSignificanceWeight)"
+          "title": "links this event declares to other events, weighted into its memories' value (see consolidation.linkSignificanceWeight). Outbound only, like Memory.links - ask GetEventLinks for both directions"
         },
         "memories": {
           "type": "array",
@@ -1339,7 +1588,7 @@
           "title": "write-only: rank relative to existing values (see SignificancePlacement)"
         }
       },
-      "description": "Event is a named time span with its own significance, optionally carrying relationships to\nother events and/or nested memories. memories/relationships are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory."
+      "description": "Event is a named time span with its own significance, optionally carrying links to\nother events and/or nested memories. memories/links are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory."
     },
     "v1ExplainConsolidationRequest": {
       "type": "object",
@@ -1559,6 +1808,23 @@
         }
       }
     },
+    "v1GetLinksResponse": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1LinkEdge"
+          }
+        },
+        "linkSignificance": {
+          "type": "string",
+          "format": "int64",
+          "title": "the queried item's total link significance, both directions - the figure the decay maths damps and weights"
+        }
+      }
+    },
     "v1GetMemoriesResponse": {
       "type": "object",
       "properties": {
@@ -1642,6 +1908,56 @@
         }
       }
     },
+    "v1Link": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "the linked memory's or event's id; must name an existing item of the same kind"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32",
+          "title": "this link's weight; 0..1000000, must not be negative - not part of the significance registry, never ranked"
+        }
+      },
+      "description": "Link is a directed, significance-carrying association between two memories or between two events.\nOne Link message describes one edge from the item carrying it to the item it names.\n\nThe significance is weighted into the decay maths for BOTH ends, with diminishing returns - the\ncontribution is consolidation.linkSignificanceWeight * log1p(sum of an item's link significances),\nso a well-connected memory decays more slowly without any number of links ever making it\nunforgettable. Unlike the event relationships this replaces, both ends must exist: a link is\ndeleted automatically when either end is forgotten, so it can never dangle."
+    },
+    "v1LinkDirection": {
+      "type": "string",
+      "enum": [
+        "LINK_DIRECTION_UNSPECIFIED",
+        "LINK_DIRECTION_BOTH",
+        "LINK_DIRECTION_OUTBOUND",
+        "LINK_DIRECTION_INBOUND"
+      ],
+      "default": "LINK_DIRECTION_UNSPECIFIED",
+      "description": "LinkDirection narrows which of an item's links a read returns. The graph is stored directed, so\nthe two directions are distinguishable, but value is symmetric - both ends of a link gain its\nsignificance - which is why BOTH is the default rather than OUTBOUND.\n\n - LINK_DIRECTION_UNSPECIFIED: treated as BOTH\n - LINK_DIRECTION_BOTH: links in either direction\n - LINK_DIRECTION_OUTBOUND: only links this item declared, pointing away from it\n - LINK_DIRECTION_INBOUND: only links other items declared, pointing at it"
+    },
+    "v1LinkEdge": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "the far end's id - the other memory or event"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32",
+          "title": "this link's weight"
+        },
+        "direction": {
+          "$ref": "#/definitions/v1LinkDirection",
+          "title": "OUTBOUND when the queried item declared this link, INBOUND when the far end did"
+        },
+        "created": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano the link was first created"
+        }
+      },
+      "description": "LinkEdge is one stored link as read back: the pair it connects, its significance, and which way\nit points relative to the item that was asked about. Link (the write form) names only the far\nend, because the near end is the item carrying it; a read can return both directions at once and\nso has to say which is which."
+    },
     "v1Memory": {
       "type": "object",
       "properties": {
@@ -1692,6 +2008,19 @@
         "placement": {
           "$ref": "#/definitions/v1SignificancePlacement",
           "title": "write-only: rank relative to existing values (see SignificancePlacement)"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Link"
+          },
+          "title": "associative links this memory declares, weighted into its value (see consolidation.linkSignificanceWeight). Outbound only - Link is a directed edge from the item carrying it, so this lists exactly the edges this memory owns and an export/import round trip reproduces them once each; ask GetMemoryLinks for both directions. Write-only on StoreMemory (targets must already exist) and populated on read only when requested; use LinkMemories/UnlinkMemories to edit them incrementally"
+        },
+        "linkSignificance": {
+          "type": "string",
+          "format": "int64",
+          "title": "read-only: sum of this memory's links' significance values, inbound and outbound, calculated by the server; ignored on write"
         }
       },
       "description": "Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to\nan event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective\nsignificance rises. is_binary controls whether the body is indexed for content search (see\nSearchMemories) - a binary body is never indexed."
@@ -1714,7 +2043,7 @@
         "effectiveSignificance": {
           "type": "number",
           "format": "double",
-          "title": "what the decay actually acts on: the memory's own significance plus its event's, the weighted relationship significance, and the weighted recall count"
+          "title": "what the decay actually acts on: the memory's own significance plus its event's, the damped link contributions below, and the weighted recall count"
         },
         "value": {
           "type": "number",
@@ -1756,6 +2085,26 @@
           "type": "number",
           "format": "double",
           "title": "projected days until the memory would be consolidated, holding today's threshold and pressure and assuming no further recall; 0 when it is already due, -1 when it is not due within the projected horizon"
+        },
+        "linkSignificance": {
+          "type": "string",
+          "format": "int64",
+          "title": "the memory's own summed link significance, both directions, before damping"
+        },
+        "linkContribution": {
+          "type": "number",
+          "format": "double",
+          "title": "what those links add to effective_significance: linkSignificanceWeight * log1p(link_significance)"
+        },
+        "eventLinkSignificance": {
+          "type": "string",
+          "format": "int64",
+          "title": "the memory's event's summed link significance, both directions, before damping; 0 for a memory with no event"
+        },
+        "eventLinkContribution": {
+          "type": "number",
+          "format": "double",
+          "title": "what the event's links add to effective_significance, damped the same way; 0 for a memory with no event"
         }
       },
       "description": "MemoryValuation is where one memory stands against the consolidation rules right now: the value\nthe decay algorithm gives it, the threshold that value is measured against, and the flags that\noverride the comparison either way. Bodies are never included - this explains a memory, it is not\na way to read one."
@@ -1847,23 +2196,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "includeLinked": {
+          "type": "boolean",
+          "title": "also return the memories linked to those recalled, one hop, in either direction. The linked memories are returned as an associative recall, not counted as directly recalled: their recall_count is untouched (see consolidation.linkRecallPropagation for what a recall does to a neighbour's decay clock)"
         }
       }
-    },
-    "v1Relationship": {
-      "type": "object",
-      "properties": {
-        "eventId": {
-          "type": "string",
-          "title": "the related event's id; not validated against existing events"
-        },
-        "significance": {
-          "type": "integer",
-          "format": "int32",
-          "title": "this relationship's weight; unvalidated (may be negative or zero) - not part of the significance registry, never ranked"
-        }
-      },
-      "description": "Relationship is a directed reference from one event to another, carrying its own significance,\nwhich is weighted into the value calculation of the referencing event's memories (see\nconsolidation.relationshipSignificanceWeight)."
     },
     "v1ReplaceMemoriesWithSummaryResponse": {
       "type": "object",
@@ -1903,6 +2241,10 @@
         "mode": {
           "$ref": "#/definitions/v1SearchMode",
           "title": "how to match; unset means KEYWORD"
+        },
+        "includeLinked": {
+          "type": "boolean",
+          "title": "also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves"
         }
       },
       "description": "SearchMemoriesRequest queries the secondary content-search index for memories matching the\nquery. Results are always re-read from the primary store, which remains authoritative; ids the\nindex returns that the primary store no longer holds are silently dropped. When reinforce is\ntrue the matched memories are recalled - resetting their decay clocks and raising their\neffective significance - rather than merely fetched, and only the memories actually returned are\nreinforced."

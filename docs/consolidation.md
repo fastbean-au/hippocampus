@@ -29,10 +29,41 @@ Where the significances are properties of the event (or a default value which is
 
 The six methods cover the shapes most use cases reach for: a power law (1) that matches published human-forgetting-curve research; two constant-rate linear decays (2, 3), kept for backwards compatibility, that forget in fixed amounts per age unit; a true exponential half-life decay (4), the standard recency-weighting curve for caches, feeds, and recommendation scoring; a logarithmic long-tail decay (5) for archival or audit-log stores that want to keep nearly everything; and a sigmoid "consolidation window" decay (6) that holds a memory near full value until a configured age, then lets it go quickly — closest in spirit to the biological process the service is named for.
 
-An event's relationship significance ($Significance_r$, the sum of the significances of its
-relationships to other events) also contributes to the value of its memories, scaled by the
-configurable weight $w$ (`consolidation.relationshipSignificanceWeight`). A weight of 0 disables
-the relationship contribution.
+### Links
+
+Memories can be linked to other memories, and events to other events, each link carrying its own
+significance (the `LinkMemories`/`LinkEvents` RPCs; see [Configurability](configuration.md#configurability)). A **link raises the effective significance
+of both of its ends**, so an item that is well connected decays more slowly — the associative half
+of the model the service is named for.
+
+The contribution is damped rather than summed. For an item whose links total $Significance_l$:
+
+$$Contribution_l = w \times \ln(1 + Significance_l)$$
+
+where $w$ is `consolidation.linkSignificanceWeight` (0 disables it entirely). A memory's value gets
+**two** such terms, damped separately: one for its own links and one for its event's. An event's own
+value gets one.
+
+The damping is the point. Validation admits at most 128 links of up to 1,000,000 significance each,
+so a naive sum could reach 1.28×10⁸ and swamp every other term — making a well-connected memory
+effectively unforgettable and defeating the capacity bound that eviction exists to hold. Under
+$\ln(1+x)$ that worst case is about 18.7 before weighting: the second link matters, the hundredth
+barely registers. Being connected raises an item's standing; it cannot buy immortality.
+
+| Total link significance | Contribution at $w = 1$ |
+| ----------------------- | ----------------------- |
+| 0                       | 0                       |
+| 10                      | 2.4                     |
+| 100                     | 4.6                     |
+| 1,000                   | 6.9                     |
+| 10,000                  | 9.2                     |
+| 128,000,000 (the cap)   | 18.7                    |
+
+> **Upgrading:** this replaces the linear `consolidation.relationshipSignificanceWeight`
+> contribution, which applied to event relationships only. Both the key name and the maths changed,
+> so **an existing configured weight must be re-tuned** — at the old weight the contribution is now
+> orders of magnitude smaller. `ExplainConsolidation` reports each memory's link significance and
+> its damped contribution side by side, which is the quickest way to pick a new value.
 
 Recalling a memory (the `RecallMemories` RPC) reinforces it in two ways: the memory's decay clock
 resets, so `age` is measured from the most recent recall rather than from creation; and each
@@ -366,17 +397,17 @@ default; when disabled the service behaves exactly as above.
 
 Configuration (`ollama.*`):
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `ollama.enabled` | `false` | Enable the embedded summariser. When false, `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. |
-| `ollama.address` | `http://localhost:11434` | Base URL of the Ollama server. |
-| `ollama.model` | `llama3.2` | Ollama model tag used for generation. |
-| `ollama.autoSummarise` | `false` | Summarise scan candidates automatically during the sleep cycle. |
-| `ollama.timeoutSeconds` | `120` | Per-call timeout for one summarisation request. |
-| `ollama.maxMemories` | `200` | Cap on how many memory bodies go into one prompt. |
-| `ollama.promptCharLimit` | `32000` | Cap on the total characters of memory bodies in one prompt. |
-| `ollama.systemPrompt` | built-in | Override the instruction sent to the model. |
-| `ollama.temperature` | model default | Sampling temperature; a low value keeps summaries faithful. |
+| Key                      | Default                  | Meaning                                                                                                                          |
+| ------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `ollama.enabled`         | `false`                  | Enable the embedded summariser. When false, `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. |
+| `ollama.address`         | `http://localhost:11434` | Base URL of the Ollama server.                                                                                                   |
+| `ollama.model`           | `llama3.2`               | Ollama model tag used for generation.                                                                                            |
+| `ollama.autoSummarise`   | `false`                  | Summarise scan candidates automatically during the sleep cycle.                                                                  |
+| `ollama.timeoutSeconds`  | `120`                    | Per-call timeout for one summarisation request.                                                                                  |
+| `ollama.maxMemories`     | `200`                    | Cap on how many memory bodies go into one prompt.                                                                                |
+| `ollama.promptCharLimit` | `32000`                  | Cap on the total characters of memory bodies in one prompt.                                                                      |
+| `ollama.systemPrompt`    | built-in                 | Override the instruction sent to the model.                                                                                      |
+| `ollama.temperature`     | model default            | Sampling temperature; a low value keeps summaries faithful.                                                                      |
 
 Deploy Ollama alongside the service with the optional `ollama` compose profile (see the comments
 in `docker-compose.yaml`); it must have the configured model pulled

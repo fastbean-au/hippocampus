@@ -31,6 +31,34 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Breaking
 
+- **Event relationships became links, and the contribution is now damped.** Memory-to-memory links
+  and event-to-event relationships turned out to be the same mechanism, so they are now one:
+  the `Link` message, the `link_significance` aggregate, and one weight. Four separate breaks:
+  - **Contract.** `Relationship` → `Link` (its `event_id` field → `id`); `Event.relationships` →
+    `Event.links`; `Event.relationship_significance` → `Event.link_significance`. Field numbers and
+    types are unchanged, so the wire format is identical — only the names break. Generated clients
+    must be regenerated. `buf breaking` reports the removal of the `Relationship` message (the field
+    renames are not wire-breaking and it does not flag them); that report is expected.
+  - **Configuration.** `consolidation.relationshipSignificanceWeight` →
+    `consolidation.linkSignificanceWeight`. The old key is not read; there is no alias.
+  - **Behaviour — the weight now means something different, and must be re-tuned.** The
+    contribution changed from `weight × total` to `weight × ln(1 + total)`. A relationship total of
+    1,280,000 at weight 0.1 used to contribute 128,000; it now contributes about 1.4. **Every
+    configured weight is effectively a no-op until re-tuned.** The damping is what stops any number
+    of links making an item unforgettable and defeating the capacity bound — see
+    [Links](docs/consolidation.md#links). `ExplainConsolidation` reports each memory's link
+    significance beside its damped contribution, which is the quickest way to pick a new value;
+    the config wizard's decay preview mirrors the new maths.
+  - **Stored schema.** Event relationships moved from the `events.relationships` JSON column to an
+    `event_links` table, alongside the new `memory_links`. **No data is migrated**: the legacy
+    columns are dropped on first startup and the graph starts empty. This is deliberate — a
+    half-migration that silently reinterpreted significances under the new damped maths would be
+    worse than starting clean. Re-create any event relationships you rely on via `LinkEvents`.
+  - Also of note: an event's links no longer round-trip through `StoreEvent`/`UpdateEvent`. They
+    are rows in their own table, edited through the link RPCs, so a create or partial update
+    carrying links leaves the existing graph alone rather than replacing it. The `hippo` CLI's
+    `--relationship` flag is renamed `--link` to match.
+
 - **The proto package is now `hippocampus.v1`, was `proto`.** Taken deliberately, and now rather
   than after 1.0, so that a future v2 of the contract can be served beside v1 instead of replacing
   it — a namespace with no version in it leaves no room to do that, and the rename only gets more
@@ -49,6 +77,25 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
     package.
 
 ### Added
+
+- **Memory-to-memory links** — an associative graph over memories, the on-thesis capability the
+  service had been missing. A link is directed, carries its own significance, and raises the
+  effective significance of **both** ends with diminishing returns, so a well-connected memory
+  decays more slowly. Three parts:
+  - `LinkMemories` / `UnlinkMemories` / `GetMemoryLinks`, and the same three for events
+    (`LinkEvents` / `UnlinkEvents` / `GetEventLinks`). Both ends must exist — links cannot dangle —
+    and a link is removed automatically when either end is forgotten.
+  - **Spreading activation**: `consolidation.linkRecallPropagation` (0–1, default 0 = off) advances
+    a recalled memory's direct neighbours' decay clocks a fraction of the way to now, so recalling
+    one thing keeps its associates alive. Their recall counts are never touched, so ranking and the
+    recall term keep their existing meaning.
+  - **Associative retrieval**: `include_linked` on `RecallMemories` and `SearchMemories`, and a
+    `linked_to` filter on `GetMemories`, all one hop.
+
+  Exposed on the `hippo` CLI (`memory link|unlink|links`, `event link|unlink|links`), the MCP bridge
+  (`link_memories`, `unlink_memories`, `get_memory_links`), and the web console's memory table.
+  Links round-trip through `Export`/`Import`/`Transfer`; the import applies them in a second pass
+  once every row exists, so a link whose target appears later in the archive is not lost.
 
 - `CHANGELOG.md` (this file), backfilled over every release, and the compatibility policy above.
 - A `proto-breaking` CI job running `buf breaking` on `contract/hippocampus.proto` against the

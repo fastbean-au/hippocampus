@@ -123,15 +123,18 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 
 ### Memories
 
-| Command         | Purpose                                                                                                                                      |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory store`  | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--timestamp`, `--binary`)                            |
-| `memory update` | partial update of an existing memory (`--id` plus any content fields)                                                                        |
-| `memory delete` | delete memories by id (`--id` repeatable, or positional ids)                                                                                 |
-| `memory list`   | list memories with filters (`--group`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
-| `memory recall` | recall memories by id (reinforces them)                                                                                                      |
-| `memory search` | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--reinforce`)                  |
-| `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)      |
+| Command          | Purpose                                                                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory store`   | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--timestamp`, `--binary`)                            |
+| `memory update`  | partial update of an existing memory (`--id` plus any content fields)                                                                        |
+| `memory delete`  | delete memories by id (`--id` repeatable, or positional ids)                                                                                 |
+| `memory list`    | list memories with filters (`--group`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
+| `memory recall`  | recall memories by id (reinforces them)                                                                                                      |
+| `memory link`    | link a memory to others (`--id`, `--link memoryID:sig` repeatable)                                                                           |
+| `memory unlink`  | remove links between a memory and others (`--id`, `--target` repeatable or positional)                                                       |
+| `memory links`   | list a memory's links (`--id`, `--direction both\|outbound\|inbound`)                                                                        |
+| `memory search`  | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--reinforce`)                  |
+| `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)       |
 
 `memory explain` reports each memory's computed value, the threshold it is measured against, and how
 long it has before it is forgotten; with `--curve-significance` it also returns the decay curve of
@@ -140,15 +143,18 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 
 ### Events
 
-| Command              | Purpose                                                                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `event create`       | create an event (`--name`, `--description`, `--significance`, `--group`, `--time-start`, `--time-end`, `--relationship eventID:sig`) |
-| `event end`          | set an event's end time (`--id`, `--time-end`)                                                                                       |
-| `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                               |
-| `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                        |
-| `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                                      |
-| `event get`          | fetch a single event (`--id`, `--memories`)                                                                                          |
-| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`)            |
+| Command              | Purpose                                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `event link`         | link an event to others (`--id`, `--link eventID:sig` repeatable)                                                            |
+| `event unlink`       | remove links between an event and others (`--id`, `--target` repeatable or positional)                                       |
+| `event links`        | list an event's links (`--id`, `--direction both\|outbound\|inbound`)                                                        |
+| `event create`       | create an event (`--name`, `--description`, `--significance`, `--group`, `--time-start`, `--time-end`, `--link eventID:sig`) |
+| `event end`          | set an event's end time (`--id`, `--time-end`)                                                                               |
+| `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                       |
+| `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                |
+| `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                              |
+| `event get`          | fetch a single event (`--id`, `--memories`)                                                                                  |
+| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`)    |
 
 ### Summarisation
 
@@ -160,11 +166,11 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 
 ### Admin
 
-| Command  | Purpose                                          |
-| -------- | ------------------------------------------------ |
-| `whoami` | report the caller's identity and effective tier                    |
-| `sleep`  | trigger a consolidation cycle now, or preview one (`--dry-run`)    |
-| `purge`  | delete every event and memory (requires `--yes`)                   |
+| Command  | Purpose                                                         |
+| -------- | --------------------------------------------------------------- |
+| `whoami` | report the caller's identity and effective tier                 |
+| `sleep`  | trigger a consolidation cycle now, or preview one (`--dry-run`) |
+| `purge`  | delete every event and memory (requires `--yes`)                |
 
 `sleep --dry-run` reports what a cycle would forget and deletes nothing — see
 [Previewing what would be forgotten](operations.md#previewing-what-would-be-forgotten). It calls a

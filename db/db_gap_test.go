@@ -194,6 +194,8 @@ func TestPurge_CommitError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM memory_links`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM event_links`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -210,6 +212,8 @@ func TestPurge_FinalPreserveError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM memory_links`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM event_links`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -390,9 +394,52 @@ func TestInitSchema_AddColumnEventsSignificanceLevelIDError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-func TestInitSchema_MigrateSignificanceError(t *testing.T) {
+func TestInitSchema_AddColumnMemoriesLinkSignificanceError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 	expectSQLiteInitSchemaThrough(mock, 7)
+
+	sqliteColumnAbsent(mock)
+	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN link_significance`).WillReturnError(errors.New("boom"))
+
+	if err := d.initSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitSchema_AddColumnEventsLinkSignificanceError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	expectSQLiteInitSchemaThrough(mock, 8)
+
+	sqliteColumnAbsent(mock)
+	mock.ExpectExec(`ALTER TABLE events ADD COLUMN link_significance`).WillReturnError(errors.New("boom"))
+
+	if err := d.initSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitSchema_LinkTablesError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	expectSQLiteInitSchemaThrough(mock, 9)
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memory_links`).WillReturnError(errors.New("boom"))
+
+	if err := d.initSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitSchema_MigrateSignificanceError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	expectSQLiteInitSchemaThrough(mock, 9)
+	expectLinkTables(mock, driverSQLite)
+	expectNoLegacyRelationshipColumns(mock)
 
 	// migrateSignificanceToLevels: its own columnExists probe fails.
 	mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
@@ -406,10 +453,13 @@ func TestInitSchema_MigrateSignificanceError(t *testing.T) {
 
 func TestInitSchema_EnsureCoveringIndexError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 7)
+	expectSQLiteInitSchemaThrough(mock, 9)
+	expectLinkTables(mock, driverSQLite)
+	expectNoLegacyRelationshipColumns(mock)
 
 	// migrateSignificanceToLevels: old column absent -> no-op.
 	sqliteColumnAbsent(mock)
+	expectSupersededIndexDrop(mock, driverSQLite)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
 
 	if err := d.initSchema(); err == nil {

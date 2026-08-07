@@ -144,7 +144,8 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 	rows, err := d.query(
 		ctx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
-			m.group_name, e.significance_level_id, COALESCE(e.relationship_significance, 0), e.id,
+			m.group_name, e.significance_level_id, COALESCE(e.link_significance, 0),
+			m.link_significance, e.id,
 			length(m.body)
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 	)
@@ -178,7 +179,8 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 			&row.eventId,
 			&row.group,
 			&eventLevelID,
-			&row.candidate.RelationshipSignificance,
+			&row.candidate.EventLinkSignificance,
+			&row.candidate.MemoryLinkSignificance,
 			&joinedEventId,
 			&bodyBytes,
 		); err != nil {
@@ -409,7 +411,7 @@ func (d *DB) previewEmptyEventDeletions(ctx context.Context, s Server) (int, err
 
 	rows, err := d.query(
 		ctx,
-		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.relationship_significance
+		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.link_significance
 		FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id
 		WHERE e.id NOT IN (SELECT DISTINCT event_id FROM memories WHERE event_id != '')`,
 	)
@@ -426,7 +428,7 @@ func (d *DB) previewEmptyEventDeletions(ctx context.Context, s Server) (int, err
 		var id string
 		var candidate EventConsolidationCandidate
 
-		if err := rows.Scan(&id, &candidate.TimeStart, &candidate.TimeEnd, &candidate.Significance, &candidate.RelationshipSignificance); err != nil {
+		if err := rows.Scan(&id, &candidate.TimeStart, &candidate.TimeEnd, &candidate.Significance, &candidate.LinkSignificance); err != nil {
 			log.Errorf("failed to scan event for preview: %s", err.Error())
 
 			return 0, err

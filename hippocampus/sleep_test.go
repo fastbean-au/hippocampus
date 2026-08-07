@@ -136,12 +136,12 @@ func TestSleep_WrapsUnderlyingError(t *testing.T) {
 }
 
 // candidate builds a MemoryConsolidationCandidate for a never-recalled memory.
-func candidate(eventSignificance int32, memorySignificance int32, relationshipSignificance int64, timestamp int64) db.MemoryConsolidationCandidate {
+func candidate(eventSignificance int32, memorySignificance int32, eventLinkSignificance int64, timestamp int64) db.MemoryConsolidationCandidate {
 	return db.MemoryConsolidationCandidate{
-		EventSignificance:        eventSignificance,
-		MemorySignificance:       memorySignificance,
-		RelationshipSignificance: relationshipSignificance,
-		Timestamp:                timestamp,
+		EventSignificance:     eventSignificance,
+		MemorySignificance:    memorySignificance,
+		EventLinkSignificance: eventLinkSignificance,
+		Timestamp:             timestamp,
 	}
 }
 
@@ -431,24 +431,29 @@ func TestShouldConsolidateMemory_FractionalThreshold(t *testing.T) {
 	}
 }
 
-// TestShouldConsolidateMemory_RelationshipSignificance verifies that an event's relationship
-// significance, scaled by the configured weight, extends the survival of that event's memories.
-// Two otherwise identical memories must diverge: the one whose event is well-connected survives.
-func TestShouldConsolidateMemory_RelationshipSignificance(t *testing.T) {
+// TestShouldConsolidateMemory_LinkSignificance verifies that an event's link significance, damped
+// and scaled by the configured weight, extends the survival of that event's memories. Two otherwise
+// identical memories must diverge: the one whose event is well-connected survives.
+func TestShouldConsolidateMemory_LinkSignificance(t *testing.T) {
 	s := &Server{
 		consolidation: Consolidation{
-			method:                         1,
-			aggressiveness:                 1.0,
-			unitsOfAgeInDays:               1.0,
-			minimumAgeInDays:               0,
-			deletionThreshold:              1.0,
-			relationshipSignificanceWeight: 1.0,
+			method:                 1,
+			aggressiveness:         1.0,
+			unitsOfAgeInDays:       1.0,
+			minimumAgeInDays:       0,
+			deletionThreshold:      1.0,
+			linkSignificanceWeight: 1.0,
 		},
 	}
 
-	// method 1: (es + ms + w*rs) / age^1
-	//   age = 10 days, es = 2, ms = 3, rs = 0  → 5/10  = 0.5 < 1.0 → SHOULD consolidate
-	//   age = 10 days, es = 2, ms = 3, rs = 10 → 15/10 = 1.5 > 1.0 → should NOT consolidate
+	// method 1: (es + ms + w*ln(1+ls)) / age^1
+	//   age = 10 days, es = 2, ms = 3, ls = 0     → 5/10               = 0.5  < 1.0 → SHOULD consolidate
+	//   age = 10 days, es = 2, ms = 3, ls = 10000 → (5 + 9.21)/10      = 1.42 > 1.0 → should NOT consolidate
+	//
+	// The 10000 is the point: under the linear contribution this replaced, a link significance of
+	// 10 was enough to triple the value. Damped, ten thousand buys a little over nine - which is
+	// the whole intent, and worth pinning by example rather than only in the comment on
+	// linkContribution.
 
 	tenDaysAgo := time.Now().UnixNano() - int64(10*DAY_IN_NANOSECONDS)
 
@@ -456,31 +461,91 @@ func TestShouldConsolidateMemory_RelationshipSignificance(t *testing.T) {
 		t.Error("memory of an unconnected event should be consolidated")
 	}
 
-	if s.ShouldConsolidateMemory(candidate(2, 3, 10, tenDaysAgo)) {
+	if s.ShouldConsolidateMemory(candidate(2, 3, 10000, tenDaysAgo)) {
 		t.Error("memory of a well-connected event should not be consolidated")
+	}
+
+	// A link significance of 10 - enough to triple the value before damping - must no longer save
+	// it: (5 + ln(11))/10 = 0.74 < 1.0.
+	if !s.ShouldConsolidateMemory(candidate(2, 3, 10, tenDaysAgo)) {
+		t.Error("a small link significance should not outweigh decay once damped")
+	}
+}
+
+// TestShouldConsolidateMemory_LinkContributionIsDamped pins the damping itself: the contribution
+// must grow logarithmically, so that multiplying the link significance by a hundred adds only a
+// constant. This is what stops a well-connected memory becoming unforgettable and defeating the
+// capacity bound.
+func TestShouldConsolidateMemory_LinkContributionIsDamped(t *testing.T) {
+	const weight = 2.0
+
+	if got := linkContribution(weight, 0); got != 0 {
+		t.Errorf("no links should contribute nothing, got %v", got)
+	}
+
+	if got := linkContribution(weight, -5); got != 0 {
+		t.Errorf("a negative sum should contribute nothing rather than a NaN, got %v", got)
+	}
+
+	small := linkContribution(weight, 100)
+	large := linkContribution(weight, 10000)
+
+	// ln(10001) - ln(101) = ln(99.02) ≈ 4.595; times the weight.
+	want := weight * math.Log(10001.0/101.0)
+
+	if diff := math.Abs((large - small) - want); diff > 1e-9 {
+		t.Errorf("a hundredfold increase should add a constant %v, added %v", want, large-small)
+	}
+
+	// The worst case the validation bounds admit - 128 links at the maximum significance - must
+	// still be a small number, not one that swamps every other term.
+	worst := linkContribution(1.0, int64(types.MaxLinks)*types.MaxLinkSignificance)
+	if worst > 20 {
+		t.Errorf("the maximum possible link contribution should stay small, got %v", worst)
 	}
 }
 
 // TestShouldConsolidateMemory_RelationshipWeightZero verifies that a zero weight disables the
-// relationship contribution entirely, preserving the previous behaviour.
+// link contribution entirely, preserving the previous behaviour.
 func TestShouldConsolidateMemory_RelationshipWeightZero(t *testing.T) {
 	s := &Server{
 		consolidation: Consolidation{
-			method:                         1,
-			aggressiveness:                 1.0,
-			unitsOfAgeInDays:               1.0,
-			minimumAgeInDays:               0,
-			deletionThreshold:              1.0,
-			relationshipSignificanceWeight: 0.0,
+			method:                 1,
+			aggressiveness:         1.0,
+			unitsOfAgeInDays:       1.0,
+			minimumAgeInDays:       0,
+			deletionThreshold:      1.0,
+			linkSignificanceWeight: 0.0,
 		},
 	}
 
-	// value = (2 + 3 + 0*1000) / 10 = 0.5 < 1.0 → consolidated despite huge relationship
+	// value = (2 + 3 + 0*ln(1001)) / 10 = 0.5 < 1.0 → consolidated despite substantial link
 	// significance.
 	tenDaysAgo := time.Now().UnixNano() - int64(10*DAY_IN_NANOSECONDS)
 
 	if !s.ShouldConsolidateMemory(candidate(2, 3, 1000, tenDaysAgo)) {
-		t.Error("relationship significance should have no effect when the weight is zero")
+		t.Error("link significance should have no effect when the weight is zero")
+	}
+}
+
+// TestMemorySignificance_LinkTermsAreDampedSeparately pins that a memory's own links and its
+// event's links are damped independently rather than summed and damped once. The two are different
+// populations, and one logarithm over both would let a heavily linked event flatten the difference
+// between its own memories.
+func TestMemorySignificance_LinkTermsAreDampedSeparately(t *testing.T) {
+	s := &Server{consolidation: Consolidation{linkSignificanceWeight: 1.0}}
+
+	split := s.memorySignificanceUnder(db.MemoryConsolidationCandidate{
+		EventLinkSignificance:  100,
+		MemoryLinkSignificance: 100,
+	}, 0)
+
+	// Damped separately: ln(101) + ln(101) = 9.230. Damped together it would be ln(201) = 5.303,
+	// which is what this test exists to rule out.
+	want := 2 * math.Log(101)
+
+	if diff := math.Abs(split - want); diff > 1e-9 {
+		t.Errorf("expected the two link terms damped separately (%v), got %v", want, split)
 	}
 }
 
@@ -717,12 +782,12 @@ func TestShouldConsolidateMemory_ZeroPressureIsSafe(t *testing.T) {
 func TestShouldConsolidateEvent(t *testing.T) {
 	s := &Server{
 		consolidation: Consolidation{
-			method:                         1,
-			aggressiveness:                 1.0,
-			unitsOfAgeInDays:               1.0,
-			minimumAgeInDays:               0,
-			deletionThreshold:              1.0,
-			relationshipSignificanceWeight: 1.0,
+			method:                 1,
+			aggressiveness:         1.0,
+			unitsOfAgeInDays:       1.0,
+			minimumAgeInDays:       0,
+			deletionThreshold:      1.0,
+			linkSignificanceWeight: 1.0,
 		},
 	}
 
@@ -735,10 +800,17 @@ func TestShouldConsolidateEvent(t *testing.T) {
 		t.Error("old low-significance event should be consolidated")
 	}
 
-	// Relationship significance protects: (5 + 10) / 10 = 1.5 > 1.0 → survives.
-	connected := db.EventConsolidationCandidate{Significance: 5, RelationshipSignificance: 10, TimeStart: tenDaysAgo}
+	// Link significance protects, damped: (5 + ln(1+10000)) / 10 = 1.42 > 1.0 → survives.
+	connected := db.EventConsolidationCandidate{Significance: 5, LinkSignificance: 10000, TimeStart: tenDaysAgo}
 	if s.ShouldConsolidateEvent(connected) {
 		t.Error("well-connected event should not be consolidated")
+	}
+
+	// And the damping applies here too: a link significance of 10 no longer saves it, where under
+	// the linear contribution this replaced it would have tripled the value.
+	barelyConnected := db.EventConsolidationCandidate{Significance: 5, LinkSignificance: 10, TimeStart: tenDaysAgo}
+	if !s.ShouldConsolidateEvent(barelyConnected) {
+		t.Error("a small link significance should not outweigh decay once damped")
 	}
 
 	// A recent TimeEnd resets the age even when TimeStart is old: 5 / 2 = 2.5 > 1.0 → survives.

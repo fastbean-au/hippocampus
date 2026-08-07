@@ -78,7 +78,7 @@ func (d *DB) memoryCandidateChunk(
 	rows, err := d.query(
 		ctx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
-			e.significance_level_id, COALESCE(e.relationship_significance, 0), e.id
+			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance, e.id
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id
 		WHERE m.id IN (`+placeholders(count)+`)`,
 		args...,
@@ -105,7 +105,8 @@ func (d *DB) memoryCandidateChunk(
 			&candidate.Candidate.RecallCount,
 			&candidate.EventId,
 			&eventLevelID,
-			&candidate.Candidate.RelationshipSignificance,
+			&candidate.Candidate.EventLinkSignificance,
+			&candidate.Candidate.MemoryLinkSignificance,
 			&joinedEventId,
 		); err != nil {
 			log.Errorf("failed to scan memory consolidation candidate: %s", err.Error())

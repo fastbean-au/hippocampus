@@ -371,7 +371,7 @@ hippo memory explain --curve-significance 40        # no ids: just the curve and
 
 Per memory it reports the `value` the decay algorithm gives it, the `threshold` that value is
 measured against, its `effective_significance` (its own significance plus its event's, the weighted
-relationship significance and the weighted recall count — the number the decay actually acts on),
+damped link contributions and the weighted recall count — the number the decay actually acts on),
 and `days_until_forgotten`: how long it has at today's threshold and pressure, assuming it is not
 recalled again. Two flags override the value comparison and are reported separately, because a
 memory far below the threshold that is nonetheless safe is otherwise baffling: `retained` (inside
@@ -406,7 +406,7 @@ Two complementary approaches:
   length-delimited-proto archive to S3; `Import` reads one back; `Transfer` streams the whole store
   directly into another instance's `ImportBatch`; `Clear` deletes exactly what a prior
   `Export`/`Transfer` captured. These preserve full state (timestamps, recall history, groups,
-  summary flags, relationships) and are idempotent by id.
+  summary flags, links) and are idempotent by id.
 
 **Driver migration** (e.g. SQLite → Postgres) uses the same path: `Export` from the source, `Import`
 into a fresh target. Record ids compare byte-for-byte across all three drivers, so identity is

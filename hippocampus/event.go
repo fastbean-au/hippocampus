@@ -64,6 +64,15 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 		return &res, mapError(err)
 	}
 
+	// Links are checked before the event is written, so a create naming a target that does not exist
+	// fails without leaving the event behind; they are written after, because the near end has to
+	// exist first.
+	if err := s.checkLinkTargets(ctx, s.eventLinks(), event.Id, event.Links); err != nil {
+		tel.eventsRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+		return &res, err
+	}
+
 	id, err := s.db.CreateEvent(ctx, event)
 	if err != nil {
 		return &res, mapError(err)
@@ -71,6 +80,8 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 	res.Id = id
 
 	tel.eventsStored.Add(ctx, 1)
+
+	s.storeLinks(ctx, s.eventLinks(), id, event.Links)
 
 	// Nested memories are best-effort: the event is already committed, so a nested memory that
 	// fails validation, is dropped for insignificance, or hits a store error cannot roll it back.

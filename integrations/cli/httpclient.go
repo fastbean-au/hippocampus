@@ -140,6 +140,46 @@ func (c *httpClient) SearchMemories(ctx context.Context, in *contract.SearchMemo
 	return out, c.do(ctx, http.MethodPost, "/v1/memories/search", nil, in, out)
 }
 
+// The link surface. Each maps onto the gateway binding its google.api.http annotation declares:
+// the near end is a path segment, and the rest of the message is the body (or, for the reads, the
+// query string).
+
+func (c *httpClient) LinkMemories(ctx context.Context, in *contract.LinkMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	out := &contract.GeneralResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/memories/"+pathSegment(in.GetId())+"/links", nil, in, out)
+}
+
+func (c *httpClient) UnlinkMemories(ctx context.Context, in *contract.UnlinkMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	out := &contract.GeneralResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/memories/"+pathSegment(in.GetId())+"/links/delete", nil, in, out)
+}
+
+func (c *httpClient) GetMemoryLinks(ctx context.Context, in *contract.GetMemoryLinksRequest, _ ...grpc.CallOption) (*contract.GetLinksResponse, error) {
+	out := &contract.GetLinksResponse{}
+
+	return out, c.doQuery(ctx, http.MethodGet, "/v1/memories/"+pathSegment(in.GetId())+"/links", in, map[string]bool{"id": true}, out)
+}
+
+func (c *httpClient) LinkEvents(ctx context.Context, in *contract.LinkEventsRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	out := &contract.GeneralResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/events/"+pathSegment(in.GetId())+"/links", nil, in, out)
+}
+
+func (c *httpClient) UnlinkEvents(ctx context.Context, in *contract.UnlinkEventsRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	out := &contract.GeneralResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/events/"+pathSegment(in.GetId())+"/links/delete", nil, in, out)
+}
+
+func (c *httpClient) GetEventLinks(ctx context.Context, in *contract.GetEventLinksRequest, _ ...grpc.CallOption) (*contract.GetLinksResponse, error) {
+	out := &contract.GetLinksResponse{}
+
+	return out, c.doQuery(ctx, http.MethodGet, "/v1/events/"+pathSegment(in.GetId())+"/links", in, map[string]bool{"id": true}, out)
+}
+
 func (c *httpClient) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.ReplaceMemoriesWithSummaryRequest, _ ...grpc.CallOption) (*contract.ReplaceMemoriesWithSummaryResponse, error) {
 	out := &contract.ReplaceMemoriesWithSummaryResponse{}
 

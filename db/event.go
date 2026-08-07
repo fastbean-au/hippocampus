@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,22 +19,24 @@ var ErrEventNotFound = errors.New("event not found")
 // eventColumns is the read projection. significance is the level's rank, exposed by eventsFrom's
 // join to the registry; scanEvent reads it into types.Event.Significance. Use it with eventsFrom as
 // the FROM source, never the bare events table (which has no significance column).
-const eventColumns = `id, time_start, time_end, significance, name, description, memories_consolidated, relationship_significance, relationships, group_name`
+const eventColumns = `id, time_start, time_end, significance, name, description, memories_consolidated, link_significance, group_name`
 
 // eventStoredColumns is the physical column list of the events table (significance_level_id, not the
 // removed significance): used for INSERT (transfer import).
-const eventStoredColumns = `id, time_start, time_end, significance_level_id, name, description, memories_consolidated, relationship_significance, relationships, group_name`
+const eventStoredColumns = `id, time_start, time_end, significance_level_id, name, description, memories_consolidated, link_significance, group_name`
 
 // eventsFrom is the read source for eventColumns: events LEFT JOINed to the significance registry
 // and aliased back to "events", so WHERE/ORDER clauses naming bare columns (id, significance, ...)
 // need no change. An unranked (NULL) level reads as significance 0.
 const eventsFrom = `(SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0) AS significance,
-	e.name, e.description, e.memories_consolidated, e.relationship_significance, e.relationships,
+	e.name, e.description, e.memories_consolidated, e.link_significance,
 	e.group_name FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id) AS events`
 
+// scanEvent reads an event row. Links themselves are not part of the projection - they live in
+// their own table and are fetched only when a caller asks for them (LinksForEvents) - but the
+// denormalised aggregate is, because the consolidation scans need it on every row.
 func scanEvent(scan func(dest ...any) error) (types.Event, error) {
 	var e types.Event
-	var relationships string
 
 	if err := scan(
 		&e.Id,
@@ -45,20 +46,11 @@ func scanEvent(scan func(dest ...any) error) (types.Event, error) {
 		&e.Name,
 		&e.Description,
 		&e.MemoriesConsolidated,
-		&e.RelationshipSignificance,
-		&relationships,
+		&e.LinkSignificance,
 		&e.Group,
 	); err != nil {
 		return e, err
 	}
-
-	r := make([]types.Relationship, 0)
-
-	if err := json.Unmarshal([]byte(relationships), &r); err != nil {
-		return e, err
-	}
-
-	e.Relationships = r
 
 	return e, nil
 }
@@ -76,13 +68,6 @@ func (d *DB) CreateEvent(ctx context.Context, event types.Event) (string, error)
 		return "", err
 	}
 
-	event.RelationshipSignificance = event.CalculateRelationshipSignificance()
-
-	relationships, err := json.Marshal(event.Relationships)
-	if err != nil {
-		return "", err
-	}
-
 	levelID, err := d.ensureSignificanceLevel(ctx, event.Significance, event.SignificanceLevelID)
 	if err != nil {
 		return "", err
@@ -90,17 +75,18 @@ func (d *DB) CreateEvent(ctx context.Context, event types.Event) (string, error)
 
 	event.SignificanceLevelID = levelID
 
+	// link_significance starts at 0 and is maintained by the link graph. Any links the caller
+	// supplied are written by the RPC layer after this returns, through LinkEvents - they name
+	// events that must already exist, which is a check that belongs where NotFound can be returned.
 	_, err = d.exec(ctx,
-		`INSERT INTO events (id, time_start, time_end, significance_level_id, name, description, relationship_significance, relationships, group_name)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO events (id, time_start, time_end, significance_level_id, name, description, group_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		event.Id,
 		event.TimeStart,
 		event.TimeEnd,
 		levelIDArg(event.SignificanceLevelID),
 		event.Name,
 		event.Description,
-		event.RelationshipSignificance,
-		string(relationships),
 		event.Group,
 	)
 
@@ -167,17 +153,11 @@ func (d *DB) UpdateEvent(ctx context.Context, event types.Event) (bool, error) {
 		args = append(args, event.Group)
 	}
 
-	if len(event.Relationships) > 0 {
-
-		// TODO: relationships coming into here need to be the intended values
-		relationships, err := json.Marshal(event.Relationships)
-		if err != nil {
-			return false, err
-		}
-
-		sets = append(sets, `relationship_significance = ?`, `relationships = ?`)
-		args = append(args, event.CalculateRelationshipSignificance(), string(relationships))
-	}
+	// Links are deliberately absent from this SET list. They are rows in their own table now, not a
+	// blob on this one, and they are edited through LinkEvents/UnlinkEvents - which can say what
+	// happened to each one and reject a target that does not exist. A partial update carrying links
+	// therefore leaves the existing graph alone rather than silently replacing it, which is what the
+	// old "intended values" TODO on the JSON column was worrying about.
 
 	// Nothing to change: there is no UPDATE to learn existence from, so probe for it directly.
 	if len(sets) == 0 {
@@ -231,15 +211,36 @@ func (d *DB) setEventConsolidated(ctx context.Context, id string) error {
 func (d *DB) DeleteEvent(ctx context.Context, id string) (bool, error) {
 	log.Trace("func() db.DeleteEvent")
 
-	// TODO: get relationships, and remove foreign components
-
-	res, err := d.exec(ctx, `DELETE FROM events WHERE id = ?`, id)
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
+		return false, err
+	}
+	defer cancel()
+
+	res, err := tx.Exec(d.rebind(`DELETE FROM events WHERE id = ?`), id)
+	if err != nil {
+		_ = tx.Rollback()
+
 		return false, err
 	}
 
 	n, err := res.RowsAffected()
 	if err != nil {
+		_ = tx.Rollback()
+
+		return false, err
+	}
+
+	// Links to and from the deleted event go with it, and the events still standing at the far end
+	// have their aggregate recalculated - otherwise they would keep counting significance from a
+	// link to something that no longer exists.
+	if err := d.pruneEventLinks(tx, []string{id}); err != nil {
+		_ = tx.Rollback()
+
+		return false, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 
@@ -255,17 +256,41 @@ func (d *DB) DeleteEvent(ctx context.Context, id string) (bool, error) {
 func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
 	log.Trace("func() db.DeleteEventIfEmpty")
 
-	res, err := d.exec(ctx,
-		`DELETE FROM events WHERE id = ? AND NOT EXISTS (SELECT 1 FROM memories WHERE event_id = ?)`,
+	tx, cancel, err := d.beginTx(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer cancel()
+
+	res, err := tx.Exec(
+		d.rebind(`DELETE FROM events WHERE id = ? AND NOT EXISTS (SELECT 1 FROM memories WHERE event_id = ?)`),
 		id,
 		id,
 	)
 	if err != nil {
+		_ = tx.Rollback()
+
 		return false, err
 	}
 
 	n, err := res.RowsAffected()
 	if err != nil {
+		_ = tx.Rollback()
+
+		return false, err
+	}
+
+	// Only prune when the event actually went: the emptiness guard may have spared it, and a spared
+	// event keeps its links.
+	if n > 0 {
+		if err := d.pruneEventLinks(tx, []string{id}); err != nil {
+			_ = tx.Rollback()
+
+			return false, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 
@@ -457,7 +482,7 @@ func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 
 	rows, err := d.query(
 		ctx,
-		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.relationship_significance
+		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.link_significance
 		FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id
 		WHERE e.id NOT IN (SELECT DISTINCT event_id FROM memories WHERE event_id != '')`,
 	)
@@ -474,7 +499,7 @@ func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 		var id string
 		var candidate EventConsolidationCandidate
 
-		if err := rows.Scan(&id, &candidate.TimeStart, &candidate.TimeEnd, &candidate.Significance, &candidate.RelationshipSignificance); err != nil {
+		if err := rows.Scan(&id, &candidate.TimeStart, &candidate.TimeEnd, &candidate.Significance, &candidate.LinkSignificance); err != nil {
 			log.Errorf("failed to scan event for consolidation: %s", err.Error())
 
 			return 0, err

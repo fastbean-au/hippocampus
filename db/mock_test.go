@@ -37,6 +37,49 @@ func expectationsMet(t *testing.T, mock sqlmock.Sqlmock) {
 	}
 }
 
+// expectLinkTables scripts initLinkTables: one CREATE TABLE plus one reverse index per graph.
+// MySQL has no CREATE INDEX IF NOT EXISTS, so its arm probes information_schema first and is
+// scripted as already having the index.
+func expectLinkTables(mock sqlmock.Sqlmock, drv driver) {
+	for range 2 {
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS \w+_links`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+		if drv == driverMySQL {
+			mock.ExpectQuery(`information_schema.statistics`).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+			continue
+		}
+
+		mock.ExpectExec(`CREATE INDEX IF NOT EXISTS idx_\w+_links_to`).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+}
+
+// expectNoLegacyRelationshipColumns scripts dropLegacyRelationshipColumns finding neither legacy
+// events column, which is the fresh-database case and a no-op.
+func expectNoLegacyRelationshipColumns(mock sqlmock.Sqlmock) {
+	for range 2 {
+		mock.ExpectQuery(`information_schema.columns|pragma_table_info`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	}
+}
+
+// expectSupersededIndexDrop scripts ensureCoveringIndex dropping the covering index's earlier
+// names before creating the current one. On MySQL each is an information_schema probe (scripted as
+// absent); elsewhere it is an unconditional DROP INDEX IF EXISTS.
+func expectSupersededIndexDrop(mock sqlmock.Sqlmock, drv driver) {
+	for range len(supersededCoveringIndexNames) {
+		if drv == driverMySQL {
+			mock.ExpectQuery(`information_schema.statistics`).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+			continue
+		}
+
+		mock.ExpectExec(`DROP INDEX IF EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+}
+
 // stopConsolidatorKeepalive shuts down the lock keepalive goroutine a consolidator setup started
 // and releases the pinned lock connection, mirroring Close's teardown without closing the mock
 // handle (Close's own server-driver path is covered separately in db_extra_test.go). It leaves the
@@ -426,7 +469,8 @@ func TestRecallMemoriesMySQL(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "timestamp", "significance", "event_id", "body",
 			"is_binary", "time_recalled", "recall_count", "is_summary", "group_name", "is_compressed",
-		}).AddRow("m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false))
+			"link_significance",
+		}).AddRow("m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false, int64(0)))
 	mock.ExpectCommit()
 
 	memories, err := d.recallMemoriesMySQL(context.Background(), []string{"m1"}, 99)
@@ -462,9 +506,12 @@ func TestInitPostgresSchemaFresh(t *testing.T) {
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectLinkTables(mock, driverPostgres)
+	expectNoLegacyRelationshipColumns(mock)
 	// migrateSignificanceToLevels: the old significance column is absent -> no-op.
 	mock.ExpectQuery(`information_schema.columns`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := d.initPostgresSchema(); err != nil {
@@ -482,15 +529,22 @@ func TestInitPostgresSchemaMigrates(t *testing.T) {
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectLinkTables(mock, driverPostgres)
+	expectNoLegacyRelationshipColumns(mock)
 	// migrateSignificanceToLevels: the old significance column exists.
 	mock.ExpectQuery(`information_schema.columns`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("significance"))
 	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnResult(sqlmock.NewResult(0, 3))
 	mock.ExpectExec(`UPDATE memories SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 5))
 	mock.ExpectExec(`UPDATE events SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 2))
+	// dropCoveringIndex drops the index under every name it has ever had - the current one and each
+	// superseded one - because a database still carrying the old significance column is by
+	// definition one that predates the current index name.
 	mock.ExpectExec(`DROP INDEX IF EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`ALTER TABLE memories DROP COLUMN significance`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`ALTER TABLE events DROP COLUMN significance`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := d.initPostgresSchema(); err != nil {
@@ -523,7 +577,10 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	// addColumnIfMissing: is_summary, is_compressed, group_name (memories), group_name (events).
+	// addColumnIfMissing: is_summary, is_compressed, group_name (memories), group_name (events),
+	// then link_significance on both tables.
+	columnPresent()
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()
@@ -538,11 +595,15 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 	columnPresent()
 	columnPresent()
 
+	expectLinkTables(mock, driverMySQL)
+	expectNoLegacyRelationshipColumns(mock)
+
 	// migrateSignificanceToLevels: the old significance column is absent -> no-op.
 	mock.ExpectQuery(`column_name FROM information_schema`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 
-	// ensureCoveringIndex -> createMySQLIndexIfMissing: index already present.
+	// ensureCoveringIndex: drop the superseded index names, then the current index is already present.
+	expectSupersededIndexDrop(mock, driverMySQL)
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
@@ -560,8 +621,11 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 func expectPostgresSchemaInitFresh(mock sqlmock.Sqlmock) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectLinkTables(mock, driverPostgres)
+	expectNoLegacyRelationshipColumns(mock)
 	mock.ExpectQuery(`column_name FROM information_schema`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 }
 
@@ -582,6 +646,8 @@ func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
 	columnPresent()
 	columnPresent()
 	columnPresent()
+	columnPresent()
+	columnPresent()
 
 	for range 5 {
 		mock.ExpectQuery(`collation_name FROM information_schema`).
@@ -591,8 +657,13 @@ func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
 	columnPresent()
 	columnPresent()
 
+	expectLinkTables(mock, driverMySQL)
+	expectNoLegacyRelationshipColumns(mock)
+
 	mock.ExpectQuery(`column_name FROM information_schema`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+
+	expectSupersededIndexDrop(mock, driverMySQL)
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 }
@@ -851,8 +922,12 @@ func TestDropCoveringIndexMySQLProbeError(t *testing.T) {
 func TestDropCoveringIndexMySQLAbsentIsNoOp(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	// One probe per name the index has ever had - the current one and each superseded one - all
+	// reporting absent.
+	for range 1 + len(supersededCoveringIndexNames) {
+		mock.ExpectQuery(`information_schema.statistics`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	}
 
 	if err := d.dropCoveringIndex(); err != nil {
 		t.Fatalf("dropCoveringIndex: %v", err)
@@ -866,9 +941,13 @@ func TestDropCoveringIndexMySQLAbsentIsNoOp(t *testing.T) {
 func TestDropCoveringIndexMySQLDropsWhenPresent(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectExec(`DROP INDEX idx_memories_consolidation ON memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// The current name is dropped first, then each superseded one; both are scripted as present so
+	// the loop is exercised end to end.
+	for range 1 + len(supersededCoveringIndexNames) {
+		mock.ExpectQuery(`information_schema.statistics`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		mock.ExpectExec(`DROP INDEX idx_memories_consolidation\w* ON memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
 
 	if err := d.dropCoveringIndex(); err != nil {
 		t.Fatalf("dropCoveringIndex: %v", err)
@@ -882,7 +961,7 @@ func TestDropCoveringIndexMySQLDropExecError(t *testing.T) {
 
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectExec(`DROP INDEX idx_memories_consolidation ON memories`).WillReturnError(errors.New("boom"))
+	mock.ExpectExec(`DROP INDEX idx_memories_consolidation\w* ON memories`).WillReturnError(errors.New("boom"))
 
 	if err := d.dropCoveringIndex(); err == nil {
 		t.Fatal("expected an error")
@@ -896,6 +975,7 @@ func TestDropCoveringIndexMySQLDropExecError(t *testing.T) {
 func TestEnsureCoveringIndexExecError(t *testing.T) {
 	d, mock := newMockDB(t, driverPostgres)
 
+	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS idx_memories_consolidation`).WillReturnError(errors.New("boom"))
 
 	if err := d.ensureCoveringIndex(); err == nil {
@@ -989,6 +1069,7 @@ func TestMigrateSignificanceToLevels_DropColumnError(t *testing.T) {
 	mock.ExpectExec(`UPDATE memories SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE events SET significance_level_id`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DROP INDEX IF EXISTS idx_memories_consolidation`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectSupersededIndexDrop(mock, driverSQLite)
 	mock.ExpectExec(`ALTER TABLE memories DROP COLUMN significance`).WillReturnError(errors.New("boom"))
 
 	if err := d.migrateSignificanceToLevels(); err == nil {
@@ -1216,6 +1297,8 @@ func TestInitPostgresSchema_MigrateError(t *testing.T) {
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectLinkTables(mock, driverPostgres)
+	expectNoLegacyRelationshipColumns(mock)
 	mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))
 
 	if err := d.initPostgresSchema(); err == nil {
@@ -1230,8 +1313,11 @@ func TestInitPostgresSchema_EnsureCoveringIndexError(t *testing.T) {
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectLinkTables(mock, driverPostgres)
+	expectNoLegacyRelationshipColumns(mock)
 	mock.ExpectQuery(`information_schema.columns`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
 
 	if err := d.initPostgresSchema(); err == nil {
@@ -1287,6 +1373,8 @@ func TestInitMySQLSchema_CollationError(t *testing.T) {
 	columnPresent()
 	columnPresent()
 	columnPresent()
+	columnPresent()
+	columnPresent()
 
 	// First collation probe (events.id) reports a mismatch, and the MODIFY fails.
 	mock.ExpectQuery(`collation_name FROM information_schema`).
@@ -1317,6 +1405,8 @@ func TestInitMySQLSchema_SignificanceLevelIDColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
+	columnPresent()
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()
@@ -1359,6 +1449,8 @@ func TestInitMySQLSchema_EnsureCoveringIndexError(t *testing.T) {
 	columnPresent()
 	columnPresent()
 	columnPresent()
+	columnPresent()
+	columnPresent()
 
 	for range 5 {
 		collationCorrect()
@@ -1367,11 +1459,16 @@ func TestInitMySQLSchema_EnsureCoveringIndexError(t *testing.T) {
 	columnPresent()
 	columnPresent()
 
+	expectLinkTables(mock, driverMySQL)
+	expectNoLegacyRelationshipColumns(mock)
+
 	// migrateSignificanceToLevels: old column absent -> no-op.
 	mock.ExpectQuery(`column_name FROM information_schema`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 
-	// ensureCoveringIndex -> createMySQLIndexIfMissing: reported absent, and the CREATE INDEX fails.
+	// ensureCoveringIndex: the superseded names are dropped, then the current index is reported
+	// absent and the CREATE INDEX fails.
+	expectSupersededIndexDrop(mock, driverMySQL)
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec(`CREATE INDEX`).WillReturnError(errors.New("boom"))
@@ -1668,6 +1765,8 @@ func TestInitMySQLSchema_EventsSignificanceLevelIDColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
+	columnPresent()
+	columnPresent()
 	columnPresent()
 	columnPresent()
 	columnPresent()

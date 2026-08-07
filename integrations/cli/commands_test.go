@@ -166,7 +166,7 @@ func TestPlacementBadMode(t *testing.T) {
 }
 
 func TestEventCreate(t *testing.T) {
-	args := []string{"--name", "deploy", "--significance", "8", "--relationship", "e2:3", "--relationship", "e3:1", "--time-start", "2026-01-02T15:04:05Z"}
+	args := []string{"--name", "deploy", "--significance", "8", "--link", "e2:3", "--link", "e3:1", "--time-start", "2026-01-02T15:04:05Z"}
 
 	req, out, err := runCommand(t, "event create", args, &fakeClient{})
 	if err != nil {
@@ -179,8 +179,8 @@ func TestEventCreate(t *testing.T) {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 
-	if len(event.GetRelationships()) != 2 || event.GetRelationships()[0].GetEventId() != "e2" || event.GetRelationships()[0].GetSignificance() != 3 {
-		t.Fatalf("unexpected relationships: %+v", event.GetRelationships())
+	if len(event.GetLinks()) != 2 || event.GetLinks()[0].GetId() != "e2" || event.GetLinks()[0].GetSignificance() != 3 {
+		t.Fatalf("unexpected links: %+v", event.GetLinks())
 	}
 
 	if event.GetTimeStart() == 0 {
@@ -199,9 +199,9 @@ func TestEventCreateRequiresName(t *testing.T) {
 	}
 }
 
-func TestEventCreateBadRelationship(t *testing.T) {
-	_, _, err := runCommand(t, "event create", []string{"--name", "x", "--relationship", "no-colon"}, &fakeClient{})
-	if err == nil || !strings.Contains(err.Error(), "invalid --relationship") {
+func TestEventCreateBadLink(t *testing.T) {
+	_, _, err := runCommand(t, "event create", []string{"--name", "x", "--link", "no-colon"}, &fakeClient{})
+	if err == nil || !strings.Contains(err.Error(), "invalid --link") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -403,6 +403,119 @@ func TestMemoryExplainCurveOnly(t *testing.T) {
 func TestMemoryExplainNeedsSomethingToExplain(t *testing.T) {
 	_, _, err := runCommand(t, "memory explain", nil, &fakeClient{})
 	if err == nil || !strings.Contains(err.Error(), "curve-significance") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestMemoryLink verifies the near end and the parsed link set reach LinkMemories.
+func TestMemoryLink(t *testing.T) {
+	args := []string{"--id", "m1", "--link", "m2:5", "--link", "m3:7"}
+
+	req, _, err := runCommand(t, "memory link", args, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	in := req.(*contract.LinkMemoriesRequest)
+
+	if in.GetId() != "m1" || len(in.GetLinks()) != 2 {
+		t.Fatalf("unexpected request: %+v", in)
+	}
+
+	if in.GetLinks()[1].GetId() != "m3" || in.GetLinks()[1].GetSignificance() != 7 {
+		t.Fatalf("unexpected links: %+v", in.GetLinks())
+	}
+}
+
+func TestMemoryLinkRequiresId(t *testing.T) {
+	_, _, err := runCommand(t, "memory link", []string{"--link", "m2:5"}, &fakeClient{})
+	if err == nil || !strings.Contains(err.Error(), "--id is required") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMemoryLinkRequiresLinks(t *testing.T) {
+	_, _, err := runCommand(t, "memory link", []string{"--id", "m1"}, &fakeClient{})
+	if err == nil || !strings.Contains(err.Error(), "at least one --link") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestMemoryUnlinkPositionalTargets pins that targets may be positional, matching how the delete
+// commands take ids.
+func TestMemoryUnlinkPositionalTargets(t *testing.T) {
+	req, _, err := runCommand(t, "memory unlink", []string{"--id", "m1", "m2", "m3"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	in := req.(*contract.UnlinkMemoriesRequest)
+
+	if in.GetId() != "m1" || len(in.GetIds()) != 2 || in.GetIds()[0] != "m2" {
+		t.Fatalf("unexpected request: %+v", in)
+	}
+}
+
+func TestMemoryLinksRendersEdges(t *testing.T) {
+	fake := &fakeClient{linksResp: &contract.GetLinksResponse{
+		LinkSignificance: 12,
+		Links: []*contract.LinkEdge{
+			{Id: "m2", Significance: 5, Direction: contract.LinkDirection_LINK_DIRECTION_OUTBOUND},
+			{Id: "m3", Significance: 7, Direction: contract.LinkDirection_LINK_DIRECTION_INBOUND},
+		},
+	}}
+
+	req, out, err := runCommand(t, "memory links", []string{"--id", "m1", "--direction", "both"}, fake)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if in := req.(*contract.GetMemoryLinksRequest); in.GetDirection() != contract.LinkDirection_LINK_DIRECTION_BOTH {
+		t.Fatalf("unexpected direction: %v", in.GetDirection())
+	}
+
+	for _, want := range []string{"2 link(s)", "12 total link significance", "outbound", "inbound"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q missing %q", out, want)
+		}
+	}
+}
+
+func TestLinksBadDirection(t *testing.T) {
+	_, _, err := runCommand(t, "event links", []string{"--id", "e1", "--direction", "sideways"}, &fakeClient{})
+	if err == nil || !strings.Contains(err.Error(), "invalid --direction") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestEventLink covers the event half, which shares its implementation with the memory half.
+func TestEventLink(t *testing.T) {
+	req, _, err := runCommand(t, "event link", []string{"--id", "e1", "--link", "e2:3"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	in := req.(*contract.LinkEventsRequest)
+
+	if in.GetId() != "e1" || len(in.GetLinks()) != 1 || in.GetLinks()[0].GetId() != "e2" {
+		t.Fatalf("unexpected request: %+v", in)
+	}
+}
+
+func TestEventUnlink(t *testing.T) {
+	req, _, err := runCommand(t, "event unlink", []string{"--id", "e1", "--target", "e2"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if in := req.(*contract.UnlinkEventsRequest); in.GetId() != "e1" || len(in.GetIds()) != 1 {
+		t.Fatalf("unexpected request: %+v", in)
+	}
+}
+
+func TestEventUnlinkRequiresTargets(t *testing.T) {
+	_, _, err := runCommand(t, "event unlink", []string{"--id", "e1"}, &fakeClient{})
+	if err == nil || !strings.Contains(err.Error(), "at least one event id to unlink") {
 		t.Fatalf("err = %v", err)
 	}
 }

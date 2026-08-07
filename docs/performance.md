@@ -279,6 +279,35 @@ Two unrelated issues found earlier in the same effort — `GetEventById` returni
 of `NotFound`, and the demo generator's burst timestamps overflowing the future-timestamp
 validation window — are already fixed.
 
+## The link graph
+
+Adding memory→memory links (and moving event relationships onto the same tables) touches the two
+things `db/bench_test.go` exists to pin: the covering index gained a column
+(`memories.link_significance`, which every consolidation scan now reads), and every delete path
+gained a link prune. Measured on an Apple M1, SQLite in-memory, five runs each:
+
+| Benchmark                           | Before   | After    | Change |
+| ----------------------------------- | -------- | -------- | ------ |
+| `ConsolidateMemories/100000`        | 64.30 ms | 67.84 ms | +5.5%  |
+| `ConsolidateEventMemories/100000`   | 119.6 ms | 122.1 ms | ~      |
+| `ConsolidateEvents/100000`          | 12.74 ms | 12.69 ms | ~      |
+| `EvictMemories/100000`              | 172.6 ms | 177.5 ms | +2.8%  |
+| `DeleteMemoriesIfUnrecalled/100000` | 1.460 s  | 1.479 s  | +1.3%  |
+
+Allocations per scan are unchanged (+0.01%), which is the number that matters most: it confirms the
+scans still read only the covering index and never touch memory bodies. The ~5% on the loose-memory
+scan is the cost of the extra index column, and is the trade the denormalised aggregate buys — the
+alternative, joining to `memory_links` per row, would be far worse.
+
+**The delete path needed a fix to get there.** The first cut ran the prune's read-and-delete pair
+against `memory_links` for every 500-id chunk regardless, which cost +33% wall time and **+129%
+allocations** on a store with no links at all — the common case, and 200 chunks' worth of wasted
+statements and argument slices on a large consolidation cycle. `pruneLinks` now opens with a single
+indexed existence probe (`SELECT 1 FROM memory_links LIMIT 1`) and returns immediately when the
+graph is empty, and skips the delete for any chunk whose read matched nothing. That brought the
+delete path back to +1.3% wall time and +0.02% allocations. A store that does not use links pays
+essentially nothing for them.
+
 ## Reproducing
 
 The generator gained three flags for this: `--target_bytes_per_sec` (byte-rate throttle),

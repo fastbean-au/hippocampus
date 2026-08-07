@@ -81,22 +81,28 @@ func TestConsolidateEvents(t *testing.T) {
 	}
 }
 
-// TestCreateEvent_CalculatesRelationshipSignificance verifies that the stored
-// RelationshipSignificance is computed from the event's relationships rather than taken from the
-// caller. Before the fix, CalculateRelationshipSignificance was never invoked, so the stored
-// value was always whatever the caller passed (typically zero) and relationships had no effect
-// on consolidation.
-func TestCreateEvent_CalculatesRelationshipSignificance(t *testing.T) {
+// TestCreateEvent_CalculatesLinkSignificance verifies that the stored
+// TestCreateEvent_LinkSignificanceIsMaintainedByTheGraph verifies that an event's link significance
+// is the store's to compute, not the caller's. CreateEvent deliberately ignores any links on the
+// struct - both ends of a link must exist before it can be written, which CreateEvent cannot
+// guarantee for an event it is in the middle of creating - so the aggregate starts at zero and is
+// recalculated by LinkEvents once the edges are in.
+func TestCreateEvent_LinkSignificanceIsMaintainedByTheGraph(t *testing.T) {
 	db := newTestDB(t)
 
+	for _, id := range []string{"e2", "e3"} {
+		mustCreateEvent(t, db, types.Event{Id: id, Name: id, TimeStart: 100, Significance: 1})
+	}
+
+	// Links on the struct are ignored by CreateEvent: nothing has been linked yet.
 	event := types.Event{
 		Id:           "e1",
 		Name:         "connected",
 		TimeStart:    100,
 		Significance: 1,
-		Relationships: []types.Relationship{
-			{EventId: "e2", Significance: 3},
-			{EventId: "e3", Significance: 4},
+		Links: []types.Link{
+			{Id: "e2", Significance: 3},
+			{Id: "e3", Significance: 4},
 		},
 	}
 
@@ -109,8 +115,36 @@ func TestCreateEvent_CalculatesRelationshipSignificance(t *testing.T) {
 		t.Fatalf("GetEvent: %s", err)
 	}
 
-	if got.RelationshipSignificance != 7 {
-		t.Errorf("expected RelationshipSignificance 7, got %d", got.RelationshipSignificance)
+	if got.LinkSignificance != 0 {
+		t.Errorf("CreateEvent must not write links itself, got LinkSignificance %d", got.LinkSignificance)
+	}
+
+	// Written through the graph, the aggregate follows.
+	if err := db.LinkEvents(context.Background(), "e1", event.Links); err != nil {
+		t.Fatalf("LinkEvents: %s", err)
+	}
+
+	if got, err = db.GetEvent(context.Background(), "e1"); err != nil {
+		t.Fatalf("GetEvent: %s", err)
+	}
+
+	if got.LinkSignificance != 7 {
+		t.Errorf("expected LinkSignificance 7, got %d", got.LinkSignificance)
+	}
+
+	// And both far ends gained it too - value is symmetric even though storage is directed.
+	for _, want := range []struct {
+		id  string
+		sig int64
+	}{{"e2", 3}, {"e3", 4}} {
+		far, err := db.GetEvent(context.Background(), want.id)
+		if err != nil {
+			t.Fatalf("GetEvent(%s): %s", want.id, err)
+		}
+
+		if far.LinkSignificance != want.sig {
+			t.Errorf("%s should have gained the link's significance %d, got %d", want.id, want.sig, far.LinkSignificance)
+		}
 	}
 }
 
@@ -195,6 +229,10 @@ func TestGetEvents_TimeEndMaxOnly(t *testing.T) {
 func TestUpdateEvent_PartialUpdate(t *testing.T) {
 	db := newTestDB(t)
 
+	for _, id := range []string{"e2", "e3"} {
+		mustCreateEvent(t, db, types.Event{Id: id, Name: id, TimeStart: 100, Significance: 1})
+	}
+
 	event := types.Event{
 		Id:           "e1",
 		Name:         "original",
@@ -202,14 +240,17 @@ func TestUpdateEvent_PartialUpdate(t *testing.T) {
 		TimeStart:    100,
 		TimeEnd:      200,
 		Significance: 5,
-		Relationships: []types.Relationship{
-			{EventId: "e2", Significance: 3},
-			{EventId: "e3", Significance: 4},
-		},
 	}
 
 	if _, err := db.CreateEvent(context.Background(), event); err != nil {
 		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	if err := db.LinkEvents(context.Background(), "e1", []types.Link{
+		{Id: "e2", Significance: 3},
+		{Id: "e3", Significance: 4},
+	}); err != nil {
+		t.Fatalf("LinkEvents: %s", err)
 	}
 
 	// Update only the description: every other field, including the relationships, must be
@@ -233,12 +274,14 @@ func TestUpdateEvent_PartialUpdate(t *testing.T) {
 		t.Errorf("zero-valued fields must not clobber stored values, got %+v", got)
 	}
 
-	if len(got.Relationships) != 2 || got.RelationshipSignificance != 7 {
-		t.Errorf("relationships must be preserved when none are provided, got %d relationships with significance %d", len(got.Relationships), got.RelationshipSignificance)
+	if got.LinkSignificance != 7 {
+		t.Errorf("links must be preserved when none are provided, got significance %d", got.LinkSignificance)
 	}
 
-	// Update with new relationships: the relationship significance must be recalculated.
-	if ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "e1", Relationships: []types.Relationship{{EventId: "e4", Significance: 10}}}); err != nil {
+	// Links on the update struct are ignored: they are rows in their own table now, edited through
+	// LinkEvents/UnlinkEvents, so a partial update carrying them leaves the graph alone rather than
+	// silently replacing it.
+	if ok, err := db.UpdateEvent(context.Background(), types.Event{Id: "e1", Links: []types.Link{{Id: "e4", Significance: 10}}}); err != nil {
 		t.Fatalf("UpdateEvent: %s", err)
 	} else if !ok {
 		t.Fatal("UpdateEvent reported the existing event as missing")
@@ -249,8 +292,8 @@ func TestUpdateEvent_PartialUpdate(t *testing.T) {
 		t.Fatalf("GetEvent: %s", err)
 	}
 
-	if len(got.Relationships) != 1 || got.RelationshipSignificance != 10 {
-		t.Errorf("expected 1 relationship with significance 10, got %d with %d", len(got.Relationships), got.RelationshipSignificance)
+	if got.LinkSignificance != 7 {
+		t.Errorf("UpdateEvent must not rewrite the link graph, got significance %d", got.LinkSignificance)
 	}
 }
 

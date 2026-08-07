@@ -317,22 +317,29 @@ func (d *DB) queryRow(ctx context.Context, query string, args ...any) *sql.Row {
 
 // MemoryConsolidationCandidate carries everything the consolidation decision needs to know about
 // a memory and its associated event.
+//
+// The two link significances are kept apart rather than added together because the value
+// calculation damps each separately: an event's standing among events and a memory's standing among
+// memories are different quantities, and folding them into one logarithm would let either mask the
+// other. Both are read from the denormalised aggregate on the row, so the scans never join to the
+// link tables.
 type MemoryConsolidationCandidate struct {
-	EventSignificance        int32
-	MemorySignificance       int32
-	RelationshipSignificance int64
-	Timestamp                int64
-	TimeRecalled             int64
-	RecallCount              int32
+	EventSignificance      int32
+	MemorySignificance     int32
+	EventLinkSignificance  int64
+	MemoryLinkSignificance int64
+	Timestamp              int64
+	TimeRecalled           int64
+	RecallCount            int32
 }
 
 // EventConsolidationCandidate carries everything the consolidation decision needs to know about
 // an event that has no associated memories.
 type EventConsolidationCandidate struct {
-	Significance             int32
-	RelationshipSignificance int64
-	TimeStart                int64
-	TimeEnd                  int64
+	Significance     int32
+	LinkSignificance int64
+	TimeStart        int64
+	TimeEnd          int64
 }
 
 // MemoryFilter narrows a GetMemories query. A zero value on any field leaves that dimension
@@ -349,6 +356,12 @@ type MemoryFilter struct {
 	OrderBy              string
 	Limit                int
 	Offset               int
+
+	// Ids restricts the result to these memories, on top of every other field. It backs the
+	// linked-to filter, which resolves a memory's neighbours and passes them here so traversal
+	// composes with the other filters and with pagination. Empty means unrestricted, so a caller
+	// holding an empty set must short-circuit rather than pass it.
+	Ids []string
 }
 
 // EventFilter narrows a GetEvents query. A zero value on any field leaves that dimension
@@ -466,6 +479,34 @@ type Store interface {
 	GetMemoryConsolidationCandidates(ctx context.Context, ids []string) ([]IdentifiedMemoryCandidate, error)
 
 	FindSummarisationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarisationCandidate, error)
+
+	// The link graph (see link.go). Mutation is per item; the aggregate the consolidation scans read
+	// is maintained by the store, never supplied by a caller. MissingMemoryIds/MissingEventIds back
+	// the RPC layer's existence check, which is what keeps links from dangling - a dangling edge
+	// would leave significance counted for one end forever.
+	LinkMemories(ctx context.Context, id string, links []types.Link) error
+	UnlinkMemories(ctx context.Context, id string, targets []string) error
+	GetMemoryLinks(ctx context.Context, id string, direction types.LinkDirection) ([]types.LinkEdge, int64, error)
+	LinkEvents(ctx context.Context, id string, links []types.Link) error
+	UnlinkEvents(ctx context.Context, id string, targets []string) error
+	GetEventLinks(ctx context.Context, id string, direction types.LinkDirection) ([]types.LinkEdge, int64, error)
+	MissingMemoryIds(ctx context.Context, ids []string) ([]string, error)
+	MissingEventIds(ctx context.Context, ids []string) ([]string, error)
+	LinksForMemories(ctx context.Context, ids []string) (map[string][]types.Link, error)
+	LinksForEvents(ctx context.Context, ids []string) (map[string][]types.Link, error)
+
+	// LinkedMemoryIds returns the memories one hop from those named, backing associative retrieval
+	// and spreading activation. ReinforceLinkedMemories is the spreading activation itself: it
+	// advances a decay clock and deliberately leaves recall_count alone.
+	LinkedMemoryIds(ctx context.Context, ids []string) ([]string, error)
+	ReinforceLinkedMemories(ctx context.Context, ids []string, fraction float64) error
+
+	// ImportMemoryLinks/ImportEventLinks are the import's second pass, applied once every row in the
+	// batch exists so a link's target may legitimately appear after the item declaring it. They
+	// report how many links were written and how many were dropped for a target that is in neither
+	// the batch nor the store.
+	ImportMemoryLinks(ctx context.Context, links map[string][]types.Link) (int, int, error)
+	ImportEventLinks(ctx context.Context, links map[string][]types.Link) (int, int, error)
 
 	// Export/transfer surface (see transfer.go): keyset pagination over the whole store,
 	// full-state import upserts, and the manifest-scoped clear primitives.
@@ -646,8 +687,7 @@ func (d *DB) initSchema() error {
 		name                      TEXT NOT NULL DEFAULT '',
 		description               TEXT NOT NULL DEFAULT '',
 		memories_consolidated     INTEGER NOT NULL DEFAULT 0,
-		relationship_significance INTEGER NOT NULL DEFAULT 0,
-		relationships             TEXT NOT NULL DEFAULT '[]',
+		link_significance         INTEGER NOT NULL DEFAULT 0,
 		group_name                TEXT NOT NULL DEFAULT ''
 	);
 
@@ -662,6 +702,7 @@ func (d *DB) initSchema() error {
 		is_summary    INTEGER NOT NULL DEFAULT 0,
 		group_name    TEXT NOT NULL DEFAULT '',
 		is_compressed INTEGER NOT NULL DEFAULT 0,
+		link_significance INTEGER NOT NULL DEFAULT 0,
 		body          BLOB NOT NULL DEFAULT x''
 	);
 	`
@@ -707,6 +748,24 @@ func (d *DB) initSchema() error {
 	}
 
 	if err := d.addColumnIfMissing("events", "significance_level_id", "INTEGER"); err != nil {
+		return err
+	}
+
+	// The link graph's denormalised aggregate. It defaults to 0, which is exactly right for a
+	// database that predates links: it has none, and initLinkTables creates the graph empty.
+	if err := d.addColumnIfMissing("memories", "link_significance", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	if err := d.addColumnIfMissing("events", "link_significance", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	if err := d.initLinkTables(); err != nil {
+		return err
+	}
+
+	if err := d.dropLegacyRelationshipColumns(); err != nil {
 		return err
 	}
 
@@ -947,6 +1006,14 @@ func (d *DB) Purge(ctx context.Context) error {
 		return err
 	}
 	defer cancel()
+
+	// Links first: they reference both tables, and nothing survives to have an aggregate
+	// recalculated, so the wholesale empty is all that is needed.
+	if err := d.purgeLinks(tx); err != nil {
+		_ = tx.Rollback()
+
+		return err
+	}
 
 	if _, err := tx.Exec(`DELETE FROM memories`); err != nil {
 		log.Errorf("failed to purge - deleting memories: %s", err.Error())

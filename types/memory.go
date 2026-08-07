@@ -29,6 +29,13 @@ type Memory struct {
 	IsSummary    bool   // set on the memory created by ReplaceMemoriesWithSummary
 	Group        string // optional grouping/context label; limited to 128 characters
 
+	// Links are this memory's associative links. On a write they are the links to create (targets
+	// must already exist); on a read they are populated only when the caller asked for them.
+	// LinkSignificance is the store-maintained sum of this memory's link significances in both
+	// directions - a calculated value, never accepted from a client.
+	Links            []Link
+	LinkSignificance int64
+
 	// SignificanceLevelID is the resolved significance registry level id, set by the RPC layer via
 	// db.ResolveSignificanceLevel before a create/update reaches the store. nil means unranked on a
 	// create, or "leave significance unchanged" on a partial update. It is internal - never part of
@@ -50,6 +57,7 @@ func MemoryFromProto(memory *contract.Memory) Memory {
 		RecallCount:  memory.GetRecallCount(),
 		IsSummary:    memory.GetIsSummary(),
 		Group:        memory.GetGroup(),
+		Links:        LinksFromProto(memory.GetLinks()),
 	}
 }
 
@@ -60,16 +68,18 @@ func (m *Memory) ToProto() *contract.Memory {
 	}
 
 	return &contract.Memory{
-		Id:           m.Id,
-		TimeStamp:    m.TimeStamp,
-		Significance: m.Significance,
-		EventId:      m.EventId,
-		Body:         m.Body,
-		IsBinary:     b,
-		TimeRecalled: m.TimeRecalled,
-		RecallCount:  m.RecallCount,
-		IsSummary:    m.IsSummary,
-		Group:        m.Group,
+		Id:               m.Id,
+		TimeStamp:        m.TimeStamp,
+		Significance:     m.Significance,
+		EventId:          m.EventId,
+		Body:             m.Body,
+		IsBinary:         b,
+		TimeRecalled:     m.TimeRecalled,
+		RecallCount:      m.RecallCount,
+		IsSummary:        m.IsSummary,
+		Group:            m.Group,
+		Links:            LinksToProto(m.Links),
+		LinkSignificance: m.LinkSignificance,
 	}
 }
 
@@ -96,9 +106,9 @@ func (m *Memory) ValidateInsert(maxMemoryBodyLength int, update bool) error {
 		// Rejected on both the insert and update arms: a future timestamp is equally corrupting
 		// whichever RPC sets it (StoreMemory or UpdateMemory), and no legitimate write is future-dated.
 		return fmt.Errorf("memory not valid - timestamp is too far in the future")
-	default:
-		return nil
 	}
+
+	return ValidateLinks(m.Links, m.Id, "memory")
 }
 
 func (m *Memory) SetDefaults() {

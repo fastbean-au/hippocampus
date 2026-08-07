@@ -24,11 +24,17 @@ const evictionRowOverheadBytes = 256
 // memoryColumns is the read projection. significance is the level's rank, exposed by memoriesFrom's
 // join to the registry; scanMemory reads it into types.Memory.Significance. Use it with memoriesFrom
 // as the FROM source, never the bare memories table (which has no significance column).
-const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed`
+const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, link_significance`
 
 // memoryStoredColumns is the physical column list of the memories table (significance_level_id, not
-// the removed significance): used for INSERT and UPDATE ... RETURNING. scanMemoryStored reads it.
+// the removed significance): used for INSERT. link_significance is deliberately absent - it is
+// maintained by the link graph rather than supplied by a write, so it must not appear in an insert's
+// column list.
 const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed`
+
+// memoryReturningColumns is memoryStoredColumns plus the link aggregate, for UPDATE ... RETURNING,
+// which reads rather than writes and so wants every column a caller sees. scanMemoryStored reads it.
+const memoryReturningColumns = memoryStoredColumns + `, link_significance`
 
 // memoryValuePlaceholders is the VALUES list matching memoryStoredColumns, so an INSERT's
 // placeholder count cannot drift from the column list as columns are added.
@@ -38,7 +44,8 @@ var memoryValuePlaceholders = `(` + placeholders(strings.Count(memoryStoredColum
 // significance registry and aliased back to "memories", so WHERE/ORDER clauses naming bare columns
 // (id, event_id, significance, ...) need no change. An unranked (NULL) level reads as significance 0.
 const memoriesFrom = `(SELECT m.id, m.timestamp, COALESCE(l.level_rank, 0) AS significance, m.event_id,
-	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name, m.is_compressed
+	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name, m.is_compressed,
+	m.link_significance
 	FROM memories m LEFT JOIN significance_levels l ON l.id = m.significance_level_id) AS memories`
 
 // placeholders returns a comma-separated list of n SQL parameter placeholders.
@@ -51,7 +58,20 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 	var body []byte
 	var isCompressed bool
 
-	if err := rows.Scan(&m.Id, &m.TimeStamp, &m.Significance, &m.EventId, &body, &m.IsBinary, &m.TimeRecalled, &m.RecallCount, &m.IsSummary, &m.Group, &isCompressed); err != nil {
+	if err := rows.Scan(
+		&m.Id,
+		&m.TimeStamp,
+		&m.Significance,
+		&m.EventId,
+		&body,
+		&m.IsBinary,
+		&m.TimeRecalled,
+		&m.RecallCount,
+		&m.IsSummary,
+		&m.Group,
+		&isCompressed,
+		&m.LinkSignificance,
+	); err != nil {
 		return m, err
 	}
 
@@ -70,16 +90,29 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 	return m, nil
 }
 
-// scanMemoryStored reads the physical memories columns (memoryStoredColumns), carrying the raw
-// significance_level_id into SignificanceLevelID. Significance (the rank) is left 0 for the caller to
-// fill from a registry snapshot (fillRanks) - used where a join is unavailable, e.g. RETURNING.
+// scanMemoryStored reads memoryReturningColumns, carrying the raw significance_level_id into
+// SignificanceLevelID. Significance (the rank) is left 0 for the caller to fill from a registry
+// snapshot (fillRanks) - used where a join is unavailable, e.g. RETURNING.
 func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 	var m types.Memory
 	var body []byte
 	var levelID sql.NullInt64
 	var isCompressed bool
 
-	if err := rows.Scan(&m.Id, &m.TimeStamp, &levelID, &m.EventId, &body, &m.IsBinary, &m.TimeRecalled, &m.RecallCount, &m.IsSummary, &m.Group, &isCompressed); err != nil {
+	if err := rows.Scan(
+		&m.Id,
+		&m.TimeStamp,
+		&levelID,
+		&m.EventId,
+		&body,
+		&m.IsBinary,
+		&m.TimeRecalled,
+		&m.RecallCount,
+		&m.IsSummary,
+		&m.Group,
+		&isCompressed,
+		&m.LinkSignificance,
+	); err != nil {
 		return m, err
 	}
 
@@ -346,7 +379,7 @@ func (d *DB) updatedRowExisted(ctx context.Context, res sql.Result, table string
 func (d *DB) DeleteMemory(ctx context.Context, id string) error {
 	log.Trace("func() db.DeleteMemory")
 
-	_, err := d.exec(ctx, `DELETE FROM memories WHERE id = ?`, id)
+	_, err := d.deleteMemoriesByIds(ctx, []string{id})
 
 	return err
 }
@@ -395,6 +428,14 @@ func (d *DB) deleteMemoriesByIds(ctx context.Context, ids []string) (int, error)
 		if n, err := res.RowsAffected(); err == nil {
 			cnt += int(n)
 		}
+	}
+
+	// Inside the same transaction, so the link rows and the aggregate the consolidation scans read
+	// never disagree with the memories that are actually there.
+	if err := d.pruneMemoryLinks(tx, ids); err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -455,6 +496,15 @@ func (d *DB) deleteMemoriesIfUnrecalled(ctx context.Context, items []memoryRecal
 		}
 
 		deletedIds = append(deletedIds, ids...)
+	}
+
+	// Only the ids that actually went: a memory the recall-race guard spared still exists, and its
+	// links must survive with it. This is the single point consolidation, eviction and Clear all
+	// funnel through, so it is the only place those three paths need to prune.
+	if err := d.pruneMemoryLinks(tx, deletedIds); err != nil {
+		_ = tx.Rollback()
+
+		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -580,20 +630,85 @@ func scanIds(rows *sql.Rows) ([]string, error) {
 	return ids, rows.Err()
 }
 
+// DeleteEventMemories deletes every memory belonging to an event. It reads the ids first rather
+// than deleting straight off event_id: the link graph is keyed on memory id, so pruning needs to
+// know what went. The read and the delete share one transaction, so a memory attached to the event
+// in between is not deleted with its links left behind.
 func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, error) {
 	log.Trace("func() db.DeleteEventMemories")
 
-	res, err := d.exec(ctx, `DELETE FROM memories WHERE event_id = ?`, eventId)
+	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
+		return 0, err
+	}
+	defer cancel()
+
+	ids, err := d.memoryIdsForEvent(tx, eventId)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
+	res, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE event_id = ?`), eventId)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
+	if err := d.pruneMemoryLinks(tx, ids); err != nil {
+		_ = tx.Rollback()
+
 		return 0, err
 	}
 
 	cnt, err := res.RowsAffected()
 	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 
 	return int(cnt), nil
+}
+
+// memoryIdsForEvent lists an event's memory ids inside a transaction, for the delete paths that
+// need to prune links but only know the event. Rows are drained and closed before the caller
+// issues its own write - the SQLite pool holds one connection.
+func (d *DB) memoryIdsForEvent(tx *sql.Tx, eventId string) ([]string, error) {
+	rows, err := tx.Query(d.rebind(`SELECT id FROM memories WHERE event_id = ?`), eventId)
+	if err != nil {
+		return nil, err
+	}
+
+	var ids []string
+
+	for rows.Next() {
+		var id string
+
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+
+			return nil, err
+		}
+
+		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+
+		return nil, err
+	}
+
+	_ = rows.Close()
+
+	return ids, nil
 }
 
 func (d *DB) UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error) {
@@ -679,7 +794,7 @@ func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int6
 		ctx,
 		`UPDATE memories SET time_recalled = ?, recall_count = recall_count + 1
 		WHERE id IN (`+placeholders(len(ids))+`)
-		RETURNING `+memoryStoredColumns,
+		RETURNING `+memoryReturningColumns,
 		args...,
 	)
 	if err != nil {
@@ -1000,6 +1115,15 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 	}
 	defer cancel()
 
+	// Read the ids before the delete: the summary replaces these memories, so their links go with
+	// them, and the link graph is keyed on memory id rather than on the event.
+	replacedIds, err := d.memoryIdsForEvent(tx, eventId)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
 	res, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE event_id = ?`), eventId)
 	if err != nil {
 		_ = tx.Rollback()
@@ -1009,6 +1133,12 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 
 	replaced, err := res.RowsAffected()
 	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
+	if err := d.pruneMemoryLinks(tx, replacedIds); err != nil {
 		_ = tx.Rollback()
 
 		return 0, err
@@ -1138,6 +1268,19 @@ func memoryFilterConditions(filter MemoryFilter) (string, []any) {
 	if filter.Group != "" {
 		query += ` AND group_name = ?`
 		args = append(args, filter.Group)
+	}
+
+	// Ids restricts the result to a known set - the linked-to filter resolves a memory's neighbours
+	// and passes them here, so link traversal composes with every other filter and with pagination
+	// rather than being a separate listing path. An empty (nil) slice is no restriction; a caller
+	// with an empty set must short-circuit rather than ask for "in nothing", which no dialect
+	// spells the same way.
+	if len(filter.Ids) > 0 {
+		query += ` AND id IN (` + placeholders(len(filter.Ids)) + `)`
+
+		for _, id := range filter.Ids {
+			args = append(args, id)
+		}
 	}
 
 	if filter.SignificanceExtremum != SignificanceExtremumNone {
@@ -1286,9 +1429,11 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 
 	// significance_level_id is read from the covering index and translated to its rank via the
 	// registry snapshot in Go, so the scan stays on the covering index and never reads memory bodies.
+	// link_significance is in that index for the same reason: it is a per-row input to the value
+	// calculation, so reading it from the index keeps the scan off the table entirely.
 	rows, err := d.query(
 		ctx,
-		`SELECT id, timestamp, significance_level_id, time_recalled, recall_count
+		`SELECT id, timestamp, significance_level_id, time_recalled, recall_count, link_significance
 		FROM memories WHERE event_id = ''`,
 	)
 	if err != nil {
@@ -1305,7 +1450,14 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 		var levelID sql.NullInt64
 		var candidate MemoryConsolidationCandidate
 
-		if err := rows.Scan(&id, &candidate.Timestamp, &levelID, &candidate.TimeRecalled, &candidate.RecallCount); err != nil {
+		if err := rows.Scan(
+			&id,
+			&candidate.Timestamp,
+			&levelID,
+			&candidate.TimeRecalled,
+			&candidate.RecallCount,
+			&candidate.MemoryLinkSignificance,
+		); err != nil {
 			log.Errorf("failed to scan memory for consolidation: %s", err.Error())
 
 			return 0, err
@@ -1381,7 +1533,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 	rows, err := d.query(
 		ctx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
-			e.significance_level_id, COALESCE(e.relationship_significance, 0),
+			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance,
 			COALESCE(e.memories_consolidated, ?), length(m.body)
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 		false,
@@ -1411,7 +1563,8 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 			&candidate.RecallCount,
 			&c.eventId,
 			&eventLevelID,
-			&candidate.RelationshipSignificance,
+			&candidate.EventLinkSignificance,
+			&candidate.MemoryLinkSignificance,
 			&consolidated,
 			&c.size,
 		); err != nil {
@@ -1590,7 +1743,7 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 	rows, err := d.query(
 		ctx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
-			e.significance_level_id, COALESCE(e.relationship_significance, 0),
+			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance,
 			COALESCE(e.memories_consolidated, ?), e.id
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id
 		WHERE m.event_id != ''`,
@@ -1618,7 +1771,8 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 			&candidate.RecallCount,
 			&eventId,
 			&eventLevelID,
-			&candidate.RelationshipSignificance,
+			&candidate.EventLinkSignificance,
+			&candidate.MemoryLinkSignificance,
 			&consolidated,
 			&joinedEventId,
 		); err != nil {

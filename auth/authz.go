@@ -106,6 +106,12 @@ var policies = map[string]rpcPolicy{
 	"SearchMemories":             {TierReader, http.MethodPost, "/v1/memories/search"},
 	"GetSummarisationCandidates": {TierReader, http.MethodGet, "/v1/summarisation/candidates"},
 
+	// Reading an item's links is a read of that item's associations, at the same tier as reading the
+	// item itself: it returns ids the caller could already reach through GetMemories/GetEvents, and
+	// nothing about their content.
+	"GetMemoryLinks": {TierReader, http.MethodGet, "/v1/memories/*/links"},
+	"GetEventLinks":  {TierReader, http.MethodGet, "/v1/events/*/links"},
+
 	// Explaining a memory is a read of that memory, not of the store: unlike the preview below it
 	// enumerates nothing, answering only about ids the caller already holds and could read in full
 	// through GetMemories at this same tier. What it adds beyond them is operational rather than
@@ -127,6 +133,14 @@ var policies = map[string]rpcPolicy{
 	"SummariseMemories":          {TierWriter, http.MethodPost, "/v1/events/*/summarise"},
 	"Import":                     {TierWriter, http.MethodPost, "/v1/import"},
 	"ImportBatch":                {TierWriter, http.MethodPost, "/v1/import/batch"},
+
+	// Linking changes what the store forgets - a link raises both ends' effective significance - so
+	// it is a write, at the same tier as editing the items themselves. Unlinking likewise: removing
+	// a link lowers what it protected.
+	"LinkMemories":   {TierWriter, http.MethodPost, "/v1/memories/*/links"},
+	"UnlinkMemories": {TierWriter, http.MethodPost, "/v1/memories/*/links/delete"},
+	"LinkEvents":     {TierWriter, http.MethodPost, "/v1/events/*/links"},
+	"UnlinkEvents":   {TierWriter, http.MethodPost, "/v1/events/*/links/delete"},
 
 	// admin
 	"Purge": {TierAdmin, http.MethodPost, "/v1/purge"},

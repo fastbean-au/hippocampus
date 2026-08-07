@@ -405,8 +405,30 @@ func memoryDecayTimestamp(candidate db.MemoryConsolidationCandidate) int64 {
 	return timestamp
 }
 
-// memorySignificance combines the memory's own significance with its event's, the weighted
-// relationship significance, and the weighted recall count.
+// linkContribution is what an item's links add to its effective significance: the weight applied to
+// the natural logarithm of one plus the summed link significance.
+//
+// The damping is the whole point. A link is a client-supplied input into the decay maths, and the
+// bounds in types (128 links of up to 1,000,000 each) still admit a summed significance of 1.28e8 -
+// which, added linearly, would swamp every other term and make a well-connected memory
+// unforgettable, defeating the storage bound that capacity eviction exists to hold. log1p turns that
+// worst case into ~18.7 before weighting, so the tenth link adds far less than the second and the
+// hundredth barely registers: being connected raises an item's standing, and cannot buy immortality.
+//
+// log1p rather than log because a sum of zero must contribute exactly zero rather than diverging,
+// and the same damping is applied to recall counts in ranking.go for the same skew reason. A
+// negative sum is impossible (validation rejects negative significances) but is treated as zero
+// rather than trusted into a NaN.
+func linkContribution(weight float64, sum int64) float64 {
+	if sum <= 0 {
+		return 0
+	}
+
+	return weight * math.Log1p(float64(sum))
+}
+
+// memorySignificance combines the memory's own significance with its event's, the damped
+// contributions of the memory's own links and its event's links, and the weighted recall count.
 func (s *Server) memorySignificance(candidate db.MemoryConsolidationCandidate) float64 {
 	return s.memorySignificanceUnder(candidate, s.consolidation.defaultEventSignificanceValue)
 }
@@ -421,13 +443,20 @@ func (s *Server) memorySignificanceUnder(candidate db.MemoryConsolidationCandida
 		eventSignificance = defaultEventSignificance
 	}
 
+	// The memory's links and its event's links are damped separately rather than summed first: they
+	// are different populations - one memory among an event's memories, one event among the store's
+	// events - and one logarithm over both would let a heavily linked event flatten the difference
+	// between its own memories.
+	weight := s.consolidation.linkSignificanceWeight
+
 	return float64(eventSignificance+candidate.MemorySignificance) +
-		s.consolidation.relationshipSignificanceWeight*float64(candidate.RelationshipSignificance) +
+		linkContribution(weight, candidate.EventLinkSignificance) +
+		linkContribution(weight, candidate.MemoryLinkSignificance) +
 		s.consolidation.recallSignificanceWeight*float64(candidate.RecallCount)
 }
 
 // ShouldConsolidateEvent decides whether an event with no associated memories has decayed below
-// the deletion threshold. The event's own significance and its relationship significance count
+// the deletion threshold. The event's own significance and its damped link contribution count
 // towards its value; its age is measured from the most recent of its start and end times.
 func (s *Server) ShouldConsolidateEvent(candidate db.EventConsolidationCandidate) bool {
 	return s.shouldConsolidateEventUnder(candidate, s.consolidation.capacityPressure)
@@ -443,7 +472,7 @@ func (s *Server) shouldConsolidateEventUnder(candidate db.EventConsolidationCand
 	}
 
 	significance := float64(candidate.Significance) +
-		s.consolidation.relationshipSignificanceWeight*float64(candidate.RelationshipSignificance)
+		linkContribution(s.consolidation.linkSignificanceWeight, candidate.LinkSignificance)
 
 	return s.shouldConsolidateUnder(significance, timestamp, pressure)
 }

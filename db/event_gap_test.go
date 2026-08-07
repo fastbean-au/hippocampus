@@ -83,7 +83,9 @@ func TestEventFilterConditions_TimeStartMax(t *testing.T) {
 func TestDeleteEvent_RowsAffectedError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
+	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnResult(sqlmock.NewErrorResult(errors.New("boom")))
+	mock.ExpectRollback()
 
 	if _, err := d.DeleteEvent(context.Background(), "e1"); err == nil {
 		t.Fatal("expected an error")
@@ -95,7 +97,9 @@ func TestDeleteEvent_RowsAffectedError(t *testing.T) {
 func TestDeleteEventIfEmpty_RowsAffectedError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
+	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnResult(sqlmock.NewErrorResult(errors.New("boom")))
+	mock.ExpectRollback()
 
 	if _, err := d.DeleteEventIfEmpty(context.Background(), "e1"); err == nil {
 		t.Fatal("expected an error")
@@ -112,7 +116,7 @@ func TestDeleteEventIfEmpty_RowsAffectedError(t *testing.T) {
 // description, memories_consolidated, relationship_significance, relationships, group_name).
 var eventRowsColumns = []string{
 	"id", "time_start", "time_end", "significance", "name",
-	"description", "memories_consolidated", "relationship_significance", "relationships", "group_name",
+	"description", "memories_consolidated", "link_significance", "group_name",
 }
 
 func TestGetEvent_ScanError(t *testing.T) {
@@ -121,7 +125,7 @@ func TestGetEvent_ScanError(t *testing.T) {
 	// "not-an-int" in the time_start slot cannot convert to int64, so rows.Scan fails inside
 	// scanEvent, propagating through GetEvent.
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(eventRowsColumns).
-		AddRow("e1", "not-an-int", int64(0), int32(1), "n", "d", false, int64(0), "[]", ""))
+		AddRow("e1", "not-an-int", int64(0), int32(1), "n", "d", false, int64(0), ""))
 
 	if _, err := d.GetEvent(context.Background(), "e1"); err == nil {
 		t.Fatal("expected a scan error")
@@ -134,7 +138,7 @@ func TestGetEvent_RowsIterationError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(eventRowsColumns).
-		AddRow("e1", int64(1), int64(0), int32(1), "n", "d", false, int64(0), "[]", "").
+		AddRow("e1", int64(1), int64(0), int32(1), "n", "d", false, int64(0), "").
 		RowError(0, errors.New("boom")))
 
 	if _, err := d.GetEvent(context.Background(), "e1"); err == nil {
@@ -144,28 +148,15 @@ func TestGetEvent_RowsIterationError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-// TestGetEvent_MalformedRelationshipsJSON drives scanEvent's json.Unmarshal error branch via a
-// real database: a row whose relationships column holds invalid JSON (only reachable by writing
-// it directly - CreateEvent/ImportEvents always marshal a valid []Relationship first).
-func TestGetEvent_MalformedRelationshipsJSON(t *testing.T) {
-	db := newTestDB(t)
-
-	mustCreateEvent(t, db, types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 1})
-
-	if _, err := db.sql.Exec(`UPDATE events SET relationships = 'not-json' WHERE id = ?`, "e1"); err != nil {
-		t.Fatalf("corrupt relationships column: %s", err)
-	}
-
-	if _, err := db.GetEvent(context.Background(), "e1"); err == nil {
-		t.Fatal("expected GetEvent to surface the JSON unmarshal error")
-	}
-}
+// scanEvent no longer unmarshals JSON: event links moved out of the relationships column and into
+// the event_links table, so the malformed-JSON branch this file used to cover does not exist. The
+// link graph's own error paths are covered in link_test.go.
 
 func TestGetEvents_ScanError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(eventRowsColumns).
-		AddRow("e1", "not-an-int", int64(0), int32(1), "n", "d", false, int64(0), "[]", ""))
+		AddRow("e1", "not-an-int", int64(0), int32(1), "n", "d", false, int64(0), ""))
 
 	if _, err := d.GetEvents(context.Background(), EventFilter{}); err == nil {
 		t.Fatal("expected a scan error")
@@ -178,7 +169,7 @@ func TestGetEvents_RowsIterationError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(eventRowsColumns).
-		AddRow("e1", int64(1), int64(0), int32(1), "n", "d", false, int64(0), "[]", "").
+		AddRow("e1", int64(1), int64(0), int32(1), "n", "d", false, int64(0), "").
 		RowError(0, errors.New("boom")))
 
 	if _, err := d.GetEvents(context.Background(), EventFilter{}); err == nil {
@@ -208,7 +199,7 @@ func TestConsolidateEvents_ScanError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM events e LEFT JOIN significance_levels`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "relationship_significance"}).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance"}).
 			AddRow("e1", "not-an-int", int64(0), int32(0), int64(0)))
 
 	if _, err := d.ConsolidateEvents(context.Background(), &stubServer{}); err == nil {
@@ -222,7 +213,7 @@ func TestConsolidateEvents_RowsIterationError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM events e LEFT JOIN significance_levels`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "relationship_significance"}).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance"}).
 			AddRow("e1", int64(1), int64(0), int32(0), int64(0)).
 			RowError(0, errors.New("boom")))
 
@@ -237,9 +228,11 @@ func TestConsolidateEvents_DeleteErrorIsBestEffort(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM events e LEFT JOIN significance_levels`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "relationship_significance"}).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance"}).
 			AddRow("e1", int64(1), int64(0), int32(0), int64(0)))
+	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnError(errors.New("boom"))
+	mock.ExpectRollback()
 
 	_, err := d.ConsolidateEvents(context.Background(), &stubServer{consolidateEvents: true})
 	if err == nil {

@@ -37,6 +37,12 @@ const (
 	Hippocampus_GetMemories_FullMethodName                = "/hippocampus.v1.Hippocampus/GetMemories"
 	Hippocampus_RecallMemories_FullMethodName             = "/hippocampus.v1.Hippocampus/RecallMemories"
 	Hippocampus_SearchMemories_FullMethodName             = "/hippocampus.v1.Hippocampus/SearchMemories"
+	Hippocampus_LinkMemories_FullMethodName               = "/hippocampus.v1.Hippocampus/LinkMemories"
+	Hippocampus_UnlinkMemories_FullMethodName             = "/hippocampus.v1.Hippocampus/UnlinkMemories"
+	Hippocampus_GetMemoryLinks_FullMethodName             = "/hippocampus.v1.Hippocampus/GetMemoryLinks"
+	Hippocampus_LinkEvents_FullMethodName                 = "/hippocampus.v1.Hippocampus/LinkEvents"
+	Hippocampus_UnlinkEvents_FullMethodName               = "/hippocampus.v1.Hippocampus/UnlinkEvents"
+	Hippocampus_GetEventLinks_FullMethodName              = "/hippocampus.v1.Hippocampus/GetEventLinks"
 	Hippocampus_ReplaceMemoriesWithSummary_FullMethodName = "/hippocampus.v1.Hippocampus/ReplaceMemoriesWithSummary"
 	Hippocampus_GetSummarisationCandidates_FullMethodName = "/hippocampus.v1.Hippocampus/GetSummarisationCandidates"
 	Hippocampus_SummariseMemories_FullMethodName          = "/hippocampus.v1.Hippocampus/SummariseMemories"
@@ -140,6 +146,24 @@ type HippocampusClient interface {
 	// SearchMemories finds memories via the optional content-search index; see
 	// SearchMemoriesRequest.
 	SearchMemories(ctx context.Context, in *SearchMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
+	// LinkMemories adds or updates links from one memory to others. Re-linking an existing pair
+	// overwrites that link's significance rather than adding a second link. NotFound if the memory
+	// or any target does not exist; InvalidArgument on a self-link or once the memory would exceed
+	// the per-item link limit.
+	LinkMemories(ctx context.Context, in *LinkMemoriesRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// UnlinkMemories removes links from one memory to the named memories; unknown targets are
+	// silently ignored. NotFound if the memory itself does not exist.
+	UnlinkMemories(ctx context.Context, in *UnlinkMemoriesRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// GetMemoryLinks returns a memory's links. By default both directions are returned (the graph is
+	// stored directed but valued symmetrically); set direction to narrow it. NotFound if the memory
+	// does not exist.
+	GetMemoryLinks(ctx context.Context, in *GetMemoryLinksRequest, opts ...grpc.CallOption) (*GetLinksResponse, error)
+	// LinkEvents is LinkMemories for events; the same rules apply.
+	LinkEvents(ctx context.Context, in *LinkEventsRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// UnlinkEvents is UnlinkMemories for events; the same rules apply.
+	UnlinkEvents(ctx context.Context, in *UnlinkEventsRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
+	// GetEventLinks is GetMemoryLinks for events; the same rules apply.
+	GetEventLinks(ctx context.Context, in *GetEventLinksRequest, opts ...grpc.CallOption) (*GetLinksResponse, error)
 	// Summarisation
 	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
 	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
@@ -363,6 +387,66 @@ func (c *hippocampusClient) SearchMemories(ctx context.Context, in *SearchMemori
 	return out, nil
 }
 
+func (c *hippocampusClient) LinkMemories(ctx context.Context, in *LinkMemoriesRequest, opts ...grpc.CallOption) (*GeneralResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GeneralResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_LinkMemories_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) UnlinkMemories(ctx context.Context, in *UnlinkMemoriesRequest, opts ...grpc.CallOption) (*GeneralResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GeneralResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_UnlinkMemories_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) GetMemoryLinks(ctx context.Context, in *GetMemoryLinksRequest, opts ...grpc.CallOption) (*GetLinksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetLinksResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetMemoryLinks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) LinkEvents(ctx context.Context, in *LinkEventsRequest, opts ...grpc.CallOption) (*GeneralResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GeneralResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_LinkEvents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) UnlinkEvents(ctx context.Context, in *UnlinkEventsRequest, opts ...grpc.CallOption) (*GeneralResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GeneralResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_UnlinkEvents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) GetEventLinks(ctx context.Context, in *GetEventLinksRequest, opts ...grpc.CallOption) (*GetLinksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetLinksResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetEventLinks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *hippocampusClient) ReplaceMemoriesWithSummary(ctx context.Context, in *ReplaceMemoriesWithSummaryRequest, opts ...grpc.CallOption) (*ReplaceMemoriesWithSummaryResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReplaceMemoriesWithSummaryResponse)
@@ -536,6 +620,24 @@ type HippocampusServer interface {
 	// SearchMemories finds memories via the optional content-search index; see
 	// SearchMemoriesRequest.
 	SearchMemories(context.Context, *SearchMemoriesRequest) (*GetMemoriesResponse, error)
+	// LinkMemories adds or updates links from one memory to others. Re-linking an existing pair
+	// overwrites that link's significance rather than adding a second link. NotFound if the memory
+	// or any target does not exist; InvalidArgument on a self-link or once the memory would exceed
+	// the per-item link limit.
+	LinkMemories(context.Context, *LinkMemoriesRequest) (*GeneralResponse, error)
+	// UnlinkMemories removes links from one memory to the named memories; unknown targets are
+	// silently ignored. NotFound if the memory itself does not exist.
+	UnlinkMemories(context.Context, *UnlinkMemoriesRequest) (*GeneralResponse, error)
+	// GetMemoryLinks returns a memory's links. By default both directions are returned (the graph is
+	// stored directed but valued symmetrically); set direction to narrow it. NotFound if the memory
+	// does not exist.
+	GetMemoryLinks(context.Context, *GetMemoryLinksRequest) (*GetLinksResponse, error)
+	// LinkEvents is LinkMemories for events; the same rules apply.
+	LinkEvents(context.Context, *LinkEventsRequest) (*GeneralResponse, error)
+	// UnlinkEvents is UnlinkMemories for events; the same rules apply.
+	UnlinkEvents(context.Context, *UnlinkEventsRequest) (*GeneralResponse, error)
+	// GetEventLinks is GetMemoryLinks for events; the same rules apply.
+	GetEventLinks(context.Context, *GetEventLinksRequest) (*GetLinksResponse, error)
 	// Summarisation
 	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
 	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
@@ -632,6 +734,24 @@ func (UnimplementedHippocampusServer) RecallMemories(context.Context, *RecallMem
 }
 func (UnimplementedHippocampusServer) SearchMemories(context.Context, *SearchMemoriesRequest) (*GetMemoriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SearchMemories not implemented")
+}
+func (UnimplementedHippocampusServer) LinkMemories(context.Context, *LinkMemoriesRequest) (*GeneralResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LinkMemories not implemented")
+}
+func (UnimplementedHippocampusServer) UnlinkMemories(context.Context, *UnlinkMemoriesRequest) (*GeneralResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnlinkMemories not implemented")
+}
+func (UnimplementedHippocampusServer) GetMemoryLinks(context.Context, *GetMemoryLinksRequest) (*GetLinksResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetMemoryLinks not implemented")
+}
+func (UnimplementedHippocampusServer) LinkEvents(context.Context, *LinkEventsRequest) (*GeneralResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LinkEvents not implemented")
+}
+func (UnimplementedHippocampusServer) UnlinkEvents(context.Context, *UnlinkEventsRequest) (*GeneralResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnlinkEvents not implemented")
+}
+func (UnimplementedHippocampusServer) GetEventLinks(context.Context, *GetEventLinksRequest) (*GetLinksResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetEventLinks not implemented")
 }
 func (UnimplementedHippocampusServer) ReplaceMemoriesWithSummary(context.Context, *ReplaceMemoriesWithSummaryRequest) (*ReplaceMemoriesWithSummaryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReplaceMemoriesWithSummary not implemented")
@@ -1002,6 +1122,114 @@ func _Hippocampus_SearchMemories_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Hippocampus_LinkMemories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LinkMemoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).LinkMemories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_LinkMemories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).LinkMemories(ctx, req.(*LinkMemoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_UnlinkMemories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnlinkMemoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).UnlinkMemories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_UnlinkMemories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).UnlinkMemories(ctx, req.(*UnlinkMemoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_GetMemoryLinks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMemoryLinksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).GetMemoryLinks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_GetMemoryLinks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).GetMemoryLinks(ctx, req.(*GetMemoryLinksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_LinkEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LinkEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).LinkEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_LinkEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).LinkEvents(ctx, req.(*LinkEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_UnlinkEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnlinkEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).UnlinkEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_UnlinkEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).UnlinkEvents(ctx, req.(*UnlinkEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_GetEventLinks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetEventLinksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).GetEventLinks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_GetEventLinks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).GetEventLinks(ctx, req.(*GetEventLinksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Hippocampus_ReplaceMemoriesWithSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReplaceMemoriesWithSummaryRequest)
 	if err := dec(in); err != nil {
@@ -1224,6 +1452,30 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SearchMemories",
 			Handler:    _Hippocampus_SearchMemories_Handler,
+		},
+		{
+			MethodName: "LinkMemories",
+			Handler:    _Hippocampus_LinkMemories_Handler,
+		},
+		{
+			MethodName: "UnlinkMemories",
+			Handler:    _Hippocampus_UnlinkMemories_Handler,
+		},
+		{
+			MethodName: "GetMemoryLinks",
+			Handler:    _Hippocampus_GetMemoryLinks_Handler,
+		},
+		{
+			MethodName: "LinkEvents",
+			Handler:    _Hippocampus_LinkEvents_Handler,
+		},
+		{
+			MethodName: "UnlinkEvents",
+			Handler:    _Hippocampus_UnlinkEvents_Handler,
+		},
+		{
+			MethodName: "GetEventLinks",
+			Handler:    _Hippocampus_GetEventLinks_Handler,
 		},
 		{
 			MethodName: "ReplaceMemoriesWithSummary",

@@ -186,6 +186,12 @@ a JSON body:
 | `GetMemories`                | GET    | `/v1/memories`                    |
 | `DeleteMemories`             | POST   | `/v1/memories/delete`             |
 | `RecallMemories`             | POST   | `/v1/memories/recall`             |
+| `LinkMemories`               | POST   | `/v1/memories/{id}/links`         |
+| `UnlinkMemories`             | POST   | `/v1/memories/{id}/links/delete`  |
+| `GetMemoryLinks`             | GET    | `/v1/memories/{id}/links`         |
+| `LinkEvents`                 | POST   | `/v1/events/{id}/links`           |
+| `UnlinkEvents`               | POST   | `/v1/events/{id}/links/delete`    |
+| `GetEventLinks`              | GET    | `/v1/events/{id}/links`           |
 | `GetSummarisationCandidates` | GET    | `/v1/summarisation/candidates`    |
 | `SummariseMemories`          | POST   | `/v1/events/{event_id}/summarise` |
 | `Export`                     | POST   | `/v1/export`                      |
@@ -222,11 +228,11 @@ buckets, and a request must have a token to spend at **every level that is confi
 left at `0` requests per second imposes no limit at all, so the three are independently optional and
 compose:
 
-| Level         | Key                            | What it bounds                                                                                                     |
-| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| **global**    | `rateLimit.global`             | Everything the instance will serve, whoever is asking. The denial-of-service ceiling.                              |
-| **tier**      | `rateLimit.tiers.<tier>`       | All callers of one [authorisation tier](#authorisation) between them — "readers may poll, writers may not flood". |
-| **client**    | `rateLimit.perClient`          | One caller's own share, so a single client cannot consume the global allowance and starve everyone else.           |
+| Level      | Key                      | What it bounds                                                                                                    |
+| ---------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| **global** | `rateLimit.global`       | Everything the instance will serve, whoever is asking. The denial-of-service ceiling.                             |
+| **tier**   | `rateLimit.tiers.<tier>` | All callers of one [authorisation tier](#authorisation) between them — "readers may poll, writers may not flood". |
+| **client** | `rateLimit.perClient`    | One caller's own share, so a single client cannot consume the global allowance and starve everyone else.          |
 
 ```json
 "rateLimit": {
@@ -1097,7 +1103,7 @@ model pulled (`docker compose exec ollama ollama pull <model>`). For the full be
 An embedded (e.g. IoT) instance can periodically move its whole store to a centralised
 instance, either directly over gRPC or through S3 when the two are never connected at the same
 time. Both paths preserve full state — original timestamps, recall history, significance,
-groups, summary flags, event links and relationships — so the centralised store's decay sees
+groups, summary flags, event ids and the link graph — so the centralised store's decay sees
 true ages: this is a data migration, not a re-store. Both are move-semantics by manifest: each
 run captures a point-in-time snapshot and records exactly what it captured (ids plus recall
 state); the paired **clear** then deletes precisely those records, re-verified live, so a memory

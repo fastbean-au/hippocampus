@@ -101,9 +101,13 @@ func TestImportPreservesFullState(t *testing.T) {
 			Name:                 "imported",
 			Description:          "with history",
 			MemoriesConsolidated: true,
-			Relationships:        []types.Relationship{{EventId: "e2", Significance: 3}},
+			Links:                []types.Link{{Id: "e2", Significance: 3}},
 			Group:                "billing",
 		},
+		// e2 is deliberately declared AFTER the event that links to it: an archive is a set of rows
+		// in no particular order, so a forward reference is the normal case, not an edge case. It is
+		// what the link import being a second pass exists for.
+		{Id: "e2", Name: "the link target", TimeStart: 50, Significance: 1},
 	}
 
 	memories := []types.Memory{
@@ -120,6 +124,13 @@ func TestImportPreservesFullState(t *testing.T) {
 		},
 	}
 
+	eventLinks := map[string][]types.Link{}
+	for _, event := range events {
+		if len(event.Links) > 0 {
+			eventLinks[event.Id] = event.Links
+		}
+	}
+
 	for range 2 { // twice: the second pass must be a no-op overwrite, not a duplicate or error
 		if _, err := db.ImportEvents(context.Background(), events); err != nil {
 			t.Fatalf("ImportEvents: %s", err)
@@ -128,6 +139,17 @@ func TestImportPreservesFullState(t *testing.T) {
 		if _, err := db.ImportMemories(context.Background(), memories); err != nil {
 			t.Fatalf("ImportMemories: %s", err)
 		}
+
+		// The link pass runs last, once every row in the batch exists - which is what lets e1's
+		// link to e2 survive despite e2 arriving after it.
+		written, dropped, err := db.ImportEventLinks(context.Background(), eventLinks)
+		if err != nil {
+			t.Fatalf("ImportEventLinks: %s", err)
+		}
+
+		if written != 1 || dropped != 0 {
+			t.Fatalf("ImportEventLinks wrote %d and dropped %d, want 1 and 0", written, dropped)
+		}
 	}
 
 	event, err := db.GetEvent(context.Background(), "e1")
@@ -135,9 +157,21 @@ func TestImportPreservesFullState(t *testing.T) {
 		t.Fatalf("GetEvent: %s", err)
 	}
 
-	if !event.MemoriesConsolidated || event.Group != "billing" || event.RelationshipSignificance != 3 ||
-		event.TimeEnd != 200 || len(event.Relationships) != 1 {
+	if !event.MemoriesConsolidated || event.Group != "billing" || event.LinkSignificance != 3 ||
+		event.TimeEnd != 200 {
 		t.Errorf("event state not preserved: %+v", event)
+	}
+
+	// Importing twice must leave one edge, not two: the link upsert is keyed on the pair, so a
+	// re-import re-weights rather than duplicating - which the aggregate above would otherwise
+	// double.
+	links, _, err := db.GetEventLinks(context.Background(), "e1", types.LinkDirectionOutbound)
+	if err != nil {
+		t.Fatalf("GetEventLinks: %s", err)
+	}
+
+	if len(links) != 1 || links[0].Id != "e2" || links[0].Significance != 3 {
+		t.Errorf("event links not preserved: %+v", links)
 	}
 
 	memory := getMemory(t, db, "m1")

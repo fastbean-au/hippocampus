@@ -514,7 +514,8 @@ const STEPS = [
             type: "float",
             def: 0,
             when: (s) =>
-              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+              value(s, "rateLimit.enabled") &&
+              value(s, "auth.method") !== "none",
             help: "A ceiling on everything readers do between them. Needs authentication: a tier comes from a token's roles.",
           },
           {
@@ -523,7 +524,8 @@ const STEPS = [
             type: "int",
             def: 0,
             when: (s) =>
-              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+              value(s, "rateLimit.enabled") &&
+              value(s, "auth.method") !== "none",
           },
           {
             key: "rateLimit.tiers.writer.requestsPerSecond",
@@ -531,7 +533,8 @@ const STEPS = [
             type: "float",
             def: 0,
             when: (s) =>
-              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+              value(s, "rateLimit.enabled") &&
+              value(s, "auth.method") !== "none",
           },
           {
             key: "rateLimit.tiers.writer.burst",
@@ -539,7 +542,8 @@ const STEPS = [
             type: "int",
             def: 0,
             when: (s) =>
-              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+              value(s, "rateLimit.enabled") &&
+              value(s, "auth.method") !== "none",
           },
           {
             key: "rateLimit.tiers.admin.requestsPerSecond",
@@ -547,7 +551,8 @@ const STEPS = [
             type: "float",
             def: 0,
             when: (s) =>
-              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+              value(s, "rateLimit.enabled") &&
+              value(s, "auth.method") !== "none",
             help: "Best left at 0. An operator answering an incident should not be queued behind a limit meant for application traffic.",
           },
           {
@@ -556,7 +561,8 @@ const STEPS = [
             type: "int",
             def: 0,
             when: (s) =>
-              value(s, "rateLimit.enabled") && value(s, "auth.method") !== "none",
+              value(s, "rateLimit.enabled") &&
+              value(s, "auth.method") !== "none",
           },
           {
             key: "rateLimit.trustForwardedFor",
@@ -944,10 +950,18 @@ const STEPS = [
             help: "Nothing inside this window is ever deleted — not by consolidation, not by capacity eviction, whatever the pressure. 0 disables the floor.",
           },
           {
-            key: "consolidation.relationshipSignificanceWeight",
-            label: "Relationship significance weight",
+            key: "consolidation.linkSignificanceWeight",
+            label: "Link significance weight",
             type: "float",
             def: 1.0,
+            help: "How much an item's links raise its effective significance. The summed link significance is damped first (weight x ln(1 + total)), so a large total adds only a little: at weight 1.0 a total of 100 adds about 4.6, and 10000 adds about 9.2. Applies to both memory links and event links. 0 disables the contribution.",
+          },
+          {
+            key: "consolidation.linkRecallPropagation",
+            label: "Spreading activation on recall",
+            type: "float",
+            def: 0,
+            help: "How far a recalled memory's direct neighbours have their decay clocks advanced toward now, as a fraction from 0 to 1. 0 (the default) disables it, so recall reinforces only what was asked for. Their recall counts are never touched.",
           },
           {
             key: "consolidation.recallSignificanceWeight",
@@ -1375,7 +1389,7 @@ const STEPS = [
       {
         title: "Transfer to a central instance",
         blurb:
-          "Move a whole store — timestamps, recall history, relationships and all — to another instance over gRPC, or through S3 when the two are never connected at once. Leave empty if you do not use it.",
+          "Move a whole store — timestamps, recall history, links and all — to another instance over gRPC, or through S3 when the two are never connected at once. Leave empty if you do not use it.",
         fields: [
           {
             key: "transfer.targetAddress",
@@ -3557,7 +3571,7 @@ function renderPreview() {
     el("h2", { text: "What this forgets, and when" }),
     el("p", {
       class: "blurb",
-      text: "Effective significance is the memory's own plus its event's, plus the weighted relationship significance and recall boost — so a recalled memory sits higher on this table than a never-recalled one, and its clock restarts at each recall.",
+      text: "Effective significance is the memory's own plus its event's, plus the damped link contributions and the recall boost — so a recalled or well-linked memory sits higher on this table than an isolated, never-recalled one, and its clock restarts at each recall. Link totals are damped (weight x ln(1 + total)) before they count, so being connected raises a memory's standing without ever making it unforgettable.",
     }),
     el(
       "div",

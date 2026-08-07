@@ -55,9 +55,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 	}
 
 	insertEvent, err := tx.Prepare(d.rebind(
-		`INSERT INTO events (id, time_start, time_end, significance_level_id, name, description,
-			memories_consolidated, relationship_significance, relationships)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	))
 	if err != nil {
 		b.Fatalf("Prepare (events): %s", err)
@@ -73,7 +71,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 
 			if i%10 == 0 {
 				if _, err := insertEvent.Exec(
-					eventId, now, now, levelID[1+i%100], "bench event", "", false, 0, "[]",
+					eventId, now, now, levelID[1+i%100], "bench event", "", false, 0, "",
 				); err != nil {
 					b.Fatalf("insert event: %s", err)
 				}
@@ -90,7 +88,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 	// Empty events, one per 100 memories, for the bare-event pass.
 	for i := 0; i < memories/100; i++ {
 		if _, err := insertEvent.Exec(
-			fmt.Sprintf("bench-empty-event-%07d", i), now, now, levelID[1+i%100], "bench empty event", "", false, 0, "[]",
+			fmt.Sprintf("bench-empty-event-%07d", i), now, now, levelID[1+i%100], "bench empty event", "", false, 0, "",
 		); err != nil {
 			b.Fatalf("insert empty event: %s", err)
 		}
@@ -256,7 +254,9 @@ func seedDeletableMemories(b *testing.B, d *DB, n int) []memoryRecallSnapshot {
 
 	levelID := seedBenchLevels(b, d, tx)
 
-	insert, err := tx.Prepare(d.rebind(`INSERT INTO memories (` + memoryStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`))
+	// The placeholder list is derived from memoryStoredColumns rather than written out, so a column
+	// added to the table can never leave this insert short of one again.
+	insert, err := tx.Prepare(d.rebind(`INSERT INTO memories (` + memoryStoredColumns + `) VALUES ` + memoryValuePlaceholders))
 	if err != nil {
 		b.Fatalf("Prepare: %s", err)
 	}
@@ -266,7 +266,7 @@ func seedDeletableMemories(b *testing.B, d *DB, n int) []memoryRecallSnapshot {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("del-%08d", i)
 
-		if _, err := insert.Exec(id, now, levelID[1], "", body, false, 0, 0, false, ""); err != nil {
+		if _, err := insert.Exec(id, now, levelID[1], "", body, false, 0, 0, false, "", false); err != nil {
 			b.Fatalf("insert: %s", err)
 		}
 

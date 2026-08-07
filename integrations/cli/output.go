@@ -93,6 +93,18 @@ func (r *renderer) renderText(msg proto.Message) error {
 			r.renderMemory(memory)
 		}
 
+	case *contract.GetLinksResponse:
+		r.line("%d link(s), %d total link significance", len(m.GetLinks()), m.GetLinkSignificance())
+
+		for _, link := range m.GetLinks() {
+			r.line("  %s  %-8s significance %d  created %s",
+				link.GetId(),
+				linkDirectionLabel(link.GetDirection()),
+				link.GetSignificance(),
+				formatNanos(link.GetCreated()),
+			)
+		}
+
 	case *contract.ReplaceMemoriesWithSummaryResponse:
 		r.line("summary memory %s replaced %d memory/memories", m.GetId(), m.GetMemoriesReplaced())
 
@@ -346,6 +358,8 @@ func (r *renderer) renderEvent(event *contract.Event) {
 		r.line("  group:        %s", group)
 	}
 
+	r.renderLinks(event.GetLinks(), event.GetLinkSignificance())
+
 	for _, memory := range event.GetMemories() {
 		r.line("")
 		r.renderMemory(memory)
@@ -375,6 +389,8 @@ func (r *renderer) renderMemory(memory *contract.Memory) {
 		r.line("  recall_count: %d (last %s)", memory.GetRecallCount(), formatNanos(memory.GetTimeRecalled()))
 	}
 
+	r.renderLinks(memory.GetLinks(), memory.GetLinkSignificance())
+
 	if memory.GetIsBinary() == contract.Bool_TRUE {
 		r.line("  body:         <binary, %d bytes>", len(memory.GetBody()))
 
@@ -403,4 +419,33 @@ func orNone(value string) string {
 	}
 
 	return value
+}
+
+// renderLinks prints an item's links, shared by the memory and event renderers. Both the summed
+// significance and the individual links are shown only when there is something to show, so an
+// unlinked item reads exactly as it did before links existed.
+func (r *renderer) renderLinks(links []*contract.Link, significance int64) {
+	if significance > 0 {
+		r.line("  link_sig:     %d", significance)
+	}
+
+	for _, link := range links {
+		r.line("  link:         %s (significance %d)", link.GetId(), link.GetSignificance())
+	}
+}
+
+// linkDirectionLabel names a link's direction relative to the item that was asked about.
+func linkDirectionLabel(d contract.LinkDirection) string {
+	switch d {
+
+	case contract.LinkDirection_LINK_DIRECTION_OUTBOUND:
+		return "outbound"
+
+	case contract.LinkDirection_LINK_DIRECTION_INBOUND:
+		return "inbound"
+
+	default:
+		return "both"
+
+	}
 }

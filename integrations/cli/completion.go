@@ -29,6 +29,7 @@ var enumFlagValues = map[string][]string{
 	"place-mode": {"above", "below", "between"},
 	"extremum":   {"highest", "lowest"},
 	"order-by":   {"significance", "timestamp"},
+	"direction":  {"both", "outbound", "inbound"},
 }
 
 // completionShells are the shells `hippo completion` can emit a script for.

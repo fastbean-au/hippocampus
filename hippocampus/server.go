@@ -126,13 +126,20 @@ type Consolidation struct {
 	deletionThreshold                  float64
 	method                             int
 	unitsOfAgeInDays                   float64
-	relationshipSignificanceWeight     float64
+	linkSignificanceWeight             float64
 	recallSignificanceWeight           float64
-	capacityMemories                   int
-	capacityPressureExponent           float64
-	capacityPressure                   float64
-	capacityBytes                      int64
-	capacityBytesFloor                 int64
+
+	// linkRecallPropagation is spreading activation: the fraction of the way toward "just recalled"
+	// that a recalled memory's direct neighbours have their decay clocks advanced. 0 (the default)
+	// disables it, so recall reinforces only what was actually asked for; 1 would reinforce a
+	// neighbour as strongly as the memory itself, which is why the sensible settings are small.
+	// Never touches recall_count - see db.ReinforceLinkedMemories.
+	linkRecallPropagation    float64
+	capacityMemories         int
+	capacityPressureExponent float64
+	capacityPressure         float64
+	capacityBytes            int64
+	capacityBytesFloor       int64
 	// lastUsedBytes caches the used-bytes reading eviction took at the end of the previous sleep
 	// cycle, so the next cycle's capacity-pressure calculation can reuse it instead of scanning the
 	// tables a second time. Written and read only from the sleep cycle, which
@@ -383,7 +390,8 @@ func New(deps Dependencies) *Server {
 			deletionThreshold:                  viper.GetFloat64("consolidation.deletionThreshold"),
 			method:                             viper.GetInt("consolidation.method"),
 			unitsOfAgeInDays:                   viper.GetFloat64("consolidation.unitsOfAgeInDays"),
-			relationshipSignificanceWeight:     viper.GetFloat64("consolidation.relationshipSignificanceWeight"),
+			linkSignificanceWeight:             viper.GetFloat64("consolidation.linkSignificanceWeight"),
+			linkRecallPropagation:              viper.GetFloat64("consolidation.linkRecallPropagation"),
 			recallSignificanceWeight:           viper.GetFloat64("consolidation.recallSignificanceWeight"),
 			capacityMemories:                   viper.GetInt("consolidation.capacityMemories"),
 			capacityPressureExponent:           viper.GetFloat64("consolidation.capacityPressureExponent"),

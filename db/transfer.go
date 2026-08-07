@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 
 	log "github.com/sirupsen/logrus"
 
@@ -218,8 +217,9 @@ func (d *DB) importLevelID(ctx context.Context, tx *sql.Tx, significance int32) 
 }
 
 // ImportEvents upserts the given events by id with every column taken from the input, inside a
-// single transaction — the event half of ImportMemories. The relationship significance is
-// recomputed from the relationships, matching CreateEvent. Returns the number of rows written.
+// single transaction — the event half of ImportMemories. link_significance is not taken from the
+// input: it is recomputed from the link rows written by the second pass, so an archive can never
+// import an aggregate that disagrees with the edges beside it. Returns the number of rows written.
 func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error) {
 	log.Trace("func() db.ImportEvents")
 
@@ -227,7 +227,7 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 		return 0, nil
 	}
 
-	query := `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	query := `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			time_start                = excluded.time_start,
 			time_end                  = excluded.time_end,
@@ -235,12 +235,11 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			name                      = excluded.name,
 			description               = excluded.description,
 			memories_consolidated     = excluded.memories_consolidated,
-			relationship_significance = excluded.relationship_significance,
-			relationships             = excluded.relationships,
+			link_significance         = excluded.link_significance,
 			group_name                = excluded.group_name`
 
 	if d.driver == driverMySQL {
-		query = `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
+		query = `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
 		ON DUPLICATE KEY UPDATE
 			time_start                = new.time_start,
 			time_end                  = new.time_end,
@@ -248,8 +247,7 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			name                      = new.name,
 			description               = new.description,
 			memories_consolidated     = new.memories_consolidated,
-			relationship_significance = new.relationship_significance,
-			relationships             = new.relationships,
+			link_significance         = new.link_significance,
 			group_name                = new.group_name`
 	}
 
@@ -266,15 +264,6 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 	defer cancel()
 
 	for _, event := range events {
-		event.RelationshipSignificance = event.CalculateRelationshipSignificance()
-
-		relationships, err := json.Marshal(event.Relationships)
-		if err != nil {
-			_ = tx.Rollback()
-
-			return 0, err
-		}
-
 		levelID, err := d.importLevelID(ctx, tx, event.Significance)
 		if err != nil {
 			_ = tx.Rollback()
@@ -282,6 +271,8 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			return 0, err
 		}
 
+		// The existing aggregate is preserved on an update and starts at 0 on an insert; ImportLinks
+		// recalculates it once the edges are in.
 		if _, err := tx.Exec(
 			d.rebind(query),
 			event.Id,
@@ -291,8 +282,7 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			event.Name,
 			event.Description,
 			event.MemoriesConsolidated,
-			event.RelationshipSignificance,
-			string(relationships),
+			event.LinkSignificance,
 			event.Group,
 		); err != nil {
 			_ = tx.Rollback()

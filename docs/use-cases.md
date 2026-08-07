@@ -157,7 +157,7 @@ flowchart LR
   each capturing a point-in-time snapshot and, optionally, clearing exactly what it captured (records
   written or recalled mid-transfer survive to the next run).
 - At the centre: `Import` (from S3) or the `ImportBatch` the direct transfer drives — full-state,
-  idempotent by id, preserving timestamps, recall history, groups, summary flags, and relationships.
+  idempotent by id, preserving timestamps, recall history, groups, summary flags, and the link graph.
 
 Because record ids compare byte-for-byte across all three drivers, the same records keep their
 identity across the move — and the same path serves **driver migration** (e.g. export from SQLite,

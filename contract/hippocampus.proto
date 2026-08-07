@@ -193,6 +193,65 @@ service Hippocampus {
 		};
 	}
 
+	// Links
+	// A Link is a directed, significance-carrying association between two memories or between two
+	// events. Both ends must already exist (NotFound otherwise), and both ends gain the link's
+	// significance in the decay maths - a link protects what it connects in either direction (see
+	// consolidation.linkSignificanceWeight). Links are removed automatically when either end is
+	// forgotten.
+
+	// LinkMemories adds or updates links from one memory to others. Re-linking an existing pair
+	// overwrites that link's significance rather than adding a second link. NotFound if the memory
+	// or any target does not exist; InvalidArgument on a self-link or once the memory would exceed
+	// the per-item link limit.
+	rpc LinkMemories(LinkMemoriesRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/{id}/links"
+			body: "*"
+		};
+	}
+
+	// UnlinkMemories removes links from one memory to the named memories; unknown targets are
+	// silently ignored. NotFound if the memory itself does not exist.
+	rpc UnlinkMemories(UnlinkMemoriesRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/{id}/links/delete"
+			body: "*"
+		};
+	}
+
+	// GetMemoryLinks returns a memory's links. By default both directions are returned (the graph is
+	// stored directed but valued symmetrically); set direction to narrow it. NotFound if the memory
+	// does not exist.
+	rpc GetMemoryLinks(GetMemoryLinksRequest) returns (GetLinksResponse) {
+		option (google.api.http) = {
+			get: "/v1/memories/{id}/links"
+		};
+	}
+
+	// LinkEvents is LinkMemories for events; the same rules apply.
+	rpc LinkEvents(LinkEventsRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/events/{id}/links"
+			body: "*"
+		};
+	}
+
+	// UnlinkEvents is UnlinkMemories for events; the same rules apply.
+	rpc UnlinkEvents(UnlinkEventsRequest) returns (GeneralResponse) {
+		option (google.api.http) = {
+			post: "/v1/events/{id}/links/delete"
+			body: "*"
+		};
+	}
+
+	// GetEventLinks is GetMemoryLinks for events; the same rules apply.
+	rpc GetEventLinks(GetEventLinksRequest) returns (GetLinksResponse) {
+		option (google.api.http) = {
+			get: "/v1/events/{id}/links"
+		};
+	}
+
 	// Summarisation
 	// ReplaceMemoriesWithSummary deletes every memory of an event and replaces them with a single
 	// caller-supplied summary memory, in one transaction; see ReplaceMemoriesWithSummaryRequest.
@@ -314,8 +373,8 @@ message SignificancePlacement {
 	string                       upper_id                            = 5; // BETWEEN only: the upper bound by an existing item's id; that item must already be ranked (significance > 0)
 }
 
-// Event is a named time span with its own significance, optionally carrying relationships to
-// other events and/or nested memories. memories/relationships are populated on read only when
+// Event is a named time span with its own significance, optionally carrying links to
+// other events and/or nested memories. memories/links are populated on read only when
 // requested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each
 // stored via the same rules as StoreMemory.
 message Event {
@@ -326,19 +385,24 @@ message Event {
 	string                                 name                      = 5;  // required (non-empty) on create; max 256 characters
 	string                                 description               = 6;  // optional; max 1024 characters
 	bool                                   memories_consolidated     = 7;  // read-only: true once a sleep cycle has deleted (consolidated) some of this event's memories; ignored on write
-	int64                                  relationship_significance = 8;  // read-only: sum of relationships' significance values, calculated by the server; ignored on write
-	repeated Relationship                  relationships             = 9;  // relationships to other events, weighted into this event's memories' value (see consolidation.relationshipSignificanceWeight)
+	int64                                  link_significance         = 8;  // read-only: sum of this event's links' significance values, inbound and outbound, calculated by the server; ignored on write
+	repeated Link                          links                     = 9;  // links this event declares to other events, weighted into its memories' value (see consolidation.linkSignificanceWeight). Outbound only, like Memory.links - ask GetEventLinks for both directions
 	repeated Memory                        memories                  = 10; // populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory
 	string                                 group                     = 11; // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
 	SignificancePlacement                  placement                 = 12; // write-only: rank relative to existing values (see SignificancePlacement)
 }
 
-// Relationship is a directed reference from one event to another, carrying its own significance,
-// which is weighted into the value calculation of the referencing event's memories (see
-// consolidation.relationshipSignificanceWeight).
-message Relationship {
-	string                                 event_id                  = 1; // the related event's id; not validated against existing events
-	int32                                  significance              = 2; // this relationship's weight; unvalidated (may be negative or zero) - not part of the significance registry, never ranked
+// Link is a directed, significance-carrying association between two memories or between two events.
+// One Link message describes one edge from the item carrying it to the item it names.
+//
+// The significance is weighted into the decay maths for BOTH ends, with diminishing returns - the
+// contribution is consolidation.linkSignificanceWeight * log1p(sum of an item's link significances),
+// so a well-connected memory decays more slowly without any number of links ever making it
+// unforgettable. Unlike the event relationships this replaces, both ends must exist: a link is
+// deleted automatically when either end is forgotten, so it can never dangle.
+message Link {
+	string                                 id                        = 1; // the linked memory's or event's id; must name an existing item of the same kind
+	int32                                  significance              = 2; // this link's weight; 0..1000000, must not be negative - not part of the significance registry, never ranked
 }
 
 // Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to
@@ -357,6 +421,8 @@ message Memory {
 	bool                                   is_summary                = 9;  // read-only: true for the summary memory created by ReplaceMemoriesWithSummary; not updatable via UpdateMemory
 	string                                 group                     = 10; // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
 	SignificancePlacement                  placement                 = 11; // write-only: rank relative to existing values (see SignificancePlacement)
+	repeated Link                          links                     = 12; // associative links this memory declares, weighted into its value (see consolidation.linkSignificanceWeight). Outbound only - Link is a directed edge from the item carrying it, so this lists exactly the edges this memory owns and an export/import round trip reproduces them once each; ask GetMemoryLinks for both directions. Write-only on StoreMemory (targets must already exist) and populated on read only when requested; use LinkMemories/UnlinkMemories to edit them incrementally
+	int64                                  link_significance         = 13; // read-only: sum of this memory's links' significance values, inbound and outbound, calculated by the server; ignored on write
 }
 
 // StoreEventResponse carries the stored event's id and how many of its nested memories were
@@ -434,6 +500,8 @@ message GetMemoriesRequest {
 	int32                                  limit                     = 7; // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
 	int32                                  offset                    = 8; // rows to skip for pagination; negative values are clamped to 0; no upper bound
 	SignificanceExtremum                   significance_extremum     = 9; // when set, ignore significance_min/significance_max and return only memories tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
+	string                                 linked_to                 = 10; // optional: restrict to memories linked to this memory id, in either direction (one hop). NotFound if that memory does not exist
+	bool                                   links                     = 11; // when true, populate each returned memory's links
 }
 
 message GetMemoriesResponse {
@@ -455,6 +523,7 @@ message DeleteMemoriesRequest {
 
 message RecallMemoriesRequest {
 	repeated string                        ids                       = 1;
+	bool                                   include_linked            = 2; // also return the memories linked to those recalled, one hop, in either direction. The linked memories are returned as an associative recall, not counted as directly recalled: their recall_count is untouched (see consolidation.linkRecallPropagation for what a recall does to a neighbour's decay clock)
 }
 
 // SearchMode selects how a search decides which memories match.
@@ -484,6 +553,65 @@ message SearchMemoriesRequest {
 	bool                                   reinforce                 = 4; // route matches through recall, reinforcing them
 	string                                 group                     = 5; // optional: restrict matches to memories carrying this group label
 	SearchMode                             mode                      = 6; // how to match; unset means KEYWORD
+	bool                                   include_linked            = 7; // also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves
+}
+
+// LinkDirection narrows which of an item's links a read returns. The graph is stored directed, so
+// the two directions are distinguishable, but value is symmetric - both ends of a link gain its
+// significance - which is why BOTH is the default rather than OUTBOUND.
+enum LinkDirection {
+	LINK_DIRECTION_UNSPECIFIED                                       = 0; // treated as BOTH
+	LINK_DIRECTION_BOTH                                              = 1; // links in either direction
+	LINK_DIRECTION_OUTBOUND                                          = 2; // only links this item declared, pointing away from it
+	LINK_DIRECTION_INBOUND                                           = 3; // only links other items declared, pointing at it
+}
+
+// LinkMemoriesRequest adds or updates links from one memory to others. It is an upsert per pair:
+// re-linking an existing pair overwrites that link's significance rather than creating a duplicate.
+message LinkMemoriesRequest {
+	string                                 id                        = 1; // the memory the links start from; must exist
+	repeated Link                          links                     = 2; // the targets and their significances; each target must exist and must not be id itself
+}
+
+message UnlinkMemoriesRequest {
+	string                                 id                        = 1; // the memory the links start from; must exist
+	repeated string                        ids                       = 2; // targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target
+}
+
+message GetMemoryLinksRequest {
+	string                                 id                        = 1; // the memory whose links to return; must exist
+	LinkDirection                          direction                 = 2; // which directions to return; unset means BOTH
+}
+
+message LinkEventsRequest {
+	string                                 id                        = 1; // the event the links start from; must exist
+	repeated Link                          links                     = 2; // the targets and their significances; each target must exist and must not be id itself
+}
+
+message UnlinkEventsRequest {
+	string                                 id                        = 1; // the event the links start from; must exist
+	repeated string                        ids                       = 2; // targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target
+}
+
+message GetEventLinksRequest {
+	string                                 id                        = 1; // the event whose links to return; must exist
+	LinkDirection                          direction                 = 2; // which directions to return; unset means BOTH
+}
+
+// LinkEdge is one stored link as read back: the pair it connects, its significance, and which way
+// it points relative to the item that was asked about. Link (the write form) names only the far
+// end, because the near end is the item carrying it; a read can return both directions at once and
+// so has to say which is which.
+message LinkEdge {
+	string                                 id                        = 1; // the far end's id - the other memory or event
+	int32                                  significance              = 2; // this link's weight
+	LinkDirection                          direction                 = 3; // OUTBOUND when the queried item declared this link, INBOUND when the far end did
+	int64                                  created                   = 4; // UnixNano the link was first created
+}
+
+message GetLinksResponse {
+	repeated LinkEdge                      links                     = 1;
+	int64                                  link_significance         = 2; // the queried item's total link significance, both directions - the figure the decay maths damps and weights
 }
 
 // ReplaceMemoriesWithSummaryRequest asks the service to delete every memory associated with an
@@ -722,7 +850,7 @@ message MemoryValuation {
 	string                                 id                        = 1;
 	string                                 event_id                  = 2;  // empty for a memory with no event (or one whose event no longer exists)
 	int32                                  significance              = 3;  // the memory's own stored significance, as ranked
-	double                                 effective_significance    = 4;  // what the decay actually acts on: the memory's own significance plus its event's, the weighted relationship significance, and the weighted recall count
+	double                                 effective_significance    = 4;  // what the decay actually acts on: the memory's own significance plus its event's, the damped link contributions below, and the weighted recall count
 	double                                 value                     = 5;  // the computed decayed value (see docs/consolidation.md)
 	double                                 threshold                 = 6;  // the capacity-pressure-scaled deletion threshold value is compared against
 	double                                 age_days                  = 7;  // days since the memory's decay clock last reset - its creation, or its most recent recall
@@ -732,6 +860,10 @@ message MemoryValuation {
 	bool                                   retained                  = 11; // held by consolidation.minimumRetentionInDays, so neither consolidation nor capacity eviction may take it
 	bool                                   below_minimum_age         = 12; // younger than consolidation.minimumAgeInDays, so value-based consolidation is deferred whatever the value says
 	double                                 days_until_forgotten      = 13; // projected days until the memory would be consolidated, holding today's threshold and pressure and assuming no further recall; 0 when it is already due, -1 when it is not due within the projected horizon
+	int64                                  link_significance         = 14; // the memory's own summed link significance, both directions, before damping
+	double                                 link_contribution         = 15; // what those links add to effective_significance: linkSignificanceWeight * log1p(link_significance)
+	int64                                  event_link_significance   = 16; // the memory's event's summed link significance, both directions, before damping; 0 for a memory with no event
+	double                                 event_link_contribution   = 17; // what the event's links add to effective_significance, damped the same way; 0 for a memory with no event
 }
 
 // ExplainConsolidationRequest asks where the named memories stand against the consolidation rules,

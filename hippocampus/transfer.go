@@ -124,6 +124,11 @@ func (s *Server) walkStore(
 			return nil, 0, 0, manifestTooLargeError(len(manifest.eventIds)+len(manifest.memories), maxRows)
 		}
 
+		// Links are not part of the page projection - they are rows in their own table - so they
+		// are attached per page. An archive that dropped them would lose the graph entirely, and
+		// silently: nothing about the restored store would look wrong.
+		s.attachEventLinks(ctx, page)
+
 		if err := onEvents(page); err != nil {
 			return nil, 0, 0, err
 		}
@@ -155,6 +160,8 @@ func (s *Server) walkStore(
 		if maxRows > 0 && len(manifest.eventIds)+len(manifest.memories) > maxRows {
 			return nil, 0, 0, manifestTooLargeError(len(manifest.eventIds)+len(manifest.memories), maxRows)
 		}
+
+		s.attachMemoryLinks(ctx, page)
 
 		if err := onMemories(page); err != nil {
 			return nil, 0, 0, err
@@ -428,6 +435,14 @@ func (s *Server) importArchive(ctx context.Context, body io.Reader) (int, int, e
 	var eventBatch []*contract.Event
 	var memoryBatch []*contract.Memory
 
+	// Links are held back to the end of the whole stream rather than applied per batch. An archive
+	// is a set of rows in no particular order, so a link's far end is routinely in a later batch
+	// than the item declaring it, and applying links batch by batch would drop every such forward
+	// reference. Only the id and the link set are kept, not the rows, so this holds a small fraction
+	// of what the archive itself does - and the per-item cap bounds it further.
+	eventLinks := make(map[string][]types.Link)
+	memoryLinks := make(map[string][]types.Link)
+
 	flush := func() error {
 		n, err := s.ingestEvents(ctx, eventBatch)
 		events += n
@@ -441,6 +456,18 @@ func (s *Server) importArchive(ctx context.Context, body io.Reader) (int, int, e
 
 		if err != nil {
 			return err
+		}
+
+		for _, e := range eventBatch {
+			if links := types.LinksFromProto(e.GetLinks()); len(links) > 0 {
+				eventLinks[e.GetId()] = links
+			}
+		}
+
+		for _, m := range memoryBatch {
+			if links := types.LinksFromProto(m.GetLinks()); len(links) > 0 {
+				memoryLinks[m.GetId()] = links
+			}
 		}
 
 		eventBatch = eventBatch[:0]
@@ -481,6 +508,8 @@ READ_LOOP:
 		return events, memories, err
 	}
 
+	s.applyImportedLinks(ctx, eventLinks, memoryLinks)
+
 	return events, memories, nil
 }
 
@@ -506,7 +535,66 @@ func (s *Server) ImportBatch(ctx context.Context, in *contract.ImportBatchReques
 		return &res, mapError(err)
 	}
 
+	// Links last, once every row in the batch exists. A link's far end routinely arrives after the
+	// item declaring it - an archive is a set of rows in no particular order - so applying links as
+	// each row landed would drop every forward reference. See ingestLinks.
+	s.ingestLinks(ctx, in.GetEvents(), in.GetMemories())
+
 	return &res, nil
+}
+
+// ingestLinks is the import's second pass: it applies the link sets carried by the imported rows,
+// after those rows have been written.
+//
+// Best-effort, like the search indexing beside it. The memories and events are already committed
+// and counted, and failing the call after that point would tell the caller nothing useful about
+// what to retry - re-importing the same batch is idempotent and would re-attempt the links anyway.
+// Links whose far end is in neither the batch nor the store are dropped by the store and reported
+// here, because a partial archive is exactly what that looks like and it is worth saying out loud.
+func (s *Server) ingestLinks(ctx context.Context, events []*contract.Event, memories []*contract.Memory) {
+	eventLinks := make(map[string][]types.Link, len(events))
+
+	for _, e := range events {
+		if links := types.LinksFromProto(e.GetLinks()); len(links) > 0 {
+			eventLinks[e.GetId()] = links
+		}
+	}
+
+	memoryLinks := make(map[string][]types.Link, len(memories))
+
+	for _, m := range memories {
+		if links := types.LinksFromProto(m.GetLinks()); len(links) > 0 {
+			memoryLinks[m.GetId()] = links
+		}
+	}
+
+	s.applyImportedLinks(ctx, eventLinks, memoryLinks)
+}
+
+// applyImportedLinks writes the collected link sets, shared by the batch and streaming import
+// paths.
+func (s *Server) applyImportedLinks(
+	ctx context.Context,
+	eventLinks map[string][]types.Link,
+	memoryLinks map[string][]types.Link,
+) {
+	if len(eventLinks) > 0 {
+		written, dropped, err := s.db.ImportEventLinks(ctx, eventLinks)
+		if err != nil {
+			log.Errorf("failed to import event links: %s", err.Error())
+		} else if dropped > 0 {
+			log.Warnf("imported %d event links, dropped %d naming an event not present", written, dropped)
+		}
+	}
+
+	if len(memoryLinks) > 0 {
+		written, dropped, err := s.db.ImportMemoryLinks(ctx, memoryLinks)
+		if err != nil {
+			log.Errorf("failed to import memory links: %s", err.Error())
+		} else if dropped > 0 {
+			log.Warnf("imported %d memory links, dropped %d naming a memory not present", written, dropped)
+		}
+	}
 }
 
 // ingestEvents converts and upserts a batch of full-state events.

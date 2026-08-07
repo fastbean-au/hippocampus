@@ -284,20 +284,33 @@ func (s *Server) valuation(
 	significance := s.memorySignificanceUnder(candidate.Candidate, state.decider.defaultEventSignificance)
 	ageDays := float64(time.Now().UnixNano()-decayTimestamp) / float64(DAY_IN_NANOSECONDS)
 
+	// The two link terms are reported alongside effective_significance rather than folded silently
+	// into it. That field documents itself as the full breakdown of what decay acts on, and a
+	// component the caller cannot see is a number they cannot reconcile - which matters more than
+	// usual here, because the damping means the raw significance and its contribution differ by
+	// orders of magnitude, and re-tuning the weight is done by reading exactly these two figures.
+	weight := s.consolidation.linkSignificanceWeight
+
 	return &contract.MemoryValuation{
 		Id:                    candidate.Id,
 		EventId:               candidate.EventId,
 		Significance:          candidate.Candidate.MemorySignificance,
 		EffectiveSignificance: significance,
-		Value:                 state.decider.MemoryValue(candidate.Candidate),
-		Threshold:             threshold,
-		AgeDays:               ageDays,
-		RecallCount:           candidate.Candidate.RecallCount,
-		TimeRecalled:          candidate.Candidate.TimeRecalled,
-		WouldConsolidate:      state.decider.ShouldConsolidateMemory(candidate.Candidate),
-		Retained:              s.retained(decayTimestamp),
-		BelowMinimumAge:       int(ageDays) < s.consolidation.minimumAgeInDays,
-		DaysUntilForgotten:    s.daysUntilForgotten(significance, ageDays, threshold),
+
+		LinkSignificance:      candidate.Candidate.MemoryLinkSignificance,
+		LinkContribution:      linkContribution(weight, candidate.Candidate.MemoryLinkSignificance),
+		EventLinkSignificance: candidate.Candidate.EventLinkSignificance,
+		EventLinkContribution: linkContribution(weight, candidate.Candidate.EventLinkSignificance),
+
+		Value:              state.decider.MemoryValue(candidate.Candidate),
+		Threshold:          threshold,
+		AgeDays:            ageDays,
+		RecallCount:        candidate.Candidate.RecallCount,
+		TimeRecalled:       candidate.Candidate.TimeRecalled,
+		WouldConsolidate:   state.decider.ShouldConsolidateMemory(candidate.Candidate),
+		Retained:           s.retained(decayTimestamp),
+		BelowMinimumAge:    int(ageDays) < s.consolidation.minimumAgeInDays,
+		DaysUntilForgotten: s.daysUntilForgotten(significance, ageDays, threshold),
 	}
 }
 

@@ -54,7 +54,7 @@ func TestGetEventsPage_ScanError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(eventRowsColumns).
-		AddRow("e1", "not-an-int", int64(0), int32(1), "n", "d", false, int64(0), "[]", ""))
+		AddRow("e1", "not-an-int", int64(0), int32(1), "n", "d", false, int64(0), ""))
 
 	if _, err := d.GetEventsPage(context.Background(), "", 10); err == nil {
 		t.Fatal("expected a scan error")
@@ -67,7 +67,7 @@ func TestGetEventsPage_RowsIterationError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(eventRowsColumns).
-		AddRow("e1", int64(1), int64(0), int32(1), "n", "d", false, int64(0), "[]", "").
+		AddRow("e1", int64(1), int64(0), int32(1), "n", "d", false, int64(0), "").
 		RowError(0, errors.New("boom")))
 
 	if _, err := d.GetEventsPage(context.Background(), "", 10); err == nil {

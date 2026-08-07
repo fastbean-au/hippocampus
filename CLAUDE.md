@@ -286,9 +286,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     `db/db.go`) share `shouldConsolidate` / `calculateValue`, which implement the six
     configurable deletion algorithms (`consolidation.method` 1–6: power law, two linear variants,
     exponential half-life, logarithmic long-tail, and sigmoid consolidation-window) documented
-    with value tables in `docs/consolidation.md`. The value combines memory/event significance, weighted relationship significance
-    (`relationshipSignificanceWeight`), and a per-recall boost (`recallSignificanceWeight`); age is
-    measured from the most recent recall. The deletion threshold is scaled each cycle by capacity
+    with value tables in `docs/consolidation.md`. The value combines memory/event significance, the
+    **damped link contributions** (`linkSignificanceWeight` × `log1p(sum)`, applied separately to the
+    memory's own links and its event's - see `db/link.go`), and a per-recall boost
+    (`recallSignificanceWeight`); age is measured from the most recent recall. The deletion threshold is scaled each cycle by capacity
     pressure (the greater of row-count utilisation against `capacityMemories` and byte
     utilisation against `capacityBytes`, raised to `capacityPressureExponent`) so forgetting
     becomes more aggressive as the store fills. Both `shouldConsolidate` and eviction first
@@ -595,6 +596,28 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   non-binary memories into the optional search index. Bodies are proto3 strings and therefore
   UTF-8 everywhere — "binary" memory bodies are client-encoded — so the archive needs no special
   binary handling.
+- `db/link.go` — the **link graph**: `memory_links` and `event_links`, one directed row per edge
+  (composite primary key, so a re-link re-weights rather than duplicating) plus a reverse index on
+  `to_id`. Three things carry the design. (1) **Storage is directed, value is symmetric**: both ends
+  of a link gain its significance, so every aggregate sums `from_id = ? OR to_id = ?` and the
+  reverse index is what keeps the second half off a scan; direction survives only because a client
+  may want to read it back. (2) The **denormalised aggregate** (`memories.link_significance`,
+  `events.link_significance`, both in the covering index) is what the consolidation scans read, so
+  they never join to this table and stay off the memory bodies. It is maintained by _recomputing_
+  it for exactly the ids whose links changed, never by applying deltas — one statement, self-
+  correcting, and the single point every mutation funnels through. (3) Links **must not dangle**,
+  because a dangling edge would count significance for one end forever: the RPC layer checks both
+  ends exist (`MissingIds` → NotFound), and `pruneLinks` runs inside every path that deletes a
+  memory or event — the chokepoints are `deleteMemoriesIfUnrecalled` (covering consolidation,
+  eviction and `Clear`), `deleteMemoriesByIds`, `DeleteEventMemories`/`ReplaceMemoriesWithSummary`
+  (which read the ids first, since they delete by `event_id`), `DeleteEvent`/`DeleteEventIfEmpty`,
+  and `Purge`. The RPC half is `hippocampus/link.go`; bounds are shared with events in
+  `types/link.go` (128 links, 1,000,000 each, no self-links, no duplicates), and the damping in
+  `linkContribution` is what makes those bounds safe rather than merely large. `Memory.links` and
+  `Event.links` are **outbound only** — that is what keeps an export/import round trip from doubling
+  every edge; `GetMemoryLinks`/`GetEventLinks` take a direction and default to both. Import applies
+  links in a **second pass** after every row in the batch exists, because an archive routinely
+  carries a link whose target appears later.
 - `types/` — request/response validation and conversion between proto messages and DB rows.
 - `stats/` — logs event/memory counts every `stats.intervalSeconds` (default 300; 0 disables the
   log line) and registers the count gauges. The log ticker and the gauge callback share one

@@ -180,8 +180,7 @@ func (d *DB) initMySQLSchema() error {
 			name                      TEXT NOT NULL,
 			description               TEXT NOT NULL,
 			memories_consolidated     BOOLEAN NOT NULL DEFAULT FALSE,
-			relationship_significance BIGINT NOT NULL DEFAULT 0,
-			relationships             TEXT NOT NULL,
+			link_significance         BIGINT NOT NULL DEFAULT 0,
 			group_name                VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT ''
 		)`,
 
@@ -196,6 +195,7 @@ func (d *DB) initMySQLSchema() error {
 			is_summary    BOOLEAN NOT NULL DEFAULT FALSE,
 			group_name    VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
 			is_compressed BOOLEAN NOT NULL DEFAULT FALSE,
+			link_significance BIGINT NOT NULL DEFAULT 0,
 			body          LONGBLOB NOT NULL
 		)`,
 
@@ -230,6 +230,16 @@ func (d *DB) initMySQLSchema() error {
 		return err
 	}
 
+	// The link graph's denormalised aggregate (see link.go). 0 is right for a database that
+	// predates links: it has none, and initLinkTables creates the graph empty.
+	if err := d.addColumnIfMissing("memories", "link_significance", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	if err := d.addColumnIfMissing("events", "link_significance", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	// Migrate the id/event_id/group_name collation on databases created before it was pinned to
 	// utf8mb4_bin. The CREATE TABLE above already collates new databases correctly, so these are
 	// no-ops there. definition is the full post-MODIFY column spec (COLLATE immediately after the
@@ -260,6 +270,14 @@ func (d *DB) initMySQLSchema() error {
 	}
 
 	if err := d.addColumnIfMissing("events", "significance_level_id", "BIGINT"); err != nil {
+		return err
+	}
+
+	if err := d.initLinkTables(); err != nil {
+		return err
+	}
+
+	if err := d.dropLegacyRelationshipColumns(); err != nil {
 		return err
 	}
 

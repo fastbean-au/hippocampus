@@ -24,7 +24,7 @@ import (
 var messageTypes = []reflect.Type{
 	reflect.TypeOf(contract.SignificancePlacement{}),
 	reflect.TypeOf(contract.Event{}),
-	reflect.TypeOf(contract.Relationship{}),
+	reflect.TypeOf(contract.Link{}),
 	reflect.TypeOf(contract.Memory{}),
 	reflect.TypeOf(contract.StoreEventResponse{}),
 	reflect.TypeOf(contract.EndEventRequest{}),

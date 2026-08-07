@@ -23,16 +23,19 @@ func TestGetMemoryConsolidationCandidates(t *testing.T) {
 
 	ctx := context.Background()
 
-	// The relationship significance is summed from the relationships by the store, not taken from
-	// the field, so it is seeded the way a client would produce it.
-	if _, err := database.CreateEvent(ctx, types.Event{
-		Id:            "event-1",
-		Name:          "an event",
-		Significance:  7,
-		TimeStart:     100,
-		Relationships: []types.Relationship{{EventId: "another", Significance: 3}},
-	}); err != nil {
-		t.Fatalf("CreateEvent: %s", err)
+	// The link significance is maintained by the store from the link rows themselves, so it is
+	// seeded the way a client would produce it: both events created, then linked.
+	for _, event := range []types.Event{
+		{Id: "event-1", Name: "an event", Significance: 7, TimeStart: 100},
+		{Id: "another", Name: "a linked event", Significance: 1, TimeStart: 100},
+	} {
+		if _, err := database.CreateEvent(ctx, event); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", event.Id, err)
+		}
+	}
+
+	if err := database.LinkEvents(ctx, "event-1", []types.Link{{Id: "another", Significance: 3}}); err != nil {
+		t.Fatalf("LinkEvents: %s", err)
 	}
 
 	memories := []types.Memory{
@@ -76,8 +79,8 @@ func TestGetMemoryConsolidationCandidates(t *testing.T) {
 		)
 	}
 
-	if withEvent.Candidate.RelationshipSignificance != 3 {
-		t.Errorf("expected the event's relationship significance, got %d", withEvent.Candidate.RelationshipSignificance)
+	if withEvent.Candidate.EventLinkSignificance != 3 {
+		t.Errorf("expected the event's link significance, got %d", withEvent.Candidate.EventLinkSignificance)
 	}
 
 	if withEvent.Candidate.Timestamp != 100 {

@@ -185,8 +185,8 @@ func TestHTTPClientTransportError(t *testing.T) {
 // message) is rendered as its raw JSON rather than a plain scalar.
 func TestQueryValuesNonScalar(t *testing.T) {
 	event := &contract.Event{
-		Group:         "g",
-		Relationships: []*contract.Relationship{{EventId: "e2", Significance: 3}},
+		Group: "g",
+		Links: []*contract.Link{{Id: "e2", Significance: 3}},
 	}
 
 	values, err := queryValues(event, nil)
@@ -198,8 +198,8 @@ func TestQueryValuesNonScalar(t *testing.T) {
 		t.Fatalf("group = %q", values.Get("group"))
 	}
 
-	if !strings.Contains(values.Get("relationships"), "e2") {
-		t.Fatalf("relationships query = %q, want the raw JSON array", values.Get("relationships"))
+	if !strings.Contains(values.Get("links"), "e2") {
+		t.Fatalf("links query = %q, want the raw JSON array", values.Get("links"))
 	}
 }
 

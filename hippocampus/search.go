@@ -110,6 +110,16 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 
 	if reinforce {
 		tel.memoriesRecalled.Add(ctx, int64(len(ranked)))
+
+		// Spreading activation, over exactly the memories returned - the same set reinforceRanked
+		// recalled, not the wider candidate pool.
+		s.reinforceLinked(ctx, idsOfMemories(ranked))
+	}
+
+	// Associative retrieval, appended after the ranked matches: these were not matched by the
+	// query, are not counted in the ranking, and are never reinforced by being returned.
+	if in.GetIncludeLinked() && len(ranked) > 0 {
+		ranked = append(ranked, s.linkedMemories(ctx, idsOfMemories(ranked))...)
 	}
 
 	ms := make([]*contract.Memory, 0, len(ranked))

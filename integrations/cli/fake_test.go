@@ -17,6 +17,7 @@ type fakeClient struct {
 
 	memoriesResp *contract.GetMemoriesResponse
 	whoAmIResp   *contract.WhoAmIResponse
+	linksResp    *contract.GetLinksResponse
 }
 
 func (f *fakeClient) capture(req proto.Message) { f.req = req }
@@ -183,4 +184,48 @@ func (f *fakeClient) Clear(_ context.Context, in *contract.ClearRequest, _ ...gr
 	f.capture(in)
 
 	return &contract.ClearResponse{}, f.err
+}
+
+func (f *fakeClient) LinkMemories(_ context.Context, in *contract.LinkMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.capture(in)
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) UnlinkMemories(_ context.Context, in *contract.UnlinkMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.capture(in)
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) GetMemoryLinks(_ context.Context, in *contract.GetMemoryLinksRequest, _ ...grpc.CallOption) (*contract.GetLinksResponse, error) {
+	f.capture(in)
+
+	if f.linksResp != nil {
+		return f.linksResp, f.err
+	}
+
+	return &contract.GetLinksResponse{}, f.err
+}
+
+func (f *fakeClient) LinkEvents(_ context.Context, in *contract.LinkEventsRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.capture(in)
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) UnlinkEvents(_ context.Context, in *contract.UnlinkEventsRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.capture(in)
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) GetEventLinks(_ context.Context, in *contract.GetEventLinksRequest, _ ...grpc.CallOption) (*contract.GetLinksResponse, error) {
+	f.capture(in)
+
+	if f.linksResp != nil {
+		return f.linksResp, f.err
+	}
+
+	return &contract.GetLinksResponse{}, f.err
 }

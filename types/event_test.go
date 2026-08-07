@@ -1,38 +1,38 @@
 package types
 
 import (
-	"math"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/fastbean-au/hippocampus/contract"
 )
 
-// TestRelationshipsFromProto verifies relationships map field-for-field and an empty input yields an
+// TestLinksFromProto verifies relationships map field-for-field and an empty input yields an
 // empty (non-nil) slice.
-func TestRelationshipsFromProto(t *testing.T) {
-	in := []*contract.Relationship{
-		{EventId: "a", Significance: 1},
-		{EventId: "b", Significance: 2},
+func TestLinksFromProto(t *testing.T) {
+	in := []*contract.Link{
+		{Id: "a", Significance: 1},
+		{Id: "b", Significance: 2},
 	}
 
-	out := RelationshipsFromProto(in)
+	out := LinksFromProto(in)
 
-	if len(out) != 2 || out[0].EventId != "a" || out[0].Significance != 1 ||
-		out[1].EventId != "b" || out[1].Significance != 2 {
+	if len(out) != 2 || out[0].Id != "a" || out[0].Significance != 1 ||
+		out[1].Id != "b" || out[1].Significance != 2 {
 		t.Errorf("unexpected relationships: %+v", out)
 	}
 
-	if RelationshipsFromProto(nil) == nil {
+	if LinksFromProto(nil) == nil {
 		t.Error("expected a non-nil empty slice for nil input")
 	}
 }
 
 // TestRelationshipToProto verifies a single relationship converts to its proto form.
 func TestRelationshipToProto(t *testing.T) {
-	p := (&Relationship{EventId: "x", Significance: 9}).ToProto()
+	p := (&Link{Id: "x", Significance: 9}).ToProto()
 
-	if p.GetEventId() != "x" || p.GetSignificance() != 9 {
+	if p.GetId() != "x" || p.GetSignificance() != 9 {
 		t.Errorf("unexpected proto relationship: %+v", p)
 	}
 }
@@ -41,28 +41,28 @@ func TestRelationshipToProto(t *testing.T) {
 // proto->struct->proto trip.
 func TestEventFromProto_RoundTrip(t *testing.T) {
 	p := &contract.Event{
-		Id:                       "e1",
-		TimeStart:                10,
-		TimeEnd:                  20,
-		Significance:             5,
-		Name:                     "n",
-		Description:              "d",
-		MemoriesConsolidated:     true,
-		RelationshipSignificance: 3,
-		Relationships:            []*contract.Relationship{{EventId: "r1", Significance: 3}},
-		Group:                    "g",
+		Id:                   "e1",
+		TimeStart:            10,
+		TimeEnd:              20,
+		Significance:         5,
+		Name:                 "n",
+		Description:          "d",
+		MemoriesConsolidated: true,
+		LinkSignificance:     3,
+		Links:                []*contract.Link{{Id: "r1", Significance: 3}},
+		Group:                "g",
 	}
 
 	e := EventFromProto(p)
 
 	if e.Id != "e1" || e.TimeStart != 10 || e.TimeEnd != 20 || e.Significance != 5 ||
-		e.Name != "n" || e.Description != "d" || e.Group != "g" || len(e.Relationships) != 1 {
+		e.Name != "n" || e.Description != "d" || e.Group != "g" || len(e.Links) != 1 {
 		t.Errorf("field mismatch after EventFromProto: %+v", e)
 	}
 
-	// RelationshipSignificance and MemoriesConsolidated are populated by the store, not FromProto,
+	// LinkSignificance and MemoriesConsolidated are populated by the store, not FromProto,
 	// so set them to assert ToProto carries them through.
-	e.RelationshipSignificance = 3
+	e.LinkSignificance = 3
 	e.MemoriesConsolidated = true
 
 	back := e.ToProto()
@@ -70,7 +70,7 @@ func TestEventFromProto_RoundTrip(t *testing.T) {
 	if back.GetId() != "e1" || back.GetTimeStart() != 10 || back.GetTimeEnd() != 20 ||
 		back.GetSignificance() != 5 || back.GetName() != "n" || back.GetDescription() != "d" ||
 		back.GetGroup() != "g" || !back.GetMemoriesConsolidated() ||
-		back.GetRelationshipSignificance() != 3 || len(back.GetRelationships()) != 1 {
+		back.GetLinkSignificance() != 3 || len(back.GetLinks()) != 1 {
 		t.Errorf("field mismatch after ToProto: %+v", back)
 	}
 }
@@ -145,12 +145,14 @@ func TestEventValidate(t *testing.T) {
 		{"update negative significance", Event{Id: "e1", Significance: -1}, true, "significance must not be < 0"},
 		{"update negative timestart", Event{Id: "e1", TimeStart: -1}, true, "TimeStart must not be < 0"},
 		{"update negative timeend", Event{Id: "e1", TimeEnd: -1}, true, "TimeEnd must not be < 0"},
-		{"valid relationship", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: "r1", Significance: 3}}}, false, ""},
-		{"too many relationships", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: manyRelationships(maxEventRelationships + 1)}, false, "too many relationships"},
-		{"relationship no event id", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{Significance: 3}}}, false, "relationship 0 has no event id"},
-		{"relationship event id too long", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: longId, Significance: 3}}}, false, "relationship 0 event id too long"},
-		{"relationship negative significance", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: "r1", Significance: -1}}}, false, "relationship 0 significance must not be < 0"},
-		{"relationship significance too large", Event{Name: "n", Significance: 1, TimeStart: 1, Relationships: []Relationship{{EventId: "r1", Significance: maxRelationshipSignificance + 1}}}, false, "relationship 0 significance must not exceed"},
+		{"valid link", Event{Name: "n", Significance: 1, TimeStart: 1, Links: []Link{{Id: "r1", Significance: 3}}}, false, ""},
+		{"too many links", Event{Name: "n", Significance: 1, TimeStart: 1, Links: manyLinks(MaxLinks + 1)}, false, "too many links"},
+		{"link no id", Event{Name: "n", Significance: 1, TimeStart: 1, Links: []Link{{Significance: 3}}}, false, "link 0 has no id"},
+		{"link id too long", Event{Name: "n", Significance: 1, TimeStart: 1, Links: []Link{{Id: longId, Significance: 3}}}, false, "link 0 id too long"},
+		{"link negative significance", Event{Name: "n", Significance: 1, TimeStart: 1, Links: []Link{{Id: "r1", Significance: -1}}}, false, "link 0 significance must not be < 0"},
+		{"link significance too large", Event{Name: "n", Significance: 1, TimeStart: 1, Links: []Link{{Id: "r1", Significance: MaxLinkSignificance + 1}}}, false, "link 0 significance must not exceed"},
+		{"self link", Event{Id: "e1", Name: "n", Significance: 1, TimeStart: 1, Links: []Link{{Id: "e1", Significance: 3}}}, false, "links event to itself"},
+		{"duplicate link", Event{Name: "n", Significance: 1, TimeStart: 1, Links: []Link{{Id: "r1", Significance: 3}, {Id: "r1", Significance: 4}}}, false, "duplicates an earlier link"},
 	}
 
 	for _, c := range cases {
@@ -176,12 +178,14 @@ func TestEventValidate(t *testing.T) {
 	}
 }
 
-// manyRelationships builds n valid relationships, for the too-many-relationships bound.
-func manyRelationships(n int) []Relationship {
-	rs := make([]Relationship, n)
+// manyLinks builds n valid, distinct links, for the too-many-links bound. The ids differ because
+// validation also rejects duplicates, and a run of identical ids would trip that check first and
+// never reach the count.
+func manyLinks(n int) []Link {
+	rs := make([]Link, n)
 
 	for i := range rs {
-		rs[i] = Relationship{EventId: "r", Significance: 1}
+		rs[i] = Link{Id: fmt.Sprintf("r%d", i), Significance: 1}
 	}
 
 	return rs
@@ -208,22 +212,7 @@ func TestEventSetDefaults(t *testing.T) {
 	}
 }
 
-// TestCalculateRelationshipSignificance_NoInt32Overflow verifies the sum accumulates in int64:
-// relationships whose int32 significances sum past math.MaxInt32 must not wrap negative.
-// Under the previous int32 accumulator this wrapped.
-func TestCalculateRelationshipSignificance_NoInt32Overflow(t *testing.T) {
-	e := Event{
-		Relationships: []Relationship{
-			{EventId: "a", Significance: math.MaxInt32},
-			{EventId: "b", Significance: math.MaxInt32},
-			{EventId: "c", Significance: math.MaxInt32},
-		},
-	}
-
-	got := e.CalculateRelationshipSignificance()
-	want := int64(math.MaxInt32) * 3
-
-	if got != want {
-		t.Errorf("expected %d, got %d (int32 overflow wrap?)", want, got)
-	}
-}
+// The summed link significance is no longer computed here - the store maintains it as a
+// denormalised aggregate, recalculated from the link rows themselves - so the int32-overflow
+// guard that used to live in this file moved with it, to
+// TestLinkSignificanceDoesNotOverflowInt32 in db/link_test.go.

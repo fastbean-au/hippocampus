@@ -31,11 +31,20 @@ var ErrInvalidPlacement = errors.New("invalid significance placement")
 // target slot), so significance never goes negative. A periodic compaction (compactSignificanceLevels)
 // keeps ranks small and inside int32.
 
+// coveringIndexName carries a version suffix because the index's column list has changed once (the
+// link graph's aggregate joined it) and CREATE INDEX IF NOT EXISTS would otherwise leave an
+// existing database on the narrower index forever - silently, since the scans would still be
+// correct and merely stop being covering. The new name's existence is the migration flag:
+// ensureCoveringIndex drops every earlier name unconditionally, which is a no-op once it has run.
 const (
 	significanceLevelsTable = "significance_levels"
-	coveringIndexName       = "idx_memories_consolidation"
-	coveringIndexColumns    = "(event_id, timestamp, significance_level_id, time_recalled, recall_count)"
+	coveringIndexName       = "idx_memories_consolidation_v2"
+	coveringIndexColumns    = "(event_id, timestamp, significance_level_id, time_recalled, recall_count, link_significance)"
 )
+
+// supersededCoveringIndexNames are the earlier incarnations of the covering index, dropped on
+// startup so a migrated database does not carry a redundant index the planner may still pick.
+var supersededCoveringIndexNames = []string{"idx_memories_consolidation"}
 
 // significanceLevelsDDL is the CREATE TABLE for the registry in the active dialect. level_rank is UNIQUE
 // so a value maps to exactly one level; id is an auto-assigned stable key items reference.
@@ -100,8 +109,18 @@ func (d *DB) columnExists(table string, column string) (bool, error) {
 // ensureCoveringIndex creates the memories consolidation covering index keyed on
 // significance_level_id, idempotently, across dialects. The scans read only these columns, so they
 // never touch the pages holding memory bodies.
+//
+// Superseded incarnations are dropped first. CREATE INDEX IF NOT EXISTS cannot widen an index in
+// place, so without this a database created before a column joined the list would keep the narrower
+// index under its old name and the scans would quietly stop being covered by it.
 func (d *DB) ensureCoveringIndex() error {
 	log.Trace("func() db.ensureCoveringIndex")
+
+	for _, name := range supersededCoveringIndexNames {
+		if err := d.dropMemoriesIndexIfExists(name); err != nil {
+			return err
+		}
+	}
 
 	if d.driver == driverMySQL {
 		return d.createMySQLIndexIfMissing(
@@ -120,19 +139,33 @@ func (d *DB) ensureCoveringIndex() error {
 	return nil
 }
 
-// dropCoveringIndex removes the covering index, idempotently. The migration must drop it before
-// dropping the old significance column: SQLite refuses to drop an indexed column outright, and
-// MySQL would silently reshape the index rather than fail.
+// dropCoveringIndex removes the covering index under every name it has ever had, idempotently. The
+// significance migration must drop it before dropping the old significance column: SQLite refuses
+// to drop an indexed column outright, and MySQL would silently reshape the index rather than fail.
+// A database reaching that migration still carries a superseded name, which is why this covers them
+// all rather than only the current one.
 func (d *DB) dropCoveringIndex() error {
 	log.Trace("func() db.dropCoveringIndex")
 
+	for _, name := range append([]string{coveringIndexName}, supersededCoveringIndexNames...) {
+		if err := d.dropMemoriesIndexIfExists(name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// dropMemoriesIndexIfExists drops one index on the memories table if it is present. MySQL has no
+// DROP INDEX IF EXISTS, so its arm probes information_schema first.
+func (d *DB) dropMemoriesIndexIfExists(name string) error {
 	if d.driver == driverMySQL {
 		var count int
 
 		if err := d.sql.QueryRow(
 			`SELECT COUNT(*) FROM information_schema.statistics
 			WHERE table_schema = DATABASE() AND table_name = 'memories' AND index_name = ?`,
-			coveringIndexName,
+			name,
 		).Scan(&count); err != nil {
 			return err
 		}
@@ -141,12 +174,12 @@ func (d *DB) dropCoveringIndex() error {
 			return nil
 		}
 
-		_, err := d.sql.Exec(`DROP INDEX ` + coveringIndexName + ` ON memories`)
+		_, err := d.sql.Exec(`DROP INDEX ` + name + ` ON memories`)
 
 		return err
 	}
 
-	_, err := d.sql.Exec(`DROP INDEX IF EXISTS ` + coveringIndexName)
+	_, err := d.sql.Exec(`DROP INDEX IF EXISTS ` + name)
 
 	return err
 }

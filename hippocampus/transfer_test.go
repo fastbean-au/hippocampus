@@ -127,7 +127,7 @@ func seedTransferFixture(t *testing.T, s *Server) {
 
 	events := []types.Event{
 		{Id: "e1", Name: "one", TimeStart: 100, TimeEnd: 200, Significance: 5, Group: "billing",
-			Relationships: []types.Relationship{{EventId: "e2", Significance: 3}}},
+			Links: []types.Link{{Id: "e2", Significance: 3}}},
 		{Id: "e2", Name: "two", TimeStart: 300, Significance: 4},
 	}
 
@@ -135,6 +135,12 @@ func seedTransferFixture(t *testing.T, s *Server) {
 		if _, err := s.db.CreateEvent(context.Background(), e); err != nil {
 			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
 		}
+	}
+
+	// Links are rows in their own table, written after both ends exist - CreateEvent does not
+	// carry them, exactly so a link can never be created pointing at an event that is not there.
+	if err := s.db.LinkEvents(context.Background(), "e1", []types.Link{{Id: "e2", Significance: 3}}); err != nil {
+		t.Fatalf("LinkEvents: %s", err)
 	}
 
 	memories := []types.Memory{
@@ -199,8 +205,19 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("GetEvent(e1): %s", err)
 	}
 
-	if event.Group != "billing" || event.TimeEnd != 200 || event.RelationshipSignificance != 3 || len(event.Relationships) != 1 {
+	if event.Group != "billing" || event.TimeEnd != 200 || event.LinkSignificance != 3 {
 		t.Errorf("event state not preserved through the archive: %+v", event)
+	}
+
+	// The link itself, not just its summed significance: the aggregate could be right while the
+	// edge that produced it was lost, which is precisely the failure an archive would hide.
+	links, total, err := target.db.GetEventLinks(context.Background(), "e1", types.LinkDirectionBoth)
+	if err != nil {
+		t.Fatalf("GetEventLinks(e1): %s", err)
+	}
+
+	if len(links) != 1 || links[0].Id != "e2" || links[0].Significance != 3 || total != 3 {
+		t.Errorf("event links not preserved through the archive: %+v (total %d)", links, total)
 	}
 
 	memories, err := target.db.GetMemoriesByIds(context.Background(), []string{"m1", "m2", "m3"})
@@ -523,7 +540,7 @@ func TestTransferDirect(t *testing.T) {
 		t.Errorf("m1 did not arrive in the target with its state, got %+v", m)
 	}
 
-	if event, err := target.db.GetEvent(context.Background(), "e1"); err != nil || event.Group != "billing" || event.RelationshipSignificance != 3 {
+	if event, err := target.db.GetEvent(context.Background(), "e1"); err != nil || event.Group != "billing" || event.LinkSignificance != 3 {
 		t.Errorf("e1 did not arrive in the target with its state, got %+v (%v)", event, err)
 	}
 }
