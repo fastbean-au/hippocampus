@@ -122,9 +122,10 @@ service Hippocampus {
 		};
 	}
 
-	// GetEvents lists events filtered by time range, significance range, and group, paginated by
-	// limit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max
-	// range for "only events tied at the highest (or lowest) significance value" instead.
+	// GetEvents lists events filtered by time range, significance range, group, and metadata,
+	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
+	// significance_min/max range for "only events tied at the highest (or lowest) significance
+	// value" instead.
 	rpc GetEvents(GetEventsRequest) returns (GetEventsResponse) {
 		option (google.api.http) = {
 			get: "/v1/events"
@@ -163,7 +164,8 @@ service Hippocampus {
 		};
 	}
 
-	// GetMemories lists memories filtered by time range, significance range, and group, paginated
+	// GetMemories lists memories filtered by time range, significance range, group, metadata, and
+	// recall state (recalled/recall_count/time_recalled, plus is_summary and is_binary), paginated
 	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
 	// range for "only memories tied at the highest (or lowest) significance value" instead.
 	rpc GetMemories(GetMemoriesRequest) returns (GetMemoriesResponse) {
@@ -334,13 +336,15 @@ service Hippocampus {
 }
 
 // Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an
-// explicitly-set value from one left absent. Used for Memory.is_binary; UNSPECIFIED and FALSE are
-// currently treated identically by the server (both mean not-binary) - only TRUE marks a memory
-// as binary.
+// explicitly-set value from one left absent. It carries Memory.is_binary - where UNSPECIFIED and
+// FALSE are treated identically by the server (both mean not-binary) and only TRUE marks a memory
+// as binary - and the boolean list filters (GetMemoriesRequest's recalled/is_summary/is_binary),
+// where the distinction matters rather more: a proto3 bool cannot say "only the memories whose
+// is_summary is false", because an unset bool and an explicit false are the same byte on the wire.
 enum Bool {
-	UNSPECIFIED                                                      = 0; // not set; the server currently treats this the same as FALSE
-	FALSE                                                            = 1; // explicitly not binary
-	TRUE                                                             = 2; // binary; the body is opaque and never indexed for content search
+	UNSPECIFIED                                                      = 0; // not set; on Memory.is_binary the server treats this the same as FALSE, on a filter it applies no restriction
+	FALSE                                                            = 1; // explicitly false
+	TRUE                                                             = 2; // explicitly true
 }
 
 // SignificanceExtremum selects "all events tied at the highest (or lowest) significance value"
@@ -390,6 +394,9 @@ message Event {
 	repeated Memory                        memories                  = 10; // populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory
 	string                                 group                     = 11; // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
 	SignificancePlacement                  placement                 = 12; // write-only: rank relative to existing values (see SignificancePlacement)
+	map<string, string>                    metadata                  = 13; // optional multi-dimensional classification, exactly as Memory.metadata: same key charset, same 32-key/512-byte-value/4096-byte bounds, same replace-wholesale semantics on update, same opacity to the server
+	bool                                   clear_metadata            = 14; // write-only: on UpdateEvent, remove all metadata (see Memory.clear_metadata for why the empty map cannot say it)
+	bool                                   clear_group               = 15; // write-only: on UpdateEvent, reset group to empty (see Memory.clear_group)
 }
 
 // Link is a directed, significance-carrying association between two memories or between two events.
@@ -423,6 +430,9 @@ message Memory {
 	SignificancePlacement                  placement                 = 11; // write-only: rank relative to existing values (see SignificancePlacement)
 	repeated Link                          links                     = 12; // associative links this memory declares, weighted into its value (see consolidation.linkSignificanceWeight). Outbound only - Link is a directed edge from the item carrying it, so this lists exactly the edges this memory owns and an export/import round trip reproduces them once each; ask GetMemoryLinks for both directions. Write-only on StoreMemory (targets must already exist) and populated on read only when requested; use LinkMemories/UnlinkMemories to edit them incrementally
 	int64                                  link_significance         = 13; // read-only: sum of this memory's links' significance values, inbound and outbound, calculated by the server; ignored on write
+	map<string, string>                    metadata                  = 14; // optional multi-dimensional classification (source=slack, project=..., author=...), where group is the single freeform label. Keys match [A-Za-z0-9][A-Za-z0-9._:/-]{0,63}; values are any UTF-8 up to 512 bytes; at most 32 keys and 4096 bytes of serialised JSON in total, and those bytes count toward memory.limit.sizeBytes alongside the body. On UpdateMemory a non-empty map REPLACES the stored map wholesale - there is no per-key merge, and an absent or empty map leaves it untouched (use clear_metadata to remove it). Opaque to the server: filterable via GetMemories/SearchMemories, never interpreted, and never emitted as a metric, span, or log attribute
+	bool                                   clear_metadata            = 15; // write-only: on UpdateMemory, remove all metadata. Exists because the map's own emptiness cannot say it - an absent map and an explicitly empty one are the same on the wire, and every other updatable field reads unset as "leave unchanged". Ignored on StoreMemory; takes precedence over any metadata supplied alongside it
+	bool                                   clear_group               = 16; // write-only: on UpdateMemory, reset group to empty, for the same reason clear_metadata exists - an empty group string otherwise means "leave unchanged". Ignored on StoreMemory; takes precedence over any group supplied alongside it
 }
 
 // StoreEventResponse carries the stored event's id and how many of its nested memories were
@@ -482,7 +492,8 @@ message GetEventsRequest {
 	string                                 order_by                  = 9;  // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
 	int32                                  limit                     = 10; // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
 	int32                                  offset                    = 11; // rows to skip for pagination; negative values are clamped to 0; no upper bound
-	SignificanceExtremum                   significance_extremum     = 12; // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
+	SignificanceExtremum                   significance_extremum     = 12; // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group, metadata) - not a range; 0 (default) applies no extremum
+	repeated string                        metadata                  = 13; // optional: restrict to events whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata
 }
 
 message GetEventsResponse {
@@ -499,9 +510,17 @@ message GetMemoriesRequest {
 	string                                 order_by                  = 6; // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
 	int32                                  limit                     = 7; // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
 	int32                                  offset                    = 8; // rows to skip for pagination; negative values are clamped to 0; no upper bound
-	SignificanceExtremum                   significance_extremum     = 9; // when set, ignore significance_min/significance_max and return only memories tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
+	SignificanceExtremum                   significance_extremum     = 9; // when set, ignore significance_min/significance_max and return only memories tied at that significance value among the other filters (time range, group, metadata, recall state) - not a range; 0 (default) applies no extremum
 	string                                 linked_to                 = 10; // optional: restrict to memories linked to this memory id, in either direction (one hop). NotFound if that memory does not exist
 	bool                                   links                     = 11; // when true, populate each returned memory's links
+	repeated string                        metadata                  = 12; // optional: restrict to memories whose metadata carries every one of these "key=value" pairs (AND, exact match). Split on the FIRST '=', so a value may itself contain '='; the key must match the metadata key charset. A repeated string rather than a map because a map cannot be bound from a URL query string - over HTTP this is ?metadata=source%3Dslack&metadata=project%3Dx. Unindexed, exactly as the group filter is
+	Bool                                   recalled                  = 13; // optional: FALSE returns only never-recalled memories (recall_count = 0), TRUE only those recalled at least once; UNSPECIFIED (default) applies no restriction. This is what answers "what have I never recalled?" - recall_count_max cannot, because 0 there means no bound
+	int32                                  recall_count_min          = 14; // inclusive lower bound on recall_count; 0 (the default) means no bound, NOT a literal never-recalled filter - use recalled for that
+	int32                                  recall_count_max          = 15; // inclusive upper bound on recall_count; 0 (the default) means no bound, NOT a literal never-recalled filter - use recalled for that
+	int64                                  time_recalled_min         = 16; // UnixNano inclusive lower bound on time_recalled; 0 (the default) means no lower bound. Both bounds ask only about memories that HAVE been recalled - see time_recalled_max
+	int64                                  time_recalled_max         = 17; // UnixNano inclusive upper bound on time_recalled; 0 (the default) means no upper bound. Never-recalled memories are excluded rather than matched: their time_recalled is 0, so "recalled before X" would otherwise return every memory that was never recalled at all. Use recalled to ask about those
+	Bool                                   is_summary                = 18; // optional: TRUE returns only summary memories (see ReplaceMemoriesWithSummary), FALSE only non-summaries; UNSPECIFIED (default) applies no restriction
+	Bool                                   is_binary                 = 19; // optional: TRUE returns only binary memories, FALSE only non-binary; UNSPECIFIED (default) applies no restriction
 }
 
 message GetMemoriesResponse {
@@ -554,6 +573,7 @@ message SearchMemoriesRequest {
 	string                                 group                     = 5; // optional: restrict matches to memories carrying this group label
 	SearchMode                             mode                      = 6; // how to match; unset means KEYWORD
 	bool                                   include_linked            = 7; // also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves
+	repeated string                        metadata                  = 8; // optional: restrict matches to memories whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata. Applied inside the search index rather than to the results, so it narrows the candidates that ranking sees and limit still means what it says
 }
 
 // LinkDirection narrows which of an item's links a read returns. The graph is stored directed, so

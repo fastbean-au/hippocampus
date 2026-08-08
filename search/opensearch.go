@@ -18,6 +18,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 // applyTimeout bounds each operation the worker applies against the cluster, so one hung request
@@ -51,7 +53,8 @@ const indexMapping = `{
 		"significance": { "type": "integer" },
 		"timestamp":    { "type": "long" },
 		"is_summary":   { "type": "boolean" },
-		"group":        { "type": "keyword" }
+		"group":        { "type": "keyword" },
+		"metadata":     { "type": "keyword" }
 	}}
 }`
 
@@ -76,6 +79,7 @@ const vectorIndexMapping = `{
 		"timestamp":    { "type": "long" },
 		"is_summary":   { "type": "boolean" },
 		"group":        { "type": "keyword" },
+		"metadata":     { "type": "keyword" },
 		"vector":       {
 			"type": "knn_vector",
 			"dimension": %d,
@@ -88,10 +92,16 @@ const vectorIndexMapping = `{
 	}}
 }`
 
-// groupMapping adds the group field to an index created before the field existed. Putting a
-// mapping for a new field is a legal, idempotent update; without it, dynamic mapping would type
-// the field as text and the term filter in Search would never match.
-const groupMapping = `{ "properties": { "group": { "type": "keyword" } } }`
+// newFieldMappings adds the fields that postdate the original index to an index created before
+// them. Putting a mapping for a new field is a legal, idempotent update; without it, dynamic
+// mapping would type each as text and the term filters in Search would never match.
+//
+// One PUT rather than one per field: they are all the same kind of migration, and a single request
+// cannot leave an index half-updated the way a sequence of them could.
+const newFieldMappings = `{ "properties": {
+	"group":    { "type": "keyword" },
+	"metadata": { "type": "keyword" }
+} }`
 
 // Config carries the OpenSearch connection settings, read from viper in main.go.
 type Config struct {
@@ -374,10 +384,10 @@ func (o *OpenSearch) ensureIndex(ctx context.Context) error {
 
 	if err == nil {
 		// The index may predate fields added to the mapping since it was created; put them in
-		// place so filters on them behave (see groupMapping).
+		// place so filters on them behave (see newFieldMappings).
 		if _, err := o.client.Indices.Mapping.Put(ctx, opensearchapi.MappingPutReq{
 			Indices: []string{o.index},
-			Body:    strings.NewReader(groupMapping),
+			Body:    strings.NewReader(newFieldMappings),
 		}); err != nil {
 			return fmt.Errorf("failed to update mapping on index '%s': %w", o.index, err)
 		}
@@ -803,6 +813,14 @@ func (o *OpenSearch) Search(ctx context.Context, query Query) ([]Hit, error) {
 
 	if query.Group != "" {
 		filters = append(filters, map[string]any{"term": map[string]any{"group": query.Group}})
+	}
+
+	// One term filter per pair, which is what makes them a conjunction: every term must match some
+	// element of the document's metadata array. The term is the pair in its wire form, identical to
+	// what MetadataToTerms indexed, so no conversion is involved. Sorted so two identical queries
+	// marshal identically.
+	for _, term := range types.MetadataToTerms(query.Metadata) {
+		filters = append(filters, map[string]any{"term": map[string]any{"metadata": term}})
 	}
 
 	body, err := json.Marshal(map[string]any{

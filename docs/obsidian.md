@@ -34,7 +34,10 @@ short:
 
 - **Store note / selection as memory** — significance comes from a `significance:` frontmatter key
   (falling back to a configurable default); the `group` label comes from the note's top-level
-  folder, a frontmatter key, or a fixed value.
+  folder, a frontmatter key, or a fixed value; and `metadata` labels come from a named list of
+  frontmatter keys plus any fixed `key=value` lines. The frontmatter keys are named explicitly
+  rather than copied wholesale, so plugin bookkeeping, dates, and tag arrays stay out of the labels
+  unless you ask for them; awkward keys ("Project Name") are normalised to the service's charset.
 - **Search memories and insert results** — content search (needs the service's `opensearch.enabled`
   index), optionally reinforcing the matches.
 - **Auto-sync a folder** — notes under a configured folder are pushed in as they are edited,

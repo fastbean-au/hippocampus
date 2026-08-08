@@ -469,8 +469,11 @@ func TestRecallMemoriesMySQL(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "timestamp", "significance", "event_id", "body",
 			"is_binary", "time_recalled", "recall_count", "is_summary", "group_name", "is_compressed",
-			"link_significance",
-		}).AddRow("m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false, int64(0)))
+			"metadata", "link_significance",
+		}).AddRow(
+			"m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false,
+			nil, int64(0),
+		))
 	mock.ExpectCommit()
 
 	memories, err := d.recallMemoriesMySQL(context.Background(), []string{"m1"}, 99)
@@ -578,13 +581,10 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	// addColumnIfMissing: is_summary, is_compressed, group_name (memories), group_name (events),
-	// then link_significance on both tables.
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
+	// link_significance on both tables, then metadata on both tables.
+	for range 8 {
+		columnPresent()
+	}
 
 	// setMySQLColumnCollationIfNeeded x5, all already at the target collation.
 	for range 5 {
@@ -642,12 +642,10 @@ func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
+	// The addColumnIfMissing calls preceding the collation migration, all reporting present.
+	for range 8 {
+		columnPresent()
+	}
 
 	for range 5 {
 		mock.ExpectQuery(`collation_name FROM information_schema`).
@@ -1369,12 +1367,10 @@ func TestInitMySQLSchema_CollationError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
+	// The addColumnIfMissing calls preceding the collation migration, all reporting present.
+	for range 8 {
+		columnPresent()
+	}
 
 	// First collation probe (events.id) reports a mismatch, and the MODIFY fails.
 	mock.ExpectQuery(`collation_name FROM information_schema`).
@@ -1405,12 +1401,10 @@ func TestInitMySQLSchema_SignificanceLevelIDColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
+	// The addColumnIfMissing calls preceding the collation migration, all reporting present.
+	for range 8 {
+		columnPresent()
+	}
 
 	for range 5 {
 		collationCorrect()
@@ -1445,12 +1439,10 @@ func TestInitMySQLSchema_EnsureCoveringIndexError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
+	// The addColumnIfMissing calls preceding the collation migration, all reporting present.
+	for range 8 {
+		columnPresent()
+	}
 
 	for range 5 {
 		collationCorrect()
@@ -1765,12 +1757,10 @@ func TestInitMySQLSchema_EventsSignificanceLevelIDColumnError(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	columnPresent()
+	// The addColumnIfMissing calls preceding the collation migration, all reporting present.
+	for range 8 {
+		columnPresent()
+	}
 
 	for range 5 {
 		collationCorrect()

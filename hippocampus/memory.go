@@ -23,11 +23,34 @@ const (
 	maxMemoryPageSize     = 200
 )
 
+// triState maps the contract's tri-state boolean onto the db package's equivalent, for the list
+// filters over boolean columns. UNSPECIFIED means no restriction rather than false.
+func triState(in contract.Bool) db.TriState {
+	switch in {
+
+	case contract.Bool_TRUE:
+		return db.TriStateTrue
+
+	case contract.Bool_FALSE:
+		return db.TriStateFalse
+
+	default:
+		return db.TriStateUnset
+
+	}
+}
+
 func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contract.StoreMemoryResponse, error) {
 	var res contract.StoreMemoryResponse
 
 	memory := types.MemoryFromProto(in)
 
+	// NOTE: memory.Metadata is in scope from here on, and must never reach a metric attribute, a
+	// span attribute, or a log field. It is client-supplied and unbounded in cardinality - one
+	// caller tagging memories with a request id would mint a new time series per write. Every
+	// attribute in this package is a bool or a small closed enum (see hippocampus/telemetry.go), and
+	// the "reason" values below are fixed literals for exactly that reason. Filter on metadata; do
+	// not measure by it.
 	if err := memory.ValidateInsert(s.maxMemoryBodyLength, false); err != nil {
 		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
 
@@ -391,6 +414,22 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		return &res, fmt.Errorf("TimestampMax must be greater than or equal to TimestampMin")
 	}
 
+	if in.GetRecallCountMax() > 0 && in.GetRecallCountMin() > 0 && in.GetRecallCountMax() < in.GetRecallCountMin() {
+		return &res, fmt.Errorf("RecallCountMax must be greater than or equal to RecallCountMin")
+	}
+
+	if in.GetTimeRecalledMax() > 0 && in.GetTimeRecalledMin() > 0 && in.GetTimeRecalledMax() < in.GetTimeRecalledMin() {
+		return &res, fmt.Errorf("TimeRecalledMax must be greater than or equal to TimeRecalledMin")
+	}
+
+	// Filter keys are validated here, not only at the db layer, because an unvalidated key reaches
+	// the driver as part of a JSON path: MySQL's JSON_EXTRACT raises ER_INVALID_JSON_PATH on a
+	// malformed one, which would surface as Internal rather than as the caller's mistake.
+	metadata, err := types.ParseMetadataFilters(in.GetMetadata())
+	if err != nil {
+		return &res, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	extremum := db.SignificanceExtremumNone
 
 	switch in.GetSignificanceExtremum() {
@@ -445,6 +484,15 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		OrderBy:              orderBy,
 		Limit:                limit,
 		Offset:               offset,
+
+		Metadata:        metadata,
+		Recalled:        triState(in.GetRecalled()),
+		IsSummary:       triState(in.GetIsSummary()),
+		IsBinary:        triState(in.GetIsBinary()),
+		RecallCountMin:  in.GetRecallCountMin(),
+		RecallCountMax:  in.GetRecallCountMax(),
+		TimeRecalledMin: in.GetTimeRecalledMin(),
+		TimeRecalledMax: in.GetTimeRecalledMax(),
 	}
 
 	// linked_to narrows the listing to one memory's direct neighbours, resolved to ids and passed

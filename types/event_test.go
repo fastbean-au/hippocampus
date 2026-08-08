@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -216,3 +217,56 @@ func TestEventSetDefaults(t *testing.T) {
 // denormalised aggregate, recalculated from the link rows themselves - so the int32-overflow
 // guard that used to live in this file moved with it, to
 // TestLinkSignificanceDoesNotOverflowInt32 in db/link_test.go.
+
+// TestEventMetadataRoundTrip mirrors TestMemoryMetadataRoundTrip: metadata is one mechanism across
+// both item types, and an asymmetry between them would only ever be a trap.
+func TestEventMetadataRoundTrip(t *testing.T) {
+	in := &contract.Event{
+		Id:            "e1",
+		Name:          "an event",
+		Metadata:      map[string]string{"source": "slack", "project": "x"},
+		ClearMetadata: true,
+		ClearGroup:    true,
+	}
+
+	e := EventFromProto(in)
+
+	if !reflect.DeepEqual(e.Metadata, map[string]string{"source": "slack", "project": "x"}) {
+		t.Fatalf("metadata not carried in: %#v", e.Metadata)
+	}
+
+	if !e.ClearMetadata || !e.ClearGroup {
+		t.Errorf("clear flags not carried in: %+v", e)
+	}
+
+	in.Metadata["source"] = "email"
+
+	if e.Metadata["source"] != "slack" {
+		t.Errorf("EventFromProto aliased the proto map: %#v", e.Metadata)
+	}
+
+	out := e.ToProto()
+
+	if !reflect.DeepEqual(out.GetMetadata(), e.Metadata) {
+		t.Errorf("metadata not carried out: %#v", out.GetMetadata())
+	}
+
+	if out.GetClearMetadata() || out.GetClearGroup() {
+		t.Error("the clear flags are write-only and must never be echoed on a read")
+	}
+
+	if got := (&Event{Id: "e1"}).ToProto().GetMetadata(); got != nil {
+		t.Errorf("expected empty metadata to convert to nil, got %#v", got)
+	}
+}
+
+// TestEventValidate_MetadataBounds checks Validate reaches ValidateMetadata and names the event as
+// the offending item; the bounds themselves are covered in metadata_test.go.
+func TestEventValidate_MetadataBounds(t *testing.T) {
+	e := Event{Id: "e1", Name: "an event", TimeStart: 1, Metadata: map[string]string{"bad key": "v"}}
+
+	err := e.Validate(false)
+	if err == nil || !strings.Contains(err.Error(), "event not valid - metadata key") {
+		t.Fatalf("expected an event metadata key error, got: %v", err)
+	}
+}

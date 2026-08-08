@@ -121,7 +121,8 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			recall_count  = excluded.recall_count,
 			is_summary    = excluded.is_summary,
 			group_name    = excluded.group_name,
-			is_compressed = excluded.is_compressed`
+			is_compressed = excluded.is_compressed,
+			metadata      = excluded.metadata`
 
 	// MySQL has no ON CONFLICT; ON DUPLICATE KEY UPDATE with the 8.0.20+ row alias is the same
 	// upsert, with 'new' standing in for 'excluded'.
@@ -137,7 +138,8 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			recall_count  = new.recall_count,
 			is_summary    = new.is_summary,
 			group_name    = new.group_name,
-			is_compressed = new.is_compressed`
+			is_compressed = new.is_compressed,
+			metadata      = new.metadata`
 	}
 
 	// The registry lock serialises level find-or-create against concurrent writers on the server
@@ -166,6 +168,15 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 		// each row takes this instance's compression policy rather than the source instance's.
 		body, isCompressed := d.compressBody(memory.Body, memory.IsBinary)
 
+		metadata, err := types.MarshalMetadata(memory.Metadata)
+		if err != nil {
+			_ = tx.Rollback()
+
+			log.Errorf("failed to encode metadata of memory '%s': %s", memory.Id, err.Error())
+
+			return 0, err
+		}
+
 		if _, err := tx.Exec(
 			d.rebind(query),
 			memory.Id,
@@ -179,6 +190,7 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			memory.IsSummary,
 			memory.Group,
 			isCompressed,
+			metadata,
 		); err != nil {
 			_ = tx.Rollback()
 
@@ -227,7 +239,7 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 		return 0, nil
 	}
 
-	query := `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	query := `INSERT INTO events (` + eventStoredColumns + `) VALUES ` + eventValuePlaceholders + `
 		ON CONFLICT (id) DO UPDATE SET
 			time_start                = excluded.time_start,
 			time_end                  = excluded.time_end,
@@ -236,10 +248,11 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			description               = excluded.description,
 			memories_consolidated     = excluded.memories_consolidated,
 			link_significance         = excluded.link_significance,
-			group_name                = excluded.group_name`
+			group_name                = excluded.group_name,
+			metadata                  = excluded.metadata`
 
 	if d.driver == driverMySQL {
-		query = `INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
+		query = `INSERT INTO events (` + eventStoredColumns + `) VALUES ` + eventValuePlaceholders + ` AS new
 		ON DUPLICATE KEY UPDATE
 			time_start                = new.time_start,
 			time_end                  = new.time_end,
@@ -248,7 +261,8 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			description               = new.description,
 			memories_consolidated     = new.memories_consolidated,
 			link_significance         = new.link_significance,
-			group_name                = new.group_name`
+			group_name                = new.group_name,
+			metadata                  = new.metadata`
 	}
 
 	releaseLock, err := d.acquireRegistryLock(ctx)
@@ -271,6 +285,15 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			return 0, err
 		}
 
+		metadata, err := types.MarshalMetadata(event.Metadata)
+		if err != nil {
+			_ = tx.Rollback()
+
+			log.Errorf("failed to encode metadata of event '%s': %s", event.Id, err.Error())
+
+			return 0, err
+		}
+
 		// The existing aggregate is preserved on an update and starts at 0 on an insert; ImportLinks
 		// recalculates it once the edges are in.
 		if _, err := tx.Exec(
@@ -284,6 +307,7 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 			event.MemoriesConsolidated,
 			event.LinkSignificance,
 			event.Group,
+			metadata,
 		); err != nil {
 			_ = tx.Rollback()
 

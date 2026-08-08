@@ -218,8 +218,10 @@ transport — native gRPC (default) or the JSON/HTTP `/v1` gateway (`--transport
 
 ```bash
 go build -C integrations/cli -o "$PWD/hippo" .
-./hippo memory store --body "remember this" --significance 6 --group svc-a
+./hippo memory store --body "remember this" --significance 6 --group svc-a \
+  --metadata source=slack --metadata project=apollo
 ./hippo --transport http --address localhost:8080 -o json memory list --group svc-a | jq
+./hippo memory list --metadata source=slack --recalled false
 ```
 
 - **Operator tool:** memory/event CRUD, recall/search, summarisation, plus admin

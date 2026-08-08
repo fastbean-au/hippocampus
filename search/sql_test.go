@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/fastbean-au/hippocampus/db"
@@ -62,7 +63,10 @@ func TestSQLSearchPassesTheQueryThrough(t *testing.T) {
 		t.Fatalf("NewSQL: %s", err)
 	}
 
-	query := Query{Text: "deployment", EventId: "e1", Group: "ops", Limit: 7}
+	query := Query{
+		Text: "deployment", EventId: "e1", Group: "ops", Limit: 7,
+		Metadata: map[string]string{"source": "slack"},
+	}
 
 	hits, err := idx.Search(context.Background(), query)
 	if err != nil {
@@ -79,8 +83,13 @@ func TestSQLSearchPassesTheQueryThrough(t *testing.T) {
 		t.Errorf("Search returned scores %v/%v, want 2.5/1.25", hits[0].Score, hits[1].Score)
 	}
 
-	want := db.ContentQuery{Text: "deployment", EventId: "e1", Group: "ops", Limit: 7}
-	if store.gotQuery != want {
+	want := db.ContentQuery{
+		Text: "deployment", EventId: "e1", Group: "ops", Limit: 7,
+		Metadata: map[string]string{"source": "slack"},
+	}
+
+	// reflect.DeepEqual rather than ==: ContentQuery carries a map since metadata filters landed.
+	if !reflect.DeepEqual(store.gotQuery, want) {
 		t.Errorf("store received %+v, want %+v", store.gotQuery, want)
 	}
 }
@@ -139,7 +148,7 @@ func TestSQLMutatorsAreInert(t *testing.T) {
 	idx.SetEventId("e1", "e2")
 	idx.Purge()
 
-	if store.gotQuery != (db.ContentQuery{}) {
+	if !reflect.DeepEqual(store.gotQuery, db.ContentQuery{}) {
 		t.Errorf("a mutator reached the store: %+v", store.gotQuery)
 	}
 

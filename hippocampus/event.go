@@ -317,6 +317,12 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		return &res, fmt.Errorf("TimeEndMax must be greater than or equal to TimeStartMax")
 	}
 
+	// See GetMemories for why filter keys are validated here rather than only at the db layer.
+	metadata, err := types.ParseMetadataFilters(in.GetMetadata())
+	if err != nil {
+		return &res, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	extremum := db.SignificanceExtremumNone
 
 	switch in.GetSignificanceExtremum() {
@@ -373,6 +379,8 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		OrderBy:              orderBy,
 		Limit:                limit,
 		Offset:               offset,
+
+		Metadata: metadata,
 	}
 
 	total, err := s.db.CountEventsFiltered(ctx, filter)

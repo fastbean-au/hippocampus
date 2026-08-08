@@ -241,8 +241,10 @@ func sqliteColumnAbsent(mock sqlmock.Sqlmock) {
 }
 
 // expectSQLiteInitSchemaThrough queues the auto_vacuum/CREATE TABLE steps (all succeeding, auto_vacuum
-// already INCREMENTAL so VACUUM is skipped) plus the first (stopAt-1) of the five
-// addColumnIfMissing calls, each reporting its column already present.
+// already INCREMENTAL so VACUUM is skipped) plus the first (stopAt-1) of initSchema's
+// addColumnIfMissing calls, each reporting its column already present. stopAt is therefore a
+// position in that sequence, and every caller past the one being tested must be bumped when a
+// column is added - there are ten today, so stopAt of 11 means "every column already present".
 func expectSQLiteInitSchemaThrough(mock sqlmock.Sqlmock, stopAt int) {
 	mock.ExpectExec(`PRAGMA auto_vacuum = INCREMENTAL`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`PRAGMA auto_vacuum`).WillReturnRows(sqlmock.NewRows([]string{"auto_vacuum"}).AddRow(2))
@@ -422,9 +424,37 @@ func TestInitSchema_AddColumnEventsLinkSignificanceError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-func TestInitSchema_LinkTablesError(t *testing.T) {
+func TestInitSchema_AddColumnMemoriesMetadataError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 	expectSQLiteInitSchemaThrough(mock, 9)
+
+	sqliteColumnAbsent(mock)
+	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN metadata`).WillReturnError(errors.New("boom"))
+
+	if err := d.initSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitSchema_AddColumnEventsMetadataError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	expectSQLiteInitSchemaThrough(mock, 10)
+
+	sqliteColumnAbsent(mock)
+	mock.ExpectExec(`ALTER TABLE events ADD COLUMN metadata`).WillReturnError(errors.New("boom"))
+
+	if err := d.initSchema(); err == nil {
+		t.Fatal("expected an error")
+	}
+
+	expectationsMet(t, mock)
+}
+
+func TestInitSchema_LinkTablesError(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	expectSQLiteInitSchemaThrough(mock, 11)
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memory_links`).WillReturnError(errors.New("boom"))
 
@@ -437,7 +467,7 @@ func TestInitSchema_LinkTablesError(t *testing.T) {
 
 func TestInitSchema_MigrateSignificanceError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 9)
+	expectSQLiteInitSchemaThrough(mock, 11)
 	expectLinkTables(mock, driverSQLite)
 	expectNoLegacyRelationshipColumns(mock)
 
@@ -453,7 +483,7 @@ func TestInitSchema_MigrateSignificanceError(t *testing.T) {
 
 func TestInitSchema_EnsureCoveringIndexError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 9)
+	expectSQLiteInitSchemaThrough(mock, 11)
 	expectLinkTables(mock, driverSQLite)
 	expectNoLegacyRelationshipColumns(mock)
 

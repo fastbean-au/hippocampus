@@ -123,18 +123,18 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 
 ### Memories
 
-| Command          | Purpose                                                                                                                                      |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory store`   | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--timestamp`, `--binary`)                            |
-| `memory update`  | partial update of an existing memory (`--id` plus any content fields)                                                                        |
-| `memory delete`  | delete memories by id (`--id` repeatable, or positional ids)                                                                                 |
-| `memory list`    | list memories with filters (`--group`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
-| `memory recall`  | recall memories by id (reinforces them)                                                                                                      |
-| `memory link`    | link a memory to others (`--id`, `--link memoryID:sig` repeatable)                                                                           |
-| `memory unlink`  | remove links between a memory and others (`--id`, `--target` repeatable or positional)                                                       |
-| `memory links`   | list a memory's links (`--id`, `--direction both\|outbound\|inbound`)                                                                        |
-| `memory search`  | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--reinforce`)                  |
-| `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)       |
+| Command          | Purpose                                                                                                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `memory store`   | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--metadata k=v`, `--timestamp`, `--binary`)                                                                                                                          |
+| `memory update`  | partial update of an existing memory (`--id` plus any content fields)                                                                                                                                                                                        |
+| `memory delete`  | delete memories by id (`--id` repeatable, or positional ids)                                                                                                                                                                                                 |
+| `memory list`    | list memories with filters (`--group`, `--metadata k=v`, `--recalled`, `--summary`, `--binary`, `--recall-count-min/-max`, `--recalled-after/-before`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
+| `memory recall`  | recall memories by id (reinforces them)                                                                                                                                                                                                                      |
+| `memory link`    | link a memory to others (`--id`, `--link memoryID:sig` repeatable)                                                                                                                                                                                           |
+| `memory unlink`  | remove links between a memory and others (`--id`, `--target` repeatable or positional)                                                                                                                                                                       |
+| `memory links`   | list a memory's links (`--id`, `--direction both\|outbound\|inbound`)                                                                                                                                                                                        |
+| `memory search`  | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--metadata k=v`, `--reinforce`)                                                                                                                |
+| `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)                                                                                                                       |
 
 `memory explain` reports each memory's computed value, the threshold it is measured against, and how
 long it has before it is forgotten; with `--curve-significance` it also returns the decay curve of
@@ -143,18 +143,18 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 
 ### Events
 
-| Command              | Purpose                                                                                                                      |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `event link`         | link an event to others (`--id`, `--link eventID:sig` repeatable)                                                            |
-| `event unlink`       | remove links between an event and others (`--id`, `--target` repeatable or positional)                                       |
-| `event links`        | list an event's links (`--id`, `--direction both\|outbound\|inbound`)                                                        |
-| `event create`       | create an event (`--name`, `--description`, `--significance`, `--group`, `--time-start`, `--time-end`, `--link eventID:sig`) |
-| `event end`          | set an event's end time (`--id`, `--time-end`)                                                                               |
-| `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                       |
-| `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                |
-| `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                              |
-| `event get`          | fetch a single event (`--id`, `--memories`)                                                                                  |
-| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`)    |
+| Command              | Purpose                                                                                                                                        |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event link`         | link an event to others (`--id`, `--link eventID:sig` repeatable)                                                                              |
+| `event unlink`       | remove links between an event and others (`--id`, `--target` repeatable or positional)                                                         |
+| `event links`        | list an event's links (`--id`, `--direction both\|outbound\|inbound`)                                                                          |
+| `event create`       | create an event (`--name`, `--description`, `--significance`, `--group`, `--metadata k=v`, `--time-start`, `--time-end`, `--link eventID:sig`) |
+| `event end`          | set an event's end time (`--id`, `--time-end`)                                                                                                 |
+| `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                                         |
+| `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                                  |
+| `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                                                |
+| `event get`          | fetch a single event (`--id`, `--memories`)                                                                                                    |
+| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`)                      |
 
 ### Summarisation
 
@@ -208,6 +208,19 @@ hippo memory store --body "canary healthy" --significance 6 --event-id "$EV" --g
 # The same over the HTTP gateway, with the token from the environment.
 export HIPPOCAMPUS_TOKEN=... HIPPOCAMPUS_TRANSPORT=http HIPPOCAMPUS_ADDRESS=localhost:8080
 hippo memory list --group deploy --significance-min 5 --limit 50
+
+# Multi-dimensional labels, and the filters over them. --metadata is repeatable and every pair must
+# match; the value may itself contain '=' since the split is on the first one.
+hippo memory store --body "deploy failed" --significance 6 \
+  --metadata source=slack --metadata project=apollo
+hippo memory list --metadata source=slack --metadata project=apollo
+
+# What have I never recalled? --recall-count-max cannot ask this: 0 means "no bound" everywhere in
+# this API, so the tri-state --recalled is what carries it. Also --summary and --binary.
+hippo memory list --recalled false --order-by significance
+
+# Metadata replaces wholesale on update, so removing labels needs an explicit instruction.
+hippo memory update --id "$ID" --clear-metadata
 
 # Ingest full-state rows exported elsewhere.
 hippo import-batch --file batch.json

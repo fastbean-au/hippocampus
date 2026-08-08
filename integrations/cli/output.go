@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -358,11 +359,35 @@ func (r *renderer) renderEvent(event *contract.Event) {
 		r.line("  group:        %s", group)
 	}
 
+	r.renderMetadata(event.GetMetadata())
+
 	r.renderLinks(event.GetLinks(), event.GetLinkSignificance())
 
 	for _, memory := range event.GetMemories() {
 		r.line("")
 		r.renderMemory(memory)
+	}
+}
+
+// renderMetadata prints a memory's or event's labels, one per line, with the keys SORTED.
+//
+// The sort is not cosmetic: Go randomises map iteration, so without it the same memory would render
+// differently between runs - unreadable to diff, and untestable against a fixture.
+func (r *renderer) renderMetadata(metadata map[string]string) {
+	if len(metadata) == 0 {
+		return
+	}
+
+	keys := make([]string, 0, len(metadata))
+
+	for k := range metadata {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		r.line("  metadata:     %s=%s", k, metadata[k])
 	}
 }
 
@@ -384,6 +409,8 @@ func (r *renderer) renderMemory(memory *contract.Memory) {
 	if group := memory.GetGroup(); group != "" {
 		r.line("  group:        %s", group)
 	}
+
+	r.renderMetadata(memory.GetMetadata())
 
 	if memory.GetRecallCount() > 0 {
 		r.line("  recall_count: %d (last %s)", memory.GetRecallCount(), formatNanos(memory.GetTimeRecalled()))

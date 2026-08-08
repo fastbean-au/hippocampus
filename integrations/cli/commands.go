@@ -35,13 +35,13 @@ func commands() map[string]command {
 	return map[string]command{
 		"memory store": {
 			summary: "store a new memory",
-			hint:    "--body <text> [--significance N] [--event-id ID] [--group G]",
+			hint:    "--body <text> [--significance N] [--event-id ID] [--group G] [--metadata k=v]",
 			flags:   memoryWriteFlags,
 			run:     runMemoryStore,
 		},
 		"memory update": {
 			summary: "apply a partial update to an existing memory",
-			hint:    "--id ID [--body <text>] [--significance N] [--group G]",
+			hint:    "--id ID [--body <text>] [--significance N] [--group G] [--metadata k=v] [--clear-metadata]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("id", "", "id of the memory to update (required)")
 				memoryContentFlags(fs)
@@ -59,7 +59,7 @@ func commands() map[string]command {
 		},
 		"memory list": {
 			summary: "list memories with optional filters",
-			hint:    "[--group G] [--significance-min N] [--limit N] [--offset N]",
+			hint:    "[--group G] [--metadata k=v] [--recalled false] [--significance-min N] [--limit N]",
 			flags:   memoryFilterFlags,
 			run:     runMemoryList,
 		},
@@ -100,12 +100,13 @@ func commands() map[string]command {
 		},
 		"memory search": {
 			summary: "search memories via the content-search index",
-			hint:    "--query <text> [--mode keyword|semantic|hybrid] [--limit N] [--event-id ID] [--reinforce]",
+			hint:    "--query <text> [--mode keyword|semantic|hybrid] [--metadata k=v] [--limit N] [--reinforce]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("query", "", "search query (required)")
 				fs.Int32("limit", 0, "maximum results (0 selects the server default)")
 				fs.String("event-id", "", "restrict matches to a single event")
 				fs.String("group", "", "restrict matches to a group label")
+				fs.StringSlice("metadata", nil, "restrict matches to memories carrying this 'key=value' label (repeatable; all must match)")
 				fs.Bool("reinforce", false, "route matches through recall, reinforcing them")
 				fs.String("mode", "keyword", "how to match: keyword, semantic, or hybrid (semantic and hybrid need the service to have an embedding model and OpenSearch)")
 			},
@@ -311,6 +312,9 @@ func memoryContentFlags(fs *pflag.FlagSet) {
 	fs.String("event-id", "", "associate the memory with an event")
 	fs.String("group", "", "freeform grouping/context label")
 	fs.String("timestamp", "", "memory timestamp as RFC3339 (defaults to now on create)")
+	fs.StringSlice("metadata", nil, "metadata label as 'key=value' (repeatable)")
+	fs.Bool("clear-metadata", false, "on update, remove all metadata (an empty --metadata means 'leave unchanged')")
+	fs.Bool("clear-group", false, "on update, reset the group to empty (an empty --group means 'leave unchanged')")
 }
 
 // memoryWriteFlags is the memory-store flag set: content plus id, binary, and placement.
@@ -330,6 +334,7 @@ func eventWriteFlags(fs *pflag.FlagSet) {
 	fs.String("group", "", "freeform grouping/context label")
 	fs.String("time-start", "", "start time as RFC3339 (defaults to now)")
 	fs.String("time-end", "", "end time as RFC3339 (0/unset means not ended)")
+	fs.StringSlice("metadata", nil, "metadata label as 'key=value' (repeatable)")
 	fs.StringSlice("link", nil, "linked event as 'eventID:significance' (repeatable)")
 	addPlacementFlags(fs)
 }
@@ -344,6 +349,14 @@ func memoryFilterFlags(fs *pflag.FlagSet) {
 	fs.Int32("limit", 0, "page size (0 selects the server default)")
 	fs.Int32("offset", 0, "rows to skip for pagination")
 	fs.String("extremum", "", "'highest' or 'lowest' significance tie (ignores the significance range)")
+	fs.StringSlice("metadata", nil, "restrict to memories carrying this 'key=value' label (repeatable; all must match)")
+	fs.String("recalled", "", "'true' for memories recalled at least once, 'false' for those never recalled")
+	fs.String("summary", "", "'true' for summary memories only, 'false' to exclude them")
+	fs.String("binary", "", "'true' for binary memories only, 'false' to exclude them")
+	fs.Int32("recall-count-min", 0, "inclusive lower bound on recall_count (0 = no bound)")
+	fs.Int32("recall-count-max", 0, "inclusive upper bound on recall_count (0 = no bound)")
+	fs.String("recalled-after", "", "inclusive lower bound on time_recalled (RFC3339); never-recalled memories are excluded")
+	fs.String("recalled-before", "", "inclusive upper bound on time_recalled (RFC3339); never-recalled memories are excluded")
 }
 
 func eventFilterFlags(fs *pflag.FlagSet) {
@@ -359,6 +372,7 @@ func eventFilterFlags(fs *pflag.FlagSet) {
 	fs.Int32("offset", 0, "rows to skip for pagination")
 	fs.Bool("memories", false, "include each event's memories")
 	fs.String("extremum", "", "'highest' or 'lowest' significance tie (ignores the significance range)")
+	fs.StringSlice("metadata", nil, "restrict to events carrying this 'key=value' label (repeatable; all must match)")
 }
 
 // addPlacementFlags registers the shared significance-placement flags.
@@ -623,6 +637,31 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 		return err
 	}
 
+	recalledAfter, err := parseTime(fs, "recalled-after")
+	if err != nil {
+		return err
+	}
+
+	recalledBefore, err := parseTime(fs, "recalled-before")
+	if err != nil {
+		return err
+	}
+
+	recalled, err := triStateFromFlag(fs, "recalled")
+	if err != nil {
+		return err
+	}
+
+	isSummary, err := triStateFromFlag(fs, "summary")
+	if err != nil {
+		return err
+	}
+
+	isBinary, err := triStateFromFlag(fs, "binary")
+	if err != nil {
+		return err
+	}
+
 	req := &contract.GetMemoriesRequest{
 		TimestampMin:         tsMin,
 		TimestampMax:         tsMax,
@@ -633,6 +672,15 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 		Limit:                i32(fs, "limit"),
 		Offset:               i32(fs, "offset"),
 		SignificanceExtremum: ext,
+
+		Metadata:        strs(fs, "metadata"),
+		Recalled:        recalled,
+		IsSummary:       isSummary,
+		IsBinary:        isBinary,
+		RecallCountMin:  i32(fs, "recall-count-min"),
+		RecallCountMax:  i32(fs, "recall-count-max"),
+		TimeRecalledMin: recalledAfter,
+		TimeRecalledMax: recalledBefore,
 	}
 
 	resp, err := client.GetMemories(ctx, req)
@@ -685,6 +733,7 @@ func runMemorySearch(ctx context.Context, client contract.HippocampusClient, fs 
 		Reinforce: b(fs, "reinforce"),
 		Group:     str(fs, "group"),
 		Mode:      mode,
+		Metadata:  strs(fs, "metadata"),
 	}
 
 	resp, err := client.SearchMemories(ctx, req)
@@ -721,6 +770,11 @@ func runEventCreate(ctx context.Context, client contract.HippocampusClient, fs *
 		return err
 	}
 
+	metadata, err := parseMetadata(strs(fs, "metadata"))
+	if err != nil {
+		return err
+	}
+
 	event := &contract.Event{
 		Id:           str(fs, "id"),
 		Name:         name,
@@ -731,6 +785,7 @@ func runEventCreate(ctx context.Context, client contract.HippocampusClient, fs *
 		TimeEnd:      timeEnd,
 		Links:        links,
 		Placement:    place,
+		Metadata:     metadata,
 	}
 
 	resp, err := client.StoreEvent(ctx, event)
@@ -868,6 +923,7 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 		Offset:               i32(fs, "offset"),
 		Memories:             b(fs, "memories"),
 		SignificanceExtremum: ext,
+		Metadata:             strs(fs, "metadata"),
 	}
 
 	resp, err := client.GetEvents(ctx, req)
@@ -1074,14 +1130,22 @@ func memoryFromFlags(fs *pflag.FlagSet, id string) (*contract.Memory, error) {
 		return nil, err
 	}
 
+	metadata, err := parseMetadata(strs(fs, "metadata"))
+	if err != nil {
+		return nil, err
+	}
+
 	return &contract.Memory{
-		Id:           id,
-		Body:         body,
-		Significance: i32(fs, "significance"),
-		EventId:      str(fs, "event-id"),
-		Group:        str(fs, "group"),
-		TimeStamp:    timestamp,
-		Placement:    place,
+		Id:            id,
+		Body:          body,
+		Significance:  i32(fs, "significance"),
+		EventId:       str(fs, "event-id"),
+		Group:         str(fs, "group"),
+		TimeStamp:     timestamp,
+		Placement:     place,
+		Metadata:      metadata,
+		ClearMetadata: b(fs, "clear-metadata"),
+		ClearGroup:    b(fs, "clear-group"),
 	}, nil
 }
 
@@ -1155,6 +1219,54 @@ func extremumFromFlags(fs *pflag.FlagSet) (contract.SignificanceExtremum, error)
 // and by memory/event link.
 func linksFromFlags(fs *pflag.FlagSet) ([]*contract.Link, error) {
 	return parseLinks(strs(fs, "link"))
+}
+
+// parseMetadata turns repeated 'key=value' entries into the metadata map a write carries, splitting
+// on the FIRST '=' so a value may contain one. It is the write-side counterpart of the filter flags,
+// which pass the same strings through untouched - the RPC's list routes take them packed because a
+// map cannot be bound from a URL query string.
+func parseMetadata(raw []string) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string]string, len(raw))
+
+	for _, entry := range raw {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid --metadata %q (want 'key=value')", entry)
+		}
+
+		if existing, seen := out[key]; seen && existing != value {
+			return nil, fmt.Errorf("--metadata %q was given twice with different values", key)
+		}
+
+		out[key] = value
+	}
+
+	return out, nil
+}
+
+// triStateFromFlag reads a 'true'/'false' string flag as the contract's tri-state, leaving it unset
+// when the flag is empty. A pflag bool could not express this: --summary=false and an omitted
+// --summary would both arrive as false, so "only the non-summaries" would be unaskable.
+func triStateFromFlag(fs *pflag.FlagSet, name string) (contract.Bool, error) {
+	switch strings.ToLower(strings.TrimSpace(str(fs, name))) {
+
+	case "":
+		return contract.Bool_UNSPECIFIED, nil
+
+	case "true":
+		return contract.Bool_TRUE, nil
+
+	case "false":
+		return contract.Bool_FALSE, nil
+
+	default:
+		return contract.Bool_UNSPECIFIED, fmt.Errorf("--%s must be 'true' or 'false'", name)
+
+	}
 }
 
 // parseLinks turns 'id:significance' entries into Links. A missing significance is an error rather

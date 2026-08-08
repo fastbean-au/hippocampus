@@ -53,6 +53,12 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 		return &res, fmt.Errorf("query must be provided")
 	}
 
+	// Validated here rather than in searchHits so a malformed filter is rejected before any index
+	// work; see GetMemories for why the key charset is enforced at this layer.
+	if _, err := types.ParseMetadataFilters(in.GetMetadata()); err != nil {
+		return &res, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	limit := int(in.GetLimit())
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -142,11 +148,15 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 func (s *Server) searchHits(ctx context.Context, in *contract.SearchMemoriesRequest, limit int) ([]search.Hit, error) {
 	idx := s.searchIdx()
 
+	// Already validated by SearchMemories, which rejects a malformed filter before over-fetching.
+	metadata, _ := types.ParseMetadataFilters(in.GetMetadata())
+
 	base := search.Query{
-		Text:    in.GetQuery(),
-		EventId: in.GetEventId(),
-		Group:   in.GetGroup(),
-		Limit:   limit,
+		Text:     in.GetQuery(),
+		EventId:  in.GetEventId(),
+		Group:    in.GetGroup(),
+		Limit:    limit,
+		Metadata: metadata,
 	}
 
 	switch in.GetMode() {

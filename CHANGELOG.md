@@ -78,6 +78,49 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **Memory and event metadata — tags and key-value attributes.** `group` was the only classification
+  on a memory, one freeform 128-character string doing the work of several dimensions at once, so
+  applications either packed a delimited string into it or buried the classification in the body.
+  `Memory` and `Event` now carry a `map<string, string> metadata` alongside it, filterable on
+  `GetMemories`, `GetEvents`, and `SearchMemories`. Documented under
+  [Metadata](docs/configuration.md#metadata).
+  - **Bounded, and the bounds are constants rather than configuration**: 32 keys, 64-byte keys
+    matching `[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}`, 512-byte values, 4096 bytes serialised in total.
+    Unbounded metadata is a body by another name, so the serialised size **counts toward
+    `memory.limit.sizeBytes`** and toward the store's byte accounting — it contributes to capacity
+    pressure and to what eviction reclaims, rather than escaping both.
+  - **Filters are repeated `key=value` strings, not a map**, because `GetMemories`/`GetEvents` are
+    HTTP `GET` routes and a map cannot be bound from a query string. Every pair must match. On
+    `SearchMemories` the filter is applied inside the index, like `group`, so it narrows the
+    candidates ranking sees rather than trimming an already-truncated page. The predicates are
+    **unindexed**, exactly as the `group` filter is.
+  - **Stored as a nullable JSON column** on all three drivers, added in place on first startup.
+    Nullable rather than defaulting to `''` deliberately: SQLite's `json_extract` raises "malformed
+    JSON" on an empty string, so an `''`-defaulted column would make the first metadata-filtered
+    query fail against every row written before the upgrade. Round-trips through
+    `Export`/`Import`/`Transfer`.
+  - Exposed on the `hippo` CLI (`--metadata k=v`, repeatable), the MCP bridge (`store_memory`,
+    `update_memory`, `create_event`, and the three list/search tools), the web console, the
+    event-source bridges (an explicit header allowlist or prefix, never copy-all), and the Obsidian
+    plugin (named frontmatter keys plus fixed labels).
+  - Metadata is **never** emitted as a metric, span, or log attribute — it is client-supplied and
+    unbounded in cardinality.
+
+- **`clear_metadata` and `clear_group` on `UpdateMemory`/`UpdateEvent`.** Every updatable field
+  reads its zero value as "leave unchanged", and an absent map is indistinguishable from an empty
+  one on the wire, so neither metadata nor a group label could be removed once set — only replaced.
+  These two write-only flags close that gap. Metadata otherwise **replaces** the stored map
+  wholesale on update; there is no per-key merge.
+
+- **Recall-state filters on `GetMemories`** — `recalled`, `recall_count_min`/`_max`,
+  `time_recalled_min`/`_max`, `is_summary`, and `is_binary`, over columns the store already
+  maintained but never exposed. `recalled`, `is_summary` and `is_binary` are the tri-state `Bool`
+  rather than plain booleans, since an unset proto3 `bool` and an explicit `false` are the same
+  value on the wire. `recalled=FALSE` is what answers "what have I never recalled?" — the count
+  range cannot, because `0` means "no bound" everywhere in this API. `time_recalled_min`/`_max` ask
+  only about memories that have been recalled, so an upper bound does not sweep in every
+  never-recalled memory (whose `time_recalled` is `0`).
+
 - **Memory-to-memory links** — an associative graph over memories, the on-thesis capability the
   service had been missing. A link is directed, carries its own significance, and raises the
   effective significance of **both** ends with diminishing returns, so a well-connected memory

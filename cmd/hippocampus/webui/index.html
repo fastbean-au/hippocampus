@@ -301,6 +301,12 @@
         color: var(--accent);
         border-color: var(--accent);
       }
+      /* Metadata labels share the Group cell rather than taking a column of their own: they are the
+         same classification the group is one dimension of, and the table is already wide. */
+      .pill.meta {
+        margin: 1px 2px 1px 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
       a.evlink {
         color: var(--accent);
         text-decoration: none;
@@ -654,6 +660,16 @@
                 <input id="mem-group" placeholder="group label" />
               </div>
             </div>
+            <div class="row">
+              <div class="field wide">
+                <label for="mem-metadata">Metadata (optional)</label>
+                <textarea
+                  id="mem-metadata"
+                  rows="3"
+                  placeholder="one key=value per line, e.g.&#10;source=slack&#10;project=apollo"
+                ></textarea>
+              </div>
+            </div>
             <div class="actions">
               <button id="mem-save" class="btn" onclick="saveMemory()">
                 Create
@@ -696,6 +712,21 @@
               <div class="field">
                 <label for="mf-group">Group</label>
                 <input id="mf-group" placeholder="exact group label" />
+              </div>
+              <div class="field">
+                <label for="mf-metadata">Metadata</label>
+                <input
+                  id="mf-metadata"
+                  placeholder="key=value, comma separated (all must match)"
+                />
+              </div>
+              <div class="field">
+                <label for="mf-recalled">Recall state</label>
+                <select id="mf-recalled">
+                  <option value="">Any</option>
+                  <option value="FALSE">Never recalled</option>
+                  <option value="TRUE">Recalled at least once</option>
+                </select>
               </div>
               <div class="field">
                 <label for="mf-from">Timestamp from</label>
@@ -2018,6 +2049,34 @@
       }
 
       // ------------------------------------------------------------------ memories
+      // metadataPills renders a memory's or event's labels as sorted key=value pills. Sorted because
+      // object key order is insertion order over the wire, so two memories carrying the same labels
+      // would otherwise display them differently depending on how each was written.
+      function metadataPills(metadata) {
+        if (!metadata) return "";
+
+        return Object.keys(metadata)
+          .sort()
+          .map(
+            (k) =>
+              `<span class="pill meta">${esc(k)}=${esc(metadata[k])}</span>`,
+          )
+          .join("");
+      }
+
+      // groupCell combines the group label and the metadata pills, which are one classification
+      // between them. A dash only when there is neither.
+      function groupCell(m) {
+        const pills = metadataPills(m.metadata);
+
+        if (!m.group && !pills) return "—";
+
+        return (
+          (m.group ? esc(m.group) : "") +
+          (pills ? (m.group ? "<br>" : "") + pills : "")
+        );
+      }
+
       function memoryRow(m) {
         const flags = [];
 
@@ -2038,7 +2097,7 @@
          permanently if this deployment will not answer (a replica, or a token that is refused). -->
     <td class="decay" data-value-for="${esc(m.id)}"><span class="muted">…</span></td>
     <td>${eventCell}</td>
-    <td>${esc(m.group || "—")}</td>
+    <td>${groupCell(m)}</td>
     <td>${esc(m.recallCount || 0)}</td>
     <td>${nanoToText(m.timeStamp)} ${flags.join(" ")}</td>
     <td class="id">${esc(m.id)}</td>
@@ -2135,6 +2194,15 @@
         const group = strOrUndef("mf-group");
         if (group) params.set("group", group);
 
+        // One parameter per pair (append, not set): the filter is a conjunction, and the gateway
+        // parses a repeated field as repeated parameters rather than one comma-joined value.
+        parseMetadataPairs($("mf-metadata").value, ",").forEach((pair) =>
+          params.append("metadata", pair),
+        );
+
+        const recalled = $("mf-recalled").value;
+        if (recalled) params.set("recalled", recalled);
+
         const from = localToNano($("mf-from").value);
         if (from) params.set("timestamp_min", from);
 
@@ -2169,24 +2237,79 @@
       }
 
       function clearMemoryFilter() {
-        ["mf-sigmin", "mf-sigmax", "mf-group", "mf-from", "mf-to"].forEach(
-          (id) => ($(id).value = ""),
-        );
+        [
+          "mf-sigmin",
+          "mf-sigmax",
+          "mf-group",
+          "mf-metadata",
+          "mf-from",
+          "mf-to",
+        ].forEach((id) => ($(id).value = ""));
         $("mf-extremum").value = "";
+        $("mf-recalled").value = "";
         syncMemoryExtremum();
+      }
+
+      // parseMetadataPairs splits a "key=value" list into trimmed, non-empty pairs. separator is
+      // "\n" for the write form (one per line) and "," for the single-line filter input. Splitting
+      // the VALUE is deliberately left to the server, which cuts on the first "=" so a value may
+      // contain one.
+      function parseMetadataPairs(text, separator) {
+        return (text || "")
+          .split(separator)
+          .map((line) => line.trim())
+          .filter((line) => line.includes("=") && !line.startsWith("="));
+      }
+
+      // metadataFromForm turns the write form's textarea into the object the API takes. Returns
+      // undefined when empty, so an omitted field means "leave unchanged" on a PATCH rather than
+      // sending an empty map (which the server could not tell apart from an absent one anyway -
+      // clearing is what clear_metadata is for).
+      function metadataFromForm() {
+        const pairs = parseMetadataPairs($("mem-metadata").value, "\n");
+
+        if (!pairs.length) return undefined;
+
+        const out = {};
+
+        pairs.forEach((pair) => {
+          const at = pair.indexOf("=");
+
+          out[pair.slice(0, at).trim()] = pair.slice(at + 1).trim();
+        });
+
+        return out;
+      }
+
+      // metadataToForm renders stored labels back into the textarea, sorted so editing a memory
+      // twice shows them in the same order both times.
+      function metadataToForm(metadata) {
+        if (!metadata) return "";
+
+        return Object.keys(metadata)
+          .sort()
+          .map((k) => k + "=" + metadata[k])
+          .join("\n");
       }
 
       async function saveMemory() {
         const id = $("mem-id").value;
+        const metadata = metadataFromForm();
         const body = {
           body: $("mem-body").value,
           significance: intOrUndef("mem-sig"),
           event_id: strOrUndef("mem-event"),
           group: strOrUndef("mem-group"),
+          metadata: metadata,
         };
 
         try {
           if (id) {
+            // Emptying the textarea on an edit means "remove the labels", which the empty map cannot
+            // say - an absent map and an empty one are the same on the wire, and every other field
+            // reads unset as "leave unchanged". clear_metadata is what carries the intent.
+            if (metadata === undefined) body.clear_metadata = true;
+
             await api("PATCH", "/v1/memories/" + encodeURIComponent(id), body);
             ok("Memory updated", id);
           } else {
@@ -2216,6 +2339,7 @@
         $("mem-sig").value = m.significance ?? "";
         $("mem-event").value = m.eventId || "";
         $("mem-group").value = m.group || "";
+        $("mem-metadata").value = metadataToForm(m.metadata);
         $("mem-form-title").textContent = "Edit memory";
         $("mem-save").textContent = "Update";
         $("mem-edit-hint").style.display = "";
@@ -2224,9 +2348,14 @@
       }
 
       function resetMemoryForm() {
-        ["mem-id", "mem-body", "mem-sig", "mem-event", "mem-group"].forEach(
-          (id) => ($(id).value = ""),
-        );
+        [
+          "mem-id",
+          "mem-body",
+          "mem-sig",
+          "mem-event",
+          "mem-group",
+          "mem-metadata",
+        ].forEach((id) => ($(id).value = ""));
         $("mem-form-title").textContent = "Create memory";
         $("mem-save").textContent = "Create";
         $("mem-edit-hint").style.display = "none";

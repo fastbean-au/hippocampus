@@ -146,7 +146,7 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			m.group_name, e.significance_level_id, COALESCE(e.link_significance, 0),
 			m.link_significance, e.id,
-			length(m.body)
+			length(m.body) + `+d.metadataBytesExpr("m.")+`
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 	)
 	if err != nil {
@@ -388,7 +388,7 @@ func (d *DB) RetainedStats(ctx context.Context, cutoff int64) (int, int64, error
 	// COALESCE because SUM over no rows is NULL, which is the empty-store case rather than an error.
 	err := d.queryRow(
 		ctx,
-		`SELECT COUNT(*), COALESCE(SUM(length(body)), 0) FROM memories WHERE `+greatest+` >= ?`,
+		`SELECT COUNT(*), COALESCE(SUM(length(body) + `+d.metadataBytesExpr("")+`), 0) FROM memories WHERE `+greatest+` >= ?`,
 		cutoff,
 	).Scan(&count, &bytes)
 	if err != nil {

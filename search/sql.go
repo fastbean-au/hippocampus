@@ -80,10 +80,11 @@ func (s *SQL) Search(ctx context.Context, query Query) ([]Hit, error) {
 	}
 
 	found, err := s.store.SearchMemoryHits(ctx, db.ContentQuery{
-		Text:    query.Text,
-		EventId: query.EventId,
-		Group:   query.Group,
-		Limit:   query.Limit,
+		Text:     query.Text,
+		EventId:  query.EventId,
+		Group:    query.Group,
+		Limit:    query.Limit,
+		Metadata: query.Metadata,
 	})
 	if err != nil {
 		return nil, err

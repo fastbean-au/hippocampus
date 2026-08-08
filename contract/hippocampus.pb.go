@@ -23,15 +23,17 @@ const (
 )
 
 // Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an
-// explicitly-set value from one left absent. Used for Memory.is_binary; UNSPECIFIED and FALSE are
-// currently treated identically by the server (both mean not-binary) - only TRUE marks a memory
-// as binary.
+// explicitly-set value from one left absent. It carries Memory.is_binary - where UNSPECIFIED and
+// FALSE are treated identically by the server (both mean not-binary) and only TRUE marks a memory
+// as binary - and the boolean list filters (GetMemoriesRequest's recalled/is_summary/is_binary),
+// where the distinction matters rather more: a proto3 bool cannot say "only the memories whose
+// is_summary is false", because an unset bool and an explicit false are the same byte on the wire.
 type Bool int32
 
 const (
-	Bool_UNSPECIFIED Bool = 0 // not set; the server currently treats this the same as FALSE
-	Bool_FALSE       Bool = 1 // explicitly not binary
-	Bool_TRUE        Bool = 2 // binary; the body is opaque and never indexed for content search
+	Bool_UNSPECIFIED Bool = 0 // not set; on Memory.is_binary the server treats this the same as FALSE, on a filter it applies no restriction
+	Bool_FALSE       Bool = 1 // explicitly false
+	Bool_TRUE        Bool = 2 // explicitly true
 )
 
 // Enum value maps for Bool.
@@ -437,18 +439,21 @@ func (x *SignificancePlacement) GetUpperId() string {
 // stored via the same rules as StoreMemory.
 type Event struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
-	Id                   string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                                  // auto-generated UUID if omitted on create; max 128 characters
-	TimeStart            int64                  `protobuf:"varint,2,opt,name=time_start,json=timeStart,proto3" json:"time_start,omitempty"`                                  // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
-	TimeEnd              int64                  `protobuf:"varint,3,opt,name=time_end,json=timeEnd,proto3" json:"time_end,omitempty"`                                        // UnixNano; 0 means the event has not ended yet (see EndEvent); when set, must not be before time_start
-	Significance         int32                  `protobuf:"varint,4,opt,name=significance,proto3" json:"significance,omitempty"`                                             // 0 = unranked (rank it later via UpdateEventSignificance/placement); must be >= 0; higher ranks more significant
-	Name                 string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`                                                              // required (non-empty) on create; max 256 characters
-	Description          string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`                                                // optional; max 1024 characters
-	MemoriesConsolidated bool                   `protobuf:"varint,7,opt,name=memories_consolidated,json=memoriesConsolidated,proto3" json:"memories_consolidated,omitempty"` // read-only: true once a sleep cycle has deleted (consolidated) some of this event's memories; ignored on write
-	LinkSignificance     int64                  `protobuf:"varint,8,opt,name=link_significance,json=linkSignificance,proto3" json:"link_significance,omitempty"`             // read-only: sum of this event's links' significance values, inbound and outbound, calculated by the server; ignored on write
-	Links                []*Link                `protobuf:"bytes,9,rep,name=links,proto3" json:"links,omitempty"`                                                            // links this event declares to other events, weighted into its memories' value (see consolidation.linkSignificanceWeight). Outbound only, like Memory.links - ask GetEventLinks for both directions
-	Memories             []*Memory              `protobuf:"bytes,10,rep,name=memories,proto3" json:"memories,omitempty"`                                                     // populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory
-	Group                string                 `protobuf:"bytes,11,opt,name=group,proto3" json:"group,omitempty"`                                                           // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
-	Placement            *SignificancePlacement `protobuf:"bytes,12,opt,name=placement,proto3" json:"placement,omitempty"`                                                   // write-only: rank relative to existing values (see SignificancePlacement)
+	Id                   string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                                                        // auto-generated UUID if omitted on create; max 128 characters
+	TimeStart            int64                  `protobuf:"varint,2,opt,name=time_start,json=timeStart,proto3" json:"time_start,omitempty"`                                                        // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
+	TimeEnd              int64                  `protobuf:"varint,3,opt,name=time_end,json=timeEnd,proto3" json:"time_end,omitempty"`                                                              // UnixNano; 0 means the event has not ended yet (see EndEvent); when set, must not be before time_start
+	Significance         int32                  `protobuf:"varint,4,opt,name=significance,proto3" json:"significance,omitempty"`                                                                   // 0 = unranked (rank it later via UpdateEventSignificance/placement); must be >= 0; higher ranks more significant
+	Name                 string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`                                                                                    // required (non-empty) on create; max 256 characters
+	Description          string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`                                                                      // optional; max 1024 characters
+	MemoriesConsolidated bool                   `protobuf:"varint,7,opt,name=memories_consolidated,json=memoriesConsolidated,proto3" json:"memories_consolidated,omitempty"`                       // read-only: true once a sleep cycle has deleted (consolidated) some of this event's memories; ignored on write
+	LinkSignificance     int64                  `protobuf:"varint,8,opt,name=link_significance,json=linkSignificance,proto3" json:"link_significance,omitempty"`                                   // read-only: sum of this event's links' significance values, inbound and outbound, calculated by the server; ignored on write
+	Links                []*Link                `protobuf:"bytes,9,rep,name=links,proto3" json:"links,omitempty"`                                                                                  // links this event declares to other events, weighted into its memories' value (see consolidation.linkSignificanceWeight). Outbound only, like Memory.links - ask GetEventLinks for both directions
+	Memories             []*Memory              `protobuf:"bytes,10,rep,name=memories,proto3" json:"memories,omitempty"`                                                                           // populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory
+	Group                string                 `protobuf:"bytes,11,opt,name=group,proto3" json:"group,omitempty"`                                                                                 // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
+	Placement            *SignificancePlacement `protobuf:"bytes,12,opt,name=placement,proto3" json:"placement,omitempty"`                                                                         // write-only: rank relative to existing values (see SignificancePlacement)
+	Metadata             map[string]string      `protobuf:"bytes,13,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // optional multi-dimensional classification, exactly as Memory.metadata: same key charset, same 32-key/512-byte-value/4096-byte bounds, same replace-wholesale semantics on update, same opacity to the server
+	ClearMetadata        bool                   `protobuf:"varint,14,opt,name=clear_metadata,json=clearMetadata,proto3" json:"clear_metadata,omitempty"`                                           // write-only: on UpdateEvent, remove all metadata (see Memory.clear_metadata for why the empty map cannot say it)
+	ClearGroup           bool                   `protobuf:"varint,15,opt,name=clear_group,json=clearGroup,proto3" json:"clear_group,omitempty"`                                                    // write-only: on UpdateEvent, reset group to empty (see Memory.clear_group)
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -567,6 +572,27 @@ func (x *Event) GetPlacement() *SignificancePlacement {
 	return nil
 }
 
+func (x *Event) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *Event) GetClearMetadata() bool {
+	if x != nil {
+		return x.ClearMetadata
+	}
+	return false
+}
+
+func (x *Event) GetClearGroup() bool {
+	if x != nil {
+		return x.ClearGroup
+	}
+	return false
+}
+
 // Link is a directed, significance-carrying association between two memories or between two events.
 // One Link message describes one edge from the item carrying it to the item it names.
 //
@@ -633,19 +659,22 @@ func (x *Link) GetSignificance() int32 {
 // SearchMemories) - a binary body is never indexed.
 type Memory struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                       // auto-generated UUID if omitted on create; max 128 characters
-	TimeStamp        int64                  `protobuf:"varint,2,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`                       // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
-	Significance     int32                  `protobuf:"varint,3,opt,name=significance,proto3" json:"significance,omitempty"`                                  // 0 = unranked (rank it later via UpdateMemory/placement); must be >= 0; higher ranks more significant. On UpdateMemory, 0 with no placement leaves the existing significance unchanged - it cannot reset a memory to unranked
-	EventId          string                 `protobuf:"bytes,4,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                              // optional: leave unset to store the memory unassociated with any event
-	Body             string                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`                                                   // required (non-empty) on create; a proto3 string, so always valid UTF-8 on the wire - encode true binary payloads (e.g. base64) before setting is_binary; optionally capped by memory.limit.sizeBytes (0 = unlimited)
-	IsBinary         Bool                   `protobuf:"varint,6,opt,name=is_binary,json=isBinary,proto3,enum=hippocampus.v1.Bool" json:"is_binary,omitempty"` // set once at creation; not updatable via UpdateMemory. TRUE bodies are opaque and never indexed for content search (see SearchMemories)
-	TimeRecalled     int64                  `protobuf:"varint,7,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"`              // read-only: UnixNano of the most recent recall (RecallMemories, or SearchMemories with reinforce); 0 if never recalled; ignored on write
-	RecallCount      int32                  `protobuf:"varint,8,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`                 // read-only: number of times the memory has been recalled; ignored on write
-	IsSummary        bool                   `protobuf:"varint,9,opt,name=is_summary,json=isSummary,proto3" json:"is_summary,omitempty"`                       // read-only: true for the summary memory created by ReplaceMemoriesWithSummary; not updatable via UpdateMemory
-	Group            string                 `protobuf:"bytes,10,opt,name=group,proto3" json:"group,omitempty"`                                                // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
-	Placement        *SignificancePlacement `protobuf:"bytes,11,opt,name=placement,proto3" json:"placement,omitempty"`                                        // write-only: rank relative to existing values (see SignificancePlacement)
-	Links            []*Link                `protobuf:"bytes,12,rep,name=links,proto3" json:"links,omitempty"`                                                // associative links this memory declares, weighted into its value (see consolidation.linkSignificanceWeight). Outbound only - Link is a directed edge from the item carrying it, so this lists exactly the edges this memory owns and an export/import round trip reproduces them once each; ask GetMemoryLinks for both directions. Write-only on StoreMemory (targets must already exist) and populated on read only when requested; use LinkMemories/UnlinkMemories to edit them incrementally
-	LinkSignificance int64                  `protobuf:"varint,13,opt,name=link_significance,json=linkSignificance,proto3" json:"link_significance,omitempty"` // read-only: sum of this memory's links' significance values, inbound and outbound, calculated by the server; ignored on write
+	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                                                        // auto-generated UUID if omitted on create; max 128 characters
+	TimeStamp        int64                  `protobuf:"varint,2,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`                                                        // UnixNano; defaults to the current time when unset (0) on create; required (> 0) once defaulted
+	Significance     int32                  `protobuf:"varint,3,opt,name=significance,proto3" json:"significance,omitempty"`                                                                   // 0 = unranked (rank it later via UpdateMemory/placement); must be >= 0; higher ranks more significant. On UpdateMemory, 0 with no placement leaves the existing significance unchanged - it cannot reset a memory to unranked
+	EventId          string                 `protobuf:"bytes,4,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                                                               // optional: leave unset to store the memory unassociated with any event
+	Body             string                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`                                                                                    // required (non-empty) on create; a proto3 string, so always valid UTF-8 on the wire - encode true binary payloads (e.g. base64) before setting is_binary; optionally capped by memory.limit.sizeBytes (0 = unlimited)
+	IsBinary         Bool                   `protobuf:"varint,6,opt,name=is_binary,json=isBinary,proto3,enum=hippocampus.v1.Bool" json:"is_binary,omitempty"`                                  // set once at creation; not updatable via UpdateMemory. TRUE bodies are opaque and never indexed for content search (see SearchMemories)
+	TimeRecalled     int64                  `protobuf:"varint,7,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"`                                               // read-only: UnixNano of the most recent recall (RecallMemories, or SearchMemories with reinforce); 0 if never recalled; ignored on write
+	RecallCount      int32                  `protobuf:"varint,8,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`                                                  // read-only: number of times the memory has been recalled; ignored on write
+	IsSummary        bool                   `protobuf:"varint,9,opt,name=is_summary,json=isSummary,proto3" json:"is_summary,omitempty"`                                                        // read-only: true for the summary memory created by ReplaceMemoriesWithSummary; not updatable via UpdateMemory
+	Group            string                 `protobuf:"bytes,10,opt,name=group,proto3" json:"group,omitempty"`                                                                                 // optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters
+	Placement        *SignificancePlacement `protobuf:"bytes,11,opt,name=placement,proto3" json:"placement,omitempty"`                                                                         // write-only: rank relative to existing values (see SignificancePlacement)
+	Links            []*Link                `protobuf:"bytes,12,rep,name=links,proto3" json:"links,omitempty"`                                                                                 // associative links this memory declares, weighted into its value (see consolidation.linkSignificanceWeight). Outbound only - Link is a directed edge from the item carrying it, so this lists exactly the edges this memory owns and an export/import round trip reproduces them once each; ask GetMemoryLinks for both directions. Write-only on StoreMemory (targets must already exist) and populated on read only when requested; use LinkMemories/UnlinkMemories to edit them incrementally
+	LinkSignificance int64                  `protobuf:"varint,13,opt,name=link_significance,json=linkSignificance,proto3" json:"link_significance,omitempty"`                                  // read-only: sum of this memory's links' significance values, inbound and outbound, calculated by the server; ignored on write
+	Metadata         map[string]string      `protobuf:"bytes,14,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // optional multi-dimensional classification (source=slack, project=..., author=...), where group is the single freeform label. Keys match [A-Za-z0-9][A-Za-z0-9._:/-]{0,63}; values are any UTF-8 up to 512 bytes; at most 32 keys and 4096 bytes of serialised JSON in total, and those bytes count toward memory.limit.sizeBytes alongside the body. On UpdateMemory a non-empty map REPLACES the stored map wholesale - there is no per-key merge, and an absent or empty map leaves it untouched (use clear_metadata to remove it). Opaque to the server: filterable via GetMemories/SearchMemories, never interpreted, and never emitted as a metric, span, or log attribute
+	ClearMetadata    bool                   `protobuf:"varint,15,opt,name=clear_metadata,json=clearMetadata,proto3" json:"clear_metadata,omitempty"`                                           // write-only: on UpdateMemory, remove all metadata. Exists because the map's own emptiness cannot say it - an absent map and an explicitly empty one are the same on the wire, and every other updatable field reads unset as "leave unchanged". Ignored on StoreMemory; takes precedence over any metadata supplied alongside it
+	ClearGroup       bool                   `protobuf:"varint,16,opt,name=clear_group,json=clearGroup,proto3" json:"clear_group,omitempty"`                                                    // write-only: on UpdateMemory, reset group to empty, for the same reason clear_metadata exists - an empty group string otherwise means "leave unchanged". Ignored on StoreMemory; takes precedence over any group supplied alongside it
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -769,6 +798,27 @@ func (x *Memory) GetLinkSignificance() int64 {
 		return x.LinkSignificance
 	}
 	return 0
+}
+
+func (x *Memory) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *Memory) GetClearMetadata() bool {
+	if x != nil {
+		return x.ClearMetadata
+	}
+	return false
+}
+
+func (x *Memory) GetClearGroup() bool {
+	if x != nil {
+		return x.ClearGroup
+	}
+	return false
 }
 
 // StoreEventResponse carries the stored event's id and how many of its nested memories were
@@ -1165,7 +1215,8 @@ type GetEventsRequest struct {
 	OrderBy              string                 `protobuf:"bytes,9,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`                                                                                   // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
 	Limit                int32                  `protobuf:"varint,10,opt,name=limit,proto3" json:"limit,omitempty"`                                                                                                    // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
 	Offset               int32                  `protobuf:"varint,11,opt,name=offset,proto3" json:"offset,omitempty"`                                                                                                  // rows to skip for pagination; negative values are clamped to 0; no upper bound
-	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,12,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=hippocampus.v1.SignificanceExtremum" json:"significance_extremum,omitempty"` // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
+	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,12,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=hippocampus.v1.SignificanceExtremum" json:"significance_extremum,omitempty"` // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group, metadata) - not a range; 0 (default) applies no extremum
+	Metadata             []string               `protobuf:"bytes,13,rep,name=metadata,proto3" json:"metadata,omitempty"`                                                                                               // optional: restrict to events whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1284,6 +1335,13 @@ func (x *GetEventsRequest) GetSignificanceExtremum() SignificanceExtremum {
 	return SignificanceExtremum_SIGNIFICANCE_EXTREMUM_UNSPECIFIED
 }
 
+func (x *GetEventsRequest) GetMetadata() []string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
 type GetEventsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Events        []*Event               `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
@@ -1346,9 +1404,17 @@ type GetMemoriesRequest struct {
 	OrderBy              string                 `protobuf:"bytes,6,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`                                                                                  // "significance" (significance desc, then time desc) or "timestamp" (time desc); defaults to significance
 	Limit                int32                  `protobuf:"varint,7,opt,name=limit,proto3" json:"limit,omitempty"`                                                                                                    // page size; a value <= 0 selects the server default (25); values above the server cap (200) are silently clamped down to it
 	Offset               int32                  `protobuf:"varint,8,opt,name=offset,proto3" json:"offset,omitempty"`                                                                                                  // rows to skip for pagination; negative values are clamped to 0; no upper bound
-	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,9,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=hippocampus.v1.SignificanceExtremum" json:"significance_extremum,omitempty"` // when set, ignore significance_min/significance_max and return only memories tied at that significance value among the other filters (time range, group) - not a range; 0 (default) applies no extremum
+	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,9,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=hippocampus.v1.SignificanceExtremum" json:"significance_extremum,omitempty"` // when set, ignore significance_min/significance_max and return only memories tied at that significance value among the other filters (time range, group, metadata, recall state) - not a range; 0 (default) applies no extremum
 	LinkedTo             string                 `protobuf:"bytes,10,opt,name=linked_to,json=linkedTo,proto3" json:"linked_to,omitempty"`                                                                              // optional: restrict to memories linked to this memory id, in either direction (one hop). NotFound if that memory does not exist
 	Links                bool                   `protobuf:"varint,11,opt,name=links,proto3" json:"links,omitempty"`                                                                                                   // when true, populate each returned memory's links
+	Metadata             []string               `protobuf:"bytes,12,rep,name=metadata,proto3" json:"metadata,omitempty"`                                                                                              // optional: restrict to memories whose metadata carries every one of these "key=value" pairs (AND, exact match). Split on the FIRST '=', so a value may itself contain '='; the key must match the metadata key charset. A repeated string rather than a map because a map cannot be bound from a URL query string - over HTTP this is ?metadata=source%3Dslack&metadata=project%3Dx. Unindexed, exactly as the group filter is
+	Recalled             Bool                   `protobuf:"varint,13,opt,name=recalled,proto3,enum=hippocampus.v1.Bool" json:"recalled,omitempty"`                                                                    // optional: FALSE returns only never-recalled memories (recall_count = 0), TRUE only those recalled at least once; UNSPECIFIED (default) applies no restriction. This is what answers "what have I never recalled?" - recall_count_max cannot, because 0 there means no bound
+	RecallCountMin       int32                  `protobuf:"varint,14,opt,name=recall_count_min,json=recallCountMin,proto3" json:"recall_count_min,omitempty"`                                                         // inclusive lower bound on recall_count; 0 (the default) means no bound, NOT a literal never-recalled filter - use recalled for that
+	RecallCountMax       int32                  `protobuf:"varint,15,opt,name=recall_count_max,json=recallCountMax,proto3" json:"recall_count_max,omitempty"`                                                         // inclusive upper bound on recall_count; 0 (the default) means no bound, NOT a literal never-recalled filter - use recalled for that
+	TimeRecalledMin      int64                  `protobuf:"varint,16,opt,name=time_recalled_min,json=timeRecalledMin,proto3" json:"time_recalled_min,omitempty"`                                                      // UnixNano inclusive lower bound on time_recalled; 0 (the default) means no lower bound. Both bounds ask only about memories that HAVE been recalled - see time_recalled_max
+	TimeRecalledMax      int64                  `protobuf:"varint,17,opt,name=time_recalled_max,json=timeRecalledMax,proto3" json:"time_recalled_max,omitempty"`                                                      // UnixNano inclusive upper bound on time_recalled; 0 (the default) means no upper bound. Never-recalled memories are excluded rather than matched: their time_recalled is 0, so "recalled before X" would otherwise return every memory that was never recalled at all. Use recalled to ask about those
+	IsSummary            Bool                   `protobuf:"varint,18,opt,name=is_summary,json=isSummary,proto3,enum=hippocampus.v1.Bool" json:"is_summary,omitempty"`                                                 // optional: TRUE returns only summary memories (see ReplaceMemoriesWithSummary), FALSE only non-summaries; UNSPECIFIED (default) applies no restriction
+	IsBinary             Bool                   `protobuf:"varint,19,opt,name=is_binary,json=isBinary,proto3,enum=hippocampus.v1.Bool" json:"is_binary,omitempty"`                                                    // optional: TRUE returns only binary memories, FALSE only non-binary; UNSPECIFIED (default) applies no restriction
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1458,6 +1524,62 @@ func (x *GetMemoriesRequest) GetLinks() bool {
 		return x.Links
 	}
 	return false
+}
+
+func (x *GetMemoriesRequest) GetMetadata() []string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *GetMemoriesRequest) GetRecalled() Bool {
+	if x != nil {
+		return x.Recalled
+	}
+	return Bool_UNSPECIFIED
+}
+
+func (x *GetMemoriesRequest) GetRecallCountMin() int32 {
+	if x != nil {
+		return x.RecallCountMin
+	}
+	return 0
+}
+
+func (x *GetMemoriesRequest) GetRecallCountMax() int32 {
+	if x != nil {
+		return x.RecallCountMax
+	}
+	return 0
+}
+
+func (x *GetMemoriesRequest) GetTimeRecalledMin() int64 {
+	if x != nil {
+		return x.TimeRecalledMin
+	}
+	return 0
+}
+
+func (x *GetMemoriesRequest) GetTimeRecalledMax() int64 {
+	if x != nil {
+		return x.TimeRecalledMax
+	}
+	return 0
+}
+
+func (x *GetMemoriesRequest) GetIsSummary() Bool {
+	if x != nil {
+		return x.IsSummary
+	}
+	return Bool_UNSPECIFIED
+}
+
+func (x *GetMemoriesRequest) GetIsBinary() Bool {
+	if x != nil {
+		return x.IsBinary
+	}
+	return Bool_UNSPECIFIED
 }
 
 type GetMemoriesResponse struct {
@@ -1678,6 +1800,7 @@ type SearchMemoriesRequest struct {
 	Group         string                 `protobuf:"bytes,5,opt,name=group,proto3" json:"group,omitempty"`                                       // optional: restrict matches to memories carrying this group label
 	Mode          SearchMode             `protobuf:"varint,6,opt,name=mode,proto3,enum=hippocampus.v1.SearchMode" json:"mode,omitempty"`         // how to match; unset means KEYWORD
 	IncludeLinked bool                   `protobuf:"varint,7,opt,name=include_linked,json=includeLinked,proto3" json:"include_linked,omitempty"` // also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves
+	Metadata      []string               `protobuf:"bytes,8,rep,name=metadata,proto3" json:"metadata,omitempty"`                                 // optional: restrict matches to memories whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata. Applied inside the search index rather than to the results, so it narrows the candidates that ranking sees and limit still means what it says
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1759,6 +1882,13 @@ func (x *SearchMemoriesRequest) GetIncludeLinked() bool {
 		return x.IncludeLinked
 	}
 	return false
+}
+
+func (x *SearchMemoriesRequest) GetMetadata() []string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
 }
 
 // LinkMemoriesRequest adds or updates links from one memory to others. It is an upsert per pair:
@@ -4325,7 +4455,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05ABOVE\x10\x01\x12\t\n" +
 	"\x05BELOW\x10\x02\x12\v\n" +
-	"\aBETWEEN\x10\x03\"\xc8\x03\n" +
+	"\aBETWEEN\x10\x03\"\x8e\x05\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -4340,10 +4470,17 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\bmemories\x18\n" +
 	" \x03(\v2\x16.hippocampus.v1.MemoryR\bmemories\x12\x14\n" +
 	"\x05group\x18\v \x01(\tR\x05group\x12C\n" +
-	"\tplacement\x18\f \x01(\v2%.hippocampus.v1.SignificancePlacementR\tplacement\":\n" +
+	"\tplacement\x18\f \x01(\v2%.hippocampus.v1.SignificancePlacementR\tplacement\x12?\n" +
+	"\bmetadata\x18\r \x03(\v2#.hippocampus.v1.Event.MetadataEntryR\bmetadata\x12%\n" +
+	"\x0eclear_metadata\x18\x0e \x01(\bR\rclearMetadata\x12\x1f\n" +
+	"\vclear_group\x18\x0f \x01(\bR\n" +
+	"clearGroup\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\":\n" +
 	"\x04Link\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\"\n" +
-	"\fsignificance\x18\x02 \x01(\x05R\fsignificance\"\xd8\x03\n" +
+	"\fsignificance\x18\x02 \x01(\x05R\fsignificance\"\x9f\x05\n" +
 	"\x06Memory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -4360,7 +4497,14 @@ const file_hippocampus_proto_rawDesc = "" +
 	" \x01(\tR\x05group\x12C\n" +
 	"\tplacement\x18\v \x01(\v2%.hippocampus.v1.SignificancePlacementR\tplacement\x12*\n" +
 	"\x05links\x18\f \x03(\v2\x14.hippocampus.v1.LinkR\x05links\x12+\n" +
-	"\x11link_significance\x18\r \x01(\x03R\x10linkSignificance\"c\n" +
+	"\x11link_significance\x18\r \x01(\x03R\x10linkSignificance\x12@\n" +
+	"\bmetadata\x18\x0e \x03(\v2$.hippocampus.v1.Memory.MetadataEntryR\bmetadata\x12%\n" +
+	"\x0eclear_metadata\x18\x0f \x01(\bR\rclearMetadata\x12\x1f\n" +
+	"\vclear_group\x18\x10 \x01(\bR\n" +
+	"clearGroup\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"c\n" +
 	"\x12StoreEventResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fmemory_count\x18\x02 \x01(\x05R\vmemoryCount\x12\x1a\n" +
@@ -4383,7 +4527,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bmemories\x18\x02 \x01(\bR\bmemories\"?\n" +
 	"\x10GetEventResponse\x12+\n" +
-	"\x05event\x18\x01 \x01(\v2\x15.hippocampus.v1.EventR\x05event\"\xce\x03\n" +
+	"\x05event\x18\x01 \x01(\v2\x15.hippocampus.v1.EventR\x05event\"\xea\x03\n" +
 	"\x10GetEventsRequest\x12$\n" +
 	"\x0etime_start_min\x18\x01 \x01(\x03R\ftimeStartMin\x12$\n" +
 	"\x0etime_start_max\x18\x02 \x01(\x03R\ftimeStartMax\x12 \n" +
@@ -4399,11 +4543,12 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x05limit\x18\n" +
 	" \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\v \x01(\x05R\x06offset\x12Y\n" +
-	"\x15significance_extremum\x18\f \x01(\x0e2$.hippocampus.v1.SignificanceExtremumR\x14significanceExtremum\"c\n" +
+	"\x15significance_extremum\x18\f \x01(\x0e2$.hippocampus.v1.SignificanceExtremumR\x14significanceExtremum\x12\x1a\n" +
+	"\bmetadata\x18\r \x03(\tR\bmetadata\"c\n" +
 	"\x11GetEventsResponse\x12-\n" +
 	"\x06events\x18\x01 \x03(\v2\x15.hippocampus.v1.EventR\x06events\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCount\"\xa1\x03\n" +
+	"totalCount\"\x83\x06\n" +
 	"\x12GetMemoriesRequest\x12#\n" +
 	"\rtimestamp_min\x18\x01 \x01(\x03R\ftimestampMin\x12#\n" +
 	"\rtimestamp_max\x18\x02 \x01(\x03R\ftimestampMax\x12)\n" +
@@ -4416,7 +4561,16 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x15significance_extremum\x18\t \x01(\x0e2$.hippocampus.v1.SignificanceExtremumR\x14significanceExtremum\x12\x1b\n" +
 	"\tlinked_to\x18\n" +
 	" \x01(\tR\blinkedTo\x12\x14\n" +
-	"\x05links\x18\v \x01(\bR\x05links\"j\n" +
+	"\x05links\x18\v \x01(\bR\x05links\x12\x1a\n" +
+	"\bmetadata\x18\f \x03(\tR\bmetadata\x120\n" +
+	"\brecalled\x18\r \x01(\x0e2\x14.hippocampus.v1.BoolR\brecalled\x12(\n" +
+	"\x10recall_count_min\x18\x0e \x01(\x05R\x0erecallCountMin\x12(\n" +
+	"\x10recall_count_max\x18\x0f \x01(\x05R\x0erecallCountMax\x12*\n" +
+	"\x11time_recalled_min\x18\x10 \x01(\x03R\x0ftimeRecalledMin\x12*\n" +
+	"\x11time_recalled_max\x18\x11 \x01(\x03R\x0ftimeRecalledMax\x123\n" +
+	"\n" +
+	"is_summary\x18\x12 \x01(\x0e2\x14.hippocampus.v1.BoolR\tisSummary\x121\n" +
+	"\tis_binary\x18\x13 \x01(\x0e2\x14.hippocampus.v1.BoolR\bisBinary\"j\n" +
 	"\x13GetMemoriesResponse\x122\n" +
 	"\bmemories\x18\x01 \x03(\v2\x16.hippocampus.v1.MemoryR\bmemories\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
@@ -4428,7 +4582,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x03ids\x18\x01 \x03(\tR\x03ids\"P\n" +
 	"\x15RecallMemoriesRequest\x12\x10\n" +
 	"\x03ids\x18\x01 \x03(\tR\x03ids\x12%\n" +
-	"\x0einclude_linked\x18\x02 \x01(\bR\rincludeLinked\"\xe9\x01\n" +
+	"\x0einclude_linked\x18\x02 \x01(\bR\rincludeLinked\"\x85\x02\n" +
 	"\x15SearchMemoriesRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x19\n" +
@@ -4436,7 +4590,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\treinforce\x18\x04 \x01(\bR\treinforce\x12\x14\n" +
 	"\x05group\x18\x05 \x01(\tR\x05group\x12.\n" +
 	"\x04mode\x18\x06 \x01(\x0e2\x1a.hippocampus.v1.SearchModeR\x04mode\x12%\n" +
-	"\x0einclude_linked\x18\a \x01(\bR\rincludeLinked\"Q\n" +
+	"\x0einclude_linked\x18\a \x01(\bR\rincludeLinked\x12\x1a\n" +
+	"\bmetadata\x18\b \x03(\tR\bmetadata\"Q\n" +
 	"\x13LinkMemoriesRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12*\n" +
 	"\x05links\x18\x02 \x03(\v2\x14.hippocampus.v1.LinkR\x05links\"9\n" +
@@ -4714,7 +4869,7 @@ func file_hippocampus_proto_rawDescGZIP() []byte {
 }
 
 var file_hippocampus_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
+var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
 var file_hippocampus_proto_goTypes = []any{
 	(Bool)(0),                                  // 0: hippocampus.v1.Bool
 	(SignificanceExtremum)(0),                  // 1: hippocampus.v1.SignificanceExtremum
@@ -4779,112 +4934,119 @@ var file_hippocampus_proto_goTypes = []any{
 	(*ExplainConsolidationResponse)(nil),       // 60: hippocampus.v1.ExplainConsolidationResponse
 	(*WhoAmIResponse)(nil),                     // 61: hippocampus.v1.WhoAmIResponse
 	(*EmptyRequest)(nil),                       // 62: hippocampus.v1.EmptyRequest
+	nil,                                        // 63: hippocampus.v1.Event.MetadataEntry
+	nil,                                        // 64: hippocampus.v1.Memory.MetadataEntry
 }
 var file_hippocampus_proto_depIdxs = []int32{
 	5,  // 0: hippocampus.v1.SignificancePlacement.mode:type_name -> hippocampus.v1.SignificancePlacement.Mode
 	8,  // 1: hippocampus.v1.Event.links:type_name -> hippocampus.v1.Link
 	9,  // 2: hippocampus.v1.Event.memories:type_name -> hippocampus.v1.Memory
 	6,  // 3: hippocampus.v1.Event.placement:type_name -> hippocampus.v1.SignificancePlacement
-	0,  // 4: hippocampus.v1.Memory.is_binary:type_name -> hippocampus.v1.Bool
-	6,  // 5: hippocampus.v1.Memory.placement:type_name -> hippocampus.v1.SignificancePlacement
-	8,  // 6: hippocampus.v1.Memory.links:type_name -> hippocampus.v1.Link
-	6,  // 7: hippocampus.v1.UpdateEventSignificanceRequest.placement:type_name -> hippocampus.v1.SignificancePlacement
-	7,  // 8: hippocampus.v1.GetEventResponse.event:type_name -> hippocampus.v1.Event
-	1,  // 9: hippocampus.v1.GetEventsRequest.significance_extremum:type_name -> hippocampus.v1.SignificanceExtremum
-	7,  // 10: hippocampus.v1.GetEventsResponse.events:type_name -> hippocampus.v1.Event
-	1,  // 11: hippocampus.v1.GetMemoriesRequest.significance_extremum:type_name -> hippocampus.v1.SignificanceExtremum
-	9,  // 12: hippocampus.v1.GetMemoriesResponse.memories:type_name -> hippocampus.v1.Memory
-	2,  // 13: hippocampus.v1.SearchMemoriesRequest.mode:type_name -> hippocampus.v1.SearchMode
-	8,  // 14: hippocampus.v1.LinkMemoriesRequest.links:type_name -> hippocampus.v1.Link
-	3,  // 15: hippocampus.v1.GetMemoryLinksRequest.direction:type_name -> hippocampus.v1.LinkDirection
-	8,  // 16: hippocampus.v1.LinkEventsRequest.links:type_name -> hippocampus.v1.Link
-	3,  // 17: hippocampus.v1.GetEventLinksRequest.direction:type_name -> hippocampus.v1.LinkDirection
-	3,  // 18: hippocampus.v1.LinkEdge.direction:type_name -> hippocampus.v1.LinkDirection
-	31, // 19: hippocampus.v1.GetLinksResponse.links:type_name -> hippocampus.v1.LinkEdge
-	9,  // 20: hippocampus.v1.ReplaceMemoriesWithSummaryRequest.summary:type_name -> hippocampus.v1.Memory
-	35, // 21: hippocampus.v1.GetSummarisationCandidatesResponse.candidates:type_name -> hippocampus.v1.SummarisationCandidate
-	6,  // 22: hippocampus.v1.SummariseMemoriesRequest.placement:type_name -> hippocampus.v1.SignificancePlacement
-	39, // 23: hippocampus.v1.ArchiveRecord.header:type_name -> hippocampus.v1.ArchiveHeader
-	7,  // 24: hippocampus.v1.ArchiveRecord.event:type_name -> hippocampus.v1.Event
-	9,  // 25: hippocampus.v1.ArchiveRecord.memory:type_name -> hippocampus.v1.Memory
-	7,  // 26: hippocampus.v1.ImportBatchRequest.events:type_name -> hippocampus.v1.Event
-	9,  // 27: hippocampus.v1.ImportBatchRequest.memories:type_name -> hippocampus.v1.Memory
-	4,  // 28: hippocampus.v1.ForgetCandidate.rule:type_name -> hippocampus.v1.ForgetRule
-	53, // 29: hippocampus.v1.PreviewConsolidationResponse.candidates:type_name -> hippocampus.v1.ForgetCandidate
-	56, // 30: hippocampus.v1.DecayCurve.points:type_name -> hippocampus.v1.DecayPoint
-	55, // 31: hippocampus.v1.ExplainConsolidationRequest.curve:type_name -> hippocampus.v1.DecayCurveRequest
-	58, // 32: hippocampus.v1.ExplainConsolidationResponse.valuations:type_name -> hippocampus.v1.MemoryValuation
-	57, // 33: hippocampus.v1.ExplainConsolidationResponse.curve:type_name -> hippocampus.v1.DecayCurve
-	2,  // 34: hippocampus.v1.WhoAmIResponse.search_modes:type_name -> hippocampus.v1.SearchMode
-	62, // 35: hippocampus.v1.Hippocampus.Purge:input_type -> hippocampus.v1.EmptyRequest
-	62, // 36: hippocampus.v1.Hippocampus.Sleep:input_type -> hippocampus.v1.EmptyRequest
-	52, // 37: hippocampus.v1.Hippocampus.PreviewConsolidation:input_type -> hippocampus.v1.PreviewConsolidationRequest
-	59, // 38: hippocampus.v1.Hippocampus.ExplainConsolidation:input_type -> hippocampus.v1.ExplainConsolidationRequest
-	62, // 39: hippocampus.v1.Hippocampus.WhoAmI:input_type -> hippocampus.v1.EmptyRequest
-	7,  // 40: hippocampus.v1.Hippocampus.StoreEvent:input_type -> hippocampus.v1.Event
-	11, // 41: hippocampus.v1.Hippocampus.EndEvent:input_type -> hippocampus.v1.EndEventRequest
-	12, // 42: hippocampus.v1.Hippocampus.UpdateEventSignificance:input_type -> hippocampus.v1.UpdateEventSignificanceRequest
-	13, // 43: hippocampus.v1.Hippocampus.MergeEvents:input_type -> hippocampus.v1.MergeEventsRequest
-	14, // 44: hippocampus.v1.Hippocampus.DeleteEvent:input_type -> hippocampus.v1.DeleteEventRequest
-	15, // 45: hippocampus.v1.Hippocampus.GetEventById:input_type -> hippocampus.v1.GetEventByIdRequest
-	17, // 46: hippocampus.v1.Hippocampus.GetEvents:input_type -> hippocampus.v1.GetEventsRequest
-	9,  // 47: hippocampus.v1.Hippocampus.StoreMemory:input_type -> hippocampus.v1.Memory
-	9,  // 48: hippocampus.v1.Hippocampus.UpdateMemory:input_type -> hippocampus.v1.Memory
-	22, // 49: hippocampus.v1.Hippocampus.DeleteMemories:input_type -> hippocampus.v1.DeleteMemoriesRequest
-	19, // 50: hippocampus.v1.Hippocampus.GetMemories:input_type -> hippocampus.v1.GetMemoriesRequest
-	23, // 51: hippocampus.v1.Hippocampus.RecallMemories:input_type -> hippocampus.v1.RecallMemoriesRequest
-	24, // 52: hippocampus.v1.Hippocampus.SearchMemories:input_type -> hippocampus.v1.SearchMemoriesRequest
-	25, // 53: hippocampus.v1.Hippocampus.LinkMemories:input_type -> hippocampus.v1.LinkMemoriesRequest
-	26, // 54: hippocampus.v1.Hippocampus.UnlinkMemories:input_type -> hippocampus.v1.UnlinkMemoriesRequest
-	27, // 55: hippocampus.v1.Hippocampus.GetMemoryLinks:input_type -> hippocampus.v1.GetMemoryLinksRequest
-	28, // 56: hippocampus.v1.Hippocampus.LinkEvents:input_type -> hippocampus.v1.LinkEventsRequest
-	29, // 57: hippocampus.v1.Hippocampus.UnlinkEvents:input_type -> hippocampus.v1.UnlinkEventsRequest
-	30, // 58: hippocampus.v1.Hippocampus.GetEventLinks:input_type -> hippocampus.v1.GetEventLinksRequest
-	33, // 59: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:input_type -> hippocampus.v1.ReplaceMemoriesWithSummaryRequest
-	62, // 60: hippocampus.v1.Hippocampus.GetSummarisationCandidates:input_type -> hippocampus.v1.EmptyRequest
-	37, // 61: hippocampus.v1.Hippocampus.SummariseMemories:input_type -> hippocampus.v1.SummariseMemoriesRequest
-	43, // 62: hippocampus.v1.Hippocampus.Export:input_type -> hippocampus.v1.ExportRequest
-	45, // 63: hippocampus.v1.Hippocampus.Import:input_type -> hippocampus.v1.ImportRequest
-	41, // 64: hippocampus.v1.Hippocampus.ImportBatch:input_type -> hippocampus.v1.ImportBatchRequest
-	47, // 65: hippocampus.v1.Hippocampus.Transfer:input_type -> hippocampus.v1.TransferRequest
-	49, // 66: hippocampus.v1.Hippocampus.Clear:input_type -> hippocampus.v1.ClearRequest
-	51, // 67: hippocampus.v1.Hippocampus.Purge:output_type -> hippocampus.v1.GeneralResponse
-	51, // 68: hippocampus.v1.Hippocampus.Sleep:output_type -> hippocampus.v1.GeneralResponse
-	54, // 69: hippocampus.v1.Hippocampus.PreviewConsolidation:output_type -> hippocampus.v1.PreviewConsolidationResponse
-	60, // 70: hippocampus.v1.Hippocampus.ExplainConsolidation:output_type -> hippocampus.v1.ExplainConsolidationResponse
-	61, // 71: hippocampus.v1.Hippocampus.WhoAmI:output_type -> hippocampus.v1.WhoAmIResponse
-	10, // 72: hippocampus.v1.Hippocampus.StoreEvent:output_type -> hippocampus.v1.StoreEventResponse
-	51, // 73: hippocampus.v1.Hippocampus.EndEvent:output_type -> hippocampus.v1.GeneralResponse
-	51, // 74: hippocampus.v1.Hippocampus.UpdateEventSignificance:output_type -> hippocampus.v1.GeneralResponse
-	51, // 75: hippocampus.v1.Hippocampus.MergeEvents:output_type -> hippocampus.v1.GeneralResponse
-	51, // 76: hippocampus.v1.Hippocampus.DeleteEvent:output_type -> hippocampus.v1.GeneralResponse
-	16, // 77: hippocampus.v1.Hippocampus.GetEventById:output_type -> hippocampus.v1.GetEventResponse
-	18, // 78: hippocampus.v1.Hippocampus.GetEvents:output_type -> hippocampus.v1.GetEventsResponse
-	21, // 79: hippocampus.v1.Hippocampus.StoreMemory:output_type -> hippocampus.v1.StoreMemoryResponse
-	51, // 80: hippocampus.v1.Hippocampus.UpdateMemory:output_type -> hippocampus.v1.GeneralResponse
-	51, // 81: hippocampus.v1.Hippocampus.DeleteMemories:output_type -> hippocampus.v1.GeneralResponse
-	20, // 82: hippocampus.v1.Hippocampus.GetMemories:output_type -> hippocampus.v1.GetMemoriesResponse
-	20, // 83: hippocampus.v1.Hippocampus.RecallMemories:output_type -> hippocampus.v1.GetMemoriesResponse
-	20, // 84: hippocampus.v1.Hippocampus.SearchMemories:output_type -> hippocampus.v1.GetMemoriesResponse
-	51, // 85: hippocampus.v1.Hippocampus.LinkMemories:output_type -> hippocampus.v1.GeneralResponse
-	51, // 86: hippocampus.v1.Hippocampus.UnlinkMemories:output_type -> hippocampus.v1.GeneralResponse
-	32, // 87: hippocampus.v1.Hippocampus.GetMemoryLinks:output_type -> hippocampus.v1.GetLinksResponse
-	51, // 88: hippocampus.v1.Hippocampus.LinkEvents:output_type -> hippocampus.v1.GeneralResponse
-	51, // 89: hippocampus.v1.Hippocampus.UnlinkEvents:output_type -> hippocampus.v1.GeneralResponse
-	32, // 90: hippocampus.v1.Hippocampus.GetEventLinks:output_type -> hippocampus.v1.GetLinksResponse
-	34, // 91: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:output_type -> hippocampus.v1.ReplaceMemoriesWithSummaryResponse
-	36, // 92: hippocampus.v1.Hippocampus.GetSummarisationCandidates:output_type -> hippocampus.v1.GetSummarisationCandidatesResponse
-	38, // 93: hippocampus.v1.Hippocampus.SummariseMemories:output_type -> hippocampus.v1.SummariseMemoriesResponse
-	44, // 94: hippocampus.v1.Hippocampus.Export:output_type -> hippocampus.v1.ExportResponse
-	46, // 95: hippocampus.v1.Hippocampus.Import:output_type -> hippocampus.v1.ImportResponse
-	42, // 96: hippocampus.v1.Hippocampus.ImportBatch:output_type -> hippocampus.v1.ImportBatchResponse
-	48, // 97: hippocampus.v1.Hippocampus.Transfer:output_type -> hippocampus.v1.TransferResponse
-	50, // 98: hippocampus.v1.Hippocampus.Clear:output_type -> hippocampus.v1.ClearResponse
-	67, // [67:99] is the sub-list for method output_type
-	35, // [35:67] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	63, // 4: hippocampus.v1.Event.metadata:type_name -> hippocampus.v1.Event.MetadataEntry
+	0,  // 5: hippocampus.v1.Memory.is_binary:type_name -> hippocampus.v1.Bool
+	6,  // 6: hippocampus.v1.Memory.placement:type_name -> hippocampus.v1.SignificancePlacement
+	8,  // 7: hippocampus.v1.Memory.links:type_name -> hippocampus.v1.Link
+	64, // 8: hippocampus.v1.Memory.metadata:type_name -> hippocampus.v1.Memory.MetadataEntry
+	6,  // 9: hippocampus.v1.UpdateEventSignificanceRequest.placement:type_name -> hippocampus.v1.SignificancePlacement
+	7,  // 10: hippocampus.v1.GetEventResponse.event:type_name -> hippocampus.v1.Event
+	1,  // 11: hippocampus.v1.GetEventsRequest.significance_extremum:type_name -> hippocampus.v1.SignificanceExtremum
+	7,  // 12: hippocampus.v1.GetEventsResponse.events:type_name -> hippocampus.v1.Event
+	1,  // 13: hippocampus.v1.GetMemoriesRequest.significance_extremum:type_name -> hippocampus.v1.SignificanceExtremum
+	0,  // 14: hippocampus.v1.GetMemoriesRequest.recalled:type_name -> hippocampus.v1.Bool
+	0,  // 15: hippocampus.v1.GetMemoriesRequest.is_summary:type_name -> hippocampus.v1.Bool
+	0,  // 16: hippocampus.v1.GetMemoriesRequest.is_binary:type_name -> hippocampus.v1.Bool
+	9,  // 17: hippocampus.v1.GetMemoriesResponse.memories:type_name -> hippocampus.v1.Memory
+	2,  // 18: hippocampus.v1.SearchMemoriesRequest.mode:type_name -> hippocampus.v1.SearchMode
+	8,  // 19: hippocampus.v1.LinkMemoriesRequest.links:type_name -> hippocampus.v1.Link
+	3,  // 20: hippocampus.v1.GetMemoryLinksRequest.direction:type_name -> hippocampus.v1.LinkDirection
+	8,  // 21: hippocampus.v1.LinkEventsRequest.links:type_name -> hippocampus.v1.Link
+	3,  // 22: hippocampus.v1.GetEventLinksRequest.direction:type_name -> hippocampus.v1.LinkDirection
+	3,  // 23: hippocampus.v1.LinkEdge.direction:type_name -> hippocampus.v1.LinkDirection
+	31, // 24: hippocampus.v1.GetLinksResponse.links:type_name -> hippocampus.v1.LinkEdge
+	9,  // 25: hippocampus.v1.ReplaceMemoriesWithSummaryRequest.summary:type_name -> hippocampus.v1.Memory
+	35, // 26: hippocampus.v1.GetSummarisationCandidatesResponse.candidates:type_name -> hippocampus.v1.SummarisationCandidate
+	6,  // 27: hippocampus.v1.SummariseMemoriesRequest.placement:type_name -> hippocampus.v1.SignificancePlacement
+	39, // 28: hippocampus.v1.ArchiveRecord.header:type_name -> hippocampus.v1.ArchiveHeader
+	7,  // 29: hippocampus.v1.ArchiveRecord.event:type_name -> hippocampus.v1.Event
+	9,  // 30: hippocampus.v1.ArchiveRecord.memory:type_name -> hippocampus.v1.Memory
+	7,  // 31: hippocampus.v1.ImportBatchRequest.events:type_name -> hippocampus.v1.Event
+	9,  // 32: hippocampus.v1.ImportBatchRequest.memories:type_name -> hippocampus.v1.Memory
+	4,  // 33: hippocampus.v1.ForgetCandidate.rule:type_name -> hippocampus.v1.ForgetRule
+	53, // 34: hippocampus.v1.PreviewConsolidationResponse.candidates:type_name -> hippocampus.v1.ForgetCandidate
+	56, // 35: hippocampus.v1.DecayCurve.points:type_name -> hippocampus.v1.DecayPoint
+	55, // 36: hippocampus.v1.ExplainConsolidationRequest.curve:type_name -> hippocampus.v1.DecayCurveRequest
+	58, // 37: hippocampus.v1.ExplainConsolidationResponse.valuations:type_name -> hippocampus.v1.MemoryValuation
+	57, // 38: hippocampus.v1.ExplainConsolidationResponse.curve:type_name -> hippocampus.v1.DecayCurve
+	2,  // 39: hippocampus.v1.WhoAmIResponse.search_modes:type_name -> hippocampus.v1.SearchMode
+	62, // 40: hippocampus.v1.Hippocampus.Purge:input_type -> hippocampus.v1.EmptyRequest
+	62, // 41: hippocampus.v1.Hippocampus.Sleep:input_type -> hippocampus.v1.EmptyRequest
+	52, // 42: hippocampus.v1.Hippocampus.PreviewConsolidation:input_type -> hippocampus.v1.PreviewConsolidationRequest
+	59, // 43: hippocampus.v1.Hippocampus.ExplainConsolidation:input_type -> hippocampus.v1.ExplainConsolidationRequest
+	62, // 44: hippocampus.v1.Hippocampus.WhoAmI:input_type -> hippocampus.v1.EmptyRequest
+	7,  // 45: hippocampus.v1.Hippocampus.StoreEvent:input_type -> hippocampus.v1.Event
+	11, // 46: hippocampus.v1.Hippocampus.EndEvent:input_type -> hippocampus.v1.EndEventRequest
+	12, // 47: hippocampus.v1.Hippocampus.UpdateEventSignificance:input_type -> hippocampus.v1.UpdateEventSignificanceRequest
+	13, // 48: hippocampus.v1.Hippocampus.MergeEvents:input_type -> hippocampus.v1.MergeEventsRequest
+	14, // 49: hippocampus.v1.Hippocampus.DeleteEvent:input_type -> hippocampus.v1.DeleteEventRequest
+	15, // 50: hippocampus.v1.Hippocampus.GetEventById:input_type -> hippocampus.v1.GetEventByIdRequest
+	17, // 51: hippocampus.v1.Hippocampus.GetEvents:input_type -> hippocampus.v1.GetEventsRequest
+	9,  // 52: hippocampus.v1.Hippocampus.StoreMemory:input_type -> hippocampus.v1.Memory
+	9,  // 53: hippocampus.v1.Hippocampus.UpdateMemory:input_type -> hippocampus.v1.Memory
+	22, // 54: hippocampus.v1.Hippocampus.DeleteMemories:input_type -> hippocampus.v1.DeleteMemoriesRequest
+	19, // 55: hippocampus.v1.Hippocampus.GetMemories:input_type -> hippocampus.v1.GetMemoriesRequest
+	23, // 56: hippocampus.v1.Hippocampus.RecallMemories:input_type -> hippocampus.v1.RecallMemoriesRequest
+	24, // 57: hippocampus.v1.Hippocampus.SearchMemories:input_type -> hippocampus.v1.SearchMemoriesRequest
+	25, // 58: hippocampus.v1.Hippocampus.LinkMemories:input_type -> hippocampus.v1.LinkMemoriesRequest
+	26, // 59: hippocampus.v1.Hippocampus.UnlinkMemories:input_type -> hippocampus.v1.UnlinkMemoriesRequest
+	27, // 60: hippocampus.v1.Hippocampus.GetMemoryLinks:input_type -> hippocampus.v1.GetMemoryLinksRequest
+	28, // 61: hippocampus.v1.Hippocampus.LinkEvents:input_type -> hippocampus.v1.LinkEventsRequest
+	29, // 62: hippocampus.v1.Hippocampus.UnlinkEvents:input_type -> hippocampus.v1.UnlinkEventsRequest
+	30, // 63: hippocampus.v1.Hippocampus.GetEventLinks:input_type -> hippocampus.v1.GetEventLinksRequest
+	33, // 64: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:input_type -> hippocampus.v1.ReplaceMemoriesWithSummaryRequest
+	62, // 65: hippocampus.v1.Hippocampus.GetSummarisationCandidates:input_type -> hippocampus.v1.EmptyRequest
+	37, // 66: hippocampus.v1.Hippocampus.SummariseMemories:input_type -> hippocampus.v1.SummariseMemoriesRequest
+	43, // 67: hippocampus.v1.Hippocampus.Export:input_type -> hippocampus.v1.ExportRequest
+	45, // 68: hippocampus.v1.Hippocampus.Import:input_type -> hippocampus.v1.ImportRequest
+	41, // 69: hippocampus.v1.Hippocampus.ImportBatch:input_type -> hippocampus.v1.ImportBatchRequest
+	47, // 70: hippocampus.v1.Hippocampus.Transfer:input_type -> hippocampus.v1.TransferRequest
+	49, // 71: hippocampus.v1.Hippocampus.Clear:input_type -> hippocampus.v1.ClearRequest
+	51, // 72: hippocampus.v1.Hippocampus.Purge:output_type -> hippocampus.v1.GeneralResponse
+	51, // 73: hippocampus.v1.Hippocampus.Sleep:output_type -> hippocampus.v1.GeneralResponse
+	54, // 74: hippocampus.v1.Hippocampus.PreviewConsolidation:output_type -> hippocampus.v1.PreviewConsolidationResponse
+	60, // 75: hippocampus.v1.Hippocampus.ExplainConsolidation:output_type -> hippocampus.v1.ExplainConsolidationResponse
+	61, // 76: hippocampus.v1.Hippocampus.WhoAmI:output_type -> hippocampus.v1.WhoAmIResponse
+	10, // 77: hippocampus.v1.Hippocampus.StoreEvent:output_type -> hippocampus.v1.StoreEventResponse
+	51, // 78: hippocampus.v1.Hippocampus.EndEvent:output_type -> hippocampus.v1.GeneralResponse
+	51, // 79: hippocampus.v1.Hippocampus.UpdateEventSignificance:output_type -> hippocampus.v1.GeneralResponse
+	51, // 80: hippocampus.v1.Hippocampus.MergeEvents:output_type -> hippocampus.v1.GeneralResponse
+	51, // 81: hippocampus.v1.Hippocampus.DeleteEvent:output_type -> hippocampus.v1.GeneralResponse
+	16, // 82: hippocampus.v1.Hippocampus.GetEventById:output_type -> hippocampus.v1.GetEventResponse
+	18, // 83: hippocampus.v1.Hippocampus.GetEvents:output_type -> hippocampus.v1.GetEventsResponse
+	21, // 84: hippocampus.v1.Hippocampus.StoreMemory:output_type -> hippocampus.v1.StoreMemoryResponse
+	51, // 85: hippocampus.v1.Hippocampus.UpdateMemory:output_type -> hippocampus.v1.GeneralResponse
+	51, // 86: hippocampus.v1.Hippocampus.DeleteMemories:output_type -> hippocampus.v1.GeneralResponse
+	20, // 87: hippocampus.v1.Hippocampus.GetMemories:output_type -> hippocampus.v1.GetMemoriesResponse
+	20, // 88: hippocampus.v1.Hippocampus.RecallMemories:output_type -> hippocampus.v1.GetMemoriesResponse
+	20, // 89: hippocampus.v1.Hippocampus.SearchMemories:output_type -> hippocampus.v1.GetMemoriesResponse
+	51, // 90: hippocampus.v1.Hippocampus.LinkMemories:output_type -> hippocampus.v1.GeneralResponse
+	51, // 91: hippocampus.v1.Hippocampus.UnlinkMemories:output_type -> hippocampus.v1.GeneralResponse
+	32, // 92: hippocampus.v1.Hippocampus.GetMemoryLinks:output_type -> hippocampus.v1.GetLinksResponse
+	51, // 93: hippocampus.v1.Hippocampus.LinkEvents:output_type -> hippocampus.v1.GeneralResponse
+	51, // 94: hippocampus.v1.Hippocampus.UnlinkEvents:output_type -> hippocampus.v1.GeneralResponse
+	32, // 95: hippocampus.v1.Hippocampus.GetEventLinks:output_type -> hippocampus.v1.GetLinksResponse
+	34, // 96: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:output_type -> hippocampus.v1.ReplaceMemoriesWithSummaryResponse
+	36, // 97: hippocampus.v1.Hippocampus.GetSummarisationCandidates:output_type -> hippocampus.v1.GetSummarisationCandidatesResponse
+	38, // 98: hippocampus.v1.Hippocampus.SummariseMemories:output_type -> hippocampus.v1.SummariseMemoriesResponse
+	44, // 99: hippocampus.v1.Hippocampus.Export:output_type -> hippocampus.v1.ExportResponse
+	46, // 100: hippocampus.v1.Hippocampus.Import:output_type -> hippocampus.v1.ImportResponse
+	42, // 101: hippocampus.v1.Hippocampus.ImportBatch:output_type -> hippocampus.v1.ImportBatchResponse
+	48, // 102: hippocampus.v1.Hippocampus.Transfer:output_type -> hippocampus.v1.TransferResponse
+	50, // 103: hippocampus.v1.Hippocampus.Clear:output_type -> hippocampus.v1.ClearResponse
+	72, // [72:104] is the sub-list for method output_type
+	40, // [40:72] is the sub-list for method input_type
+	40, // [40:40] is the sub-list for extension type_name
+	40, // [40:40] is the sub-list for extension extendee
+	0,  // [0:40] is the sub-list for field type_name
 }
 
 func init() { file_hippocampus_proto_init() }
@@ -4903,7 +5065,7 @@ func file_hippocampus_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hippocampus_proto_rawDesc), len(file_hippocampus_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   57,
+			NumMessages:   59,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

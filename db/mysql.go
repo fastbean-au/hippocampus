@@ -181,7 +181,8 @@ func (d *DB) initMySQLSchema() error {
 			description               TEXT NOT NULL,
 			memories_consolidated     BOOLEAN NOT NULL DEFAULT FALSE,
 			link_significance         BIGINT NOT NULL DEFAULT 0,
-			group_name                VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT ''
+			group_name                VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+			metadata                  JSON
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS memories (
@@ -196,7 +197,8 @@ func (d *DB) initMySQLSchema() error {
 			group_name    VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
 			is_compressed BOOLEAN NOT NULL DEFAULT FALSE,
 			link_significance BIGINT NOT NULL DEFAULT 0,
-			body          LONGBLOB NOT NULL
+			body          LONGBLOB NOT NULL,
+			metadata      JSON
 		)`,
 
 		d.significanceLevelsDDL(),
@@ -237,6 +239,18 @@ func (d *DB) initMySQLSchema() error {
 	}
 
 	if err := d.addColumnIfMissing("events", "link_significance", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// Metadata (see types/metadata.go), NULL-able with no default. MySQL forbids a DEFAULT on a JSON
+	// column at all, but that restriction costs nothing here because the other two drivers must also
+	// leave it NULL: json_extract's SQLite equivalent raises "malformed JSON" on an empty string, so
+	// an ''-defaulted column would break the first metadata-filtered query against pre-migration rows.
+	if err := d.addColumnIfMissing("memories", "metadata", "JSON"); err != nil {
+		return err
+	}
+
+	if err := d.addColumnIfMissing("events", "metadata", "JSON"); err != nil {
 		return err
 	}
 

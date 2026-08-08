@@ -28,6 +28,18 @@ type Doc struct {
 	IsSummary    bool   `json:"is_summary"`
 	Group        string `json:"group"`
 
+	// Metadata is the memory's metadata rendered as sorted "key=value" strings - a flat keyword
+	// array, deliberately not a nested object.
+	//
+	// Metadata keys are client-supplied, and an object mapping would mint a new index field per
+	// distinct key: a client generating a key per request would exhaust the cluster's field limit
+	// (index.mapping.total_fields.limit, 1000 by default) and break indexing for every memory, not
+	// just its own. A keyword array cannot, term-filters exactly, ANDs naturally as several term
+	// filters, and is byte-identical to the wire form of a metadata filter - so a filter becomes a
+	// term with no conversion. The cost is that values cannot be prefix- or range-queried, which
+	// the exact-match-only filter design already rules out.
+	Metadata []string `json:"metadata,omitempty"`
+
 	// Vector is the body's embedding, when semantic search is configured. It is omitted when
 	// absent so a deployment without an embedder indexes exactly the document it always did.
 	//
@@ -51,6 +63,7 @@ func DocFromMemory(in types.Memory) Doc {
 		Timestamp:    in.TimeStamp,
 		IsSummary:    in.IsSummary,
 		Group:        in.Group,
+		Metadata:     types.MetadataToTerms(in.Metadata),
 	}
 }
 
@@ -72,6 +85,12 @@ type Query struct {
 	EventId string
 	Group   string
 	Limit   int
+
+	// Metadata restricts matches to memories carrying every one of these key/value pairs. It is
+	// applied INSIDE the index rather than to the results, like EventId and Group: post-filtering
+	// would silently shrink a page below the caller's limit, and would interact badly with the
+	// ranking layer's over-fetch, which is headroom rather than a guarantee.
+	Metadata map[string]string
 }
 
 // Hit is one search match: the memory's id and how well its body matched.

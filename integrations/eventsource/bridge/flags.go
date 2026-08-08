@@ -32,6 +32,9 @@ func RegisterCommonFlags(fs *pflag.FlagSet) {
 	fs.String("group-header", "", "message header whose value overrides the group for that message")
 	fs.Bool("binary", false, "treat payloads as binary: base64-encode the body and mark it is_binary (never content-indexed)")
 	fs.Int("max-body-bytes", 0, "truncate a payload to at most this many bytes before it becomes a memory body (0 = unlimited)")
+	fs.StringSlice("metadata", nil, "metadata label as 'key=value' stamped on every memory (repeatable)")
+	fs.StringSlice("metadata-header", nil, "message header to copy onto each memory's metadata (repeatable)")
+	fs.String("metadata-header-prefix", "", "copy every message header carrying this prefix onto the memory's metadata, with the prefix stripped from the key")
 
 	fs.String("log-level", "info", "logging level (trace, debug, info, warn, error)")
 }

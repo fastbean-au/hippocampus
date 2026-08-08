@@ -29,6 +29,15 @@ type Memory struct {
 	IsSummary    bool   // set on the memory created by ReplaceMemoriesWithSummary
 	Group        string // optional grouping/context label; limited to 128 characters
 
+	// Metadata is the multi-dimensional classification group could only carry one dimension of;
+	// see types/metadata.go for the bounds and why they are constants. ClearMetadata and ClearGroup
+	// are write-only update instructions, never populated on a read: every other updatable field
+	// reads its zero value as "leave unchanged", so without them neither field could be unset once
+	// set.
+	Metadata      map[string]string
+	ClearMetadata bool
+	ClearGroup    bool
+
 	// Links are this memory's associative links. On a write they are the links to create (targets
 	// must already exist); on a read they are populated only when the caller asked for them.
 	// LinkSignificance is the store-maintained sum of this memory's link significances in both
@@ -58,6 +67,10 @@ func MemoryFromProto(memory *contract.Memory) Memory {
 		IsSummary:    memory.GetIsSummary(),
 		Group:        memory.GetGroup(),
 		Links:        LinksFromProto(memory.GetLinks()),
+
+		Metadata:      CopyMetadata(memory.GetMetadata()),
+		ClearMetadata: memory.GetClearMetadata(),
+		ClearGroup:    memory.GetClearGroup(),
 	}
 }
 
@@ -80,6 +93,12 @@ func (m *Memory) ToProto() *contract.Memory {
 		Group:            m.Group,
 		Links:            LinksToProto(m.Links),
 		LinkSignificance: m.LinkSignificance,
+
+		// Copied, and nil for an empty map: a memory with no metadata allocates none, and a client
+		// cannot distinguish nil from empty on either transport anyway (the HTTP gateway emits
+		// unpopulated fields, so it renders both as {}, exactly as it renders a nil links slice as
+		// []). ClearMetadata/ClearGroup are write-only and deliberately not carried back.
+		Metadata: CopyMetadata(m.Metadata),
 	}
 }
 
@@ -96,7 +115,12 @@ func (m *Memory) ValidateInsert(maxMemoryBodyLength int, update bool) error {
 		return fmt.Errorf("memory not valid - id too long")
 	case !update && len(m.Body) == 0:
 		return fmt.Errorf("memory not valid - no body provided")
-	case maxMemoryBodyLength > 0 && len(m.Body) > maxMemoryBodyLength:
+	case maxMemoryBodyLength > 0 && len(m.Body)+MetadataSerialisedLen(m.Metadata) > maxMemoryBodyLength:
+		// Metadata counts toward the same budget as the body: it is stored per memory and is
+		// client-supplied, so leaving it outside the limit would be a way around it. This cannot
+		// reject a write that would previously have succeeded - a memory written before metadata
+		// existed contributes zero - and MaxMetadataBytes is the bound that applies when the limit is
+		// unset (0), which is the default.
 		return fmt.Errorf("memory not valid - body too long")
 	case len(m.Group) > 128:
 		return fmt.Errorf("memory not valid - group too long")
@@ -106,6 +130,10 @@ func (m *Memory) ValidateInsert(maxMemoryBodyLength int, update bool) error {
 		// Rejected on both the insert and update arms: a future timestamp is equally corrupting
 		// whichever RPC sets it (StoreMemory or UpdateMemory), and no legitimate write is future-dated.
 		return fmt.Errorf("memory not valid - timestamp is too far in the future")
+	}
+
+	if err := ValidateMetadata(m.Metadata, "memory"); err != nil {
+		return err
 	}
 
 	return ValidateLinks(m.Links, m.Id, "memory")

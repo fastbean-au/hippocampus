@@ -84,6 +84,11 @@ type ContentQuery struct {
 	EventId string
 	Group   string
 	Limit   int
+
+	// Metadata restricts matches to memories carrying every one of these key/value pairs, applied
+	// in the join to the primary table alongside the group filter and BEFORE the LIMIT - so it
+	// narrows the candidates rather than the page.
+	Metadata map[string]string
 }
 
 // ContentHit is one match: the memory's id and its relevance, with the sign flipped from FTS5's
@@ -295,6 +300,14 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 		clauses = append(clauses, `m.group_name = ?`)
 		args = append(args, query.Group)
 	}
+
+	// Metadata narrows the candidates inside the query rather than filtering the results, so the
+	// LIMIT below still returns a full page when one exists. This path is SQLite-only (FTS5), but
+	// the predicate goes through the shared builder anyway so the two backends cannot drift on what
+	// a filter means.
+	metadataClauses, metadataArgs := d.metadataConditions("m.", query.Metadata)
+	clauses = append(clauses, metadataClauses...)
+	args = append(args, metadataArgs...)
 
 	limit := query.Limit
 	if limit <= 0 {

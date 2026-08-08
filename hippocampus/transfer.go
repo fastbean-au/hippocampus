@@ -616,6 +616,12 @@ func (s *Server) ingestEvents(ctx context.Context, protos []*contract.Event) (in
 		// them through.
 		event.MemoriesConsolidated = in.GetMemoriesConsolidated()
 
+		// See ingestMemories for why the metadata bounds are enforced on an import that otherwise
+		// bypasses validation.
+		if err := types.ValidateMetadata(event.Metadata, "event"); err != nil {
+			return 0, fmt.Errorf("imported event '%s': %w", event.Id, err)
+		}
+
 		events[i] = event
 	}
 
@@ -644,6 +650,16 @@ func (s *Server) ingestMemories(ctx context.Context, protos []*contract.Memory) 
 		}
 
 		memories[i] = types.MemoryFromProto(in)
+
+		// An import deliberately bypasses ValidateInsert - archives carry historical timestamps and
+		// pre-existing significances that the fresh-write rules would reject - but the metadata
+		// STRUCTURAL bounds are enforced even here. They are what keeps the store's byte accounting
+		// honest: an over-sized map would distort UsedBytes, and therefore capacity pressure, and
+		// therefore what eviction believes it has to delete. An archive this service produced can
+		// never trip them, so this only ever rejects a hand-crafted one.
+		if err := types.ValidateMetadata(memories[i].Metadata, "memory"); err != nil {
+			return 0, fmt.Errorf("imported memory '%s': %w", memories[i].Id, err)
+		}
 	}
 
 	count, err := s.db.ImportMemories(ctx, memories)
@@ -665,9 +681,15 @@ func (s *Server) ingestMemories(ctx context.Context, protos []*contract.Memory) 
 }
 
 // memoryTransferSize estimates a memory's serialised proto size for byte-budgeting a Transfer
-// batch: the body plus the id/group strings plus a fixed allowance for the remaining fields.
+// batch: the body plus the id/group strings plus the metadata plus a fixed allowance for the
+// remaining fields.
+//
+// Metadata is measured rather than left to the fixed allowance because it is bounded well above it
+// (types.MaxMetadataBytes is 4 KiB against transferMemoryOverheadBytes' handful), so a page of
+// heavily tagged memories would otherwise overflow the receiver's max-receive-message size.
 func memoryTransferSize(memory types.Memory) int {
-	return len(memory.Body) + len(memory.Id) + len(memory.Group) + transferMemoryOverheadBytes
+	return len(memory.Body) + len(memory.Id) + len(memory.Group) +
+		types.MetadataSerialisedLen(memory.Metadata) + transferMemoryOverheadBytes
 }
 
 // batchMemoriesByBytes splits a page of memories into sub-batches each estimated to serialise

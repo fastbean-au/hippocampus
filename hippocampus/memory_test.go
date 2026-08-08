@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -950,5 +952,236 @@ func TestReplaceMemoriesWithSummary_PlacementInvalidRejected(t *testing.T) {
 	})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
+	}
+}
+
+// TestStoreAndFilterMemoriesByMetadata drives the metadata surface end to end at the RPC layer:
+// stored through StoreMemory as a proto map, filtered through GetMemories as packed "key=value"
+// strings, and returned intact.
+func TestStoreAndFilterMemoriesByMetadata(t *testing.T) {
+	s := newTestServer(t)
+
+	memories := []*contract.Memory{
+		{Id: "m1", Body: "a", Significance: 5, Metadata: map[string]string{"source": "slack", "project": "x"}},
+		{Id: "m2", Body: "b", Significance: 5, Metadata: map[string]string{"source": "slack", "project": "y"}},
+		{Id: "m3", Body: "c", Significance: 5, Metadata: map[string]string{"source": "email"}},
+		{Id: "m4", Body: "d", Significance: 5},
+	}
+
+	for _, m := range memories {
+		if _, err := s.StoreMemory(context.Background(), m); err != nil {
+			t.Fatalf("StoreMemory(%s): %s", m.GetId(), err)
+		}
+	}
+
+	// A stored memory carries its metadata back out.
+	got, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{Metadata: []string{"source=slack"}})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if len(got.GetMemories()) != 2 {
+		t.Fatalf("expected 2 slack memories, got %d", len(got.GetMemories()))
+	}
+
+	if got.GetTotalCount() != 2 {
+		t.Errorf("expected a total count of 2, got %d", got.GetTotalCount())
+	}
+
+	for _, m := range got.GetMemories() {
+		if m.GetMetadata()["source"] != "slack" {
+			t.Errorf("memory %s came back without its metadata: %#v", m.GetId(), m.GetMetadata())
+		}
+	}
+
+	// Two pairs are conjoined.
+	got, err = s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		Metadata: []string{"source=slack", "project=x"},
+	})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if len(got.GetMemories()) != 1 || got.GetMemories()[0].GetId() != "m1" {
+		t.Fatalf("expected only m1, got %+v", got.GetMemories())
+	}
+
+	// A memory stored without metadata reports none rather than an empty map.
+	got, err = s.GetMemories(context.Background(), &contract.GetMemoriesRequest{})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	for _, m := range got.GetMemories() {
+		if m.GetId() == "m4" && m.GetMetadata() != nil {
+			t.Errorf("expected no metadata on m4, got %#v", m.GetMetadata())
+		}
+	}
+}
+
+// TestGetMemoriesRejectsMalformedMetadataFilters checks a bad filter is the caller's mistake
+// (InvalidArgument) rather than an Internal from the driver. An unvalidated key would reach MySQL's
+// JSON_EXTRACT as part of a JSON path and raise ER_INVALID_JSON_PATH, which is why the RPC layer
+// validates filter keys with the same rule it validates written ones.
+func TestGetMemoriesRejectsMalformedMetadataFilters(t *testing.T) {
+	s := newTestServer(t)
+
+	cases := []struct {
+		name   string
+		filter []string
+	}{
+		{"no separator", []string{"novalue"}},
+		{"no key", []string{"=v"}},
+		{"invalid key", []string{`a"b=v`}},
+		{"path-escaping key", []string{`$.a=v`}},
+		{"same key twice with different values", []string{"a=1", "a=2"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{Metadata: c.filter})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+
+			if status.Code(err) != codes.InvalidArgument {
+				t.Errorf("expected InvalidArgument, got %s: %s", status.Code(err), err)
+			}
+		})
+	}
+}
+
+// TestStoreMemoryRejectsOverBoundsMetadata checks ValidateInsert's metadata arm surfaces as
+// InvalidArgument through the RPC.
+func TestStoreMemoryRejectsOverBoundsMetadata(t *testing.T) {
+	s := newTestServer(t)
+
+	_, err := s.StoreMemory(context.Background(), &contract.Memory{
+		Body: "body", Significance: 5, Metadata: map[string]string{"bad key": "v"},
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %s: %s", status.Code(err), err)
+	}
+}
+
+// TestUpdateMemoryClearFlags pins the two write-only clear instructions at the RPC layer: they are
+// the only way to unset either field, because every updatable field reads its zero value as "leave
+// unchanged" and an absent map is indistinguishable from an empty one on the wire.
+func TestUpdateMemoryClearFlags(t *testing.T) {
+	s := newTestServer(t)
+
+	if _, err := s.StoreMemory(context.Background(), &contract.Memory{
+		Id: "m1", Body: "body", Significance: 5, Group: "billing",
+		Metadata: map[string]string{"source": "slack"},
+	}); err != nil {
+		t.Fatalf("StoreMemory: %s", err)
+	}
+
+	if _, err := s.UpdateMemory(context.Background(), &contract.Memory{
+		Id: "m1", ClearMetadata: true, ClearGroup: true,
+	}); err != nil {
+		t.Fatalf("UpdateMemory: %s", err)
+	}
+
+	got, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if len(got.GetMemories()) != 1 {
+		t.Fatalf("expected the memory to survive, got %+v", got.GetMemories())
+	}
+
+	m := got.GetMemories()[0]
+
+	if m.GetMetadata() != nil {
+		t.Errorf("expected ClearMetadata to remove the metadata, got %#v", m.GetMetadata())
+	}
+
+	if m.GetGroup() != "" {
+		t.Errorf("expected ClearGroup to reset the group, got %q", m.GetGroup())
+	}
+}
+
+// TestGetMemoriesRecallStateFilters covers item 58's second half at the RPC layer, above all the
+// question it exists to answer: "what have I never recalled?".
+func TestGetMemoriesRecallStateFilters(t *testing.T) {
+	s := newTestServer(t)
+
+	for _, m := range []*contract.Memory{
+		{Id: "m1", Body: "never recalled", Significance: 5},
+		{Id: "m2", Body: "recalled", Significance: 5},
+		{Id: "m3", Body: "binary", Significance: 5, IsBinary: contract.Bool_TRUE},
+	} {
+		if _, err := s.StoreMemory(context.Background(), m); err != nil {
+			t.Fatalf("StoreMemory(%s): %s", m.GetId(), err)
+		}
+	}
+
+	if _, err := s.RecallMemories(context.Background(), &contract.RecallMemoriesRequest{Ids: []string{"m2"}}); err != nil {
+		t.Fatalf("RecallMemories: %s", err)
+	}
+
+	ids := func(res *contract.GetMemoriesResponse) []string {
+		out := make([]string, 0, len(res.GetMemories()))
+
+		for _, m := range res.GetMemories() {
+			out = append(out, m.GetId())
+		}
+
+		sort.Strings(out)
+
+		return out
+	}
+
+	cases := []struct {
+		name    string
+		request *contract.GetMemoriesRequest
+		want    []string
+	}{
+		{"never recalled", &contract.GetMemoriesRequest{Recalled: contract.Bool_FALSE}, []string{"m1", "m3"}},
+		{"recalled", &contract.GetMemoriesRequest{Recalled: contract.Bool_TRUE}, []string{"m2"}},
+		{"unspecified applies no filter", &contract.GetMemoriesRequest{}, []string{"m1", "m2", "m3"}},
+		{"binary only", &contract.GetMemoriesRequest{IsBinary: contract.Bool_TRUE}, []string{"m3"}},
+		{"non-binary only", &contract.GetMemoriesRequest{IsBinary: contract.Bool_FALSE}, []string{"m1", "m2"}},
+		{"non-summaries", &contract.GetMemoriesRequest{IsSummary: contract.Bool_FALSE}, []string{"m1", "m2", "m3"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := s.GetMemories(context.Background(), c.request)
+			if err != nil {
+				t.Fatalf("GetMemories: %s", err)
+			}
+
+			if have := ids(got); !reflect.DeepEqual(have, c.want) {
+				t.Errorf("expected %v, got %v", c.want, have)
+			}
+
+			if int(got.GetTotalCount()) != len(c.want) {
+				t.Errorf("expected a total count of %d, got %d", len(c.want), got.GetTotalCount())
+			}
+		})
+	}
+}
+
+// TestGetMemoriesRejectsInvertedRecallBounds mirrors the existing significance/timestamp guards.
+func TestGetMemoriesRejectsInvertedRecallBounds(t *testing.T) {
+	s := newTestServer(t)
+
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		RecallCountMin: 5, RecallCountMax: 2,
+	}); err == nil {
+		t.Error("expected an inverted recall-count range to be rejected")
+	}
+
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		TimeRecalledMin: 500, TimeRecalledMax: 200,
+	}); err == nil {
+		t.Error("expected an inverted time-recalled range to be rejected")
 	}
 }

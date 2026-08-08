@@ -9,10 +9,15 @@ package bridge
 import (
 	"encoding/base64"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/fastbean-au/hippocampus/contract"
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 // Message is a broker-agnostic delivery. Each adapter normalises its native message onto this shape
@@ -92,6 +97,20 @@ type TransformConfig struct {
 	// rule never rejects an otherwise-valid delivery. Defaults to "(empty message)".
 	EmptyBody string
 
+	// Metadata is stamped on every memory, before any per-message header labels are added.
+	Metadata map[string]string
+
+	// MetadataHeaders names the message headers to copy onto each memory's metadata, and
+	// MetadataHeaderPrefix copies every header whose name carries that prefix (the prefix is
+	// stripped from the resulting key).
+	//
+	// Both are opt-in selections rather than "copy every header", deliberately. Broker headers are
+	// unbounded and mostly machinery - trace context, delivery counts, redelivery flags, per-broker
+	// internals - so copying them all would fill each memory's metadata budget with noise, and the
+	// keys would be attacker- or infrastructure-controlled rather than the operator's choice.
+	MetadataHeaders      []string
+	MetadataHeaderPrefix string
+
 	// nowFn is injectable for deterministic tests; nil means time.Now.
 	nowFn func() time.Time
 }
@@ -130,6 +149,7 @@ func (t *DefaultTransformer) Transform(msg Message) ([]*contract.Memory, error) 
 		Significance: t.significance(msg),
 		TimeStamp:    t.timestamp(msg).UnixNano(),
 		Group:        t.group(msg),
+		Metadata:     t.metadata(msg),
 	}
 
 	if isBinary {
@@ -190,6 +210,154 @@ func (t *DefaultTransformer) group(msg Message) string {
 	}
 
 	return ""
+}
+
+// metadata builds a memory's metadata: the fixed labels first, then the selected headers, which
+// override a fixed label of the same key.
+//
+// Keys are normalised to the service's metadata charset and anything that still does not fit is
+// dropped, as is anything over the per-entry or total caps - a header the operator asked for but
+// the service would reject must not fail the delivery, because the message is not at fault and a
+// nack would redeliver it forever. Dropped selections are logged at Warn so a misconfiguration is
+// visible rather than silent.
+func (t *DefaultTransformer) metadata(msg Message) map[string]string {
+	if len(t.cfg.Metadata) == 0 && len(t.cfg.MetadataHeaders) == 0 && t.cfg.MetadataHeaderPrefix == "" {
+		return nil
+	}
+
+	out := make(map[string]string, len(t.cfg.Metadata)+len(t.cfg.MetadataHeaders))
+
+	for k, v := range t.cfg.Metadata {
+		if key := normaliseMetadataKey(k); key != "" {
+			out[key] = v
+		}
+	}
+
+	for _, name := range t.cfg.MetadataHeaders {
+		v, ok := msg.Headers[name]
+		if !ok || v == "" {
+			continue
+		}
+
+		if key := normaliseMetadataKey(name); key != "" {
+			out[key] = v
+		}
+	}
+
+	if prefix := t.cfg.MetadataHeaderPrefix; prefix != "" {
+		for name, v := range msg.Headers {
+			if v == "" || !strings.HasPrefix(name, prefix) {
+				continue
+			}
+
+			// The prefix is the selector, not part of the label, so it is stripped: a header named
+			// hippo-project becomes project.
+			if key := normaliseMetadataKey(strings.TrimPrefix(name, prefix)); key != "" {
+				out[key] = v
+			}
+		}
+	}
+
+	return boundMetadata(out)
+}
+
+// normaliseMetadataKey rewrites a broker header name into the service's metadata key charset
+// ([A-Za-z0-9][A-Za-z0-9._:/-]*), lowercasing it and replacing anything else with '_'. It returns
+// "" for a name with no usable leading character, since a key must start alphanumeric.
+//
+// Header names vary by broker in exactly the ways the charset forbids - MQTT user properties are
+// arbitrary, AMQP allows spaces, Kafka keys are raw bytes - so normalising here is what keeps a
+// legitimate delivery from being rejected for a name the operator did not choose.
+func normaliseMetadataKey(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+
+	var b strings.Builder
+
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+
+		alphanumeric := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+
+		switch {
+
+		case alphanumeric:
+			b.WriteByte(c)
+
+		case b.Len() == 0:
+			// A key must begin alphanumeric, so leading punctuation is dropped rather than
+			// substituted - a leading '_' would itself be invalid.
+			continue
+
+		case c == '.' || c == '_' || c == ':' || c == '/' || c == '-':
+			b.WriteByte(c)
+
+		default:
+			b.WriteByte('_')
+
+		}
+	}
+
+	key := b.String()
+
+	if len(key) > types.MaxMetadataKeyLength {
+		key = key[:types.MaxMetadataKeyLength]
+	}
+
+	return key
+}
+
+// boundMetadata drops entries until the map fits the service's caps, so an over-eager header
+// selection is trimmed rather than rejected by the service on every message. Keys are considered in
+// sorted order, so which entries survive is deterministic rather than a function of map iteration.
+func boundMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(metadata))
+
+	for k := range metadata {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	out := make(map[string]string, len(metadata))
+	total := 0
+
+	for _, k := range keys {
+		v := metadata[k]
+
+		if len(v) > types.MaxMetadataValueLength {
+			log.Warnf("eventsource: dropping metadata label '%s': value is %d bytes (max %d)", k, len(v), types.MaxMetadataValueLength)
+
+			continue
+		}
+
+		if len(out) >= types.MaxMetadataKeys {
+			log.Warnf("eventsource: dropping metadata label '%s': already at the %d-key limit", k, types.MaxMetadataKeys)
+
+			continue
+		}
+
+		// A rough per-entry serialised cost: the two quoted strings, the colon, and the separator.
+		cost := len(k) + len(v) + 6
+
+		if total+cost > types.MaxMetadataBytes {
+			log.Warnf("eventsource: dropping metadata label '%s': would exceed the %d-byte metadata limit", k, types.MaxMetadataBytes)
+
+			continue
+		}
+
+		out[k] = v
+		total += cost
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // timestamp resolves the memory timestamp, falling back to now when the broker gave none and

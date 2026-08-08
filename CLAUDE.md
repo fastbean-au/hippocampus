@@ -426,11 +426,25 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   avoid ever reading memory bodies. The `db.Server` interface (implemented by
   `hippocampus.Server`) inverts the dependency so the DB's consolidation scans can ask the server
   whether to delete a row. `initSchema` also runs `addColumnIfMissing` for columns added after a
-  table's original `CREATE TABLE` (currently `memories.is_summary` and the `group_name` column
+  table's original `CREATE TABLE` (currently `memories.is_summary`, the `group_name` column
   on both tables — named `group_name` because `GROUP` is reserved in every dialect, surfaced as
-  `group` in the API), so a database file written by an older version of the service is migrated
-  in place on next startup (Postgres uses native `ADD COLUMN IF NOT EXISTS`; MySQL shares the
-  probe with SQLite via `information_schema`).
+  `group` in the API — and the `metadata` column on both), so a database file written by an older
+  version of the service is migrated in place on next startup (Postgres uses native
+  `ADD COLUMN IF NOT EXISTS`; MySQL shares the probe with SQLite via `information_schema`).
+  **`metadata` is NULL-able with no DEFAULT on all three dialects, unlike `group_name` beside it,
+  and must stay that way**: SQLite's `json_extract` raises "malformed JSON" on an empty string but
+  returns NULL for NULL, so an `''`-defaulted column would make the _first_ metadata-filtered query
+  fail against every row written before the migration — a failure invisible to any fresh-database
+  test, which is why `TestMetadataFilterAgainstAPreMigrationDatabase` builds an old-schema store and
+  migrates it. The dialect-specific halves live in `db/metadata.go`: `metadataBytesExpr` (the byte
+  length for the store's accounting, per-dialect because SQLite's `length()` counts characters on a
+  text value and Postgres' `octet_length` has no definition for `jsonb`) and `metadataConditions`
+  (the filter predicate, which binds the key as a parameter — safe only because the key charset in
+  `types/metadata.go` excludes the characters that would let it escape the JSON path, and which
+  needs an explicit `COLLATE utf8mb4_bin` on MySQL or values would match case-insensitively there
+  and byte-for-byte everywhere else). Metadata bytes are counted at **four** sites that must agree
+  or eviction chases a figure it cannot reach: `EvictMemories`, `usedBytesLiveRows`,
+  `PreviewConsolidation`, and `RetainedStats`.
 - `contract/` — the gRPC contract (`hippocampus.proto`) and generated code. RPCs cover
   event/memory CRUD plus `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
   `ReplaceMemoriesWithSummary`, `GetSummarisationCandidates`, `SummariseMemories` (the embedded-LLM

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,11 +77,13 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "update_memory",
 		Description: "Revise an existing memory by id: only the fields you set are changed (body, " +
-			"significance, group, event_id) and omitted fields keep their stored values. Significance " +
-			"0 leaves the existing significance unchanged (it cannot reset a memory to unranked), and a " +
-			"memory's binary/summary nature cannot be changed here. Use this to correct or amend a " +
-			"memory you already stored rather than storing a duplicate. An unknown id is reported as " +
-			"not found; no memory is created.",
+			"significance, group, event_id, metadata) and omitted fields keep their stored values. " +
+			"Significance 0 leaves the existing significance unchanged (it cannot reset a memory to " +
+			"unranked), and a memory's binary/summary nature cannot be changed here. Metadata REPLACES " +
+			"the stored labels wholesale rather than merging with them, and because an omitted field " +
+			"means 'leave unchanged', removing labels or a group needs clear_metadata/clear_group. Use " +
+			"this to correct or amend a memory you already stored rather than storing a duplicate. An " +
+			"unknown id is reported as not found; no memory is created.",
 	}, b.updateMemory)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -106,9 +109,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_memories",
-		Description: "List memories filtered by group and significance range, ordered by significance " +
-			"or timestamp, with paging. A read-only browse that does not reinforce anything - use " +
-			"recall_memories when you actually retrieve a memory.",
+		Description: "List memories filtered by group, significance range, and metadata labels, ordered " +
+			"by significance or timestamp, with paging. Set recalled=false to find the memories that " +
+			"have never been recalled - the closest thing to asking what is about to be forgotten. A " +
+			"read-only browse that does not reinforce anything - use recall_memories when you actually " +
+			"retrieve a memory.",
 	}, b.listMemories)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -169,6 +174,8 @@ type memoryView struct {
 	RecallCount  int32  `json:"recall_count"`
 	IsSummary    bool   `json:"is_summary,omitempty"`
 	IsBinary     bool   `json:"is_binary,omitempty"`
+
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // eventView is the plain-struct projection of a contract.Event, mirroring memoryView.
@@ -180,6 +187,8 @@ type eventView struct {
 	Group        string `json:"group,omitempty"`
 	TimeStart    int64  `json:"time_start"`
 	TimeEnd      int64  `json:"time_end,omitempty"`
+
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 func toMemoryView(in *contract.Memory) memoryView {
@@ -195,6 +204,51 @@ func toMemoryView(in *contract.Memory) memoryView {
 		RecallCount:  in.GetRecallCount(),
 		IsSummary:    in.GetIsSummary(),
 		IsBinary:     in.GetIsBinary() == contract.Bool_TRUE,
+		Metadata:     in.GetMetadata(),
+	}
+}
+
+// metadataFilterPairs packs a metadata filter map into the repeated "key=value" strings the RPC
+// takes. The tools expose a map because that is the shape a model produces naturally and the shape
+// metadata is written in; the RPC takes strings because its list routes are HTTP GETs, and a map
+// cannot be bound from a URL query string.
+func metadataFilterPairs(metadata map[string]string) []string {
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(metadata))
+
+	for k := range metadata {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	pairs := make([]string, 0, len(keys))
+
+	for _, k := range keys {
+		pairs = append(pairs, k+"="+metadata[k])
+	}
+
+	return pairs
+}
+
+// triStateFilter maps an optional bool onto the contract's tri-state, so a tool can express "only
+// the false ones" - which a plain bool cannot, since omitting it and setting it to false would both
+// arrive as false.
+func triStateFilter(in *bool) contract.Bool {
+	switch {
+
+	case in == nil:
+		return contract.Bool_UNSPECIFIED
+
+	case *in:
+		return contract.Bool_TRUE
+
+	default:
+		return contract.Bool_FALSE
+
 	}
 }
 
@@ -213,6 +267,7 @@ func toEventView(in *contract.Event) eventView {
 	return eventView{
 		Id:           in.GetId(),
 		Name:         in.GetName(),
+		Metadata:     in.GetMetadata(),
 		Description:  in.GetDescription(),
 		Significance: in.GetSignificance(),
 		Group:        in.GetGroup(),
@@ -228,6 +283,8 @@ type storeMemoryInput struct {
 	Significance int32  `json:"significance,omitempty" jsonschema:"how important the memory is; higher is more significant and survives longer; 0 leaves it unranked"`
 	Group        string `json:"group,omitempty" jsonschema:"optional freeform grouping/context label (system, subsystem, owner, ...)"`
 	EventId      string `json:"event_id,omitempty" jsonschema:"optional id of an event to associate this memory with"`
+
+	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional key/value labels for multi-dimensional classification, e.g. {\"source\": \"slack\", \"project\": \"apollo\"}; keys are letters, digits and . _ : / - only; at most 32 pairs"`
 }
 
 type storeMemoryOutput struct {
@@ -248,6 +305,7 @@ func (b *bridge) storeMemory(ctx context.Context, _ *mcp.CallToolRequest, in sto
 		Significance: in.Significance,
 		Group:        in.Group,
 		EventId:      in.EventId,
+		Metadata:     in.Metadata,
 	})
 	if err != nil {
 		return nil, storeMemoryOutput{}, fmt.Errorf("StoreMemory failed: %w", err)
@@ -264,6 +322,10 @@ type updateMemoryInput struct {
 	Significance int32  `json:"significance,omitempty" jsonschema:"new significance; higher survives longer; 0 leaves the existing significance unchanged"`
 	Group        string `json:"group,omitempty" jsonschema:"new grouping/context label; omit to leave the group unchanged"`
 	EventId      string `json:"event_id,omitempty" jsonschema:"associate the memory with this event; omit to leave the association unchanged"`
+
+	Metadata      map[string]string `json:"metadata,omitempty" jsonschema:"new key/value labels; REPLACES the stored set wholesale rather than merging, and omitting it leaves them unchanged - use clear_metadata to remove them"`
+	ClearMetadata bool              `json:"clear_metadata,omitempty" jsonschema:"remove all of the memory's metadata; takes precedence over any metadata sent alongside it"`
+	ClearGroup    bool              `json:"clear_group,omitempty" jsonschema:"reset the memory's group to empty; an empty group otherwise means leave unchanged"`
 }
 
 type updateMemoryOutput struct {
@@ -275,19 +337,25 @@ func (b *bridge) updateMemory(ctx context.Context, _ *mcp.CallToolRequest, in up
 		return nil, updateMemoryOutput{}, fmt.Errorf("id is required")
 	}
 
-	if in.Body == "" && in.Significance == 0 && in.Group == "" && in.EventId == "" {
-		return nil, updateMemoryOutput{}, fmt.Errorf("at least one field (body, significance, group, event_id) must be set to update")
+	if in.Body == "" && in.Significance == 0 && in.Group == "" && in.EventId == "" &&
+		len(in.Metadata) == 0 && !in.ClearMetadata && !in.ClearGroup {
+		return nil, updateMemoryOutput{}, fmt.Errorf(
+			"at least one field (body, significance, group, event_id, metadata, clear_metadata, clear_group) must be set to update",
+		)
 	}
 
 	callCtx, cancel := b.callContext(ctx)
 	defer cancel()
 
 	res, err := b.client.UpdateMemory(callCtx, &contract.Memory{
-		Id:           in.Id,
-		Body:         in.Body,
-		Significance: in.Significance,
-		Group:        in.Group,
-		EventId:      in.EventId,
+		Id:            in.Id,
+		Body:          in.Body,
+		Significance:  in.Significance,
+		Group:         in.Group,
+		EventId:       in.EventId,
+		Metadata:      in.Metadata,
+		ClearMetadata: in.ClearMetadata,
+		ClearGroup:    in.ClearGroup,
 	})
 	if err != nil {
 		return nil, updateMemoryOutput{}, fmt.Errorf("UpdateMemory failed: %w", err)
@@ -363,6 +431,8 @@ type searchMemoriesInput struct {
 	Mode      string `json:"mode,omitempty" jsonschema:"how to match: keyword (the default) matches the words in the body; semantic matches by meaning; hybrid does both and fuses them. semantic and hybrid need the service to have an embedding model and OpenSearch configured, and are rejected otherwise"`
 
 	IncludeLinked bool `json:"include_linked,omitempty" jsonschema:"also return the memories linked to each match, one hop away, appended after the ranked results"`
+
+	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict matches to memories carrying ALL of these key/value labels exactly"`
 }
 
 // searchModes maps the tool's mode string onto the RPC enum. An unknown value is an error rather
@@ -397,6 +467,7 @@ func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 		Mode:      mode,
 
 		IncludeLinked: in.IncludeLinked,
+		Metadata:      metadataFilterPairs(in.Metadata),
 	})
 	if err != nil {
 		return nil, memoriesOutput{}, fmt.Errorf("SearchMemories failed: %w", err)
@@ -414,6 +485,9 @@ type listMemoriesInput struct {
 	OrderBy         string `json:"order_by,omitempty" jsonschema:"'significance' (the default) or 'timestamp'"`
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
+
+	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict to memories carrying ALL of these key/value labels exactly"`
+	Recalled *bool             `json:"recalled,omitempty" jsonschema:"optional: false returns only memories that have never been recalled, true only those recalled at least once; omit for no restriction"`
 }
 
 type memoriesPageOutput struct {
@@ -432,6 +506,8 @@ func (b *bridge) listMemories(ctx context.Context, _ *mcp.CallToolRequest, in li
 		OrderBy:         in.OrderBy,
 		Limit:           in.Limit,
 		Offset:          in.Offset,
+		Metadata:        metadataFilterPairs(in.Metadata),
+		Recalled:        triStateFilter(in.Recalled),
 	})
 	if err != nil {
 		return nil, memoriesPageOutput{}, fmt.Errorf("GetMemories failed: %w", err)
@@ -450,6 +526,8 @@ type createEventInput struct {
 	Description  string `json:"description,omitempty" jsonschema:"optional longer description of the event"`
 	Significance int32  `json:"significance,omitempty" jsonschema:"how important the event is; higher is more significant; 0 leaves it unranked"`
 	Group        string `json:"group,omitempty" jsonschema:"optional freeform grouping/context label"`
+
+	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional key/value labels for multi-dimensional classification; keys are letters, digits and . _ : / - only; at most 32 pairs"`
 }
 
 type createEventOutput struct {
@@ -470,6 +548,7 @@ func (b *bridge) createEvent(ctx context.Context, _ *mcp.CallToolRequest, in cre
 		Description:  in.Description,
 		Significance: in.Significance,
 		Group:        in.Group,
+		Metadata:     in.Metadata,
 	})
 	if err != nil {
 		return nil, createEventOutput{}, fmt.Errorf("StoreEvent failed: %w", err)
@@ -487,6 +566,8 @@ type listEventsInput struct {
 	OrderBy         string `json:"order_by,omitempty" jsonschema:"'significance' (the default) or 'timestamp'"`
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
+
+	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict to events carrying ALL of these key/value labels exactly"`
 }
 
 type eventsPageOutput struct {
@@ -505,6 +586,7 @@ func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in list
 		OrderBy:         in.OrderBy,
 		Limit:           in.Limit,
 		Offset:          in.Offset,
+		Metadata:        metadataFilterPairs(in.Metadata),
 	})
 	if err != nil {
 		return nil, eventsPageOutput{}, fmt.Errorf("GetEvents failed: %w", err)

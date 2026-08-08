@@ -182,3 +182,104 @@ func TestMemorySetDefaults(t *testing.T) {
 		t.Errorf("SetDefaults overwrote supplied values: %+v", fixed)
 	}
 }
+
+// TestMemoryMetadataRoundTrip verifies metadata survives both conversions and that the clear flags
+// travel inbound only. They are write-only update instructions - echoing them back on a read would
+// invite a client to round-trip a fetched memory through UpdateMemory and silently wipe it.
+func TestMemoryMetadataRoundTrip(t *testing.T) {
+	in := &contract.Memory{
+		Id:            "m1",
+		Body:          "body",
+		Metadata:      map[string]string{"source": "slack", "project": "x"},
+		ClearMetadata: true,
+		ClearGroup:    true,
+	}
+
+	m := MemoryFromProto(in)
+
+	if !reflect.DeepEqual(m.Metadata, map[string]string{"source": "slack", "project": "x"}) {
+		t.Fatalf("metadata not carried in: %#v", m.Metadata)
+	}
+
+	if !m.ClearMetadata || !m.ClearGroup {
+		t.Errorf("clear flags not carried in: %+v", m)
+	}
+
+	// The conversion copies, so a caller reusing the proto message cannot mutate a stored memory.
+	in.Metadata["source"] = "email"
+
+	if m.Metadata["source"] != "slack" {
+		t.Errorf("MemoryFromProto aliased the proto map: %#v", m.Metadata)
+	}
+
+	out := m.ToProto()
+
+	if !reflect.DeepEqual(out.GetMetadata(), m.Metadata) {
+		t.Errorf("metadata not carried out: %#v", out.GetMetadata())
+	}
+
+	if out.GetClearMetadata() || out.GetClearGroup() {
+		t.Error("the clear flags are write-only and must never be echoed on a read")
+	}
+}
+
+// TestMemoryMetadataEmptyStaysAbsent keeps a memory with no metadata looking exactly as it did
+// before the field existed - no metadata key in the JSON a gateway client sees.
+func TestMemoryMetadataEmptyStaysAbsent(t *testing.T) {
+	for _, metadata := range []map[string]string{nil, {}} {
+		m := Memory{Id: "m1", Body: "body", Metadata: metadata}
+
+		if got := m.ToProto().GetMetadata(); got != nil {
+			t.Errorf("expected empty metadata to convert to nil, got %#v", got)
+		}
+	}
+}
+
+// TestMemoryValidateInsert_MetadataCountsTowardBodyLimit pins the decision that metadata shares the
+// body's budget. Leaving it outside memory.limit.sizeBytes would be a way around the limit, since
+// metadata is client-supplied and stored per memory. Note this cannot reject a write that would
+// previously have succeeded: a memory carrying no metadata contributes zero.
+func TestMemoryValidateInsert_MetadataCountsTowardBodyLimit(t *testing.T) {
+	metadata := map[string]string{"source": "slack"}
+
+	overhead := MetadataSerialisedLen(metadata)
+	if overhead == 0 {
+		t.Fatal("expected the metadata to have a non-zero serialised length")
+	}
+
+	limit := 32 + overhead
+
+	// The body alone fits the limit exactly.
+	bare := Memory{Id: "m1", Body: strings.Repeat("b", limit)}
+	if err := bare.ValidateInsert(limit, false); err != nil {
+		t.Fatalf("expected a body at the limit to be accepted: %s", err)
+	}
+
+	// The same body with metadata does not.
+	withMetadata := Memory{Id: "m1", Body: strings.Repeat("b", limit), Metadata: metadata}
+	if err := withMetadata.ValidateInsert(limit, false); err == nil {
+		t.Fatal("expected body+metadata over the limit to be rejected")
+	}
+
+	// And a body sized to leave exactly enough room does.
+	fitting := Memory{Id: "m1", Body: strings.Repeat("b", limit-overhead), Metadata: metadata}
+	if err := fitting.ValidateInsert(limit, false); err != nil {
+		t.Fatalf("expected body+metadata at the limit to be accepted: %s", err)
+	}
+
+	// An unset limit (the default) leaves MaxMetadataBytes as the only bound.
+	if err := withMetadata.ValidateInsert(0, false); err != nil {
+		t.Fatalf("expected an unset limit to accept the write: %s", err)
+	}
+}
+
+// TestMemoryValidateInsert_MetadataBounds checks ValidateInsert actually reaches ValidateMetadata;
+// the bounds themselves are covered in metadata_test.go.
+func TestMemoryValidateInsert_MetadataBounds(t *testing.T) {
+	m := Memory{Id: "m1", Body: "body", Metadata: map[string]string{"bad key": "v"}}
+
+	err := m.ValidateInsert(0, false)
+	if err == nil || !strings.Contains(err.Error(), "metadata key") {
+		t.Fatalf("expected a metadata key error, got: %v", err)
+	}
+}

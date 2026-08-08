@@ -54,8 +54,12 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 		b.Fatalf("Prepare (memories): %s", err)
 	}
 
+	// Both placeholder lists are derived from their column constants rather than written out, so a
+	// column added to either table cannot leave these inserts short of one - which, inside this
+	// transaction on SQLite's single connection, surfaces as a deadlock rather than as the error
+	// b.Fatalf would report.
 	insertEvent, err := tx.Prepare(d.rebind(
-		`INSERT INTO events (` + eventStoredColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO events (` + eventStoredColumns + `) VALUES ` + eventValuePlaceholders,
 	))
 	if err != nil {
 		b.Fatalf("Prepare (events): %s", err)
@@ -71,7 +75,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 
 			if i%10 == 0 {
 				if _, err := insertEvent.Exec(
-					eventId, now, now, levelID[1+i%100], "bench event", "", false, 0, "",
+					eventId, now, now, levelID[1+i%100], "bench event", "", false, 0, "", nil,
 				); err != nil {
 					b.Fatalf("insert event: %s", err)
 				}
@@ -79,7 +83,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 		}
 
 		if _, err := insertMemory.Exec(
-			fmt.Sprintf("bench-memory-%08d", i), now, levelID[1+i%100], eventId, body, false, 0, 0, false, "", false,
+			fmt.Sprintf("bench-memory-%08d", i), now, levelID[1+i%100], eventId, body, false, 0, 0, false, "", false, nil,
 		); err != nil {
 			b.Fatalf("insert memory: %s", err)
 		}
@@ -88,7 +92,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 	// Empty events, one per 100 memories, for the bare-event pass.
 	for i := 0; i < memories/100; i++ {
 		if _, err := insertEvent.Exec(
-			fmt.Sprintf("bench-empty-event-%07d", i), now, now, levelID[1+i%100], "bench empty event", "", false, 0, "",
+			fmt.Sprintf("bench-empty-event-%07d", i), now, now, levelID[1+i%100], "bench empty event", "", false, 0, "", nil,
 		); err != nil {
 			b.Fatalf("insert empty event: %s", err)
 		}
@@ -266,7 +270,7 @@ func seedDeletableMemories(b *testing.B, d *DB, n int) []memoryRecallSnapshot {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("del-%08d", i)
 
-		if _, err := insert.Exec(id, now, levelID[1], "", body, false, 0, 0, false, "", false); err != nil {
+		if _, err := insert.Exec(id, now, levelID[1], "", body, false, 0, 0, false, "", false, nil); err != nil {
 			b.Fatalf("insert: %s", err)
 		}
 

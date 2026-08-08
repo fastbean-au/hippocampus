@@ -142,5 +142,35 @@ func transformConfig() bridge.TransformConfig {
 		GroupHeader:        viper.GetString("group-header"),
 		Binary:             viper.GetBool("binary"),
 		MaxBodyBytes:       viper.GetInt("max-body-bytes"),
+
+		Metadata:             metadataLabels(),
+		MetadataHeaders:      viper.GetStringSlice("metadata-header"),
+		MetadataHeaderPrefix: viper.GetString("metadata-header-prefix"),
 	}
+}
+
+// metadataLabels turns the repeated --metadata 'key=value' flags into the fixed labels stamped on
+// every memory, splitting on the FIRST '=' so a value may contain one. A malformed entry is skipped
+// with a warning rather than failing startup: the bridge's job is to keep consuming, and one bad
+// flag should not stop it.
+func metadataLabels() map[string]string {
+	raw := viper.GetStringSlice("metadata")
+	if len(raw) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(raw))
+
+	for _, entry := range raw {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			log.Warnf("ignoring malformed --metadata %q (want 'key=value')", entry)
+
+			continue
+		}
+
+		out[key] = value
+	}
+
+	return out
 }

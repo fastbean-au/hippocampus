@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -251,5 +252,73 @@ func TestRenderTextExplanationEdges(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestRenderMemoryMetadataIsSorted is the reason renderMetadata sorts rather than ranging the map.
+// Go randomises map iteration, so an unsorted renderer would print the same memory differently
+// between runs - unreadable to diff and untestable. The keys here are inserted in reverse order so
+// a renderer that simply ranged would have to be lucky to pass, and running the render repeatedly
+// makes that luck run out.
+func TestRenderMemoryMetadataIsSorted(t *testing.T) {
+	memory := &contract.Memory{
+		Id: "m1", Body: "body", Significance: 5,
+		Metadata: map[string]string{"source": "slack", "project": "apollo", "author": "sean"},
+	}
+
+	want := []string{
+		"  metadata:     author=sean",
+		"  metadata:     project=apollo",
+		"  metadata:     source=slack",
+	}
+
+	for range 20 {
+		var buf bytes.Buffer
+
+		r := &renderer{out: &buf}
+
+		if err := r.render(&contract.GetMemoriesResponse{Memories: []*contract.Memory{memory}}); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+
+		var got []string
+
+		for _, line := range strings.Split(buf.String(), "\n") {
+			if strings.HasPrefix(line, "  metadata:") {
+				got = append(got, line)
+			}
+		}
+
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("metadata rendered as %#v, want %#v", got, want)
+		}
+	}
+}
+
+// TestRenderEventMetadata verifies the event renderer carries metadata too, and that an item
+// without any prints no metadata lines rather than an empty one.
+func TestRenderEventMetadata(t *testing.T) {
+	var buf bytes.Buffer
+
+	r := &renderer{out: &buf}
+
+	if err := r.render(&contract.GetEventResponse{Event: &contract.Event{
+		Id: "e1", Name: "an event", Metadata: map[string]string{"team": "platform"},
+	}}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "  metadata:     team=platform") {
+		t.Fatalf("event output = %q", buf.String())
+	}
+
+	buf.Reset()
+
+	if err := r.render(&contract.GetEventResponse{Event: &contract.Event{Id: "e1", Name: "an event"}}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "metadata") {
+		t.Fatalf("an event with no metadata should print no metadata line, got %q", buf.String())
 	}
 }

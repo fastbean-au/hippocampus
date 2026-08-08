@@ -403,6 +403,34 @@ func queryValues(m proto.Message, exclude map[string]bool) (url.Values, error) {
 		case float64:
 			values.Set(k, strconv.FormatFloat(v, 'f', -1, 64))
 
+		case []any:
+			// A repeated field becomes one query parameter per element, which is how the gateway
+			// parses them - the default arm below would send the raw JSON array as a single value
+			// and the gateway would reject it. Only reachable since a list request gained a
+			// repeated field (the metadata filters); before that nothing exercised this.
+			for _, element := range v {
+				switch element := element.(type) {
+
+				case string:
+					values.Add(k, element)
+
+				case bool:
+					values.Add(k, strconv.FormatBool(element))
+
+				case float64:
+					values.Add(k, strconv.FormatFloat(element, 'f', -1, 64))
+
+				default:
+					encoded, err := json.Marshal(element)
+					if err != nil {
+						continue
+					}
+
+					values.Add(k, string(encoded))
+
+				}
+			}
+
 		default:
 			values.Set(k, string(rawValue))
 		}

@@ -30,6 +30,12 @@ var enumFlagValues = map[string][]string{
 	"extremum":   {"highest", "lowest"},
 	"order-by":   {"significance", "timestamp"},
 	"direction":  {"both", "outbound", "inbound"},
+
+	// The tri-state list filters. They are string flags rather than pflag bools precisely so
+	// "false" is expressible, so both values are worth offering.
+	"recalled": {"true", "false"},
+	"summary":  {"true", "false"},
+	"binary":   {"true", "false"},
 }
 
 // completionShells are the shells `hippo completion` can emit a script for.

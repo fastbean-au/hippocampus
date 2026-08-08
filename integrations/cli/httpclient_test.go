@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -289,5 +290,50 @@ func TestHTTPClientExplainConsolidation(t *testing.T) {
 
 	if len(sent.GetMemoryIds()) != 2 || sent.GetCurve().GetSignificance() != 10 {
 		t.Fatalf("body round-trip mismatch: %+v", sent)
+	}
+}
+
+// TestHTTPClientGetMemoriesRepeatedQueryParams covers the repeated-field encoding, which nothing
+// exercised until the metadata filters landed: GetMemoriesRequest had no repeated field, so
+// queryValues' fallback arm would have sent the raw JSON array (metadata=["a=b"]) as a single value
+// and the gateway would have rejected it. Each element must be its own parameter.
+func TestHTTPClientGetMemoriesRepeatedQueryParams(t *testing.T) {
+	client, captured := newTestHTTPClient(t, http.StatusOK, &contract.GetMemoriesResponse{})
+
+	req := &contract.GetMemoriesRequest{
+		Metadata: []string{"source=slack", "project=apollo"},
+		Recalled: contract.Bool_FALSE,
+	}
+
+	if _, err := client.GetMemories(context.Background(), req); err != nil {
+		t.Fatalf("GetMemories: %v", err)
+	}
+
+	got := captured.query["metadata"]
+
+	want := []string{"source=slack", "project=apollo"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("metadata = %#v, want %#v (one parameter per pair)", got, want)
+	}
+
+	// The tri-state travels as its enum name, like every other enum on this route.
+	if got := captured.query.Get("recalled"); got != "FALSE" {
+		t.Fatalf("recalled = %q, want FALSE", got)
+	}
+}
+
+// TestHTTPClientGetEventsRepeatedQueryParams is the event twin - the same encoding path, reached
+// through a different request message.
+func TestHTTPClientGetEventsRepeatedQueryParams(t *testing.T) {
+	client, captured := newTestHTTPClient(t, http.StatusOK, &contract.GetEventsResponse{})
+
+	if _, err := client.GetEvents(context.Background(), &contract.GetEventsRequest{
+		Metadata: []string{"team=platform"},
+	}); err != nil {
+		t.Fatalf("GetEvents: %v", err)
+	}
+
+	if got := captured.query["metadata"]; !reflect.DeepEqual(got, []string{"team=platform"}) {
+		t.Fatalf("metadata = %#v, want [team=platform]", got)
 	}
 }

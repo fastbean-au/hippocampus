@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -685,5 +686,170 @@ func TestRecallIncludeLinkedPassesThrough(t *testing.T) {
 
 	if !fake.recallReq.GetIncludeLinked() {
 		t.Error("include_linked did not reach the RPC")
+	}
+}
+
+// TestMetadataReachesTheRPCs verifies metadata travels on every tool that writes it, as a proto map
+// on the write path and as packed "key=value" strings on the filter path - the two shapes are
+// different because the list RPCs are HTTP GETs, whose query strings cannot carry a map.
+func TestMetadataReachesTheRPCs(t *testing.T) {
+	ctx := context.Background()
+	metadata := map[string]string{"source": "slack", "project": "apollo"}
+
+	t.Run("store_memory", func(t *testing.T) {
+		f := &fakeClient{storeMemoryRes: &contract.StoreMemoryResponse{Id: "m1"}}
+		b := newBridge(f)
+
+		if _, _, err := b.storeMemory(ctx, nil, storeMemoryInput{Body: "b", Metadata: metadata}); err != nil {
+			t.Fatalf("storeMemory: %s", err)
+		}
+
+		if !reflect.DeepEqual(f.storeMemoryReq.GetMetadata(), metadata) {
+			t.Errorf("StoreMemory received %#v, want %#v", f.storeMemoryReq.GetMetadata(), metadata)
+		}
+	})
+
+	t.Run("update_memory", func(t *testing.T) {
+		f := &fakeClient{}
+		b := newBridge(f)
+
+		if _, _, err := b.updateMemory(ctx, nil, updateMemoryInput{
+			Id: "m1", Metadata: metadata, ClearGroup: true,
+		}); err != nil {
+			t.Fatalf("updateMemory: %s", err)
+		}
+
+		if !reflect.DeepEqual(f.updateMemoryReq.GetMetadata(), metadata) {
+			t.Errorf("UpdateMemory received %#v, want %#v", f.updateMemoryReq.GetMetadata(), metadata)
+		}
+
+		if !f.updateMemoryReq.GetClearGroup() {
+			t.Error("UpdateMemory did not carry clear_group")
+		}
+	})
+
+	t.Run("create_event", func(t *testing.T) {
+		f := &fakeClient{}
+		b := newBridge(f)
+
+		if _, _, err := b.createEvent(ctx, nil, createEventInput{Name: "e", Metadata: metadata}); err != nil {
+			t.Fatalf("createEvent: %s", err)
+		}
+
+		if !reflect.DeepEqual(f.storeEventReq.GetMetadata(), metadata) {
+			t.Errorf("StoreEvent received %#v, want %#v", f.storeEventReq.GetMetadata(), metadata)
+		}
+	})
+
+	// The filter path packs the map into sorted pairs.
+	want := []string{"project=apollo", "source=slack"}
+
+	t.Run("list_memories", func(t *testing.T) {
+		f := &fakeClient{}
+		b := newBridge(f)
+
+		if _, _, err := b.listMemories(ctx, nil, listMemoriesInput{Metadata: metadata}); err != nil {
+			t.Fatalf("listMemories: %s", err)
+		}
+
+		if !reflect.DeepEqual(f.getMemoriesReq.GetMetadata(), want) {
+			t.Errorf("GetMemories received %#v, want %#v", f.getMemoriesReq.GetMetadata(), want)
+		}
+	})
+
+	t.Run("search_memories", func(t *testing.T) {
+		f := &fakeClient{}
+		b := newBridge(f)
+
+		if _, _, err := b.searchMemories(ctx, nil, searchMemoriesInput{Query: "q", Metadata: metadata}); err != nil {
+			t.Fatalf("searchMemories: %s", err)
+		}
+
+		if !reflect.DeepEqual(f.searchReq.GetMetadata(), want) {
+			t.Errorf("SearchMemories received %#v, want %#v", f.searchReq.GetMetadata(), want)
+		}
+	})
+
+	t.Run("list_events", func(t *testing.T) {
+		f := &fakeClient{}
+		b := newBridge(f)
+
+		if _, _, err := b.listEvents(ctx, nil, listEventsInput{Metadata: metadata}); err != nil {
+			t.Fatalf("listEvents: %s", err)
+		}
+
+		if !reflect.DeepEqual(f.getEventsReq.GetMetadata(), want) {
+			t.Errorf("GetEvents received %#v, want %#v", f.getEventsReq.GetMetadata(), want)
+		}
+	})
+}
+
+// TestUpdateMemoryAcceptsMetadataOnlyUpdates covers the "no fields set" guard. It enumerates the
+// updatable fields by hand, so a new one that is not added to it makes an otherwise valid update
+// fail with a misleading message.
+func TestUpdateMemoryAcceptsMetadataOnlyUpdates(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name  string
+		input updateMemoryInput
+	}{
+		{"metadata only", updateMemoryInput{Id: "m1", Metadata: map[string]string{"source": "slack"}}},
+		{"clear metadata only", updateMemoryInput{Id: "m1", ClearMetadata: true}},
+		{"clear group only", updateMemoryInput{Id: "m1", ClearGroup: true}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := newBridge(&fakeClient{})
+
+			if _, _, err := b.updateMemory(ctx, nil, c.input); err != nil {
+				t.Fatalf("expected the update to be accepted, got: %s", err)
+			}
+		})
+	}
+
+	// An update setting nothing at all is still rejected.
+	b := newBridge(&fakeClient{})
+
+	if _, _, err := b.updateMemory(ctx, nil, updateMemoryInput{Id: "m1"}); err == nil {
+		t.Error("expected an update with no fields set to be rejected")
+	}
+}
+
+// TestMemoryViewCarriesMetadata verifies metadata reaches the MCP host on the way back out.
+func TestMemoryViewCarriesMetadata(t *testing.T) {
+	metadata := map[string]string{"source": "slack"}
+
+	view := toMemoryView(&contract.Memory{Id: "m1", Body: "b", Metadata: metadata})
+	if !reflect.DeepEqual(view.Metadata, metadata) {
+		t.Errorf("memoryView carried %#v, want %#v", view.Metadata, metadata)
+	}
+
+	if got := toMemoryView(&contract.Memory{Id: "m1"}).Metadata; got != nil {
+		t.Errorf("expected no metadata for a memory without any, got %#v", got)
+	}
+
+	eview := toEventView(&contract.Event{Id: "e1", Name: "e", Metadata: metadata})
+	if !reflect.DeepEqual(eview.Metadata, metadata) {
+		t.Errorf("eventView carried %#v, want %#v", eview.Metadata, metadata)
+	}
+}
+
+// TestTriStateFilter pins the optional-bool mapping: a tool must be able to say "only the false
+// ones", which is exactly what a plain bool cannot express.
+func TestTriStateFilter(t *testing.T) {
+	yes, no := true, false
+
+	if got := triStateFilter(nil); got != contract.Bool_UNSPECIFIED {
+		t.Errorf("nil should be UNSPECIFIED, got %v", got)
+	}
+
+	if got := triStateFilter(&yes); got != contract.Bool_TRUE {
+		t.Errorf("true should be TRUE, got %v", got)
+	}
+
+	if got := triStateFilter(&no); got != contract.Bool_FALSE {
+		t.Errorf("false should be FALSE, got %v", got)
 	}
 }

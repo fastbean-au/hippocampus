@@ -194,6 +194,18 @@ func valueForType(t *testing.T, fieldType reflect.Type, seed int) reflect.Value 
 
 		return slice
 
+	case reflect.Map:
+		// Memory.metadata and Event.metadata are the contract's only map fields. One entry is enough
+		// to distinguish a populated map from the nil a mis-wired getter would return, and the key is
+		// seeded like every other value so two map fields on one message cannot be confused.
+		m := reflect.MakeMap(fieldType)
+		m.SetMapIndex(
+			valueForType(t, fieldType.Key(), seed),
+			valueForType(t, fieldType.Elem(), seed+1),
+		)
+
+		return m
+
 	case reflect.Pointer:
 		return reflect.New(fieldType.Elem())
 

@@ -214,12 +214,105 @@ without authentication, for liveness/readiness probes (see [Health and readiness
 The `GetEvents` and `GetMemories` list endpoints additionally accept a `significance_extremum`
 query parameter (`SIGNIFICANCE_EXTREMUM_HIGHEST` or `SIGNIFICANCE_EXTREMUM_LOWEST`): in place of a
 `significance_min`/`significance_max` range, it returns only the events/memories tied at the single
-highest (or lowest) significance value among those matching the other filters (time range, group) —
-computed dynamically, not against a caller-supplied bound. It is mutually exclusive with
-`significance_min`/`significance_max`; supplying both is rejected with `InvalidArgument`. The
+highest (or lowest) significance value among those matching the other filters (time range, group,
+metadata, recall state) — computed dynamically, not against a caller-supplied bound. It is mutually
+exclusive with `significance_min`/`significance_max`; supplying both is rejected with
+`InvalidArgument`. The
 lowest-significance set is exactly what the next sleep cycle forgets first, which makes it a handy
 lens on consolidation (see [Demonstrations](demonstrations.md)). The full field-level request and
 response schema for every endpoint lives in the OpenAPI description at `/v1/openapi.json`.
+
+#### Metadata filters
+
+Memories and events carry a `metadata` map (see [Metadata](#metadata)), and `GetMemories`,
+`GetEvents`, and `SearchMemories` all accept a `metadata` filter that restricts results to items
+carrying **every** one of the given pairs — a conjunction, matched exactly.
+
+Over HTTP the filter is a **repeated `key=value` query parameter**, not a map:
+
+```
+GET /v1/memories?metadata=source%3Dslack&metadata=project%3Dapollo
+```
+
+It is a repeated string rather than a map because grpc-gateway cannot bind a map field from a URL
+query string, and these are `GET` routes. The pair is split on the **first** `=`, so a value may
+itself contain one; a key may not, which is what keeps the packing unambiguous. A key that does not
+match the metadata charset is rejected with `InvalidArgument` rather than reaching the database.
+
+On `SearchMemories` the filter is applied **inside the search index**, alongside `group` — so it
+narrows the candidates that ranking sees, and `limit` still returns a full page when one exists.
+
+Metadata predicates are **unindexed**, exactly as the `group` filter is: the only index on the
+memories table is the consolidation covering index. On a large store a metadata-filtered list is a
+scan, and is best combined with a time range or a page size.
+
+#### Recall-state filters
+
+`GetMemories` also filters on the columns the store already maintained but never exposed:
+
+| Parameter                                 | Meaning                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------- |
+| `recalled`                                | `FALSE` for memories never recalled, `TRUE` for those recalled at least once |
+| `recall_count_min` / `recall_count_max`   | inclusive bounds on the recall count; `0` means no bound                     |
+| `time_recalled_min` / `time_recalled_max` | inclusive UnixNano bounds on the last recall                                 |
+| `is_summary`                              | `TRUE` for summary memories only, `FALSE` to exclude them                    |
+| `is_binary`                               | `TRUE` for binary memories only, `FALSE` to exclude them                     |
+
+`recalled`, `is_summary` and `is_binary` are the tri-state `Bool` (`UNSPECIFIED`/`FALSE`/`TRUE`)
+rather than plain booleans, because an unset proto3 `bool` and an explicit `false` are the same
+value on the wire — so "only the ones that are false" would otherwise be unaskable.
+
+That is also why `recalled` exists alongside the count range. Every numeric bound in this API treats
+`0` as _no bound_, so `recall_count_max=0` reads as unbounded and cannot mean "never recalled" —
+which is the question worth asking, being the closest thing to "what is about to be forgotten"
+short of `ExplainConsolidation`:
+
+```
+GET /v1/memories?recalled=FALSE&order_by=significance
+```
+
+`time_recalled_min`/`time_recalled_max` ask only about memories that **have** been recalled. A
+never-recalled memory has `time_recalled` of `0`, so an upper bound would otherwise sweep in every
+memory that was never recalled at all — "recalled before Tuesday" answering with memories that were
+never recalled would be a trap rather than a filter.
+
+### Metadata
+
+Every memory and event carries an optional `metadata` map of string keys to string values: the
+multi-dimensional classification the single freeform `group` label cannot express (`source=slack`,
+`project=apollo`, `author=…` all at once, rather than one of them or a delimited string).
+
+It is opaque to the server — filterable, never interpreted — and bounded, because unbounded metadata
+would be a body by another name:
+
+| Bound            | Value                                                  |
+| ---------------- | ------------------------------------------------------ |
+| Keys per item    | 32                                                     |
+| Key length       | 64 bytes, matching `[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}` |
+| Value length     | 512 bytes                                              |
+| Total serialised | 4096 bytes                                             |
+
+The serialised size **counts toward `memory.limit.sizeBytes`** alongside the body, so metadata
+cannot be used to escape that limit; the caps above are what bound it when the limit is unset (the
+default). Metadata bytes are also counted by the store's byte accounting, so they contribute to
+capacity pressure and to what eviction reclaims.
+
+The key charset is narrow for two concrete reasons: excluding `=` keeps the `key=value` filter
+packing unambiguous, and excluding `"`, `$` and `[` keeps a key from escaping the JSON path it is
+bound into, so a filter key is always a bound parameter and never string-concatenated into SQL.
+
+On `UpdateMemory`/`UpdateEvent` a non-empty map **replaces** the stored map wholesale — there is no
+per-key merge — and an absent or empty map leaves it unchanged, following the same
+non-zero-means-change rule as every other updatable field. Because an absent map and an explicitly
+empty one are indistinguishable on the wire, removing metadata needs the write-only
+`clear_metadata` flag; `clear_group` does the same for the group label, which had the same gap.
+
+Metadata is **never** emitted as a metric, span, or log attribute. It is client-supplied and
+unbounded in cardinality, and every attribute the service exports is a boolean or a small closed
+enum (see [Observability](#observability)).
+
+Metadata round-trips through `Export`/`Import`/`Transfer`. It is stored as a nullable JSON column on
+all three drivers, added in place on first startup after an upgrade, so no migration step is needed.
 
 ### Rate limiting
 

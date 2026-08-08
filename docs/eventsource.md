@@ -38,7 +38,7 @@ broker ─▶ adapter (nats/mqtt/rabbitmq/kafka) ─▶ bridge.Store ─▶ Tran
 A delivery that fails to store (a transform error or a gRPC transport failure) is treated as failed
 so the adapter can redeliver it — NATS drops it (no ack exists), MQTT leaves it unacked, RabbitMQ
 nacks with requeue, and Kafka leaves the offset uncommitted. A memory dropped for significance below
-the service's threshold is a *success*, not a failure.
+the service's threshold is a _success_, not a failure.
 
 ## Install
 
@@ -106,15 +106,36 @@ go run ./cmd/kafka --brokers localhost:9092 --topic events --consumer-group hipp
 The default transformer maps one message to one memory. Its behaviour is controlled by the shared
 flags:
 
-| Flag | Effect |
-| --- | --- |
-| `--significance` | Significance stamped on each memory (default 1). |
-| `--significance-header` | Message header whose integer value overrides `--significance` per message. |
-| `--group` | Group label for every memory. |
-| `--group-from-subject` | When `--group` is empty, use the subject/topic as the group (default on). |
-| `--group-header` | Message header whose value overrides the group per message. |
-| `--binary` | Base64-encode the payload and mark the memory `is_binary` (never content-indexed). |
-| `--max-body-bytes` | Truncate an over-long payload before it becomes a body (0 = unlimited). |
+| Flag                       | Effect                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------ |
+| `--significance`           | Significance stamped on each memory (default 1).                                                 |
+| `--significance-header`    | Message header whose integer value overrides `--significance` per message.                       |
+| `--group`                  | Group label for every memory.                                                                    |
+| `--group-from-subject`     | When `--group` is empty, use the subject/topic as the group (default on).                        |
+| `--group-header`           | Message header whose value overrides the group per message.                                      |
+| `--binary`                 | Base64-encode the payload and mark the memory `is_binary` (never content-indexed).               |
+| `--max-body-bytes`         | Truncate an over-long payload before it becomes a body (0 = unlimited).                          |
+| `--metadata`               | Metadata label as `key=value`, stamped on every memory (repeatable).                             |
+| `--metadata-header`        | Message header to copy onto each memory's metadata (repeatable).                                 |
+| `--metadata-header-prefix` | Copy every header carrying this prefix onto the metadata, with the prefix stripped from the key. |
+
+Header selection is an **allowlist or a prefix, never "copy every header"**. Broker headers are
+unbounded and mostly machinery — trace context, delivery counts, redelivery flags — so copying them
+all would fill each memory's metadata budget with noise, and the keys would be infrastructure's
+rather than the operator's choice.
+
+Selected header names are normalised to the service's metadata key charset (lowercased, anything
+outside `[A-Za-z0-9._:/-]` replaced with `_`), since header names routinely contain spaces and
+capitals the service would reject. Anything that still will not fit — an over-long value, or a
+selection past the 32-key or 4 KiB caps — is **dropped with a warning rather than failing the
+delivery**: the message is not at fault, and on an at-least-once broker a nack would redeliver it
+forever.
+
+```sh
+hippocampus-nats-bridge --subject 'events.>' \
+  --metadata source=nats --metadata env=prod \
+  --metadata-header-prefix 'hippo-'
+```
 
 The broker-provided message timestamp is used when available (a future timestamp is clamped to now so
 the service's clock-skew guard never rejects the write), otherwise the current time.

@@ -6,69 +6,70 @@
 // numbers/booleans below before anything else in the plugin sees it.
 
 export interface MemoryView {
-	id: string;
-	body: string;
-	significance: number;
-	eventId: string;
-	group: string;
-	timeStamp: number;
-	timeRecalled: number;
-	recallCount: number;
-	isSummary: boolean;
-	isBinary: boolean;
+  id: string;
+  body: string;
+  significance: number;
+  eventId: string;
+  group: string;
+  timeStamp: number;
+  timeRecalled: number;
+  recallCount: number;
+  isSummary: boolean;
+  isBinary: boolean;
 }
 
 export interface EventView {
-	id: string;
-	name: string;
-	description: string;
-	significance: number;
-	group: string;
-	timeStart: number;
-	timeEnd: number;
+  id: string;
+  name: string;
+  description: string;
+  significance: number;
+  group: string;
+  timeStart: number;
+  timeEnd: number;
 }
 
 export interface StoreResult {
-	id: string;
-	rejected: boolean;
+  id: string;
+  rejected: boolean;
 }
 
 export interface SummarisationCandidate {
-	eventId: string;
-	eventName: string;
-	memoryCount: number;
+  eventId: string;
+  eventName: string;
+  memoryCount: number;
 }
 
 // Input shapes for the write endpoints. Timestamps are deliberately omitted so the server defaults
 // them to "now" (sidestepping the int64-as-string encoding on the write path).
 
 export interface StoreMemoryInput {
-	body: string;
-	significance?: number;
-	group?: string;
-	eventId?: string;
+  body: string;
+  significance?: number;
+  group?: string;
+  eventId?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface SearchMemoriesInput {
-	query: string;
-	limit?: number;
-	group?: string;
-	eventId?: string;
-	reinforce?: boolean;
+  query: string;
+  limit?: number;
+  group?: string;
+  eventId?: string;
+  reinforce?: boolean;
 }
 
 export interface ListInput {
-	group?: string;
-	significanceMin?: number;
-	significanceMax?: number;
-	orderBy?: string;
-	limit?: number;
-	offset?: number;
+  group?: string;
+  significanceMin?: number;
+  significanceMax?: number;
+  orderBy?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface StoreEventInput {
-	name: string;
-	description?: string;
-	significance?: number;
-	group?: string;
+  name: string;
+  description?: string;
+  significance?: number;
+  group?: string;
 }

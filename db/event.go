@@ -19,24 +19,30 @@ var ErrEventNotFound = errors.New("event not found")
 // eventColumns is the read projection. significance is the level's rank, exposed by eventsFrom's
 // join to the registry; scanEvent reads it into types.Event.Significance. Use it with eventsFrom as
 // the FROM source, never the bare events table (which has no significance column).
-const eventColumns = `id, time_start, time_end, significance, name, description, memories_consolidated, link_significance, group_name`
+const eventColumns = `id, time_start, time_end, significance, name, description, memories_consolidated, link_significance, group_name, metadata`
 
 // eventStoredColumns is the physical column list of the events table (significance_level_id, not the
 // removed significance): used for INSERT (transfer import).
-const eventStoredColumns = `id, time_start, time_end, significance_level_id, name, description, memories_consolidated, link_significance, group_name`
+const eventStoredColumns = `id, time_start, time_end, significance_level_id, name, description, memories_consolidated, link_significance, group_name, metadata`
+
+// eventValuePlaceholders is the VALUES list matching eventStoredColumns, so an INSERT's placeholder
+// count cannot drift from the column list as columns are added - the memory side's precedent, moved
+// here after the transfer import's hand-written literals had to be counted by hand once.
+var eventValuePlaceholders = `(` + placeholders(strings.Count(eventStoredColumns, ",")+1) + `)`
 
 // eventsFrom is the read source for eventColumns: events LEFT JOINed to the significance registry
 // and aliased back to "events", so WHERE/ORDER clauses naming bare columns (id, significance, ...)
 // need no change. An unranked (NULL) level reads as significance 0.
 const eventsFrom = `(SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0) AS significance,
 	e.name, e.description, e.memories_consolidated, e.link_significance,
-	e.group_name FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id) AS events`
+	e.group_name, e.metadata FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id) AS events`
 
 // scanEvent reads an event row. Links themselves are not part of the projection - they live in
 // their own table and are fetched only when a caller asks for them (LinksForEvents) - but the
 // denormalised aggregate is, because the consolidation scans need it on every row.
 func scanEvent(scan func(dest ...any) error) (types.Event, error) {
 	var e types.Event
+	var metadata any
 
 	if err := scan(
 		&e.Id,
@@ -48,9 +54,21 @@ func scanEvent(scan func(dest ...any) error) (types.Event, error) {
 		&e.MemoriesConsolidated,
 		&e.LinkSignificance,
 		&e.Group,
+		&metadata,
 	); err != nil {
 		return e, err
 	}
+
+	// Scanned into an any because the column is NULL-able and its Go type differs per driver; see
+	// scanMemory for the same treatment.
+	decodedMetadata, err := types.UnmarshalMetadata(metadata)
+	if err != nil {
+		log.Errorf("failed to decode metadata of event '%s': %s", e.Id, err.Error())
+
+		return e, err
+	}
+
+	e.Metadata = decodedMetadata
 
 	return e, nil
 }
@@ -75,12 +93,19 @@ func (d *DB) CreateEvent(ctx context.Context, event types.Event) (string, error)
 
 	event.SignificanceLevelID = levelID
 
+	metadata, err := types.MarshalMetadata(event.Metadata)
+	if err != nil {
+		log.Errorf("failed to encode metadata of event '%s': %s", event.Id, err.Error())
+
+		return "", err
+	}
+
 	// link_significance starts at 0 and is maintained by the link graph. Any links the caller
 	// supplied are written by the RPC layer after this returns, through LinkEvents - they name
 	// events that must already exist, which is a check that belongs where NotFound can be returned.
 	_, err = d.exec(ctx,
-		`INSERT INTO events (id, time_start, time_end, significance_level_id, name, description, group_name)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO events (id, time_start, time_end, significance_level_id, name, description, group_name, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.Id,
 		event.TimeStart,
 		event.TimeEnd,
@@ -88,6 +113,7 @@ func (d *DB) CreateEvent(ctx context.Context, event types.Event) (string, error)
 		event.Name,
 		event.Description,
 		event.Group,
+		metadata,
 	)
 
 	return event.Id, err
@@ -148,9 +174,29 @@ func (d *DB) UpdateEvent(ctx context.Context, event types.Event) (bool, error) {
 		args = append(args, event.Description)
 	}
 
-	if event.Group != "" {
+	// ClearGroup and ClearMetadata mirror UpdateMemory's exactly - see the comments there for why
+	// the fields' own zero values cannot express "unset this".
+	if event.ClearGroup {
+		sets = append(sets, `group_name = ?`)
+		args = append(args, "")
+	} else if event.Group != "" {
 		sets = append(sets, `group_name = ?`)
 		args = append(args, event.Group)
+	}
+
+	if event.ClearMetadata {
+		sets = append(sets, `metadata = ?`)
+		args = append(args, nil)
+	} else if len(event.Metadata) > 0 {
+		metadata, err := types.MarshalMetadata(event.Metadata)
+		if err != nil {
+			log.Errorf("failed to encode metadata of event '%s': %s", event.Id, err.Error())
+
+			return false, err
+		}
+
+		sets = append(sets, `metadata = ?`)
+		args = append(args, metadata)
 	}
 
 	// Links are deliberately absent from this SET list. They are rows in their own table now, not a
@@ -342,7 +388,12 @@ const defaultEventOrderBy = "significance"
 // equality match against the highest (or lowest) significance value among events matching the
 // other filters - computed via a subquery built from this same function (with the extremum and
 // range fields cleared), so the "other filters" stay identical between the two.
-func eventFilterConditions(filter EventFilter) (string, []any) {
+//
+// As on the memory side, every predicate other than the significance range must be added ABOVE the
+// extremum block, which returns early - see memoryFilterConditions for what a clause added below it
+// would silently do. It is a method for the same reason too: the metadata predicate is
+// dialect-specific (see metadata.go).
+func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 	query := ` WHERE 1=1`
 	var args []any
 
@@ -371,6 +422,8 @@ func eventFilterConditions(filter EventFilter) (string, []any) {
 		args = append(args, filter.Group)
 	}
 
+	query, args = d.appendMetadataConditions(query, args, "", filter.Metadata)
+
 	if filter.SignificanceExtremum != SignificanceExtremumNone {
 		aggregate := "MAX"
 		if filter.SignificanceExtremum == SignificanceExtremumLowest {
@@ -381,7 +434,7 @@ func eventFilterConditions(filter EventFilter) (string, []any) {
 		subFilter.SignificanceExtremum = SignificanceExtremumNone
 		subFilter.SignificanceMin = 0
 		subFilter.SignificanceMax = 0
-		subWhere, subArgs := eventFilterConditions(subFilter)
+		subWhere, subArgs := d.eventFilterConditions(subFilter)
 
 		query += ` AND significance = (SELECT ` + aggregate + `(significance) FROM ` + eventsFrom + subWhere + `)`
 		args = append(args, subArgs...)
@@ -407,7 +460,7 @@ func eventFilterConditions(filter EventFilter) (string, []any) {
 func (d *DB) CountEventsFiltered(ctx context.Context, filter EventFilter) (int, error) {
 	log.Trace("func() db.CountEventsFiltered")
 
-	where, args := eventFilterConditions(filter)
+	where, args := d.eventFilterConditions(filter)
 
 	var count int
 
@@ -424,7 +477,7 @@ func (d *DB) CountEventsFiltered(ctx context.Context, filter EventFilter) (int, 
 func (d *DB) GetEvents(ctx context.Context, filter EventFilter) (*[]types.Event, error) {
 	log.Trace("func() db.GetEvents")
 
-	where, args := eventFilterConditions(filter)
+	where, args := d.eventFilterConditions(filter)
 
 	order, ok := eventOrderClauses[filter.OrderBy]
 	if !ok {

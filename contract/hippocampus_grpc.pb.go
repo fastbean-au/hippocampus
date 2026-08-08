@@ -115,9 +115,10 @@ type HippocampusClient interface {
 	// GetEventById fetches a single event by id; set memories to also load its nested memories.
 	// NotFound if the event does not exist.
 	GetEventById(ctx context.Context, in *GetEventByIdRequest, opts ...grpc.CallOption) (*GetEventResponse, error)
-	// GetEvents lists events filtered by time range, significance range, and group, paginated by
-	// limit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max
-	// range for "only events tied at the highest (or lowest) significance value" instead.
+	// GetEvents lists events filtered by time range, significance range, group, and metadata,
+	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
+	// significance_min/max range for "only events tied at the highest (or lowest) significance
+	// value" instead.
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
@@ -133,7 +134,8 @@ type HippocampusClient interface {
 	UpdateMemory(ctx context.Context, in *Memory, opts ...grpc.CallOption) (*GeneralResponse, error)
 	// DeleteMemories deletes the given memories by id; unknown ids are silently ignored.
 	DeleteMemories(ctx context.Context, in *DeleteMemoriesRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
-	// GetMemories lists memories filtered by time range, significance range, and group, paginated
+	// GetMemories lists memories filtered by time range, significance range, group, metadata, and
+	// recall state (recalled/recall_count/time_recalled, plus is_summary and is_binary), paginated
 	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
 	// range for "only memories tied at the highest (or lowest) significance value" instead.
 	GetMemories(ctx context.Context, in *GetMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
@@ -589,9 +591,10 @@ type HippocampusServer interface {
 	// GetEventById fetches a single event by id; set memories to also load its nested memories.
 	// NotFound if the event does not exist.
 	GetEventById(context.Context, *GetEventByIdRequest) (*GetEventResponse, error)
-	// GetEvents lists events filtered by time range, significance range, and group, paginated by
-	// limit/offset (see GetEventsRequest). significance_extremum swaps the significance_min/max
-	// range for "only events tied at the highest (or lowest) significance value" instead.
+	// GetEvents lists events filtered by time range, significance range, group, and metadata,
+	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
+	// significance_min/max range for "only events tied at the highest (or lowest) significance
+	// value" instead.
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
@@ -607,7 +610,8 @@ type HippocampusServer interface {
 	UpdateMemory(context.Context, *Memory) (*GeneralResponse, error)
 	// DeleteMemories deletes the given memories by id; unknown ids are silently ignored.
 	DeleteMemories(context.Context, *DeleteMemoriesRequest) (*GeneralResponse, error)
-	// GetMemories lists memories filtered by time range, significance range, and group, paginated
+	// GetMemories lists memories filtered by time range, significance range, group, metadata, and
+	// recall state (recalled/recall_count/time_recalled, plus is_summary and is_binary), paginated
 	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
 	// range for "only memories tied at the highest (or lowest) significance value" instead.
 	GetMemories(context.Context, *GetMemoriesRequest) (*GetMemoriesResponse, error)

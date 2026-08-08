@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -517,5 +518,101 @@ func TestEventUnlinkRequiresTargets(t *testing.T) {
 	_, _, err := runCommand(t, "event unlink", []string{"--id", "e1"}, &fakeClient{})
 	if err == nil || !strings.Contains(err.Error(), "at least one event id to unlink") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestParseMetadata covers the write-side flag parsing. The split is on the FIRST '=', so a value
+// may contain one; a key may not, which is what makes the packing unambiguous.
+func TestParseMetadata(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     []string
+		want    map[string]string
+		wantErr bool
+	}{
+		{"none", nil, nil, false},
+		{"one pair", []string{"source=slack"}, map[string]string{"source": "slack"}, false},
+		{
+			"two pairs",
+			[]string{"source=slack", "project=apollo"},
+			map[string]string{"source": "slack", "project": "apollo"},
+			false,
+		},
+		{"value containing the separator", []string{"q=a=b"}, map[string]string{"q": "a=b"}, false},
+		{"empty value", []string{"source="}, map[string]string{"source": ""}, false},
+		{"repeated key, same value", []string{"a=1", "a=1"}, map[string]string{"a": "1"}, false},
+
+		{"no separator", []string{"novalue"}, nil, true},
+		{"no key", []string{"=v"}, nil, true},
+		{"repeated key, different values", []string{"a=1", "a=2"}, nil, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := parseMetadata(c.raw)
+
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error for %v", c.raw)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("parseMetadata(%v): %s", c.raw, err)
+			}
+
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("expected %#v, got %#v", c.want, got)
+			}
+		})
+	}
+}
+
+// TestTriStateFromFlag pins why these filters are string flags rather than pflag bools: an omitted
+// bool and an explicit --summary=false are the same value, so "only the non-summaries" would be
+// unaskable.
+func TestTriStateFromFlag(t *testing.T) {
+	cases := []struct {
+		value   string
+		want    contract.Bool
+		wantErr bool
+	}{
+		{"", contract.Bool_UNSPECIFIED, false},
+		{"true", contract.Bool_TRUE, false},
+		{"false", contract.Bool_FALSE, false},
+		{"TRUE", contract.Bool_TRUE, false},
+		{" false ", contract.Bool_FALSE, false},
+		{"maybe", contract.Bool_UNSPECIFIED, true},
+	}
+
+	for _, c := range cases {
+		fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		fs.String("recalled", "", "")
+
+		if err := fs.Set("recalled", c.value); err != nil {
+			t.Fatalf("failed to set the flag: %s", err)
+		}
+
+		got, err := triStateFromFlag(fs, "recalled")
+
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("expected an error for %q", c.value)
+			}
+
+			continue
+		}
+
+		if err != nil {
+			t.Errorf("triStateFromFlag(%q): %s", c.value, err)
+
+			continue
+		}
+
+		if got != c.want {
+			t.Errorf("triStateFromFlag(%q) = %v, want %v", c.value, got, c.want)
+		}
 	}
 }

@@ -21,6 +21,13 @@ type Event struct {
 	MemoriesConsolidated bool   // if true, some memories related to this event have been consolidated (deleted)
 	Group                string // optional grouping/context label; limited to 128 characters
 
+	// Metadata, ClearMetadata and ClearGroup mirror the same three fields on Memory exactly - one
+	// mechanism, same bounds (types/metadata.go), same write-only clearing semantics. An asymmetry
+	// between the two would only ever be a trap.
+	Metadata      map[string]string
+	ClearMetadata bool
+	ClearGroup    bool
+
 	// SignificanceLevelID is the resolved significance registry level id, set by the RPC layer via
 	// db.ResolveSignificanceLevel before a create/update reaches the store. nil means unranked on a
 	// create, or "leave significance unchanged" on a partial update. It is internal - never part of
@@ -38,6 +45,10 @@ func EventFromProto(event *contract.Event) Event {
 		Description:  event.GetDescription(),
 		Links:        LinksFromProto(event.GetLinks()),
 		Group:        event.GetGroup(),
+
+		Metadata:      CopyMetadata(event.GetMetadata()),
+		ClearMetadata: event.GetClearMetadata(),
+		ClearGroup:    event.GetClearGroup(),
 	}
 }
 
@@ -53,6 +64,10 @@ func (e *Event) ToProto() *contract.Event {
 		LinkSignificance:     e.LinkSignificance,
 		Links:                LinksToProto(e.Links),
 		Group:                e.Group,
+
+		// Copied, and nil for an empty map (see Memory.ToProto); ClearMetadata/ClearGroup are
+		// write-only and never carried back.
+		Metadata: CopyMetadata(e.Metadata),
 	}
 }
 
@@ -89,6 +104,10 @@ func (e *Event) Validate(update bool) error {
 		// consolidation's age base uses max(time_start, time_end), so a backwards pair there degrades
 		// gracefully rather than corrupting.
 		return fmt.Errorf("event not valid - TimeEnd must not be before TimeStart")
+	}
+
+	if err := ValidateMetadata(e.Metadata, "event"); err != nil {
+		return err
 	}
 
 	return ValidateLinks(e.Links, e.Id, "event")

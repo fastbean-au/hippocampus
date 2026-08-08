@@ -172,11 +172,14 @@ func (d *DB) usedBytesLiveRows(ctx context.Context) (int64, error) {
 	if err := d.queryRow(
 		ctx,
 		// Link rows are counted at the flat per-row overhead like everything else: an edge is two
-		// ids and two integers, with no variable payload of its own worth measuring.
+		// ids and two integers, with no variable payload of its own worth measuring. Metadata is
+		// measured rather than absorbed into that overhead - it is client-supplied and bounded well
+		// above it (types.MaxMetadataBytes), and this figure must stay the exact complement of
+		// EvictMemories' freed-bytes estimate, which measures it too.
 		`SELECT
-			(SELECT COUNT(*) * ? + COALESCE(SUM(octet_length(body)), 0) FROM memories)
+			(SELECT COUNT(*) * ? + COALESCE(SUM(octet_length(body) + `+d.metadataBytesExpr("")+`), 0) FROM memories)
 			+ (SELECT COUNT(*) * ? + COALESCE(SUM(
-				octet_length(name) + octet_length(description)
+				octet_length(name) + octet_length(description) + `+d.metadataBytesExpr("")+`
 			), 0) FROM events)
 			+ (SELECT COUNT(*) * ? FROM memory_links)
 			+ (SELECT COUNT(*) * ? FROM event_links)`,
@@ -206,7 +209,8 @@ func (d *DB) initPostgresSchema() error {
 		description               TEXT NOT NULL DEFAULT '',
 		memories_consolidated     BOOLEAN NOT NULL DEFAULT FALSE,
 		link_significance         BIGINT NOT NULL DEFAULT 0,
-		group_name                TEXT NOT NULL DEFAULT ''
+		group_name                TEXT NOT NULL DEFAULT '',
+		metadata                  JSONB
 	);
 
 	CREATE TABLE IF NOT EXISTS memories (
@@ -221,7 +225,8 @@ func (d *DB) initPostgresSchema() error {
 		group_name    TEXT NOT NULL DEFAULT '',
 		is_compressed BOOLEAN NOT NULL DEFAULT FALSE,
 		link_significance BIGINT NOT NULL DEFAULT 0,
-		body          BYTEA NOT NULL DEFAULT ''::bytea
+		body          BYTEA NOT NULL DEFAULT ''::bytea,
+		metadata      JSONB
 	);
 
 	-- Postgres supports ADD COLUMN IF NOT EXISTS natively, so columns added after a table's
@@ -245,6 +250,12 @@ func (d *DB) initPostgresSchema() error {
 	-- predates links: it has none, and initLinkTables creates the graph empty.
 	ALTER TABLE memories ADD COLUMN IF NOT EXISTS link_significance BIGINT NOT NULL DEFAULT 0;
 	ALTER TABLE events ADD COLUMN IF NOT EXISTS link_significance BIGINT NOT NULL DEFAULT 0;
+
+	-- Metadata (see types/metadata.go). NULL-able with no default, matching the other two drivers:
+	-- an empty-string default would be malformed JSON, and NULL is what every dialect's JSON
+	-- accessor returns nothing for, so a row without metadata is uniformly excluded by a predicate.
+	ALTER TABLE memories ADD COLUMN IF NOT EXISTS metadata JSONB;
+	ALTER TABLE events ADD COLUMN IF NOT EXISTS metadata JSONB;
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {

@@ -24,13 +24,16 @@ const evictionRowOverheadBytes = 256
 // memoryColumns is the read projection. significance is the level's rank, exposed by memoriesFrom's
 // join to the registry; scanMemory reads it into types.Memory.Significance. Use it with memoriesFrom
 // as the FROM source, never the bare memories table (which has no significance column).
-const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, link_significance`
+// metadata sits ahead of link_significance so this list and memoryReturningColumns (which appends
+// link_significance to memoryStoredColumns) share one tail order, and scanMemory/scanMemoryStored
+// therefore read their last three columns identically.
+const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, metadata, link_significance`
 
 // memoryStoredColumns is the physical column list of the memories table (significance_level_id, not
 // the removed significance): used for INSERT. link_significance is deliberately absent - it is
 // maintained by the link graph rather than supplied by a write, so it must not appear in an insert's
 // column list.
-const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed`
+const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, metadata`
 
 // memoryReturningColumns is memoryStoredColumns plus the link aggregate, for UPDATE ... RETURNING,
 // which reads rather than writes and so wants every column a caller sees. scanMemoryStored reads it.
@@ -45,7 +48,7 @@ var memoryValuePlaceholders = `(` + placeholders(strings.Count(memoryStoredColum
 // (id, event_id, significance, ...) need no change. An unranked (NULL) level reads as significance 0.
 const memoriesFrom = `(SELECT m.id, m.timestamp, COALESCE(l.level_rank, 0) AS significance, m.event_id,
 	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name, m.is_compressed,
-	m.link_significance
+	m.link_significance, m.metadata
 	FROM memories m LEFT JOIN significance_levels l ON l.id = m.significance_level_id) AS memories`
 
 // placeholders returns a comma-separated list of n SQL parameter placeholders.
@@ -57,6 +60,7 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 	var m types.Memory
 	var body []byte
 	var isCompressed bool
+	var metadata any
 
 	if err := rows.Scan(
 		&m.Id,
@@ -70,10 +74,23 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 		&m.IsSummary,
 		&m.Group,
 		&isCompressed,
+		&metadata,
 		&m.LinkSignificance,
 	); err != nil {
 		return m, err
 	}
+
+	// Scanned into an any because the column is NULL-able and comes back as []byte on SQLite and
+	// MySQL but either []byte or string on Postgres; UnmarshalMetadata resolves all of those, and a
+	// row with no metadata reads as nil rather than an empty map.
+	decodedMetadata, err := types.UnmarshalMetadata(metadata)
+	if err != nil {
+		log.Errorf("failed to decode metadata of memory '%s': %s", m.Id, err.Error())
+
+		return m, err
+	}
+
+	m.Metadata = decodedMetadata
 
 	// Decompression is driven by the row's own flag, so a store holding a mix of compressed and
 	// uncompressed rows - which any store whose compression setting has ever changed will - reads
@@ -98,6 +115,7 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 	var body []byte
 	var levelID sql.NullInt64
 	var isCompressed bool
+	var metadata any
 
 	if err := rows.Scan(
 		&m.Id,
@@ -111,10 +129,20 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 		&m.IsSummary,
 		&m.Group,
 		&isCompressed,
+		&metadata,
 		&m.LinkSignificance,
 	); err != nil {
 		return m, err
 	}
+
+	decodedMetadata, err := types.UnmarshalMetadata(metadata)
+	if err != nil {
+		log.Errorf("failed to decode metadata of memory '%s': %s", m.Id, err.Error())
+
+		return m, err
+	}
+
+	m.Metadata = decodedMetadata
 
 	decompressed, err := decompressBody(body, isCompressed)
 	if err != nil {
@@ -178,6 +206,13 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 
 	body, isCompressed := d.compressBody(memory.Body, memory.IsBinary)
 
+	metadata, err := types.MarshalMetadata(memory.Metadata)
+	if err != nil {
+		log.Errorf("failed to encode metadata of memory '%s': %s", memory.Id, err.Error())
+
+		return "", err
+	}
+
 	_, err = d.exec(ctx,
 		`INSERT INTO memories (`+memoryStoredColumns+`) VALUES `+memoryValuePlaceholders,
 		memory.Id,
@@ -191,6 +226,7 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 		memory.IsSummary,
 		memory.Group,
 		isCompressed,
+		metadata,
 	)
 	if err != nil {
 		return memory.Id, err
@@ -276,9 +312,34 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 		bodyIsBinary = isBinary
 	}
 
-	if memory.Group != "" {
+	// ClearGroup is checked ahead of the value, and wins: an empty group otherwise means "leave
+	// unchanged" under this function's non-zero-means-change rule, so without an explicit
+	// instruction there would be no way to unset a group once set.
+	if memory.ClearGroup {
+		sets = append(sets, `group_name = ?`)
+		args = append(args, "")
+	} else if memory.Group != "" {
 		sets = append(sets, `group_name = ?`)
 		args = append(args, memory.Group)
+	}
+
+	// Metadata replaces wholesale rather than merging per key, and ClearMetadata is its counterpart
+	// to ClearGroup - an absent map and an explicitly empty one are the same on the wire, so the map
+	// cannot say "remove everything" itself. Cleared to NULL rather than '{}' for the reason the
+	// column is NULL-able at all: see the schema comment in initSchema.
+	if memory.ClearMetadata {
+		sets = append(sets, `metadata = ?`)
+		args = append(args, nil)
+	} else if len(memory.Metadata) > 0 {
+		metadata, err := types.MarshalMetadata(memory.Metadata)
+		if err != nil {
+			log.Errorf("failed to encode metadata of memory '%s': %s", memory.Id, err.Error())
+
+			return false, err
+		}
+
+		sets = append(sets, `metadata = ?`)
+		args = append(args, metadata)
 	}
 
 	// Nothing to change: there is no UPDATE to learn existence from, so probe for it directly.
@@ -1146,6 +1207,15 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 
 	body, isCompressed := d.compressBody(summary.Body, summary.IsBinary)
 
+	metadata, err := types.MarshalMetadata(summary.Metadata)
+	if err != nil {
+		_ = tx.Rollback()
+
+		log.Errorf("failed to encode metadata of summary memory '%s': %s", summary.Id, err.Error())
+
+		return 0, err
+	}
+
 	if _, err := tx.Exec(
 		d.rebind(`INSERT INTO memories (`+memoryStoredColumns+`) VALUES `+memoryValuePlaceholders),
 		summary.Id,
@@ -1159,6 +1229,7 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 		summary.IsSummary,
 		summary.Group,
 		isCompressed,
+		metadata,
 	); err != nil {
 		_ = tx.Rollback()
 
@@ -1251,7 +1322,16 @@ const defaultMemoryOrderBy = "significance"
 // equality match against the highest (or lowest) significance value among memories matching the
 // other filters - computed via a subquery built from this same function (with the extremum and
 // range fields cleared), so the "other filters" stay identical between the two.
-func memoryFilterConditions(filter MemoryFilter) (string, []any) {
+//
+// IMPORTANT: every predicate other than the significance range must be added ABOVE the extremum
+// block, which returns early. A clause added below it would be silently dropped from any request
+// that also set an extremum - and, worse, would not compose into the subquery, so "the highest
+// significance among the never-recalled memories" would quietly become "the highest significance
+// overall, filtered to the never-recalled ones", which is a different and usually empty answer.
+//
+// It is a method rather than a package function because the metadata predicate is dialect-specific
+// (see metadata.go).
+func (d *DB) memoryFilterConditions(filter MemoryFilter) (string, []any) {
 	query := ` WHERE 1=1`
 	var args []any
 
@@ -1283,6 +1363,61 @@ func memoryFilterConditions(filter MemoryFilter) (string, []any) {
 		}
 	}
 
+	// Metadata is a conjunction of per-key predicates; the dialect differences live in metadata.go.
+	// A memory with no metadata holds NULL, which equals nothing on any dialect, so it is correctly
+	// excluded by any key predicate without a special case.
+	query, args = d.appendMetadataConditions(query, args, "", filter.Metadata)
+
+	// Recall state. Recalled is the tri-state that answers "what have I never recalled?", which the
+	// count range cannot: RecallCountMax of 0 reads as no bound under the package's usual rule.
+	switch filter.Recalled {
+
+	case TriStateFalse:
+		query += ` AND recall_count = 0`
+
+	case TriStateTrue:
+		query += ` AND recall_count > 0`
+
+	}
+
+	if filter.RecallCountMin > 0 {
+		query += ` AND recall_count >= ?`
+		args = append(args, filter.RecallCountMin)
+	}
+
+	if filter.RecallCountMax > 0 {
+		query += ` AND recall_count <= ?`
+		args = append(args, filter.RecallCountMax)
+	}
+
+	// Both bounds are asked only of memories that have actually been recalled. A never-recalled
+	// memory has time_recalled = 0, so the lower bound excludes it naturally, but the upper bound
+	// would sweep in every never-recalled memory in the store - "recalled before Tuesday" answering
+	// with memories that were never recalled at all. The explicit > 0 makes the two symmetric: this
+	// pair asks "of the memories that were recalled, which fall in this window", and Recalled is
+	// what asks about the never-recalled ones.
+	if filter.TimeRecalledMin > 0 {
+		query += ` AND time_recalled >= ?`
+		args = append(args, filter.TimeRecalledMin)
+	}
+
+	if filter.TimeRecalledMax > 0 {
+		query += ` AND time_recalled > 0 AND time_recalled <= ?`
+		args = append(args, filter.TimeRecalledMax)
+	}
+
+	// The boolean columns are bound as Go bools rather than 0/1 literals: they are INTEGER on
+	// SQLite but BOOLEAN on Postgres and MySQL, and a bound bool is correct against all three.
+	if arg, ok := triStateArg(filter.IsSummary); ok {
+		query += ` AND is_summary = ?`
+		args = append(args, arg)
+	}
+
+	if arg, ok := triStateArg(filter.IsBinary); ok {
+		query += ` AND is_binary = ?`
+		args = append(args, arg)
+	}
+
 	if filter.SignificanceExtremum != SignificanceExtremumNone {
 		aggregate := "MAX"
 		if filter.SignificanceExtremum == SignificanceExtremumLowest {
@@ -1293,7 +1428,7 @@ func memoryFilterConditions(filter MemoryFilter) (string, []any) {
 		subFilter.SignificanceExtremum = SignificanceExtremumNone
 		subFilter.SignificanceMin = 0
 		subFilter.SignificanceMax = 0
-		subWhere, subArgs := memoryFilterConditions(subFilter)
+		subWhere, subArgs := d.memoryFilterConditions(subFilter)
 
 		query += ` AND significance = (SELECT ` + aggregate + `(significance) FROM ` + memoriesFrom + subWhere + `)`
 		args = append(args, subArgs...)
@@ -1319,7 +1454,7 @@ func memoryFilterConditions(filter MemoryFilter) (string, []any) {
 func (d *DB) CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (int, error) {
 	log.Trace("func() db.CountMemoriesFiltered")
 
-	where, args := memoryFilterConditions(filter)
+	where, args := d.memoryFilterConditions(filter)
 
 	var count int
 
@@ -1336,7 +1471,7 @@ func (d *DB) CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (in
 func (d *DB) GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Memory, error) {
 	log.Trace("func() db.GetMemories")
 
-	where, args := memoryFilterConditions(filter)
+	where, args := d.memoryFilterConditions(filter)
 
 	order, ok := memoryOrderClauses[filter.OrderBy]
 	if !ok {
@@ -1534,7 +1669,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		ctx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance,
-			COALESCE(e.memories_consolidated, ?), length(m.body)
+			COALESCE(e.memories_consolidated, ?), length(m.body) + `+d.metadataBytesExpr("m.")+`
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 		false,
 	)

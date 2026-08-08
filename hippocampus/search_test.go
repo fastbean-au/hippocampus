@@ -3,6 +3,7 @@ package hippocampus
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -705,4 +706,162 @@ func memoryIds(memories []*contract.Memory) []string {
 	}
 
 	return ids
+}
+
+// TestSearchMemories_MetadataFilterOnTheSQLBackend drives a metadata-filtered search end to end
+// over the real FTS5 backend: two memories match the query text, only one carries the metadata.
+func TestSearchMemories_MetadataFilterOnTheSQLBackend(t *testing.T) {
+	ctx := context.Background()
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("failed to create test DB: %s", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	idx, err := search.NewSQL(database)
+	if err != nil {
+		t.Fatalf("search.NewSQL: %s", err)
+	}
+
+	s := &Server{db: database, search: idx}
+
+	memories := []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 5, Body: "the deployment failed on staging",
+			Metadata: map[string]string{"source": "slack", "env": "staging"}},
+		{Id: "m2", TimeStamp: 200, Significance: 5, Body: "the deployment failed on production",
+			Metadata: map[string]string{"source": "email", "env": "production"}},
+		{Id: "m3", TimeStamp: 300, Significance: 5, Body: "the deployment succeeded"},
+	}
+
+	for _, m := range memories {
+		if _, err := s.db.CreateMemory(ctx, m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{
+		Query: "deployment", Metadata: []string{"source=slack"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.GetMemories()) != 1 || res.GetMemories()[0].GetId() != "m1" {
+		t.Fatalf("expected only m1, got %+v", res.GetMemories())
+	}
+
+	// The metadata comes back on the result, read from the primary store rather than the index.
+	if res.GetMemories()[0].GetMetadata()["env"] != "staging" {
+		t.Errorf("expected the memory's metadata on the result, got %#v", res.GetMemories()[0].GetMetadata())
+	}
+
+	// Two pairs are conjoined: m1 carries both, so it still matches.
+	res, err = s.SearchMemories(ctx, &contract.SearchMemoriesRequest{
+		Query: "deployment", Metadata: []string{"source=slack", "env=staging"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.GetMemories()) != 1 || res.GetMemories()[0].GetId() != "m1" {
+		t.Fatalf("expected only m1, got %+v", res.GetMemories())
+	}
+
+	// Two pairs no single memory carries together match nothing, even though each matches a memory.
+	res, err = s.SearchMemories(ctx, &contract.SearchMemoriesRequest{
+		Query: "deployment", Metadata: []string{"source=slack", "env=production"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.GetMemories()) != 0 {
+		t.Fatalf("expected no match for a pair no memory carries together, got %+v", res.GetMemories())
+	}
+
+	res, err = s.SearchMemories(ctx, &contract.SearchMemoriesRequest{
+		Query: "deployment", Metadata: []string{"source=carrier-pigeon"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(res.GetMemories()) != 0 {
+		t.Errorf("expected no matches, got %+v", res.GetMemories())
+	}
+}
+
+// TestSearchMemories_MetadataFilterIsPushedIntoTheIndex is the reason the filter is not applied to
+// the results after the fact.
+//
+// The index is asked for the filter, so it narrows the CANDIDATES; a post-filter would instead trim
+// a page the index had already truncated to the limit, silently returning fewer memories than the
+// caller asked for even when more matched. The ranking layer's over-fetch is headroom, not a
+// guarantee, so it would not save it.
+func TestSearchMemories_MetadataFilterIsPushedIntoTheIndex(t *testing.T) {
+	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
+	s := newSearchTestServer(t, idx)
+
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{
+		Id: "m1", TimeStamp: 100, Significance: 5, Body: "a", Metadata: map[string]string{"source": "slack"},
+	}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if _, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{
+		Query: "anything", Metadata: []string{"source=slack", "env=staging"},
+	}); err != nil {
+		t.Fatalf("SearchMemories: %s", err)
+	}
+
+	if len(idx.queries) == 0 {
+		t.Fatal("the index was never queried")
+	}
+
+	got := idx.queries[len(idx.queries)-1].Metadata
+
+	want := map[string]string{"source": "slack", "env": "staging"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the index was asked for %#v, want %#v", got, want)
+	}
+}
+
+// TestSearchMemories_RejectsMalformedMetadataFilters checks a bad filter is rejected before any
+// index work rather than reaching a backend.
+func TestSearchMemories_RejectsMalformedMetadataFilters(t *testing.T) {
+	idx := &fakeIndex{enabled: true}
+	s := newSearchTestServer(t, idx)
+
+	_, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{
+		Query: "anything", Metadata: []string{"novalue"},
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %s: %s", status.Code(err), err)
+	}
+
+	if len(idx.queries) != 0 {
+		t.Errorf("a malformed filter reached the index: %+v", idx.queries)
+	}
+}
+
+// TestDocFromMemoryCarriesMetadataTerms pins the indexed projection: sorted "key=value" strings,
+// the shape a term filter matches against.
+func TestDocFromMemoryCarriesMetadataTerms(t *testing.T) {
+	doc := search.DocFromMemory(types.Memory{
+		Id: "m1", Body: "a", Metadata: map[string]string{"source": "slack", "env": "staging"},
+	})
+
+	want := []string{"env=staging", "source=slack"}
+	if !reflect.DeepEqual(doc.Metadata, want) {
+		t.Errorf("expected %v, got %v", want, doc.Metadata)
+	}
+
+	if got := search.DocFromMemory(types.Memory{Id: "m1", Body: "a"}).Metadata; got != nil {
+		t.Errorf("expected no terms for a memory without metadata, got %v", got)
+	}
 }

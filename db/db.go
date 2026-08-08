@@ -362,6 +362,24 @@ type MemoryFilter struct {
 	// composes with the other filters and with pagination. Empty means unrestricted, so a caller
 	// holding an empty set must short-circuit rather than pass it.
 	Ids []string
+
+	// Metadata restricts the result to memories carrying every one of these key/value pairs
+	// exactly - a conjunction, not a match on any. Empty means unrestricted. The predicate is
+	// unindexed, exactly as Group's is.
+	Metadata map[string]string
+
+	// Recalled, IsSummary and IsBinary are tri-state because the columns they filter are boolean:
+	// a Go bool could not distinguish "only the never-recalled ones" from "no restriction", and
+	// never-recalled is the question this filter exists to answer. RecallCountMin/Max and
+	// TimeRecalledMin/Max follow the package's usual 0-means-no-bound rule, which is exactly why
+	// Recalled is needed alongside them - RecallCountMax of 0 reads as unbounded.
+	Recalled        TriState
+	IsSummary       TriState
+	IsBinary        TriState
+	RecallCountMin  int32
+	RecallCountMax  int32
+	TimeRecalledMin int64
+	TimeRecalledMax int64
 }
 
 // EventFilter narrows a GetEvents query. A zero value on any field leaves that dimension
@@ -380,6 +398,10 @@ type EventFilter struct {
 	OrderBy              string
 	Limit                int
 	Offset               int
+
+	// Metadata restricts the result to events carrying every one of these key/value pairs exactly,
+	// as MemoryFilter.Metadata does for memories.
+	Metadata map[string]string
 }
 
 // SignificanceExtremum mirrors contract.SignificanceExtremum without the db package depending on
@@ -390,6 +412,17 @@ const (
 	SignificanceExtremumNone SignificanceExtremum = iota
 	SignificanceExtremumHighest
 	SignificanceExtremumLowest
+)
+
+// TriState mirrors contract.Bool without the db package depending on the contract package, for the
+// filters over boolean columns. The three-valued form is what lets a filter say "only the false
+// ones" - a plain bool would make that indistinguishable from asking for no restriction at all.
+type TriState int
+
+const (
+	TriStateUnset TriState = iota
+	TriStateFalse
+	TriStateTrue
 )
 
 // SummarisationCandidate identifies an event whose memories have accumulated enough, and gone
@@ -688,7 +721,8 @@ func (d *DB) initSchema() error {
 		description               TEXT NOT NULL DEFAULT '',
 		memories_consolidated     INTEGER NOT NULL DEFAULT 0,
 		link_significance         INTEGER NOT NULL DEFAULT 0,
-		group_name                TEXT NOT NULL DEFAULT ''
+		group_name                TEXT NOT NULL DEFAULT '',
+		metadata                  TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS memories (
@@ -703,7 +737,8 @@ func (d *DB) initSchema() error {
 		group_name    TEXT NOT NULL DEFAULT '',
 		is_compressed INTEGER NOT NULL DEFAULT 0,
 		link_significance INTEGER NOT NULL DEFAULT 0,
-		body          BLOB NOT NULL DEFAULT x''
+		body          BLOB NOT NULL DEFAULT x'',
+		metadata      TEXT
 	);
 	`
 
@@ -758,6 +793,19 @@ func (d *DB) initSchema() error {
 	}
 
 	if err := d.addColumnIfMissing("events", "link_significance", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// Metadata (see types/metadata.go) is deliberately NULL-able with no default, unlike group_name
+	// beside it. json_extract raises "malformed JSON" on an empty string but returns NULL for NULL,
+	// so a column defaulting to '' would make the FIRST metadata-filtered query fail against every
+	// row written before this migration ran. NULL is the value all three dialects' JSON accessors
+	// agree means "no metadata here", so a row without it is uniformly excluded by a key predicate.
+	if err := d.addColumnIfMissing("memories", "metadata", "TEXT"); err != nil {
+		return err
+	}
+
+	if err := d.addColumnIfMissing("events", "metadata", "TEXT"); err != nil {
 		return err
 	}
 
