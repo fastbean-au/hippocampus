@@ -40,8 +40,17 @@ import (
 var version = "dev"
 
 func main() {
-	if err := registerFlags(pflag.CommandLine, os.Args[1:]); err != nil {
-		log.Panicf("failed to register command line flags: %s", err.Error())
+	os.Exit(realMain(os.Args[1:]))
+}
+
+// realMain is the testable body of main: it registers flags, installs the signal handler, and runs
+// serve, returning a process exit code rather than calling os.Exit itself so tests can drive every
+// branch. It mirrors the eventsource bridges' entry point.
+func realMain(args []string) int {
+	if err := registerFlags(pflag.CommandLine, args); err != nil {
+		log.Errorf("failed to register command line flags: %s", err.Error())
+
+		return 1
 	}
 
 	// Turn SIGINT/SIGTERM into a cancelled context so both transports shut down cleanly when the
@@ -50,8 +59,12 @@ func main() {
 	defer stop()
 
 	if err := serve(ctx); err != nil {
-		log.Fatalf("hippocampus-mcp exited with an error: %s", err.Error())
+		log.Errorf("hippocampus-mcp exited with an error: %s", err.Error())
+
+		return 1
 	}
+
+	return 0
 }
 
 // serve handles the --version short-circuit, sets the log level, and hands off to run. It is split

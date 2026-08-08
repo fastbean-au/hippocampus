@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,28 +24,44 @@ import (
 )
 
 func main() {
-	pflag.StringP("address", "a", "localhost:8300", "address of the hippocampus gRPC service")
-	pflag.StringP("data_dir", "d", "./demo/data", "directory holding the hippocampus database files")
-	pflag.String("log_level", "info", "logging level")
-	pflag.Int64("max_bytes", 1073741824, "pause generation while the database is at or above this size")
-	pflag.Int64("seed", 0, "random seed; 0 seeds from the current time")
-	pflag.Int("bursty_workers", 3, "workers creating events with a burst of memories")
-	pflag.Int("slow_workers", 4, "workers creating events that accumulate memories over time")
-	pflag.Int("loose_workers", 2, "workers creating memories with no event")
-	pflag.Int("query_workers", 3, "workers querying and recalling")
-	pflag.Int("mutator_workers", 1, "workers updating, merging, and deleting")
-	pflag.Int64("target_bytes_per_sec", 0, "cap aggregate accepted write throughput to this byte rate; 0 disables the throttle")
-	pflag.Int("body_bytes", 0, "override the mixed body-size distribution with bodies of ~this many bytes (jittered ±50%); 0 uses the default mix")
-	pflag.Int("sample_interval_seconds", 0, "record the store's population shape this often; 0 disables the sampler")
-	pflag.Parse()
+	if err := run(context.Background(), os.Args[1:]); err != nil {
+		log.Fatalf("generator exited with an error: %s", err.Error())
+	}
+}
 
-	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
-		log.Panicf("failed to bind command line flags: %s", err.Error())
+// run is main's body with the process-level concerns lifted out, so a test can drive the whole
+// startup path - flag binding, client construction, worker launch and shutdown - and stop it by
+// cancelling ctx rather than by signalling the process. main passes context.Background(); the
+// signal handling below derives from whatever it is given, so a cancelled parent stops the
+// generator exactly as SIGTERM does.
+func run(ctx context.Context, args []string) error {
+	flags := pflag.NewFlagSet("generator", pflag.ContinueOnError)
+
+	flags.StringP("address", "a", "localhost:8300", "address of the hippocampus gRPC service")
+	flags.StringP("data_dir", "d", "./demo/data", "directory holding the hippocampus database files")
+	flags.String("log_level", "info", "logging level")
+	flags.Int64("max_bytes", 1073741824, "pause generation while the database is at or above this size")
+	flags.Int64("seed", 0, "random seed; 0 seeds from the current time")
+	flags.Int("bursty_workers", 3, "workers creating events with a burst of memories")
+	flags.Int("slow_workers", 4, "workers creating events that accumulate memories over time")
+	flags.Int("loose_workers", 2, "workers creating memories with no event")
+	flags.Int("query_workers", 3, "workers querying and recalling")
+	flags.Int("mutator_workers", 1, "workers updating, merging, and deleting")
+	flags.Int64("target_bytes_per_sec", 0, "cap aggregate accepted write throughput to this byte rate; 0 disables the throttle")
+	flags.Int("body_bytes", 0, "override the mixed body-size distribution with bodies of ~this many bytes (jittered ±50%); 0 uses the default mix")
+	flags.Int("sample_interval_seconds", 0, "record the store's population shape this often; 0 disables the sampler")
+
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("failed to parse command line flags: %w", err)
+	}
+
+	if err := viper.BindPFlags(flags); err != nil {
+		return fmt.Errorf("failed to bind command line flags: %w", err)
 	}
 
 	level, err := log.ParseLevel(viper.GetString("log_level"))
 	if err != nil {
-		log.Panicf("invalid log level '%s': %s", viper.GetString("log_level"), err.Error())
+		return fmt.Errorf("invalid log level '%s': %w", viper.GetString("log_level"), err)
 	}
 	log.SetLevel(level)
 
@@ -78,20 +95,12 @@ func main() {
 		grpc.WithUnaryInterceptor(unaryLatencyInterceptor(lat)),
 	)
 	if err != nil {
-		log.Panicf("failed to create gRPC client for '%s': %s", cfg.Address, err.Error())
+		return fmt.Errorf("failed to create gRPC client for '%s': %w", cfg.Address, err)
 	}
 	defer func() { _ = conn.Close() }()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	exit := make(chan os.Signal, 1)
-	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-exit
-		log.Info("shutdown signal received - stopping generator")
-		cancel()
-	}()
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	log.Infof("generator started against %s", cfg.Address)
 
@@ -99,4 +108,6 @@ func main() {
 	generator.Run(ctx)
 
 	log.Info("generator stopped")
+
+	return nil
 }
