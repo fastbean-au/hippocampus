@@ -14,7 +14,11 @@ What each version number covers:
 - **The gRPC contract** (`contract/hippocampus.proto`) and the `/v1` JSON gateway it generates.
   Compatibility here is enforced mechanically: the `proto-breaking` CI job runs `buf breaking`
   against the previous release tag, so an accidental field renumbering or a removed RPC fails the
-  build rather than shipping. A deliberate break is listed under **Breaking** below.
+  build rather than shipping. A deliberate break is listed under **Breaking** below. The job always
+  runs and always reports, but its verdict is advisory in the two cases where the version number
+  already permits a break — a pre-1.0 baseline, or a major increment declared in the `[Unreleased]`
+  heading (see [RELEASE.md](RELEASE.md#compatibility)) — so the report is worth reading even when
+  the build is green.
 - **Configuration keys.** A removed or renamed key is a breaking change. A new key always carries a
   default that preserves the previous behaviour, so an existing `config.json` keeps working.
 - **The stored database.** Schema additions are migrated in place on startup, so a store written by

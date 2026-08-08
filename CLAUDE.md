@@ -33,7 +33,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   the gateway needs are vendored under `contract/google/api/`)
 - Check the contract for breaking changes: `cd contract && buf breaking --against
 '../.git#tag=<previous tag>,subdir=contract' --path hippocampus.proto` (config and rationale in
-  `contract/buf.yaml`; CI runs it as the `proto-breaking` job against the last release tag). The
+  `contract/buf.yaml`; CI runs it as the `proto-breaking` job against the last release tag, which
+  always reports but only **fails** the build where semver does not already permit the break — it
+  stands down against a pre-1.0 baseline, and for a major increment declared as
+  `## [Unreleased] (v2.0.0)` in `CHANGELOG.md`; see `RELEASE.md`). The
   proto package is `hippocampus.v1`, so every gRPC method is `/hippocampus.v1.Hippocampus/<Method>`
   — three packages keep a hand-written copy of that prefix (`auth/grpc.go`,
   `cmd/hippocampus/rpcmetrics.go`, `hippocampus/server.go`), each held to the generated descriptor

@@ -62,9 +62,12 @@ Run these before cutting a tag. Most of the mechanical checks are also enforced 
    coverage.)
 
 6. Update [`CHANGELOG.md`](CHANGELOG.md): rename the `[Unreleased]` heading to the version and its
-   date, open a fresh empty `[Unreleased]`, and add the two link references at the foot of the file.
-   Anything under **Breaking** must also be reflected in the release notes people actually read —
-   see [Compatibility](#compatibility) below.
+   date, open a fresh empty `[Unreleased]` (bare, with no version marker), and add the two link
+   references at the foot of the file. Anything under **Breaking** must also be reflected in the
+   release notes people actually read — see [Compatibility](#compatibility) below. If the release
+   you are heading towards is a **major** increment, say so in the heading while the work is in
+   flight — `## [Unreleased] (v2.0.0)` — which is what stands the contract gate down; renaming the
+   heading here is what clears it again.
 7. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
    to release.
 
@@ -78,6 +81,25 @@ release process's business:
   on `contract/hippocampus.proto` against the most recent release tag reachable from the commit, so
   an accidental field renumbering or a removed RPC fails the build before it can ship. Configuration
   and rationale live in [`contract/buf.yaml`](contract/buf.yaml).
+- **The gate reports always, but only binds where semver says a break is not permitted.** It stands
+  down — running, printing its findings, and leaving the job green — in the two cases where the
+  version number already licences the break: when the baseline tag is **pre-1.0** (semver allows a
+  break in any 0.x release, and this project has taken several), and when the next release is a
+  **major increment**. Everywhere else a finding fails the build. The point is that a gate which
+  goes red on a permitted, documented break is a gate people stop reading; a stood-down report is
+  still worth reading, and reviewing it is part of the pre-flight below.
+- **A major increment must be declared in the changelog to stand the gate down.** CI runs on `main`
+  before the tag exists, so it takes the intended version from the `[Unreleased]` heading:
+
+  ```markdown
+  ## [Unreleased] (v2.0.0)
+  ```
+
+  Only a **major** increment over the baseline stands the gate down; declaring a minor or patch
+  leaves it binding, which is most of the reason to declare one. Anything the parser does not
+  recognise — no marker, a typo, a version below the baseline — leaves the gate binding too, so a
+  mistake shows up as a red build rather than as a silently disabled check. Step 6 of the pre-flight
+  clears the marker along with the heading, so it never outlives its release.
 - **A deliberate break needs three things**, in this order: agreement that it is worth doing *now*
   (pre-1.0 is far cheaper than after — every generated client is a copy of the contract, and there
   are more of them each release); a **Breaking** entry in the changelog saying what a caller must

@@ -1,7 +1,11 @@
 # buf configuration for the gRPC contract.
 #
 # This exists for one command: `buf breaking`, run by the `proto-breaking` job in
-# .github/workflows/ci.yaml against the previous release tag. Published clients are generated from
+# .github/workflows/ci.yaml against the previous release tag. That job decides whether the report is
+# binding - it is advisory against a pre-1.0 baseline, and for a declared major increment, since
+# semver permits a break in both (the rules are in that job's comments and in RELEASE.md). Nothing
+# about that decision lives here: this file only ever says what counts as a break.
+# Published clients are generated from
 # contract/hippocampus.proto, so an accidental field renumbering or a removed RPC silently breaks
 # every one of them and is not caught by anything else in the repo - `go generate ./contract`
 # regenerates happily, and the Go compiler only ever sees the new descriptor.
