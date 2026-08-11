@@ -394,12 +394,7 @@ func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *con
 
 		stats.Errors++
 
-		// Counted per rule, which is what makes the failure attributable rather than merely visible:
-		// "rule X errors on every event" is the diagnosis, and a bare error count cannot give it.
-		var evalErr *rules.EvalError
-		if errors.As(err, &evalErr) {
-			tel.ruleErrors.Add(ctx, 1, observability.WithGroup(attribute.String(attrRule, evalErr.Rule)))
-		}
+		p.recordRuleError(ctx, err)
 	}
 
 	stats.EventsJudged++
@@ -412,8 +407,10 @@ func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *con
 	}).
 		Debug("event judged")
 
+	judged := &judgement{event: event, memories: memories, facts: facts, decision: decision}
+
 	if p.cfg.DryRun {
-		p.countDecision(decision, memories, stats)
+		p.dryRun(ctx, judged, stats)
 
 		return
 	}
@@ -421,7 +418,7 @@ func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *con
 	switch decision.Action {
 
 	case rules.ActionPromote:
-		p.promote(ctx, event, memories, decision, stats)
+		p.promote(ctx, judged, stats)
 
 	case rules.ActionDrop:
 		if err := p.drain(ctx, event.GetId(), len(memories)); err != nil {
@@ -437,6 +434,59 @@ func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *con
 		p.recordEvent(ctx, decision, outcomeDropped)
 
 	}
+}
+
+// failEvent reports a failure that leaves the event where it is, to be re-judged next pass.
+//
+// A mutation failing is treated exactly as a promotion failing, and deliberately NOT as a rule that
+// did not match: there is no safe fallback for a field the operator asked to have set. Promoting at
+// the edge's own significance would put the record into the central store's decay model at a weight
+// the rules file explicitly rejected, and silently. Failing leaves it on the source, which is the
+// one outcome that loses nothing.
+func (p *Promoter) failEvent(ctx context.Context, judged *judgement, stats *Stats, err error) {
+	log.Error(err.Error())
+
+	stats.Errors++
+
+	p.recordEvent(ctx, judged.decision, outcomeFailed)
+	p.recordRuleError(ctx, err)
+}
+
+// recordRuleError counts an evaluation failure against the rule that caused it, which is what makes
+// it attributable rather than merely visible: "rule X errors on every event" is the diagnosis, and a
+// bare error total cannot give it. Errors that are not a rule's fault carry no EvalError and are
+// left to the pass-level counters.
+func (p *Promoter) recordRuleError(ctx context.Context, err error) {
+	var evalErr *rules.EvalError
+
+	if errors.As(err, &evalErr) {
+		tel.ruleErrors.Add(ctx, 1, observability.WithGroup(attribute.String(attrRule, evalErr.Rule)))
+	}
+}
+
+// dryRun reports what a judgement would have done without moving or deleting anything.
+//
+// The mutation IS evaluated, because it reads only facts already in hand and because the numbers it
+// produces are exactly what a dry run exists to check - a scoring rule whose significance is not
+// shown has not been tested. The one part that cannot be shown is a summarising rule's per-memory
+// mutation: the summary does not exist until the source is asked to write it, which a dry run must
+// not do.
+func (p *Promoter) dryRun(ctx context.Context, judged *judgement, stats *Stats) {
+	if err := p.applyEventSet(ctx, judged); err != nil {
+		p.failEvent(ctx, judged, stats, err)
+
+		return
+	}
+
+	if !judged.decision.Reduce.Summarise {
+		if err := p.applyMemorySet(ctx, judged, judged.memories); err != nil {
+			p.failEvent(ctx, judged, stats, err)
+
+			return
+		}
+	}
+
+	p.countDecision(judged.decision, judged.memories, stats)
 }
 
 // recordEvent counts one judged event against the rule that decided it.
@@ -596,33 +646,32 @@ func (p *Promoter) readEventMemories(ctx context.Context, eventId string) ([]*co
 // event from the source. The order is deliberate: the target is written first and the source is
 // emptied only once it has accepted everything, so a failure anywhere leaves the records where they
 // still exist rather than nowhere.
-func (p *Promoter) promote(
-	ctx context.Context,
-	event *contract.Event,
-	memories []*contract.Memory,
-	decision rules.Decision,
-	stats *Stats,
-) {
+func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats) {
+	event := judged.event
+	decision := judged.decision
+
+	// The event's own mutation runs first, against the facts the rule matched on rather than against
+	// a reduced or summarised version of the event that no rule ever saw.
+	if err := p.applyEventSet(ctx, judged); err != nil {
+		p.failEvent(ctx, judged, stats, err)
+
+		return
+	}
+
 	// onSource is what the event is expected to hold when the drain re-checks it, which is NOT the
 	// number about to be promoted: a keepTopN/minSignificance reduction chooses what crosses to the
 	// central store and leaves the rest in place to be drained, while summarise actually replaces
 	// them on the source. Conflating the two makes every reduced event look like it changed
 	// underneath the judgement, and nothing is ever drained.
-	memories, onSource, err := p.reduce(ctx, event.GetId(), memories, decision.Reduce)
+	memories, onSource, err := p.reduce(ctx, judged)
 	if err != nil {
-		log.Errorf("reducing event '%s': %s", event.GetId(), err.Error())
-
-		stats.Errors++
-		p.recordEvent(ctx, decision, outcomeFailed)
+		p.failEvent(ctx, judged, stats, fmt.Errorf("reducing event '%s': %w", event.GetId(), err))
 
 		return
 	}
 
 	if err := p.sendEvent(ctx, event); err != nil {
-		log.Errorf("promoting event '%s': %s", event.GetId(), err.Error())
-
-		stats.Errors++
-		p.recordEvent(ctx, decision, outcomeFailed)
+		p.failEvent(ctx, judged, stats, fmt.Errorf("promoting event '%s': %w", event.GetId(), err))
 
 		return
 	}
@@ -636,10 +685,12 @@ func (p *Promoter) promote(
 	}
 
 	if err != nil {
-		log.Errorf("promoting memories of event '%s' (%d sent before the failure): %s", event.GetId(), sent, err.Error())
-
-		stats.Errors++
-		p.recordEvent(ctx, decision, outcomeFailed)
+		p.failEvent(ctx, judged, stats, fmt.Errorf(
+			"promoting memories of event '%s' (%d sent before the failure): %w",
+			event.GetId(),
+			sent,
+			err,
+		))
 
 		return
 	}
@@ -659,28 +710,42 @@ func (p *Promoter) promote(
 	}
 }
 
-// reduce applies the decision's reduction, returning the memories to promote and how many the
-// SOURCE is expected to hold afterwards (what the drain re-checks against).
+// reduce applies the decision's memory-scoped mutation and then its reduction, returning the
+// memories to promote and how many the SOURCE is expected to hold afterwards (what the drain
+// re-checks against).
 //
-// The two kinds differ in exactly that second number. A selection reduction is a decision about what
-// crosses the boundary and changes nothing on the source, so the source still holds every memory the
-// judgement saw. Summarise is a real mutation of the source - it replaces them - so what remains is
-// the summary.
-func (p *Promoter) reduce(
-	ctx context.Context,
-	eventId string,
-	memories []*contract.Memory,
-	reduction rules.Reduce,
-) ([]*contract.Memory, int, error) {
-	judged := len(memories)
+// The two kinds of reduction differ in exactly that second number. A selection reduction is a
+// decision about what crosses the boundary and changes nothing on the source, so the source still
+// holds every memory the judgement saw. Summarise is a real mutation of the source - it replaces
+// them - so what remains is the summary.
+//
+// The MUTATION RUNS BEFORE THE SELECTION, which is the ordering that makes the two compose: a rule
+// that scores memories and then keeps the top ten means the top ten BY ITS OWN SCORE, not by the
+// significance the edge happened to store. The cost is evaluating expressions for memories that are
+// then discarded; ranking by a number the rule just declared irrelevant would be worse. After a
+// summarise reduction there is one memory to score - the summary - and it is scored for the same
+// reason: it is what crosses.
+func (p *Promoter) reduce(ctx context.Context, judged *judgement) ([]*contract.Memory, int, error) {
+	reduction := judged.decision.Reduce
+	memories := judged.memories
+	onSource := len(memories)
 
 	if reduction.Summarise {
-		summarised, err := p.summarise(ctx, eventId)
+		summarised, err := p.summarise(ctx, judged.event.GetId())
 		if err != nil {
 			return nil, 0, err
 		}
 
-		return summarised, len(summarised), nil
+		memories = summarised
+		onSource = len(summarised)
+	}
+
+	if err := p.applyMemorySet(ctx, judged, memories); err != nil {
+		return nil, 0, err
+	}
+
+	if reduction.Summarise {
+		return memories, onSource, nil
 	}
 
 	if reduction.MinSignificance > 0 {
@@ -710,7 +775,7 @@ func (p *Promoter) reduce(
 		memories = sorted[:reduction.KeepTopN]
 	}
 
-	return memories, judged, nil
+	return memories, onSource, nil
 }
 
 // summarise asks the SOURCE to replace the event's memories with one generated summary, then reads

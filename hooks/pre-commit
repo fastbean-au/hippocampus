@@ -30,6 +30,21 @@ export GOTOOLCHAIN=auto
 # its own, so an inherited override here can only cause harm - unset it rather than trust it.
 unset GOROOT GOTOOLDIR 2>/dev/null || true
 
+# `go install`ed tools land in GOBIN (or GOPATH/bin), which is on an interactive shell's PATH via the
+# user's profile but not necessarily on the PATH git hands a hook - a commit made from an editor, an
+# IDE, or an agent's non-login shell inherits a much smaller PATH, and golangci-lint below then fails
+# with "command not found" rather than a lint error. Put the Go bin directory on the PATH explicitly
+# so the hook resolves the same tools whichever shell invoked it.
+go_bin="$(go env GOBIN)"
+if [ -z "$go_bin" ]; then
+	go_bin="$(go env GOPATH)/bin"
+fi
+case ":$PATH:" in
+*":$go_bin:"*) ;;
+*) PATH="$go_bin:$PATH" ;;
+esac
+export PATH
+
 echo "pre-commit: go mod tidy"
 go mod tidy
 
@@ -49,6 +64,12 @@ echo "pre-commit: go vet ./..."
 go vet ./...
 
 echo "pre-commit: golangci-lint run"
+if ! command -v golangci-lint > /dev/null 2>&1; then
+	echo "pre-commit: golangci-lint not found on PATH (looked in $go_bin) - install it with:" >&2
+	echo "  go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" >&2
+
+	exit 1
+fi
 golangci-lint run
 
 # Self-heal a trimmed Go toolchain. GOTOOLCHAIN=auto above may download a newer toolchain module

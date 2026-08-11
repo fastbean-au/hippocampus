@@ -73,6 +73,10 @@ type Rule struct {
 	Expr   string  `json:"expr"`
 	Action Action  `json:"action"`
 	Reduce *Reduce `json:"reduce,omitempty"`
+
+	// Set rewrites fields on the promoted copy - significance above all, which is what decides how
+	// long the central store keeps what this rule admits. See set.go.
+	Set *Set `json:"set,omitempty"`
 }
 
 // file is the on-disk JSON shape. defaultAction has no default value on purpose: a rules file that
@@ -106,11 +110,12 @@ func (o Options) evalTimeout() time.Duration {
 	return o.EvalTimeout
 }
 
-// compiledRule pairs a rule with its compiled program. Compilation happens once, at load, so a
+// compiledRule pairs a rule with its compiled programs. Compilation happens once, at load, so a
 // broken expression is a load failure rather than a surprise on the first event that reaches it.
 type compiledRule struct {
-	rule    Rule
-	program cel.Program
+	rule     Rule
+	program  cel.Program
+	mutation *Mutation
 }
 
 // Ruleset is a loaded, compiled rules file: immutable once built, which is what lets the Watcher
@@ -128,6 +133,11 @@ type Decision struct {
 	Rule   string
 	Action Action
 	Reduce Reduce
+
+	// Mutation is the matched rule's compiled Set, or nil where it declared none. It is carried on
+	// the decision rather than looked up again by name so the promoter applies the mutation of
+	// exactly the rule that decided, even across a ruleset reload.
+	Mutation *Mutation
 }
 
 // DefaultAction returns the action taken when no rule matches.
@@ -135,6 +145,23 @@ func (r *Ruleset) DefaultAction() Action { return r.defaultAction }
 
 // Rules returns how many rules the set holds.
 func (r *Ruleset) Rules() int { return len(r.rules) }
+
+// Mutating returns how many rules rewrite fields on the promoted copy. It is reported by
+// --check-rules because a mutation is invisible in the promote/drop outcome a rules file is
+// otherwise read for: an operator checking a file should be told that some of it also re-ranks.
+func (r *Ruleset) Mutating() int {
+	count := 0
+
+	for _, compiled := range r.rules {
+		if compiled.mutation == nil {
+			continue
+		}
+
+		count++
+	}
+
+	return count
+}
 
 // NeedsMemories reports whether any rule references the memories list. When it is false the
 // promoter can judge an event without materialising its memory bodies at all, which for a large
@@ -172,15 +199,11 @@ func Parse(data []byte, opts Options) (*Ruleset, error) {
 		return nil, fmt.Errorf("defaultAction: %w (it is required - a rules file that omitted it would silently drop every unmatched event)", err)
 	}
 
-	env, err := newEnv(true)
-	if err != nil {
-		return nil, err
-	}
-
-	// The probe environment is the same one minus `memories`. Compiling a rule against both is how
-	// NeedsMemories is decided: the rule has already compiled cleanly against the full environment,
-	// so the only thing that can newly fail here is the reference this is looking for.
-	probeEnv, err := newEnv(false)
+	// Three environments, differing only in whether they declare `memories` and `memory`. The probe
+	// is the same as the match environment minus `memories`, which is how NeedsMemories is decided:
+	// the rule has already compiled cleanly against the full environment, so the only thing that can
+	// newly fail against the probe is the reference this is looking for.
+	envs, err := newEnvironments()
 	if err != nil {
 		return nil, err
 	}
@@ -208,16 +231,25 @@ func Parse(data []byte, opts Options) (*Ruleset, error) {
 
 		names[rule.Name] = struct{}{}
 
-		program, err := compileRule(env, rule, opts.costLimit())
+		program, err := compileRule(envs.match, rule, opts.costLimit())
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", label, err)
 		}
 
-		if referencesMemories(probeEnv, rule.Expr) {
+		mutation, err := compileSet(envs, rule, opts.costLimit())
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+
+		if mutation != nil {
+			mutation.evalTimeout = set.evalTimeout
+		}
+
+		if ruleNeedsMemories(envs.probe, rule) {
 			set.needsMemories = true
 		}
 
-		set.rules = append(set.rules, compiledRule{rule: rule, program: program})
+		set.rules = append(set.rules, compiledRule{rule: rule, program: program, mutation: mutation})
 	}
 
 	return set, nil
@@ -234,6 +266,10 @@ func validateRule(rule Rule) error {
 	}
 
 	if err := validAction(rule.Action); err != nil {
+		return err
+	}
+
+	if err := validateSet(rule); err != nil {
 		return err
 	}
 
@@ -308,10 +344,46 @@ func compileRule(env *cel.Env, rule Rule, costLimit uint64) (cel.Program, error)
 	return program, nil
 }
 
+// ruleNeedsMemories reports whether judging under this rule requires the event's memories to be
+// read at all.
+//
+// A memory-scoped mutation forces it regardless of what its expressions reference: the promoter
+// must hold the memories in order to rewrite them, even for a block as constant as
+// `{"significance": "1"}`.
+func ruleNeedsMemories(probeEnv *cel.Env, rule Rule) bool {
+	if referencesMemories(probeEnv, rule.Expr) {
+		return true
+	}
+
+	if rule.Set == nil {
+		return false
+	}
+
+	if rule.Set.Memory != nil {
+		return true
+	}
+
+	if rule.Set.Event == nil {
+		return false
+	}
+
+	for _, expr := range rule.Set.Event.expressions() {
+		if referencesMemories(probeEnv, expr) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // referencesMemories reports whether an expression reads the memories list, by compiling it against
 // an environment that does not declare one. The expression has already compiled against the full
 // environment by the time this runs, so a failure here can only be the missing declaration.
 func referencesMemories(probeEnv *cel.Env, expr string) bool {
+	if expr == "" {
+		return false
+	}
+
 	_, issues := probeEnv.Compile(expr)
 
 	return issues != nil && issues.Err() != nil
@@ -344,7 +416,12 @@ func (r *Ruleset) Evaluate(ctx context.Context, facts Facts) (Decision, error) {
 			continue
 		}
 
-		decision := Decision{Rule: compiled.rule.Name, Action: compiled.rule.Action}
+		decision := Decision{
+			Rule:     compiled.rule.Name,
+			Action:   compiled.rule.Action,
+			Mutation: compiled.mutation,
+		}
+
 		if compiled.rule.Reduce != nil {
 			decision.Reduce = *compiled.rule.Reduce
 		}

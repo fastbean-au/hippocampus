@@ -73,10 +73,51 @@ const (
 	memoryTypeName = "rules.Memory"
 )
 
-// newEnv builds the CEL environment rules are compiled against. withMemories is false for the probe
-// environment described in compileRule - the same declarations minus `memories`.
-func newEnv(withMemories bool) (*cel.Env, error) {
-	opts := []cel.EnvOption{
+// envOptions selects which of the optional variables an environment declares. The base environment
+// (both false) is the probe described in Parse; `memories` is the list every match expression may
+// range over; `memory` is the singular binding a memory-scoped mutation expression is evaluated
+// once per memory against.
+type envOptions struct {
+	memories bool
+	memory   bool
+}
+
+// environments are the three compilation environments, built once per load and shared by every
+// rule in the file. They differ only in those two declarations.
+type environments struct {
+	// match compiles match expressions and event-scoped mutation expressions - the same vocabulary,
+	// so a rule sets a field using exactly what it matched on.
+	match *cel.Env
+
+	// memory adds the singular `memory`, for the per-memory half of a mutation block.
+	memory *cel.Env
+
+	// probe is match minus `memories`, which is how NeedsMemories is decided. See Parse.
+	probe *cel.Env
+}
+
+func newEnvironments() (environments, error) {
+	var out environments
+	var err error
+
+	if out.match, err = newEnv(envOptions{memories: true}); err != nil {
+		return environments{}, err
+	}
+
+	if out.memory, err = newEnv(envOptions{memories: true, memory: true}); err != nil {
+		return environments{}, err
+	}
+
+	if out.probe, err = newEnv(envOptions{}); err != nil {
+		return environments{}, err
+	}
+
+	return out, nil
+}
+
+// newEnv builds one CEL environment.
+func newEnv(opts envOptions) (*cel.Env, error) {
+	envOpts := []cel.EnvOption{
 		ext.NativeTypes(
 			ext.ParseStructTags(true),
 			reflect.TypeOf(Event{}),
@@ -96,13 +137,22 @@ func newEnv(withMemories bool) (*cel.Env, error) {
 		// The string helpers (lowerAscii, split, replace, join, ...) on top of the built-in
 		// contains/startsWith/matches. Body matching is most of what a content rule does.
 		ext.Strings(),
+
+		// math.least/math.greatest, which are what make a mutation expression's arithmetic safe to
+		// write: a computed significance must land in a bounded range, and clamping it is otherwise
+		// a nest of conditionals. CEL has no min/max built in.
+		ext.Math(),
 	}
 
-	if withMemories {
-		opts = append(opts, cel.Variable("memories", cel.ListType(cel.ObjectType(memoryTypeName))))
+	if opts.memories {
+		envOpts = append(envOpts, cel.Variable("memories", cel.ListType(cel.ObjectType(memoryTypeName))))
 	}
 
-	env, err := cel.NewEnv(opts...)
+	if opts.memory {
+		envOpts = append(envOpts, cel.Variable("memory", cel.ObjectType(memoryTypeName)))
+	}
+
+	env, err := cel.NewEnv(envOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("building the CEL environment: %w", err)
 	}
@@ -123,4 +173,15 @@ func (f Facts) activation() map[string]any {
 		"event":    f.Event,
 		"memories": memories,
 	}
+}
+
+// memoryActivation is the binding a memory-scoped mutation expression sees: the same event and
+// memory list, plus the one memory being written. The siblings stay in scope on purpose - ranking a
+// memory against its own event ("at or above the mean") is most of what a per-memory expression is
+// for, and it cannot be done from the memory alone.
+func (f Facts) memoryActivation(memory Memory) map[string]any {
+	activation := f.activation()
+	activation["memory"] = memory
+
+	return activation
 }

@@ -300,9 +300,10 @@ func checkRules(path string, opts rules.Options) error {
 	}
 
 	fmt.Printf(
-		"%s: %d rule(s), default action '%s', reads memory bodies: %t\n",
+		"%s: %d rule(s), %d setting fields on promotion, default action '%s', reads memory bodies: %t\n",
 		path,
 		set.Rules(),
+		set.Mutating(),
 		set.DefaultAction(),
 		set.NeedsMemories(),
 	)

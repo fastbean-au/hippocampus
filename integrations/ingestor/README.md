@@ -63,6 +63,25 @@ go run ./cmd/ingestor --source-address ... --target-address ... --rules rules.js
 First match wins; `defaultAction` is required. The file is re-read when its mtime changes — a broken
 initial load fails startup, a broken reload keeps the last good ruleset.
 
+A `promote` rule may also **rewrite what crosses**, which is how an edge re-ranks what it admits
+rather than only admitting it:
+
+```json
+{
+  "name": "escalate-production-errors",
+  "expr": "event.metadata[?'severity'].orValue('') == 'error'",
+  "action": "promote",
+  "set": {
+    "event": { "significance": "math.least(100, event.significance * 4)", "group": "'incidents'" },
+    "memory": { "significance": "memory.body.contains('panic') ? 90 : memory.significance" }
+  }
+}
+```
+
+Only the promoted copy is touched, never the edge; the mutation runs before any `reduce`, so
+`keepTopN` ranks by the score the rule set. See
+[docs/ingestor.md](../../docs/ingestor.md#setting-fields-on-promotion).
+
 ## Observability
 
 `/healthz` and `/readyz` on `--health-port` (8090 by default, 0 disables); `/readyz` names whichever

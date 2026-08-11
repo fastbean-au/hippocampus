@@ -16,6 +16,7 @@ It ships as `integrations/ingestor` — a separate Go module and a separate proc
 - [Configuring the edge](#configuring-the-edge) ← **read this one**
 - [Rules](#rules)
 - [Reductions](#reductions)
+- [Setting fields on promotion](#setting-fields-on-promotion)
 - [Applying rule changes to a running instance](#applying-rule-changes-to-a-running-instance)
 - [Memories with no event](#memories-with-no-event)
 - [Flags](#flags)
@@ -293,7 +294,8 @@ sum by (hippocampus_group, outcome) (rate(hippocampus_ingestor_events_total[5m])
 
 ## Rules
 
-A rules file is JSON; each rule's match clause is a CEL expression.
+A rules file is JSON; each rule's match clause is a
+[CEL](https://cel.dev/overview/cel-overview) expression.
 
 ```json
 {
@@ -342,6 +344,14 @@ metadata}`.
 The aggregates are on `event` deliberately, so the common shape rules need no comprehension — and so
 the ingestor can skip building the memory list entirely when no rule reads it.
 
+Beyond the core language, two of cel-go's
+[extension libraries](https://github.com/google/cel-go/tree/master/ext) are enabled: **strings**
+(`lowerAscii`, `split`, `replace`, `join`, on top of the built-in `contains`/`startsWith`/`matches`)
+and **math** (`math.least`, `math.greatest` — there is no min/max in core CEL, which matters when
+[setting a significance](#setting-fields-on-promotion) that has to land in a bounded range).
+Optional types are on as well, which is what makes `event.metadata[?'severity'].orValue('')` valid;
+that one is core CEL rather than an extension, and it is the subject of the next section.
+
 ### The mistake every rules file makes first
 
 Indexing a metadata key that is absent is an **evaluation error** in CEL, not an empty string:
@@ -385,6 +395,98 @@ that instance. An edge without it reports `FailedPrecondition` and the event **f
 than being promoted whole — quietly promoting everything a rule asked to have condensed would be the
 opposite of what was written. It cannot be combined with the other two: there is nothing left for a
 selection to select from.
+
+## Setting fields on promotion
+
+A `promote` rule may also carry a `set` block, which rewrites fields on the copy that crosses:
+
+```json
+{ "name": "escalate-production-errors",
+  "expr": "event.metadata[?'severity'].orValue('') == 'error'",
+  "action": "promote",
+  "set": {
+      "event": {
+          "significance": "math.least(100, event.significance * 4)",
+          "group": "'incidents'",
+          "metadata": "{'promoted_by': 'edge-a'}"
+      },
+      "memory": {
+          "significance": "memory.body.contains('panic') ? 90 : memory.significance"
+      }
+  } }
+```
+
+**This is the difference between an admission gate and a ranking one.** Promote-or-drop is binary;
+significance is the number the central store's entire [decay model](consolidation.md) runs on, so
+setting it at the crossing decides *how long* what you admit is kept. An edge knows things the
+central store cannot — that this instance is production, that a body carrying a stack trace outranks
+the ten around it — and this is where that knowledge is spent.
+
+| Scope | Fields |
+| --- | --- |
+| `set.event` | `significance`, `group`, `name`, `description`, `metadata` |
+| `set.memory` | `significance`, `group`, `metadata` |
+
+Each value is a CEL expression, compiled and type-checked at load like a match expression. The event
+scope sees exactly what the rule matched on (`event`, `memories`); the memory scope additionally
+binds `memory` — the record being written — and keeps the siblings in scope, so a memory can be
+ranked against its own event:
+
+```javascript
+"significance": "memory.significance >= int(event.significance_mean) ? 80 : 10"
+```
+
+There is deliberately no `body`: rewriting content is what the `summarise` reduction is for.
+
+### Six things worth knowing
+
+**Only the promoted copy is touched.** The edge is drained either way, so writing back to it would
+be a write nobody reads. Nothing here mutates the source (`summarise` still does, as it always did).
+
+**The mutation runs before the reduction.** A rule that scores memories and then keeps the top ten
+keeps the top ten **by its own score**, not by the significance the edge stored. Ranking by a number
+the rule has just declared irrelevant would be the surprising reading. After a `summarise` reduction
+the summary is what crosses, so the summary is what gets scored.
+
+**An expression must produce the right type**, checked at load: `int` for significance (a `double`
+is refused — say `int(...)` rather than have a rank truncated silently), `string`, and
+`map(string, string)` for metadata. `math.least`/`math.greatest`, from the
+[math extension](https://github.com/google/cel-go/tree/master/ext), are what make a computed
+significance safe to clamp.
+
+**Metadata is merged, not replaced** — the expression's entries are stamped over what the record
+carries. CEL has no map union operator, so a replacing `metadata` could not express "keep what is
+there and add a label", which is nearly always what is wanted. The cost: a promotion cannot *remove*
+a metadata key.
+
+**A value the target would reject fails the event loudly.** Significance is bounds-checked against
+`[0, 2147483647]`, the string fields against their column limits, and metadata against the service's
+own validator. A failure is logged naming the rule *and the field*, counted on
+`hippocampus.ingestor.rule_errors`, and **leaves the event on the edge** — where it can still be
+promoted once the rules file is fixed. This is deliberately unlike a *match* expression erroring,
+which merely does not match: not matching is a safe fallback, whereas promoting at a weight the
+rules file explicitly rejected would put the record into the central decay model at the wrong rank,
+silently and irreversibly.
+
+**`--dry-run` evaluates it.** The reported memory counts are the ones the rule's own scores produce,
+since a scoring rule whose numbers are never shown has not been tested. The single exception is a
+`summarise` rule's per-memory block: the summary does not exist until the edge is asked to write it,
+which a dry run must not do.
+
+Rules that set fields are counted by `--check-rules`:
+
+```console
+$ hippocampus-ingestor --rules rules.json --check-rules
+rules.json: 4 rule(s), 2 setting fields on promotion, default action 'drop', reads memory bodies: true
+```
+
+### Interaction with group scoping
+
+`set.event.group` and `set.memory.group` write the `group` label, which is also what
+[group scoping](configuration.md#group-scoping) binds a token to. If the **target** token is
+group-scoped, a promotion naming a group outside that scope is refused by the target — as it should
+be; the group on the wire is never trusted. Setting the group is therefore for an unscoped target
+token, or for choosing among the groups the token already holds.
 
 ## Applying rule changes to a running instance
 
@@ -462,3 +564,6 @@ promoted.
   deciding where it runs.
 - **An event over `--max-event-memories` is left unjudged**, reported, and never promoted or dropped.
   Judging a truncated view of an event would decide its fate on facts that are not its own.
+- **Orphans are never scored.** Rules key on events, so a memory carrying no `event_id` bypasses the
+  ruleset entirely — including any `set` block. `--orphans promote` promotes it exactly as the edge
+  held it. If orphans need re-ranking, the fix is to give the writer an event to write against.

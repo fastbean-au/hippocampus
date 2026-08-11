@@ -123,6 +123,15 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   - **A `promote` rule may reduce first**: `keepTopN`/`minSignificance` choose what crosses (the
     rest are still drained), or `summarise` calls `SummariseMemories` on the edge, which needs
     `ollama.enabled` there and fails the event loudly if it is absent.
+  - **A `promote` rule may also rewrite what crosses.** A `set` block carries CEL expressions for
+    `significance`, `group`, `metadata` (and `name`/`description` on the event), evaluated per event
+    and per memory, so the edge can **re-rank** what it admits rather than only admit it —
+    significance being the number the central store's whole decay model runs on. Only the promoted
+    copy is touched, never the edge, which is drained regardless. The mutation runs **before** any
+    reduction, so `keepTopN` ranks by the score the rule just set; values are bounds-checked against
+    what the target would accept (a bad one fails the event loudly and leaves it on the edge rather
+    than promoting it at a weight the file rejected); and `metadata` is **merged** over what the
+    record carries, since CEL has no map union and stamping one provenance label is the common case.
   - **An edge must be configured not to forget.** Default consolidation settings will evict the
     memories of an event before the rules ever see it; set `consolidation.minimumRetentionInDays`
     above the longest an event stays open. See the docs — this is the one thing to get right.

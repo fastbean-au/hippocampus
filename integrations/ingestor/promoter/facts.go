@@ -52,24 +52,33 @@ func buildFacts(event *contract.Event, memories []*contract.Memory, withMemories
 	facts.Memories = make([]rules.Memory, 0, len(memories))
 
 	for _, memory := range memories {
-		metadata := memory.GetMetadata()
-		if metadata == nil {
-			metadata = map[string]string{}
-		}
-
-		facts.Memories = append(facts.Memories, rules.Memory{
-			Id:           memory.GetId(),
-			Body:         memory.GetBody(),
-			Significance: int64(memory.GetSignificance()),
-			IsBinary:     memory.GetIsBinary() == contract.Bool_TRUE,
-			IsSummary:    memory.GetIsSummary(),
-			RecallCount:  int64(memory.GetRecallCount()),
-			TimeStamp:    memory.GetTimeStamp(),
-			Metadata:     metadata,
-		})
+		facts.Memories = append(facts.Memories, memoryFact(memory))
 	}
 
 	return facts
+}
+
+// memoryFact projects one memory onto what an expression sees of it.
+//
+// It is separate from the loop above because a memory-scoped mutation binds `memory` to the record
+// it is about to write, which is not always one of the judged memories: after a summarise reduction
+// it is the summary, which did not exist when the facts were built.
+func memoryFact(memory *contract.Memory) rules.Memory {
+	metadata := memory.GetMetadata()
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+
+	return rules.Memory{
+		Id:           memory.GetId(),
+		Body:         memory.GetBody(),
+		Significance: int64(memory.GetSignificance()),
+		IsBinary:     memory.GetIsBinary() == contract.Bool_TRUE,
+		IsSummary:    memory.GetIsSummary(),
+		RecallCount:  int64(memory.GetRecallCount()),
+		TimeStamp:    memory.GetTimeStamp(),
+		Metadata:     metadata,
+	}
 }
 
 // aggregate computes the per-event memory statistics in one walk.

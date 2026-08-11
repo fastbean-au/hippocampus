@@ -880,6 +880,18 @@ github.com/fastbean-au/hippocampus => ../..`), which is what makes `github.com/g
     (`keepTopN`/`minSignificance` choose what _crosses_ and leave the source untouched, `summarise`
     replaces memories on the source), which is why `reduce` returns both. (5) **An event over
     `--max-event-memories` is left unjudged** rather than judged on a truncated view of itself.
+    (6) A `promote` rule may also carry a **`set` block** (`rules/set.go`) — CEL expressions for
+    `significance`/`group`/`metadata` (plus `name`/`description` on the event), evaluated per event
+    and per memory, which is what turns the gate from admit-or-not into admit-and-rank; significance
+    is the number the central store's decay runs on, so this decides how long what crosses is kept.
+    Four constraints carry it: only the **promoted copy** is written (the edge is drained anyway);
+    the mutation runs **before** the reduction, so `keepTopN` ranks by the score the rule just set
+    (and a `summarise` reduction scores the summary, being what crosses); every result is
+    bounds-checked here against what the target would accept, because a value the target rejects
+    fails the whole `ImportBatch` and the event then sits on the edge being re-refused every pass;
+    and a failure **fails the event loudly** rather than falling back to the stored significance —
+    unlike a *match* expression erroring, which merely does not match, there is no safe fallback for
+    a rank the operator asked for. `metadata` merges rather than replaces (CEL has no map union).
     `promoter/` is driven in tests against two in-memory fake instances, so no service is needed.
     Built/vetted/tested by the `ingestor` CI job; the release cross-compiles `hippocampus-ingestor`
     and publishes `ghcr.io/fastbean-au/hippocampus-ingestor`. See `docs/ingestor.md` — in particular
