@@ -2549,6 +2549,17 @@
             "$ref": "#/definitions/v1SearchMode"
           },
           "description": "search_modes lists the SearchMemories modes this deployment can serve, so a client can adapt\nrather than discover an unavailable mode by having a search rejected. It depends on the\nstorage driver and on whether OpenSearch and an embedding model are configured - never on the\ncaller - so it is the same for every caller of a given instance. An empty list means content\nsearch is unavailable entirely and SearchMemories is rejected in every mode."
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "groups is the caller's group scope: the group labels whose records this token may read and\nwrite. Empty means unscoped - the whole store - which is what every token is unless the\ndeployment issues scoped ones, so a client must read group_scoped rather than infer from the\nlist being empty."
+        },
+        "groupScoped": {
+          "type": "boolean",
+          "description": "group_scoped reports whether a scope is in force for this caller. It exists because an empty\ngroups list is ambiguous on its own and the two readings are opposites: unscoped (see\neverything) versus scoped to nothing. A client showing \"you can see N groups\" must branch on\nthis, not on len(groups).\n\nWhen true, writes are stamped with the caller's group, Purge/Sleep/PreviewConsolidation are\nrefused, and records outside the scope report NotFound - so a console can explain an empty\nstore rather than leave it looking like data loss."
         }
       },
       "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."

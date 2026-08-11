@@ -58,6 +58,7 @@ func execute(args []string) {
 	flags.Bool("mint-token", false, "mint a signed auth token from the configured signing secret and exit")
 	flags.String("client-id", "", "client_id claim to embed in a minted token (used with --mint-token)")
 	flags.StringSlice("role", nil, "authorisation role(s) to embed in a minted token: reader, writer, and/or admin (repeatable or comma-separated; used with --mint-token)")
+	flags.StringSlice("group", nil, "group label(s) to scope a minted token to, restricting it to records carrying them (repeatable or comma-separated; omit for an unscoped token that sees the whole store; used with --mint-token)")
 	flags.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
 	flags.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
 	flags.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
@@ -158,11 +159,18 @@ func execute(args []string) {
 			log.Fatal("--mint-token requires at least one --role (reader, writer, and/or admin); a role-less token is denied every RPC")
 		}
 
+		// Unlike --role, no --group is a legitimate and common request: it mints an unscoped token,
+		// which is what every token was before group scoping existed. It is also the most
+		// privileged shape a token has, so the fact is reported on the stderr line below rather
+		// than left to be inferred from a missing field.
+		groups := viper.GetStringSlice("group")
+
 		token, err := auth.MintToken(auth.MintRequest{
 			Secret:   secret,
 			Kid:      kid,
 			ClientID: viper.GetString("client-id"),
 			Roles:    roles,
+			Groups:   groups,
 			TTL:      viper.GetDuration("ttl"),
 		})
 		if err != nil {
@@ -175,7 +183,12 @@ func execute(args []string) {
 		// `token=$(hippocampus --mint-token ...)` works - so an operator can record it for later
 		// per-token revocation.
 		if id, err := auth.TokenID(token); err == nil {
-			fmt.Fprintf(os.Stderr, "jti=%s client_id=%s roles=%s\n", id, viper.GetString("client-id"), strings.Join(roles, ","))
+			scope := "unscoped (whole store)"
+			if len(groups) > 0 {
+				scope = strings.Join(groups, ",")
+			}
+
+			fmt.Fprintf(os.Stderr, "jti=%s client_id=%s roles=%s groups=%s\n", id, viper.GetString("client-id"), strings.Join(roles, ","), scope)
 		}
 
 		return
@@ -589,6 +602,7 @@ func run(ctx context.Context, version versionInfo) error {
 	case "idp":
 		viper.SetDefault("auth.jwksRefreshIntervalSeconds", 300)
 		viper.SetDefault("auth.roleClaim", "roles")
+		viper.SetDefault("auth.groupsClaim", "groups")
 
 		refreshInterval := time.Duration(viper.GetInt("auth.jwksRefreshIntervalSeconds")) * time.Second
 
@@ -598,6 +612,7 @@ func run(ctx context.Context, version versionInfo) error {
 			Audience:        viper.GetString("auth.audience"),
 			RefreshInterval: refreshInterval,
 			RoleClaim:       viper.GetString("auth.roleClaim"),
+			GroupsClaim:     viper.GetString("auth.groupsClaim"),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to initialise auth: %w", err)
@@ -641,6 +656,18 @@ func run(ctx context.Context, version versionInfo) error {
 			verifier = auth.NewRevokingVerifier(verifier, list)
 
 			log.Infof("token revocation enabled from '%s'", path)
+		}
+
+		// Group scoping is inert unless tokens carry a scope, so nothing needs enabling for it to
+		// work. What this key adds is the refusal of a token that arrives WITHOUT one: an unscoped
+		// token sees the whole store, so on a partitioned deployment the absence of a scope is the
+		// most dangerous shape a valid token can have, not the least. Wrapping outside the
+		// revocation decorator is deliberate but immaterial - both only inspect claims the inner
+		// verifier already produced.
+		if viper.GetBool("auth.requireGroupScope") {
+			verifier = auth.NewGroupScopedVerifier(verifier, true)
+
+			log.Info("auth.requireGroupScope is set - tokens carrying no group scope will be rejected")
 		}
 	}
 

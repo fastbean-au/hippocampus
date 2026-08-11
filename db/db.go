@@ -363,6 +363,18 @@ type MemoryFilter struct {
 	// holding an empty set must short-circuit rather than pass it.
 	Ids []string
 
+	// Groups is the CALLER'S SCOPE, and is a different thing from Group beside it: Group is the
+	// filter a client asked for, Groups is the set of groups that client is permitted to see at all
+	// (auth.Claims.Groups). They compose as a conjunction, so a client asking for a group outside
+	// its scope matches nothing - an empty page, which is the correct answer and deliberately not
+	// an error, since reporting one would confirm the group exists.
+	//
+	// Empty means unrestricted, per this struct's usual rule. That default is load-bearing: every
+	// server-owned scan (the sleep cycle, the reconcile sweep, the search backfill) leaves it unset
+	// and must keep seeing the whole store, since the decay dynamics are store-global and a
+	// consolidation pass that skipped a group would simply never forget it.
+	Groups []string
+
 	// Metadata restricts the result to memories carrying every one of these key/value pairs
 	// exactly - a conjunction, not a match on any. Empty means unrestricted. The predicate is
 	// unindexed, exactly as Group's is.
@@ -402,6 +414,11 @@ type EventFilter struct {
 	// Metadata restricts the result to events carrying every one of these key/value pairs exactly,
 	// as MemoryFilter.Metadata does for memories.
 	Metadata map[string]string
+
+	// Groups is the caller's scope, exactly as MemoryFilter.Groups is for memories - distinct from
+	// Group, which is the filter the client asked for. See that field for why empty means the whole
+	// store.
+	Groups []string
 }
 
 // SignificanceExtremum mirrors contract.SignificanceExtremum without the db package depending on
@@ -432,6 +449,13 @@ type SummarisationCandidate struct {
 	EventId     string
 	EventName   string
 	MemoryCount int
+
+	// Group is the event's group label, carried so GetSummarisationCandidates can serve a
+	// group-scoped caller from the same store-wide cache the sleep cycle populates. The scan itself
+	// must stay unscoped - a group it skipped would never be summarised for anyone - so the
+	// narrowing happens on the way out, which is only possible if the group travels with the
+	// candidate.
+	Group string
 }
 
 type Server interface {
@@ -525,6 +549,11 @@ type Store interface {
 	GetEventLinks(ctx context.Context, id string, direction types.LinkDirection) ([]types.LinkEdge, int64, error)
 	MissingMemoryIds(ctx context.Context, ids []string) ([]string, error)
 	MissingEventIds(ctx context.Context, ids []string) ([]string, error)
+
+	// The group-scope counterpart to the two above, for the RPCs that address rows by id and so
+	// have no filter to carry the caller's scope (see scope.go).
+	MemoryIdsOutsideGroups(ctx context.Context, ids []string, groups []string) ([]string, error)
+	EventIdsOutsideGroups(ctx context.Context, ids []string, groups []string) ([]string, error)
 	LinksForMemories(ctx context.Context, ids []string) (map[string][]types.Link, error)
 	LinksForEvents(ctx context.Context, ids []string) (map[string][]types.Link, error)
 
@@ -543,8 +572,11 @@ type Store interface {
 
 	// Export/transfer surface (see transfer.go): keyset pagination over the whole store,
 	// full-state import upserts, and the manifest-scoped clear primitives.
-	GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error)
-	GetEventsPage(ctx context.Context, afterId string, limit int) ([]types.Event, error)
+	// The trailing groups is the caller's group scope (nil for the server-owned walks). It is on
+	// these two rather than only on the filters because Export/Transfer/Clear reach the store
+	// through them and must not carry a scoped caller past its own partition.
+	GetMemoriesPage(ctx context.Context, afterId string, limit int, groups []string) ([]types.Memory, error)
+	GetEventsPage(ctx context.Context, afterId string, limit int, groups []string) ([]types.Event, error)
 	ImportMemories(ctx context.Context, memories []types.Memory) (int, error)
 	ImportEvents(ctx context.Context, events []types.Event) (int, error)
 	ClearMemories(ctx context.Context, snapshots []MemoryRecallSnapshot) (int, error)

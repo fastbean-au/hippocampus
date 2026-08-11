@@ -187,6 +187,18 @@ func RouteRPC(httpMethod string, pattern string) (string, bool) {
 	return rpc, ok
 }
 
+// HasPolicy reports whether an RPC, named as it appears in the service descriptor, has an
+// authorisation policy. It exists so a table elsewhere that is keyed by the same RPC names - the
+// group-scope declarations in hippocampus/scope.go - can cross-check itself against this one
+// without exporting the table or duplicating it. Each table already guards its own coverage of the
+// descriptor; what this catches is the two disagreeing about what an RPC is called, which would
+// leave a real RPC unguarded while both coverage tests still passed.
+func HasPolicy(rpc string) bool {
+	_, ok := policies[rpc]
+
+	return ok
+}
+
 // captureSegment matches a grpc-gateway path capture as Pattern.String renders it (e.g. "{id=*}"),
 // so normalisePattern can reduce it to the placeholder the policy table uses.
 var captureSegment = regexp.MustCompile(`\{[^}]*\}`)
@@ -365,23 +377,25 @@ func forbidden(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden"})
 }
 
-// rolesFromClaim extracts a role list from a differently-named claim, for identity providers that
-// do not publish roles under the standard top-level "roles" (auth.roleClaim). It parses the token
-// unverified - the signature was already checked by the caller, and this only reads a claim value,
-// never makes a trust decision - and accepts either a JSON array of strings or a single string.
+// stringsFromClaim extracts a list of strings from a differently-named claim, for identity
+// providers that do not publish a value under the name Claims parses directly - roles under the
+// standard top-level "roles" (auth.roleClaim), or the group scope under "groups"
+// (auth.groupsClaim). It parses the token unverified - the signature was already checked by the
+// caller, and this only reads a claim value, never makes a trust decision - and accepts either a
+// JSON array of strings or a single string.
 //
 // The claim name is resolved literally first, so a provider whose key itself contains dots or
 // slashes (Auth0 namespaces its roles under a URI such as "https://example.com/roles") matches as a
 // plain top-level key. Only when no literal key matches is the name treated as a dotted path and
 // walked through nested objects, so a nested claim (Keycloak's "realm_access.roles") also resolves.
-func rolesFromClaim(token string, claimName string) []string {
+func stringsFromClaim(token string, claimName string) []string {
 	var raw jwt.MapClaims
 
 	if _, _, err := jwt.NewParser().ParseUnverified(token, &raw); err != nil {
 		return nil
 	}
 
-	return coerceRoles(resolveClaim(raw, claimName))
+	return coerceStrings(resolveClaim(raw, claimName))
 }
 
 // resolveClaim looks up claimName in the parsed claims, preferring a literal top-level key and
@@ -414,9 +428,9 @@ func resolveClaim(raw jwt.MapClaims, claimName string) any {
 	return current
 }
 
-// coerceRoles turns a resolved claim value into a role list, accepting a single string or a JSON
-// array and keeping only the string members of an array. Any other type yields no roles.
-func coerceRoles(value any) []string {
+// coerceStrings turns a resolved claim value into a string list, accepting a single string or a
+// JSON array and keeping only the string members of an array. Any other type yields nothing.
+func coerceStrings(value any) []string {
 	switch v := value.(type) {
 
 	case string:

@@ -300,6 +300,35 @@ func TestDefaultTransformerMetadata(t *testing.T) {
 			TransformConfig{MetadataHeaders: []string{"X-Absent"}},
 			nil,
 		},
+
+		// The subject as a metadata label. This is what lets a bridge keep the subject as
+		// classification when its service token is group-scoped and the group must therefore be the
+		// token's own label rather than the subject.
+		{
+			"subject recorded under the configured key",
+			TransformConfig{SubjectMetadataKey: "subject"},
+			map[string]string{"subject": "events.orders"},
+		},
+		{
+			"the subject key is normalised like any other",
+			TransformConfig{SubjectMetadataKey: "Broker Subject"},
+			map[string]string{"broker_subject": "events.orders"},
+		},
+		{
+			// The value is the raw subject: only the key has a restricted charset, and rewriting the
+			// value would make the label stop matching the subject it names.
+			"subject alongside the group it no longer has to be",
+			TransformConfig{Group: "team-alpha", SubjectMetadataKey: "subject"},
+			map[string]string{"subject": "events.orders"},
+		},
+		{
+			"an explicitly mapped header wins over the subject on the same key",
+			TransformConfig{
+				SubjectMetadataKey: "x-source",
+				MetadataHeaders:    []string{"X-Source"},
+			},
+			map[string]string{"x-source": "slack"},
+		},
 	}
 
 	for _, c := range cases {

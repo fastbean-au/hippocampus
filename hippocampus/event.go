@@ -39,6 +39,16 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 		return &res, mapError(err)
 	}
 
+	// Stamp the group the caller's scope permits, before the nested memories below inherit it.
+	group, err := s.writeGroup(ctx, event.Group)
+	if err != nil {
+		tel.eventsRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+		return &res, err
+	}
+
+	event.Group = group
+
 	// The minimum-significance gate applies only to an absolute positive significance: an unranked
 	// create (significance 0) is a deliberate "rank it later", and a placement is a deliberate
 	// relative ranking - neither is the insignificant-write the gate drops.
@@ -122,6 +132,10 @@ func (s *Server) EndEvent(ctx context.Context, in *contract.EndEventRequest) (*c
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
 	}
 
+	if err := s.scopeEventIds(ctx, []string{in.GetId()}); err != nil {
+		return &res, err
+	}
+
 	t := in.GetTimeEnd()
 	if t == 0 {
 		t = time.Now().UnixNano()
@@ -151,6 +165,10 @@ func (s *Server) UpdateEventSignificance(ctx context.Context, in *contract.Updat
 
 	if in.GetId() == "" {
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
+	}
+
+	if err := s.scopeEventIds(ctx, []string{in.GetId()}); err != nil {
+		return &res, err
 	}
 
 	e := types.Event{
@@ -192,6 +210,20 @@ func (s *Server) MergeEvents(ctx context.Context, in *contract.MergeEventsReques
 		return &res, fmt.Errorf("both 'merge_from' and 'merge_to' must be provided")
 	}
 
+	// Both ends are scope-checked for a scoped caller: a merge re-points memories between events, so
+	// allowing either end outside the partition would move records across the boundary in one call.
+	//
+	// This narrows the RPC for a scoped caller in one documented way. Unscoped, merge_from need NOT
+	// exist - that is the dangling-reference heal, where memories still pointing at a deleted event
+	// are re-homed. Scoped, a nonexistent merge_from is refused, because scopeEventIds cannot tell a
+	// missing id from one in another group and must not answer differently for the two: doing so
+	// would turn this RPC into an oracle for whether an id exists elsewhere in the store. The heal
+	// is an operator's repair of store-wide damage and belongs with an unscoped token, alongside
+	// Purge and Sleep.
+	if err := s.scopeEventIds(ctx, []string{tid, fid}); err != nil {
+		return &res, err
+	}
+
 	// The merge re-points merge_from's memories at merge_to. If merge_to does not exist, every one
 	// of those memories becomes a dangling reference in a single call, so verify it first.
 	// merge_from need not exist - an absent one simply matches no memories, and any
@@ -226,6 +258,10 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 	// (and mirroring that wipe into the search index).
 	if eid == "" {
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
+	}
+
+	if err := s.scopeEventIds(ctx, []string{eid}); err != nil {
+		return &res, err
 	}
 
 	deleted, err := s.db.DeleteEvent(ctx, eid)
@@ -267,6 +303,10 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 
 	eid := in.GetId()
 
+	if err := s.scopeEventIds(ctx, []string{eid}); err != nil {
+		return &res, err
+	}
+
 	event, err := s.db.GetEvent(ctx, eid)
 	if err != nil {
 		if errors.Is(err, db.ErrEventNotFound) {
@@ -283,8 +323,13 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 			return &res, mapError(err)
 		}
 
-		ms := make([]*contract.Memory, len(*memories))
-		for i, m := range *memories {
+		// The event is in scope, but a memory attached to it may carry a different group of its own
+		// - nothing requires the two to agree, and an unscoped writer can create exactly that - so
+		// the nested memories are filtered rather than assumed to inherit the event's scope.
+		nested := s.filterMemoriesToScope(ctx, *memories)
+
+		ms := make([]*contract.Memory, len(nested))
+		for i, m := range nested {
 			ms[i] = m.ToProto()
 		}
 		res.Event.Memories = ms
@@ -383,6 +428,9 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		Metadata: metadata,
 	}
 
+	// The caller's group scope, as a predicate so it narrows before the LIMIT and the total count.
+	filter.Groups, _ = s.scopedGroups(ctx)
+
 	total, err := s.db.CountEventsFiltered(ctx, filter)
 	if err != nil {
 		return &res, mapError(err)
@@ -415,7 +463,9 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 			return &res, mapError(err)
 		}
 
-		for _, m := range *memories {
+		// Filtered for the same reason as GetEventById's nested memories: an in-scope event may hold
+		// a memory carrying a group of its own that the caller does not.
+		for _, m := range s.filterMemoriesToScope(ctx, *memories) {
 			if i, ok := indexByEventId[m.EventId]; ok {
 				es[i].Memories = append(es[i].Memories, m.ToProto())
 			}

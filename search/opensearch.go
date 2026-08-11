@@ -815,6 +815,19 @@ func (o *OpenSearch) Search(ctx context.Context, query Query) ([]Hit, error) {
 		filters = append(filters, map[string]any{"term": map[string]any{"group": query.Group}})
 	}
 
+	// The caller's group scope: a terms filter (any of), conjoined with the single-group term above
+	// by sitting in the same filter list. It needs no mapping change and no reindex - "group" is
+	// already a keyword field carrying exactly this value, which is the whole reason scoping was
+	// built on the existing group label rather than a new one.
+	if len(query.Groups) > 0 {
+		scope := make([]any, 0, len(query.Groups))
+		for _, group := range query.Groups {
+			scope = append(scope, group)
+		}
+
+		filters = append(filters, map[string]any{"terms": map[string]any{"group": scope}})
+	}
+
 	// One term filter per pair, which is what makes them a conjunction: every term must match some
 	// element of the document's metadata array. The term is the pair in its wire form, identical to
 	// what MetadataToTerms indexed, so no conversion is involved. Sorted so two identical queries

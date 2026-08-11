@@ -89,6 +89,12 @@ type ContentQuery struct {
 	// in the join to the primary table alongside the group filter and BEFORE the LIMIT - so it
 	// narrows the candidates rather than the page.
 	Metadata map[string]string
+
+	// Groups is the caller's group scope (see MemoryFilter.Groups), distinct from the Group filter
+	// above. Like Metadata it is applied inside the query, not to the results: post-filtering a
+	// ranked page would silently return fewer matches than the caller asked for, and would let the
+	// size of the shortfall report how much of the store the caller cannot see.
+	Groups []string
 }
 
 // ContentHit is one match: the memory's id and its relevance, with the sign flipped from FTS5's
@@ -299,6 +305,13 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 	if query.Group != "" {
 		clauses = append(clauses, `m.group_name = ?`)
 		args = append(args, query.Group)
+	}
+
+	// The caller's scope, conjoined with the Group filter above. Built through the same helper the
+	// filter predicates use so the two paths cannot disagree about what a scope means.
+	if clause, clauseArgs := groupScopeConditions("m.", query.Groups); clause != "" {
+		clauses = append(clauses, strings.TrimPrefix(clause, ` AND `))
+		args = append(args, clauseArgs...)
 	}
 
 	// Metadata narrows the candidates inside the query rather than filtering the results, so the

@@ -88,8 +88,8 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 			return err
 		}},
 		{"FindSummarisationCandidates", func() error { _, err := db.FindSummarisationCandidates(ctx, 1, 1, 0); return err }},
-		{"GetMemoriesPage", func() error { _, err := db.GetMemoriesPage(ctx, "", 10); return err }},
-		{"GetEventsPage", func() error { _, err := db.GetEventsPage(ctx, "", 10); return err }},
+		{"GetMemoriesPage", func() error { _, err := db.GetMemoriesPage(ctx, "", 10, nil); return err }},
+		{"GetEventsPage", func() error { _, err := db.GetEventsPage(ctx, "", 10, nil); return err }},
 		{"ImportMemories", func() error { _, err := db.ImportMemories(ctx, []types.Memory{memory}); return err }},
 		{"ImportEvents", func() error { _, err := db.ImportEvents(ctx, []types.Event{event}); return err }},
 		{"ClearMemories", func() error {

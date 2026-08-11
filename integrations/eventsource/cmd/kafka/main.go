@@ -148,6 +148,7 @@ func transformConfig() bridge.TransformConfig {
 		Metadata:             metadataLabels(),
 		MetadataHeaders:      viper.GetStringSlice("metadata-header"),
 		MetadataHeaderPrefix: viper.GetString("metadata-header-prefix"),
+		SubjectMetadataKey:   viper.GetString("subject-metadata-key"),
 	}
 }
 

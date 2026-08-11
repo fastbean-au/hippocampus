@@ -300,7 +300,7 @@ type failGetMemoriesPageStore struct {
 	err error
 }
 
-func (f failGetMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error) {
+func (f failGetMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId string, limit int, groups []string) ([]types.Memory, error) {
 	return nil, f.err
 }
 

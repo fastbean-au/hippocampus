@@ -285,10 +285,24 @@ suggests:
   `isBinary` after creation.
 - **`significance: 0` on `UpdateMemory` leaves the existing significance unchanged** — it cannot
   reset a memory to unranked.
-- **`group` is a label, not a permission.** It scopes queries; it grants nothing and hides nothing.
+- **`group` is a label unless the deployment scopes tokens to it.** By default it only narrows
+  queries: it grants nothing and hides nothing. But a deployment using
+  [group scoping](configuration.md#group-scoping) binds a token to particular labels, and then three
+  things change for your client, none of them visible in the schema:
+  - **`NotFound` may mean "not yours".** An out-of-scope record is reported exactly as a nonexistent
+    one, deliberately, so that the error cannot be used to prove a record exists. Do not treat
+    `NotFound` as proof that an id was never valid.
+  - **Your writes are stamped for you.** Omit `group` and the server fills in the token's own; send
+    a group the token does not hold and the write is refused with `PermissionDenied`. A client that
+    hard-codes a group will break when handed a scoped token — prefer to omit it.
+  - **Listings and `totalCount` are narrowed**, and filtering by a group outside the scope returns
+    an empty page rather than an error. `Purge`, `Sleep` and `PreviewConsolidation` are refused
+    outright.
 - **Feature-detect with `WhoAmI`** rather than probing: `searchModes` reports which
   `SearchMemories` modes this deployment can actually serve (an empty list means content search is
-  unavailable entirely), and `role` reports the caller's effective tier.
+  unavailable entirely), `role` reports the caller's effective tier, and `groupScoped`/`groups`
+  report the token's group scope. Read `groupScoped`, **not** whether `groups` is empty — an empty
+  list means unscoped (the whole store), which is the opposite of scoped-to-nothing.
 - **A purge blocks everything.** While `Purge` runs, every other RPC is rejected with `Unavailable`
   (`503`). It is brief; retry.
 - **Set deadlines.** The service bounds its own storage operations

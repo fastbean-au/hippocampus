@@ -168,7 +168,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 
 | Command  | Purpose                                                         |
 | -------- | --------------------------------------------------------------- |
-| `whoami` | report the caller's identity and effective tier                 |
+| `whoami` | report the caller's identity, effective tier, and group scope   |
 | `sleep`  | trigger a consolidation cycle now, or preview one (`--dry-run`) |
 | `purge`  | delete every event and memory (requires `--yes`)                |
 
@@ -177,6 +177,22 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 separate read-only RPC (`PreviewConsolidation`), so it cannot trigger a cycle by accident;
 `--limit` bounds how many individual memories are detailed (default 100, max 1000) without
 affecting the counts, which are always complete.
+
+`whoami` reports the token's [group scope](configuration.md#group-scoping) on its own line —
+`groups: unscoped (whole store)` when the token carries none, which is the state to check first when
+a listing comes back shorter than expected:
+
+```text
+client_id:    agent-a
+role:         writer
+auth_enabled: true
+groups:       alpha
+```
+
+All three of `sleep`, `sleep --dry-run` and `purge` act on the **whole store**, so all three are
+refused to a group-scoped token whatever its tier — an operator runs them with an unscoped one. The
+same applies to the `MergeEvents` dangling-reference heal. Everything else narrows to the scope
+rather than failing, `export` and `clear` included, so a scoped `export` is a per-group snapshot.
 
 ### Data movement
 

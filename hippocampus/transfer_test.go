@@ -844,7 +844,7 @@ type failEventsPageStore struct {
 	err error
 }
 
-func (f failEventsPageStore) GetEventsPage(ctx context.Context, afterId string, limit int) ([]types.Event, error) {
+func (f failEventsPageStore) GetEventsPage(ctx context.Context, afterId string, limit int, groups []string) ([]types.Event, error) {
 	return nil, f.err
 }
 
@@ -855,7 +855,7 @@ type failMemoriesPageStore struct {
 	err error
 }
 
-func (f failMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error) {
+func (f failMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId string, limit int, groups []string) ([]types.Memory, error) {
 	return nil, f.err
 }
 

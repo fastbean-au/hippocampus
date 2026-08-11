@@ -34,6 +34,32 @@ func ClientIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+// GroupsFromContext returns the group scope carried by the request's verified claims, and whether
+// the caller is bound to one at all. It reads through ClaimsFromContext rather than a context key of
+// its own - the scope arrives as a claim, so stashing it separately would be a second copy of a
+// value that is already on the context, free to fall out of step with it.
+//
+// The bool is what callers must branch on, not len(groups): false means the request carries no
+// scope and may see the whole store (authentication is disabled, or the token is unscoped), while
+// true with a non-empty slice means the request is restricted to exactly those groups. The two
+// cannot be told apart from the slice alone, and defaulting the wrong way in either direction is a
+// bug - "no scope" read as "scope to nothing" makes an unauthenticated instance return nothing, and
+// "scope to nothing" read as "no scope" hands a bound token the whole store.
+//
+// A verified token whose scope is empty is reported as unbound. A deployment that considers that a
+// misconfiguration rejects it at verification time instead (NewGroupScopedVerifier), which keeps
+// this function's contract simple: by the time it is called, an empty scope has already been
+// allowed by policy.
+func GroupsFromContext(ctx context.Context) ([]string, bool) {
+	claims := ClaimsFromContext(ctx)
+
+	if claims == nil || len(claims.Groups) == 0 {
+		return nil, false
+	}
+
+	return claims.Groups, true
+}
+
 // tierContextKey is the unexported key type under which the caller's resolved authorisation tier is
 // stashed. Like claimsContextKey, an unexported type prevents collisions from other packages.
 type tierContextKey struct{}

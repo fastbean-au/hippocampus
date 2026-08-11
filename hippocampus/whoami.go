@@ -22,6 +22,11 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 	// caller to describe.
 	modes := s.searchModes()
 
+	// The group scope is reported on both paths. On the unauthenticated one it is always absent,
+	// which is the truth rather than a placeholder: with no token there is no scope, and a client
+	// that renders "unscoped" from it is showing the right thing.
+	groups, scoped := s.scopedGroups(ctx)
+
 	tier, ok := auth.TierFromContext(ctx)
 
 	if !ok {
@@ -29,6 +34,8 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 			Role:        auth.TierAdmin.String(),
 			AuthEnabled: false,
 			SearchModes: modes,
+			Groups:      groups,
+			GroupScoped: scoped,
 		}, nil
 	}
 
@@ -37,5 +44,7 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 		Role:        tier.String(),
 		AuthEnabled: true,
 		SearchModes: modes,
+		Groups:      groups,
+		GroupScoped: scoped,
 	}, nil
 }

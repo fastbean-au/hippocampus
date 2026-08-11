@@ -71,7 +71,7 @@ write latency for that step; **pauses** counts generator backpressure pauses.
   briefly blocks the one connection) and falls at high steps as backpressure paces the writers.
 - SQLite's WAL does not truncate while readers are active, so the file grows to a high-water mark
   under sustained writes; here it is bounded by the backpressure pause plus `walTriggerBytes`. Size
-  the disk for the peak, not the steady state (see [Operations](operations.md#choosing-and-sizing-a-storage-backend)).
+  the disk for the peak, not the steady state (see [Operations](operations.md#choosing-a-storage-driver)).
 
 ### PostgreSQL (25-connection pool)
 
@@ -119,7 +119,7 @@ Steps 1–6 (higher steps were disk-limited on the test host; see [Caveats](#cav
   drop to 1–2 per step and used-bytes climbs to ~9× the cap.
 - This is largely **stock `mysql:8.0` configuration** — a 128 MB InnoDB buffer pool,
   `innodb_flush_log_at_trx_commit=1`, and the doublewrite buffer make each commit fsync-heavy. It is
-  exactly the tuning called out in [Operations](operations.md#choosing-and-sizing-a-storage-backend);
+  exactly the tuning called out in [Operations](operations.md#choosing-a-storage-driver);
   a larger buffer pool and relaxed flush settings move MySQL much closer to Postgres. Both server
   backends here ran their default configs, so this is a fair default-vs-default comparison, not a
   tuned one.

@@ -35,6 +35,7 @@ func RegisterCommonFlags(fs *pflag.FlagSet) {
 	fs.StringSlice("metadata", nil, "metadata label as 'key=value' stamped on every memory (repeatable)")
 	fs.StringSlice("metadata-header", nil, "message header to copy onto each memory's metadata (repeatable)")
 	fs.String("metadata-header-prefix", "", "copy every message header carrying this prefix onto the memory's metadata, with the prefix stripped from the key")
+	fs.String("subject-metadata-key", "", "record the message subject/topic as a metadata label under this key, as well as (or instead of) using it as the group - set this with an explicit --group when the service token is group-scoped")
 
 	fs.String("log-level", "info", "logging level (trace, debug, info, warn, error)")
 }

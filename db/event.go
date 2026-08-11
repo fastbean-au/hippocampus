@@ -422,6 +422,9 @@ func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 		args = append(args, filter.Group)
 	}
 
+	// The caller's group scope, conjoined with the Group filter above (see MemoryFilter.Groups).
+	query, args = appendGroupScope(query, args, "", filter.Groups)
+
 	query, args = d.appendMetadataConditions(query, args, "", filter.Metadata)
 
 	if filter.SignificanceExtremum != SignificanceExtremumNone {

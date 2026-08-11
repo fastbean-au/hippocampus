@@ -91,6 +91,15 @@ type Query struct {
 	// would silently shrink a page below the caller's limit, and would interact badly with the
 	// ranking layer's over-fetch, which is headroom rather than a guarantee.
 	Metadata map[string]string
+
+	// Groups is the caller's group scope: the set of group labels this caller may see at all,
+	// distinct from Group, which is the single label they chose to filter by. The two compose as a
+	// conjunction. Empty means unscoped - every group - so a backend must treat it the way it
+	// treats an absent filter, not as "match nothing".
+	//
+	// It is applied inside the index for the same reasons Metadata is, and one more: the shortfall
+	// from post-filtering would itself report how much of the store the caller cannot see.
+	Groups []string
 }
 
 // Hit is one search match: the memory's id and how well its body matched.

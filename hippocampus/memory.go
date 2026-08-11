@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/types"
@@ -71,10 +72,30 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 		return &res, nil
 	}
 
+	// Stamp the group the caller's scope permits. For a scoped caller naming nothing this fills in
+	// their sole group, so a bound writer never creates a record it cannot then read back.
+	group, err := s.writeGroup(ctx, memory.Group)
+	if err != nil {
+		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+		return &res, err
+	}
+
+	memory.Group = group
+
 	// A memory referencing an event that does not exist would be a dangling reference: no
 	// consolidation pass could see it through its event, so reject it rather than create one.
 	// Event-less memories (empty event_id) are unaffected.
 	if memory.EventId != "" {
+		// Checked before existence, so an event outside the caller's scope reports NotFound rather
+		// than the FailedPrecondition below - which would otherwise distinguish "no such event" from
+		// "an event you cannot see", and so confirm the latter exists.
+		if err := s.scopeEventIds(ctx, []string{memory.EventId}); err != nil {
+			tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+			return &res, err
+		}
+
 		exists, err := s.db.EventExists(ctx, memory.EventId)
 		if err != nil {
 			return &res, mapError(err)
@@ -158,10 +179,38 @@ func (s *Server) UpdateMemory(ctx context.Context, in *contract.Memory) (*contra
 		return &res, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	// The memory being updated must be in the caller's scope.
+	if err := s.scopeMemoryIds(ctx, []string{in.GetId()}); err != nil {
+		return &res, err
+	}
+
+	// A group on an update MOVES the memory, so it is checked against the scope rather than
+	// defaulted: a scoped caller may re-file a record within its own partition but must not be able
+	// to push one out of it, which would delete the record as far as they could ever tell and hand
+	// it to whoever holds the destination group. An update naming no group leaves it untouched,
+	// which is why writeGroup's "stamp the sole group" case is deliberately not used here - it would
+	// silently re-file every memory a multi-group caller touched.
+	//
+	// ClearGroup is refused for a scoped caller for the same reason: it moves the record to the
+	// unnamed group, which is outside every scope.
+	if groups, bound := s.scopedGroups(ctx); bound {
+		if memory.Group != "" && !auth.GroupInScope(groups, memory.Group) {
+			return &res, status.Errorf(codes.PermissionDenied, "group %q is outside this token's scope", memory.Group)
+		}
+
+		if memory.ClearGroup {
+			return &res, status.Error(codes.PermissionDenied, "a group-scoped token cannot clear a record's group, which would move it outside its own scope")
+		}
+	}
+
 	// Re-pointing a memory at an event that does not exist would create a dangling reference; reject
 	// it rather than let the update produce an immortal memory. A partial update
 	// that leaves event_id unset (empty) does not touch the memory's event, so it is unaffected.
 	if memory.EventId != "" {
+		if err := s.scopeEventIds(ctx, []string{memory.EventId}); err != nil {
+			return &res, err
+		}
+
 		exists, err := s.db.EventExists(ctx, memory.EventId)
 		if err != nil {
 			return &res, mapError(err)
@@ -217,6 +266,10 @@ func (s *Server) DeleteMemories(ctx context.Context, in *contract.DeleteMemories
 		return &res, nil
 	}
 
+	if err := s.scopeMemoryIds(ctx, ids); err != nil {
+		return &res, err
+	}
+
 	cnt, err := s.db.DeleteMemories(ctx, ids)
 
 	tel.memoriesDeleted.Add(ctx, int64(cnt))
@@ -244,6 +297,13 @@ func (s *Server) RecallMemories(ctx context.Context, in *contract.RecallMemories
 
 	if len(ids) == 0 {
 		return &res, nil
+	}
+
+	// Checked before the recall, not after: recall is a WRITE (it resets the decay clock and raises
+	// the recall count), so filtering out-of-scope memories from the response would leave the caller
+	// having reinforced records they may not see - a memory another group could then never forget.
+	if err := s.scopeMemoryIds(ctx, ids); err != nil {
+		return &res, err
 	}
 
 	reinforce := s.mayReinforce(ctx)
@@ -301,6 +361,10 @@ func (s *Server) ReplaceMemoriesWithSummary(ctx context.Context, in *contract.Re
 	eventId := in.GetEventId()
 	if eventId == "" {
 		return &res, fmt.Errorf("event_id must be provided")
+	}
+
+	if err := s.scopeEventIds(ctx, []string{eventId}); err != nil {
+		return &res, err
 	}
 
 	if _, err := s.db.GetEvent(ctx, eventId); err != nil {
@@ -386,17 +450,29 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 func (s *Server) GetSummarisationCandidates(ctx context.Context, in *contract.EmptyRequest) (*contract.GetSummarisationCandidatesResponse, error) {
 	var res contract.GetSummarisationCandidatesResponse
 
+	groups, bound := s.scopedGroups(ctx)
+
 	s.summarisationCandidatesMu.RLock()
 	defer s.summarisationCandidatesMu.RUnlock()
 
-	cs := make([]*contract.SummarisationCandidate, len(s.summarisationCandidates))
-	for i, c := range s.summarisationCandidates {
-		cs[i] = &contract.SummarisationCandidate{
+	// The cache is store-wide (the scan must see every group, or a group it skipped would never be
+	// summarised for anyone), so a scoped caller is served the subset carrying a group it holds.
+	// Filtering here rather than at the scan is also why this cannot shorten a page: the response is
+	// the whole list, not a limited one.
+	cs := make([]*contract.SummarisationCandidate, 0, len(s.summarisationCandidates))
+
+	for _, c := range s.summarisationCandidates {
+		if bound && !auth.GroupInScope(groups, c.Group) {
+			continue
+		}
+
+		cs = append(cs, &contract.SummarisationCandidate{
 			EventId:     c.EventId,
 			EventName:   c.EventName,
 			MemoryCount: int32(c.MemoryCount),
-		}
+		})
 	}
+
 	res.Candidates = cs
 
 	return &res, nil
@@ -495,9 +571,20 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		TimeRecalledMax: in.GetTimeRecalledMax(),
 	}
 
+	// The caller's group scope, applied as a predicate so it narrows the candidates before the
+	// LIMIT and the total count - both of which would otherwise report on records the caller cannot
+	// see. It composes with the Group filter above rather than replacing it.
+	filter.Groups, _ = s.scopedGroups(ctx)
+
 	// linked_to narrows the listing to one memory's direct neighbours, resolved to ids and passed
 	// down as a filter so it composes with the time/significance/group filters and with pagination.
 	if linkedTo := in.GetLinkedTo(); linkedTo != "" {
+		// The anchor must be one the caller can see; its neighbours are then narrowed by the scope
+		// predicate on the filter, so a link reaching out of the partition contributes nothing.
+		if err := s.scopeMemoryIds(ctx, []string{linkedTo}); err != nil {
+			return &res, err
+		}
+
 		missing, err := s.db.MissingMemoryIds(ctx, []string{linkedTo})
 		if err != nil {
 			return &res, mapError(err)

@@ -83,6 +83,7 @@ func (s *SQL) Search(ctx context.Context, query Query) ([]Hit, error) {
 		Text:     query.Text,
 		EventId:  query.EventId,
 		Group:    query.Group,
+		Groups:   query.Groups,
 		Limit:    query.Limit,
 		Metadata: query.Metadata,
 	})

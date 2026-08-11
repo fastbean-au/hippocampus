@@ -764,6 +764,30 @@ const STEPS = [
         ],
       },
       {
+        title: "Group scoping",
+        blurb:
+          "Restrict a token to records carrying particular group labels — a soft partition for teams or systems sharing one store. Inert until tokens carry a groups claim, so an existing deployment is unchanged. NOT isolation: the decay dynamics stay store-global, so a busy group still affects what another forgets. Hard isolation means one instance per tenant.",
+        when: (s) => value(s, "auth.method") !== "none",
+        fields: [
+          {
+            key: "auth.groupsClaim",
+            label: "Groups claim",
+            type: "text",
+            def: "groups",
+            svc: "groups",
+            when: (s) => value(s, "auth.method") === "idp",
+            help: "The token claim carrying the caller's group scope. A dotted path reaches into a nested object, exactly as the role claim does.",
+          },
+          {
+            key: "auth.requireGroupScope",
+            label: "Require every token to carry a group scope",
+            type: "bool",
+            def: false,
+            help: "On, a token arriving with no groups claim is rejected. Worth setting once a store is partitioned: an unscoped token is the most privileged shape there is — it sees everything — so its absence should be an error rather than a silent grant.",
+          },
+        ],
+      },
+      {
         title: "Browser sign-in",
         blurb:
           "How the embedded console (/ui) obtains a token under idp. Leave both off for a service with no human users.",

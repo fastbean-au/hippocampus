@@ -29,7 +29,7 @@ func TestGetMemoriesPage_ScanError(t *testing.T) {
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(memoryPageColumns).
 		AddRow("m1", "not-an-int", int32(1), "", []byte("x"), false, int64(0), int32(0), false, ""))
 
-	if _, err := d.GetMemoriesPage(context.Background(), "", 10); err == nil {
+	if _, err := d.GetMemoriesPage(context.Background(), "", 10, nil); err == nil {
 		t.Fatal("expected a scan error")
 	}
 
@@ -43,7 +43,7 @@ func TestGetMemoriesPage_RowsIterationError(t *testing.T) {
 		AddRow("m1", int64(1), int32(1), "", []byte("x"), false, int64(0), int32(0), false, "").
 		RowError(0, errors.New("boom")))
 
-	if _, err := d.GetMemoriesPage(context.Background(), "", 10); err == nil {
+	if _, err := d.GetMemoriesPage(context.Background(), "", 10, nil); err == nil {
 		t.Fatal("expected an iteration error")
 	}
 
@@ -56,7 +56,7 @@ func TestGetEventsPage_ScanError(t *testing.T) {
 	mock.ExpectQuery(`FROM `).WillReturnRows(sqlmock.NewRows(eventRowsColumns).
 		AddRow("e1", "not-an-int", int64(0), int32(1), "n", "d", false, int64(0), ""))
 
-	if _, err := d.GetEventsPage(context.Background(), "", 10); err == nil {
+	if _, err := d.GetEventsPage(context.Background(), "", 10, nil); err == nil {
 		t.Fatal("expected a scan error")
 	}
 
@@ -70,7 +70,7 @@ func TestGetEventsPage_RowsIterationError(t *testing.T) {
 		AddRow("e1", int64(1), int64(0), int32(1), "n", "d", false, int64(0), "").
 		RowError(0, errors.New("boom")))
 
-	if _, err := d.GetEventsPage(context.Background(), "", 10); err == nil {
+	if _, err := d.GetEventsPage(context.Background(), "", 10, nil); err == nil {
 		t.Fatal("expected an iteration error")
 	}
 

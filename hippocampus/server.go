@@ -622,6 +622,12 @@ func (s *Server) Sleep(ctx context.Context, in *contract.EmptyRequest) (*contrac
 		return &res, status.Error(codes.FailedPrecondition, "consolidation is disabled on this instance")
 	}
 
+	// The cycle is store-global - one capacity target, one pressure, one eviction ranking across
+	// every group - so there is no such thing as sleeping a partition. See hippocampus/scope.go.
+	if err := s.requireUnbound(ctx, "Sleep"); err != nil {
+		return &res, err
+	}
+
 	err := s.sleepOnce()
 	if err == nil {
 
@@ -649,6 +655,14 @@ func (s *Server) Sleep(ctx context.Context, in *contract.EmptyRequest) (*contrac
 func (s *Server) Purge(ctx context.Context, in *contract.EmptyRequest) (*contract.GeneralResponse, error) {
 	log.Debug("Purge()")
 	var res contract.GeneralResponse
+
+	// Refused to a scoped caller rather than narrowed to their partition. A group-scoped purge would
+	// report success for an operation whose name promises the whole store, and it would also have to
+	// make the purge gate below group-aware - otherwise one group's purge would spend its duration
+	// returning Unavailable to every other group.
+	if err := s.requireUnbound(ctx, "Purge"); err != nil {
+		return &res, err
+	}
 
 	s.purgeInProgress.Store(true)
 

@@ -488,7 +488,7 @@ func (l *OAuth2Login) loginError(w http.ResponseWriter, err error) {
 
 // nonceFromToken reads the nonce claim from an id_token without verifying it - the signature is
 // checked separately by the id_token verifier; this only reads a value to compare, never makes a
-// trust decision, mirroring rolesFromClaim.
+// trust decision, mirroring stringsFromClaim.
 func nonceFromToken(token string) string {
 	var raw jwt.MapClaims
 

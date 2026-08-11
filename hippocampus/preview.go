@@ -74,6 +74,15 @@ func (s *Server) PreviewConsolidation(
 		return nil, status.Error(grpccodes.FailedPrecondition, "consolidation is disabled on this instance")
 	}
 
+	// A dry run enumerates ids, groups and significances from across the whole store, which is the
+	// point of it - it describes a cycle that will act on every group at once. Narrowing it to a
+	// partition would describe something the store never does, since the capacity pressure and
+	// eviction ranking it reports are store-global. ExplainConsolidation is the group-scoped way to
+	// ask the same question about records the caller actually holds.
+	if err := s.requireUnbound(ctx, "PreviewConsolidation"); err != nil {
+		return nil, err
+	}
+
 	ctx, span := tel.tracer.Start(ctx, "preview_consolidation")
 	defer span.End()
 

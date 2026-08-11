@@ -42,7 +42,7 @@ func TestGetPagesRoundTrip(t *testing.T) {
 	afterId := ""
 
 	for {
-		page, err := db.GetMemoriesPage(context.Background(), afterId, 2)
+		page, err := db.GetMemoriesPage(context.Background(), afterId, 2, nil)
 		if err != nil {
 			t.Fatalf("GetMemoriesPage: %s", err)
 		}
@@ -66,7 +66,7 @@ func TestGetPagesRoundTrip(t *testing.T) {
 	afterId = ""
 
 	for {
-		page, err := db.GetEventsPage(context.Background(), afterId, 2)
+		page, err := db.GetEventsPage(context.Background(), afterId, 2, nil)
 		if err != nil {
 			t.Fatalf("GetEventsPage: %s", err)
 		}

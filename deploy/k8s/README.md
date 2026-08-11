@@ -78,7 +78,7 @@ cluster already uses (an `Ingress`/`Gateway`, a `LoadBalancer` Service, a mesh).
 Each overlay ships a `config.json` wired in through a Kustomize `configMapGenerator`, so editing it
 changes the ConfigMap's content-hash name and `kubectl apply` rolls the workload automatically —
 no stale config left running. The full key reference is in the top-level
-[README → Configurability](../../README.md#configurability).
+[Configurability](../../docs/configuration.md).
 
 Secrets are injected as **environment overrides** rather than baked into the ConfigMap. Every config
 key maps to `HIPPOCAMPUS_<PATH>` with dots as underscores (viper precedence is env > file), so:
@@ -105,7 +105,7 @@ it. The SQLite overlay needs no secret unless you enable auth.
 Auth is off (`auth.method: none`) in both shipped configs. To turn on HMAC bearer tokens, set
 `auth.method: hmac` in the overlay's `config.json` (the `signing-secret` Secret is already wired into
 the pod env, so it activates immediately) and mint tokens with
-`hippocampus --mint-token` (see [README → Authentication](../../README.md#authentication)). For an
+`hippocampus --mint-token` (see [Authentication](../../docs/configuration.md#authentication)). For an
 IdP, set `auth.method: idp` and the `auth.jwksUrl`/`auth.issuer` keys. Enable TLS via the `tls.*`
 keys and mount the cert/key from a Secret, or terminate TLS at your ingress/mesh.
 

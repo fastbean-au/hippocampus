@@ -118,6 +118,29 @@ func TestContentSearchAppliesFilters(t *testing.T) {
 	if ids := searchIds(t, d, ContentQuery{Text: "deployment", Group: "nobody"}); len(ids) != 0 {
 		t.Errorf("search filtered to an unused group: got %v, want none", ids)
 	}
+
+	// The caller's group scope is a separate predicate from the Group filter, and the two must
+	// behave the same way here as they do in the OpenSearch backend - which is why this mirrors
+	// TestOpenSearchIntegration_RoundTrip's scope cases case for case. A backend that disagreed
+	// about what a scope means would make SearchMemories return different records depending on
+	// which one a deployment happened to configure.
+	if ids := searchIds(t, d, ContentQuery{Text: "deployment", Groups: []string{"personal"}}); len(ids) != 1 || ids[0] != "m2" {
+		t.Errorf("scoped search: got %v, want [m2]", ids)
+	}
+
+	if ids := searchIds(t, d, ContentQuery{Text: "deployment", Groups: []string{"ops", "personal"}}); len(ids) != 2 {
+		t.Errorf("search scoped to both groups: got %v, want two matches", ids)
+	}
+
+	// An empty scope reads as unscoped: all three, including the group-less m3.
+	if ids := searchIds(t, d, ContentQuery{Text: "deployment", Groups: nil}); len(ids) != 3 {
+		t.Errorf("an empty scope must match everything: got %v, want three matches", ids)
+	}
+
+	// Scope and filter conjoin rather than the filter widening the scope.
+	if ids := searchIds(t, d, ContentQuery{Text: "deployment", Group: "ops", Groups: []string{"personal"}}); len(ids) != 0 {
+		t.Errorf("a group filter outside the scope must match nothing: got %v", ids)
+	}
 }
 
 // Limit must bound the result set: an unbounded content search over a large store is exactly the

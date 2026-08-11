@@ -43,6 +43,14 @@ func (s *Server) SummariseMemories(ctx context.Context, in *contract.SummariseMe
 		return &res, status.Error(codes.InvalidArgument, "event_id must be provided")
 	}
 
+	// Scope-checked before the summariser is consulted, so a caller cannot learn whether an event
+	// outside their partition exists by comparing a NotFound against a FailedPrecondition. The
+	// sleep cycle's auto-summarisation path calls summariseEvent directly and is server-owned, so it
+	// is unaffected by this and keeps covering every group.
+	if err := s.scopeEventIds(ctx, []string{eventId}); err != nil {
+		return &res, err
+	}
+
 	if !s.summariser().Enabled() {
 		return &res, status.Error(codes.FailedPrecondition, summarise.ErrDisabled.Error())
 	}

@@ -371,12 +371,12 @@ func TestRolesFromClaim(t *testing.T) {
 	}
 
 	// The standard claim is "roles"; asking for a different, absent claim yields no roles.
-	if got := rolesFromClaim(token, "groups"); got != nil {
+	if got := stringsFromClaim(token, "groups"); got != nil {
 		t.Fatalf("expected no roles for absent claim, got %v", got)
 	}
 
 	// Reading the present "roles" claim back returns it.
-	if got := rolesFromClaim(token, "roles"); len(got) != 1 || got[0] != "ignored" {
+	if got := stringsFromClaim(token, "roles"); len(got) != 1 || got[0] != "ignored" {
 		t.Fatalf("expected [ignored] from roles claim, got %v", got)
 	}
 
@@ -393,16 +393,16 @@ func TestRolesFromClaim(t *testing.T) {
 		t.Fatalf("SignedString: %s", err)
 	}
 
-	if got := rolesFromClaim(signed, "num_claim"); got != nil {
+	if got := stringsFromClaim(signed, "num_claim"); got != nil {
 		t.Fatalf("expected no roles for a non-string/array claim, got %v", got)
 	}
 
-	if got := rolesFromClaim(signed, "mixed"); len(got) != 2 || got[0] != "reader" || got[1] != "writer" {
+	if got := stringsFromClaim(signed, "mixed"); len(got) != 2 || got[0] != "reader" || got[1] != "writer" {
 		t.Fatalf("expected [reader writer] from a mixed array, got %v", got)
 	}
 
 	// A token that does not parse yields no roles rather than panicking.
-	if got := rolesFromClaim("not-a-jwt", "roles"); got != nil {
+	if got := stringsFromClaim("not-a-jwt", "roles"); got != nil {
 		t.Fatalf("expected no roles from an unparseable token, got %v", got)
 	}
 }
@@ -430,21 +430,21 @@ func TestRolesFromClaimProviderShapes(t *testing.T) {
 		t.Fatalf("SignedString: %s", err)
 	}
 
-	if got := rolesFromClaim(signed, "https://hippocampus.demo/roles"); len(got) != 2 || got[0] != "writer" || got[1] != "admin" {
+	if got := stringsFromClaim(signed, "https://hippocampus.demo/roles"); len(got) != 2 || got[0] != "writer" || got[1] != "admin" {
 		t.Fatalf("expected [writer admin] from the Auth0 namespaced claim, got %v", got)
 	}
 
-	if got := rolesFromClaim(signed, "realm_access.roles"); len(got) != 2 || got[0] != "reader" || got[1] != "writer" {
+	if got := stringsFromClaim(signed, "realm_access.roles"); len(got) != 2 || got[0] != "reader" || got[1] != "writer" {
 		t.Fatalf("expected [reader writer] from the Keycloak nested claim, got %v", got)
 	}
 
 	// A dotted path whose intermediate segment is missing yields no roles rather than erroring.
-	if got := rolesFromClaim(signed, "resource_access.roles"); got != nil {
+	if got := stringsFromClaim(signed, "resource_access.roles"); got != nil {
 		t.Fatalf("expected no roles for an absent nested path, got %v", got)
 	}
 
 	// A dotted path that bottoms out on a non-object before its final segment also yields nothing.
-	if got := rolesFromClaim(signed, "realm_access.roles.extra"); got != nil {
+	if got := stringsFromClaim(signed, "realm_access.roles.extra"); got != nil {
 		t.Fatalf("expected no roles when the path walks past a leaf, got %v", got)
 	}
 
@@ -463,11 +463,11 @@ func TestRolesFromClaimProviderShapes(t *testing.T) {
 		t.Fatalf("SignedString: %s", err)
 	}
 
-	if got := rolesFromClaim(signedScalar, "role"); len(got) != 1 || got[0] != "admin" {
+	if got := stringsFromClaim(signedScalar, "role"); len(got) != 1 || got[0] != "admin" {
 		t.Fatalf("expected [admin] from a scalar top-level claim, got %v", got)
 	}
 
-	if got := rolesFromClaim(signedScalar, "realm_access.role"); len(got) != 1 || got[0] != "writer" {
+	if got := stringsFromClaim(signedScalar, "realm_access.role"); len(got) != 1 || got[0] != "writer" {
 		t.Fatalf("expected [writer] from a scalar nested claim, got %v", got)
 	}
 }

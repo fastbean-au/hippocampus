@@ -50,11 +50,22 @@ type JWKSConfig struct {
 
 	// RoleClaim names the token claim carrying the bearer's roles when the provider does not use
 	// the standard top-level "roles" claim. Empty or "roles" uses the value parsed directly into
-	// Claims.Roles; any other name triggers a secondary read of that claim (see rolesFromClaim),
+	// Claims.Roles; any other name triggers a secondary read of that claim (see stringsFromClaim),
 	// resolved literally first (so Auth0's URI-namespaced key matches as a top-level key) and, when
 	// no literal key exists, as a dotted path through nested objects (so Keycloak's
 	// "realm_access.roles" resolves).
 	RoleClaim string
+
+	// GroupsClaim names the token claim carrying the bearer's group scope (see Claims.Groups) when
+	// the provider does not use the standard top-level "groups" claim. It resolves exactly as
+	// RoleClaim does, through the same helper, so an identity provider that namespaces or nests one
+	// of the two invariably does the same to the other.
+	//
+	// A name that resolves to nothing yields an empty scope, which reads as unscoped - the whole
+	// store. That is the same failure a misconfigured provider produces, and auth.requireGroupScope
+	// (NewGroupScopedVerifier) is what turns it into a refusal rather than a silent grant. A
+	// deployment relying on group scoping against an IdP should set both keys.
+	GroupsClaim string
 }
 
 // JWKSVerifier verifies RS256 tokens against the RSA keys published at an identity provider's
@@ -149,7 +160,12 @@ func (v *JWKSVerifier) Verify(token string) (*Claims, error) {
 	// When the provider publishes roles under a non-standard claim name, resolve them from there.
 	// The signature is already verified above, so reading the claim value unverified is safe.
 	if v.cfg.RoleClaim != "" && v.cfg.RoleClaim != "roles" {
-		claims.Roles = rolesFromClaim(token, v.cfg.RoleClaim)
+		claims.Roles = stringsFromClaim(token, v.cfg.RoleClaim)
+	}
+
+	// The group scope resolves the same way, and for the same reason.
+	if v.cfg.GroupsClaim != "" && v.cfg.GroupsClaim != "groups" {
+		claims.Groups = stringsFromClaim(token, v.cfg.GroupsClaim)
 	}
 
 	return &claims, nil

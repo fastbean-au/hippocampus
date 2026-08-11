@@ -110,8 +110,8 @@ builder --config builder-config.yaml
 Ingesting the bundled 12-line `sample.log` produces 12 memories (monotonic significance from `DEBUG`
 to `FATAL`, one event for the day); a `Sleep` cycle with decay tuned to bite then forgets the
 low-severity tiers first, leaving the `ERROR`/`FATAL` survivors. See
-[`otel/collector/README.md`](../otel/collector/README.md) for the full walkthrough and
-[`otel/hippocampusexporter/README.md`](../otel/hippocampusexporter/README.md) for the exporter's
+[`integrations/otel/collector/README.md`](../integrations/otel/collector/README.md) for the full walkthrough and
+[`integrations/otel/hippocampusexporter/README.md`](../integrations/otel/hippocampusexporter/README.md) for the exporter's
 configuration (auth/TLS, the significance table, and the event-keying options).
 
 ## Centralised mode (Postgres + OpenSearch)
@@ -134,7 +134,7 @@ go run ./cmd/logs -s localhost:50051 -n 20000 -d 60
 With OpenSearch enabled, the book demonstration additionally exercises **content search**: after
 loading, `POST /v1/memories/search` (or the console at `/ui`) finds paragraphs by content, always
 re-reading hits from the primary store so consolidated memories drop out of results. See
-[Content search](configuration.md#content-search-opensearch). Grafana is on `:3000` for the
+[Content search](configuration.md#content-search). Grafana is on `:3000` for the
 consolidation/eviction metrics while the sleep cycle runs.
 
 ## What to look at

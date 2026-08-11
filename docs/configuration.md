@@ -282,6 +282,11 @@ Every memory and event carries an optional `metadata` map of string keys to stri
 multi-dimensional classification the single freeform `group` label cannot express (`source=slack`,
 `project=apollo`, `author=…` all at once, rather than one of them or a delimited string).
 
+> Metadata is generally the right place for classification, leaving `group` free to be the access
+> boundary — see [Group scoping](#group-scoping). Note that **`group` is not a security boundary
+> unless tokens are scoped to it**: without a `groups` claim it is a label like any other, and any
+> writer can read and delete every group's records.
+
 It is opaque to the server — filterable, never interpreted — and bounded, because unbounded metadata
 would be a body by another name:
 
@@ -685,6 +690,82 @@ Two mechanisms cut a credential off before its TTL expires:
   works in front of `idp` as well as `hmac`, so a provider-issued token can be revoked locally even
   when the provider's own revocation lags.
 
+### Group scoping
+
+Authorisation tiers say what a caller may **do**. Group scoping says which records they may do it
+**to**: a token may carry a `groups` claim naming the group labels (`Memory.group` / `Event.group`)
+whose records it can read and write.
+
+```json
+"auth": {
+    "groupsClaim": "groups",
+    "requireGroupScope": false
+}
+```
+
+Mint a scoped token with `--group` (repeatable or comma-separated):
+
+```bash
+hippocampus --mint-token --client-id sales-agent --role writer --group sales --ttl 24h
+```
+
+**It is off until tokens carry the claim.** An existing deployment is entirely unchanged: no schema
+change, no migration, and a token with no `groups` claim behaves exactly as every token did before.
+
+**An empty scope means the whole store.** That is the single most important thing to know about it —
+an unscoped token is the *most* privileged shape a token has, not the least. `auth.requireGroupScope`
+turns the absence of a scope into a rejection, which is worth setting once a store is partitioned: an
+identity provider misconfigured to stop emitting the claim would otherwise hand every caller
+everything, and every request would succeed while doing it. Under `idp`, set `auth.groupsClaim` too
+if the provider publishes the scope under another name (a dotted path reaches into a nested object,
+exactly as `auth.roleClaim` does).
+
+What changes for a scoped caller:
+
+| Behaviour             | Effect                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| Listing and searching | Narrowed to the scope, including `total_count`. Filtering by a group outside it returns an empty page, not an error. |
+| Reads/writes by id    | A record outside the scope reports `NotFound` — never `PermissionDenied`, which would confirm it exists. |
+| Writes                | Stamped with the caller's group. A token holding several groups must name one; a token holding one has it filled in. |
+| Moving a record       | A write may re-file within the scope but cannot push a record out of it (`clear_group` is refused). |
+| Links                 | Both ends must be in scope. Edges reaching outside are dropped from responses rather than refused. |
+| Export/Transfer/Clear | Walk only the caller's partition — which is also a useful per-group export.                    |
+| Purge/Sleep/Preview   | Refused. All three act on the whole store; see below.                                          |
+
+`WhoAmI` reports `groups` and `group_scoped`, so a client can adapt — read `group_scoped`, never
+`len(groups)`, since an empty list means unscoped rather than scoped to nothing. The embedded console
+shows the scope beside the role pill for exactly this reason: otherwise a scoped view looks like a
+store that has lost most of its data.
+
+**Three RPCs are refused to a scoped token.** `Purge` empties the store, `Sleep` runs the
+store-global decay cycle, and `PreviewConsolidation` enumerates across every group by design. None
+has a per-partition meaning under a shared capacity target, so each belongs to whoever runs the store
+— and an unscoped token is what that operator holds. `ExplainConsolidation` is the group-scoped way
+to ask where an individual memory stands.
+
+**Import never trusts the group on the wire.** An archive is a file, so honouring the group written
+in it would let a scoped caller place records in any partition by editing one. `Import`/`ImportBatch`
+resolve the group from the verified claim instead: absent, the caller's sole group is stamped; if the
+record names a group the token does not hold, the call is **refused** rather than silently re-filed.
+
+That matters for the embedded-ingestor pattern (a fleet of single-tenant edge instances transferring
+into one centralised store). It works with no configuration at all when the edge's records carry no
+group — they are stamped with the edge's own group on arrival — but an edge that sets group labels
+locally will have its `Transfer` refused unless those labels match its token's scope. Either leave
+`group` unset at the edge, or use the same label there as the transfer token carries.
+
+**Pre-existing records carry no group** and are therefore invisible to a scoped token. Stamp them
+before issuing scoped tokens against an existing store:
+
+```sql
+UPDATE memories SET group_name = 'default' WHERE group_name = '';
+UPDATE events   SET group_name = 'default' WHERE group_name = '';
+```
+
+**This is a partition, not isolation** — see
+[Group scoping and the trust boundary](operations.md#group-scoping-and-the-trust-boundary) for what
+it does and does not guarantee before relying on it.
+
 ### TLS
 
 `tls.enabled` (`false` by default) turns on TLS for both the gRPC service and the HTTP gateway,
@@ -823,7 +904,7 @@ _consolidating_ instance takes a session-scoped advisory lock at startup (MySQL:
 scoped to the schema name); a second instance that also has `consolidation.enabled: true` refuses
 to start, rather than silently running concurrent consolidation cycles against shared data.
 Additional instances with `consolidation.enabled: false` skip the lock and run alongside it as
-read/write replicas — see [Horizontal scaling](../README.md#horizontal-scaling).
+read/write replicas — see [Deployment model](operations.md#deployment-model-one-consolidating-instance-per-store).
 
 Both capacity axes (`consolidation.capacityMemories` and `consolidation.capacityBytes`) work
 with every driver, but the byte measure differs. SQLite reads the database's pages excluding

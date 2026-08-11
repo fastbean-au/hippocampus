@@ -100,6 +100,23 @@ type TransformConfig struct {
 	// Metadata is stamped on every memory, before any per-message header labels are added.
 	Metadata map[string]string
 
+	// SubjectMetadataKey, when set, records the message's subject/topic as a metadata label under
+	// this key, in addition to whatever Group does with it. Empty (the default) records nothing, so
+	// an existing bridge is unchanged.
+	//
+	// It exists because the subject is the one classification the bridge has that was previously
+	// only expressible as the group - and group is now also an access boundary when the service
+	// issues group-scoped tokens. A scoped token may write only the groups it holds, so
+	// GroupFromSubject and a scoped token are mutually exclusive: every message would be refused.
+	// Setting Group to the token's own label and SubjectMetadataKey to "subject" keeps the routing
+	// information without asking the group to be two things at once, which is the same division
+	// metadata was introduced for.
+	//
+	// The value is the raw subject, not normalised - only the KEY has a restricted charset. An
+	// over-long subject is dropped by the metadata bounds rather than truncated, like any other
+	// label.
+	SubjectMetadataKey string
+
 	// MetadataHeaders names the message headers to copy onto each memory's metadata, and
 	// MetadataHeaderPrefix copies every header whose name carries that prefix (the prefix is
 	// stripped from the resulting key).
@@ -221,15 +238,24 @@ func (t *DefaultTransformer) group(msg Message) string {
 // nack would redeliver it forever. Dropped selections are logged at Warn so a misconfiguration is
 // visible rather than silent.
 func (t *DefaultTransformer) metadata(msg Message) map[string]string {
-	if len(t.cfg.Metadata) == 0 && len(t.cfg.MetadataHeaders) == 0 && t.cfg.MetadataHeaderPrefix == "" {
+	if len(t.cfg.Metadata) == 0 && len(t.cfg.MetadataHeaders) == 0 &&
+		t.cfg.MetadataHeaderPrefix == "" && t.cfg.SubjectMetadataKey == "" {
 		return nil
 	}
 
-	out := make(map[string]string, len(t.cfg.Metadata)+len(t.cfg.MetadataHeaders))
+	out := make(map[string]string, len(t.cfg.Metadata)+len(t.cfg.MetadataHeaders)+1)
 
 	for k, v := range t.cfg.Metadata {
 		if key := normaliseMetadataKey(k); key != "" {
 			out[key] = v
+		}
+	}
+
+	// The subject goes in before the header-derived labels, so an operator who has deliberately
+	// mapped a header onto the same key wins - the header is the more specific instruction.
+	if t.cfg.SubjectMetadataKey != "" && msg.Subject != "" {
+		if key := normaliseMetadataKey(t.cfg.SubjectMetadataKey); key != "" {
+			out[key] = msg.Subject
 		}
 	}
 

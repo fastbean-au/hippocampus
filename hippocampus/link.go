@@ -29,6 +29,14 @@ type linkKind struct {
 	link    func(ctx context.Context, id string, links []types.Link) error
 	unlink  func(ctx context.Context, id string, targets []string) error
 	get     func(ctx context.Context, id string, d types.LinkDirection) ([]types.LinkEdge, int64, error)
+
+	// scope refuses ids outside the caller's group scope, and outside reports which ids those are.
+	// The two differ in what the caller may learn: scope is for ids the caller named and may
+	// therefore be told about (as a NotFound indistinguishable from a genuinely absent id), while
+	// outside is for ids the caller did NOT name - the far ends of links the traversal found - which
+	// must be dropped silently, since refusing would itself reveal that a link crosses the boundary.
+	scope   func(ctx context.Context, ids []string) error
+	outside func(ctx context.Context, ids []string) ([]string, error)
 }
 
 func (s *Server) memoryLinks() linkKind {
@@ -38,6 +46,8 @@ func (s *Server) memoryLinks() linkKind {
 		link:    s.db.LinkMemories,
 		unlink:  s.db.UnlinkMemories,
 		get:     s.db.GetMemoryLinks,
+		scope:   s.scopeMemoryIds,
+		outside: s.memoryIdsOutsideScope,
 	}
 }
 
@@ -48,6 +58,8 @@ func (s *Server) eventLinks() linkKind {
 		link:    s.db.LinkEvents,
 		unlink:  s.db.UnlinkEvents,
 		get:     s.db.GetEventLinks,
+		scope:   s.scopeEventIds,
+		outside: s.eventIdsOutsideScope,
 	}
 }
 
@@ -85,8 +97,6 @@ func (s *Server) createLinks(
 		return &res, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// The near end and every far end are checked in one call, so a request naming several unknown
-	// ids reports all of them rather than one per round trip.
 	ids := make([]string, 0, len(links)+1)
 	ids = append(ids, id)
 
@@ -94,6 +104,17 @@ func (s *Server) createLinks(
 		ids = append(ids, l.Id)
 	}
 
+	// Every end must be in the caller's scope. A link is a two-way significance transfer - both ends
+	// gain it, and the aggregate the consolidation scans read is what carries it - so allowing one
+	// end outside the partition would let a caller make another group's record harder to forget,
+	// using a record that group cannot see. Checked before the existence check below so an
+	// out-of-scope id reports the same NotFound as an absent one.
+	if err := kind.scope(ctx, ids); err != nil {
+		return &res, err
+	}
+
+	// The near end and every far end are checked in one call, so a request naming several unknown
+	// ids reports all of them rather than one per round trip.
 	missing, err := kind.missing(ctx, ids)
 	if err != nil {
 		return &res, mapError(err)
@@ -192,6 +213,10 @@ func (s *Server) removeLinks(
 		return &res, status.Error(codes.InvalidArgument, "no ids provided")
 	}
 
+	if err := kind.scope(ctx, []string{id}); err != nil {
+		return &res, err
+	}
+
 	// Only the near end has to exist. An unknown target is simply a link that is not there, which is
 	// the state the caller asked for - the same reasoning DeleteMemories applies to unknown ids.
 	missing, err := kind.missing(ctx, []string{id})
@@ -203,8 +228,38 @@ func (s *Server) removeLinks(
 		return &res, status.Errorf(codes.NotFound, "no such %s: %s", kind.name, id)
 	}
 
-	if err := kind.unlink(ctx, id, types.DedupeLinkIds(targets)); err != nil {
+	remaining := types.DedupeLinkIds(targets)
+
+	// An out-of-scope target is DROPPED rather than refused, which is exactly how an unknown target
+	// is already treated - and it has to be, for the same reason: refusing would tell the caller the
+	// difference between a target that does not exist and one that exists in another group. The
+	// caller still gets Ok, having achieved what they asked for as far as their own partition goes.
+	outside, err := kind.outside(ctx, remaining)
+	if err != nil {
 		return &res, mapError(err)
+	}
+
+	if len(outside) > 0 {
+		drop := make(map[string]bool, len(outside))
+		for _, v := range outside {
+			drop[v] = true
+		}
+
+		kept := make([]string, 0, len(remaining))
+
+		for _, target := range remaining {
+			if !drop[target] {
+				kept = append(kept, target)
+			}
+		}
+
+		remaining = kept
+	}
+
+	if len(remaining) > 0 {
+		if err := kind.unlink(ctx, id, remaining); err != nil {
+			return &res, mapError(err)
+		}
 	}
 
 	res.Ok = true
@@ -238,6 +293,10 @@ func (s *Server) readLinks(
 		return &res, status.Errorf(codes.InvalidArgument, "%s id must be provided", kind.name)
 	}
 
+	if err := kind.scope(ctx, []string{id}); err != nil {
+		return &res, err
+	}
+
 	missing, err := kind.missing(ctx, []string{id})
 	if err != nil {
 		return &res, mapError(err)
@@ -252,14 +311,67 @@ func (s *Server) readLinks(
 		return &res, mapError(err)
 	}
 
+	// Edges reaching out of the caller's scope are dropped: the far end's id is a record the caller
+	// may not see, and returning it here would make the link graph a way to enumerate ids across the
+	// boundary - the one read path that could, since every other one goes through a group predicate.
+	edges, err = s.filterEdgesToScope(ctx, kind, edges)
+	if err != nil {
+		return &res, mapError(err)
+	}
+
 	res.Links = make([]*contract.LinkEdge, len(edges))
 	for i, e := range edges {
 		res.Links[i] = e.ToProto()
 	}
 
+	// LinkSignificance is deliberately NOT recomputed from the filtered edges: it is the
+	// denormalised aggregate the consolidation scans actually read, so reporting a scope-adjusted
+	// figure would show the caller a number that does not drive what the store does. The value
+	// genuinely does include contributions from links the caller cannot see - a documented property
+	// of a soft partition, not an oversight. See hippocampus/scope.go and TODO 60.1.
 	res.LinkSignificance = total
 
 	return &res, nil
+}
+
+// filterEdgesToScope drops link edges whose far end lies outside the caller's scope.
+func (s *Server) filterEdgesToScope(
+	ctx context.Context,
+	kind linkKind,
+	edges []types.LinkEdge,
+) ([]types.LinkEdge, error) {
+	if _, bound := s.scopedGroups(ctx); !bound || len(edges) == 0 {
+		return edges, nil
+	}
+
+	ids := make([]string, 0, len(edges))
+	for _, e := range edges {
+		ids = append(ids, e.Id)
+	}
+
+	outside, err := kind.outside(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(outside) == 0 {
+		return edges, nil
+	}
+
+	drop := make(map[string]bool, len(outside))
+	for _, v := range outside {
+		drop[v] = true
+	}
+
+	kept := make([]types.LinkEdge, 0, len(edges))
+
+	for _, e := range edges {
+		if !drop[e.Id] {
+			kept = append(kept, e)
+		}
+	}
+
+	return kept, nil
 }
 
 // storeLinks writes the links a create carried, after the item itself has been written. It is
@@ -296,6 +408,13 @@ func (s *Server) checkLinkTargets(ctx context.Context, kind linkKind, id string,
 		targets = append(targets, l.Id)
 	}
 
+	// A create carrying inline links must not reach out of the caller's partition, for the same
+	// reason LinkMemories must not - and it is refused rather than dropped, because these targets
+	// were named by the caller.
+	if err := kind.scope(ctx, targets); err != nil {
+		return err
+	}
+
 	missing, err := kind.missing(ctx, targets)
 	if err != nil {
 		return mapError(err)
@@ -328,8 +447,71 @@ func (s *Server) attachMemoryLinks(ctx context.Context, memories []types.Memory)
 		return
 	}
 
+	// Attached links go out on GetMemories, so a link crossing the boundary would leak a far-end id
+	// here exactly as it would through GetMemoryLinks. Same treatment: drop it silently.
+	if _, bound := s.scopedGroups(ctx); bound {
+		s.dropOutOfScopeLinks(ctx, s.memoryLinks(), links)
+	}
+
 	for i := range memories {
 		memories[i].Links = links[memories[i].Id]
+	}
+}
+
+// dropOutOfScopeLinks removes far ends the caller cannot see from a per-item link map, in place. It
+// resolves every far end across the whole map in one query rather than per item, since the map is
+// built for a page of results and a per-item check would be an N+1 on the read path.
+//
+// Best-effort like its callers: if the scope check itself fails, the links are cleared rather than
+// returned unfiltered. Failing closed matters more than completeness here - the links are
+// supplementary to the records they hang off, but returning them unchecked would be the leak this
+// exists to prevent.
+func (s *Server) dropOutOfScopeLinks(ctx context.Context, kind linkKind, links map[string][]types.Link) {
+	if len(links) == 0 {
+		return
+	}
+
+	seen := make(map[string]bool)
+	var farEnds []string
+
+	for _, items := range links {
+		for _, l := range items {
+			if !seen[l.Id] {
+				seen[l.Id] = true
+
+				farEnds = append(farEnds, l.Id)
+			}
+		}
+	}
+
+	outside, err := kind.outside(ctx, farEnds)
+	if err != nil {
+		log.Errorf("failed to scope-check %s links, omitting them: %s", kind.name, err.Error())
+
+		clear(links)
+
+		return
+	}
+
+	if len(outside) == 0 {
+		return
+	}
+
+	drop := make(map[string]bool, len(outside))
+	for _, v := range outside {
+		drop[v] = true
+	}
+
+	for id, items := range links {
+		kept := make([]types.Link, 0, len(items))
+
+		for _, l := range items {
+			if !drop[l.Id] {
+				kept = append(kept, l)
+			}
+		}
+
+		links[id] = kept
 	}
 }
 
@@ -350,6 +532,14 @@ func (s *Server) attachEventLinks(ctx context.Context, events []types.Event) {
 		log.Errorf("failed to read links for events: %s", err.Error())
 
 		return
+	}
+
+	// This feeds the archive walk, so an edge to an event outside the caller's scope would both leak
+	// its id and write a dangling link into the export - the far end is not in the archive, and
+	// import drops what it cannot resolve. Filtering here is therefore correctness as well as
+	// confidentiality.
+	if _, bound := s.scopedGroups(ctx); bound {
+		s.dropOutOfScopeLinks(ctx, s.eventLinks(), links)
 	}
 
 	for i := range events {
@@ -424,5 +614,7 @@ func (s *Server) linkedMemories(ctx context.Context, ids []string) []types.Memor
 		return nil
 	}
 
-	return *memories
+	// A link may cross a group boundary (an unscoped caller can create one), so what the traversal
+	// reached is filtered to the caller's scope rather than returned wholesale.
+	return s.filterMemoriesToScope(ctx, *memories)
 }

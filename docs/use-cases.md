@@ -18,8 +18,10 @@ important for a long time, and which is which is not known up front. Some shapes
 
 - **Operational / audit event history** — keep every deploy, incident, and config change while they
   matter; let routine, low-significance chatter decay; reinforce (recall) the records an
-  investigation touches so they survive. `group` labels scope events to a system or team. Where a
-  compliance window applies, a retention floor guarantees nothing is dropped before it elapses.
+  investigation touches so they survive. `group` labels scope events to a system or team, and
+  [group scoping](configuration.md#group-scoping) can bind a token to them so each team reaches only
+  its own. Where a compliance window applies, a retention floor guarantees nothing is dropped before
+  it elapses.
 - **Agent / assistant memory** — a bounded long-term memory for an LLM agent: store observations as
   memories, group them into events, recall the relevant ones on each interaction (which reinforces
   them), and let the unused ones fade. Summarisation condenses a pile of related-but-quiet memories
@@ -168,5 +170,5 @@ import into Postgres). See the [Operations guide](operations.md#backup-restore-a
 For worked examples that load recognisable data — a Dickens novel as a narrative, synthetic service
 logs whose severity drives what survives — in both the embedded and centralised modes, see
 [Demonstrations](demonstrations.md). To ingest **real** logs from files or instrumented
-applications, the [OpenTelemetry Collector logs exporter](../otel/hippocampusexporter) drops
+applications, the [OpenTelemetry Collector logs exporter](../integrations/otel/hippocampusexporter) drops
 Hippocampus into a standard collector pipeline (severity → significance, `service.name` → group).

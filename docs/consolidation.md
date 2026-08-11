@@ -17,7 +17,7 @@ Memory consolidation is done through a process that runs regularly at a configur
 
 The frequency is set by `sleep.periodSeconds`. Setting it to `0` (or any non-positive value) disables the automatic timed cycle entirely: the service then only consolidates when the manual `Sleep` RPC is called, or when the WAL trigger fires (see [Checkpoint-triggered eviction](#checkpoint-triggered-eviction)). This suits an instance that should not forget on its own — for example one used purely for import/archival, or one whose sleep cadence is driven externally.
 
-`consolidation.enabled` (default `true`) is a coarser switch: set it to `false` and the instance runs **no** sleep cycle at all — no timed cycle, no WAL trigger, and the manual `Sleep` RPC is rejected with `FailedPrecondition`. This is the read/write-replica half of [horizontal scaling](../README.md#horizontal-scaling): several instances share one PostgreSQL/MySQL database, exactly one runs with `consolidation.enabled: true` (and holds the single-consolidator lock), and the rest run with it `false` to serve reads and writes without ever consolidating.
+`consolidation.enabled` (default `true`) is a coarser switch: set it to `false` and the instance runs **no** sleep cycle at all — no timed cycle, no WAL trigger, and the manual `Sleep` RPC is rejected with `FailedPrecondition`. This is the read/write-replica half of [horizontal scaling](operations.md#deployment-model-one-consolidating-instance-per-store): several instances share one PostgreSQL/MySQL database, exactly one runs with `consolidation.enabled: true` (and holds the single-consolidator lock), and the rest run with it `false` to serve reads and writes without ever consolidating.
 
 ## Percentile
 

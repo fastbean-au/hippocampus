@@ -361,6 +361,26 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.
+  - `scope.go` is the RPC half of **group scoping** (`auth/groups.go` is the other; the decision
+    record is TODO 60.1). It cannot be one chokepoint, because the RPCs do not reach the store the
+    same way: a listing carries the scope as a predicate (`MemoryFilter.Groups`), an id-addressing
+    RPC has no predicate and checks the ids instead (`scopeMemoryIds`/`scopeEventIds`), a store walk
+    threads it into pagination, and `Purge`/`Sleep`/`PreviewConsolidation` cannot be scoped at all
+    and are refused (`requireUnbound`). Four mechanisms means four places to forget one, so the
+    `scopes` table declares which each RPC uses and `TestScopesCoverEveryRPC` requires every
+    descriptor method to appear — **a new RPC must add an entry**, and a subtest in
+    `scope_isolation_test.go`, whose own descriptor check is the reminder. The table is
+    documentation and a checklist, never consulted at request time; what verifies the handlers is
+    `TestGroupScopeIsolation*`, which drives every RPC as a caller bound to one group (disabling
+    `scopedGroups` fails 34 of its subtests). Three rules the code holds to: an out-of-scope id the
+    caller **named** reports `NotFound`, never `PermissionDenied`, which would confirm it exists;
+    an id the caller did **not** name (a link's far end, an unlink target) is dropped silently, since
+    refusing would reveal the crossing; and `writeGroup` stamps a scoped caller's sole group on a
+    write naming none, so a bound writer never creates a record it cannot read back. Two things
+    deliberately cross the boundary, both consequences of the partition being _soft_:
+    `link_significance` is scope-blind (it is the denormalised aggregate in the covering index, and
+    recomputing per-scope would mean joining the link tables in the consolidation scans), and the
+    decay dynamics stay store-global.
 - `db/` — storage layer. One `DB` struct speaks three SQL dialects, selected by `storage.driver`
   (`sqlite`, the default, `postgres`, or `mysql`); nearly all query and consolidation logic is
   shared, with a `driver` field branching the genuinely divergent pieces (DDL, `?`-vs-`$N`
@@ -371,7 +391,17 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   a filesystem stat, and `Close`), so an RPC's deadline/cancellation reaches the driver; the db
   layer wraps that ctx with the server-owned `storage.queryTimeoutSeconds` bound (default 60; 0
   disables) in `opContext`, so whichever fires first ends the operation. The sleep cycle passes its
-  own (tracing-span) context and stays server-owned, not tied to the `Sleep` RPC's deadline. Memory
+  own (tracing-span) context and stays server-owned, not tied to the `Sleep` RPC's deadline.
+  `scope.go` is the storage half of group scoping: `appendGroupScope` builds the one `group_name IN
+(...)` predicate every scoped query uses (applied in `memoryFilterConditions`/
+  `eventFilterConditions` **above the significance-extremum early return**, for the reason that
+  function's own comment gives, plus `SearchMemoryHits` and the two `Get*Page` walks), and
+  `MemoryIdsOutsideGroups`/`EventIdsOutsideGroups` are the id-check counterpart, chunked exactly as
+  `MissingIds` is. An **empty groups slice means unrestricted**, which is what lets every
+  server-owned scan (the sleep cycle, the reconcile sweep, the search backfill) pass nil and keep
+  seeing the whole store — a consolidation pass that skipped a group would simply never forget it.
+  There is deliberately **no tenant column**: the scope is the existing `group_name`, already in the
+  covering index and both search backends, which is why the feature needed no migration. Memory
   bodies are stored compressed (`compress.go`, `storage.compression.enabled`, **on** by default;
   gzip, deliberately not configurable so an old body always stays readable — though the compression
   _level_ is encoder-side only and so carries no such commitment, which is why it is `BestSpeed`):
@@ -688,6 +718,17 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `auth.readerRecallReinforces` decides whether a reader's `RecallMemories`/reinforcing
   `SearchMemories` actually reinforces or is downgraded to a plain read) and the `WhoAmI` RPC, which
   reports the caller's effective tier so the web console can hide the write controls it may not use.
+  **Group scoping** (`groups.go`) is the orthogonal axis: a tier says what a caller may _do_, a scope
+  says which records they may do it _to_. `Claims.Groups` (from the `groups` claim, or
+  `auth.groupsClaim` for an IdP naming it differently) names the `group` labels a token may reach;
+  `GroupsFromContext` returns `(groups, bound)` and **callers must branch on the bool, never on the
+  slice's length** — an empty scope means the _whole store_, so reading it as "scoped to nothing"
+  empties every read on an unauthenticated instance and reading the reverse hands a bound token
+  everything. `GroupInScope` is the membership test, exact and byte-for-byte so it agrees with how
+  the store compares `group_name` (MySQL needs its explicit `COLLATE utf8mb4_bin` for that).
+  `NewGroupScopedVerifier` (`auth.requireGroupScope`) is a decorator in the `NewRevokingVerifier`
+  mould, refusing a token that carries no scope — an unscoped token being the _most_ privileged
+  shape there is, not the least. Enforcement is not here; see `hippocampus/scope.go`.
 - `demo/` — a long-running load generator (`demo/generator`, its own `main` package) plus a
   launch script (`run.sh`) and a demo-tuned config. Bursty/slow/event-less writers, query and
   recall workers, and a mutator exercise every RPC; a watcher pauses writes while the database
@@ -815,3 +856,11 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
   Authentication (JWT bearer tokens) and TLS
   are both optional and disabled by default; see [Authentication](docs/configuration.md#authentication)
   and [TLS](docs/configuration.md#tls).
+- **A shared store is a shared trust domain unless tokens are group-scoped.** `group` is a label
+  with no access-control meaning of its own; binding it to a token's `groups` claim
+  ([Group scoping](docs/configuration.md#group-scoping)) makes it a **soft** partition — records are
+  scoped, but the decay dynamics stay store-global, so a busy group still influences what another
+  forgets. Hard isolation is still one instance per tenant, which is what item 9 and item 60.1 both
+  concluded. Anything new that reads or writes stored records must therefore decide how it honours a
+  caller's scope, and say so in `hippocampus/scope.go` — the drift guard will not let a new RPC
+  through without it.

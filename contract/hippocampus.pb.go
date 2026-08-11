@@ -4341,7 +4341,21 @@ type WhoAmIResponse struct {
 	// storage driver and on whether OpenSearch and an embedding model are configured - never on the
 	// caller - so it is the same for every caller of a given instance. An empty list means content
 	// search is unavailable entirely and SearchMemories is rejected in every mode.
-	SearchModes   []SearchMode `protobuf:"varint,4,rep,packed,name=search_modes,json=searchModes,proto3,enum=hippocampus.v1.SearchMode" json:"search_modes,omitempty"`
+	SearchModes []SearchMode `protobuf:"varint,4,rep,packed,name=search_modes,json=searchModes,proto3,enum=hippocampus.v1.SearchMode" json:"search_modes,omitempty"`
+	// groups is the caller's group scope: the group labels whose records this token may read and
+	// write. Empty means unscoped - the whole store - which is what every token is unless the
+	// deployment issues scoped ones, so a client must read group_scoped rather than infer from the
+	// list being empty.
+	Groups []string `protobuf:"bytes,5,rep,name=groups,proto3" json:"groups,omitempty"`
+	// group_scoped reports whether a scope is in force for this caller. It exists because an empty
+	// groups list is ambiguous on its own and the two readings are opposites: unscoped (see
+	// everything) versus scoped to nothing. A client showing "you can see N groups" must branch on
+	// this, not on len(groups).
+	//
+	// When true, writes are stamped with the caller's group, Purge/Sleep/PreviewConsolidation are
+	// refused, and records outside the scope report NotFound - so a console can explain an empty
+	// store rather than leave it looking like data loss.
+	GroupScoped   bool `protobuf:"varint,6,opt,name=group_scoped,json=groupScoped,proto3" json:"group_scoped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4402,6 +4416,20 @@ func (x *WhoAmIResponse) GetSearchModes() []SearchMode {
 		return x.SearchModes
 	}
 	return nil
+}
+
+func (x *WhoAmIResponse) GetGroups() []string {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
+func (x *WhoAmIResponse) GetGroupScoped() bool {
+	if x != nil {
+		return x.GroupScoped
+	}
+	return false
 }
 
 type EmptyRequest struct {
@@ -4784,12 +4812,14 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\n" +
 	"valuations\x18\f \x03(\v2\x1f.hippocampus.v1.MemoryValuationR\n" +
 	"valuations\x120\n" +
-	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\"\xa3\x01\n" +
+	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\"\xde\x01\n" +
 	"\x0eWhoAmIResponse\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12!\n" +
 	"\fauth_enabled\x18\x03 \x01(\bR\vauthEnabled\x12=\n" +
-	"\fsearch_modes\x18\x04 \x03(\x0e2\x1a.hippocampus.v1.SearchModeR\vsearchModes\"\x0e\n" +
+	"\fsearch_modes\x18\x04 \x03(\x0e2\x1a.hippocampus.v1.SearchModeR\vsearchModes\x12\x16\n" +
+	"\x06groups\x18\x05 \x03(\tR\x06groups\x12!\n" +
+	"\fgroup_scoped\x18\x06 \x01(\bR\vgroupScoped\"\x0e\n" +
 	"\fEmptyRequest*,\n" +
 	"\x04Bool\x12\x0f\n" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +

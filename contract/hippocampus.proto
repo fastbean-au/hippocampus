@@ -934,6 +934,22 @@ message WhoAmIResponse {
 	// caller - so it is the same for every caller of a given instance. An empty list means content
 	// search is unavailable entirely and SearchMemories is rejected in every mode.
 	repeated SearchMode                    search_modes              = 4;
+
+	// groups is the caller's group scope: the group labels whose records this token may read and
+	// write. Empty means unscoped - the whole store - which is what every token is unless the
+	// deployment issues scoped ones, so a client must read group_scoped rather than infer from the
+	// list being empty.
+	repeated string                        groups                    = 5;
+
+	// group_scoped reports whether a scope is in force for this caller. It exists because an empty
+	// groups list is ambiguous on its own and the two readings are opposites: unscoped (see
+	// everything) versus scoped to nothing. A client showing "you can see N groups" must branch on
+	// this, not on len(groups).
+	//
+	// When true, writes are stamped with the caller's group, Purge/Sleep/PreviewConsolidation are
+	// refused, and records outside the scope report NotFound - so a console can explain an empty
+	// store rather than leave it looking like data loss.
+	bool                                   group_scoped              = 6;
 }
 
 message EmptyRequest {}

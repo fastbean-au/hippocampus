@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -56,6 +57,16 @@ func (r *renderer) renderText(msg proto.Message) error {
 		r.line("client_id:    %s", orNone(m.GetClientId()))
 		r.line("role:         %s", m.GetRole())
 		r.line("auth_enabled: %t", m.GetAuthEnabled())
+
+		// Rendered from group_scoped, not from the list being empty: unscoped and scoped-to-nothing
+		// are opposites and the list alone cannot tell them apart. Spelling out "unscoped" matters
+		// here more than in the console - an operator reading an unexpectedly short list wants to
+		// know whether their token is the reason.
+		if m.GetGroupScoped() {
+			r.line("groups:       %s", strings.Join(m.GetGroups(), ", "))
+		} else {
+			r.line("groups:       unscoped (whole store)")
+		}
 
 	case *contract.StoreMemoryResponse:
 		if m.GetRejected() {

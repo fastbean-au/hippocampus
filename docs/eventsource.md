@@ -118,11 +118,28 @@ flags:
 | `--metadata`               | Metadata label as `key=value`, stamped on every memory (repeatable).                             |
 | `--metadata-header`        | Message header to copy onto each memory's metadata (repeatable).                                 |
 | `--metadata-header-prefix` | Copy every header carrying this prefix onto the metadata, with the prefix stripped from the key. |
+| `--subject-metadata-key`   | Record the subject/topic as a metadata label under this key, as well as (or instead of) as the group. |
 
 Header selection is an **allowlist or a prefix, never "copy every header"**. Broker headers are
 unbounded and mostly machinery — trace context, delivery counts, redelivery flags — so copying them
 all would fill each memory's metadata budget with noise, and the keys would be infrastructure's
 rather than the operator's choice.
+
+> **If the bridge's token is [group-scoped](configuration.md#group-scoping), turn
+> `--group-from-subject` off.** It is on by default, so each memory would be stamped with its
+> subject as the group — and a scoped token may only write the groups it holds, so **every message
+> would be refused** with `PermissionDenied`.
+>
+> ```bash
+> go run ./cmd/nats --subject 'events.>' --token "$SCOPED_TOKEN" \
+>   --group team-alpha --group-from-subject=false --subject-metadata-key subject
+> ```
+>
+> `--group` names the label the token carries (or leave it unset and let the server stamp the
+> token's sole group), and `--subject-metadata-key` keeps the subject as **metadata** — which is
+> where multi-dimensional classification belongs now that `group` can also be an access boundary.
+> Nothing is lost: filter on it with `?metadata=subject%3Devents.orders.created` exactly as you
+> would have filtered on the group. An unscoped token is unaffected and the default stands.
 
 Selected header names are normalised to the service's metadata key charset (lowercased, anything
 outside `[A-Za-z0-9._:/-]` replaced with `_`), since header names routinely contain spaces and

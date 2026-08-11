@@ -24,18 +24,24 @@ type MemoryRecallSnapshot struct {
 // order — keyset pagination for export and transfer, so no long-running query is held across the
 // whole table (the SQLite pool has a single connection). Unlike GetIndexableMemoriesPage this
 // returns every memory, binary included: an archive must carry the whole store.
-func (d *DB) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]types.Memory, error) {
+func (d *DB) GetMemoriesPage(ctx context.Context, afterId string, limit int, groups []string) ([]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesPage")
 
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	rows, err := d.query(
-		ctx,
-		`SELECT `+memoryColumns+` FROM `+memoriesFrom+` WHERE id > ? ORDER BY id LIMIT ?`,
-		afterId,
-		limit,
-	)
+	// The scope narrows the page's contents, not the keyset cursor: pages stay ordered by id and a
+	// scoped walk simply skips rows, so a caller's cursor arithmetic is unchanged. Nil from the
+	// server-owned callers (the reconcile sweep, the search backfill), which must see everything.
+	query := `SELECT ` + memoryColumns + ` FROM ` + memoriesFrom + ` WHERE id > ?`
+	args := []any{afterId}
+
+	query, args = appendGroupScope(query, args, "", groups)
+
+	query += ` ORDER BY id LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := d.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -61,18 +67,21 @@ func (d *DB) GetMemoriesPage(ctx context.Context, afterId string, limit int) ([]
 
 // GetEventsPage returns up to limit events whose id sorts after afterId, in ascending id order —
 // the event half of the export/transfer pagination.
-func (d *DB) GetEventsPage(ctx context.Context, afterId string, limit int) ([]types.Event, error) {
+func (d *DB) GetEventsPage(ctx context.Context, afterId string, limit int, groups []string) ([]types.Event, error) {
 	log.Trace("func() db.GetEventsPage")
 
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	rows, err := d.query(
-		ctx,
-		`SELECT `+eventColumns+` FROM `+eventsFrom+` WHERE id > ? ORDER BY id LIMIT ?`,
-		afterId,
-		limit,
-	)
+	query := `SELECT ` + eventColumns + ` FROM ` + eventsFrom + ` WHERE id > ?`
+	args := []any{afterId}
+
+	query, args = appendGroupScope(query, args, "", groups)
+
+	query += ` ORDER BY id LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := d.query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

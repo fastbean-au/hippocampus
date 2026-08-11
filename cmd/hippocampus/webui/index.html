@@ -519,6 +519,15 @@
           class="pill"
           title="your effective authorization role"
         ></span>
+        <!-- The group scope sits beside the role because the two answer different questions about the
+         same token: the role is what you may do, the scope is which records you may do it to. Without
+         it a scoped console looks like a store that has lost most of its data. -->
+        <span
+          id="scope-pill"
+          class="pill meta"
+          style="display: none"
+          title="this token is restricted to these groups"
+        ></span>
         <!-- Sign out is the only auth control in the header; signing *in* happens on the gate below,
          which is what stands here when there is no session. -->
         <button id="logout-btn" class="btn ghost small" style="display: none">
@@ -1283,6 +1292,8 @@
         role: null,
         authEnabled: false,
         searchModes: [],
+        groups: [],
+        groupScoped: false,
         status: 0,
       };
 
@@ -1301,9 +1312,19 @@
             role,
             authEnabled,
             canWrite: !authEnabled || role === "writer" || role === "admin",
-            isAdmin: !authEnabled || role === "admin",
+            // isAdmin gates the store-wide controls, so it is NOT purely the tier: a group-scoped
+            // token is refused Purge/Sleep/PreviewConsolidation whatever its role, since all three
+            // act on the whole store. Offering the dry-run panel to a scoped admin would break the
+            // rule the .admin-only CSS exists to keep - never show a control certain to be refused.
+            // The scope pill's tooltip says why it is absent.
+            isAdmin:
+              (!authEnabled || role === "admin") && !who.groupScoped,
             // Which search modes this deployment can serve - a property of the server, not the token.
             searchModes: who.searchModes || [],
+            // The group scope, if this token carries one. groupScoped is authoritative; groups alone
+            // cannot distinguish unscoped from scoped-to-nothing.
+            groups: who.groups || [],
+            groupScoped: !!who.groupScoped,
             status: 200,
           };
         } catch (e) {
@@ -1313,6 +1334,8 @@
             canWrite: false,
             isAdmin: false,
             searchModes: [],
+            groups: [],
+            groupScoped: false,
             status: e.status || 0,
           };
 
@@ -1391,6 +1414,7 @@
         document.body.classList.toggle("admin", !!caps.isAdmin);
 
         applySearchModes();
+        applyScope();
         applyGate();
 
         // Sign out is offered only where there is a session to end: a deployment with authentication on
@@ -1409,6 +1433,32 @@
         pill.style.display = "inline-block";
         pill.classList.toggle("ro", !caps.canWrite);
         pill.textContent = caps.role ? "role: " + caps.role : "not signed in";
+      }
+
+      // applyScope shows which groups this token is restricted to, when it is restricted at all.
+      //
+      // It reads caps.groupScoped rather than the length of caps.groups, because an empty list is
+      // ambiguous in exactly the way that matters: unscoped means the whole store, and "scoped to
+      // nothing" would mean the opposite. The server reports the two separately for this reason.
+      //
+      // Written into textContent, never innerHTML: group labels are client-supplied strings and this
+      // is the console that item 24.1 fixed a stored-XSS in.
+      function applyScope() {
+        const pill = $("scope-pill");
+
+        if (!caps.groupScoped) {
+          pill.style.display = "none";
+
+          return;
+        }
+
+        pill.style.display = "inline-block";
+        pill.textContent = "groups: " + caps.groups.join(", ");
+        pill.title =
+          "This token is restricted to " +
+          caps.groups.join(", ") +
+          ". Records in other groups are not shown, writes are filed under this scope, and " +
+          "Purge/Sleep/Preview are unavailable.";
       }
 
       // api issues a JSON request to the gateway (same origin). Returns parsed body,

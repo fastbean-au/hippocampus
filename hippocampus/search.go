@@ -151,10 +151,18 @@ func (s *Server) searchHits(ctx context.Context, in *contract.SearchMemoriesRequ
 	// Already validated by SearchMemories, which rejects a malformed filter before over-fetching.
 	metadata, _ := types.ParseMetadataFilters(in.GetMetadata())
 
+	// The scope goes into the query, not onto the results. Both backends apply it inside the index
+	// so it narrows the candidates before the limit - filtering afterwards would shorten the page
+	// by however much of the store the caller cannot see, which is both a worse result and a
+	// measure of the hidden data. It also has to survive the hybrid path below, where the same base
+	// query is run twice and the two orderings fused; carrying it on base is what guarantees that.
+	groups, _ := s.scopedGroups(ctx)
+
 	base := search.Query{
 		Text:     in.GetQuery(),
 		EventId:  in.GetEventId(),
 		Group:    in.GetGroup(),
+		Groups:   groups,
 		Limit:    limit,
 		Metadata: metadata,
 	}

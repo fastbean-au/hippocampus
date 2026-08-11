@@ -650,6 +650,47 @@ is the fix, and is **off by default** because believing a caller-supplied header
 reachable listener lets any caller mint itself an unlimited number of buckets. Set it only when a
 proxy you control overwrites `X-Forwarded-For` rather than appending to it.
 
+## Group scoping and the trust boundary
+
+**A shared store is a shared trust domain by default.** Every token that can read can read
+everything, and `group` is a label — despite reading like ownership ("system, subsystem, owner"),
+it carries no access-control meaning of its own. Do not stand up one store for two parties on the
+assumption that `group` separates them.
+
+There are two ways to actually separate them, and they are not interchangeable.
+
+**Soft partitioning — [group scoping](configuration.md#group-scoping).** Bind tokens to group
+labels with a `groups` claim. Each team or system then sees, writes, exports and links only its own
+records, and the console, CLI and `WhoAmI` report the scope. This is the right answer for teams or
+systems **inside one trust boundary**, where the goal is that people not trip over each other's
+data rather than that they be unable to reach it.
+
+What it does **not** give you, because the partition is soft:
+
+- **The decay dynamics are shared.** Capacity pressure, the eviction ranking, the significance
+  registry and the sleep cadence are store-global. A group writing heavily raises the pressure that
+  decides what *every* group forgets, and eviction ranks across the whole store by value. There is
+  no per-group capacity target and no per-group quota.
+- **`link_significance` crosses the boundary.** It is a denormalised aggregate in the covering index,
+  so a link to a record in another group raises this one's effective significance even though the
+  other end can never be read. Spreading activation on recall crosses such a link too. Only an
+  unscoped token can create one.
+- **It is not a defence against a hostile caller with a valid token.** It is one predicate and one
+  id check per path, guarded by a test rather than by a structural impossibility.
+- **Operators still need unscoped tokens** for `Purge`, `Sleep`, `PreviewConsolidation`, the
+  `MergeEvents` dangling-reference heal, and the `--backfill-search` CLI mode.
+
+**Hard isolation — one instance per tenant.** Where bleed-through is unacceptable, or a tenant needs
+its own capacity and decay tuning, run a separate instance and a separate store. That is the model
+[item 9 chose](../TODO.md) and it remains the recommendation: it isolates the memory dynamics
+perfectly, gives each tenant its own auth secrets, backup and restore, and makes erasure a matter of
+dropping a volume. With the embedded SQLite driver that is one container and one volume per tenant;
+on `postgres`/`mysql` it is one database per tenant.
+
+The two compose: a fleet of single-tenant embedded instances can transfer into one centralised
+multi-group store, with the centralised side stamping each ingestor's group from its
+[`transfer.token`](configuration.md#transfer-and-archive) rather than from anything in the archive.
+
 ## Security
 
 - **Rate limiting** (`rateLimit.enabled`) bounds how much any caller — or the instance as a whole —
@@ -683,6 +724,11 @@ proxy you control overwrites `X-Forwarded-For` rather than appending to it.
   re-mint pre-existing tokens with a `--role`**. The verified `client_id` is logged on every failing
   request (and, on the HTTP gateway, every request), so a leaked or misbehaving token can be traced
   to the client it was issued to.
+- **Scope tokens to groups where several parties share a store.** A tier bounds what a caller may
+  do, not which records they may do it to; [group scoping](configuration.md#group-scoping) bounds
+  the latter, via a `groups` claim and `--group` at mint time. Read
+  [the trust boundary](#group-scoping-and-the-trust-boundary) first — it is a soft partition, and
+  hard isolation is still one instance per tenant.
 - **gRPC transport hardening.** If the gRPC port is exposed beyond trusted callers, cap the
   concurrent HTTP/2 streams one connection may open with `maxConcurrentStreams`, and enforce a
   keepalive policy (`keepalive.minTimeSeconds`, `keepalive.permitWithoutStream`) so an abusive

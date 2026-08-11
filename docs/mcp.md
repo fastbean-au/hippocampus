@@ -47,6 +47,14 @@ refused every mutation regardless of which tools are registered here. `delete_me
 scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear`,
 which stay `admin`-tier and off this surface.
 
+**Bound the model's reach as well as its verbs.** The tier decides what a model may do; a
+[group scope](configuration.md#group-scoping) decides which records it may do it to. Giving the
+bridge a token scoped to one group is the natural way to attach a model to one project or workspace
+in a shared store: every tool above narrows to it, out-of-scope memories report `NotFound` rather
+than confirming they exist, and the model's own writes are stamped with that group automatically —
+so it need not (and cannot) choose where its memories are filed. Note this is a soft partition; see
+[the trust boundary](operations.md#group-scoping-and-the-trust-boundary).
+
 | Tool                           | Maps to                      | Notes                                                                                                                                                                                                                                        |
 | :----------------------------- | :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `store_memory`                 | `StoreMemory`                | Store text with a significance, optionally with `metadata` key/value labels; low-significance memories are forgotten over time.                                                                                                              |
@@ -91,7 +99,8 @@ and [TLS](configuration.md#tls) surface. Mint a token with
 `hippocampus --mint-token --client-id <id> --role writer --ttl 24h -c config.json`; the same token
 authenticates the bridge. Give it at least the `writer` [tier](configuration.md#authorisation) — the
 bridge's tools include `store_memory` and `create_event` — or `reader` if you only expose the
-read-only tools. The token may also be supplied as `HIPPOCAMPUS_MCP_TOKEN` (any flag maps to
+read-only tools. Add `--group <label>` to that mint command to scope the model to one slice of a
+shared store. The token may also be supplied as `HIPPOCAMPUS_MCP_TOKEN` (any flag maps to
 `HIPPOCAMPUS_MCP_<NAME>` with dashes as underscores), keeping the secret out of the argv the host
 stores.
 

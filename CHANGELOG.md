@@ -82,6 +82,45 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **Group scoping — a token can be restricted to particular `group` labels.** Authorisation tiers say
+  what a caller may do; nothing said which records they may do it to, so any writer in a shared store
+  could read and delete every other team's memories. A token may now carry a `groups` claim naming
+  the group labels whose records it can reach. New keys `auth.groupsClaim` (default `groups`, for an
+  identity provider that names the claim differently) and `auth.requireGroupScope`; `--mint-token`
+  gains `--group`; `WhoAmI` gains `groups` and `group_scoped`, which the console, the `hippo` CLI and
+  the config wizard all surface. Documented under
+  [Group scoping](docs/configuration.md#group-scoping).
+  - **Inert until tokens carry the claim, so every existing deployment is unchanged.** There is no
+    schema change, no migration, no index rebuild and no OpenSearch reindex: the scope is the
+    existing `group_name` column, which is already in the covering index, both search backends and
+    the archive. An unscoped token behaves exactly as every token did before.
+  - **An empty scope means the whole store**, so an unscoped token is the *most* privileged shape a
+    token has, not the least. `auth.requireGroupScope` turns its absence into a rejection — worth
+    setting once a store is partitioned, since a provider that stops emitting the claim would
+    otherwise hand every caller everything while every request succeeded.
+  - For a scoped caller: listings, searches and their `total_count` are narrowed; records outside the
+    scope report `NotFound` rather than `PermissionDenied` (which would confirm they exist); writes
+    are stamped with the caller's group, and cannot be moved out of it; both ends of a link must be
+    in scope, with edges reaching outside dropped from responses; `Export`/`Transfer`/`Clear` walk
+    only that partition; and `Purge`, `Sleep` and `PreviewConsolidation` are refused, all three
+    acting on the whole store.
+  - **Pre-existing records carry no group and are invisible to a scoped token.** Stamp them with an
+    `UPDATE` before issuing scoped tokens against an existing store — see the documentation.
+  - **It is a soft partition, not isolation**, and the difference is documented at
+    [the trust boundary](docs/operations.md#group-scoping-and-the-trust-boundary). The decay dynamics
+    stay store-global, so a busy group still affects what another forgets and there is no per-group
+    capacity target; `link_significance` is a scope-blind aggregate, so a cross-group link raises an
+    item's significance regardless of who can read the other end. Hard isolation remains one instance
+    per tenant. The reasoning, and what a full tenant model would have cost, is recorded as TODO 60.1.
+
+- **Event-source bridges: `--subject-metadata-key`.** Records the broker subject/topic as a metadata
+  label as well as (or instead of) using it as the group. Empty by default, so an existing bridge is
+  unchanged. It exists because `--group-from-subject` is on by default and a group-scoped token may
+  only write the groups it holds — the two are mutually exclusive, and without this the subject had
+  nowhere else to go. Pair `--group <token's label> --group-from-subject=false
+--subject-metadata-key subject` to keep the routing information as a filterable label. See
+  [Event sourcing](docs/eventsource.md).
+
 - **Memory and event metadata — tags and key-value attributes.** `group` was the only classification
   on a memory, one freeform 128-character string doing the work of several dimensions at once, so
   applications either packed a delimited string into it or buried the classification in the body.

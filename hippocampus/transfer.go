@@ -85,18 +85,26 @@ func (s *Server) walkStore(
 
 	maxRows := s.transfer.maxManifestRows
 
+	// The caller's group scope narrows the walk itself, so an Export/Transfer moves exactly the
+	// caller's partition and a Clear deletes only what such a walk captured. Nil for an unscoped
+	// caller, which walks the whole store as before.
+	groups, scoped := s.scopedGroups(ctx)
+
 	// Pre-flight the manifest size against the cap before doing any work, so an over-cap Export
 	// fails immediately instead of after the (potentially large, wasted) S3 upload. Counts are a
 	// snapshot and the store can grow underneath the walk, so the accumulation loops below re-check;
 	// this is only the early exit. Skipped when a count errors (negative) — the in-walk guard covers
 	// it. maxRows <= 0 (the default) leaves the manifest unbounded, preserving prior behaviour.
+	//
+	// A scoped caller is pre-flighted against its own partition, not the store: counting the whole
+	// store would refuse a small export because of rows the caller is not going to walk, get, or be
+	// able to see - and the error would report a size that does not correspond to anything they
+	// could act on.
 	if maxRows > 0 {
-		with, without := s.db.CountMemories(ctx)
+		total, ok := s.manifestPreflightCount(ctx, groups, scoped)
 
-		if events := s.db.CountEvents(ctx); events >= 0 && with >= 0 && without >= 0 {
-			if total := events + with + without; total > maxRows {
-				return nil, 0, 0, manifestTooLargeError(total, maxRows)
-			}
+		if ok && total > maxRows {
+			return nil, 0, 0, manifestTooLargeError(total, maxRows)
 		}
 	}
 
@@ -107,7 +115,7 @@ func (s *Server) walkStore(
 	afterId := ""
 
 	for {
-		page, err := s.db.GetEventsPage(ctx, afterId, batchSize)
+		page, err := s.db.GetEventsPage(ctx, afterId, batchSize, groups)
 		if err != nil {
 			return nil, 0, 0, err
 		}
@@ -140,7 +148,7 @@ func (s *Server) walkStore(
 	afterId = ""
 
 	for {
-		page, err := s.db.GetMemoriesPage(ctx, afterId, batchSize)
+		page, err := s.db.GetMemoriesPage(ctx, afterId, batchSize, groups)
 		if err != nil {
 			return nil, 0, 0, err
 		}
@@ -172,6 +180,35 @@ func (s *Server) walkStore(
 	}
 
 	return manifest, events, memories, nil
+}
+
+// manifestPreflightCount returns how many records a walk would capture, and whether the figure is
+// trustworthy. The bool is false when any underlying count failed, in which case the caller must
+// skip the early exit and let the in-walk guard do the work - exactly as it did before scoping,
+// where a negative count meant the same thing.
+func (s *Server) manifestPreflightCount(ctx context.Context, groups []string, scoped bool) (int, bool) {
+	if !scoped {
+		with, without := s.db.CountMemories(ctx)
+		events := s.db.CountEvents(ctx)
+
+		if events < 0 || with < 0 || without < 0 {
+			return 0, false
+		}
+
+		return events + with + without, true
+	}
+
+	memories, err := s.db.CountMemoriesFiltered(ctx, db.MemoryFilter{Groups: groups})
+	if err != nil {
+		return 0, false
+	}
+
+	events, err := s.db.CountEventsFiltered(ctx, db.EventFilter{Groups: groups})
+	if err != nil {
+		return 0, false
+	}
+
+	return memories + events, true
 }
 
 // storeManifest caches the manifest for a later Clear, evicting the oldest beyond the cap.
@@ -622,6 +659,13 @@ func (s *Server) ingestEvents(ctx context.Context, protos []*contract.Event) (in
 			return 0, fmt.Errorf("imported event '%s': %w", event.Id, err)
 		}
 
+		group, err := s.writeGroup(ctx, event.Group)
+		if err != nil {
+			return 0, err
+		}
+
+		event.Group = group
+
 		events[i] = event
 	}
 
@@ -660,6 +704,18 @@ func (s *Server) ingestMemories(ctx context.Context, protos []*contract.Memory) 
 		if err := types.ValidateMetadata(memories[i].Metadata, "memory"); err != nil {
 			return 0, fmt.Errorf("imported memory '%s': %w", memories[i].Id, err)
 		}
+
+		// The group is resolved from the caller's scope, never trusted from the wire: an archive is
+		// a file, and an import that honoured the group written in it would let a scoped caller
+		// place records in any partition simply by editing one. For an embedded ingestor - one
+		// group on its token, none in its archive - this is a plain stamp, which is what makes the
+		// embedded-to-centralised path work without the archive format knowing about groups at all.
+		group, err := s.writeGroup(ctx, memories[i].Group)
+		if err != nil {
+			return 0, err
+		}
+
+		memories[i].Group = group
 	}
 
 	count, err := s.db.ImportMemories(ctx, memories)

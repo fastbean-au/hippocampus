@@ -161,6 +161,35 @@ func TestOpenSearchIntegration_RoundTrip(t *testing.T) {
 		t.Errorf("expected only m1 within group g1, got %v", ids)
 	}
 
+	// The caller's group scope: a terms filter over the same keyword field, so it needs no mapping
+	// change. It is a different code path from the single-group term above and must be exercised
+	// separately - the two compose as a conjunction, which the last case here pins.
+	ids = mustSearch(t, idx, Query{Text: "fox", Groups: []string{"g2"}, Limit: 10})
+
+	if len(ids) != 1 || ids[0] != "m2" {
+		t.Errorf("expected only m2 within scope [g2], got %v", ids)
+	}
+
+	ids = mustSearch(t, idx, Query{Text: "fox", Groups: []string{"g1", "g2"}, Limit: 10})
+
+	if len(ids) != 2 {
+		t.Errorf("expected both matches within scope [g1 g2], got %v", ids)
+	}
+
+	// An empty scope must read as unscoped, never as "match nothing".
+	ids = mustSearch(t, idx, Query{Text: "fox", Groups: nil, Limit: 10})
+
+	if len(ids) != 2 {
+		t.Errorf("an empty scope must match everything, got %v", ids)
+	}
+
+	// Scope and filter conjoin: asking for a group outside the scope matches nothing.
+	ids = mustSearch(t, idx, Query{Text: "fox", Group: "g1", Groups: []string{"g2"}, Limit: 10})
+
+	if len(ids) != 0 {
+		t.Errorf("a group filter outside the scope must match nothing, got %v", ids)
+	}
+
 	// Delete-by-id, including an id that was never indexed (must not error).
 	mustApply(t, idx, op{kind: opDeleteIds, ids: []string{"m2", "never-indexed"}})
 

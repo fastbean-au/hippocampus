@@ -81,7 +81,7 @@ func (s *Server) reconcileOnce() {
 		default:
 		}
 
-		memories, err := s.db.GetMemoriesPage(ctx, afterId, s.reconcileBatchSize)
+		memories, err := s.db.GetMemoriesPage(ctx, afterId, s.reconcileBatchSize, nil)
 		if err != nil {
 			log.Warnf("search reconcile: failed to read memories after id '%s' (abandoning this sweep; the next one retries): %s", afterId, err.Error())
 

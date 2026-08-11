@@ -19,7 +19,9 @@
     "jwksUrl": "",
     "issuer": "",
     "audience": "",
-    "jwksRefreshIntervalSeconds": 300
+    "jwksRefreshIntervalSeconds": 300,
+    "groupsClaim": "groups",
+    "requireGroupScope": false
   },
   "rateLimit": {
     "enabled": false,

@@ -88,6 +88,15 @@ func (s *Server) ExplainConsolidation(
 		)
 	}
 
+	// Explain answers only about ids the caller supplies, so it is scoped by checking them rather
+	// than refused outright the way the preview is. The pressure and threshold it also reports are
+	// store-global figures, which is correct and not a leak: they are what actually decides this
+	// caller's own memories' fate, and withholding them would leave a value with nothing to measure
+	// it against.
+	if err := s.scopeMemoryIds(ctx, ids); err != nil {
+		return nil, err
+	}
+
 	curve, err := curveRequest(in.GetCurve())
 	if err != nil {
 		return nil, err

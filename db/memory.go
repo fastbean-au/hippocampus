@@ -1262,11 +1262,13 @@ func (d *DB) FindSummarisationCandidates(ctx context.Context, minMemories int, m
 		greatest = `GREATEST(m.timestamp, m.time_recalled)`
 	}
 
+	// e.group_name rides along so the served list can be narrowed to a group-scoped caller without a
+	// second lookup; the scan itself stays store-wide (see SummarisationCandidate.Group).
 	query := `
-		SELECT m.event_id, e.name, COUNT(*)
+		SELECT m.event_id, e.name, COUNT(*), e.group_name
 		FROM memories m INNER JOIN events e ON e.id = m.event_id
 		WHERE m.event_id != '' AND NOT m.is_summary
-		GROUP BY m.event_id, e.name
+		GROUP BY m.event_id, e.name, e.group_name
 		HAVING COUNT(*) >= ? AND MAX(` + greatest + `) < ?
 		ORDER BY COUNT(*) DESC`
 
@@ -1291,7 +1293,7 @@ func (d *DB) FindSummarisationCandidates(ctx context.Context, minMemories int, m
 	for rows.Next() {
 		var c SummarisationCandidate
 
-		if err := rows.Scan(&c.EventId, &c.EventName, &c.MemoryCount); err != nil {
+		if err := rows.Scan(&c.EventId, &c.EventName, &c.MemoryCount, &c.Group); err != nil {
 			return nil, err
 		}
 
@@ -1349,6 +1351,10 @@ func (d *DB) memoryFilterConditions(filter MemoryFilter) (string, []any) {
 		query += ` AND group_name = ?`
 		args = append(args, filter.Group)
 	}
+
+	// The caller's group scope, conjoined with (not replacing) the Group filter above: asking for a
+	// group outside the scope must return nothing rather than widen it.
+	query, args = appendGroupScope(query, args, "", filter.Groups)
 
 	// Ids restricts the result to a known set - the linked-to filter resolves a memory's neighbours
 	// and passes them here, so link traversal composes with every other filter and with pagination

@@ -31,6 +31,13 @@ type MintRequest struct {
 	// Hippocampus RPC under the default-closed policy.
 	Roles []string
 
+	// Groups are stamped into the token's groups claim, scoping the bearer to those group labels
+	// (see Claims.Groups). Note that this is the opposite way round from Roles: an empty Groups
+	// mints an UNSCOPED token, which sees the whole store, whereas an empty Roles mints one that
+	// can do nothing. That asymmetry is inherent - a tier is a grant and a scope is a restriction -
+	// and is why auth.requireGroupScope exists for deployments that want the omission caught.
+	Groups []string
+
 	// TTL is how long the token stays valid from the moment it is minted.
 	TTL time.Duration
 }
@@ -61,6 +68,7 @@ func MintToken(req MintRequest) (string, error) {
 		},
 		ClientID: req.ClientID,
 		Roles:    req.Roles,
+		Groups:   req.Groups,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

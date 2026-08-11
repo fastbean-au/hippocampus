@@ -17,6 +17,10 @@ func TestRegisterCommonFlags(t *testing.T) {
 		"significance":         "1",
 		"group-from-subject":   "true",
 		"log-level":            "info",
+
+		// Empty, so a bridge that does not set it behaves exactly as it did before the flag
+		// existed - the subject reaches the memory only through the group, as it always has.
+		"subject-metadata-key": "",
 	}
 
 	for name, want := range wantDefaults {

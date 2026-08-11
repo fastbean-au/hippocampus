@@ -633,7 +633,7 @@ func TestImportMemoriesAppliesLocalCompressionPolicy(t *testing.T) {
 		t.Fatalf("ImportMemories (repeat): %s", err)
 	}
 
-	memories, err := d.GetMemoriesPage(context.Background(), "", 10)
+	memories, err := d.GetMemoriesPage(context.Background(), "", 10, nil)
 	if err != nil {
 		t.Fatalf("GetMemoriesPage: %s", err)
 	}
