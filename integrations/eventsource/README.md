@@ -118,6 +118,14 @@ Run `--help` on any command for the full flag list, or `--version` to print the 
   bridges sharing `--consumer-group` to split partitions between them; a store failure backs off
   (`--error-backoff-seconds`) and re-reads rather than skipping.
 
+## Observability
+
+Every bridge serves `/healthz` and `/readyz` on `--health-port` (8090 by default, 0 disables) and
+exports OTEL metrics with `--metrics`. Readiness reports whether the Hippocampus instance the bridge
+writes to can serve — not the broker, whose failures are already visible as a restart or handled by
+the adapter's own reconnect. See
+[docs/eventsource.md](../../docs/eventsource.md#observability).
+
 ## Development
 
 ```sh

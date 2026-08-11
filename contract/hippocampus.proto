@@ -521,6 +521,8 @@ message GetMemoriesRequest {
 	int64                                  time_recalled_max         = 17; // UnixNano inclusive upper bound on time_recalled; 0 (the default) means no upper bound. Never-recalled memories are excluded rather than matched: their time_recalled is 0, so "recalled before X" would otherwise return every memory that was never recalled at all. Use recalled to ask about those
 	Bool                                   is_summary                = 18; // optional: TRUE returns only summary memories (see ReplaceMemoriesWithSummary), FALSE only non-summaries; UNSPECIFIED (default) applies no restriction
 	Bool                                   is_binary                 = 19; // optional: TRUE returns only binary memories, FALSE only non-binary; UNSPECIFIED (default) applies no restriction
+	string                                 event_id                  = 20; // optional: restrict to memories associated with this event. This is the paged way to read an event's memories - GetEventById with memories: true returns them all in one message, which overruns the receive frame on a large event. Empty (the default) applies no restriction rather than matching the event-less; use has_event for those
+	Bool                                   has_event                 = 21; // optional: FALSE returns only memories associated with no event, TRUE only those associated with one; UNSPECIFIED (default) applies no restriction. Exists because event_id cannot say it - an event-less memory stores an empty event_id, which is the same value that means "no bound" there, exactly as recalled exists alongside recall_count_min/max
 }
 
 message GetMemoriesResponse {

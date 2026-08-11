@@ -502,6 +502,78 @@ func TestGetMemories_IsBinaryAndIsSummaryFilters(t *testing.T) {
 	}
 }
 
+// TestGetMemories_EventFilters covers the paged way to read one event's memories, and the tri-state
+// beside it. The pair exists because an event-less memory stores an empty event_id, which is also
+// EventId's "no bound" value - so one field cannot ask both questions, exactly as Recalled cannot be
+// folded into RecallCountMax.
+func TestGetMemories_EventFilters(t *testing.T) {
+	db := newTestDB(t)
+
+	for _, e := range []types.Event{
+		{Id: "e1", TimeStart: 50, Significance: 5, Name: "one"},
+		{Id: "e2", TimeStart: 60, Significance: 5, Name: "two"},
+	} {
+		if _, err := db.CreateEvent(context.Background(), e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	memories := []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 5, Body: "first of e1", EventId: "e1"},
+		{Id: "m2", TimeStamp: 200, Significance: 5, Body: "second of e1", EventId: "e1"},
+		{Id: "m3", TimeStamp: 300, Significance: 5, Body: "of e2", EventId: "e2"},
+		{Id: "m4", TimeStamp: 400, Significance: 5, Body: "no event at all"},
+	}
+
+	for _, m := range memories {
+		if _, err := db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		filter MemoryFilter
+		want   []string
+	}{
+		{"one event's memories", MemoryFilter{EventId: "e1"}, []string{"m1", "m2"}},
+		{"another event's", MemoryFilter{EventId: "e2"}, []string{"m3"}},
+		{"an unknown event matches nothing", MemoryFilter{EventId: "nope"}, []string{}},
+		// The trap the pair exists for: an empty EventId must not mean "the event-less ones".
+		{"empty event id applies no restriction", MemoryFilter{EventId: ""}, []string{"m1", "m2", "m3", "m4"}},
+		{"event-less only", MemoryFilter{HasEvent: TriStateFalse}, []string{"m4"}},
+		{"evented only", MemoryFilter{HasEvent: TriStateTrue}, []string{"m1", "m2", "m3"}},
+		{"has_event unset applies no restriction", MemoryFilter{HasEvent: TriStateUnset}, []string{"m1", "m2", "m3", "m4"}},
+		// Composition with the other predicates, and with the significance extremum - the latter is
+		// what the "add every predicate ABOVE the extremum block" comment in memoryFilterConditions
+		// is protecting, since a clause added below it would not reach the subquery either.
+		{"composes with a time bound", MemoryFilter{EventId: "e1", TimeStampMin: 150}, []string{"m2"}},
+		{"composes with the extremum", MemoryFilter{EventId: "e1", SignificanceExtremum: SignificanceExtremumHighest}, []string{"m1", "m2"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := db.GetMemories(context.Background(), c.filter)
+			if err != nil {
+				t.Fatalf("GetMemories: %s", err)
+			}
+
+			if ids := memoryIds(got); !reflect.DeepEqual(ids, c.want) {
+				t.Errorf("expected %v, got %v", c.want, ids)
+			}
+
+			total, err := db.CountMemoriesFiltered(context.Background(), c.filter)
+			if err != nil {
+				t.Fatalf("CountMemoriesFiltered: %s", err)
+			}
+
+			if total != len(c.want) {
+				t.Errorf("expected a count of %d, got %d", len(c.want), total)
+			}
+		})
+	}
+}
+
 // TestUpdateMemoryMetadata pins the update semantics: a non-empty map replaces the stored map
 // wholesale rather than merging per key, an absent map leaves it untouched, and ClearMetadata is
 // the only way to remove it - the map's own emptiness cannot say so, because an absent map and an

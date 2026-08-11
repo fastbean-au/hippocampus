@@ -34,6 +34,7 @@ import (
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/hippocampus"
+	"github.com/fastbean-au/hippocampus/observability"
 	"github.com/fastbean-au/hippocampus/ratelimit"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/stats"
@@ -318,7 +319,7 @@ func run(ctx context.Context, version versionInfo) error {
 
 	// initialise observability
 	log.Debug("initialising observability")
-	obsCfg := ObservabilityConfig{
+	obsCfg := observability.Config{
 		TracingEnabled:         viper.GetBool("observability.tracing.enabled"),
 		TracingSamplingRatio:   viper.GetFloat64("observability.tracing.samplingRatio"),
 		MetricsEnabled:         viper.GetBool("observability.metrics.enabled"),
@@ -328,7 +329,7 @@ func run(ctx context.Context, version versionInfo) error {
 		ServiceVersion:         version.Version,
 	}
 
-	shutdownObservability, err := initObservability(context.Background(), obsCfg)
+	shutdownObservability, err := observability.Init(context.Background(), obsCfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialise observability: %w", err)
 	}

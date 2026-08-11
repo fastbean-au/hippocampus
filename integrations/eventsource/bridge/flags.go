@@ -38,4 +38,18 @@ func RegisterCommonFlags(fs *pflag.FlagSet) {
 	fs.String("subject-metadata-key", "", "record the message subject/topic as a metadata label under this key, as well as (or instead of) using it as the group - set this with an explicit --group when the service token is group-scoped")
 
 	fs.String("log-level", "info", "logging level (trace, debug, info, warn, error)")
+
+	// Observability. Metrics/tracing are off until a collector is wanted, matching the service's own
+	// defaults; the probe listener is ON, because a bridge that cannot be probed is a bridge whose
+	// stalling is invisible. Running several bridges on one host means giving each its own
+	// --health-port.
+	fs.Bool("metrics", false, "export OTEL metrics over OTLP/gRPC")
+	fs.Bool("tracing", false, "export OTEL traces over OTLP/gRPC")
+	fs.Float64("tracing-sampling-ratio", 0.1, "fraction of locally started traces to sample")
+	fs.String("otlp-endpoint", "", "OTLP/gRPC collector endpoint (empty uses the OTEL_EXPORTER_OTLP_* environment variables, then localhost:4317)")
+	fs.Bool("otlp-insecure", true, "connect to the collector without TLS")
+	fs.Int("metrics-interval-seconds", 0, "OTEL metric export interval (0 selects the SDK default)")
+	fs.String("metrics-group", "", "tenancy label stamped on this process's telemetry as a resource attribute; defaults to --group when that is set")
+	fs.Int("health-port", 8090, "port serving /healthz and /readyz (0 disables)")
+	fs.String("health-bind-address", "", "interface for the health listener (empty binds all)")
 }

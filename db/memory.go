@@ -1369,6 +1369,26 @@ func (d *DB) memoryFilterConditions(filter MemoryFilter) (string, []any) {
 		}
 	}
 
+	// One event's memories, the paged counterpart to GetMemoriesForEvent. Empty is no restriction,
+	// so HasEvent beside it is what asks for the event-less - an empty event_id is both the stored
+	// value for those and this field's "no bound".
+	if filter.EventId != "" {
+		query += ` AND event_id = ?`
+		args = append(args, filter.EventId)
+	}
+
+	// An event-less memory stores an empty event_id rather than NULL (see the schema), so both arms
+	// compare against '' and neither needs a NULL special case.
+	switch filter.HasEvent {
+
+	case TriStateFalse:
+		query += ` AND event_id = ''`
+
+	case TriStateTrue:
+		query += ` AND event_id != ''`
+
+	}
+
 	// Metadata is a conjunction of per-key predicates; the dialect differences live in metadata.go.
 	// A memory with no metadata holds NULL, which equals nothing on any dialect, so it is correctly
 	// excluded by any key predicate without a special case.

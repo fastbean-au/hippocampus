@@ -95,7 +95,7 @@ func TestToMessage(t *testing.T) {
 }
 
 func TestHandle_AcksOnSuccess(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{RequeueOnError: true}, store)
 
 	ack := &fakeAck{}
@@ -113,7 +113,7 @@ func TestHandle_NacksWithRequeueOnFailure(t *testing.T) {
 		return nil, errors.New("boom")
 	})
 
-	store := bridge.NewStore(okStorer{}, failing, 0)
+	store := bridge.NewStore(okStorer{}, failing, 0, "test")
 	b := New(Config{RequeueOnError: true}, store)
 
 	ack := &fakeAck{}
@@ -133,7 +133,7 @@ func TestHandle_NacksWithRequeueOnFailure(t *testing.T) {
 }
 
 func TestConsume_StopsOnContextCancel(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{}, store)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -145,7 +145,7 @@ func TestConsume_StopsOnContextCancel(t *testing.T) {
 }
 
 func TestConsume_ErrorsWhenChannelCloses(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{}, store)
 
 	ch := make(chan amqp.Delivery)
@@ -216,7 +216,7 @@ func (c *fakeConn) Close() error {
 func newRunBridge(t *testing.T, cfg Config, conn *fakeConn, dialErr error) *Bridge {
 	t.Helper()
 
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(cfg, store)
 	b.dial = func(url string) (amqpConn, error) {
 		if dialErr != nil {
@@ -321,7 +321,7 @@ func TestRun_ConsumeError(t *testing.T) {
 
 func TestHandle_AckErrorLogged(t *testing.T) {
 	// A delivery with a nil Acknowledger makes Ack() error; handle must not panic.
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{}, store)
 
 	b.handle(context.Background(), amqp.Delivery{RoutingKey: "s", Body: []byte("x")})
@@ -340,7 +340,7 @@ func TestHandle_NackErrorLogged(t *testing.T) {
 		return nil, errors.New("boom")
 	})
 
-	store := bridge.NewStore(okStorer{}, failing, 0)
+	store := bridge.NewStore(okStorer{}, failing, 0, "test")
 	b := New(Config{RequeueOnError: true}, store)
 
 	b.handle(context.Background(), amqp.Delivery{RoutingKey: "s", Body: []byte("x")})

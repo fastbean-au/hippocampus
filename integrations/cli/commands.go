@@ -357,6 +357,8 @@ func memoryFilterFlags(fs *pflag.FlagSet) {
 	fs.Int32("recall-count-max", 0, "inclusive upper bound on recall_count (0 = no bound)")
 	fs.String("recalled-after", "", "inclusive lower bound on time_recalled (RFC3339); never-recalled memories are excluded")
 	fs.String("recalled-before", "", "inclusive upper bound on time_recalled (RFC3339); never-recalled memories are excluded")
+	fs.String("event", "", "restrict to one event's memories (the paged way to read them)")
+	fs.String("has-event", "", "'true' for memories associated with an event, 'false' for those with none")
 }
 
 func eventFilterFlags(fs *pflag.FlagSet) {
@@ -662,6 +664,11 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 		return err
 	}
 
+	hasEvent, err := triStateFromFlag(fs, "has-event")
+	if err != nil {
+		return err
+	}
+
 	req := &contract.GetMemoriesRequest{
 		TimestampMin:         tsMin,
 		TimestampMax:         tsMax,
@@ -673,8 +680,11 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 		Offset:               i32(fs, "offset"),
 		SignificanceExtremum: ext,
 
+		EventId: str(fs, "event"),
+
 		Metadata:        strs(fs, "metadata"),
 		Recalled:        recalled,
+		HasEvent:        hasEvent,
 		IsSummary:       isSummary,
 		IsBinary:        isBinary,
 		RecallCountMin:  i32(fs, "recall-count-min"),

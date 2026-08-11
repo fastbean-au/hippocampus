@@ -257,8 +257,16 @@ scan, and is best combined with a time range or a page size.
 | `time_recalled_min` / `time_recalled_max` | inclusive UnixNano bounds on the last recall                                 |
 | `is_summary`                              | `TRUE` for summary memories only, `FALSE` to exclude them                    |
 | `is_binary`                               | `TRUE` for binary memories only, `FALSE` to exclude them                     |
+| `event_id`                                | restrict to one event's memories; empty means no restriction                 |
+| `has_event`                               | `FALSE` for memories belonging to no event, `TRUE` for those belonging to one |
 
-`recalled`, `is_summary` and `is_binary` are the tri-state `Bool` (`UNSPECIFIED`/`FALSE`/`TRUE`)
+`event_id` is the **paged** way to read an event's memories. `GetEventById` with `memories: true`
+returns every one of them in a single message, which overruns the receive frame on a large event;
+this composes with `limit`/`offset` and every other filter. `has_event` exists beside it for the
+same reason `recalled` exists beside the count range: an event-less memory stores an empty
+`event_id`, which is also `event_id`'s "no bound" value, so one field cannot ask both questions.
+
+`recalled`, `has_event`, `is_summary` and `is_binary` are the tri-state `Bool` (`UNSPECIFIED`/`FALSE`/`TRUE`)
 rather than plain booleans, because an unset proto3 `bool` and an explicit `false` are the same
 value on the wire — so "only the ones that are false" would otherwise be unaskable.
 

@@ -523,6 +523,29 @@ Metrics worth alerting on in production:
   recovered (the request got `Internal`/`500` and the process survived); any non-zero value is a
   bug worth investigating.
 
+### Client-side components
+
+The [ingestor](ingestor.md#observability) and the [broker bridges](eventsource.md#observability) are
+separate processes that dial a Hippocampus instance, and they are instrumented on the same model:
+`--metrics` exports over OTLP/gRPC, and `--health-port` (**8090 by default**) serves `/healthz`
+(liveness) and `/readyz` (whether the instance they write to can actually serve). Both surfaces are
+documented in full on those pages; three things are worth knowing at the operations level.
+
+- **`hippocampus.client.rpc.requests` / `.duration`** are the client-side RED metrics, emitted by
+  every component that dials the service, with an `endpoint` attribute (`source`/`target` for the
+  ingestor, `hippocampus` for a bridge). `outcome` is classified exactly as the service classifies
+  its own, so "the error rate" means one thing on both sides of the connection.
+- **`hippocampus.ingestor.seconds_since_last_pass` is the staleness signal.** Every other metric
+  these components emit is a counter, and a counter that stops advancing is indistinguishable from a
+  component with nothing to do; this one rises on its own whether the loop is stalled, deadlocked or
+  dead. Alert on it rather than on the absence of promotions.
+- **Tenancy is `--metrics-group`**, a per-process label stamped on both the resource and each metric
+  (the duplication is what avoids a `target_info` join in every query). It is deliberately never read
+  off the records: a bridge derives a memory's group from the message subject by default, so a
+  per-record label would be unbounded.
+
+Nothing here is wired into the shipped alert rules, which cover the service only.
+
 For local viewing (evaluation, soak testing, dashboard work) every compose stack carries an
 optional all-in-one `grafana/otel-lgtm` collector (Grafana + Prometheus + Tempo + Loki) behind a
 compose `observability` profile — off by default, so a stack run without it never attempts an

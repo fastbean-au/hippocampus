@@ -1,4 +1,4 @@
-package main
+package observability
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 )
 
 // TestInitObservability_Disabled verifies that with both tracing and metrics disabled,
-// initObservability is a no-op: it returns a shutdown function that itself succeeds, and it must
+// Init is a no-op: it returns a shutdown function that itself succeeds, and it must
 // not install any global tracer/meter provider (the rest of the service depends on this to stay
 // no-op-safe when observability is off).
 func TestInitObservability_Disabled(t *testing.T) {
-	shutdown, err := initObservability(context.Background(), ObservabilityConfig{})
+	shutdown, err := Init(context.Background(), Config{})
 	if err != nil {
-		t.Fatalf("initObservability (disabled): %s", err)
+		t.Fatalf("Init (disabled): %s", err)
 	}
 
 	if shutdown == nil {
@@ -44,7 +44,7 @@ func TestInitObservability_Enabled(t *testing.T) {
 		otel.SetMeterProvider(restoreMeter)
 	})
 
-	cfg := ObservabilityConfig{
+	cfg := Config{
 		TracingEnabled:         true,
 		TracingSamplingRatio:   0.5,
 		MetricsEnabled:         true,
@@ -54,9 +54,9 @@ func TestInitObservability_Enabled(t *testing.T) {
 		ServiceVersion:         "v0.0.0-test",
 	}
 
-	shutdown, err := initObservability(context.Background(), cfg)
+	shutdown, err := Init(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("initObservability (enabled, unreachable collector): %s", err)
+		t.Fatalf("Init (enabled, unreachable collector): %s", err)
 	}
 
 	if shutdown == nil {
@@ -107,14 +107,14 @@ func TestInitObservability_TracingOnly(t *testing.T) {
 		otel.SetMeterProvider(restoreMeter)
 	})
 
-	shutdown, err := initObservability(context.Background(), ObservabilityConfig{
+	shutdown, err := Init(context.Background(), Config{
 		TracingEnabled:       true,
 		TracingSamplingRatio: 1,
 		OTLPEndpoint:         "127.0.0.1:1",
 		OTLPInsecure:         true,
 	})
 	if err != nil {
-		t.Fatalf("initObservability (tracing only): %s", err)
+		t.Fatalf("Init (tracing only): %s", err)
 	}
 
 	if _, ok := otel.GetTracerProvider().Tracer("test").(nooptrace.Tracer); ok {
@@ -134,14 +134,14 @@ func TestInitObservability_MetricsOnly(t *testing.T) {
 		otel.SetMeterProvider(restoreMeter)
 	})
 
-	shutdown, err := initObservability(context.Background(), ObservabilityConfig{
+	shutdown, err := Init(context.Background(), Config{
 		MetricsEnabled: true,
 		OTLPEndpoint:   "127.0.0.1:1",
 		OTLPInsecure:   true,
 		// MetricsIntervalSeconds left at zero: must fall back to the reader's own default interval.
 	})
 	if err != nil {
-		t.Fatalf("initObservability (metrics only, zero interval): %s", err)
+		t.Fatalf("Init (metrics only, zero interval): %s", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

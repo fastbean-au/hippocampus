@@ -19,6 +19,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (one `cmd/<broker>` each for `nats`/`mqtt`/`rabbitmq`/`kafka`; consumes from the broker and stores
   each message as a memory; `go test ./...` in that dir, with `HIPPOCAMPUS_TEST_MQTT_BROKER`/
   `HIPPOCAMPUS_TEST_RABBITMQ_URL` set to run the broker integration tests; see `docs/eventsource.md`)
+- Run the ingestor (separate module — run from its directory):
+  `cd integrations/ingestor && go run ./cmd/ingestor --source-address localhost:50051 --target-address central:50051 --rules rules.json`
+  (promotes completed events from an edge instance into a central one under a CEL rules file;
+  `--check-rules` compiles the rules and exits, `--dry-run` judges without moving anything;
+  `--health-port` (8090) serves `/healthz`+`/readyz` and `--metrics` exports OTLP;
+  `go test ./...` in that dir needs no service; see `docs/ingestor.md`)
 - Test: `go test ./...` (single test: `go test ./hippocampus -run TestName`)
 - Benchmarks: `go test ./db -bench . -run XXX` (`db/bench_test.go`; run on demand — deliberately
   not CI-gated — and compare with benchstat when touching `hippocampus/sleep.go`, the db scans,
@@ -839,9 +845,67 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     (`ghcr.io/fastbean-au/hippocampus-<broker>-bridge`) via a matrix over the one parameterised
     `integrations/eventsource/Dockerfile` (the `BROKER` build-arg selects `cmd/<broker>`; built with
     the repo root as context since the module's `replace` reaches the root contract). A bridge is an
-    outbound client (dials broker + service, listens on no port), so the image exposes nothing and has
-    no default CMD — each broker's required flags are passed after the image name. See
-    `docs/eventsource.md` and the module README.
+    outbound client (dials broker + service), and since the instrumentation landed it also serves
+    `/healthz`+`/readyz` on `--health-port` (8090, 0 disables) and exports `hippocampus.bridge.*`
+    metrics — so the image's lack of an EXPOSE is now a default rather than a property of the design.
+    It has no default CMD — each broker's required flags are passed after the image name. Readiness
+    deliberately covers the SERVICE and not the broker: a broker unreachable at startup exits the
+    process (visible as a restart) and a mid-run disconnect is the adapter's own to retry, whereas a
+    bridge that cannot write looks exactly like a bridge with no traffic. See `docs/eventsource.md`
+    and the module README.
+  - `integrations/ingestor/` — the **ingestor** (TODO 67): stage data in an edge instance, and when
+    an event **completes**, judge it against a CEL rules file and either promote it to a central
+    instance, promote it after reducing it, or drop it — draining the edge either way. Its own Go
+    module (module path `github.com/fastbean-au/hippocampus/integrations/ingestor`; `replace
+github.com/fastbean-au/hippocampus => ../..`), which is what makes `github.com/google/cel-go`
+    affordable — **the root module does not import it**. A client of two instances, not a service
+    feature: the edge is a stock `hippocampus` binary, and the core needed only one additive field
+    (`GetMemoriesRequest.event_id`/`has_event`). Five things carry the design. (1) **It holds no
+    state.** `ImportBatch` is a full-state upsert by id, so promote-then-drain is at-least-once
+    against an idempotent receiver and a crash between the two re-promotes identical rows; there is
+    no cursor and no bookmark, because _the edge store is the queue_ and what it contains is exactly
+    what has not been judged yet. (2) **Judgement happens at completion, not at ingest**, which is
+    the whole answer to "how do rule changes reach events in flight" — an open event is judged by
+    whatever rules are in force when it completes, and the only mechanism needed is one immutable
+    ruleset snapshot per pass (`rules.Watcher`, an `atomic.Pointer` swap on an mtime poll, modelled
+    on `auth/revocation.go` including bad-initial-load-fails-startup and
+    bad-reload-keeps-the-last-good). (3) **Rules are compiled at load** against a declared CEL
+    environment (`rules/env.go`'s `Event`/`Memory` structs, pinned by `TestDeclaredEnvironment`
+    because the field set is a contract with every deployed rules file), bounded by a cost limit and
+    a timeout, and an expression that _errors_ (the classic: an unguarded `event.metadata['k']`) does
+    not match, is logged naming the rule, and does not stop the rules after it. (4) **The drain
+    re-checks** the event's memory count before deleting, so a memory landing against an
+    already-ended event is never deleted unjudged — `--settle-seconds` makes that rare and the
+    re-check makes it correct; note the two reduction kinds disagree about that count
+    (`keepTopN`/`minSignificance` choose what _crosses_ and leave the source untouched, `summarise`
+    replaces memories on the source), which is why `reduce` returns both. (5) **An event over
+    `--max-event-memories` is left unjudged** rather than judged on a truncated view of itself.
+    `promoter/` is driven in tests against two in-memory fake instances, so no service is needed.
+    Built/vetted/tested by the `ingestor` CI job; the release cross-compiles `hippocampus-ingestor`
+    and publishes `ghcr.io/fastbean-au/hippocampus-ingestor`. See `docs/ingestor.md` — in particular
+    that **an edge must set `consolidation.minimumRetentionInDays` above the longest an event stays
+    open**, or its own decay will forget in-flight events before the rules ever see them.
+    Instrumented like the bridges (see `observability/` below): `hippocampus.ingestor.*` plus the
+    shared client RED metrics, and `/healthz`+`/readyz` naming which of its two ends is unreachable.
+- `observability/` — the shared OTEL bootstrap and probe endpoints, in the root module so the
+  service, the ingestor and the four broker bridges use one implementation (it began as
+  `cmd/hippocampus/observability.go` and was promoted, not copied; the integration modules already
+  depend on the root module for the contract, and the root already carried the OTEL dependencies, so
+  sharing costs neither side anything). Three pieces. `Init` installs the global tracer/meter
+  providers and returns a flush func, unchanged from the service's version apart from a
+  configurable `service.name`. `HealthServer` serves `/healthz` (liveness) and `/readyz` (a named
+  map of dependency checks, cached so a probe cannot become its own load), with `GRPCHealthCheck`
+  probing `grpc.health.v1.Health` — chosen because it is exempt from the auth interceptor, touches
+  no data, and is driven on the service side by its own database readiness, so "ready" means the far
+  end can serve rather than that a socket opened. `UnaryClientMetricsInterceptor` records the
+  client-side RED metrics (`hippocampus.client.rpc.requests`/`.duration`) for everything that dials
+  the service, classifying `outcome` exactly as `rpcmetrics.go` does so the error rate means one
+  thing on both sides. **Tenancy** (`WithGroup`, `GroupAttribute`) is a per-process label set once at
+  `Init` and stamped on both the resource and each metric: the duplication exists because the
+  OTLP→Prometheus translation puts resource attributes in `target_info`, and it is affordable only
+  because the value is static — reading a group off each record would be unbounded (a bridge's group
+  defaults to the message subject), which is why that shape is refused. No **service** metric carries
+  a group; this is the client side only, and item 60.1 records why the service side stayed out.
 
 ## Conventions in this repo
 

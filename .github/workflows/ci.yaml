@@ -292,6 +292,11 @@ jobs:
               -t "hippocampus-${broker}-bridge:ci" .
           done
 
+      # The ingestor image, same shape: a separate module built with the repo root as context, so a
+      # broken Dockerfile or module build fails CI here rather than at release time.
+      - name: Ingestor image build
+        run: docker build -f integrations/ingestor/Dockerfile -t hippocampus-ingestor:ci .
+
   # The OTEL collector exporter under integrations/otel is a SEPARATE Go module (its dependency tree
   # is large and kept out of the root module), so the test job's `go build/test ./...` never
   # descends into it - it would rot undetected. Build, vet, and test it here on its own. It has a
@@ -351,6 +356,28 @@ jobs:
 
       - name: Build, vet, and test the CLI module
         working-directory: integrations/cli
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  # The ingestor under integrations/ingestor is a SEPARATE Go module (its CEL dependency tree stays
+  # out of the root module), so the test job's `go build/test ./...` never descends into it. Build,
+  # vet, and test the module on its own. It has a `replace => ../..` back to the repo root, so the
+  # full checkout is required. Its tests are self-contained - the promoter is driven against two
+  # in-memory fake instances - so no service container is needed.
+  ingestor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: integrations/ingestor/go.mod
+
+      - name: Build, vet, and test the ingestor module
+        working-directory: integrations/ingestor
         run: |
           go build ./...
           go vet ./...

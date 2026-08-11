@@ -16,11 +16,16 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/fastbean-au/hippocampus/observability"
+
 	"github.com/fastbean-au/hippocampus/integrations/eventsource/bridge"
 	rabbitbridge "github.com/fastbean-au/hippocampus/integrations/eventsource/rabbitmq"
 )
 
 var version = "dev"
+
+// brokerName identifies this adapter in the telemetry and the probe bodies.
+const brokerName = "rabbitmq"
 
 func main() {
 	os.Exit(realMain(os.Args[1:]))
@@ -104,6 +109,7 @@ func run(ctx context.Context) error {
 		TLSCertFile:           viper.GetString("tls-cert"),
 		TLSKeyFile:            viper.GetString("tls-key"),
 		TLSInsecureSkipVerify: viper.GetBool("tls-insecure-skip-verify"),
+		Endpoint:              "hippocampus",
 	}
 
 	conn, client, err := bridge.Dial(clientCfg)
@@ -113,9 +119,18 @@ func run(ctx context.Context) error {
 
 	defer func() { _ = conn.Close() }()
 
+	// Observability and the probe endpoints, started once the connection exists so readiness can
+	// report whether the service this bridge writes to can actually serve.
+	stopRuntime, err := bridge.StartRuntime(ctx, runtimeConfig(), conn)
+	if err != nil {
+		return err
+	}
+
+	defer stopRuntime()
+
 	transformer := bridge.NewDefaultTransformer(transformConfig())
 
-	store := bridge.NewStore(client, transformer, time.Duration(viper.GetInt("call-timeout-seconds"))*time.Second)
+	store := bridge.NewStore(client, transformer, time.Duration(viper.GetInt("call-timeout-seconds"))*time.Second, brokerName)
 
 	b := rabbitbridge.New(rabbitbridge.Config{
 		URL:            viper.GetString("amqp-url"),
@@ -172,4 +187,33 @@ func metadataLabels() map[string]string {
 	}
 
 	return out
+}
+
+// runtimeConfig assembles the observability wiring from viper. Shared shape across every bridge cmd;
+// kept here (not in the bridge package) so all viper reads stay in main.
+//
+// The tenancy label falls back to --group when --metrics-group is unset, because a bridge configured
+// with a fixed group already IS one tenant's - and a resource attribute is the only shape that is
+// safe here, since the per-message group can be the message subject and so unbounded.
+func runtimeConfig() bridge.RuntimeConfig {
+	group := viper.GetString("metrics-group")
+	if group == "" {
+		group = viper.GetString("group")
+	}
+
+	return bridge.RuntimeConfig{
+		Broker:  brokerName,
+		Version: version,
+		Observability: observability.Config{
+			TracingEnabled:         viper.GetBool("tracing"),
+			TracingSamplingRatio:   viper.GetFloat64("tracing-sampling-ratio"),
+			MetricsEnabled:         viper.GetBool("metrics"),
+			MetricsIntervalSeconds: viper.GetInt("metrics-interval-seconds"),
+			OTLPEndpoint:           viper.GetString("otlp-endpoint"),
+			OTLPInsecure:           viper.GetBool("otlp-insecure"),
+			Group:                  group,
+		},
+		HealthPort:        viper.GetInt("health-port"),
+		HealthBindAddress: viper.GetString("health-bind-address"),
+	}
 }

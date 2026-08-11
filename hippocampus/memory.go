@@ -561,8 +561,11 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		Limit:                limit,
 		Offset:               offset,
 
+		EventId: in.GetEventId(),
+
 		Metadata:        metadata,
 		Recalled:        triState(in.GetRecalled()),
+		HasEvent:        triState(in.GetHasEvent()),
 		IsSummary:       triState(in.GetIsSummary()),
 		IsBinary:        triState(in.GetIsBinary()),
 		RecallCountMin:  in.GetRecallCountMin(),

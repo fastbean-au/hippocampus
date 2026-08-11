@@ -37,7 +37,7 @@ func TestStore_HandleStoresEachMemory(t *testing.T) {
 		}, nil
 	})
 
-	s := NewStore(fake, tr, 0)
+	s := NewStore(fake, tr, 0, "test")
 
 	if err := s.Handle(context.Background(), Message{Subject: "s"}); err != nil {
 		t.Fatalf("Handle: %v", err)
@@ -59,7 +59,7 @@ func TestStore_HandleTransformErrorPropagates(t *testing.T) {
 		return nil, want
 	})
 
-	s := NewStore(fake, tr, 0)
+	s := NewStore(fake, tr, 0, "test")
 
 	err := s.Handle(context.Background(), Message{Subject: "s"})
 	if !errors.Is(err, want) {
@@ -76,7 +76,7 @@ func TestStore_HandleStoreErrorPropagates(t *testing.T) {
 	fake := &fakeStorer{err: want}
 	tr := NewDefaultTransformer(TransformConfig{})
 
-	s := NewStore(fake, tr, 0)
+	s := NewStore(fake, tr, 0, "test")
 
 	err := s.Handle(context.Background(), Message{Subject: "s", Data: []byte("x")})
 	if !errors.Is(err, want) {
@@ -88,7 +88,7 @@ func TestStore_HandleRejectedIsNotError(t *testing.T) {
 	fake := &fakeStorer{rejected: true}
 	tr := NewDefaultTransformer(TransformConfig{})
 
-	s := NewStore(fake, tr, 0)
+	s := NewStore(fake, tr, 0, "test")
 
 	if err := s.Handle(context.Background(), Message{Subject: "s", Data: []byte("x")}); err != nil {
 		t.Fatalf("Handle should not error on a rejected (insignificant) memory: %v", err)
@@ -105,7 +105,7 @@ func TestStore_HandleNoMemoriesIsNoOp(t *testing.T) {
 		return nil, nil
 	})
 
-	s := NewStore(fake, tr, 0)
+	s := NewStore(fake, tr, 0, "test")
 
 	if err := s.Handle(context.Background(), Message{Subject: "s"}); err != nil {
 		t.Fatalf("Handle: %v", err)
@@ -120,7 +120,7 @@ func TestStore_HandleWithCallTimeout(t *testing.T) {
 	fake := &fakeStorer{}
 	tr := NewDefaultTransformer(TransformConfig{})
 
-	s := NewStore(fake, tr, time.Second)
+	s := NewStore(fake, tr, time.Second, "test")
 
 	if err := s.Handle(context.Background(), Message{Subject: "s", Data: []byte("x")}); err != nil {
 		t.Fatalf("Handle: %v", err)
@@ -137,7 +137,7 @@ func TestStore_HandleSkipsNilMemory(t *testing.T) {
 		return []*contract.Memory{nil, {Body: "a"}}, nil
 	})
 
-	s := NewStore(fake, tr, 0)
+	s := NewStore(fake, tr, 0, "test")
 
 	if err := s.Handle(context.Background(), Message{Subject: "s"}); err != nil {
 		t.Fatalf("Handle: %v", err)

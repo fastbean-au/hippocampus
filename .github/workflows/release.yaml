@@ -180,9 +180,12 @@ jobs:
               ( cd integrations/eventsource && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-${broker}-bridge${ext}" "./cmd/${broker}" )
             done
 
+            # Ingestor (separate module; build from its directory into the shared stage).
+            ( cd integrations/ingestor && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-ingestor${ext}" ./cmd/ingestor )
+
             plat="${GOOS}_${GOARCH}"
 
-            for binary in hippocampus hippocampus-config-wizard hippo hippocampus-mcp hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
+            for binary in hippocampus hippocampus-config-wizard hippo hippocampus-mcp hippocampus-ingestor hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
               if [ "$GOOS" = "windows" ]; then
                 # -j junks the stage/ path so the archive entries are just the binary and LICENSE.
                 zip -j -q "dist/${binary}_${VERSION}_${plat}.zip" "stage/${binary}${ext}" stage/LICENSE
@@ -510,3 +513,54 @@ jobs:
             BROKER=${{ matrix.broker }}
           tags: ${{ steps.meta-bridge.outputs.tags }}
           labels: ${{ steps.meta-bridge.outputs.labels }}
+
+  # Build and push the ingestor image to GHCR. Same shape as the bridge images above - a separate
+  # module, so the build context is the repo root (its `replace => ../..` reaches the root contract)
+  # while the root module never imports it. Publishes to its own package (<repo>-ingestor).
+  publish-ingestor:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      # See the publish job: QEMU for the alpine RUN steps, Buildx for the multi-platform manifest.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive ingestor image tags
+        id: meta-ingestor
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-ingestor
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
+
+      - name: Build and push ingestor image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: integrations/ingestor/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ env.RELEASE_TAG }}
+          tags: ${{ steps.meta-ingestor.outputs.tags }}
+          labels: ${{ steps.meta-ingestor.outputs.labels }}

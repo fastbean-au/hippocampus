@@ -47,7 +47,7 @@ func TestIntegration_RealBroker(t *testing.T) {
 	const queue = "hippo-eventsource-test"
 
 	storer := &countingStorer{}
-	store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 
 	b := New(Config{URL: url, Queue: queue, DeclareQueue: true, RequeueOnError: true, Prefetch: 1}, store)
 

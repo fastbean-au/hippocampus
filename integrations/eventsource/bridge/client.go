@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/fastbean-au/hippocampus/contract"
+	"github.com/fastbean-au/hippocampus/observability"
 )
 
 // ClientConfig describes how to reach the Hippocampus gRPC service. It mirrors the trust options the
@@ -39,6 +40,10 @@ type ClientConfig struct {
 
 	// TLSInsecureSkipVerify skips verification of the service certificate (dev only).
 	TLSInsecureSkipVerify bool
+
+	// Endpoint names this connection in the client RPC metrics. Empty omits the metrics interceptor
+	// entirely, which is what a caller that does not want the instrumentation gets.
+	Endpoint string
 }
 
 // Dial opens a gRPC client connection to the service described by cfg and returns it alongside a
@@ -53,8 +58,21 @@ func Dial(cfg ClientConfig) (*grpc.ClientConn, contract.HippocampusClient, error
 
 	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
 
+	// Chained rather than two WithUnaryInterceptor options, the second of which would silently
+	// replace the first. The metrics interceptor is outermost so it measures the whole call
+	// including the token being attached.
+	var interceptors []grpc.UnaryClientInterceptor
+
+	if cfg.Endpoint != "" {
+		interceptors = append(interceptors, observability.UnaryClientMetricsInterceptor(cfg.Endpoint))
+	}
+
 	if cfg.Token != "" {
-		dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(bearerTokenInterceptor(cfg.Token)))
+		interceptors = append(interceptors, bearerTokenInterceptor(cfg.Token))
+	}
+
+	if len(interceptors) > 0 {
+		dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(interceptors...))
 	}
 
 	conn, err := grpc.NewClient(cfg.Address, dialOpts...)

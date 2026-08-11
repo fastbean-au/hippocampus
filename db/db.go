@@ -380,12 +380,21 @@ type MemoryFilter struct {
 	// unindexed, exactly as Group's is.
 	Metadata map[string]string
 
-	// Recalled, IsSummary and IsBinary are tri-state because the columns they filter are boolean:
-	// a Go bool could not distinguish "only the never-recalled ones" from "no restriction", and
-	// never-recalled is the question this filter exists to answer. RecallCountMin/Max and
-	// TimeRecalledMin/Max follow the package's usual 0-means-no-bound rule, which is exactly why
-	// Recalled is needed alongside them - RecallCountMax of 0 reads as unbounded.
+	// EventId restricts the result to one event's memories. Empty means unrestricted, per this
+	// struct's usual rule - which is why HasEvent exists beside it: an event-less memory stores an
+	// empty event_id, so this field cannot ask for those without the empty string meaning two things
+	// at once. It is the paged counterpart to GetMemoriesForEvent, which returns a whole event's
+	// memories in one unbounded slice.
+	EventId string
+
+	// Recalled, HasEvent, IsSummary and IsBinary are tri-state because the columns they filter are
+	// boolean, or in HasEvent's case boolean in effect: a Go bool could not distinguish "only the
+	// never-recalled ones" from "no restriction", and never-recalled is the question that filter
+	// exists to answer. RecallCountMin/Max and TimeRecalledMin/Max follow the package's usual
+	// 0-means-no-bound rule, which is exactly why Recalled is needed alongside them - RecallCountMax
+	// of 0 reads as unbounded.
 	Recalled        TriState
+	HasEvent        TriState
 	IsSummary       TriState
 	IsBinary        TriState
 	RecallCountMin  int32

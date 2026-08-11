@@ -44,7 +44,7 @@ func TestIntegration_RealBroker(t *testing.T) {
 	}
 
 	storer := &countingStorer{}
-	store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 
 	b := New(Config{
 		Broker:       broker,

@@ -140,7 +140,7 @@ func TestToMessage_NoHeaders(t *testing.T) {
 
 func TestRun_SubscribeDeliversToStore(t *testing.T) {
 	storer := &okStorer{}
-	store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 
 	fc := &fakeConn{deliver: &natsgo.Msg{Subject: "events.a", Data: []byte("hello")}}
 
@@ -170,7 +170,7 @@ func TestRun_SubscribeDeliversToStore(t *testing.T) {
 }
 
 func TestRun_QueueSubscribeWhenQueueSet(t *testing.T) {
-	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	fc := &fakeConn{}
 
 	b := New(Config{Subject: "s", Queue: "workers"}, store)
@@ -191,7 +191,7 @@ func TestRun_QueueSubscribeWhenQueueSet(t *testing.T) {
 }
 
 func TestRun_ConnectError(t *testing.T) {
-	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 
 	b := New(Config{Subject: "s"}, store)
 	b.connect = func(url string, opts ...natsgo.Option) (natsConn, error) {
@@ -204,7 +204,7 @@ func TestRun_ConnectError(t *testing.T) {
 }
 
 func TestRun_SubscribeError(t *testing.T) {
-	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	fc := &fakeConn{subErr: errors.New("subscribe failed")}
 
 	b := New(Config{Subject: "s"}, store)
@@ -218,7 +218,7 @@ func TestRun_SubscribeError(t *testing.T) {
 }
 
 func TestRun_AppliesAllConnectionOptions(t *testing.T) {
-	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(&okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	fc := &fakeConn{}
 
 	var gotURL string
@@ -291,7 +291,7 @@ func TestRun_EmbeddedServerRealConnect(t *testing.T) {
 	for _, queue := range []string{"", "workers"} {
 		t.Run("queue="+queue, func(t *testing.T) {
 			storer := &okStorer{}
-			store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+			store := bridge.NewStore(storer, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 
 			b := New(Config{URL: url, Subject: "events.test", Queue: queue, Name: "test"}, store)
 

@@ -101,7 +101,7 @@ func TestConsume_CommitsAfterSuccessfulStore(t *testing.T) {
 		},
 	}
 
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{Topic: "t"}, store)
 
 	if err := b.consume(ctx, fr); err != nil {
@@ -129,7 +129,7 @@ func TestConsume_DoesNotCommitOnStoreFailure(t *testing.T) {
 		return nil, errors.New("boom")
 	})
 
-	store := bridge.NewStore(okStorer{}, failing, 0)
+	store := bridge.NewStore(okStorer{}, failing, 0, "test")
 	b := New(Config{Topic: "t", ErrorBackoff: time.Millisecond}, store)
 
 	if err := b.consume(ctx, fr); err != nil {
@@ -142,7 +142,7 @@ func TestConsume_DoesNotCommitOnStoreFailure(t *testing.T) {
 }
 
 func TestConsume_ReturnsErrorOnFetchFailure(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{Topic: "t"}, store)
 
 	if err := b.consume(context.Background(), &errReader{}); err == nil {
@@ -173,7 +173,7 @@ func TestRun_UsesInjectedReaderAndCloses(t *testing.T) {
 		msgs:   []kafkago.Message{{Topic: "t", Value: []byte("a"), Offset: 1}},
 	}
 
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{Topic: "t", GroupID: "g"}, store)
 	b.newReader = func(Config) reader {
 		return fr
@@ -205,7 +205,7 @@ func TestConsume_BackoffCancelStops(t *testing.T) {
 		return nil, errors.New("boom")
 	})
 
-	store := bridge.NewStore(okStorer{}, failing, 0)
+	store := bridge.NewStore(okStorer{}, failing, 0, "test")
 	b := New(Config{Topic: "t", ErrorBackoff: time.Hour}, store)
 
 	go func() {
@@ -245,7 +245,7 @@ func TestConsume_CommitErrorReturned(t *testing.T) {
 		commitErr: errors.New("commit failed"),
 	}
 
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{Topic: "t"}, store)
 
 	if err := b.consume(context.Background(), fr); err == nil {
@@ -263,7 +263,7 @@ func TestConsume_CommitErrorSwallowedOnCancel(t *testing.T) {
 		commitErr: errors.New("commit failed"),
 	}
 
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{Topic: "t"}, store)
 
 	if err := b.consume(ctx, fr); err != nil {

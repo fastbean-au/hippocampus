@@ -488,6 +488,8 @@ type listMemoriesInput struct {
 
 	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict to memories carrying ALL of these key/value labels exactly"`
 	Recalled *bool             `json:"recalled,omitempty" jsonschema:"optional: false returns only memories that have never been recalled, true only those recalled at least once; omit for no restriction"`
+	EventId  string            `json:"event_id,omitempty" jsonschema:"optional: restrict to one event's memories; this is the paged way to read them, and an empty value applies no restriction rather than matching the event-less"`
+	HasEvent *bool             `json:"has_event,omitempty" jsonschema:"optional: false returns only memories belonging to no event, true only those belonging to one; omit for no restriction"`
 }
 
 type memoriesPageOutput struct {
@@ -508,6 +510,8 @@ func (b *bridge) listMemories(ctx context.Context, _ *mcp.CallToolRequest, in li
 		Offset:          in.Offset,
 		Metadata:        metadataFilterPairs(in.Metadata),
 		Recalled:        triStateFilter(in.Recalled),
+		EventId:         in.EventId,
+		HasEvent:        triStateFilter(in.HasEvent),
 	})
 	if err != nil {
 		return nil, memoriesPageOutput{}, fmt.Errorf("GetMemories failed: %w", err)

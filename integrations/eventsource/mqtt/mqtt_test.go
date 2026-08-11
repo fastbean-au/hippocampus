@@ -53,7 +53,7 @@ func TestToMessage(t *testing.T) {
 }
 
 func TestMessageHandler_AcksOnSuccess(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{}, store)
 
 	m := &fakeMessage{topic: "t", payload: []byte("x")}
@@ -69,7 +69,7 @@ func TestMessageHandler_DoesNotAckOnFailure(t *testing.T) {
 		return nil, errors.New("boom")
 	})
 
-	store := bridge.NewStore(okStorer{}, failing, 0)
+	store := bridge.NewStore(okStorer{}, failing, 0, "test")
 	b := New(Config{}, store)
 
 	m := &fakeMessage{topic: "t", payload: []byte("x")}
@@ -138,7 +138,7 @@ func (c *fakeClient) OptionsReader() pahomqtt.ClientOptionsReader {
 }
 
 func TestRun_ConnectsSubscribesAndDisconnects(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	fc := &fakeClient{}
 
 	b := New(Config{Broker: "tcp://x:1883", Topic: "sensors/#", QoS: 1, Username: "u", Password: "p"}, store)
@@ -168,7 +168,7 @@ func TestRun_ConnectsSubscribesAndDisconnects(t *testing.T) {
 }
 
 func TestRun_ConnectError(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 
 	b := New(Config{Broker: "tcp://x:1883", Topic: "t"}, store)
 	b.connect = func(opts *pahomqtt.ClientOptions) (pahomqtt.Client, error) {
@@ -181,7 +181,7 @@ func TestRun_ConnectError(t *testing.T) {
 }
 
 func TestRun_SubscribeErrorIsLoggedNotFatal(t *testing.T) {
-	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0)
+	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	fc := &fakeClient{subToken: &fakeToken{err: errors.New("subscribe failed")}}
 
 	b := New(Config{Broker: "tcp://x:1883", Topic: "t"}, store)

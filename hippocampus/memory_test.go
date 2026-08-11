@@ -1169,6 +1169,75 @@ func TestGetMemoriesRecallStateFilters(t *testing.T) {
 	}
 }
 
+// TestGetMemoriesEventFilters covers the RPC half of the event_id/has_event pair: the paged way to
+// read one event's memories, where the only alternative is GetEventById with memories: true, which
+// returns every one of them in a single message.
+func TestGetMemoriesEventFilters(t *testing.T) {
+	s := newTestServer(t)
+
+	for _, e := range []*contract.Event{
+		{Id: "e1", Name: "one", Significance: 5},
+		{Id: "e2", Name: "two", Significance: 5},
+	} {
+		if _, err := s.StoreEvent(context.Background(), e); err != nil {
+			t.Fatalf("StoreEvent(%s): %s", e.GetId(), err)
+		}
+	}
+
+	for _, m := range []*contract.Memory{
+		{Id: "m1", Body: "first of e1", Significance: 5, EventId: "e1"},
+		{Id: "m2", Body: "second of e1", Significance: 5, EventId: "e1"},
+		{Id: "m3", Body: "of e2", Significance: 5, EventId: "e2"},
+		{Id: "m4", Body: "no event at all", Significance: 5},
+	} {
+		if _, err := s.StoreMemory(context.Background(), m); err != nil {
+			t.Fatalf("StoreMemory(%s): %s", m.GetId(), err)
+		}
+	}
+
+	ids := func(res *contract.GetMemoriesResponse) []string {
+		out := make([]string, 0, len(res.GetMemories()))
+
+		for _, m := range res.GetMemories() {
+			out = append(out, m.GetId())
+		}
+
+		sort.Strings(out)
+
+		return out
+	}
+
+	cases := []struct {
+		name    string
+		request *contract.GetMemoriesRequest
+		want    []string
+	}{
+		{"one event's memories", &contract.GetMemoriesRequest{EventId: "e1"}, []string{"m1", "m2"}},
+		{"an unknown event matches nothing", &contract.GetMemoriesRequest{EventId: "nope"}, []string{}},
+		// An empty event_id is "no bound", not "the event-less ones" - which is why has_event exists.
+		{"empty event id applies no filter", &contract.GetMemoriesRequest{EventId: ""}, []string{"m1", "m2", "m3", "m4"}},
+		{"event-less only", &contract.GetMemoriesRequest{HasEvent: contract.Bool_FALSE}, []string{"m4"}},
+		{"evented only", &contract.GetMemoriesRequest{HasEvent: contract.Bool_TRUE}, []string{"m1", "m2", "m3"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := s.GetMemories(context.Background(), c.request)
+			if err != nil {
+				t.Fatalf("GetMemories: %s", err)
+			}
+
+			if have := ids(got); !reflect.DeepEqual(have, c.want) {
+				t.Errorf("expected %v, got %v", c.want, have)
+			}
+
+			if int(got.GetTotalCount()) != len(c.want) {
+				t.Errorf("expected a total count of %d, got %d", len(c.want), got.GetTotalCount())
+			}
+		})
+	}
+}
+
 // TestGetMemoriesRejectsInvertedRecallBounds mirrors the existing significance/timestamp guards.
 func TestGetMemoriesRejectsInvertedRecallBounds(t *testing.T) {
 	s := newTestServer(t)

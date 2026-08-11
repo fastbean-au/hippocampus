@@ -212,6 +212,51 @@ lower-significance ones are forgotten first while the ones you keep recalling su
   `--consumer-group` to split a topic's partitions between them; a store failure backs off
   (`--error-backoff-seconds`) and re-reads rather than skipping.
 
+## Observability
+
+Every bridge serves `/healthz` and `/readyz` on `--health-port` (**8090 by default**; 0 disables) and
+exports OTEL metrics over OTLP/gRPC with `--metrics`.
+
+`/healthz` is process liveness and never fails while the process runs; `/readyz` reports whether the
+Hippocampus instance the bridge writes to can actually serve:
+
+```json
+{"component":"hippocampus-nats-bridge","dependencies":{"hippocampus":"ok"},"status":"ready"}
+```
+
+**The broker is deliberately not part of readiness.** Both of its failure modes are already handled:
+a broker unreachable at startup exits the process before the consume loop begins — the supervisor's
+problem, and visible as a restart — while a mid-run disconnect is the adapter's own to retry. What
+nothing else would notice is the Hippocampus end going away, because a bridge with no traffic and a
+bridge that cannot write look identical from outside. That is the gap the probe closes.
+
+| Metric | Type | Attributes |
+| --- | --- | --- |
+| `hippocampus.bridge.messages` | counter | `broker`, `outcome` (stored/rejected/filtered/failed) |
+| `hippocampus.bridge.memories` | counter | `broker`, `outcome` |
+| `hippocampus.bridge.message.duration` | histogram (s) | `broker`, `outcome` |
+| `hippocampus.bridge.body_bytes` | histogram | `broker` |
+| `hippocampus.client.rpc.requests` | counter | `endpoint`, `rpc`, `code`, `outcome` |
+| `hippocampus.client.rpc.duration` | histogram (s) | as above |
+
+`outcome` is four-valued rather than a success bool, because the three non-failures are
+operationally different and an SLO has to separate them: a memory the **service** declined for
+insignificance (`rejected`) is the decay model working, a message a Transformer chose to yield
+nothing for (`filtered`) was dropped on purpose, and only `failed` is the bridge not doing its job. A
+message yielding several memories reports the **worst** of their outcomes, since the adapter is about
+to redeliver the whole message if any of them failed.
+
+**Tenancy** is `--metrics-group`, defaulting to `--group` when that is set. It is a **per-process**
+label, never the per-message group — with `--group-from-subject` (the default) that value is the
+message subject, so on a wildcard subscription it would be one metric stream per subject. Set once
+per process it costs no extra cardinality at all.
+
+```promql
+sum by (broker, outcome) (rate(hippocampus_bridge_messages_total[5m]))
+```
+
+Running several bridges on one host means giving each its own `--health-port`.
+
 ## Custom transformations
 
 The `Transformer` is the extension point for anything beyond one-message-one-memory:

@@ -82,6 +82,57 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **The ingestor and the four broker bridges are instrumented.** Both were long-running daemons with
+  no metrics and nothing to probe, which made their worst failure mode — stalling silently — look
+  exactly like being idle. Each now serves `/healthz` and `/readyz` and exports OTEL metrics over
+  OTLP/gRPC, sharing one implementation with the service via a new root-module `observability`
+  package (`cmd/hippocampus/observability.go` promoted, not copied).
+  - **Health surfaces.** `--health-port` (**8090 by default**, 0 disables) serves `/healthz`
+    (liveness, never fails while the process runs) and `/readyz` (whether the Hippocampus instance
+    can actually serve, checked via the token-free gRPC health service and named per dependency, so
+    a failing probe says *which* end is down).
+    **This is a change of network surface**: these binaries previously listened on nothing at all.
+    Set `--health-port 0` to keep that, and give each process its own port when several run on one
+    host.
+  - **Metrics.** `hippocampus.ingestor.*` (events by outcome and rule, memories, orphans, rule
+    errors, pass duration, and `seconds_since_last_pass`), `hippocampus.bridge.*` (messages and
+    memories by broker and outcome, message duration, body bytes), and `hippocampus.client.rpc.*`
+    (client-side RED metrics emitted by everything that dials the service, tagged by endpoint).
+    `outcome` is multi-valued rather than a success bool throughout, so an event a rule deliberately
+    dropped, or a memory the service declined for insignificance, never shares a series with a
+    failure.
+  - **Tenancy is `--metrics-group`**, a per-process label stamped on both the OTEL resource and each
+    metric — the duplication avoids a `target_info` join in every query, and costs nothing because
+    the value is fixed for the process's lifetime. It is deliberately **not** read from each record:
+    a bridge derives a memory's group from the message subject by default, so a per-record label
+    would be unbounded. Note that no service metric carries a group; this is the client side only.
+- **An ingestor: stage data at the edge, promote only what earns it.** A new
+  `integrations/ingestor` module and `hippocampus-ingestor` binary that watches an edge instance for
+  **completed** events, judges each against a [CEL](https://cel.dev) rules file, and either promotes
+  it to a central instance, promotes it after reducing it, or drops it — draining the edge either
+  way. It is a client of two instances, not a service feature: the edge is a stock, unmodified
+  `hippocampus`. Documented in [Ingestor](docs/ingestor.md).
+  - **It holds no state.** `ImportBatch` is a full-state upsert by id, so promote-then-drain is
+    at-least-once against an idempotent receiver and a crash between the two re-promotes identical
+    rows. There is no cursor and no bookmark: the edge store *is* the queue, and what it holds is
+    exactly what has not been judged yet.
+  - **Judgement happens at event completion, not at ingest**, which is what makes a rule change
+    reach in-flight data: an event still open when the rules reload is judged by the new ones. The
+    file is re-read on an mtime change, a bad initial load fails startup, and a bad reload keeps the
+    last good ruleset — the same contract as `auth.revocationFile`.
+  - **A `promote` rule may reduce first**: `keepTopN`/`minSignificance` choose what crosses (the
+    rest are still drained), or `summarise` calls `SummariseMemories` on the edge, which needs
+    `ollama.enabled` there and fails the event loudly if it is absent.
+  - **An edge must be configured not to forget.** Default consolidation settings will evict the
+    memories of an event before the rules ever see it; set `consolidation.minimumRetentionInDays`
+    above the longest an event stays open. See the docs — this is the one thing to get right.
+- **`GetMemories` can filter by event.** New `event_id` and `has_event` fields on
+  `GetMemoriesRequest`, exposed as `hippo memory list --event/--has-event` and on the MCP bridge's
+  `list_memories`. Previously the only way to read an event's memories was `GetEventById` with
+  `memories: true`, which returns every one of them in a single message and overruns the receive
+  frame on a large event; this composes with `limit`/`offset` and every other filter. `has_event`
+  exists alongside it because an event-less memory stores an empty `event_id`, which is also that
+  filter's "no bound" value — the same reason `recalled` exists alongside `recall_count_max`.
 - **Group scoping — a token can be restricted to particular `group` labels.** Authorisation tiers say
   what a caller may do; nothing said which records they may do it to, so any writer in a shared store
   could read and delete every other team's memories. A token may now carry a `groups` claim naming

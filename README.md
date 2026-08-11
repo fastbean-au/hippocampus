@@ -352,6 +352,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | 🧪 **[Demonstrations](docs/demonstrations.md)**      | Worked scenarios using real-world data shapes and data generators.                          |
 | 🤖 **[MCP Server](docs/mcp.md)**                     | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol.         |
 | 🔌 **[Event Sourcing](docs/eventsource.md)**         | Bridge NATS, MQTT, RabbitMQ, or Kafka into Hippocampus, storing each message as a memory.   |
+| 🚦 **[Ingestor](docs/ingestor.md)**                  | Stage data at the edge and promote completed events into a central store under CEL rules.   |
 | 📓 **[Obsidian Integration](docs/obsidian.md)**      | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge.   |
 
 What changed between releases — and what a version number does and does not promise — is in

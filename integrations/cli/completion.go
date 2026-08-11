@@ -33,9 +33,10 @@ var enumFlagValues = map[string][]string{
 
 	// The tri-state list filters. They are string flags rather than pflag bools precisely so
 	// "false" is expressible, so both values are worth offering.
-	"recalled": {"true", "false"},
-	"summary":  {"true", "false"},
-	"binary":   {"true", "false"},
+	"recalled":  {"true", "false"},
+	"summary":   {"true", "false"},
+	"binary":    {"true", "false"},
+	"has-event": {"true", "false"},
 }
 
 // completionShells are the shells `hippo completion` can emit a script for.
