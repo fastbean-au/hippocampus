@@ -51,6 +51,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -133,6 +134,11 @@ type Config struct {
 	// what the feed produced, never the replies captured through it, so eviction follows the feed's
 	// own recency rather than whichever thread is busiest.
 	CaptureIndexSize int
+
+	// CaptureSignificance is the significance a CAPTURED post arrives with, 0 leaving it the same as
+	// every other post's. It is applied by stamping CaptureSignificanceHeader, which the command has
+	// pointed the transformer's significance override at.
+	CaptureSignificance int32
 
 	// FeedAuthors stores a firehose post whose author the feed has surfaced, so an account the feed
 	// is made of is followed rather than only the posts that feed picked. The DIDs are derived from
@@ -726,20 +732,56 @@ func (b *Bridge) dispatchPost(ctx context.Context, msg bridge.Message, operation
 		return b.store.Forget(ctx, []string{msg.Headers[hdrURI]})
 	}
 
-	// In feed mode the feed decides what is worth storing, so a post arriving on the firehose is not
-	// stored - unless one of the capture rules claims it - but it is still ENGAGEMENT when it is a
-	// reply, and the reply's parent may well be one of the feed's posts. Dropping the frame entirely
-	// would silently lose that reinforcement.
-	if !b.feedMode() || b.captureFromFirehose(msg) {
+	if err := b.storeFirehosePost(ctx, msg); err != nil {
+		return err
+	}
+
+	// A reply is engagement with what it replies to, exactly as a like is.
+	return b.reinforce(ctx, msg.Headers[hdrReplyParent])
+}
+
+// storeFirehosePost writes a post arriving on the firehose, if anything should.
+//
+// Outside feed mode that is every post. In feed mode the feed decides what is worth storing, so a
+// firehose post is stored only when a capture rule claims it - but the frame is never dropped
+// before dispatchPost's reinforcement, because a reply is engagement whether or not it is kept.
+func (b *Bridge) storeFirehosePost(ctx context.Context, msg bridge.Message) error {
+	if !b.feedMode() {
 		if err := b.storePost(ctx, msg, msg.Headers[hdrReplyRoot]); err != nil {
 			return err
 		}
 
 		b.linkStored(ctx, msg)
+
+		return nil
 	}
 
-	// A reply is engagement with what it replies to, exactly as a like is.
-	return b.reinforce(ctx, msg.Headers[hdrReplyParent])
+	if !b.captureFromFirehose(msg) {
+		return nil
+	}
+
+	b.rankCapture(msg)
+
+	// Deliberately NOT linkStored. Topic terms come from a post's link-card URL and fall back to its
+	// body, and a captured reply is conversational text rather than an editorially written slug - so
+	// relating on it relates posts that merely argue alike, which is worse than leaving them
+	// unrelated. The feed's own posts carry cards and keep being related exactly as before.
+	return b.storePost(ctx, msg, msg.Headers[hdrReplyRoot])
+}
+
+// rankCapture stamps the significance a captured post should arrive with, when one is configured.
+//
+// It is a header rather than a field because the Transformer belongs to the Store and runs inside
+// Handle: the significance override the default transformer already supports is the only seam that
+// varies a single message's significance, and it is exactly the right shape - a missing or
+// unparseable header falls back to the configured default, so a capture is never rejected for
+// being unranked.
+func (b *Bridge) rankCapture(msg bridge.Message) {
+	if b.cfg.CaptureSignificance <= 0 {
+		return
+	}
+
+	msg.Headers[CaptureSignificanceHeader] = strconv.FormatInt(int64(b.cfg.CaptureSignificance), 10)
 }
 
 // captureFromFirehose reports whether a post the FEED did not select should nonetheless be stored.

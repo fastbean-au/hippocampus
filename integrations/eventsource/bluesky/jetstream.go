@@ -63,6 +63,20 @@ const (
 	hdrHandle = "handle"
 )
 
+// CaptureSignificanceHeader is the header this bridge stamps on a post it CAPTURES (see
+// --capture-replies and --feed-authors) when --capture-significance is set, carrying the
+// significance that post should arrive with.
+//
+// It is exported because the wiring it needs is the command's: the Transformer belongs to the
+// Store, so the only way to vary significance per message is the header override the default
+// transformer already supports, and the command points TransformConfig.SignificanceHeader at this
+// name. Nothing else may be pointed there at the same time, which the command enforces.
+//
+// A reply is not a headline: a curated feed's posts were chosen by someone, and the conversation
+// around them is worth keeping without being worth as much. Without this they arrive at the same
+// significance and compete for the same capacity.
+const CaptureSignificanceHeader = "capture-significance"
+
 // event is one Jetstream frame.
 type event struct {
 	DID    string  `json:"did"`

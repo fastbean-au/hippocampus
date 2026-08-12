@@ -143,6 +143,11 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
     is made of are followed rather than only the posts that feed picked. The DIDs are derived from
     the feed itself on each read, so there is no account list to maintain.
 
+  `--capture-significance` ranks a captured post below the feed's own (a reply is worth keeping
+  without being worth as much as the post it answers; without it they compete for the same capacity),
+  and captured posts are deliberately **not** topic-linked, since a reply carries no link card and its
+  body is conversation rather than an editorially written slug.
+
   Both indexes are bounded, in-memory and best-effort (`--capture-index-size`, `--feed-authors-max`);
   the capture index holds only what the feed produced, never the replies captured through it, so one
   busy thread cannot evict the posts every other thread is matched on. Neither works under `--dids`,

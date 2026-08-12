@@ -900,7 +900,12 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     bridge holds (matched on ROOT first, so it matches however deep the reply sits — this is what
     makes `--events thread` hold a conversation rather than one memory), the second stores a post by
     any DID the feed has surfaced (derived from `post.author.did` per read, so no account list is
-    maintained). Both indexes are `idCache`s, bounded and best-effort like the term index; the
+    maintained). **`--capture-significance`** ranks a capture below the feed's own posts, delivered
+    through the transformer's per-message override (`CaptureSignificanceHeader`) because the
+    Transformer belongs to the Store — so it cannot be combined with `--significance-header`, which
+    the command refuses; and a capture is deliberately NOT topic-linked, since terms fall back to the
+    body and a reply's body is conversation rather than an editorial slug. Both indexes are
+    `idCache`s, bounded and best-effort like the term index; the
     capture index holds only what the FEED produced, never the replies captured through it, or one
     busy thread would evict the posts every other thread is matched on. Neither works under `--dids`,
     because `wantedDids` selects on the repo a record was written IN and a reply lives in the

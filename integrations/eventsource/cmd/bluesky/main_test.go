@@ -7,6 +7,8 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+
+	blueskybridge "github.com/fastbean-au/hippocampus/integrations/eventsource/bluesky"
 )
 
 func setupFlags(t *testing.T, args []string) {
@@ -177,6 +179,44 @@ func TestWarnOnSubscriptionScope(t *testing.T) {
 			warnOnSubscriptionScope(v.feed, v.dids, v.capture)
 		})
 	}
+}
+
+// TestSignificanceHeader covers the command's half of --capture-significance: the flag is delivered
+// through the transformer's per-message override, so the command must point that override at the
+// header the bridge stamps, and must refuse the operator's own --significance-header rather than
+// silently letting one of the two win.
+func TestSignificanceHeader(t *testing.T) {
+	t.Run("the operator's header by default", func(t *testing.T) {
+		setupFlags(t, []string{"--significance-header", "priority"})
+
+		if got := significanceHeader(); got != "priority" {
+			t.Errorf("significanceHeader = %q, want the operator's own", got)
+		}
+	})
+
+	t.Run("the capture header when a capture significance is set", func(t *testing.T) {
+		setupFlags(t, []string{"--capture-significance", "3"})
+
+		if got := significanceHeader(); got != blueskybridge.CaptureSignificanceHeader {
+			t.Errorf("significanceHeader = %q, want the capture header", got)
+		}
+	})
+
+	t.Run("neither, unset", func(t *testing.T) {
+		setupFlags(t, nil)
+
+		if got := significanceHeader(); got != "" {
+			t.Errorf("significanceHeader = %q, want no override", got)
+		}
+	})
+
+	t.Run("the combination is refused", func(t *testing.T) {
+		setupFlags(t, []string{"--capture-significance", "3", "--significance-header", "priority"})
+
+		if err := run(context.Background()); err == nil {
+			t.Error("expected --capture-significance with --significance-header to be refused")
+		}
+	})
 }
 
 func TestSlicesContain(t *testing.T) {

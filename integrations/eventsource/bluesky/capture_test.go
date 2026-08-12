@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/fastbean-au/hippocampus/integrations/eventsource/bridge"
 )
 
 // feedPostURI is the id of the post newFakeAppView's `post` helper produces, which is what a feed
@@ -201,6 +203,100 @@ func TestCaptureIndexHoldsOnlyFeedPosts(t *testing.T) {
 
 	if capturedFrom(client, reply) != 1 || capturedFrom(client, "at://did:plc:other/app.bsky.feed.post/r2") != 1 {
 		t.Error("expected both levels of the conversation to be captured")
+	}
+}
+
+// TestCaptureSignificanceRanksACaptureBelowTheFeed covers --capture-significance: a reply is worth
+// keeping without being worth as much as the post it answers, so it must not arrive competing with a
+// curated headline for the same capacity.
+//
+// The bridge and the command are two halves of this - the bridge stamps the header, the command
+// points the transformer's override at it - so the test wires the transformer the way the command
+// does. TestSignificanceHeader covers the command's half.
+func TestCaptureSignificanceRanksACaptureBelowTheFeed(t *testing.T) {
+	client := &fakeClient{}
+
+	cfg := Config{
+		Events:              EventsNone,
+		CaptureReplies:      true,
+		CaptureSignificance: 3,
+		Feed:                "at://did:plc:x/app.bsky.feed.generator/news",
+		Recall:              true,
+	}
+
+	tr := NewTransformer(bridge.TransformConfig{
+		Significance:       10,
+		SignificanceHeader: CaptureSignificanceHeader,
+		Group:              "news",
+	}, Options{Events: cfg.Events})
+
+	b := New(cfg, bridge.NewStore(client, tr, 0, "bluesky"))
+
+	av := newFakeAppView(t, [][]feedItem{{post("p1", "a headline", 3, 1)}})
+	b.feed = testFeed(t, av, false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := b.pollFeed(ctx); err != nil {
+		t.Fatalf("pollFeed: %s", err)
+	}
+
+	consumeFrames(t, b, [][]byte{
+		postJSONFrom("did:plc:stranger", 10, "r1", "a reply", replyExtra(feedPostURI, feedPostURI)),
+	})
+
+	for _, v := range client.storedMemories() {
+		want := int32(10)
+
+		if v.GetId() != feedPostURI {
+			want = 3
+		}
+
+		if v.GetSignificance() != want {
+			t.Errorf("%s stored at significance %d, want %d", v.GetId(), v.GetSignificance(), want)
+		}
+	}
+}
+
+// TestCaptureSignificanceLeavesAnUnrankedCaptureAlone pins the default: with no capture significance
+// configured, nothing is stamped and a capture arrives exactly as every other post does.
+func TestCaptureSignificanceLeavesAnUnrankedCaptureAlone(t *testing.T) {
+	b := New(Config{CaptureReplies: true}, nil)
+
+	msg := toMessage(mustDecode(t, postJSON(10, "a", "a reply", replyExtra("root", "parent"))))
+
+	b.rankCapture(msg)
+
+	if _, ok := msg.Headers[CaptureSignificanceHeader]; ok {
+		t.Error("an unconfigured capture significance stamped a header, which overrides --significance")
+	}
+}
+
+// TestCapturesAreNotTopicLinked covers the deliberate omission: topic terms come from a link-card URL
+// and fall back to the body, and a captured reply's body is conversation rather than an editorial
+// slug - so relating on it would relate posts that merely argue alike. The feed's own posts must keep
+// being related.
+func TestCapturesAreNotTopicLinked(t *testing.T) {
+	client := &fakeClient{}
+
+	b := captureBridge(t, Config{
+		Events:         EventsNone,
+		CaptureReplies: true,
+		TopicLinks:     true,
+	}, client)
+
+	// Two captured replies sharing several body terms: without the omission, the second would be
+	// related to the first.
+	consumeFrames(t, b, [][]byte{
+		postJSONFrom("did:plc:stranger", 10, "r1", "sweeping ethics reform bill senate vote", replyExtra(feedPostURI, feedPostURI)),
+		postJSONFrom("did:plc:other", 20, "r2", "sweeping ethics reform bill senate vote", replyExtra(feedPostURI, feedPostURI)),
+	})
+
+	for _, v := range client.linkedMemories() {
+		if v.id == "at://did:plc:other/app.bsky.feed.post/r2" || v.id == "at://did:plc:stranger/app.bsky.feed.post/r1" {
+			t.Errorf("a captured reply was topic-linked (%s)", v.id)
+		}
 	}
 }
 

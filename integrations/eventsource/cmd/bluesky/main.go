@@ -78,6 +78,9 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 		"also store a firehose post replying to a thread this bridge holds, so --events thread "+
 			"produces conversations rather than lone posts (--feed only, and not with --dids)")
 	fs.Int("capture-index-size", 5000, "how many stored feed posts a reply is matched against for --capture-replies")
+	fs.Int32("capture-significance", 0,
+		"significance a captured post arrives with (0 = the same as --significance); a reply is worth "+
+			"keeping without being worth as much as the post it answers")
 	fs.Bool("feed-authors", false,
 		"also store firehose posts by any account the feed has surfaced, not only the posts the feed picked "+
 			"(--feed only, and not with --dids)")
@@ -183,6 +186,15 @@ func run(ctx context.Context) error {
 
 	warnOnSubscriptionScope(feed, dids, capture || feedAuthors)
 
+	// --capture-significance is delivered through the transformer's per-message significance
+	// override, so it and an operator-chosen --significance-header want the same single field. Refuse
+	// the pair rather than silently letting one win: whichever we picked would leave the other flag
+	// accepted and doing nothing.
+	if viper.GetInt32("capture-significance") > 0 && viper.GetString("significance-header") != "" {
+		return fmt.Errorf("--capture-significance and --significance-header cannot be combined: " +
+			"both set the per-message significance override")
+	}
+
 	clientCfg := bridge.ClientConfig{
 		Address:               viper.GetString("address"),
 		Token:                 viper.GetString("token"),
@@ -241,8 +253,9 @@ func run(ctx context.Context) error {
 		FeedAuthors:      feedAuthors,
 		FeedAuthorsMax:   viper.GetInt("feed-authors-max"),
 
-		CaptureReplies:   capture,
-		CaptureIndexSize: viper.GetInt("capture-index-size"),
+		CaptureReplies:      capture,
+		CaptureIndexSize:    viper.GetInt("capture-index-size"),
+		CaptureSignificance: viper.GetInt32("capture-significance"),
 
 		TopicLinks:               viper.GetBool("topic-links"),
 		TopicIndexSize:           viper.GetInt("topic-index-size"),
@@ -314,7 +327,7 @@ func slicesContain(in []string, v string) bool {
 func transformConfig() bridge.TransformConfig {
 	return bridge.TransformConfig{
 		Significance:       viper.GetInt32("significance"),
-		SignificanceHeader: viper.GetString("significance-header"),
+		SignificanceHeader: significanceHeader(),
 		Group:              viper.GetString("group"),
 		GroupFromSubject:   viper.GetBool("group-from-subject"),
 		GroupHeader:        viper.GetString("group-header"),
@@ -326,6 +339,18 @@ func transformConfig() bridge.TransformConfig {
 		MetadataHeaderPrefix: viper.GetString("metadata-header-prefix"),
 		SubjectMetadataKey:   viper.GetString("subject-metadata-key"),
 	}
+}
+
+// significanceHeader resolves which header, if any, overrides the configured significance for a
+// single message. --capture-significance claims it (the bridge stamps that header on the posts it
+// captures); otherwise it is the operator's own --significance-header. run() has already refused
+// the combination, so this cannot silently drop either.
+func significanceHeader() string {
+	if viper.GetInt32("capture-significance") > 0 {
+		return blueskybridge.CaptureSignificanceHeader
+	}
+
+	return viper.GetString("significance-header")
 }
 
 // metadataLabels turns the repeated --metadata 'key=value' flags into the fixed labels stamped on

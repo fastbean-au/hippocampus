@@ -381,6 +381,20 @@ not captured, and a restart starts empty. The capture index holds only what the 
 never the replies captured through it, so one busy thread cannot evict the posts every other thread
 is matched on.
 
+**Rank a capture below the feed.** `--capture-significance` gives captured posts a significance of
+their own — a reply is worth keeping without being worth as much as the post it answers, and without
+it they arrive at `--significance` like everything else and compete for the same capacity. With
+`--significance 10 --capture-significance 3` a headline outlives its replies by more than three times
+(a method-1 lifetime is roughly `significance / deletionThreshold` age units), so a thread thins back
+to its head rather than going all at once. It is delivered through the transformer's per-message
+override, so it cannot be combined with `--significance-header`: the bridge refuses that pair at
+startup rather than letting one of them silently win.
+
+**Captured posts are deliberately not topic-linked.** `--topic-links` takes terms from a post's
+link-card URL and falls back to its body; a reply carries no card, and its body is conversation rather
+than an editorially written slug, so relating on it relates posts that merely argue alike. The feed's
+own posts carry cards and keep being related exactly as before.
+
 Two things neither flag can do, both for the same reason — Jetstream's `wantedDids` selects on the
 repository a record was written **in**, and a like, repost or reply lives in the *engager's*
 repository:
@@ -448,6 +462,7 @@ copy has quietly turned a public post into a permanent private archive.
 | `--feed-seed-recalls` | `true` | carry a backfilled post's engagement across as a damped recall count |
 | `--capture-replies` | `false` | also store a firehose post replying to a thread this bridge holds |
 | `--capture-index-size` | `5000` | stored feed posts a reply is matched against |
+| `--capture-significance` | `0` | significance a captured post arrives with (0 = same as `--significance`) |
 | `--feed-authors` | `false` | also store firehose posts by any account the feed has surfaced |
 | `--feed-authors-max` | `500` | feed authors remembered |
 | `--topic-links` | `false` | relate posts sharing topic terms |
