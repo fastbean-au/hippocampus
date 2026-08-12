@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -259,6 +260,22 @@ func (k opKind) String() string {
 	return "unknown"
 }
 
+// documentId escapes a memory id for use as the <id> segment of a /<index>/_doc/<id> request.
+//
+// The SDK interpolates DocumentID straight into the request path with no escaping of its own
+// (fmt.Sprintf("/%s/_doc/%s", ...)), so an id carrying a slash - which every memory written by the
+// Bluesky bridge does, being an at:// URI - stops being one path segment and becomes several. The
+// cluster is then asked for a route that is not a document operation at all: the index write is
+// rejected and the delete of that same id addresses nothing. Neither failure is visible anywhere
+// but the log, since search simply returns fewer results than it should.
+//
+// This covers the id, not the whole path: an address carrying a path prefix defeats it, because
+// the transport rebuilds url.URL.Path from its decoded form and drops the escaping (see the
+// warning in NewOpenSearch, which is all that can be done about it from here).
+func documentId(id string) string {
+	return url.PathEscape(id)
+}
+
 // op is one queued index mutation.
 type op struct {
 	kind      opKind
@@ -354,6 +371,8 @@ func NewOpenSearch(cfg Config) (*OpenSearch, error) {
 		return nil, err
 	}
 
+	warnOnPathPrefixedAddresses(cfg.Addresses)
+
 	o := &OpenSearch{
 		client:                client,
 		index:                 cfg.Index,
@@ -374,6 +393,26 @@ func NewOpenSearch(cfg Config) (*OpenSearch, error) {
 	go o.worker()
 
 	return o, nil
+}
+
+// warnOnPathPrefixedAddresses logs the one case documentId's escaping cannot survive: a cluster
+// address with a path prefix (an OpenSearch behind a reverse proxy on a sub-path). The transport
+// prepends that prefix to the decoded url.URL.Path, which invalidates the escaped form and makes
+// Go fall back to re-escaping the decoded path - where a slash is a legal path character and stays
+// one. Nothing here can compensate for that, so a deployment doing it deserves to be told rather
+// than to lose every memory whose id contains a slash.
+func warnOnPathPrefixedAddresses(addresses []string) {
+	for _, v := range addresses {
+		u, err := url.Parse(v)
+		if err != nil || strings.Trim(u.Path, "/") == "" {
+			continue
+		}
+
+		log.Warnf(
+			"opensearch address '%s' carries a path prefix, so memory ids containing '/' (e.g. the at:// URIs the Bluesky bridge writes) cannot be indexed or deleted: serve the cluster at the root of its host instead",
+			v,
+		)
+	}
 }
 
 // ensureIndex creates the index with its explicit mapping when it does not already exist.
@@ -602,7 +641,7 @@ func (o *OpenSearch) apply(ctx context.Context, v op) error {
 
 		_, err = o.client.Index(ctx, opensearchapi.IndexReq{
 			Index:      o.index,
-			DocumentID: v.doc.Id,
+			DocumentID: documentId(v.doc.Id),
 			Body:       strings.NewReader(string(body)),
 		})
 
@@ -618,7 +657,7 @@ func (o *OpenSearch) apply(ctx context.Context, v op) error {
 		for _, id := range v.ids {
 			resp, err := o.client.Document.Delete(ctx, opensearchapi.DocumentDeleteReq{
 				Index:      o.index,
-				DocumentID: id,
+				DocumentID: documentId(id),
 			})
 
 			// A 404 means the document was never indexed (e.g. binary memory, dropped op, or

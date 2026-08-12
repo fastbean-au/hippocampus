@@ -378,6 +378,19 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   transport and the Obsidian plugin. The gRPC surface was never affected. No client change is
   needed: an id must be encoded as one path segment, as those clients already did.
 
+- **The OpenSearch index dropped every memory whose id contains a `/`.** The document id went into
+  the `/<index>/_doc/<id>` request path unescaped, so an `at://` URI became six path segments and
+  the cluster answered `no handler found for uri ... and method [PUT]`. Indexing and deleting missed
+  alike: nothing failed visibly on the write path, the index simply stayed empty of those memories
+  and `SearchMemories` returned nothing for them — which on a Bluesky-sourced store is nearly
+  everything, since the bridge ids each memory by the post's `at://` URI. The id is now
+  path-escaped; it is still stored and returned by the cluster in its original form, so hits still
+  name a memory the primary store can be asked for and no reindex is needed beyond re-indexing the
+  memories that never landed (`--backfill-search`). The one shape escaping cannot survive — a
+  cluster address carrying a path prefix, where the client library rebuilds the path from its
+  decoded form — is now warned about at startup. This is the same class of fault as the gateway
+  `404` above, in a different layer.
+
 - **A bridge truncating a body with `--max-body-bytes` could produce a message that never delivered.**
   The truncation sliced raw bytes, so a multi-byte character straddling the budget was cut in half
   and the memory failed to *marshal* (`string field contains invalid UTF-8`) before it ever reached

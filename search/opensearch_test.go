@@ -200,6 +200,32 @@ func TestOpenSearchIntegration_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestOpenSearchIntegration_SlashBearingId is the end-to-end half of
+// TestOpenSearch_DocumentIdIsPathEscaped: against a real cluster it verifies that the escaped id is
+// accepted, comes back from a search DECODED (so a hit still names a memory the primary store can
+// be asked for), and can be deleted by the same unescaped id the rest of the service uses. Every
+// memory the Bluesky bridge writes is ided by an at:// URI, so this shape is the common case there
+// rather than an edge case.
+func TestOpenSearchIntegration_SlashBearingId(t *testing.T) {
+	idx := newIntegrationIndex(t)
+
+	id := "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3lk2mnopqrs2t"
+
+	mustApply(t, idx, op{kind: opIndex, doc: Doc{Id: id, Body: "a post about otters", EventId: "e1", Significance: 5, Timestamp: 100}})
+
+	ids := mustSearch(t, idx, Query{Text: "otters", Limit: 10})
+
+	if len(ids) != 1 || ids[0] != id {
+		t.Fatalf("expected the at:// id back from the search, got %v", ids)
+	}
+
+	mustApply(t, idx, op{kind: opDeleteIds, ids: []string{id}})
+
+	if ids := mustSearch(t, idx, Query{Text: "otters", Limit: 10}); len(ids) != 0 {
+		t.Errorf("expected the at:// id to be deletable, got %v", ids)
+	}
+}
+
 // TestOpenSearchIntegration_DeleteByEventSeesUnrefreshedDocs verifies the forced refresh inside
 // the event-scoped delete: documents indexed moments earlier must not survive it.
 func TestOpenSearchIntegration_DeleteByEventSeesUnrefreshedDocs(t *testing.T) {
