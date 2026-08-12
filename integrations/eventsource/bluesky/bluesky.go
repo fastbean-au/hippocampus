@@ -67,8 +67,10 @@ import (
 // DefaultURL is Bluesky's public Jetstream endpoint.
 const DefaultURL = "wss://jetstream2.us-east.bsky.network/subscribe"
 
-// maxCollections is Jetstream's server-side limit on wantedCollections.
-const maxCollections = 100
+// MaxCollections is Jetstream's server-side limit on wantedCollections. Exported because the
+// command validates the flag against it before dialling: exceeding it is otherwise a server-side
+// rejection, which is a confusing way to find out about a typo in a long list.
+const MaxCollections = 100
 
 // Event name/description caps, mirroring the service's own (types/event.go).
 const (
@@ -82,7 +84,7 @@ type Config struct {
 	URL string
 
 	// Collections are the record NSIDs to subscribe to (Jetstream's wantedCollections; wildcards
-	// allowed, at most maxCollections). Empty subscribes to everything, which on the public firehose
+	// allowed, at most MaxCollections). Empty subscribes to everything, which on the public firehose
 	// is a great deal more than this bridge knows what to do with.
 	Collections []string
 
@@ -116,6 +118,33 @@ type Config struct {
 	// count. Without it every seeded memory looks equally untouched, because its likes happened
 	// before the bridge was watching and the firehose will never report them.
 	FeedSeedRecalls bool
+
+	// CaptureReplies stores a firehose post that replies to a thread this bridge already holds,
+	// instead of treating it as reinforcement alone. It is what turns --events thread from a
+	// structure into a conversation: the feed's post opens the event, and the public's replies to it
+	// become memories in that event.
+	//
+	// Feed mode only, and only on an unfiltered subscription. In firehose mode every post is stored
+	// already; under --dids a reply written by anyone else is never delivered to filter (wantedDids
+	// selects on the repo the record was written in, and a reply lives in the replier's).
+	CaptureReplies bool
+
+	// CaptureIndexSize bounds the set of stored feed posts a reply is matched against. It holds only
+	// what the feed produced, never the replies captured through it, so eviction follows the feed's
+	// own recency rather than whichever thread is busiest.
+	CaptureIndexSize int
+
+	// FeedAuthors stores a firehose post whose author the feed has surfaced, so an account the feed
+	// is made of is followed rather than only the posts that feed picked. The DIDs are derived from
+	// the feed itself on every read - a feed already hands back post.author.did - so this needs no
+	// account list to maintain and follows the feed's editorial choices as they change.
+	//
+	// Note what it cannot do: it does NOT bring in replies BY OTHERS to those accounts (that is
+	// CaptureReplies), because those are records in the repliers' repositories.
+	FeedAuthors bool
+
+	// FeedAuthorsMax bounds the derived author set.
+	FeedAuthorsMax int
 
 	// TopicLinks relates posts that share topic terms - see topics.go. It is what makes
 	// consolidation.linkRecallPropagation do anything: with links, a like on one outlet's coverage
@@ -163,7 +192,7 @@ type Config struct {
 	HonourDeletes bool
 
 	// RootCacheSize bounds the known-thread-roots cache, which is a pure optimisation - see
-	// rootCache.
+	// idCache.
 	RootCacheSize int
 
 	// ErrorBackoff is the pause before retrying a frame whose store failed; MaxRetries is how many
@@ -202,10 +231,16 @@ type dialFunc func(ctx context.Context, cfg Config, cursor int64) (stream, error
 type Bridge struct {
 	cfg    Config
 	store  *bridge.Store
-	roots  *rootCache
+	roots  *idCache
 	recall *recallBuffer
 	feed   *feedSource
 	topics *topicIndex
+
+	// stored and authors are the two firehose-capture indexes, nil when their feature is off - see
+	// captureFromFirehose. Both are written by the feed poller and read by the Jetstream consumer,
+	// which is the reason idCache locks.
+	stored  *idCache
+	authors *idCache
 
 	// dial is overridable in tests.
 	dial dialFunc
@@ -268,10 +303,18 @@ func New(cfg Config, store *bridge.Store) *Bridge {
 		cfg.TopicLinkSignificance = 50
 	}
 
+	if cfg.CaptureIndexSize <= 0 {
+		cfg.CaptureIndexSize = 5000
+	}
+
+	if cfg.FeedAuthorsMax <= 0 {
+		cfg.FeedAuthorsMax = 500
+	}
+
 	b := &Bridge{
 		cfg:   cfg,
 		store: store,
-		roots: newRootCache(cfg.RootCacheSize),
+		roots: newIDCache(cfg.RootCacheSize),
 		dial:  defaultDial,
 	}
 
@@ -287,6 +330,17 @@ func New(cfg Config, store *bridge.Store) *Bridge {
 
 	if cfg.TopicLinks {
 		b.topics = newTopicIndex(cfg.TopicIndexSize)
+	}
+
+	// Both capture indexes are built whenever their flag is set, feed mode or not: the flags are
+	// meaningless outside it (see captureFromFirehose), but refusing to build them here would trade a
+	// warning at startup for a nil dereference at frame rate.
+	if cfg.CaptureReplies {
+		b.stored = newIDCache(cfg.CaptureIndexSize)
+	}
+
+	if cfg.FeedAuthors {
+		b.authors = newIDCache(cfg.FeedAuthorsMax)
 	}
 
 	return b
@@ -325,12 +379,14 @@ func (b *Bridge) Run(ctx context.Context) error {
 	}
 
 	log.WithFields(log.Fields{
-		"url":         b.cfg.URL,
-		"collections": b.cfg.Collections,
-		"dids":        len(b.cfg.DIDs),
-		"events":      b.cfg.Events,
-		"recall":      b.cfg.Recall,
-		"feed":        b.cfg.Feed,
+		"url":             b.cfg.URL,
+		"collections":     b.cfg.Collections,
+		"dids":            len(b.cfg.DIDs),
+		"events":          b.cfg.Events,
+		"recall":          b.cfg.Recall,
+		"feed":            b.cfg.Feed,
+		"capture_replies": b.cfg.CaptureReplies,
+		"feed_authors":    b.cfg.FeedAuthors,
 	}).
 		Info("Bluesky bridge consuming")
 
@@ -395,6 +451,8 @@ func (b *Bridge) backfillFeed(ctx context.Context) error {
 		return err
 	}
 
+	b.rememberFeedPosts(mems)
+
 	log.WithFields(log.Fields{"posts": len(mems), "imported": imported, "seeded": b.cfg.FeedSeedRecalls}).
 		Info("seeded the store from the feed")
 
@@ -418,6 +476,7 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 		return err
 	}
 
+	b.rememberFeedPosts(mems)
 	b.linkMemories(ctx, mems)
 
 	return nil
@@ -668,9 +727,10 @@ func (b *Bridge) dispatchPost(ctx context.Context, msg bridge.Message, operation
 	}
 
 	// In feed mode the feed decides what is worth storing, so a post arriving on the firehose is not
-	// stored - but it is still ENGAGEMENT when it is a reply, and the reply's parent may well be one
-	// of the feed's posts. Dropping the frame entirely would silently lose that reinforcement.
-	if !b.feedMode() {
+	// stored - unless one of the capture rules claims it - but it is still ENGAGEMENT when it is a
+	// reply, and the reply's parent may well be one of the feed's posts. Dropping the frame entirely
+	// would silently lose that reinforcement.
+	if !b.feedMode() || b.captureFromFirehose(msg) {
 		if err := b.storePost(ctx, msg, msg.Headers[hdrReplyRoot]); err != nil {
 			return err
 		}
@@ -680,6 +740,71 @@ func (b *Bridge) dispatchPost(ctx context.Context, msg bridge.Message, operation
 
 	// A reply is engagement with what it replies to, exactly as a like is.
 	return b.reinforce(ctx, msg.Headers[hdrReplyParent])
+}
+
+// captureFromFirehose reports whether a post the FEED did not select should nonetheless be stored.
+//
+// Two independent reasons, either sufficient, both answered from memory because this runs on every
+// post frame on the open firehose:
+//
+//   - --capture-replies: the post replies to a thread this bridge holds. The root is tried first
+//     because it names the thread rather than the immediately preceding post, so it still matches
+//     however deep in the conversation the reply sits; the parent is tried after it for the case
+//     where the thread's root was never stored but one of its replies was.
+//   - --feed-authors: the post's author is an account this feed has surfaced, so it is one of the
+//     accounts the feed is made of saying something the feed did not pick up.
+//
+// A false answer leaves the frame exactly where it was: not stored, still reinforcing whatever it
+// replies to.
+func (b *Bridge) captureFromFirehose(msg bridge.Message) bool {
+	if b.stored != nil {
+		if root := msg.Headers[hdrReplyRoot]; root != "" && b.stored.Contains(root) {
+			return true
+		}
+
+		if parent := msg.Headers[hdrReplyParent]; parent != "" && b.stored.Contains(parent) {
+			return true
+		}
+	}
+
+	if b.authors != nil {
+		if did := msg.Headers[hdrDID]; did != "" && b.authors.Contains(did) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// rememberFeedPosts records what a feed read produced, for the capture rules to match against.
+//
+// Only the feed's own posts go in, never the replies captured through them: the index is bounded,
+// and letting one busy thread's replies fill it would evict the very posts the other threads are
+// matched on. Nothing is lost by that - a reply to a captured reply carries the same thread ROOT,
+// which is still here.
+//
+// A memory the service declined (below its minimum significance) is remembered like any other,
+// since the batch writes do not report which. The cost is capturing a reply to a post the store
+// does not hold, which stores one memory that opens its own thread rather than joining one - the
+// same thing that happens to any reply whose root has been consolidated away.
+func (b *Bridge) rememberFeedPosts(mems []feedMemory) {
+	if b.stored == nil && b.authors == nil {
+		return
+	}
+
+	for _, v := range mems {
+		if b.stored != nil && v.Memory.GetId() != "" {
+			b.stored.Add(v.Memory.GetId())
+		}
+
+		if b.authors == nil {
+			continue
+		}
+
+		if did := v.Message.Headers[hdrDID]; did != "" {
+			b.authors.Add(did)
+		}
+	}
 }
 
 // storePost writes one post, opening its thread's event when thread modelling is on.

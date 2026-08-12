@@ -883,7 +883,7 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     which a section name relates everything. It relates ~a quarter of a live news feed, cross-outlet.
     This is what makes the service's `linkRecallPropagation` and `linkSignificanceWeight` do
     anything, since nothing else in the bridge creates links. Two constraints: the term index is the
-    one genuinely STATEFUL thing here (bounded; unlike `rootCache` it is not just an optimisation, so
+    one genuinely STATEFUL thing here (bounded; unlike the roots cache it is not just an optimisation, so
     losing it stops links being made — accepted, it is best-effort enrichment), and links are issued
     AFTER the write via `Store.Link` rather than attached to it, because a target must exist and in a
     forgetting store attaching them would let a just-consolidated neighbour fail the write; the
@@ -895,7 +895,18 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     design — a lost like decays a memory slightly sooner, it does not make it wrong), `--events thread`
     opens an event per thread root (sparse on the open firehose; `--dids` is where threading gets
     interesting), and `--honour-deletes` defaults **on** because decay is about significance while
-    deletion is about consent. Tests are network-free by default (NATS uses an embedded in-process
+    deletion is about consent. **`--capture-replies`/`--feed-authors`** widen feed mode, where a
+    firehose post is otherwise reinforcement alone: the first stores a post replying to a thread the
+    bridge holds (matched on ROOT first, so it matches however deep the reply sits — this is what
+    makes `--events thread` hold a conversation rather than one memory), the second stores a post by
+    any DID the feed has surfaced (derived from `post.author.did` per read, so no account list is
+    maintained). Both indexes are `idCache`s, bounded and best-effort like the term index; the
+    capture index holds only what the FEED produced, never the replies captured through it, or one
+    busy thread would evict the posts every other thread is matched on. Neither works under `--dids`,
+    because `wantedDids` selects on the repo a record was written IN and a reply lives in the
+    replier's — the same reason `--dids` beside `--feed` receives NO engagement at all. All three
+    combinations are warned about in `cmd/bluesky/main.go`, since each presents as a feed nobody is
+    interacting with rather than as a failure. Tests are network-free by default (NATS uses an embedded in-process
     server; bluesky's `consume`/`serve` run off a canned frame slice and its real dial is covered by a
     local `httptest` websocket server; MQTT/RabbitMQ/Jetstream real-connect paths are env-gated
     integration tests — `HIPPOCAMPUS_TEST_MQTT_BROKER`/`HIPPOCAMPUS_TEST_RABBITMQ_URL`/

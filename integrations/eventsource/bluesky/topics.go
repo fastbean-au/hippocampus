@@ -153,7 +153,7 @@ func normaliseTerm(tok string) string {
 
 // topicIndex maps a term to the memories that recently carried it.
 //
-// This is the first genuinely STATEFUL thing in this bridge, and unlike rootCache it is not merely an
+// This is the first genuinely STATEFUL thing in this bridge, and unlike the roots cache it is not merely an
 // optimisation: lose it and links stop being made. That is accepted deliberately - linking is
 // best-effort enrichment, nothing depends on it being complete, and the alternative (asking the
 // service which stored memories share a term) is a query per post for a feature worth one map

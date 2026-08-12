@@ -63,7 +63,8 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 		blueskybridge.CollectionPost,
 		blueskybridge.CollectionLike,
 		blueskybridge.CollectionRepost,
-	}, "record collections to subscribe to (Jetstream wantedCollections; at most 100)")
+	}, fmt.Sprintf("record collections to subscribe to (Jetstream wantedCollections; at most %d)",
+		blueskybridge.MaxCollections))
 	fs.StringSlice("dids", nil, "restrict to these repositories (Jetstream wantedDids; empty is the whole network)")
 	fs.Int64("cursor", 0, "resume point: a Jetstream sequence number or unix-microsecond timestamp; 0 starts at the live tip")
 	fs.String("feed", "",
@@ -73,6 +74,14 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.Bool("feed-backfill", true, "read the whole feed once at startup so the store is populated immediately")
 	fs.Bool("feed-seed-recalls", true,
 		"carry a backfilled post's observed engagement across as a damped recall count")
+	fs.Bool("capture-replies", false,
+		"also store a firehose post replying to a thread this bridge holds, so --events thread "+
+			"produces conversations rather than lone posts (--feed only, and not with --dids)")
+	fs.Int("capture-index-size", 5000, "how many stored feed posts a reply is matched against for --capture-replies")
+	fs.Bool("feed-authors", false,
+		"also store firehose posts by any account the feed has surfaced, not only the posts the feed picked "+
+			"(--feed only, and not with --dids)")
+	fs.Int("feed-authors-max", 500, "how many feed authors are remembered for --feed-authors")
 	fs.Bool("topic-links", false,
 		"relate posts sharing topic terms, so a like on one story pulls its neighbours back too "+
 			"(needs consolidation.linkRecallPropagation on the service to propagate)")
@@ -143,8 +152,9 @@ func run(ctx context.Context) error {
 
 	// Jetstream's own cap. Sending more is a server-side rejection, which is a confusing way to find
 	// out about a typo in a long list.
-	if len(collections) > 100 {
-		return fmt.Errorf("--collections accepts at most 100 entries, got %d", len(collections))
+	if len(collections) > blueskybridge.MaxCollections {
+		return fmt.Errorf("--collections accepts at most %d entries, got %d",
+			blueskybridge.MaxCollections, len(collections))
 	}
 
 	feed := viper.GetString("feed")
@@ -166,6 +176,12 @@ func run(ctx context.Context) error {
 		log.Warnf("--collections does not include %q, so upstream deletions of the feed's posts "+
 			"will not be honoured", blueskybridge.CollectionPost)
 	}
+
+	dids := viper.GetStringSlice("dids")
+	capture := viper.GetBool("capture-replies")
+	feedAuthors := viper.GetBool("feed-authors")
+
+	warnOnSubscriptionScope(feed, dids, capture || feedAuthors)
 
 	clientCfg := bridge.ClientConfig{
 		Address:               viper.GetString("address"),
@@ -215,13 +231,18 @@ func run(ctx context.Context) error {
 	b := blueskybridge.New(blueskybridge.Config{
 		URL:              viper.GetString("jetstream-url"),
 		Collections:      collections,
-		DIDs:             viper.GetStringSlice("dids"),
+		DIDs:             dids,
 		Cursor:           viper.GetInt64("cursor"),
 		Feed:             viper.GetString("feed"),
 		FeedAppView:      viper.GetString("feed-appview"),
 		FeedPollInterval: time.Duration(viper.GetInt("feed-poll-seconds")) * time.Second,
 		FeedBackfill:     viper.GetBool("feed-backfill"),
 		FeedSeedRecalls:  viper.GetBool("feed-seed-recalls"),
+		FeedAuthors:      feedAuthors,
+		FeedAuthorsMax:   viper.GetInt("feed-authors-max"),
+
+		CaptureReplies:   capture,
+		CaptureIndexSize: viper.GetInt("capture-index-size"),
 
 		TopicLinks:               viper.GetBool("topic-links"),
 		TopicIndexSize:           viper.GetInt("topic-index-size"),
@@ -246,6 +267,37 @@ func run(ctx context.Context) error {
 	log.WithField("address", clientCfg.Address).Info("connecting to hippocampus")
 
 	return b.Run(ctx)
+}
+
+// warnOnSubscriptionScope names the combinations that leave a bridge quietly doing less than it was
+// asked to, all of them consequences of one fact: Jetstream's wantedDids selects on the repository a
+// record was written IN, and a like, a repost or a reply is written in the ENGAGER's repository
+// rather than in that of the post it answers.
+//
+// None is fatal. Each is a legal subscription that simply cannot produce what the other flags are
+// for, and none of them fails visibly - they present as a feed nobody is interacting with, or as a
+// capture rule that never fires.
+func warnOnSubscriptionScope(feed string, dids []string, capture bool) {
+	if feed != "" && len(dids) > 0 {
+		log.Warn("--dids restricts the subscription to those repositories, so likes, reposts and replies " +
+			"written by anyone else never arrive: --feed with --dids receives no engagement at all")
+	}
+
+	if !capture {
+		return
+	}
+
+	// Both capture rules answer "should this firehose post be stored anyway", which is only a
+	// question while something else is deciding what to store.
+	if feed == "" {
+		log.Warn("--capture-replies and --feed-authors choose which firehose posts to store while a --feed " +
+			"decides the rest; without --feed every post is stored already and both do nothing")
+	}
+
+	if len(dids) > 0 {
+		log.Warn("--dids delivers only those repositories' own records, so a reply written by anyone else " +
+			"never arrives: --capture-replies and --feed-authors need the unfiltered subscription")
+	}
 }
 
 // slicesContain reports whether the slice holds v.

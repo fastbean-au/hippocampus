@@ -355,7 +355,42 @@ whose root the bridge has not seen creates that root's event first.
 
 Note that threads are **sparse on the open firehose**: sampling the whole network means you rarely
 see both a root and its replies, so most events end up holding one memory. `--dids` is where
-threading gets interesting, because following a handful of accounts yields whole conversations.
+threading gets interesting, because following a handful of accounts yields whole conversations — and
+in feed mode, `--capture-replies` below.
+
+### Capturing more than the feed picked
+
+In feed mode a firehose post is reinforcement and nothing else. Two flags widen that, and they are
+independent — each answers "store this post anyway" for a different reason.
+
+`--capture-replies` stores a post that **replies to a thread this bridge holds**. That is what makes
+`--events thread` produce actual conversations rather than lone posts: the feed's post opens the
+event, and the public's replies to it become memories in that event. A reply is matched on its thread
+**root** first, so it matches however deep in the conversation it sits, and on its parent after that.
+It still reinforces its parent exactly as before — capture adds a memory, it does not replace the
+engagement.
+
+`--feed-authors` stores a post by **any account the feed has surfaced**, so the accounts a feed is
+made of are followed rather than only the posts that feed chose. The DIDs are derived from the feed
+itself on every read (a feed hands back `post.author.did`), so there is no account list to maintain
+and the set follows the feed's editorial choices as they change.
+
+Both are bounded, in-memory and best-effort, like the topic index: `--capture-index-size` (5,000
+stored feed posts) and `--feed-authors-max` (500 authors) cap them, losing an entry means one post is
+not captured, and a restart starts empty. The capture index holds only what the **feed** produced,
+never the replies captured through it, so one busy thread cannot evict the posts every other thread
+is matched on.
+
+Two things neither flag can do, both for the same reason — Jetstream's `wantedDids` selects on the
+repository a record was written **in**, and a like, repost or reply lives in the *engager's*
+repository:
+
+- `--feed-authors` does **not** bring in replies to those accounts. Only `--capture-replies` reaches
+  those, and only on an unfiltered subscription.
+- Neither works under `--dids`, which is also why `--dids` beside `--feed` receives **no engagement
+  at all**: the likes and replies your feed's posts collect are written by other people. The bridge
+  warns at startup about each of these combinations, since all of them present as a feed nobody
+  appears to be interacting with rather than as anything failing.
 
 ### Relating posts to each other
 
@@ -411,6 +446,10 @@ copy has quietly turned a public post into a permanent private archive.
 | `--feed-poll-seconds` | `60` | how often the feed is re-read |
 | `--feed-backfill` | `true` | read the whole feed once at startup |
 | `--feed-seed-recalls` | `true` | carry a backfilled post's engagement across as a damped recall count |
+| `--capture-replies` | `false` | also store a firehose post replying to a thread this bridge holds |
+| `--capture-index-size` | `5000` | stored feed posts a reply is matched against |
+| `--feed-authors` | `false` | also store firehose posts by any account the feed has surfaced |
+| `--feed-authors-max` | `500` | feed authors remembered |
 | `--topic-links` | `false` | relate posts sharing topic terms |
 | `--topic-index-size` | `5000` | memories the term index remembers |
 | `--topic-min-shared` | `2` | terms two posts must share to be related |

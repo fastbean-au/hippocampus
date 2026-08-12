@@ -164,34 +164,42 @@ func (r *recallBuffer) recall(ctx context.Context, batch []string) error {
 // shutdownFlushTimeout bounds the last flush after the context is cancelled.
 const shutdownFlushTimeout = 5 * time.Second
 
-// rootCache remembers thread roots the bridge has already opened an event for.
+// idCache is a bounded LRU set of ids, so a per-frame decision can be made from memory instead of
+// from an RPC. A Bridge keeps three, and what losing an entry costs differs by which:
 //
-// It is a PURE OPTIMISATION and nothing reads it for correctness: EnsureEvent is idempotent
-// (AlreadyExists is a success), so dropping the whole cache costs one redundant RPC per thread and
-// changes no outcome. That is what makes it safe to bound, safe to lose on a restart, and safe to
-// evict from under a live thread.
-type rootCache struct {
+//   - roots, the thread roots an event has been opened for: a PURE OPTIMISATION. EnsureEvent is
+//     idempotent (AlreadyExists is a success), so dropping the whole cache costs one redundant RPC
+//     per thread and changes no outcome.
+//   - stored, the feed posts this bridge has written, which --capture-replies consults: losing an
+//     entry means a reply to that post is not captured. Like topicIndex, that is best-effort
+//     enrichment rather than correctness - nothing is stored wrongly, only less is stored.
+//   - authors, the DIDs the feed has surfaced, which --feed-authors consults: losing one means that
+//     account's firehose posts are ignored again until the feed next names them.
+//
+// None of the three is ever read for correctness, which is what makes all of them safe to bound,
+// safe to lose on a restart, and safe to evict from under a live thread.
+type idCache struct {
 	mu    sync.Mutex
 	size  int
 	order *list.List
 	items map[string]*list.Element
 }
 
-func newRootCache(size int) *rootCache {
+func newIDCache(size int) *idCache {
 	if size <= 0 {
 		size = 1
 	}
 
-	return &rootCache{
+	return &idCache{
 		size:  size,
 		order: list.New(),
 		items: make(map[string]*list.Element, size),
 	}
 }
 
-// Contains reports whether the root is known to exist, promoting it on a hit so the popular threads
-// are the ones that stay cached.
-func (c *rootCache) Contains(id string) bool {
+// Contains reports whether the id is in the set, promoting it on a hit so the entries still being
+// used are the ones that stay cached.
+func (c *idCache) Contains(id string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -205,8 +213,8 @@ func (c *rootCache) Contains(id string) bool {
 	return true
 }
 
-// Add records a root as known, evicting the least recently used entry at capacity.
-func (c *rootCache) Add(id string) {
+// Add records an id, evicting the least recently used entry at capacity.
+func (c *idCache) Add(id string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -229,9 +237,9 @@ func (c *rootCache) Add(id string) {
 	}
 }
 
-// Remove forgets a root, for when the store turns out no longer to hold it - the store's own sleep
+// Remove forgets an id, for when the store turns out no longer to hold it - the store's own sleep
 // cycle can consolidate an event between our caching it and our next write to it.
-func (c *rootCache) Remove(id string) {
+func (c *idCache) Remove(id string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

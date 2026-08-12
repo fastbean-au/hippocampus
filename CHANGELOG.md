@@ -131,6 +131,26 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   "already have it", so re-reading the feed needs no bookmark and never rolls back live
   reinforcement.
 
+- **The Bluesky bridge can capture the conversation around a feed's posts, not just the posts.** In
+  feed mode a firehose post was reinforcement and nothing else, which left `--events thread` holding
+  events of one memory. Two new flags widen that, independently:
+  - `--capture-replies` stores a post that **replies to a thread the bridge holds**, matching on the
+    thread root first (so it matches however deep the reply sits) and its parent after. With
+    `--events thread` the feed's post opens the event and the public's replies become memories in it
+    — the post-as-event, responses-as-memories shape. A captured reply still reinforces its parent;
+    capture adds a memory rather than replacing the engagement.
+  - `--feed-authors` stores a post by **any account the feed has surfaced**, so the accounts a feed
+    is made of are followed rather than only the posts that feed picked. The DIDs are derived from
+    the feed itself on each read, so there is no account list to maintain.
+
+  Both indexes are bounded, in-memory and best-effort (`--capture-index-size`, `--feed-authors-max`);
+  the capture index holds only what the feed produced, never the replies captured through it, so one
+  busy thread cannot evict the posts every other thread is matched on. Neither works under `--dids`,
+  because Jetstream's `wantedDids` selects on the repository a record was written **in** and a reply
+  lives in the replier's — the same reason `--dids` beside `--feed` receives no engagement at all.
+  All three combinations are now warned about at startup, having previously presented as a feed
+  nobody appeared to be interacting with rather than as anything failing.
+
 - **The event-sourcing bridges can authenticate with OIDC client-credentials.** `--oidc-issuer`
   (or `--oidc-token-url`) plus `--oidc-client-id`/`--oidc-client-secret` make a bridge mint and
   refresh its own access tokens instead of carrying a `--token` that eventually expires — at which

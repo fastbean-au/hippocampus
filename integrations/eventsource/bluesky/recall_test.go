@@ -226,7 +226,7 @@ func TestRecallBufferRunIsANoOpWhenBatchingIsOff(t *testing.T) {
 
 func TestRootCache(t *testing.T) {
 	t.Run("add and contains", func(t *testing.T) {
-		c := newRootCache(4)
+		c := newIDCache(4)
 
 		if c.Contains("a") {
 			t.Error("an empty cache reported a hit")
@@ -247,7 +247,7 @@ func TestRootCache(t *testing.T) {
 	})
 
 	t.Run("evicts the least recently used at capacity", func(t *testing.T) {
-		c := newRootCache(2)
+		c := newIDCache(2)
 
 		c.Add("a")
 		c.Add("b")
@@ -269,7 +269,7 @@ func TestRootCache(t *testing.T) {
 	})
 
 	t.Run("remove", func(t *testing.T) {
-		c := newRootCache(4)
+		c := newIDCache(4)
 
 		c.Add("a")
 		c.Remove("a")
@@ -283,7 +283,7 @@ func TestRootCache(t *testing.T) {
 	})
 
 	t.Run("a zero size still holds one entry", func(t *testing.T) {
-		c := newRootCache(0)
+		c := newIDCache(0)
 
 		c.Add("a")
 

@@ -151,6 +151,34 @@ func TestTransformConfig(t *testing.T) {
 	}
 }
 
+// TestWarnOnSubscriptionScope drives every combination the warnings distinguish. They are warnings,
+// so there is nothing to assert beyond reaching each branch - which is the point: the combinations
+// are legal, silent, and do less than they look like they do.
+func TestWarnOnSubscriptionScope(t *testing.T) {
+	feed := "at://did:plc:x/app.bsky.feed.generator/news"
+	dids := []string{"did:plc:news"}
+
+	cases := []struct {
+		name    string
+		feed    string
+		dids    []string
+		capture bool
+	}{
+		{name: "the firehose, unfiltered and uncaptured"},
+		{name: "a feed with no DID filter", feed: feed},
+		{name: "a feed whose DID filter removes its own engagement", feed: feed, dids: dids},
+		{name: "capture with nothing else deciding what to store", capture: true},
+		{name: "capture on a filtered subscription", dids: dids, capture: true},
+		{name: "capture as intended", feed: feed, capture: true},
+	}
+
+	for _, v := range cases {
+		t.Run(v.name, func(t *testing.T) {
+			warnOnSubscriptionScope(v.feed, v.dids, v.capture)
+		})
+	}
+}
+
 func TestSlicesContain(t *testing.T) {
 	in := []string{"a", "b"}
 
