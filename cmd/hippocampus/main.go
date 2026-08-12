@@ -858,10 +858,7 @@ func run(ctx context.Context, version versionInfo) error {
 		// hence the RPC's required tier - is known) rather than an outer HTTP wrapper. It reads the
 		// claims stashed by auth.HTTPMiddleware below, so it enforces the same policy as the gRPC
 		// interceptor from the same table. Added only when auth is enabled, mirroring the gRPC side.
-		// The route-capture middleware is registered first so it runs outermost of the gateway
-		// middlewares: it names the RPC for httpMetricsMiddleware, and running ahead of the authoriser
-		// means a request the authoriser rejects is still counted against the RPC it was aimed at.
-		muxOpts := []runtime.ServeMuxOption{runtime.WithMiddlewares(gatewayRouteMiddleware())}
+		muxOpts := gatewayMuxOptions()
 
 		if authEnabled {
 			muxOpts = append(muxOpts, runtime.WithMiddlewares(authoriser.GatewayMiddleware()))
@@ -1378,6 +1375,34 @@ const (
 	gatewayReadHeaderTimeout = 10 * time.Second
 	gatewayIdleTimeout       = 120 * time.Second
 )
+
+// gatewayMuxOptions returns the ServeMux options every gateway wiring needs, whatever the
+// configuration adds on top (the authoriser and the rate limiter are appended by the caller when
+// they are enabled). It is a function rather than a literal at the call site so a test can build a
+// mux routed exactly as the service's is.
+//
+// The unescaping mode is load-bearing. Ids here are caller-chosen and routinely contain a "/" - an
+// at:// URI is what the event-source bridges write - and the default (UnescapingModeLegacy) routes
+// on r.URL.Path, which net/url has by then fully unescaped: a %2F inside an id has become a real
+// separator and split the id across two path segments, so no by-id route matched at all and every
+// such request 404'd. Every other mode routes on r.URL.RawPath and splits it before unescaping, so
+// an escaped id stays in one segment; a single-segment capture is then always unescaped in full
+// (grpc-gateway forces UnescapingModeAllCharacters for those regardless of the mode), which is what
+// hands the handler the id byte-for-byte as it was written. AllExceptReserved is the mode
+// grpc-gateway intends to default to in v3, so this is a step towards that default rather than away
+// from it, and it is inert for a request carrying nothing escaped: RawPath is empty then, and the
+// legacy path is taken.
+func gatewayMuxOptions() []runtime.ServeMuxOption {
+	return []runtime.ServeMuxOption{
+		runtime.WithUnescapingMode(runtime.UnescapingModeAllExceptReserved),
+
+		// The route-capture middleware is registered first so it runs outermost of the gateway
+		// middlewares: it names the RPC for httpMetricsMiddleware, and running ahead of the
+		// authoriser means a request the authoriser rejects is still counted against the RPC it was
+		// aimed at.
+		runtime.WithMiddlewares(gatewayRouteMiddleware()),
+	}
+}
 
 // newGatewayServer builds the HTTP gateway server with the hardening timeouts above. It is a
 // separate function so the timeout policy can be unit-tested without standing up the whole service.

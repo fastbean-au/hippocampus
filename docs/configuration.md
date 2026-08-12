@@ -205,6 +205,11 @@ a JSON body:
 | `Purge`                      | POST   | `/v1/purge`                       |
 | `WhoAmI`                     | GET    | `/v1/whoami`                      |
 
+**An id in a `{braces}` segment must be percent-encoded**, including its slashes (`/` → `%2F`) —
+ids are caller-chosen and routinely contain them (an `at://` URI is what the event-source bridges
+write). Encode the whole id as one path segment, as `encodeURIComponent` and Go's `url.PathEscape`
+do; an unencoded slash splits the id across segments and no route matches it.
+
 `ReplaceMemoriesWithSummary`'s body maps directly to its `summary` field (a `Memory`), rather
 than the whole request, so a client posts a plain memory object to
 `/v1/events/{event_id}/summary` without a wrapper. `/healthz` and `/readyz` are always reachable

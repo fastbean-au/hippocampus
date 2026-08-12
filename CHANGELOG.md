@@ -356,6 +356,10 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 - First run after a clone no longer needs a config file: an absent `./config.json` starts the
   service on built-in defaults (a `--config_file` given explicitly must still exist).
+- **A memory's body (and an event's description) now gets a row of its own** in the web console's
+  tables, spanning the width beneath the record's metadata, rather than competing for width as a
+  column — where a single long unbreakable neighbour left it wrapping one word per line. Ids in the
+  tables are middle-truncated with the full value on the tooltip and behind a copy button.
 - The web console presents a **sign-in card in place of the console** when authentication is on and
   no session has resolved — on first load, after **Sign out**, and when a token is refused. The
   header's always-present bearer-token box is gone; the token is entered on the card instead. Purely
@@ -363,6 +367,16 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   what the page shows.
 
 ### Fixed
+
+- **The `/v1` gateway returned `404` for any id containing a `/`.** Every by-id path — `GET`/`PATCH`
+  a memory or event, the link endpoints, `EndEvent`, `UpdateEventSignificance`, the two summary
+  routes — failed for an id the caller had percent-encoded correctly, because the gateway matched
+  routes against the already-unescaped path: a `%2F` inside an id had by then become a real
+  separator and split the id across path segments. Ids are caller-chosen and full of slashes in
+  practice (an `at://` URI is what the event-source bridges write), so this took out most of the web
+  console's row actions on any Bluesky-sourced store, and the same calls from the `hippo` CLI's HTTP
+  transport and the Obsidian plugin. The gRPC surface was never affected. No client change is
+  needed: an id must be encoded as one path segment, as those clients already did.
 
 - **A bridge truncating a body with `--max-body-bytes` could produce a message that never delivered.**
   The truncation sliced raw bytes, so a multi-byte character straddling the budget was cut in half

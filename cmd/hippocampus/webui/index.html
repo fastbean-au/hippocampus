@@ -273,16 +273,73 @@
         text-transform: uppercase;
         letter-spacing: 0.4px;
       }
-      td.body {
+      /* A memory body (and an event description) is free text of any length, so it gets a row of its
+         own spanning the table rather than a column competing with the metadata for width: as a
+         column, a single long unbreakable neighbour (an at:// id) squeezed it to a few characters
+         and it wrapped one word per line. The main row drops its bottom border while a body row
+         follows it, so the pair reads as one record. */
+      tr.has-body > td {
+        border-bottom: none;
+        padding-bottom: 4px;
+      }
+      td.bodycell {
+        padding-top: 0;
+      }
+      .bodytext {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 13px;
-        max-width: 380px;
-        word-break: break-word;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        border-left: 2px solid var(--border);
+        padding: 2px 0 2px 10px;
+        /* Bounded rather than unbounded: one multi-kilobyte memory would otherwise push every other
+           row off the screen. Scrolls in place; the full text is always reachable. */
+        max-height: 14em;
+        overflow-y: auto;
       }
       td.id {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
         color: var(--muted);
+        white-space: nowrap;
+      }
+      /* Row buttons stay on one line. They wrapped to one per line only because the free-text column
+         was taking the table's width; now that it does not, a stack of four buttons is what would
+         make a record tall. */
+      td .actions {
+        flex-wrap: nowrap;
+      }
+      /* Ids are middle-truncated for display (see shortId): the full value is on the title and behind
+         the copy button, so nothing is lost, while the column stops setting the table's width. */
+      .idc {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .idc .idv {
+        cursor: default;
+      }
+      button.copy {
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        color: var(--muted);
+        cursor: pointer;
+        padding: 1px 3px;
+        line-height: 0;
+      }
+      button.copy:hover {
+        color: var(--accent);
+        border-color: var(--border);
+      }
+      button.copy.copied {
+        color: var(--good);
+      }
+      button.copy svg {
+        width: 13px;
+        height: 13px;
+        display: block;
       }
       .pill {
         display: inline-block;
@@ -1576,6 +1633,76 @@
         );
       }
 
+      // shortId middle-truncates an id for display. Ids here are caller-chosen and routinely long and
+      // front-loaded with a shared prefix (an at:// URI is ~70 characters of which the last dozen are
+      // what distinguishes it), so both ends are kept and the middle elided. Display only: every call
+      // site pairs it with the full value on a title and a copy button.
+      const idHead = 16;
+      const idTail = 12;
+
+      function shortId(id) {
+        const s = String(id == null ? "" : id);
+
+        if (s.length <= idHead + idTail + 1) return s;
+
+        return s.slice(0, idHead) + "…" + s.slice(-idTail);
+      }
+
+      // copyButton renders the clipboard button that carries the full id. The icon is inline SVG: the
+      // page is served with a strict CSP and ships as one file, so there is nothing to fetch.
+      function copyButton(text) {
+        return `<button class="copy" data-act="copy" data-copy="${esc(text)}" title="Copy to clipboard" aria-label="Copy to clipboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5"/><path d="M10.5 3.5v-1h-8v9h1"/></svg></button>`;
+      }
+
+      // idCell is the standard rendering of an id in a table: truncated, titled with the full value,
+      // and copyable. inner overrides the displayed element (the links table makes it a link).
+      function idCell(id, inner) {
+        const full = String(id == null ? "" : id);
+
+        if (!full) return "—";
+
+        const shown =
+          inner ||
+          `<span class="idv" title="${esc(full)}">${esc(shortId(full))}</span>`;
+
+        return `<span class="idc">${shown}${copyButton(full)}</span>`;
+      }
+
+      // copyText writes to the clipboard and flashes the button that asked. The execCommand fallback is
+      // not vestigial: navigator.clipboard is undefined on a plain-HTTP origin (the demo stack, and any
+      // deployment behind a TLS-terminating proxy reached directly), which is exactly where a console
+      // is most likely to be opened.
+      async function copyText(text, el) {
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement("textarea");
+
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+
+            const done = document.execCommand("copy");
+
+            document.body.removeChild(ta);
+
+            if (!done) throw new Error("the browser refused the copy");
+          }
+        } catch (e) {
+          fail("Copy failed", e);
+
+          return;
+        }
+
+        if (!el) return;
+
+        el.classList.add("copied");
+        setTimeout(() => el.classList.remove("copied"), 900);
+      }
+
       // Row actions are wired through data-* attributes and a single delegated listener, never inline
       // onclick handlers with an interpolated id/name/body. An inline handler is a JS-string-inside-an-
       // HTML-attribute context, and esc() does NOT make it safe there: the browser HTML-decodes the
@@ -1594,6 +1721,10 @@
         if (!el) return;
 
         switch (el.dataset.act) {
+          case "copy":
+            copyText(el.dataset.copy, el);
+            break;
+
           case "open-event":
             ev.preventDefault();
             openEvent(el.dataset.event);
@@ -2137,20 +2268,23 @@
 
         // The event id is a link: clicking it opens the event and all of its memories (openEvent).
         const eventCell = m.eventId
-          ? `<a class="evlink" data-act="open-event" data-event="${esc(m.eventId)}">${esc(m.eventId)}</a>`
+          ? `<a class="evlink" data-act="open-event" data-event="${esc(m.eventId)}" title="${esc(m.eventId)}">${esc(shortId(m.eventId))}</a>`
           : "—";
 
-        return `<tr>
-    <td class="body">${esc(m.body)}</td>
+        // The body is the second row of the pair, spanning the table; a memory with no body renders
+        // as a single row (and keeps its bottom border, hence the conditional class).
+        const body = m.body ? String(m.body) : "";
+
+        return `<tr${body ? ' class="has-body"' : ""}>
     <td>${esc(m.significance ?? "")}</td>
     <!-- Filled in by decorateValues() once the server has valued the page; a dash until then, and
          permanently if this deployment will not answer (a replica, or a token that is refused). -->
     <td class="decay" data-value-for="${esc(m.id)}"><span class="muted">…</span></td>
-    <td>${eventCell}</td>
+    <td class="id">${eventCell}</td>
     <td>${groupCell(m)}</td>
     <td>${esc(m.recallCount || 0)}</td>
     <td>${nanoToText(m.timeStamp)} ${flags.join(" ")}</td>
-    <td class="id">${esc(m.id)}</td>
+    <td class="id">${idCell(m.id)}</td>
     <td>
       <div class="actions">
         <button class="btn small ghost writer-only" data-act="edit-memory" data-id="${esc(m.id)}">Edit</button>
@@ -2159,7 +2293,11 @@
         <button class="btn small danger writer-only" data-act="delete-memory" data-id="${esc(m.id)}">Delete</button>
       </div>
     </td>
-  </tr>`;
+  </tr>${
+    body
+      ? `<tr><td class="bodycell" colspan="8"><div class="bodytext">${esc(body)}</div></td></tr>`
+      : ""
+  }`;
       }
 
       function renderMemories(target, memories, opts) {
@@ -2178,7 +2316,7 @@
         const rows = memories.map(memoryRow).join("");
         $(target).innerHTML = `<table>
     <thead><tr>
-      <th>Body</th><th>Sig</th><th title="computed value against the deletion threshold">Value</th>
+      <th>Sig</th><th title="computed value against the deletion threshold">Value</th>
       <th>Event</th><th>Group</th><th>Recalls</th><th>Timestamp</th><th>Id</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -2434,7 +2572,9 @@
       async function openLinks(id) {
         linksSubject = id;
 
-        $("links-subject").textContent = id;
+        // innerHTML rather than textContent because the id is rendered through idCell (which escapes
+        // it) so the heading carries the same truncation and copy button as the tables.
+        $("links-subject").innerHTML = idCell(id);
         $("links-card").style.display = "";
         $("links-list").innerHTML = '<div class="empty">Loading…</div>';
 
@@ -2475,7 +2615,10 @@
         const rows = links
           .map(
             (l) => `<tr>
-        <td class="id"><a class="evlink" data-act="follow-link" data-id="${esc(l.id)}">${esc(l.id)}</a></td>
+        <td class="id">${idCell(
+          l.id,
+          `<a class="evlink idv" data-act="follow-link" data-id="${esc(l.id)}" title="${esc(l.id)}">${esc(shortId(l.id))}</a>`,
+        )}</td>
         <td>${esc(String(l.significance ?? 0))}</td>
         <td>${esc(l.direction === "LINK_DIRECTION_OUTBOUND" ? "→ outbound" : "← inbound")}</td>
         <td>${nanoToText(l.created)}</td>
@@ -3033,10 +3176,10 @@
         const rows = (data.candidates || [])
           .map(
             (c) => `<tr>
-    <td class="id">${esc(c.id)}</td>
+    <td class="id">${idCell(c.id)}</td>
     <td>${esc(num(Number(c.value)))}</td>
     <td>${esc(c.significance ?? "")}</td>
-    <td>${esc(c.eventId || "—")}</td>
+    <td class="id">${c.eventId ? idCell(c.eventId) : "—"}</td>
     <td>${esc(c.group || "—")}</td>
     <td>${c.rule === "FORGET_RULE_EVICTION" ? "over capacity" : "decayed"}</td>
   </tr>`,
@@ -3087,15 +3230,18 @@
           ? `<a class="evlink" data-act="open-event" data-event="${esc(e.id)}">${esc(e.name || "(unnamed)")}</a>`
           : esc(e.name || "—");
 
-        return `<tr>
+        // The description is the event's free text, so it takes a row of its own beneath the metadata
+        // for the same reason a memory's body does.
+        const description = e.description ? String(e.description) : "";
+
+        return `<tr${description ? ' class="has-body"' : ""}>
     <td>${nameCell}</td>
-    <td class="body">${esc(e.description || "")}</td>
     <td>${esc(e.significance ?? "")}</td>
     <td>${esc(e.group || "—")}</td>
     <td>${nanoToText(e.timeStart)}</td>
     <td>${e.timeEnd && e.timeEnd !== "0" ? nanoToText(e.timeEnd) : '<span class="pill">open</span>'}</td>
     <td>${memCount || "—"}</td>
-    <td class="id">${esc(e.id)}</td>
+    <td class="id">${idCell(e.id)}</td>
     <td>
       <div class="actions">
         <button class="btn small ghost writer-only" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
@@ -3103,7 +3249,11 @@
         <button class="btn small danger writer-only" data-act="delete-event" data-id="${esc(e.id)}">Delete</button>
       </div>
     </td>
-  </tr>`;
+  </tr>${
+    description
+      ? `<tr><td class="bodycell" colspan="8"><div class="bodytext">${esc(description)}</div></td></tr>`
+      : ""
+  }`;
       }
 
       function renderEvents(events) {
@@ -3120,7 +3270,7 @@
         const rows = events.map(eventRow).join("");
         $("events-list").innerHTML = `<table>
     <thead><tr>
-      <th>Name</th><th>Description</th><th>Sig</th><th>Group</th><th>Start</th><th>End</th><th>Mem</th><th>Id</th><th></th>
+      <th>Name</th><th>Sig</th><th>Group</th><th>Start</th><th>End</th><th>Mem</th><th>Id</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
