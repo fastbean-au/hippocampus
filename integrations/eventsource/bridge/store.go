@@ -13,10 +13,29 @@ import (
 	"github.com/fastbean-au/hippocampus/contract"
 )
 
-// memoryStorer is the narrow slice of the generated Hippocampus client the Store needs, so tests can
-// substitute a fake. contract.HippocampusClient satisfies it.
-type memoryStorer interface {
+// hippocampusClient is the narrow slice of the generated Hippocampus client the Store needs, so
+// tests can substitute a fake. contract.HippocampusClient satisfies it.
+//
+// It names five RPCs and no more, deliberately: this interface IS the module's statement of what a
+// bridge is permitted to do to a store. A bridge writes memories, opens the events they belong to,
+// reinforces what an upstream stream tells it was engaged with, honours an upstream deletion, and
+// seeds a store from an upstream that already has history. It does not list, search, export,
+// summarise, or clear. Dial hands back the whole generated client, so this declaration is the only
+// thing standing between an adapter and Purge - widening it wants a reason in the commit message.
+//
+// ImportBatch is the one that deserves its reason here. It is a full-state upsert that carries
+// recall history, which StoreMemory deliberately refuses to (a fresh memory is never pre-reinforced,
+// or a create could arrive already unforgettable). A bridge reading a source that reports engagement
+// it did not witness - a ranked feed that hands back a post's like count, say - has no other way to
+// express "this was returned to N times", and the alternative encodings all lie: significance says
+// the author mattered more, and issuing N recalls both resets the decay clock to now and hammers the
+// service. It is TierWriter, the same tier StoreMemory already needs, so it grants no new privilege.
+type hippocampusClient interface {
 	StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error)
+	StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error)
+	RecallMemories(ctx context.Context, in *contract.RecallMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
+	DeleteMemories(ctx context.Context, in *contract.DeleteMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
+	ImportBatch(ctx context.Context, in *contract.ImportBatchRequest, opts ...grpc.CallOption) (*contract.ImportBatchResponse, error)
 }
 
 // Store turns delivered broker messages into Hippocampus memories and writes them over gRPC. It is
@@ -24,7 +43,7 @@ type memoryStorer interface {
 // into a Message and calls Handle, using Handle's error return to decide whether to ack or
 // nack/redeliver the delivery.
 type Store struct {
-	client      memoryStorer
+	client      hippocampusClient
 	transformer Transformer
 	callTimeout time.Duration
 
@@ -37,7 +56,7 @@ type Store struct {
 // (<= 0 means no per-call bound beyond the caller's context). The broker name is stamped on every
 // metric this Store records; an empty one reports "unknown" rather than an empty label, which is
 // harder to spot in a query.
-func NewStore(client memoryStorer, transformer Transformer, callTimeout time.Duration, broker string) *Store {
+func NewStore(client hippocampusClient, transformer Transformer, callTimeout time.Duration, broker string) *Store {
 	if broker == "" {
 		broker = "unknown"
 	}
@@ -48,6 +67,17 @@ func NewStore(client memoryStorer, transformer Transformer, callTimeout time.Dur
 		callTimeout: callTimeout,
 		broker:      broker,
 	}
+}
+
+// Transformer returns the Transformer this Store was built with.
+//
+// It exists for an adapter with a SECOND source of messages - one that does not arrive over the
+// broker - so it can map them through the very same instance rather than a separately-configured
+// one that is merely meant to match. The Bluesky adapter's curated-feed mode is the case: a post
+// read over HTTP must be filtered, bounded and clamped exactly as one read off the firehose, and
+// sharing the instance is what makes that true by construction instead of by review.
+func (s *Store) Transformer() Transformer {
+	return s.transformer
 }
 
 // Handle transforms one message and stores every memory it yields. It returns an error only when a

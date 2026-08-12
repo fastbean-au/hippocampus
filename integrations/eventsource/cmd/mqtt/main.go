@@ -111,6 +111,16 @@ func run(ctx context.Context) error {
 		TLSKeyFile:            viper.GetString("tls-key"),
 		TLSInsecureSkipVerify: viper.GetBool("tls-insecure-skip-verify"),
 		Endpoint:              "hippocampus",
+
+		// A set client id selects the client-credentials grant over --token; see bridge/oidc.go.
+		OIDC: bridge.OIDCConfig{
+			Issuer:       viper.GetString("oidc-issuer"),
+			TokenURL:     viper.GetString("oidc-token-url"),
+			ClientID:     viper.GetString("oidc-client-id"),
+			ClientSecret: viper.GetString("oidc-client-secret"),
+			Scope:        viper.GetString("oidc-scope"),
+			Audience:     viper.GetString("oidc-audience"),
+		},
 	}
 
 	conn, client, err := bridge.Dial(clientCfg)

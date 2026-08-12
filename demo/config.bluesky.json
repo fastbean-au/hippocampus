@@ -1,0 +1,64 @@
+{
+    "logging": {
+        "level": "info",
+        "json": false
+    },
+    "port": 8300,
+    "gateway": { "port": 8080 },
+    "opensearch": {
+        "enabled": false,
+        "addresses": ["http://localhost:9200"],
+        "index": "hippocampus-bluesky",
+        "queueSize": 4096,
+        "reconcileIntervalSeconds": 300,
+        "reconcileBatchSize": 500
+    },
+    "observability": {
+        "tracing": {
+            "enabled": false,
+            "samplingRatio": 0.05
+        },
+        "metrics": {
+            "enabled": false,
+            "exportIntervalSeconds": 15
+        },
+        "otlp": {
+            "endpoint": "localhost:4317",
+            "insecure": true
+        }
+    },
+    "storage": {
+        "directory": "./demo/data-bluesky"
+    },
+    "memory": {
+        "limit": {
+            "sizeBytes": 8192
+        },
+        "minimumSignificance": 0
+    },
+    "event": {
+       "minimumSignificance": 0
+    },
+    "sleep": {
+        "periodSeconds": 60
+    },
+    "shutdown": {
+        "timeoutSeconds": 30
+    },
+    "consolidation": {
+        "defaultEventSignificanceValue": 0,
+        "defaultEventSignificancePercentile": 0,
+        "minimumAgeInDays": 0,
+        "minimumRetentionInDays": 0,
+        "aggressiveness": 1.0,
+        "deletionThreshold": 5,
+        "method": 1,
+        "unitsOfAgeInDays": 0.002,
+        "linkSignificanceWeight": 1.0,
+        "recallSignificanceWeight": 5.0,
+        "capacityMemories": 800,
+        "capacityPressureExponent": 4.0,
+        "capacityBytes": 1200000,
+        "capacityBytesFloor": 960000
+    }
+}

@@ -2,14 +2,15 @@
 
 Bridge services that consume from a message broker and store each message as a Hippocampus
 **memory**, so a stream of events decays and consolidates under the same significance/recall dynamics
-as everything else in the store. One bridge exists for each of four brokers:
+as everything else in the store. One bridge exists for each of five sources:
 
-| Broker   | Command            | Client library                       | Delivery semantics                          |
+| Source   | Command            | Client library                       | Delivery semantics                          |
 | -------- | ------------------ | ------------------------------------ | ------------------------------------------- |
 | NATS     | `cmd/nats`         | `github.com/nats-io/nats.go`         | at-most-once (core NATS has no ack)         |
 | MQTT     | `cmd/mqtt`         | `github.com/eclipse/paho.mqtt.golang`| at-least-once (QoS ≥ 1, manual ack)         |
 | RabbitMQ | `cmd/rabbitmq`     | `github.com/rabbitmq/amqp091-go`     | at-least-once (manual ack, nack-with-requeue)|
 | Kafka    | `cmd/kafka`        | `github.com/segmentio/kafka-go`      | at-least-once (offset committed after store)|
+| Bluesky  | `cmd/bluesky`      | `github.com/gorilla/websocket`       | at-least-once, cursor-gated                 |
 
 This is its own Go module (`github.com/fastbean-au/hippocampus/integrations/eventsource`), separate
 from the root so its broker-client dependencies never reach the main service build — the same
@@ -18,12 +19,24 @@ arrangement the OTEL exporter uses.
 > The full guide — how it works, message shaping, delivery semantics, custom transformers, and a
 > worked end-to-end walkthrough — lives in **[docs/eventsource.md](../../docs/eventsource.md)**.
 
+**Authenticating.** `--token` for a hand run; `--oidc-issuer` + `--oidc-client-id`/`--oidc-client-secret`
+for anything long-running against an IdP-backed service, since a static token expires and the bridge
+then fails every write silently for as long as it runs. See
+[Authenticating to the service](../../docs/eventsource.md#authenticating-to-the-service).
+
+**Bluesky is the odd one out.** It is the only bridge that *reinforces* as well as writes: a post
+becomes a memory, and the likes, reposts and replies that follow it become `RecallMemories` calls
+against that post. Because a memory's id **is** the post's `at://` URI and a like names its target by
+that same URI, reinforcing needs no state and no lookup — a like for a post the store never held, or
+has already forgotten, costs one `UPDATE` that matches no rows. See
+[Bluesky](../../docs/eventsource.md#bluesky-the-firehose-bridge).
+
 ## Install
 
 Each command is a standalone binary; pick whichever broker you need.
 
 **Prebuilt binary (no Go toolchain).** Every tagged release attaches
-`hippocampus-<broker>-bridge` archives (`nats`/`mqtt`/`rabbitmq`/`kafka`) for Linux, macOS, and
+`hippocampus-<broker>-bridge` archives (`nats`/`mqtt`/`rabbitmq`/`kafka`/`bluesky`) for Linux, macOS, and
 Windows on amd64/arm64, with a `checksums.txt` to verify them — grab one from the
 [releases page](https://github.com/fastbean-au/hippocampus/releases).
 
@@ -56,7 +69,7 @@ normalises its native delivery onto a `bridge.Message`, and the core turns that 
 `contract.Memory` values via a `Transformer` and writes them over gRPC.
 
 ```text
-broker ── adapter (nats/mqtt/rabbitmq/kafka) ── bridge.Store ── Transformer ── StoreMemory RPC ─▶ Hippocampus
+broker ── adapter (nats/mqtt/rabbitmq/kafka/bluesky) ── bridge.Store ── Transformer ── StoreMemory RPC ─▶ Hippocampus
 ```
 
 The `Transformer` is the extension point:

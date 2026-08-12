@@ -299,8 +299,8 @@ _See the **[collector walkthrough](integrations/otel/collector/README.md)** and 
 
 Bridge a message broker into Hippocampus so a stream of events decays and consolidates like any other
 memory. [`integrations/eventsource`](integrations/eventsource) ships a bridge for **NATS, MQTT,
-RabbitMQ, and Kafka**: each consumes a subject/topic/queue and stores every message as a memory
-(payload → body, subject → group, configurable significance).
+RabbitMQ, Kafka, and the Bluesky firehose**: each consumes a subject/topic/queue and stores every
+message as a memory (payload → body, subject → group, configurable significance).
 
 ```bash
 cd integrations/eventsource
@@ -314,6 +314,9 @@ docker run --rm ghcr.io/fastbean-au/hippocampus-kafka-bridge:latest \
   default one-message-one-memory mapping, or embed an adapter with your own transform.
 - **Broker-native delivery:** manual ack/commit for at-least-once (MQTT/RabbitMQ/Kafka); queue
   groups/consumer groups for horizontal scale.
+- **Engagement as recall (Bluesky):** a post becomes a memory and the likes, reposts and replies that
+  follow it reinforce it — so everything arrives equally significant and only what people came back
+  to survives. Stateless, because a memory's id *is* the post's `at://` URI.
 - **Prebuilt binaries and images:** each release attaches `hippocampus-<broker>-bridge` binaries and
   publishes a multi-arch image per broker to GHCR.
 
@@ -351,7 +354,7 @@ Detailed operational and architectural guides live under [`docs/`](docs/):
 | 📐 **[Use Cases & Patterns](docs/use-cases.md)**     | Embedded vs. centralised topologies and data transfer strategies.                           |
 | 🧪 **[Demonstrations](docs/demonstrations.md)**      | Worked scenarios using real-world data shapes and data generators.                          |
 | 🤖 **[MCP Server](docs/mcp.md)**                     | Give an LLM host (Claude Desktop/Code) memory tools via the Model Context Protocol.         |
-| 🔌 **[Event Sourcing](docs/eventsource.md)**         | Bridge NATS, MQTT, RabbitMQ, or Kafka into Hippocampus, storing each message as a memory.   |
+| 🔌 **[Event Sourcing](docs/eventsource.md)**         | Bridge NATS, MQTT, RabbitMQ, Kafka, or the Bluesky firehose in, storing each message as a memory. |
 | 🚦 **[Ingestor](docs/ingestor.md)**                  | Stage data at the edge and promote completed events into a central store under CEL rules.   |
 | 📓 **[Obsidian Integration](docs/obsidian.md)**      | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge.   |
 

@@ -34,6 +34,10 @@ go.work.sum
 demo/bin/
 demo/data/
 
+# The Bluesky demo's store. Other people's public posts, kept locally and never published; the
+# demo script names the directory and the rm that removes it.
+demo/data-bluesky/
+
 # Integration bridge build artifacts (`go build` in the module drops a binary named after the dir)
 hippocampus-mcp
 integrations/mcp/mcp

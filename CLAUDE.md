@@ -16,9 +16,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   see `docs/cli.md`)
 - Run an event-sourcing bridge (separate module — run from its directory):
   `cd integrations/eventsource && go run ./cmd/nats --subject 'events.>' --address localhost:50051`
-  (one `cmd/<broker>` each for `nats`/`mqtt`/`rabbitmq`/`kafka`; consumes from the broker and stores
-  each message as a memory; `go test ./...` in that dir, with `HIPPOCAMPUS_TEST_MQTT_BROKER`/
-  `HIPPOCAMPUS_TEST_RABBITMQ_URL` set to run the broker integration tests; see `docs/eventsource.md`)
+  (one `cmd/<broker>` each for `nats`/`mqtt`/`rabbitmq`/`kafka`/`bluesky`; consumes from the broker
+  and stores each message as a memory; `go test ./...` in that dir, with `HIPPOCAMPUS_TEST_MQTT_BROKER`/
+  `HIPPOCAMPUS_TEST_RABBITMQ_URL`/`HIPPOCAMPUS_TEST_JETSTREAM` set to run the integration tests; see
+  `docs/eventsource.md`)
 - Run the ingestor (separate module — run from its directory):
   `cd integrations/ingestor && go run ./cmd/ingestor --source-address localhost:50051 --target-address central:50051 --rules rules.json`
   (promotes completed events from an edge instance into a central one under a CEL rules file;
@@ -823,24 +824,72 @@ github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter t
     store each message as a memory. Its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/eventsource`; `replace
 github.com/fastbean-au/hippocampus => ../..`) so the four broker-client dependency trees
-    (`nats.go`, `paho.mqtt.golang`, `amqp091-go`, `segmentio/kafka-go`) stay out of the root build —
+    (`nats.go`, `paho.mqtt.golang`, `amqp091-go`, `segmentio/kafka-go`, `gorilla/websocket`) stay out
+    of the root build —
     **the root module does not import it**. A shared `bridge/` core carries the reusable pieces: a
     broker-agnostic `Message`, the `Transformer` callback seam (`Transform(Message) ([]*contract.Memory,
 error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer` (payload→body,
     subject→group, fixed/header significance, optional base64/binary + truncation, future-timestamp
     clamping), `Store.Handle` (transform then `StoreMemory` each memory; a `Rejected` below-threshold
     memory is a success, a transform/transport failure is the adapter's cue to nack/redeliver), the
-    gRPC `Dial` (bearer-token + TLS trust options, mirroring the MCP bridge), and `RegisterCommonFlags`
-    (pflag only — each `cmd/*` main owns its viper reads, per the convention). Four adapters
-    (`nats/`, `mqtt/`, `rabbitmq/`, `kafka/`), each a library `Bridge` (`New(Config, *bridge.Store)` +
-    `Run(ctx)`) plus a `cmd/<broker>` runnable, with a broker-connection seam injected so `Run` is
-    unit-testable with fakes; delivery semantics match each broker (NATS at-most-once; MQTT/RabbitMQ/
-    Kafka at-least-once via manual ack/commit). Tests are broker-free by default (NATS uses an
-    embedded in-process server; MQTT/RabbitMQ real-connect paths are env-gated integration tests —
-    `HIPPOCAMPUS_TEST_MQTT_BROKER`/`HIPPOCAMPUS_TEST_RABBITMQ_URL` — that CI runs against mosquitto/
-    rabbitmq containers), every package ≥95% covered. Built/vetted/tested by the `eventsource-bridges`
-    CI job (like `otel-exporter`; the `docker` CI job also smoke-builds the four images). The release
-    workflow cross-compiles all four `cmd` binaries (`hippocampus-<broker>-bridge`) onto the GitHub
+    gRPC `Dial` (bearer-token + TLS trust options, mirroring the MCP bridge; auth is either a static
+    `--token` or the OIDC **client-credentials** grant in `bridge/oidc.go`, selected by a set
+    `--oidc-client-id`, which mints and refreshes its own access tokens — a static token expires and
+    then fails every write *silently* for as long as the daemon runs, which is why anything against
+    an IdP-backed service wants the grant; config is validated eagerly but discovery is LAZY so an
+    IdP blip does not stop a supervised bridge starting, and it deliberately matches the generators'
+    implementation in the `hippocampus-gen` repo, down to the Auth0 audience quirk, so one Keycloak
+    realm configures both), and `RegisterCommonFlags`
+    (pflag only — each `cmd/*` main owns its viper reads, per the convention). The client seam
+    (`hippocampusClient`, `bridge/store.go`) names **four** RPCs and no more — `StoreMemory`,
+    `StoreEvent`, `RecallMemories`, `DeleteMemories` — and that unexported interface IS the module's
+    statement of what a bridge may do to a store: `Dial` hands back the whole generated client, so
+    this declaration is the only thing standing between an adapter and `Purge`. Beyond `Handle`,
+    `bridge/recall.go` adds `Recall`/`Forget`/`EnsureEvent`/`HandleEvent`, which share one rule — **an
+    id the store does not have is never an error** (recall is an `UPDATE ... WHERE id IN (...)` that
+    matches nothing, a duplicate create is `AlreadyExists`, a delete reports `Ok false`) — and that
+    rule is exactly what lets a reinforcing bridge hold no state. Two traps live there: `HandleEvent`
+    absorbing `AlreadyExists` must still store the memories (an event is routinely opened by something
+    other than the record that owns it, and returning early dropped that record's memory silently),
+    and `DefaultTransformer`'s `MaxBodyBytes` must back up to a rune boundary (a proto3 string must be
+    valid UTF-8, and a split rune fails to MARSHAL, which redelivery can never fix — a poison message
+    retried forever). Both were found by running the Bluesky bridge against the live firehose, not by
+    a test. Five adapters (`nats/`, `mqtt/`, `rabbitmq/`, `kafka/`, `bluesky/`), each a library
+    `Bridge` (`New(Config, *bridge.Store)` + `Run(ctx)`) plus a `cmd/<broker>` runnable, with a
+    connection seam injected so `Run` is unit-testable with fakes; delivery semantics match each
+    broker (NATS at-most-once; MQTT/RabbitMQ/Kafka at-least-once via manual ack/commit; Bluesky
+    at-least-once, cursor-gated). **`bluesky/` is the one that is not a message broker**: it consumes
+    Jetstream (Bluesky's JSON projection of the atproto firehose, via `gorilla/websocket` — already an
+    indirect dep, so it cost no new module) and is the only adapter that REINFORCES as well as writes.
+    A post becomes a memory whose id is its `at://` URI; a like/repost/reply becomes a `RecallMemories`
+    against that URI, so the mapping needs no map and no lookup, and every post arrives equally
+    significant with only engagement differentiating what survives. **`--feed at://…`** swaps the post
+    source from the firehose to a curated atproto FEED GENERATOR (HTTP `getFeed`, polled) while
+    engagement keeps arriving on Jetstream — the feed decides what is stored, the firehose reports what
+    was done with it, and they meet by URI with no correlation state; it trades volume for legibility
+    (tens of posts/hour, all readable) so it suits a hosted demo where the firehose suits a local one.
+    `--feed-backfill` seeds from the whole feed at startup and `--feed-seed-recalls` carries observed
+    engagement across as `round(log1p(likes+reposts))` — the damping is load-bearing, since effective
+    significance is LINEAR in recall count and a raw count would make one post unforgettable. Seeding
+    is the only `ImportBatch` write (the one RPC carrying recall history) and happens once; polling
+    uses `StoreMemories`, treating `AlreadyExists` as "already have it", which needs no bookmark and
+    never rolls back live reinforcement — an upsert per poll would. The feed shares the Store's own
+    Transformer (`Store.Transformer()`) so both sources filter identically by construction. Its token
+    must be **unscoped and
+    writer-tier** (a group-scoped token makes an unknown id `NotFound` for the whole batch; a reader
+    token does not reinforce). Recalls are batched (`--recall-batch-size/-window-ms`, best-effort by
+    design — a lost like decays a memory slightly sooner, it does not make it wrong), `--events thread`
+    opens an event per thread root (sparse on the open firehose; `--dids` is where threading gets
+    interesting), and `--honour-deletes` defaults **on** because decay is about significance while
+    deletion is about consent. Tests are network-free by default (NATS uses an embedded in-process
+    server; bluesky's `consume`/`serve` run off a canned frame slice and its real dial is covered by a
+    local `httptest` websocket server; MQTT/RabbitMQ/Jetstream real-connect paths are env-gated
+    integration tests — `HIPPOCAMPUS_TEST_MQTT_BROKER`/`HIPPOCAMPUS_TEST_RABBITMQ_URL`/
+    `HIPPOCAMPUS_TEST_JETSTREAM`, the last needing no container since Jetstream is public, and set in
+    CI only on pushes to the default branch so a fork's PR never reaches Bluesky), every package
+    ≥95% covered (`bridge` itself sits at ~91%, held down by `StartRuntime`). Built/vetted/tested by the `eventsource-bridges`
+    CI job (like `otel-exporter`; the `docker` CI job also smoke-builds the five images). The release
+    workflow cross-compiles all five `cmd` binaries (`hippocampus-<broker>-bridge`) onto the GitHub
     release and publishes one multi-arch image per broker to GHCR
     (`ghcr.io/fastbean-au/hippocampus-<broker>-bridge`) via a matrix over the one parameterised
     `integrations/eventsource/Dockerfile` (the `BROKER` build-arg selects `cmd/<broker>`; built with

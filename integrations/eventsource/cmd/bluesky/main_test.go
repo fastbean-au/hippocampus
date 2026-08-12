@@ -1,0 +1,218 @@
+package main
+
+import (
+	"context"
+	"os"
+	"testing"
+
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
+)
+
+func setupFlags(t *testing.T, args []string) {
+	t.Helper()
+
+	viper.Reset()
+
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	if err := registerFlags(fs, args); err != nil {
+		t.Fatalf("registerFlags: %v", err)
+	}
+}
+
+func resetCommandLine() {
+	viper.Reset()
+	pflag.CommandLine = pflag.NewFlagSet("bluesky", pflag.ContinueOnError)
+	pflag.CommandLine.SetOutput(os.NewFile(0, os.DevNull))
+}
+
+// cancelledCtx returns an already-cancelled context so the bridge's reconnect loop returns before it
+// dials Jetstream, letting run's happy path be exercised with no network at all.
+func cancelledCtx() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	return ctx
+}
+
+func TestRegisterFlags_ParseError(t *testing.T) {
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	fs.SetOutput(os.NewFile(0, os.DevNull))
+
+	if err := registerFlags(fs, []string{"--not-a-flag"}); err == nil {
+		t.Errorf("registerFlags should error on an unknown flag")
+	}
+}
+
+func TestServe_Version(t *testing.T) {
+	setupFlags(t, []string{"--version"})
+
+	if err := serve(context.Background()); err != nil {
+		t.Errorf("serve --version = %v, want nil", err)
+	}
+}
+
+func TestServe_BadLogLevel(t *testing.T) {
+	setupFlags(t, []string{"--log-level", "bogus"})
+
+	if err := serve(context.Background()); err == nil {
+		t.Errorf("serve should error on an invalid log level")
+	}
+}
+
+func TestServe_RunsThrough(t *testing.T) {
+	setupFlags(t, []string{"--log-level", "debug"})
+
+	if err := serve(cancelledCtx()); err != nil {
+		t.Errorf("serve through a cancelled context = %v, want nil", err)
+	}
+}
+
+func TestRun_HappyPathReturnsOnCancel(t *testing.T) {
+	setupFlags(t, nil)
+
+	if err := run(cancelledCtx()); err != nil {
+		t.Errorf("run with a cancelled context = %v, want nil", err)
+	}
+}
+
+func TestRun_ThreadModeReturnsOnCancel(t *testing.T) {
+	setupFlags(t, []string{"--events", "thread", "--group", "bluesky"})
+
+	if err := run(cancelledCtx()); err != nil {
+		t.Errorf("run in thread mode = %v, want nil", err)
+	}
+}
+
+func TestRun_InvalidEventsMode(t *testing.T) {
+	setupFlags(t, []string{"--events", "sideways"})
+
+	if err := run(context.Background()); err == nil {
+		t.Errorf("run should reject an unknown --events mode")
+	}
+}
+
+// TestRun_TooManyCollections: Jetstream caps wantedCollections at 100, and finding that out as a
+// server-side rejection is a confusing way to learn about a typo in a long list.
+func TestRun_TooManyCollections(t *testing.T) {
+	collections := make([]string, 0, 101)
+
+	for i := range 101 {
+		collections = append(collections, string(rune('a'+i%26))+"pp.test.collection")
+	}
+
+	args := []string{"--collections", joinComma(collections)}
+
+	setupFlags(t, args)
+
+	if err := run(context.Background()); err == nil {
+		t.Errorf("run should reject more than 100 collections")
+	}
+}
+
+// TestRun_WithoutPostsIsAllowed: a bridge subscribed only to likes stores nothing but still
+// reinforces, which is unusual rather than wrong - so it warns and proceeds.
+func TestRun_WithoutPostsIsAllowed(t *testing.T) {
+	setupFlags(t, []string{"--collections", "app.bsky.feed.like"})
+
+	if err := run(cancelledCtx()); err != nil {
+		t.Errorf("run without the post collection = %v, want nil", err)
+	}
+}
+
+func TestRun_DialError(t *testing.T) {
+	setupFlags(t, []string{"--tls", "--tls-ca-cert", "/no/such/ca.pem"})
+
+	if err := run(context.Background()); err == nil {
+		t.Errorf("run should surface the hippocampus dial error")
+	}
+}
+
+func TestTransformConfig(t *testing.T) {
+	setupFlags(t, []string{"--significance", "7", "--group", "g", "--binary", "--max-body-bytes", "10"})
+
+	cfg := transformConfig()
+
+	if cfg.Significance != 7 || cfg.Group != "g" || !cfg.Binary || cfg.MaxBodyBytes != 10 {
+		t.Errorf("transformConfig = %+v, unexpected", cfg)
+	}
+}
+
+func TestSlicesContain(t *testing.T) {
+	in := []string{"a", "b"}
+
+	if !slicesContain(in, "b") {
+		t.Error("expected b to be found")
+	}
+
+	if slicesContain(in, "c") {
+		t.Error("did not expect c to be found")
+	}
+
+	if slicesContain(nil, "a") {
+		t.Error("an empty slice contains nothing")
+	}
+}
+
+func TestRealMain_VersionReturnsZero(t *testing.T) {
+	resetCommandLine()
+
+	if code := realMain([]string{"--version"}); code != 0 {
+		t.Errorf("realMain --version = %d, want 0", code)
+	}
+}
+
+func TestRealMain_FlagErrorReturnsOne(t *testing.T) {
+	resetCommandLine()
+
+	if code := realMain([]string{"--not-a-flag"}); code != 1 {
+		t.Errorf("realMain with a bad flag = %d, want 1", code)
+	}
+}
+
+func TestRealMain_ServeErrorReturnsOne(t *testing.T) {
+	resetCommandLine()
+
+	if code := realMain([]string{"--log-level", "bogus"}); code != 1 {
+		t.Errorf("realMain with a bad log level = %d, want 1", code)
+	}
+}
+
+// joinComma builds the repeated-flag form pflag's StringSlice parses.
+func joinComma(in []string) string {
+	out := ""
+
+	for i, v := range in {
+		if i > 0 {
+			out += ","
+		}
+
+		out += v
+	}
+
+	return out
+}
+
+// TestRun_RejectsAnIncompleteOIDCConfig: client-credentials auth is validated at startup (no
+// network), so a typo'd flag fails immediately rather than at whatever hour the first post arrives.
+func TestRun_RejectsAnIncompleteOIDCConfig(t *testing.T) {
+	setupFlags(t, []string{"--oidc-client-id", "hippocampus-gen"}) // no secret, no issuer
+
+	if err := run(context.Background()); err == nil {
+		t.Error("run should reject client-credentials auth with no secret or issuer")
+	}
+}
+
+// TestRun_AcceptsAValidOIDCConfig pins the other half: a complete config must NOT reach out to the
+// IdP at startup, so an unreachable issuer does not stop the bridge coming up.
+func TestRun_AcceptsAValidOIDCConfig(t *testing.T) {
+	setupFlags(t, []string{
+		"--oidc-issuer", "http://127.0.0.1:1/realms/hippocampus",
+		"--oidc-client-id", "hippocampus-gen",
+		"--oidc-client-secret", "secret",
+	})
+
+	if err := run(cancelledCtx()); err != nil {
+		t.Errorf("run with valid client-credentials config = %v, want nil", err)
+	}
+}

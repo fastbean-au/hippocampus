@@ -281,12 +281,12 @@ jobs:
           curl -sf http://localhost:8091/styles.css > /dev/null
           docker rm -f config-wizard
 
-      # The four event-sourcing bridge images share one parameterised Dockerfile (BROKER build-arg)
+      # The five event-sourcing bridge images share one parameterised Dockerfile (BROKER build-arg)
       # built with the repo root as context. Build each on the native platform (no push) so a broken
       # Dockerfile or module build fails CI; the release workflow does the multi-arch push.
       - name: Event-sourcing bridge images build
         run: |
-          for broker in nats mqtt rabbitmq kafka; do
+          for broker in nats mqtt rabbitmq kafka bluesky; do
             docker build -f integrations/eventsource/Dockerfile \
               --build-arg BROKER="$broker" \
               -t "hippocampus-${broker}-bridge:ci" .
@@ -455,11 +455,17 @@ jobs:
             sleep 1
           done
 
+      # The Bluesky bridge needs no container at all - Jetstream is a public, unauthenticated service
+      # - so its integration test costs one environment variable rather than a service definition.
+      # It is set only on pushes to the default branch, deliberately: turning it on for pull requests
+      # would make every fork's PR reach out to Bluesky's infrastructure, and would make CI red
+      # whenever a third party's endpoint is down. The fakes cover the loop; this covers the wire.
       - name: Build, vet, and test the eventsource module
         working-directory: integrations/eventsource
         env:
           HIPPOCAMPUS_TEST_MQTT_BROKER: tcp://localhost:1883
           HIPPOCAMPUS_TEST_RABBITMQ_URL: amqp://hippo:hippo@localhost:5672/
+          HIPPOCAMPUS_TEST_JETSTREAM: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'wss://jetstream2.us-east.bsky.network/subscribe' || '' }}
         run: |
           go build ./...
           go vet ./...

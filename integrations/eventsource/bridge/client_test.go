@@ -175,7 +175,7 @@ func TestBearerTokenInterceptor(t *testing.T) {
 		return nil
 	}
 
-	if err := bearerTokenInterceptor("secret")(context.Background(), "/svc/M", nil, nil, nil, invoker); err != nil {
+	if err := bearerInterceptor(staticSource{token: "secret"})(context.Background(), "/svc/M", nil, nil, nil, invoker); err != nil {
 		t.Fatalf("interceptor: %v", err)
 	}
 

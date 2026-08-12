@@ -82,6 +82,65 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **A Bluesky firehose bridge, and with it engagement-as-recall.** `integrations/eventsource` gains a
+  fifth adapter (`cmd/bluesky`) that consumes
+  [Jetstream](https://github.com/bluesky-social/jetstream), the public JSON projection of the atproto
+  firehose. It is the first bridge that *reinforces* as well as writes: a post becomes a memory, and
+  the likes, reposts and replies that follow it become `RecallMemories` calls against that post — so
+  every post arrives with the same significance and only what people came back to survives.
+  - **It needs no state.** A memory's id *is* the post's `at://` URI, and a like names its target by
+    that same URI, so reinforcing is a call rather than a lookup. A like for a post the bridge never
+    ingested, or one the store has already forgotten, costs one `UPDATE` matching no rows. The same
+    identity makes replay idempotent, which is what the cursor-gated at-least-once loop relies on.
+  - **The bridge's token must be unscoped and writer-tier.** A group-scoped token makes the service
+    scope-check ids before recalling them, turning an id it does not hold into `NotFound` for the
+    whole batch; a reader-tier token gets a non-reinforcing read unless `auth.readerRecallReinforces`
+    is set. Both are absorbed, so a misconfiguration degrades to "reinforcement stops working"
+    rather than "the bridge stops consuming".
+  - `--events thread` opens an event per thread root, `--honour-deletes` (**on by default**) maps an
+    upstream deletion onto a memory deletion — decay is about significance, deletion is about
+    consent — and `--dids`/`--langs` narrow the stream. Recalls are batched and deliberately
+    best-effort: a lost like decays a memory slightly sooner, it does not make it wrong.
+  - Ships as `ghcr.io/fastbean-au/hippocampus-bluesky-bridge` and a per-OS/arch release binary, like
+    the other four. A demo is in `demo/bluesky.sh`. See
+    [docs/eventsource.md](docs/eventsource.md#bluesky-the-firehose-bridge).
+- **The Bluesky bridge can take its posts from a curated feed.** `--feed at://…` reads an atproto
+  feed generator over HTTP instead of the firehose, while engagement keeps arriving on Jetstream —
+  the feed decides what is worth storing, the firehose reports what people did with it, and the two
+  meet by `at://` URI with no correlation state. It trades volume for legibility (tens of posts an
+  hour rather than tens a second, every one of them readable), which suits a hosted demo where the
+  firehose suits a local one. `--feed-backfill` seeds the store from the whole feed at startup, and
+  `--feed-seed-recalls` carries each backfilled post's observed engagement across as a **damped**
+  recall count — `round(log1p(likes + reposts))` — because those likes happened before the bridge was
+  watching and the firehose will never report them. The damping matters: effective significance rises
+  linearly with recall count, so a raw five-thousand-like count would make one post unforgettable
+  forever. Seeding is the only write that uses `ImportBatch`, which is the one RPC that carries
+  recall history, and it happens once; polling uses `StoreMemory` and treats `AlreadyExists` as
+  "already have it", so re-reading the feed needs no bookmark and never rolls back live
+  reinforcement.
+
+- **The event-sourcing bridges can authenticate with OIDC client-credentials.** `--oidc-issuer`
+  (or `--oidc-token-url`) plus `--oidc-client-id`/`--oidc-client-secret` make a bridge mint and
+  refresh its own access tokens instead of carrying a `--token` that eventually expires — at which
+  point the bridge does not stop, it keeps consuming and fails every write with `Unauthenticated`,
+  silently, for as long as it is left running. Setting a client id selects the grant over a static
+  token. Configuration is validated at startup but discovery is deferred to the first RPC, so a
+  typo fails immediately while an IdP that happens to be unreachable does not stop a supervised
+  bridge coming up; a token that cannot be obtained fails the RPC rather than sending none, so on an
+  at-least-once broker the message is redelivered. Flag names match the showcase generators', so one
+  realm configures both.
+
+- **The event-sourcing bridge core gained `Recall`, `Forget`, `EnsureEvent` and `HandleEvent`.** The
+  client seam widened from one RPC to four named ones (`StoreMemory`, `StoreEvent`,
+  `RecallMemories`, `DeleteMemories`), which is still a guard rather than the whole generated
+  client: `Dial` hands back everything, so that unexported interface is the only thing standing
+  between an adapter and `Purge`. `Handle`'s behaviour is unchanged, so the existing four adapters
+  are untouched. Three new metrics come with it — `hippocampus.bridge.recalls`,
+  `hippocampus.bridge.events` and `hippocampus.bridge.recall.batch_size` — where the `missing`
+  recall outcome is the informative one: an id the store no longer holds is the decay model having
+  already done its job, and its ratio to `reinforced` is the most useful number a reinforcing bridge
+  produces.
+
 - **The ingestor and the four broker bridges are instrumented.** Both were long-running daemons with
   no metrics and nothing to probe, which made their worst failure mode — stalling silently — look
   exactly like being idle. Each now serves `/healthz` and `/readyz` and exports OTEL metrics over
@@ -290,6 +349,16 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   header's always-present bearer-token box is gone; the token is entered on the card instead. Purely
   a console change: the server enforced (and still enforces) authorisation on every RPC regardless of
   what the page shows.
+
+### Fixed
+
+- **A bridge truncating a body with `--max-body-bytes` could produce a message that never delivered.**
+  The truncation sliced raw bytes, so a multi-byte character straddling the budget was cut in half
+  and the memory failed to *marshal* (`string field contains invalid UTF-8`) before it ever reached
+  the service. Because the fault was in the message rather than the service, redelivery could not
+  clear it: on an at-least-once broker it was a poison message nacked and retried forever. The cut
+  now backs up to a rune boundary. Affected all bridges, on any non-ASCII payload; found by running
+  the new Bluesky bridge, whose posts are full of emoji, against the live firehose.
 
 ## [0.23.0] - 2026-08-05
 

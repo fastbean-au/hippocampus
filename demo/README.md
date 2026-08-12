@@ -106,3 +106,80 @@ worker counts (`--bursty_workers`, `--slow_workers`, `--loose_workers`, `--query
 
 Service behaviour is tuned in `demo/config.json` — notably `sleep.periodSeconds` (how often
 consolidation runs) and the `consolidation` block (how aggressively it forgets).
+
+## The Bluesky firehose demo (`./demo/bluesky.sh`)
+
+A second, quite different demo: instead of a synthetic generator, it consumes the **live public
+Bluesky firehose** and lets the decay model run on real data arriving in real time.
+
+```sh
+./demo/bluesky.sh                 # the whole network
+LANGS=en ./demo/bluesky.sh        # only posts tagged English
+DIDS=did:plc:xxxx ./demo/bluesky.sh   # follow specific accounts instead
+```
+
+It builds the service plus the `bluesky` bridge from `integrations/eventsource`, runs the service on
+`demo/config.bluesky.json` (port 8300, gateway 8080, store under `demo/data-bluesky`), and points
+the bridge at Jetstream. `SEARCH` and `OBSERVABILITY` behave exactly as in `run.sh`.
+
+### What it demonstrates
+
+Every post arrives with the **same significance** (`SIGNIFICANCE`, default 10). What differentiates
+them afterwards is engagement: a like, a repost or a reply is turned into a `RecallMemories` call
+against that post, which resets its decay clock and raises its effective significance. So the store
+sorts itself purely by what people came back to.
+
+That mapping needs **no state at all**: a memory's id is the post's `at://` URI and a like names its
+target by that same URI, so the bridge holds no map and does no lookup. A like for a post it never
+ingested, or one the store has already forgotten, costs one `UPDATE` that matches no rows.
+
+With the shipped settings (`unitsOfAgeInDays: 0.002`, so one age unit is ~2.9 minutes, power-law
+decay, threshold 5, `recallSignificanceWeight: 5`) a post's lifetime is about
+`34.6 x effective-significance / capacity-pressure` seconds:
+
+| likes since last | effective significance | lifetime at pressure x1 |
+|---|---|---|
+| 0 | 10 | 5m 46s |
+| 1 | 15 | 8m 38s |
+| 3 | 25 | 14m 24s |
+| 10 | 60 | 34m 34s |
+
+and each of those clocks restarts on the *next* like. Within half an hour you see the flat mass of
+unengaged posts turning over every few minutes, a visible tail of once- or twice-liked posts, and a
+handful that simply never leave.
+
+### What to look at
+
+- **Decay tab** (`http://localhost:8080/ui`) — the capacity pressure and scaled threshold tiles,
+  then the "what would be forgotten now" dry run: it fills with unengaged posts and stays empty of
+  liked ones. That is the whole demo in one screenshot.
+- **Memories tab** — click the value cell of a post with `recall_count > 5` and one with 0, and put
+  the two decay curves side by side.
+- **Search tab** — free-text over live posts. The `Reinforce` toggle makes searching a trending term
+  a second, manual demonstration of the same mechanism.
+- **Grafana** (`:3000`) — capacity pressure, used bytes, consolidation and eviction rates. The
+  bridge's own metrics have no shipped panels; the one worth adding by hand in Explore is the hit
+  rate, which is what says the decay model is doing anything:
+
+  ```promql
+  sum(rate(hippocampus_bridge_recalls_total{outcome="reinforced"}[5m]))
+    / sum(rate(hippocampus_bridge_recalls_total[5m]))
+  ```
+
+### Notes from running it
+
+- **The capacity defaults are measured, not calculated.** A run on the open firehose settles around
+  1,270 memories using ~1.9 MB (about 1,500 bytes each — `UsedBytes` counts live SQLite pages
+  including indexes). The caps sit just under that so eviction and pressure actually engage; set
+  them well above the equilibrium and the Decay tab shows a flat `x1.00` all session. Narrowing the
+  stream with `LANGS`/`DIDS` lowers the arrival rate and so the equilibrium too — the script prints
+  the observed ratio five minutes in.
+- **Threads are sparse on the open firehose.** `EVENTS=thread` opens an event per thread root, but
+  sampling the whole network means you rarely see both a root post and its replies, so most events
+  end up holding one memory. `DIDS=...` is where threading gets interesting, because following a few
+  accounts gives you whole conversations. `EVENTS=none` is also markedly faster — thread mode costs
+  a second RPC per post.
+- **Deletions are honoured** (`--honour-deletes`, on by default). Decay is about significance;
+  deletion is about consent, and on Bluesky deleting a post is the only withdrawal a person has.
+- **The data is other people's public posts**, kept locally in `demo/data-bluesky` (gitignored) and
+  published nowhere. `rm -rf demo/data-bluesky` removes it.

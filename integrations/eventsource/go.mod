@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/fastbean-au/hippocampus v0.0.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats-server/v2 v2.14.4
 	github.com/nats-io/nats.go v1.52.0
 	github.com/rabbitmq/amqp091-go v1.13.0
@@ -28,7 +29,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/minio/highwayhash v1.0.4 // indirect

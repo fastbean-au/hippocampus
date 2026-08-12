@@ -14,8 +14,12 @@ import (
 	"github.com/fastbean-au/hippocampus/integrations/eventsource/bridge"
 )
 
-// countingStorer counts StoreMemory calls for the integration test.
+// countingStorer counts StoreMemory calls for the integration test. It embeds the generated
+// interface so widening bridge.NewStore's client seam never touches this file; the embedded value is
+// nil, so a call to any other RPC panics.
 type countingStorer struct {
+	contract.HippocampusClient
+
 	mu    sync.Mutex
 	calls int
 }

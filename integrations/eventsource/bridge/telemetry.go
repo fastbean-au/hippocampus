@@ -38,11 +38,29 @@ const (
 	OutcomeFailed   = "failed"
 )
 
+// Recall and event outcomes, kept in their own block because they are a DIFFERENT closed enum from
+// the message outcomes above and confusing the two would make a dashboard silently wrong.
+//
+// "missing" is the one worth explaining: an id an engagement stream asked to reinforce that the
+// store no longer holds is not a failure and not a filter - it is the decay model having already
+// done its job. The ratio of missing to reinforced is the single most informative number a
+// reinforcing bridge produces, which is why it gets its own value rather than being folded into
+// "filtered".
+const (
+	OutcomeReinforced = "reinforced"
+	OutcomeMissing    = "missing"
+	OutcomeCreated    = "created"
+	OutcomeExists     = "exists"
+)
+
 type telemetry struct {
 	messages      metric.Int64Counter
 	memories      metric.Int64Counter
 	storeDuration metric.Float64Histogram
 	bodyBytes     metric.Int64Histogram
+	recalls       metric.Int64Counter
+	events        metric.Int64Counter
+	recallBatch   metric.Int64Histogram
 }
 
 func newTelemetry() *telemetry {
@@ -57,6 +75,13 @@ func newTelemetry() *telemetry {
 			"Time to transform and store one broker message, in seconds. Per-RPC latency is hippocampus.client.rpc.duration."),
 		bodyBytes: newInt64Histogram(meter, "hippocampus.bridge.body_bytes", "",
 			"Size in bytes of each memory body a bridge writes, mirroring the service's own memory.body_bytes."),
+		recalls: newInt64Counter(meter, "hippocampus.bridge.recalls",
+			"Memory ids submitted for reinforcement, by broker and outcome (reinforced/missing/failed). "+
+				"'missing' is the engagement stream landing on something the store has already forgotten."),
+		events: newInt64Counter(meter, "hippocampus.bridge.events",
+			"Events opened by a bridge, by broker and outcome (created/exists/rejected/failed)."),
+		recallBatch: newInt64Histogram(meter, "hippocampus.bridge.recall.batch_size", "",
+			"Ids per RecallMemories call, so a batching window can be tuned against the RPC rate it saves."),
 	}
 }
 

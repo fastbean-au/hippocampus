@@ -176,7 +176,7 @@ jobs:
             ( cd integrations/cli && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippo${ext}" . )
 
             # Event-sourcing bridges (separate module; build from its directory into the shared stage).
-            for broker in nats mqtt rabbitmq kafka; do
+            for broker in nats mqtt rabbitmq kafka bluesky; do
               ( cd integrations/eventsource && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${repo_root}/stage/hippocampus-${broker}-bridge${ext}" "./cmd/${broker}" )
             done
 
@@ -185,7 +185,7 @@ jobs:
 
             plat="${GOOS}_${GOARCH}"
 
-            for binary in hippocampus hippocampus-config-wizard hippo hippocampus-mcp hippocampus-ingestor hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge; do
+            for binary in hippocampus hippocampus-config-wizard hippo hippocampus-mcp hippocampus-ingestor hippocampus-nats-bridge hippocampus-mqtt-bridge hippocampus-rabbitmq-bridge hippocampus-kafka-bridge hippocampus-bluesky-bridge; do
               if [ "$GOOS" = "windows" ]; then
                 # -j junks the stage/ path so the archive entries are just the binary and LICENSE.
                 zip -j -q "dist/${binary}_${VERSION}_${plat}.zip" "stage/${binary}${ext}" stage/LICENSE
@@ -471,7 +471,7 @@ jobs:
 
     strategy:
       matrix:
-        broker: [nats, mqtt, rabbitmq, kafka]
+        broker: [nats, mqtt, rabbitmq, kafka, bluesky]
 
     steps:
       - uses: actions/checkout@v4

@@ -13,7 +13,10 @@ import (
 	"github.com/fastbean-au/hippocampus/integrations/eventsource/bridge"
 )
 
-type okStorer struct{}
+// okStorer satisfies bridge.NewStore's client seam by embedding the generated interface and
+// overriding only StoreMemory, so widening that seam never touches this file. The embedded value is
+// nil: a call to any other RPC panics, which is the assertion this adapter wants.
+type okStorer struct{ contract.HippocampusClient }
 
 func (okStorer) StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error) {
 	return &contract.StoreMemoryResponse{Id: "x"}, nil

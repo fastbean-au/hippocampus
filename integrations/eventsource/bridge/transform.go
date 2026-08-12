@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	log "github.com/sirupsen/logrus"
 
@@ -181,7 +182,22 @@ func (t *DefaultTransformer) Transform(msg Message) ([]*contract.Memory, error) 
 // encoded as binary.
 func (t *DefaultTransformer) body(data []byte) (string, bool) {
 	if t.cfg.MaxBodyBytes > 0 && len(data) > t.cfg.MaxBodyBytes {
-		data = data[:t.cfg.MaxBodyBytes]
+		cut := t.cfg.MaxBodyBytes
+
+		// A memory body is a proto3 string and so must be valid UTF-8. Cutting at an arbitrary byte
+		// splits any multi-byte character that straddles the budget, and the resulting message does
+		// not fail validation - it fails to MARSHAL ("string field contains invalid UTF-8"), before
+		// it ever reaches the service. Because the fault is in the message itself, redelivery cannot
+		// clear it: on an at-least-once broker it is a poison message that is nacked and retried
+		// forever. So the cut backs up to the last rune boundary. A binary body is base64-encoded
+		// below and carries no such constraint, which is why it keeps the exact byte budget.
+		if !t.cfg.Binary {
+			for cut > 0 && !utf8.RuneStart(data[cut]) {
+				cut--
+			}
+		}
+
+		data = data[:cut]
 	}
 
 	if len(data) == 0 {

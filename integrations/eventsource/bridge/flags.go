@@ -24,6 +24,17 @@ func RegisterCommonFlags(fs *pflag.FlagSet) {
 	fs.Bool("tls-insecure-skip-verify", false, "skip verification of the service certificate (dev only; used with --tls)")
 	fs.Int("call-timeout-seconds", 30, "per-message timeout bounding each StoreMemory RPC")
 
+	// OIDC client-credentials auth, for a long-running bridge against an IdP-backed service: the
+	// bridge mints its own access tokens and refreshes them, instead of carrying a --token that
+	// eventually expires and then fails every write silently. Setting --oidc-client-id selects this
+	// over --token. The names match the generators' so one realm configures both the same way.
+	fs.String("oidc-issuer", "", "OIDC issuer to discover the token endpoint from (client-credentials auth)")
+	fs.String("oidc-token-url", "", "OIDC token endpoint, used in place of discovery from --oidc-issuer")
+	fs.String("oidc-client-id", "", "OIDC client id; setting it selects client-credentials auth over --token")
+	fs.String("oidc-client-secret", "", "OIDC client secret (prefer the HIPPOCAMPUS_<BROKER>_OIDC_CLIENT_SECRET env var)")
+	fs.String("oidc-scope", "", "optional space-separated scopes to request")
+	fs.String("oidc-audience", "", "optional audience to request (Auth0 needs its API identifier; Keycloak ignores it)")
+
 	// DefaultTransformer shaping.
 	fs.Int32("significance", 1, "significance stamped on each stored memory (a per-message header can override it)")
 	fs.String("significance-header", "", "message header whose integer value overrides --significance for that message")

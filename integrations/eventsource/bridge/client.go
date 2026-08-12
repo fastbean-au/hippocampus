@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/observability"
@@ -24,8 +22,15 @@ type ClientConfig struct {
 	Address string
 
 	// Token, when set, is sent as "authorization: Bearer <token>" metadata on every RPC, matching
-	// the service's auth interceptor.
+	// the service's auth interceptor. It is the right shape for a hand-run bridge; for a long-running
+	// one against an IdP prefer OIDC below, since a static token eventually expires and the bridge
+	// then fails every write for as long as it is left running.
 	Token string
+
+	// OIDC, when its ClientID is set, mints and refreshes access tokens via the client-credentials
+	// grant instead of using Token. This is what a bridge deployed beside an IdP-backed service
+	// wants, and it takes precedence over Token.
+	OIDC OIDCConfig
 
 	// TLS enables a TLS dial. The remaining TLS* fields are consulted only when TLS is true.
 	TLS bool
@@ -49,26 +54,36 @@ type ClientConfig struct {
 // Dial opens a gRPC client connection to the service described by cfg and returns it alongside a
 // ready-to-use Hippocampus client. The caller owns the connection and must Close it. A bearer token,
 // when configured, is attached to every outgoing RPC via a client interceptor so no call site has to
-// remember to send it.
+// remember to send it - whether that token is the fixed one from --token or one minted and
+// refreshed via the OIDC client-credentials grant.
+//
+// Dial performs no network I/O of its own (grpc.NewClient does not block, and OIDC discovery is
+// deferred to the first RPC), so it fails only on genuine misconfiguration.
 func Dial(cfg ClientConfig) (*grpc.ClientConn, contract.HippocampusClient, error) {
 	creds, err := transportCredentials(cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building transport credentials: %w", err)
 	}
 
+	source, err := tokenSource(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("configuring bearer-token auth: %w", err)
+	}
+
 	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
 
 	// Chained rather than two WithUnaryInterceptor options, the second of which would silently
 	// replace the first. The metrics interceptor is outermost so it measures the whole call
-	// including the token being attached.
+	// including the token being attached - and, with OIDC, including a refresh when one falls due,
+	// which is exactly the latency an operator would want to see attributed to the RPC.
 	var interceptors []grpc.UnaryClientInterceptor
 
 	if cfg.Endpoint != "" {
 		interceptors = append(interceptors, observability.UnaryClientMetricsInterceptor(cfg.Endpoint))
 	}
 
-	if cfg.Token != "" {
-		interceptors = append(interceptors, bearerTokenInterceptor(cfg.Token))
+	if source != nil {
+		interceptors = append(interceptors, bearerInterceptor(source))
 	}
 
 	if len(interceptors) > 0 {
@@ -81,24 +96,6 @@ func Dial(cfg ClientConfig) (*grpc.ClientConn, contract.HippocampusClient, error
 	}
 
 	return conn, contract.NewHippocampusClient(conn), nil
-}
-
-// bearerTokenInterceptor stamps "authorization: Bearer <token>" onto every RPC's outgoing metadata,
-// matching integrations/mcp and the OTEL exporter.
-func bearerTokenInterceptor(token string) grpc.UnaryClientInterceptor {
-	return func(
-		ctx context.Context,
-		method string,
-		req any,
-		reply any,
-		cc *grpc.ClientConn,
-		invoker grpc.UnaryInvoker,
-		opts ...grpc.CallOption,
-	) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
-
-		return invoker(ctx, method, req, reply, cc, opts...)
-	}
 }
 
 // transportCredentials builds the gRPC transport credentials from the TLS* fields, mirroring the

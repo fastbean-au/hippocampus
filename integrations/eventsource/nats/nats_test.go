@@ -15,7 +15,12 @@ import (
 	"github.com/fastbean-au/hippocampus/integrations/eventsource/bridge"
 )
 
+// okStorer satisfies bridge.NewStore's client seam by embedding the generated interface and
+// overriding only StoreMemory, so widening that seam never touches this file. The embedded value is
+// nil: a call to any other RPC panics, which is the assertion this adapter wants.
 type okStorer struct {
+	contract.HippocampusClient
+
 	mu    sync.Mutex
 	calls int
 }

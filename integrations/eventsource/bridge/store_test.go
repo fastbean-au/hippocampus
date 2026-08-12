@@ -12,10 +12,37 @@ import (
 )
 
 // fakeStorer records StoreMemory calls and returns a scripted response/error.
+//
+// It satisfies the client seam by EMBEDDING the generated interface and overriding only the methods
+// a test exercises, so widening that seam never touches this file again. The embedded value is nil,
+// so a call to any other method panics - which is the assertion we want: a Store method reaching an
+// RPC the test did not script should fail loudly rather than return a zero value.
 type fakeStorer struct {
+	contract.HippocampusClient
+
 	calls    []*contract.Memory
 	rejected bool
 	err      error
+
+	events     []*contract.Event
+	eventResp  *contract.StoreEventResponse
+	eventErr   error
+	recalled   [][]string
+	recallResp *contract.GetMemoriesResponse
+	recallErr  error
+	deleted    [][]string
+	deleteErr  error
+	imported   [][]*contract.Memory
+	importErr  error
+}
+
+func (f *fakeStorer) ImportBatch(ctx context.Context, in *contract.ImportBatchRequest, opts ...grpc.CallOption) (*contract.ImportBatchResponse, error) {
+	f.imported = append(f.imported, in.GetMemories())
+	if f.importErr != nil {
+		return nil, f.importErr
+	}
+
+	return &contract.ImportBatchResponse{MemoriesImported: int32(len(in.GetMemories()))}, nil
 }
 
 func (f *fakeStorer) StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error) {
@@ -25,6 +52,41 @@ func (f *fakeStorer) StoreMemory(ctx context.Context, in *contract.Memory, opts 
 	}
 
 	return &contract.StoreMemoryResponse{Id: "id-" + in.GetBody(), Rejected: f.rejected}, nil
+}
+
+func (f *fakeStorer) StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error) {
+	f.events = append(f.events, in)
+	if f.eventErr != nil {
+		return nil, f.eventErr
+	}
+
+	if f.eventResp != nil {
+		return f.eventResp, nil
+	}
+
+	return &contract.StoreEventResponse{Id: in.GetId(), MemoryCount: int32(len(in.GetMemories()))}, nil
+}
+
+func (f *fakeStorer) RecallMemories(ctx context.Context, in *contract.RecallMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error) {
+	f.recalled = append(f.recalled, in.GetIds())
+	if f.recallErr != nil {
+		return nil, f.recallErr
+	}
+
+	if f.recallResp != nil {
+		return f.recallResp, nil
+	}
+
+	return &contract.GetMemoriesResponse{}, nil
+}
+
+func (f *fakeStorer) DeleteMemories(ctx context.Context, in *contract.DeleteMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.deleted = append(f.deleted, in.GetIds())
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
+
+	return &contract.GeneralResponse{}, nil
 }
 
 func TestStore_HandleStoresEachMemory(t *testing.T) {

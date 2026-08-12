@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/types"
@@ -457,5 +460,70 @@ func TestTransformedMetadataPassesServiceValidation(t *testing.T) {
 
 	if err := types.ValidateMetadata(memories[0].GetMetadata(), "memory"); err != nil {
 		t.Errorf("the transformer produced metadata the service would reject: %s", err)
+	}
+}
+
+// TestBodyTruncationKeepsValidUTF8 is a regression test for a poison-message bug: MaxBodyBytes used
+// to slice raw bytes, so a multi-byte character straddling the budget was cut in half and the memory
+// could not be MARSHALLED at all ("string field contains invalid UTF-8"). Since the fault is in the
+// message rather than the service, redelivery never clears it - on an at-least-once broker it is
+// retried forever. Found by running the Bluesky bridge, whose posts are full of emoji, against the
+// live firehose with --max-body-bytes set.
+func TestBodyTruncationKeepsValidUTF8(t *testing.T) {
+	cases := []struct {
+		name   string
+		data   string
+		max    int
+		binary bool
+		want   string
+	}{
+		{name: "cut inside a multi-byte rune", data: "ab🎉cd", max: 4, want: "ab"},
+		{name: "cut exactly on a boundary", data: "ab🎉cd", max: 2, want: "ab"},
+		{name: "cut after a whole rune", data: "ab🎉cd", max: 6, want: "ab🎉"},
+		{name: "ascii is unaffected", data: "abcdef", max: 3, want: "abc"},
+		{name: "shorter than the budget", data: "ab", max: 10, want: "ab"},
+		// A binary body is base64-encoded, so it has no UTF-8 constraint and keeps the exact budget.
+		{name: "binary keeps the exact byte budget", data: "ab🎉cd", max: 4, binary: true,
+			want: base64.StdEncoding.EncodeToString([]byte("ab🎉cd")[:4])},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr := NewDefaultTransformer(TransformConfig{
+				Significance: 1,
+				MaxBodyBytes: c.max,
+				Binary:       c.binary,
+			})
+
+			mems, err := tr.Transform(Message{Subject: "s", Data: []byte(c.data)})
+			if err != nil {
+				t.Fatalf("Transform: %s", err)
+			}
+
+			got := mems[0].GetBody()
+
+			if got != c.want {
+				t.Errorf("body = %q, want %q", got, c.want)
+			}
+
+			if !c.binary && !utf8.ValidString(got) {
+				t.Error("body is not valid UTF-8, so the memory could not be marshalled")
+			}
+		})
+	}
+}
+
+// TestBodyTruncationSurvivesAProtoRoundTrip proves the point end to end: an invalid body does not
+// fail validation, it fails marshalling, which no amount of redelivery can fix.
+func TestBodyTruncationSurvivesAProtoRoundTrip(t *testing.T) {
+	tr := NewDefaultTransformer(TransformConfig{Significance: 1, MaxBodyBytes: 4})
+
+	mems, err := tr.Transform(Message{Subject: "s", Data: []byte("ab🎉cd")})
+	if err != nil {
+		t.Fatalf("Transform: %s", err)
+	}
+
+	if _, err := proto.Marshal(mems[0]); err != nil {
+		t.Errorf("marshalling the truncated memory failed: %s", err)
 	}
 }

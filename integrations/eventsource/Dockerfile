@@ -1,6 +1,7 @@
 # Builds one event-sourcing broker bridge image. The bridge consumes from a message broker and
 # stores each message in a running Hippocampus instance as a memory. Which broker is selected by the
-# BROKER build-arg (nats | mqtt | rabbitmq | kafka), so one Dockerfile produces all four images.
+# BROKER build-arg (nats | mqtt | rabbitmq | kafka | bluesky), so one Dockerfile produces all five
+# images.
 #
 # The build context must be the repository root: integrations/eventsource is a separate Go module
 # whose go.mod has `replace github.com/fastbean-au/hippocampus => ../..`, so the root module (the
@@ -30,14 +31,16 @@ COPY . .
 # The replace directive in the module's go.mod resolves against /src, so the build must run from the
 # module directory. CGO is off so the binary runs on a minimal base image with no C library.
 WORKDIR /src/integrations/eventsource
-RUN test -n "${BROKER}" || (echo "BROKER build-arg is required (nats|mqtt|rabbitmq|kafka)" && exit 1)
+RUN test -n "${BROKER}" || (echo "BROKER build-arg is required (nats|mqtt|rabbitmq|kafka|bluesky)" && exit 1)
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
     -o /hippocampus-bridge "./cmd/${BROKER}"
 
-# A bridge is an outbound client only: it dials the broker and the Hippocampus service and listens on
-# no port, so there is no EXPOSE and no HEALTHCHECK (nothing to probe). It also has no useful default
-# CMD - each broker requires its own flags (--subject/--topic/--queue), passed after the image name.
+# A bridge is primarily an outbound client: it dials the broker and the Hippocampus service. Since
+# the instrumentation landed it also serves /healthz and /readyz on --health-port (8090, 0 disables),
+# so the absence of an EXPOSE is a default rather than a property of the design - publish that port
+# if you want to probe it. There is no useful default CMD: each broker requires its own flags
+# (--subject/--topic/--queue, or none at all for bluesky), passed after the image name.
 FROM alpine:3.22
 
 # checkov:skip=CKV_DOCKER_2: a bridge exposes no port or health endpoint; liveness is left to the
