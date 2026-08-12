@@ -340,6 +340,14 @@ against each other while leaving even the biggest of them mortal. Reposts count 
 because both mean "someone came back to it"; replies are excluded, since a reply is its own post and
 on a news feed is as often disagreement as endorsement.
 
+The seed runs once, at startup, which is exactly when the things it depends on are least likely to be
+up: in a composed stack the bridge, the service and the IdP start together, and a client-credentials
+token cannot be minted until the IdP has finished booting. It is therefore **retried** — eight
+attempts over about four minutes, backing off from five seconds to one — before giving up and leaving
+the store to fill from live polling. Retrying the whole seed rather than the failed call within it
+costs nothing, because a backfill is a read of the feed followed by an idempotent upsert of what it
+returned.
+
 Seeding is the **only** write that uses `ImportBatch` (the one RPC that can carry recall history),
 and it happens once. Polling uses `StoreMemory` and treats `AlreadyExists` as "already have it" —
 which is what lets re-reading the same feed page need no bookmark, and, crucially, leaves an existing
@@ -351,7 +359,13 @@ reinforcement back to whatever the feed last reported.
 `--events thread` opens an event per thread root, so a reply becomes a memory of the root's event
 (`--events none`, the default, leaves every post standalone and costs one RPC per post instead of
 two). A top-level post opens its event and stores its own memory in a single `StoreEvent`; a reply
-whose root the bridge has not seen creates that root's event first.
+whose root the bridge has not seen creates that root's event first. That applies to the **feed** as
+well as the firehose — a curated feed contains replies (a news account continuing its own thread is
+the common case), and the service refuses a memory naming an event it does not hold. A memory whose
+event cannot be opened is skipped on its own rather than failing the write of the whole page: a feed
+poll returns the same page every read, so a page-level abort is not a transient error but a permanent
+stall, with the posts after the offending one never written on any tick. Those skips are counted as
+`hippocampus.bridge.memories{outcome="orphaned"}`.
 
 Note that threads are **sparse on the open firehose**: sampling the whole network means you rarely
 see both a root and its replies, so most events end up holding one memory. `--dids` is where
@@ -540,7 +554,7 @@ bridge that cannot write look identical from outside. That is the gap the probe 
 | Metric | Type | Attributes |
 | --- | --- | --- |
 | `hippocampus.bridge.messages` | counter | `broker`, `outcome` (stored/rejected/filtered/failed) |
-| `hippocampus.bridge.memories` | counter | `broker`, `outcome` |
+| `hippocampus.bridge.memories` | counter | `broker`, `outcome` (stored/rejected/orphaned) |
 | `hippocampus.bridge.message.duration` | histogram (s) | `broker`, `outcome` |
 | `hippocampus.bridge.body_bytes` | histogram | `broker` |
 | `hippocampus.bridge.recalls` | counter | `broker`, `outcome` (reinforced/missing/failed) |
@@ -555,6 +569,12 @@ insignificance (`rejected`) is the decay model working, a message a Transformer 
 nothing for (`filtered`) was dropped on purpose, and only `failed` is the bridge not doing its job. A
 message yielding several memories reports the **worst** of their outcomes, since the adapter is about
 to redeliver the whole message if any of them failed.
+
+`orphaned` is a **memory** outcome only, never a message one: it is a memory refused because the
+event it names is not in the store, which a batch write skips rather than aborting on. It is separate
+from `rejected` because the two say opposite things — `rejected` is the decay model declining an
+insignificant memory, `orphaned` is a memory that would have been stored had its event been opened
+first, so a sustained non-zero rate is worth looking at.
 
 The **recall** outcomes are a separate closed enum, and `missing` is the one worth understanding: an
 id an engagement stream asked to reinforce that the store no longer holds is not a failure and not a

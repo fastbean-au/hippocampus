@@ -393,6 +393,21 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Fixed
 
+- **A Bluesky feed poll stalled permanently on the first reply in a page.** Under `--events thread`
+  the Transformer puts a reply's memory in its thread root's event, and the service refuses a memory
+  naming an event it does not hold — but only the firehose path ever opened that event, never the
+  feed path. The refusal then aborted the write of the whole page, so every post after the reply went
+  unwritten; since a poll returns the same page each time, the next tick stopped at the same post and
+  the store never grew past it. Two fixes: the feed path now opens a reply's thread before writing
+  it, as the firehose path always has, and a batch write **skips** a memory whose event is missing
+  rather than aborting on it (counted as `hippocampus.bridge.memories{outcome="orphaned"}`).
+
+- **A Bluesky feed backfill failed permanently if the IdP was still booting.** The startup seed ran
+  once, with no retry, so a bridge starting alongside its identity provider could not mint a token,
+  logged one warning, and ran unseeded until somebody restarted it — which any stack bounce could
+  cause. The seed is now retried past a cold start (eight attempts over about four minutes) before
+  giving up and leaving the store to fill from live polling.
+
 - **The `/v1` gateway returned `404` for any id containing a `/`.** Every by-id path — `GET`/`PATCH`
   a memory or event, the link endpoints, `EndEvent`, `UpdateEventSignificance`, the two summary
   routes — failed for an id the caller had percent-encoded correctly, because the gateway matched

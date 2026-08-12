@@ -280,22 +280,57 @@ func (s *Store) importChunk(ctx context.Context, mems []*contract.Memory) (int, 
 // not possible. A memory the store already holds is AlreadyExists, which is a success here for the
 // same reason it is on the event: the id is the upstream record's, so a replayed frame writing the
 // same memory twice is exactly what at-least-once delivery is expected to do.
+//
+// A memory naming an event the store does not have is skipped rather than failing the batch, and
+// that is the difference between a batch that makes progress and one that cannot. The service
+// refuses such a memory with FailedPrecondition (it would be a dangling reference), and a bridge
+// writing a POLLED source hits it routinely: the source hands back the same page every read, so if
+// one orphaned memory in it aborts the write, every memory after that one in the page is never
+// written - and the next poll returns the same page and stops in the same place. That is a
+// permanent stall dressed up as a transient error, and no amount of retrying clears it. Skipping
+// costs one memory that could not have been stored anyway; aborting costs all of them.
+//
+// Narrowed to memories that actually name an event, so a FailedPrecondition arising from anything
+// else still fails the batch and is still reported.
 func (s *Store) storeEach(ctx context.Context, mems []*contract.Memory) error {
 	for i, v := range mems {
 		if v == nil {
 			continue
 		}
 
-		if _, err := s.store(ctx, v); err != nil {
-			if status.Code(err) == codes.AlreadyExists {
-				continue
-			}
-
-			return fmt.Errorf("storing memory %d of %d for an existing event: %w", i+1, len(mems), err)
+		_, err := s.store(ctx, v)
+		if err == nil {
+			continue
 		}
+
+		if status.Code(err) == codes.AlreadyExists {
+			continue
+		}
+
+		if status.Code(err) == codes.FailedPrecondition && v.GetEventId() != "" {
+			s.recordOrphaned(ctx)
+
+			log.WithFields(log.Fields{
+				"id":       v.GetId(),
+				"event_id": v.GetEventId(),
+			}).
+				Debug("memory skipped: the event it names is not in the store")
+
+			continue
+		}
+
+		return fmt.Errorf("storing memory %d of %d: %w", i+1, len(mems), err)
 	}
 
 	return nil
+}
+
+// recordOrphaned counts one memory skipped for naming an event the store does not hold.
+func (s *Store) recordOrphaned(ctx context.Context) {
+	tel.memories.Add(ctx, 1, observability.WithGroup(
+		attribute.String(attrBroker, s.broker),
+		attribute.String(attrOutcome, OutcomeOrphaned),
+	))
 }
 
 // Link relates one memory to others, best-effort.

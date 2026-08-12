@@ -509,6 +509,57 @@ func TestStoreMemoriesTreatsAnExistingMemoryAsSuccess(t *testing.T) {
 	}
 }
 
+// TestStoreMemoriesSkipsAMemoryWhoseEventIsMissing is a regression test for a PERMANENT STALL, not
+// for one dropped memory.
+//
+// A polled source hands back the same page every read. When one memory in that page named an event
+// the store did not hold, the service's FailedPrecondition aborted the batch - so every memory after
+// it went unwritten, the next poll returned the same page, and the write stopped at the same memory
+// again. The store simply stopped growing, while the bridge logged a retryable-looking error each
+// tick. The live symptom was a feed poll storing 46 of 99 posts, forever.
+func TestStoreMemoriesSkipsAMemoryWhoseEventIsMissing(t *testing.T) {
+	fake := &fakeStorer{
+		errFor: func(in *contract.Memory) error {
+			if in.GetEventId() == "" {
+				return nil
+			}
+
+			return status.Error(codes.FailedPrecondition, "event 'at://root' does not exist")
+		},
+	}
+
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	err := s.StoreMemories(context.Background(), []*contract.Memory{
+		{Id: "at://a", Body: "one"},
+		{Id: "at://b", Body: "reply", EventId: "at://root"},
+		{Id: "at://c", Body: "three"},
+	})
+	if err != nil {
+		t.Fatalf("StoreMemories should skip an orphaned memory, got %s", err)
+	}
+
+	if len(fake.calls) != 3 {
+		t.Fatalf("StoreMemory called %d times, want all three attempted", len(fake.calls))
+	}
+
+	if fake.calls[2].GetId() != "at://c" {
+		t.Errorf("last memory attempted was %q, want the batch to have continued to at://c", fake.calls[2].GetId())
+	}
+}
+
+// TestStoreMemoriesPropagatesFailedPreconditionWithoutAnEvent: the skip is narrowed to memories that
+// actually name an event, so the same code from any other cause still fails the batch and is still
+// reported rather than being silently swallowed.
+func TestStoreMemoriesPropagatesFailedPreconditionWithoutAnEvent(t *testing.T) {
+	fake := &fakeStorer{err: status.Error(codes.FailedPrecondition, "something else entirely")}
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	if err := s.StoreMemories(context.Background(), []*contract.Memory{{Id: "a", Body: "x"}}); err == nil {
+		t.Error("expected a FailedPrecondition unrelated to an event to propagate")
+	}
+}
+
 func TestStoreMemoriesPropagatesRealFailures(t *testing.T) {
 	fake := &fakeStorer{err: status.Error(codes.Unavailable, "down")}
 	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")

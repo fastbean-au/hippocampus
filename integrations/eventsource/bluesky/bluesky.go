@@ -248,6 +248,12 @@ type Bridge struct {
 	stored  *idCache
 	authors *idCache
 
+	// backfillAttempts and backfillBackoff bound the startup seed's retry - see seedFeed. Fields
+	// rather than the constants directly, so a test can drive the retry without waiting out a cold
+	// start's worth of backoff.
+	backfillAttempts int
+	backfillBackoff  time.Duration
+
 	// dial is overridable in tests.
 	dial dialFunc
 }
@@ -318,10 +324,12 @@ func New(cfg Config, store *bridge.Store) *Bridge {
 	}
 
 	b := &Bridge{
-		cfg:   cfg,
-		store: store,
-		roots: newIDCache(cfg.RootCacheSize),
-		dial:  defaultDial,
+		cfg:              cfg,
+		store:            store,
+		roots:            newIDCache(cfg.RootCacheSize),
+		backfillAttempts: feedBackfillMaxAttempts,
+		backfillBackoff:  feedBackfillRetryBase,
+		dial:             defaultDial,
 	}
 
 	if cfg.Recall {
@@ -404,6 +412,21 @@ func (b *Bridge) Run(ctx context.Context) error {
 	return err
 }
 
+// Backfill retry bounds. The seed runs ONCE, at startup, which is precisely when the things it
+// depends on are least likely to be up: in a composed stack the bridge, the service and the IdP
+// start together, and a client-credentials token cannot be minted until the IdP has finished
+// booting. Without a retry that race is permanent - the one attempt fails, the log says so, and the
+// deployment runs unseeded until somebody notices and restarts it.
+//
+// The delays are the shape a cold start wants rather than a network blip's: start at a few seconds,
+// cap at a minute, and give up after about four minutes, which outlasts an IdP boot without holding
+// live polling for an outage that is not going to clear.
+const (
+	feedBackfillMaxAttempts = 8
+	feedBackfillRetryBase   = 5 * time.Second
+	feedBackfillRetryMax    = time.Minute
+)
+
 // runFeed seeds the store from the feed and then re-reads it for new posts until ctx is cancelled.
 //
 // Every failure here is logged and retried on the next tick rather than returned: the feed is a
@@ -411,9 +434,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 // engagement stream is still flowing.
 func (b *Bridge) runFeed(ctx context.Context) {
 	if b.cfg.FeedBackfill {
-		if err := b.backfillFeed(ctx); err != nil && ctx.Err() == nil {
-			log.WithError(err).Warn("seeding from the feed failed; continuing with live polling")
-		}
+		b.seedFeed(ctx)
 	}
 
 	ticker := time.NewTicker(b.cfg.FeedPollInterval)
@@ -433,6 +454,44 @@ func (b *Bridge) runFeed(ctx context.Context) {
 	}
 }
 
+// seedFeed runs the backfill, retrying past a cold start before giving up and leaving the store to
+// fill from live polling.
+//
+// Retrying the whole seed rather than the failed call within it is deliberate and costs nothing: a
+// backfill is a read of the feed followed by an idempotent upsert of what it returned, so a repeat
+// attempt writes the same rows to the same ids. There is therefore nothing to resume from and no
+// partial state to reconcile - which is the same statelessness the rest of this bridge runs on.
+func (b *Bridge) seedFeed(ctx context.Context) {
+	backoff := b.backfillBackoff
+
+	for attempt := 1; attempt <= b.backfillAttempts; attempt++ {
+		err := b.backfillFeed(ctx)
+		if err == nil {
+			return
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		if attempt == b.backfillAttempts {
+			log.WithError(err).WithField("attempts", attempt).
+				Warn("seeding from the feed failed; continuing with live polling")
+
+			return
+		}
+
+		log.WithError(err).WithFields(log.Fields{"attempt": attempt, "retry_in": backoff.String()}).
+			Info("seeding from the feed failed; retrying")
+
+		if sleepErr := sleep(ctx, backoff); sleepErr != nil {
+			return
+		}
+
+		backoff = growBackoff(backoff, feedBackfillRetryMax)
+	}
+}
+
 // backfillFeed seeds the store from the whole feed, once.
 func (b *Bridge) backfillFeed(ctx context.Context) error {
 	mems, err := b.feed.Backfill(ctx)
@@ -443,6 +502,8 @@ func (b *Bridge) backfillFeed(ctx context.Context) error {
 	if len(mems) == 0 {
 		return nil
 	}
+
+	b.ensureFeedEvents(ctx, mems)
 
 	// A backfill is the one place links ride ON the write: an import applies them in a second pass
 	// once every row in the batch exists, so a link to a post later in the same seed resolves rather
@@ -476,6 +537,8 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 		return nil
 	}
 
+	b.ensureFeedEvents(ctx, mems)
+
 	// StoreMemories, never ImportMemories: a feed hands back the same posts every read, and an
 	// upsert would roll each one's accumulated reinforcement back to nothing.
 	if err := b.store.StoreMemories(ctx, memoriesOf(mems)); err != nil {
@@ -486,6 +549,39 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 	b.linkMemories(ctx, mems)
 
 	return nil
+}
+
+// ensureFeedEvents opens the thread events the feed's own replies belong to, before those memories
+// are written.
+//
+// A curated feed contains replies - a news account continuing its own thread is the common case -
+// and under --events thread the Transformer puts such a post's memory in its thread ROOT's event.
+// The firehose path has always opened that event first (storePost), because the service refuses a
+// memory naming an event it does not hold; the feed path never did, so under --events thread every
+// feed reply was refused. Not harmlessly, either: it aborted the write of the whole page, so the
+// posts after it in that page were never stored, and since a poll returns the same page each time,
+// the poller stopped in the same place on every tick and the store stopped growing.
+//
+// Best-effort, and the reason it can be is that skipping is now survivable: an event this fails to
+// open leaves its memory to be skipped individually by storeEach rather than taking the page with
+// it. The roots cache makes this at most one RPC per thread, not per post.
+func (b *Bridge) ensureFeedEvents(ctx context.Context, mems []feedMemory) {
+	for _, v := range mems {
+		root := v.Memory.GetEventId()
+
+		if root == "" || b.roots.Contains(root) {
+			continue
+		}
+
+		if err := b.store.EnsureEvent(ctx, b.rootEvent(root, v.Message)); err != nil {
+			log.WithError(err).WithField("root", root).
+				Debug("opening a feed reply's thread failed; the reply is skipped")
+
+			continue
+		}
+
+		b.roots.Add(root)
+	}
 }
 
 // memoriesOf drops the messages the feed carried alongside its memories.

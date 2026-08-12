@@ -74,6 +74,11 @@ type fakeClient struct {
 	recalled []string
 	deleted  []string
 
+	// strictEvents makes StoreMemory behave as the service does: a memory naming an event that has
+	// not been created is refused with FailedPrecondition, because it would be a dangling reference.
+	// A fake that accepts one is how the feed poll's stall got past these tests in the first place.
+	strictEvents bool
+
 	storeErr  error
 	eventErr  error
 	eventErrs []error // consumed one per StoreEvent call, before eventErr
@@ -163,9 +168,24 @@ func (f *fakeClient) StoreMemory(ctx context.Context, in *contract.Memory, opts 
 		return nil, f.storeErr
 	}
 
+	if f.strictEvents && in.GetEventId() != "" && !f.hasEvent(in.GetEventId()) {
+		return nil, status.Errorf(codes.FailedPrecondition, "event '%s' does not exist", in.GetEventId())
+	}
+
 	f.memories = append(f.memories, in)
 
 	return &contract.StoreMemoryResponse{Id: in.GetId()}, nil
+}
+
+// hasEvent reports whether an event of that id has been created. The caller holds f.mu.
+func (f *fakeClient) hasEvent(id string) bool {
+	for _, v := range f.events {
+		if v.GetId() == id {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (f *fakeClient) StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error) {
@@ -221,7 +241,13 @@ func testBridge(t *testing.T, cfg Config, client *fakeClient) *Bridge {
 	tr := NewTransformer(bridge.TransformConfig{Significance: 10, Group: "bluesky"}, Options{Events: cfg.Events})
 	store := bridge.NewStore(client, tr, 0, "bluesky")
 
-	return New(cfg, store)
+	b := New(cfg, store)
+
+	// The startup seed's retry is paced for an IdP cold start; no test wants to wait that out, and a
+	// test that means to exercise the retry sets these itself.
+	b.backfillBackoff = time.Millisecond
+
+	return b
 }
 
 func postJSON(cursor int64, rkey string, text string, extra string) []byte {

@@ -785,3 +785,214 @@ func TestJoinCommas(t *testing.T) {
 		}
 	}
 }
+
+// replyPost builds a feed item that is a reply to root, which is what a news account continuing its
+// own thread looks like in a curated feed.
+func replyPost(rkey string, text string, root string) feedItem {
+	item := post(rkey, text, 0, 0)
+	item.Post.Record.Reply = &reply{
+		Root:   &ref{URI: root},
+		Parent: &ref{URI: root},
+	}
+
+	return item
+}
+
+// TestPollFeedOpensTheThreadOfAReplyAndStoresThePageAfterIt is the regression test for a stalled
+// feed poll.
+//
+// Under --events thread the Transformer puts a reply's memory in its thread ROOT's event, and the
+// service refuses a memory naming an event it does not hold. The feed path never opened that event
+// (only the firehose path did), so the reply was refused - and the refusal aborted the write of the
+// whole page, leaving every post after it in the page unwritten. Because a poll returns the same
+// page each time, the next tick stopped at the same post, and the store never grew past it.
+//
+// Both halves are asserted here: the thread is opened, and the posts after the reply are stored.
+func TestPollFeedOpensTheThreadOfAReplyAndStoresThePageAfterIt(t *testing.T) {
+	const root = "at://did:plc:news/app.bsky.feed.post/root"
+
+	av := newFakeAppView(t, [][]feedItem{{
+		post("a", "first headline", 0, 0),
+		replyPost("b", "the thread continues", root),
+		post("c", "third headline", 0, 0),
+	}})
+
+	client := &fakeClient{strictEvents: true}
+
+	b := testBridge(t, Config{
+		Events:      EventsThread,
+		Feed:        "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView: av.server.URL,
+		Group:       "news",
+	}, client)
+
+	if err := b.pollFeed(context.Background()); err != nil {
+		t.Fatalf("pollFeed: %s", err)
+	}
+
+	stored, events, _, _ := client.snapshot()
+
+	if len(stored) != 3 {
+		t.Fatalf("stored %d memories, want all three of the page", len(stored))
+	}
+
+	if stored[2].GetId() != "at://did:plc:news/app.bsky.feed.post/c" {
+		t.Errorf("last stored memory is %q, want the page to have continued past the reply", stored[2].GetId())
+	}
+
+	if len(events) != 1 || events[0].GetId() != root {
+		t.Fatalf("events = %v, want the reply's thread root to have been opened", events)
+	}
+
+	if events[0].GetGroup() != "news" {
+		t.Errorf("thread event group = %q, want the bridge's configured group", events[0].GetGroup())
+	}
+
+	// One event per thread, not one per post: the roots cache means a second poll of the same page
+	// costs no further StoreEvent calls.
+	if err := b.pollFeed(context.Background()); err != nil {
+		t.Fatalf("second pollFeed: %s", err)
+	}
+
+	if _, events, _, _ = client.snapshot(); len(events) != 1 {
+		t.Errorf("StoreEvent called %d times over two polls, want the roots cache to have covered the second", len(events))
+	}
+}
+
+// TestPollFeedSkipsAReplyWhoseThreadCannotBeOpened: opening the thread is best-effort, and what
+// makes that acceptable is that the memory it belongs to is then skipped on its own rather than
+// taking the rest of the page with it.
+func TestPollFeedSkipsAReplyWhoseThreadCannotBeOpened(t *testing.T) {
+	const root = "at://did:plc:news/app.bsky.feed.post/root"
+
+	av := newFakeAppView(t, [][]feedItem{{
+		replyPost("b", "the thread continues", root),
+		post("c", "third headline", 0, 0),
+	}})
+
+	client := &fakeClient{strictEvents: true, eventErr: errUnavailable}
+
+	b := testBridge(t, Config{
+		Events:      EventsThread,
+		Feed:        "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView: av.server.URL,
+	}, client)
+
+	if err := b.pollFeed(context.Background()); err != nil {
+		t.Fatalf("pollFeed should survive an event that cannot be opened, got %s", err)
+	}
+
+	stored, _, _, _ := client.snapshot()
+
+	if len(stored) != 1 || stored[0].GetId() != "at://did:plc:news/app.bsky.feed.post/c" {
+		t.Fatalf("stored %v, want only the post after the skipped reply", stored)
+	}
+}
+
+// TestSeedFeedRetriesPastAColdStart: the seed runs once, at startup, which is exactly when the IdP
+// it mints its token from may still be booting. Without a retry that race leaves the deployment
+// permanently unseeded, with nothing but one Warn line to say so.
+func TestSeedFeedRetriesPastAColdStart(t *testing.T) {
+	av := newFakeAppView(t, [][]feedItem{{post("a", "headline", 3, 0)}})
+
+	// Two failures then success, standing in for an IdP that is not yet answering: the bearer
+	// interceptor fails the RPC before it reaches the service.
+	client := &fakeClient{importErr: errors.New("obtaining bearer token: connection refused")}
+
+	b := testBridge(t, Config{
+		Events:          EventsNone,
+		Feed:            "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView:     av.server.URL,
+		FeedBackfill:    true,
+		FeedSeedRecalls: true,
+	}, client)
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+
+		client.mu.Lock()
+		client.importErr = nil
+		client.mu.Unlock()
+	}()
+
+	b.seedFeed(context.Background())
+
+	if len(client.importedBatches()) != 1 {
+		t.Fatalf("imported %d batches, want the seed to have retried until it succeeded",
+			len(client.importedBatches()))
+	}
+
+	if calls, _ := av.snapshot(); calls < 2 {
+		t.Errorf("AppView called %d times, want the whole seed to have been re-run", calls)
+	}
+}
+
+// TestSeedFeedGivesUpAndLetsPollingContinue: a retry that never succeeds must still hand over to
+// live polling rather than blocking the feed goroutine for the life of the process.
+func TestSeedFeedGivesUpAndLetsPollingContinue(t *testing.T) {
+	av := newFakeAppView(t, [][]feedItem{{post("a", "headline", 3, 0)}})
+	client := &fakeClient{importErr: errors.New("still down")}
+
+	b := testBridge(t, Config{
+		Events:       EventsNone,
+		Feed:         "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView:  av.server.URL,
+		FeedBackfill: true,
+	}, client)
+
+	b.backfillAttempts = 3
+
+	done := make(chan struct{})
+
+	go func() {
+		b.seedFeed(context.Background())
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(5 * time.Second):
+		t.Fatal("seedFeed did not give up")
+	}
+
+	if calls, _ := av.snapshot(); calls != 3 {
+		t.Errorf("AppView called %d times, want exactly the three attempts", calls)
+	}
+}
+
+// TestSeedFeedStopsOnCancellation: the retry must not hold a shutting-down bridge open.
+func TestSeedFeedStopsOnCancellation(t *testing.T) {
+	av := newFakeAppView(t, [][]feedItem{{post("a", "headline", 3, 0)}})
+	client := &fakeClient{importErr: errors.New("still down")}
+
+	b := testBridge(t, Config{
+		Events:       EventsNone,
+		Feed:         "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView:  av.server.URL,
+		FeedBackfill: true,
+	}, client)
+
+	b.backfillBackoff = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+
+	go func() {
+		b.seedFeed(ctx)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(3 * time.Second):
+		t.Fatal("seedFeed did not return on cancellation")
+	}
+}

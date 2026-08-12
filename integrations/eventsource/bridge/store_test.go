@@ -24,6 +24,10 @@ type fakeStorer struct {
 	rejected bool
 	err      error
 
+	// errFor scripts a PER-MEMORY failure, for the batch paths where what matters is which memories
+	// were attempted after one of them failed.
+	errFor func(*contract.Memory) error
+
 	events     []*contract.Event
 	eventResp  *contract.StoreEventResponse
 	eventErr   error
@@ -64,6 +68,13 @@ func (f *fakeStorer) ImportBatch(ctx context.Context, in *contract.ImportBatchRe
 
 func (f *fakeStorer) StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error) {
 	f.calls = append(f.calls, in)
+
+	if f.errFor != nil {
+		if err := f.errFor(in); err != nil {
+			return nil, err
+		}
+	}
+
 	if f.err != nil {
 		return nil, f.err
 	}

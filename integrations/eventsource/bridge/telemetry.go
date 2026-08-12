@@ -31,11 +31,17 @@ const (
 // working, a message a Transformer chose to yield nothing for was filtered on purpose, and neither
 // should share a series with a message that could not be delivered. An SLO on "the bridge is
 // broken" has to be able to exclude the first two.
+// "orphaned" is a MEMORY outcome only, never a message one: it is one memory refused because the
+// event it names is not in the store, which the batch write skips rather than aborting on (see
+// storeEach). It is separate from "rejected" because the two say opposite things about the bridge -
+// rejected is the decay model declining an insignificant memory, orphaned is a memory that could
+// have been stored had its event been opened first, so a non-zero rate is worth looking at.
 const (
 	OutcomeStored   = "stored"
 	OutcomeRejected = "rejected"
 	OutcomeFiltered = "filtered"
 	OutcomeFailed   = "failed"
+	OutcomeOrphaned = "orphaned"
 )
 
 // Recall and event outcomes, kept in their own block because they are a DIFFERENT closed enum from
@@ -70,7 +76,8 @@ func newTelemetry() *telemetry {
 		messages: newInt64Counter(meter, "hippocampus.bridge.messages",
 			"Broker messages handled, by broker and outcome (stored/rejected/filtered/failed)."),
 		memories: newInt64Counter(meter, "hippocampus.bridge.memories",
-			"Memories written to the service, by broker and outcome. One message may yield several."),
+			"Memories written to the service, by broker and outcome (stored/rejected/orphaned). "+
+				"One message may yield several."),
 		storeDuration: newFloat64Histogram(meter, "hippocampus.bridge.message.duration", "s",
 			"Time to transform and store one broker message, in seconds. Per-RPC latency is hippocampus.client.rpc.duration."),
 		bodyBytes: newInt64Histogram(meter, "hippocampus.bridge.body_bytes", "",
