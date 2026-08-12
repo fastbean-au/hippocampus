@@ -874,7 +874,21 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     is the only `ImportBatch` write (the one RPC carrying recall history) and happens once; polling
     uses `StoreMemories`, treating `AlreadyExists` as "already have it", which needs no bookmark and
     never rolls back live reinforcement — an upsert per poll would. The feed shares the Store's own
-    Transformer (`Store.Transformer()`) so both sources filter identically by construction. Its token
+    Transformer (`Store.Transformer()`) so both sources filter identically by construction.
+    **`--topic-links`** (`bluesky/topics.go`) relates posts with NO NLP: a news post's link card
+    carries the article URL and a news URL's path is a hand-written SLUG, already tokenised on
+    hyphens and chosen editorially, so terms come from splitting it (falling back to the body when
+    there is no card). Two posts relate on >= `--topic-min-shared` terms, ignoring any term carried by
+    more than `--topic-max-frequency-percent` of the index — the cheap stand-in for IDF, without
+    which a section name relates everything. It relates ~a quarter of a live news feed, cross-outlet.
+    This is what makes the service's `linkRecallPropagation` and `linkSignificanceWeight` do
+    anything, since nothing else in the bridge creates links. Two constraints: the term index is the
+    one genuinely STATEFUL thing here (bounded; unlike `rootCache` it is not just an optimisation, so
+    losing it stops links being made — accepted, it is best-effort enrichment), and links are issued
+    AFTER the write via `Store.Link` rather than attached to it, because a target must exist and in a
+    forgetting store attaching them would let a just-consolidated neighbour fail the write; the
+    backfill is the exception and attaches them to its `ImportBatch`, whose second pass resolves
+    intra-batch targets. Its token
     must be **unscoped and
     writer-tier** (a group-scoped token makes an unknown id `NotFound` for the whole batch; a reader
     token does not reinforce). Recalls are batched (`--recall-batch-size/-window-ms`, best-effort by

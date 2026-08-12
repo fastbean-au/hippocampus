@@ -622,3 +622,61 @@ func TestTransformerAccessorReturnsTheSameInstance(t *testing.T) {
 		t.Errorf("the returned transformer did not behave like the one supplied: %v, %v", mems, err)
 	}
 }
+
+func TestLink(t *testing.T) {
+	links := []*contract.Link{{Id: "at://b", Significance: 50}}
+
+	t.Run("relates the named memories", func(t *testing.T) {
+		fake := &fakeStorer{}
+		s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+		if err := s.Link(context.Background(), "at://a", links); err != nil {
+			t.Fatalf("Link: %s", err)
+		}
+
+		if len(fake.linked) != 1 || fake.linked[0].id != "at://a" {
+			t.Fatalf("linked %v, want at://a", fake.linked)
+		}
+
+		if len(fake.linked[0].links) != 1 || fake.linked[0].links[0].GetId() != "at://b" {
+			t.Errorf("links = %v", fake.linked[0].links)
+		}
+	})
+
+	t.Run("an empty id or no links issues no RPC", func(t *testing.T) {
+		fake := &fakeStorer{}
+		s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+		if err := s.Link(context.Background(), "", links); err != nil {
+			t.Fatalf("Link: %s", err)
+		}
+
+		if err := s.Link(context.Background(), "at://a", nil); err != nil {
+			t.Fatalf("Link: %s", err)
+		}
+
+		if len(fake.linked) != 0 {
+			t.Errorf("issued %d link calls, want none", len(fake.linked))
+		}
+	})
+
+	// A target the store has already forgotten is the expected case in a store whose job is
+	// forgetting - it must leave the memory stored-but-unrelated, not fail.
+	t.Run("a forgotten target is absorbed", func(t *testing.T) {
+		fake := &fakeStorer{linkErr: status.Error(codes.NotFound, "no such memory")}
+		s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+		if err := s.Link(context.Background(), "at://a", links); err != nil {
+			t.Errorf("Link should absorb NotFound, got %s", err)
+		}
+	})
+
+	t.Run("a transport failure propagates", func(t *testing.T) {
+		fake := &fakeStorer{linkErr: status.Error(codes.Unavailable, "down")}
+		s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+		if err := s.Link(context.Background(), "at://a", links); err == nil {
+			t.Error("expected a transport failure to propagate")
+		}
+	})
+}

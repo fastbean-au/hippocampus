@@ -98,6 +98,17 @@ func post(rkey string, text string, likes int, reposts int) feedItem {
 	}}
 }
 
+// postWithLink builds a feed item carrying an external link card.
+func postWithLink(rkey string, text string, uri string) feedItem {
+	item := post(rkey, text, 1, 0)
+	item.Post.Record.Embed = &embed{
+		Type:     "app.bsky.embed.external",
+		External: &external{URI: uri},
+	}
+
+	return item
+}
+
 func testFeed(t *testing.T, av *fakeAppView, seed bool) *feedSource {
 	t.Helper()
 
@@ -125,8 +136,8 @@ func TestFeedBackfillPagesTheWholeFeed(t *testing.T) {
 		t.Fatalf("got %d memories, want 3 across both pages", len(mems))
 	}
 
-	if mems[0].GetId() != "at://did:plc:news/app.bsky.feed.post/a" {
-		t.Errorf("id = %q, want the post's at:// URI", mems[0].GetId())
+	if mems[0].Memory.GetId() != "at://did:plc:news/app.bsky.feed.post/a" {
+		t.Errorf("id = %q, want the post's at:// URI", mems[0].Memory.GetId())
 	}
 
 	calls, queries := av.snapshot()
@@ -166,7 +177,7 @@ func TestFeedBackfillSeedsDampedRecallCounts(t *testing.T) {
 
 	got := map[string]int32{}
 	for _, m := range mems {
-		got[rkeyOf(m.GetId())] = m.GetRecallCount()
+		got[rkeyOf(m.Memory.GetId())] = m.Memory.GetRecallCount()
 	}
 
 	if got["none"] != 0 {
@@ -196,8 +207,8 @@ func TestFeedSeedingCanBeTurnedOff(t *testing.T) {
 		t.Fatalf("Backfill: %s", err)
 	}
 
-	if mems[0].GetRecallCount() != 0 {
-		t.Errorf("recall count = %d, want 0 when seeding is off", mems[0].GetRecallCount())
+	if mems[0].Memory.GetRecallCount() != 0 {
+		t.Errorf("recall count = %d, want 0 when seeding is off", mems[0].Memory.GetRecallCount())
 	}
 }
 
@@ -215,9 +226,9 @@ func TestFeedPollNeverSeeds(t *testing.T) {
 		t.Fatalf("got %d memories, want 1", len(mems))
 	}
 
-	if mems[0].GetRecallCount() != 0 {
+	if mems[0].Memory.GetRecallCount() != 0 {
 		t.Errorf("poll produced recall count %d, want 0 even with seeding configured",
-			mems[0].GetRecallCount())
+			mems[0].Memory.GetRecallCount())
 	}
 }
 
@@ -262,8 +273,8 @@ func TestFeedUsesTheSameTransformer(t *testing.T) {
 		t.Fatalf("got %d memories, want only the one passing the transformer's filters", len(mems))
 	}
 
-	if rkeyOf(mems[0].GetId()) != "keep" {
-		t.Errorf("kept %q, want the long-enough headline", rkeyOf(mems[0].GetId()))
+	if rkeyOf(mems[0].Memory.GetId()) != "keep" {
+		t.Errorf("kept %q, want the long-enough headline", rkeyOf(mems[0].Memory.GetId()))
 	}
 }
 
@@ -283,7 +294,7 @@ func TestFeedCarriesTheAuthorHandle(t *testing.T) {
 	}
 
 	// A DID is unreadable; the handle names the news organisation, and only the feed path has it.
-	if got := mems[0].GetMetadata()[hdrHandle]; got != "reuters.com" {
+	if got := mems[0].Memory.GetMetadata()[hdrHandle]; got != "reuters.com" {
 		t.Errorf("handle metadata = %q, want reuters.com", got)
 	}
 }
@@ -656,7 +667,7 @@ func TestFeedMessageCarriesEveryRecordField(t *testing.T) {
 		t.Fatalf("Poll: %s", err)
 	}
 
-	md := mems[0].GetMetadata()
+	md := mems[0].Memory.GetMetadata()
 
 	if md[hdrLangs] != "en,fr,de" {
 		t.Errorf("langs metadata = %q, want the joined list", md[hdrLangs])
@@ -667,8 +678,8 @@ func TestFeedMessageCarriesEveryRecordField(t *testing.T) {
 	}
 
 	// Thread mode must file a feed-sourced reply under its root exactly as a firehose one.
-	if mems[0].GetEventId() != "at://did:plc:root/app.bsky.feed.post/rr" {
-		t.Errorf("event id = %q, want the reply root", mems[0].GetEventId())
+	if mems[0].Memory.GetEventId() != "at://did:plc:root/app.bsky.feed.post/rr" {
+		t.Errorf("event id = %q, want the reply root", mems[0].Memory.GetEventId())
 	}
 }
 
@@ -686,8 +697,8 @@ func TestFeedItemWithoutACIDOrTimestamp(t *testing.T) {
 	}
 
 	// A missing createdAt leaves the timestamp zero, which the shared transformer fills with now.
-	if mems[0].GetTimeStamp() <= 0 {
-		t.Errorf("timestamp = %d, want the transformer's fallback to now", mems[0].GetTimeStamp())
+	if mems[0].Memory.GetTimeStamp() <= 0 {
+		t.Errorf("timestamp = %d, want the transformer's fallback to now", mems[0].Memory.GetTimeStamp())
 	}
 }
 
@@ -702,7 +713,7 @@ func TestFeedUnparseableCreatedAtFallsBackToNow(t *testing.T) {
 		t.Fatalf("Poll: %s", err)
 	}
 
-	if mems[0].GetTimeStamp() <= 0 {
+	if mems[0].Memory.GetTimeStamp() <= 0 {
 		t.Error("an unparseable createdAt should fall back to now, not to zero")
 	}
 }

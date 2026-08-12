@@ -104,6 +104,18 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   - Ships as `ghcr.io/fastbean-au/hippocampus-bluesky-bridge` and a per-OS/arch release binary, like
     the other four. A demo is in `demo/bluesky.sh`. See
     [docs/eventsource.md](docs/eventsource.md#bluesky-the-firehose-bridge).
+- **The Bluesky bridge can relate posts to each other, with no NLP.** `--topic-links` extracts topic
+  terms from a post's link-card URL — a news URL's path is a slug someone wrote by hand, already
+  tokenised on hyphens and chosen editorially — and relates posts sharing at least two of them,
+  ignoring terms common enough to be section names rather than topics. Measured against a live news
+  feed it relates about a quarter of posts, and the matches are cross-outlet. This is what makes
+  `consolidation.linkRecallPropagation` do anything: with links, a like on one outlet's coverage
+  pulls the others back from the threshold too, and `linkSignificanceWeight` makes a cluster of
+  coverage more durable than a lone post. Links are issued **after** the write rather than attached
+  to it, because a link target must exist and in a store whose job is forgetting, attaching them to
+  the create would let a neighbour consolidated a minute ago fail the write itself; a backfill is the
+  exception, attaching them to its `ImportBatch` whose second pass resolves intra-batch targets.
+
 - **The Bluesky bridge can take its posts from a curated feed.** `--feed at://…` reads an atproto
   feed generator over HTTP instead of the firehose, while engagement keeps arriving on Jetstream —
   the feed decides what is worth storing, the firehose reports what people did with it, and the two

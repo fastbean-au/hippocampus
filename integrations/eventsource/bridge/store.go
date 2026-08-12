@@ -16,11 +16,11 @@ import (
 // hippocampusClient is the narrow slice of the generated Hippocampus client the Store needs, so
 // tests can substitute a fake. contract.HippocampusClient satisfies it.
 //
-// It names five RPCs and no more, deliberately: this interface IS the module's statement of what a
+// It names six RPCs and no more, deliberately: this interface IS the module's statement of what a
 // bridge is permitted to do to a store. A bridge writes memories, opens the events they belong to,
-// reinforces what an upstream stream tells it was engaged with, honours an upstream deletion, and
-// seeds a store from an upstream that already has history. It does not list, search, export,
-// summarise, or clear. Dial hands back the whole generated client, so this declaration is the only
+// relates them to each other, reinforces what an upstream stream tells it was engaged with, honours
+// an upstream deletion, and seeds a store from an upstream that already has history. It does not
+// list, search, export, summarise, or clear. Dial hands back the whole generated client, so this declaration is the only
 // thing standing between an adapter and Purge - widening it wants a reason in the commit message.
 //
 // ImportBatch is the one that deserves its reason here. It is a full-state upsert that carries
@@ -36,6 +36,7 @@ type hippocampusClient interface {
 	RecallMemories(ctx context.Context, in *contract.RecallMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
 	DeleteMemories(ctx context.Context, in *contract.DeleteMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
 	ImportBatch(ctx context.Context, in *contract.ImportBatchRequest, opts ...grpc.CallOption) (*contract.ImportBatchResponse, error)
+	LinkMemories(ctx context.Context, in *contract.LinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
 }
 
 // Store turns delivered broker messages into Hippocampus memories and writes them over gRPC. It is

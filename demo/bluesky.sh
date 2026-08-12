@@ -20,6 +20,11 @@
 # Environment overrides:
 #   LANGS=en                 keep only posts declaring these languages (default: all)
 #   DIDS=did:plc:...         follow only these accounts instead of the whole network
+#   FEED=at://...            take posts from a curated feed generator instead of the firehose
+#                            (engagement still comes from the firehose). Much lower volume and
+#                            every memory is a readable headline, so the decay clock in
+#                            config.bluesky.json wants slowing down to match - see docs/eventsource.md
+#   TOPIC_LINKS=0            do not relate posts that share topic terms (default: on)
 #   EVENTS=thread|none       thread modelling (default: thread)
 #   SIGNIFICANCE=10          the significance every post arrives with
 #   CAPACITY_BYTES=1200000   the byte cap eviction works to (see "tuning" below)
@@ -52,6 +57,8 @@ HEALTH_PORT=8090
 
 LANGS="${LANGS:-}"
 DIDS="${DIDS:-}"
+FEED="${FEED:-}"
+TOPIC_LINKS="${TOPIC_LINKS:-1}"
 EVENTS="${EVENTS:-thread}"
 SIGNIFICANCE="${SIGNIFICANCE:-10}"
 CAPACITY_BYTES="${CAPACITY_BYTES:-1200000}"
@@ -268,6 +275,7 @@ BRIDGE_ARGS=(
     --group-from-subject=false
     --metadata source=bluesky
     --metadata-header did
+    --metadata-header handle
     --metadata-header lang
     --metadata-header embed
     --events "${EVENTS}"
@@ -278,6 +286,16 @@ BRIDGE_ARGS=(
 
 if [[ -n ${LANGS} ]]; then
     BRIDGE_ARGS+=(--langs "${LANGS}")
+fi
+if [[ -n ${FEED} ]]; then
+    BRIDGE_ARGS+=(--feed "${FEED}")
+fi
+# Topic links are what make consolidation.linkRecallPropagation (set in config.bluesky.json) do
+# anything: without edges there is nothing for a recall to spread along. They are far better with
+# FEED set, where nearly every post carries a link card whose URL slug is an editorial keyword list;
+# on the open firehose most posts have no card and the terms come from the text instead.
+if [[ -n ${TOPIC_LINKS} && ${TOPIC_LINKS} != "false" && ${TOPIC_LINKS} != "0" ]]; then
+    BRIDGE_ARGS+=(--topic-links)
 fi
 if [[ -n ${DIDS} ]]; then
     BRIDGE_ARGS+=(--dids "${DIDS}")

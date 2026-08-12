@@ -55,6 +55,7 @@
         "method": 1,
         "unitsOfAgeInDays": 0.002,
         "linkSignificanceWeight": 1.0,
+        "linkRecallPropagation": 0.25,
         "recallSignificanceWeight": 5.0,
         "capacityMemories": 800,
         "capacityPressureExponent": 4.0,

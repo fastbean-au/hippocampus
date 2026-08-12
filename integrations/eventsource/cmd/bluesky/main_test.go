@@ -14,6 +14,13 @@ func setupFlags(t *testing.T, args []string) {
 
 	viper.Reset()
 
+	// --health-port 0 unless the case sets it: run() starts the probe server, and several of these
+	// tests call run(), so leaving it at the 8090 default has every one of them bind the same real
+	// port. That is what a unit test should never do, and under -count it exhausts the runtime.
+	if !slicesContain(args, "--health-port") {
+		args = append(append([]string{}, args...), "--health-port", "0")
+	}
+
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	if err := registerFlags(fs, args); err != nil {
 		t.Fatalf("registerFlags: %v", err)
@@ -76,11 +83,27 @@ func TestRun_HappyPathReturnsOnCancel(t *testing.T) {
 	}
 }
 
-func TestRun_ThreadModeReturnsOnCancel(t *testing.T) {
-	setupFlags(t, []string{"--events", "thread", "--group", "bluesky"})
+// TestRun_ConfiguredPathsReturnOnCancel drives thread mode, a post-less collection list and a valid
+// client-credentials config through run() in ONE call.
+//
+// Deliberately one rather than three: each run() builds a gRPC client and installs and tears down
+// the global OTEL providers, and stacking several of those alongside the TestRealMain cases below
+// (which drive signal.NotifyContext) has tripped a runtime fatal in os/signal. The branches under
+// test are independent of each other, so exercising them together loses nothing.
+func TestRun_ConfiguredPathsReturnOnCancel(t *testing.T) {
+	setupFlags(t, []string{
+		"--events", "thread",
+		"--group", "bluesky",
+		"--collections", "app.bsky.feed.like",
+		"--oidc-issuer", "http://127.0.0.1:1/realms/hippocampus",
+		"--oidc-client-id", "hippocampus-gen",
+		"--oidc-client-secret", "secret",
+	})
 
+	// A complete client-credentials config must not reach out to the IdP at startup, so an
+	// unreachable issuer does not stop the bridge coming up.
 	if err := run(cancelledCtx()); err != nil {
-		t.Errorf("run in thread mode = %v, want nil", err)
+		t.Errorf("run = %v, want nil", err)
 	}
 }
 
@@ -107,16 +130,6 @@ func TestRun_TooManyCollections(t *testing.T) {
 
 	if err := run(context.Background()); err == nil {
 		t.Errorf("run should reject more than 100 collections")
-	}
-}
-
-// TestRun_WithoutPostsIsAllowed: a bridge subscribed only to likes stores nothing but still
-// reinforces, which is unusual rather than wrong - so it warns and proceeds.
-func TestRun_WithoutPostsIsAllowed(t *testing.T) {
-	setupFlags(t, []string{"--collections", "app.bsky.feed.like"})
-
-	if err := run(cancelledCtx()); err != nil {
-		t.Errorf("run without the post collection = %v, want nil", err)
 	}
 }
 
@@ -200,19 +213,5 @@ func TestRun_RejectsAnIncompleteOIDCConfig(t *testing.T) {
 
 	if err := run(context.Background()); err == nil {
 		t.Error("run should reject client-credentials auth with no secret or issuer")
-	}
-}
-
-// TestRun_AcceptsAValidOIDCConfig pins the other half: a complete config must NOT reach out to the
-// IdP at startup, so an unreachable issuer does not stop the bridge coming up.
-func TestRun_AcceptsAValidOIDCConfig(t *testing.T) {
-	setupFlags(t, []string{
-		"--oidc-issuer", "http://127.0.0.1:1/realms/hippocampus",
-		"--oidc-client-id", "hippocampus-gen",
-		"--oidc-client-secret", "secret",
-	})
-
-	if err := run(cancelledCtx()); err != nil {
-		t.Errorf("run with valid client-credentials config = %v, want nil", err)
 	}
 }

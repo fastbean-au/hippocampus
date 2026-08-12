@@ -151,15 +151,25 @@ func (f *feedSource) fetch(ctx context.Context, cursor string) (*feedResponse, e
 	return &out, nil
 }
 
+// feedMemory pairs a memory with the message it was built from.
+//
+// The message is kept because topic linking needs the post's link-card URL, and reconstructing that
+// from the stored memory would silently depend on whether the operator happened to map external-uri
+// into metadata. Carrying it is one pointer and removes the coupling.
+type feedMemory struct {
+	Memory  *contract.Memory
+	Message bridge.Message
+}
+
 // Backfill reads the whole feed and returns memories carrying SEEDED recall counts.
 //
 // A backfilled post's likes are all in the past, so the firehose will never report them: without
 // seeding, a store that starts with several hundred headlines shows every one of them as equally
 // untouched, and the model looks like it is doing nothing until hours of live engagement accumulate.
 // Seeding is what makes the first thing a visitor sees the actual shape of the thing.
-func (f *feedSource) Backfill(ctx context.Context) ([]*contract.Memory, error) {
+func (f *feedSource) Backfill(ctx context.Context) ([]feedMemory, error) {
 	var (
-		out    []*contract.Memory
+		out    []feedMemory
 		cursor string
 	)
 
@@ -195,7 +205,7 @@ func (f *feedSource) Backfill(ctx context.Context) ([]*contract.Memory, error) {
 // ImportMemories: a feed hands back the same posts on every read, and importing would replace each
 // one - rolling its live reinforcement back to whatever the feed last reported. Letting
 // AlreadyExists mean "already have it" is what makes polling need no bookmark and no dedupe state.
-func (f *feedSource) Poll(ctx context.Context) ([]*contract.Memory, error) {
+func (f *feedSource) Poll(ctx context.Context) ([]feedMemory, error) {
 	resp, err := f.fetch(ctx, "")
 	if err != nil {
 		return nil, err
@@ -207,8 +217,8 @@ func (f *feedSource) Poll(ctx context.Context) ([]*contract.Memory, error) {
 // memories turns feed items into memories, through the SAME Transformer the firehose path uses - so
 // the language filter, the minimum length, the id cap, the metadata handling and the timestamp clamp
 // all behave identically whichever source a post arrived from.
-func (f *feedSource) memories(items []feedItem, seed bool) ([]*contract.Memory, error) {
-	out := make([]*contract.Memory, 0, len(items))
+func (f *feedSource) memories(items []feedItem, seed bool) ([]feedMemory, error) {
+	out := make([]feedMemory, 0, len(items))
 
 	for _, item := range items {
 		p := item.Post
@@ -216,7 +226,9 @@ func (f *feedSource) memories(items []feedItem, seed bool) ([]*contract.Memory, 
 			continue
 		}
 
-		mems, err := f.transform.Transform(f.message(p))
+		msg := f.message(p)
+
+		mems, err := f.transform.Transform(msg)
 		if err != nil {
 			return nil, err
 		}
@@ -230,7 +242,7 @@ func (f *feedSource) memories(items []feedItem, seed bool) ([]*contract.Memory, 
 				m.RecallCount = seededRecallCount(p)
 			}
 
-			out = append(out, m)
+			out = append(out, feedMemory{Memory: m, Message: msg})
 		}
 	}
 
@@ -270,8 +282,14 @@ func (f *feedSource) message(p *postView) bridge.Message {
 		msg.Headers[hdrLangs] = joinCommas(p.Record.Langs)
 	}
 
-	if p.Record.Embed != nil && p.Record.Embed.Type != "" {
-		msg.Headers[hdrEmbed] = p.Record.Embed.Type
+	if p.Record.Embed != nil {
+		if p.Record.Embed.Type != "" {
+			msg.Headers[hdrEmbed] = p.Record.Embed.Type
+		}
+
+		if p.Record.Embed.External != nil && p.Record.Embed.External.URI != "" {
+			msg.Headers[hdrExternalURI] = p.Record.Embed.External.URI
+		}
 	}
 
 	if p.Record.Reply != nil && p.Record.Reply.Root != nil {

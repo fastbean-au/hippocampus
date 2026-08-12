@@ -117,6 +117,30 @@ type Config struct {
 	// before the bridge was watching and the firehose will never report them.
 	FeedSeedRecalls bool
 
+	// TopicLinks relates posts that share topic terms - see topics.go. It is what makes
+	// consolidation.linkRecallPropagation do anything: with links, a like on one outlet's coverage
+	// pulls the others back from the threshold too.
+	TopicLinks bool
+
+	// TopicIndexSize bounds how many memories the term index remembers. It is the one genuinely
+	// stateful thing in the bridge, and losing it only stops links being made.
+	TopicIndexSize int
+
+	// TopicMinShared is how many terms two posts must share to be related. Two is the useful floor:
+	// one shared term relates half the corpus, three relates almost nothing.
+	TopicMinShared int
+
+	// TopicMaxLinks bounds the links one post is given, well under the service's own cap of 128.
+	TopicMaxLinks int
+
+	// TopicMaxFrequencyPercent is the document-frequency cutoff: a term carried by more than this
+	// percentage of the indexed memories is a section name rather than a topic, and is ignored. It is
+	// the cheap stand-in for IDF.
+	TopicMaxFrequencyPercent int
+
+	// TopicLinkSignificance is the significance each topic link carries.
+	TopicLinkSignificance int32
+
 	// Events selects thread modelling: EventsNone stores every post as a standalone memory,
 	// EventsThread opens an event per thread root so a reply is a memory of the root's event.
 	Events string
@@ -181,6 +205,7 @@ type Bridge struct {
 	roots  *rootCache
 	recall *recallBuffer
 	feed   *feedSource
+	topics *topicIndex
 
 	// dial is overridable in tests.
 	dial dialFunc
@@ -223,6 +248,26 @@ func New(cfg Config, store *bridge.Store) *Bridge {
 		cfg.FeedPollInterval = time.Minute
 	}
 
+	if cfg.TopicIndexSize <= 0 {
+		cfg.TopicIndexSize = 5000
+	}
+
+	if cfg.TopicMinShared <= 0 {
+		cfg.TopicMinShared = 2
+	}
+
+	if cfg.TopicMaxLinks <= 0 {
+		cfg.TopicMaxLinks = 8
+	}
+
+	if cfg.TopicMaxFrequencyPercent <= 0 {
+		cfg.TopicMaxFrequencyPercent = 2
+	}
+
+	if cfg.TopicLinkSignificance <= 0 {
+		cfg.TopicLinkSignificance = 50
+	}
+
 	b := &Bridge{
 		cfg:   cfg,
 		store: store,
@@ -238,6 +283,10 @@ func New(cfg Config, store *bridge.Store) *Bridge {
 	// clamped by the identical instance that handles one off the firehose.
 	if cfg.Feed != "" {
 		b.feed = newFeedSource(cfg, store.Transformer())
+	}
+
+	if cfg.TopicLinks {
+		b.topics = newTopicIndex(cfg.TopicIndexSize)
 	}
 
 	return b
@@ -333,10 +382,15 @@ func (b *Bridge) backfillFeed(ctx context.Context) error {
 		return nil
 	}
 
+	// A backfill is the one place links ride ON the write: an import applies them in a second pass
+	// once every row in the batch exists, so a link to a post later in the same seed resolves rather
+	// than dangling, and several hundred posts are related without several hundred extra calls.
+	b.attachLinks(mems)
+
 	// ImportMemories, not StoreMemories: this is the one write that must carry the seeded recall
 	// counts, and it is safe to upsert precisely because it happens once, before anything live has
 	// reinforced any of these.
-	imported, err := b.store.ImportMemories(ctx, mems)
+	imported, err := b.store.ImportMemories(ctx, memoriesOf(mems))
 	if err != nil {
 		return err
 	}
@@ -360,7 +414,71 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 
 	// StoreMemories, never ImportMemories: a feed hands back the same posts every read, and an
 	// upsert would roll each one's accumulated reinforcement back to nothing.
-	return b.store.StoreMemories(ctx, mems)
+	if err := b.store.StoreMemories(ctx, memoriesOf(mems)); err != nil {
+		return err
+	}
+
+	b.linkMemories(ctx, mems)
+
+	return nil
+}
+
+// memoriesOf drops the messages the feed carried alongside its memories.
+func memoriesOf(in []feedMemory) []*contract.Memory {
+	out := make([]*contract.Memory, 0, len(in))
+
+	for _, v := range in {
+		out = append(out, v.Memory)
+	}
+
+	return out
+}
+
+// linkStored relates a post that has just been written, best-effort.
+//
+// After the write rather than on it, because a link target must exist and the store's whole job is
+// forgetting: attaching links to the create would let a neighbour consolidated a minute ago fail the
+// write itself. Afterwards, the worst case is one skipped link.
+func (b *Bridge) linkStored(ctx context.Context, msg bridge.Message) {
+	if b.topics == nil {
+		return
+	}
+
+	id := msg.Headers[hdrURI]
+
+	links := b.linksFor(msg, id)
+	if len(links) == 0 {
+		return
+	}
+
+	if err := b.store.Link(ctx, id, links); err != nil {
+		log.WithError(err).WithField("id", id).
+			Debug("relating a post to its neighbours failed; it is stored unrelated")
+	}
+}
+
+// linkMemories does the same for a batch the feed produced, using the message each memory was built
+// from rather than reconstructing one from what happened to reach metadata.
+func (b *Bridge) linkMemories(ctx context.Context, mems []feedMemory) {
+	if b.topics == nil {
+		return
+	}
+
+	for _, v := range mems {
+		if v.Memory == nil {
+			continue
+		}
+
+		links := b.linksFor(v.Message, v.Memory.GetId())
+		if len(links) == 0 {
+			continue
+		}
+
+		if err := b.store.Link(ctx, v.Memory.GetId(), links); err != nil {
+			log.WithError(err).WithField("id", v.Memory.GetId()).
+				Debug("relating a post to its neighbours failed; it is stored unrelated")
+		}
+	}
 }
 
 // serve is the reconnect loop. Split from Run so the flusher's lifecycle is not entangled with it,
@@ -370,6 +488,14 @@ func (b *Bridge) serve(ctx context.Context) error {
 	backoff := b.cfg.ReconnectBackoff
 
 	for {
+		// Checked BEFORE the dial, not only after it. A websocket dial on an already-cancelled
+		// context is not reliably instant - it can get as far as a DNS lookup and a TCP connect - so
+		// testing afterwards means a bridge shut down during startup still reaches out to the
+		// network once, and a test with a cancelled context blocks on a real host.
+		if ctx.Err() != nil {
+			return nil
+		}
+
 		s, err := b.dial(ctx, b.cfg, cursor)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -548,6 +674,8 @@ func (b *Bridge) dispatchPost(ctx context.Context, msg bridge.Message, operation
 		if err := b.storePost(ctx, msg, msg.Headers[hdrReplyRoot]); err != nil {
 			return err
 		}
+
+		b.linkStored(ctx, msg)
 	}
 
 	// A reply is engagement with what it replies to, exactly as a like is.

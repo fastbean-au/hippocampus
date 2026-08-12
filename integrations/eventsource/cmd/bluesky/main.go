@@ -73,6 +73,15 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.Bool("feed-backfill", true, "read the whole feed once at startup so the store is populated immediately")
 	fs.Bool("feed-seed-recalls", true,
 		"carry a backfilled post's observed engagement across as a damped recall count")
+	fs.Bool("topic-links", false,
+		"relate posts sharing topic terms, so a like on one story pulls its neighbours back too "+
+			"(needs consolidation.linkRecallPropagation on the service to propagate)")
+	fs.Int("topic-index-size", 5000, "how many memories the topic term index remembers")
+	fs.Int("topic-min-shared", 2, "terms two posts must share to be related")
+	fs.Int("topic-max-links", 8, "links given to one post (the service caps links at 128)")
+	fs.Int("topic-max-frequency-percent", 2,
+		"ignore a term carried by more than this percentage of indexed memories - it is a section name, not a topic")
+	fs.Int32("topic-link-significance", 50, "significance carried by each topic link")
 	fs.String("events", blueskybridge.EventsNone,
 		"thread modelling: none (every post standalone) or thread (an event per thread root)")
 	fs.Bool("recall", true, "reinforce a post's memory when it is liked, reposted, or replied to")
@@ -204,27 +213,34 @@ func run(ctx context.Context) error {
 	store := bridge.NewStore(client, transformer, time.Duration(viper.GetInt("call-timeout-seconds"))*time.Second, brokerName)
 
 	b := blueskybridge.New(blueskybridge.Config{
-		URL:                 viper.GetString("jetstream-url"),
-		Collections:         collections,
-		DIDs:                viper.GetStringSlice("dids"),
-		Cursor:              viper.GetInt64("cursor"),
-		Feed:                viper.GetString("feed"),
-		FeedAppView:         viper.GetString("feed-appview"),
-		FeedPollInterval:    time.Duration(viper.GetInt("feed-poll-seconds")) * time.Second,
-		FeedBackfill:        viper.GetBool("feed-backfill"),
-		FeedSeedRecalls:     viper.GetBool("feed-seed-recalls"),
-		Events:              events,
-		Group:               viper.GetString("group"),
-		Recall:              viper.GetBool("recall"),
-		RecallBatchSize:     viper.GetInt("recall-batch-size"),
-		RecallBatchWindow:   time.Duration(viper.GetInt("recall-batch-window-ms")) * time.Millisecond,
-		HonourDeletes:       viper.GetBool("honour-deletes"),
-		RootCacheSize:       viper.GetInt("root-cache-size"),
-		ReadTimeout:         time.Duration(viper.GetInt("read-timeout-seconds")) * time.Second,
-		ErrorBackoff:        time.Duration(viper.GetInt("error-backoff-seconds")) * time.Second,
-		MaxRetries:          viper.GetInt("max-retries"),
-		ReconnectBackoff:    time.Duration(viper.GetInt("reconnect-backoff-seconds")) * time.Second,
-		ReconnectMaxBackoff: time.Duration(viper.GetInt("reconnect-max-backoff-seconds")) * time.Second,
+		URL:              viper.GetString("jetstream-url"),
+		Collections:      collections,
+		DIDs:             viper.GetStringSlice("dids"),
+		Cursor:           viper.GetInt64("cursor"),
+		Feed:             viper.GetString("feed"),
+		FeedAppView:      viper.GetString("feed-appview"),
+		FeedPollInterval: time.Duration(viper.GetInt("feed-poll-seconds")) * time.Second,
+		FeedBackfill:     viper.GetBool("feed-backfill"),
+		FeedSeedRecalls:  viper.GetBool("feed-seed-recalls"),
+
+		TopicLinks:               viper.GetBool("topic-links"),
+		TopicIndexSize:           viper.GetInt("topic-index-size"),
+		TopicMinShared:           viper.GetInt("topic-min-shared"),
+		TopicMaxLinks:            viper.GetInt("topic-max-links"),
+		TopicMaxFrequencyPercent: viper.GetInt("topic-max-frequency-percent"),
+		TopicLinkSignificance:    viper.GetInt32("topic-link-significance"),
+		Events:                   events,
+		Group:                    viper.GetString("group"),
+		Recall:                   viper.GetBool("recall"),
+		RecallBatchSize:          viper.GetInt("recall-batch-size"),
+		RecallBatchWindow:        time.Duration(viper.GetInt("recall-batch-window-ms")) * time.Millisecond,
+		HonourDeletes:            viper.GetBool("honour-deletes"),
+		RootCacheSize:            viper.GetInt("root-cache-size"),
+		ReadTimeout:              time.Duration(viper.GetInt("read-timeout-seconds")) * time.Second,
+		ErrorBackoff:             time.Duration(viper.GetInt("error-backoff-seconds")) * time.Second,
+		MaxRetries:               viper.GetInt("max-retries"),
+		ReconnectBackoff:         time.Duration(viper.GetInt("reconnect-backoff-seconds")) * time.Second,
+		ReconnectMaxBackoff:      time.Duration(viper.GetInt("reconnect-max-backoff-seconds")) * time.Second,
 	}, store)
 
 	log.WithField("address", clientCfg.Address).Info("connecting to hippocampus")

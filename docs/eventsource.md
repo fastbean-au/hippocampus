@@ -357,6 +357,40 @@ Note that threads are **sparse on the open firehose**: sampling the whole networ
 see both a root and its replies, so most events end up holding one memory. `--dids` is where
 threading gets interesting, because following a handful of accounts yields whole conversations.
 
+### Relating posts to each other
+
+`--topic-links` relates posts that are about the same story, using no NLP at all.
+
+A news post's link card carries the article URL, and a news URL's path is a **slug someone wrote by
+hand**: `/politics/2026/08/samuel-alito-ethics-conflicts-interest-fossil`. That is a keyword list,
+already tokenised on hyphens and chosen editorially rather than grammatically — which is what
+relatedness actually wants, and is better here than extracting nouns from the headline would be. A
+part-of-speech tagger would cost a dependency, model data and per-post CPU to do the same job worse.
+
+Two posts are related when they share at least `--topic-min-shared` terms (2 by default — one shared
+term relates half a news corpus, three relates almost nothing), ignoring terms carried by more than
+`--topic-max-frequency-percent` of the indexed memories, which is the cheap stand-in for IDF and is
+what stops a section name relating everything to everything. Posts without a link card fall back to
+their own text.
+
+Measured against a live news feed that relates about a quarter of posts, and the matches are
+**cross-outlet** — one paper's *"Alito made up to $2.9 million from fossil fuel assets"* against
+another's *"Supreme Court justice Samuel Alito gained up to $2.9 million from…"*.
+
+**Why it is worth having.** Links are what make `consolidation.linkRecallPropagation` do anything: with
+them, a like on one outlet's coverage pulls the others back from the threshold too, and
+`linkSignificanceWeight` makes a cluster of coverage more durable than a lone post. That is a real
+claim about news, demonstrated rather than asserted. Both settings live on the **service**, not the
+bridge — the bridge only creates the edges.
+
+**Two things to know.** The term index is the one genuinely stateful thing in this bridge (bounded by
+`--topic-index-size`); unlike the thread-root cache it is not merely an optimisation, so losing it
+stops links being made — accepted deliberately, since linking is best-effort enrichment. And links
+are issued **after** the write, not attached to it: a link target must exist, and in a store whose
+whole job is forgetting, attaching them to the create would let a neighbour consolidated a minute ago
+fail the write itself. A backfill is the exception and attaches them to its `ImportBatch`, whose
+second pass resolves intra-batch targets without a call each.
+
 ### Deletions
 
 `--honour-deletes` (**on by default**) maps an upstream record deletion onto a memory deletion.
@@ -377,6 +411,12 @@ copy has quietly turned a public post into a permanent private archive.
 | `--feed-poll-seconds` | `60` | how often the feed is re-read |
 | `--feed-backfill` | `true` | read the whole feed once at startup |
 | `--feed-seed-recalls` | `true` | carry a backfilled post's engagement across as a damped recall count |
+| `--topic-links` | `false` | relate posts sharing topic terms |
+| `--topic-index-size` | `5000` | memories the term index remembers |
+| `--topic-min-shared` | `2` | terms two posts must share to be related |
+| `--topic-max-links` | `8` | links given to one post |
+| `--topic-max-frequency-percent` | `2` | ignore terms carried by more than this share of the index |
+| `--topic-link-significance` | `50` | significance carried by each topic link |
 | `--events` | `none` | `none` or `thread` |
 | `--recall` | `true` | reinforce a post when it is liked, reposted or replied to |
 | `--recall-batch-size` | `256` | ids per `RecallMemories` call (0 = one RPC per engagement) |

@@ -166,6 +166,38 @@ handful that simply never leave.
     / sum(rate(hippocampus_bridge_recalls_total[5m]))
   ```
 
+### Related stories
+
+`TOPIC_LINKS` (on by default) relates posts about the same story, and
+`consolidation.linkRecallPropagation: 0.25` in the config is what makes those links *do* something:
+when a post is liked, its related posts have their decay clocks pulled a quarter of the way back
+towards "just recalled" too. So a story several outlets covered survives as a cluster, while a lone
+post with the same engagement does not — `linkSignificanceWeight` adds the second half of that, since
+a well-connected memory carries more effective significance.
+
+The terms come from the post's link-card URL: a news URL's path is a slug someone wrote by hand
+(`/politics/2026/08/samuel-alito-ethics-conflicts-interest-fossil`), which is a keyword list already
+tokenised on hyphens. No NLP, no model, no dependency. Posts with no link card fall back to their
+own text.
+
+This is **much better with `FEED` set**, where nearly every post carries a link card. On the open
+firehose most posts do not, so the terms come from the text and the links are noisier.
+
+### Using a curated feed instead
+
+```sh
+FEED='at://did:plc:kkf4naxqmweop7dv4l2iqqf5/app.bsky.feed.generator/news-2-0' ./demo/bluesky.sh
+```
+
+Posts then come from that feed generator — ~500 headlines from verified news organisations, seeded at
+startup — while likes and reposts keep arriving on the firehose to reinforce them. Every memory is
+something you can read, which makes the Decay tab far more legible than the open firehose.
+
+It arrives at roughly 70 posts an hour rather than 70 a second, so the shipped decay clock is much too
+fast for it: raise `unitsOfAgeInDays` (one age unit of a few hours rather than three minutes) and
+lower the capacity caps to match, or the store will hold a handful of memories and turn over before
+you can look at it. See [the feed section](../docs/eventsource.md#curated-feeds-instead-of-the-firehose).
+
 ### Notes from running it
 
 - **The capacity defaults are measured, not calculated.** A run on the open firehose settles around

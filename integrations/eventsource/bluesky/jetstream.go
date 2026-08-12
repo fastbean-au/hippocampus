@@ -51,6 +51,7 @@ const (
 	hdrLang        = "lang"
 	hdrLangs       = "langs"
 	hdrEmbed       = "embed"
+	hdrExternalURI = "external-uri"
 	hdrReplyRoot   = "reply-root"
 	hdrReplyParent = "reply-parent"
 	hdrSubject     = "subject"
@@ -106,6 +107,15 @@ type ref struct {
 
 type embed struct {
 	Type string `json:"$type"`
+
+	// External is the link card a news post almost always carries. Its URI is the single most
+	// useful field on the record for relating posts to each other - see topics.go.
+	External *external `json:"external,omitempty"`
+}
+
+type external struct {
+	URI   string `json:"uri"`
+	Title string `json:"title,omitempty"`
 }
 
 // cursor is the resume point to report once this frame has been fully handled: the v2 sequence
@@ -179,8 +189,14 @@ func toMessage(ev *event) bridge.Message {
 		msg.Headers[hdrLangs] = strings.Join(r.Langs, ",")
 	}
 
-	if r.Embed != nil && r.Embed.Type != "" {
-		msg.Headers[hdrEmbed] = r.Embed.Type
+	if r.Embed != nil {
+		if r.Embed.Type != "" {
+			msg.Headers[hdrEmbed] = r.Embed.Type
+		}
+
+		if r.Embed.External != nil && r.Embed.External.URI != "" {
+			msg.Headers[hdrExternalURI] = r.Embed.External.URI
+		}
 	}
 
 	if r.Reply != nil {

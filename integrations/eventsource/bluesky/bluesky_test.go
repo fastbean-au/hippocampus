@@ -79,6 +79,47 @@ type fakeClient struct {
 	eventErrs []error // consumed one per StoreEvent call, before eventErr
 	imported  [][]*contract.Memory
 	importErr error
+	linked    []linkCall
+	linkErr   error
+}
+
+// linkCall records one LinkMemories request.
+type linkCall struct {
+	id    string
+	links []*contract.Link
+}
+
+// errUnavailable stands in for a transport failure in the link tests.
+var errUnavailable = errors.New("unavailable")
+
+func (f *fakeClient) LinkMemories(ctx context.Context, in *contract.LinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.linkErr != nil {
+		return nil, f.linkErr
+	}
+
+	f.linked = append(f.linked, linkCall{id: in.GetId(), links: in.GetLinks()})
+
+	return &contract.GeneralResponse{}, nil
+}
+
+func (f *fakeClient) linkedMemories() []linkCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]linkCall, len(f.linked))
+	copy(out, f.linked)
+
+	return out
+}
+
+// postFrameWithLink builds a firehose post frame carrying an external link card.
+func postFrameWithLink(cursor int64, rkey string, text string, external string) []byte {
+	extra := fmt.Sprintf(`,"embed":{"$type":"app.bsky.embed.external","external":{"uri":%q}}`, external)
+
+	return postJSON(cursor, rkey, text, extra)
 }
 
 func (f *fakeClient) ImportBatch(ctx context.Context, in *contract.ImportBatchRequest, opts ...grpc.CallOption) (*contract.ImportBatchResponse, error) {
@@ -1021,5 +1062,32 @@ func TestThreadEventFallsBackToTheRkey(t *testing.T) {
 
 	if ev.GetName() != "post xyz" {
 		t.Errorf("name = %q, want the rkey fallback", ev.GetName())
+	}
+}
+
+// TestServeDialsNothingOnACancelledContext is a regression test: serve used to check the context
+// only AFTER dialling, so a bridge shut down during startup still reached out to the network once -
+// and a test with a cancelled context blocked on a real host until the test binary timed out.
+func TestServeDialsNothingOnACancelledContext(t *testing.T) {
+	client := &fakeClient{}
+	b := testBridge(t, Config{Events: EventsNone}, client)
+
+	dialled := false
+
+	b.dial = func(ctx context.Context, cfg Config, cursor int64) (stream, error) {
+		dialled = true
+
+		return &fakeStream{}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := b.serve(ctx); err != nil {
+		t.Fatalf("serve: %s", err)
+	}
+
+	if dialled {
+		t.Error("serve dialled despite its context already being cancelled")
 	}
 }

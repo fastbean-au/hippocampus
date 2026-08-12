@@ -298,6 +298,40 @@ func (s *Store) storeEach(ctx context.Context, mems []*contract.Memory) error {
 	return nil
 }
 
+// Link relates one memory to others, best-effort.
+//
+// It is deliberately a SEPARATE call rather than links attached to the create, and the reason is
+// that a link target must exist: attaching them to the write would mean a target the store has since
+// forgotten fails the whole write, and in a store whose entire job is forgetting that is not a corner
+// case. Issued afterwards, the worst outcome is that this one call reports NotFound and the memory
+// is stored unrelated - which is why NotFound is absorbed here rather than returned.
+//
+// A backfill is the exception and should attach links to its ImportBatch instead: an import applies
+// links in a second pass once every row in the batch exists, so intra-batch targets resolve and no
+// extra call is needed.
+func (s *Store) Link(ctx context.Context, id string, links []*contract.Link) error {
+	if id == "" || len(links) == 0 {
+		return nil
+	}
+
+	ctx, cancel := s.callContext(ctx)
+	defer cancel()
+
+	_, err := s.client.LinkMemories(ctx, &contract.LinkMemoriesRequest{Id: id, Links: links})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			log.WithField("id", id).
+				Debug("linking skipped: a target has already been forgotten")
+
+			return nil
+		}
+
+		return err
+	}
+
+	return nil
+}
+
 // callContext applies the Store's per-call timeout, shared by every method here and by store(). The
 // returned cancel is always non-nil, so a caller can defer it unconditionally.
 func (s *Store) callContext(ctx context.Context) (context.Context, context.CancelFunc) {

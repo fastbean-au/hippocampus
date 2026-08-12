@@ -34,6 +34,23 @@ type fakeStorer struct {
 	deleteErr  error
 	imported   [][]*contract.Memory
 	importErr  error
+	linked     []storerLink
+	linkErr    error
+}
+
+type storerLink struct {
+	id    string
+	links []*contract.Link
+}
+
+func (f *fakeStorer) LinkMemories(ctx context.Context, in *contract.LinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	if f.linkErr != nil {
+		return nil, f.linkErr
+	}
+
+	f.linked = append(f.linked, storerLink{id: in.GetId(), links: in.GetLinks()})
+
+	return &contract.GeneralResponse{}, nil
 }
 
 func (f *fakeStorer) ImportBatch(ctx context.Context, in *contract.ImportBatchRequest, opts ...grpc.CallOption) (*contract.ImportBatchResponse, error) {
