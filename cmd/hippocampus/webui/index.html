@@ -254,6 +254,16 @@
       .checkbox input {
         width: auto;
       }
+      /* Every table renders inside one of these. `width: 100%` only ever shrinks a table to its
+         container; it cannot take it below its own min-content width, and these tables have a floor
+         no styling removes - two nowrap monospace id columns and a row of action buttons. Below
+         about 1000px of viewport that floor exceeds the card, and without a scroll container here
+         the table simply drew outside the card's border and off the page. Scrolling the table alone
+         keeps the overflow where it belongs: the card's edge holds, and the page never scrolls
+         sideways. */
+      .tablewrap {
+        overflow-x: auto;
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -2314,13 +2324,13 @@
         memories.forEach((m) => memRegistry.set(m.id, m));
 
         const rows = memories.map(memoryRow).join("");
-        $(target).innerHTML = `<table>
+        $(target).innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
       <th>Sig</th><th title="computed value against the deletion threshold">Value</th>
       <th>Event</th><th>Group</th><th>Recalls</th><th>Timestamp</th><th>Id</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
-  </table>`;
+  </table></div>`;
 
         // Deliberately not awaited: the table is useful the moment it renders, and the valuation is an
         // extra round trip that must not hold it back (or fail it).
@@ -2635,8 +2645,8 @@
         $("links-list").innerHTML =
           `<div class="muted" style="margin-bottom:8px">Total link significance
     ${esc(String(data.linkSignificance ?? 0))} — damped before it counts toward the decay maths.</div>
-    <table><thead><tr><th>Memory</th><th>Significance</th><th>Direction</th><th>Created</th><th></th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    <div class="tablewrap"><table><thead><tr><th>Memory</th><th>Significance</th><th>Direction</th><th>Created</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
       }
 
       async function addLink() {
@@ -3187,10 +3197,10 @@
           .join("");
 
         const table = rows
-          ? `<table>
+          ? `<div class="tablewrap"><table>
         <thead><tr><th>Id</th><th>Value</th><th>Sig</th><th>Event</th><th>Group</th><th>Why</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>
+      </table></div>
       ${data.truncated ? '<p class="muted">Sample truncated — raise the limit to see more.</p>' : ""}`
           : '<div class="empty">Nothing would be forgotten right now.</div>';
 
@@ -3268,12 +3278,12 @@
         events.forEach((e) => evRegistry.set(e.id, e));
 
         const rows = events.map(eventRow).join("");
-        $("events-list").innerHTML = `<table>
+        $("events-list").innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
       <th>Name</th><th>Sig</th><th>Group</th><th>Start</th><th>End</th><th>Mem</th><th>Id</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
-  </table>`;
+  </table></div>`;
       }
 
       // Offset of the currently displayed events page. loadEvents() restarts from the top; eventsPage()
