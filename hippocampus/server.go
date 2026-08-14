@@ -157,6 +157,12 @@ type Consolidation struct {
 	// (summarisationMinMemories > 0). Off by default: enabling the LLM must not silently start
 	// rewriting stored memories.
 	autoSummarise bool
+
+	// tombstones (consolidation.tombstones.enabled) mirrors the storage layer's forgotten-log
+	// policy, which is where the feature actually lives (db/tombstone.go). The RPC layer keeps its
+	// own copy of the one flag because GetForgottenMemories has to report whether the service is
+	// recording: an empty log otherwise cannot be told from a log nobody is writing.
+	tombstones bool
 }
 
 type Server struct {
@@ -403,6 +409,7 @@ func New(deps Dependencies) *Server {
 			summarisationMinAgeInDays:          viper.GetInt("consolidation.summarisationMinAgeInDays"),
 			summarisationMaxCandidates:         viper.GetInt("consolidation.summarisationMaxCandidates"),
 			autoSummarise:                      viper.GetBool("ollama.autoSummarise"),
+			tombstones:                         viper.GetBool("consolidation.tombstones.enabled"),
 		},
 	}
 

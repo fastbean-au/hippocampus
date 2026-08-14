@@ -1304,6 +1304,56 @@
             <div class="empty">No dry run yet.</div>
           </div>
         </div>
+
+        <div class="card admin-only">
+          <h2>What was forgotten</h2>
+          <p class="muted" style="margin-top: -6px">
+            The forgotten log (<code class="inline"
+              >GET /v1/memories/forgotten</code
+            >): one record per memory a cycle actually deleted, with the value
+            and threshold that decided it. Optional and off by default
+            (<code class="inline">consolidation.tombstones.enabled</code>).
+            Records carry no body — this says a memory was lost, not what it
+            said. Administrator only.
+          </p>
+          <div class="row">
+            <div class="field">
+              <label for="f-memory-id">Memory id</label>
+              <input id="f-memory-id" placeholder="did this one go, and when" />
+            </div>
+            <div class="field">
+              <label for="f-group">Group</label>
+              <input id="f-group" placeholder="any" />
+            </div>
+            <div class="field">
+              <label for="f-rule">Why</label>
+              <select id="f-rule">
+                <option value="">Either</option>
+                <option value="FORGET_RULE_CONSOLIDATION">Decayed</option>
+                <option value="FORGET_RULE_EVICTION">Over capacity</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="f-limit">Records</label>
+              <input
+                id="f-limit"
+                type="number"
+                min="1"
+                max="1000"
+                placeholder="100"
+              />
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="loadForgotten()">Load</button>
+            <button class="btn ghost" onclick="clearForgotten()">
+              Clear the log
+            </button>
+          </div>
+          <div id="forgotten-results">
+            <div class="empty">The forgotten log has not been loaded.</div>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -3696,6 +3746,102 @@
   </div>
   ${retentionWarning}
   ${table}`;
+      }
+
+      // ------------------------------------------------------------------ forgotten log
+      // The dry run above says what would go; this says what did. It is the only view in the console
+      // that can speak about a memory that no longer exists, which is also why it is the only one whose
+      // rows cannot be clicked through to the record they name.
+      async function loadForgotten() {
+        const params = new URLSearchParams();
+        const set = (key, value) => {
+          if (value !== undefined && value !== "") params.set(key, value);
+        };
+
+        set("memoryId", $("f-memory-id").value.trim());
+        set("group", $("f-group").value.trim());
+        set("rule", $("f-rule").value);
+        set("limit", intOrUndef("f-limit"));
+
+        try {
+          const data = await api(
+            "GET",
+            "/v1/memories/forgotten?" + params.toString(),
+          );
+
+          renderForgotten(data);
+        } catch (e) {
+          $("forgotten-results").innerHTML =
+            '<div class="empty">The forgotten log could not be read.</div>';
+
+          fail("Forgotten log", e);
+        }
+      }
+
+      function renderForgotten(data) {
+        const records = data.memories || [];
+
+        // An empty log is ambiguous - nothing forgotten, or nothing written down - and the enabled
+        // flag is the only thing that tells them apart. Say which.
+        const disabled = data.enabled
+          ? ""
+          : `<p class="muted" style="color:var(--warn)">The forgotten log is not enabled, so nothing new is being
+       recorded. Set <code class="inline">consolidation.tombstones.enabled</code> to start keeping
+       one; what is already here stays until it is cleared.</p>`;
+
+        if (!records.length) {
+          $("forgotten-results").innerHTML =
+            disabled + '<div class="empty">Nothing has been forgotten.</div>';
+
+          return;
+        }
+
+        const rows = records
+          .map(
+            (m) => `<tr>
+    <td class="id">${esc(m.id)}</td>
+    <td>${ageCell(m.forgottenAt)}</td>
+    <td>${esc(num(Number(m.value)))}</td>
+    <td>${esc(num(Number(m.threshold)))}</td>
+    <td>${esc(m.significance ?? "")}</td>
+    <td>${esc(m.eventId || "—")}</td>
+    <td>${esc(m.group || "—")}</td>
+    <td>${m.rule === "FORGET_RULE_EVICTION" ? "over capacity" : "decayed"}</td>
+  </tr>`,
+          )
+          .join("");
+
+        $("forgotten-results").innerHTML =
+          disabled +
+          `<p class="muted" style="margin-top:12px">Showing ${esc(records.length.toLocaleString())} of
+     ${esc(Number(data.total || 0).toLocaleString())} record(s), most recent first.</p>
+   <div class="tablewrap"><table>
+     <thead><tr><th>Id</th><th>Forgotten</th><th>Value</th><th>Threshold</th><th>Sig</th><th>Event</th><th>Group</th><th>Why</th></tr></thead>
+     <tbody>${rows}</tbody>
+   </table></div>`;
+      }
+
+      // clearForgotten empties the log. It is the one action here that destroys a record of something
+      // already destroyed, so it confirms - the caps configured on the service never do this.
+      async function clearForgotten() {
+        if (
+          !confirm(
+            "Delete every record in the forgotten log? The memories are already gone; this removes the record that they existed.",
+          )
+        ) {
+          return;
+        }
+
+        try {
+          const data = await api("POST", "/v1/memories/forgotten/delete", {
+            all: true,
+          });
+
+          ok("Forgotten log cleared", `${data.deleted || 0} record(s) deleted`);
+          loadForgotten();
+        } catch (e) {
+          fail("Clearing the forgotten log failed", e);
+        }
       }
 
       // ------------------------------------------------------------------ events

@@ -168,7 +168,7 @@ func TestPruneOnEveryDeletePath(t *testing.T) {
 			// The consolidation/eviction/clear chokepoint.
 			name: "deleteMemoriesIfUnrecalled",
 			delete: func(t *testing.T, db *DB) {
-				if _, err := db.deleteMemoriesIfUnrecalled(ctx, []memoryRecallSnapshot{{id: "m1"}}); err != nil {
+				if _, err := db.deleteMemoriesIfUnrecalled(ctx, []memoryRecallSnapshot{{id: "m1"}}, forgetReason{}); err != nil {
 					t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 				}
 			},

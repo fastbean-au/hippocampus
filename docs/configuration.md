@@ -202,6 +202,8 @@ a JSON body:
 | `Sleep`                      | POST   | `/v1/sleep`                       |
 | `PreviewConsolidation`       | GET    | `/v1/sleep/preview`               |
 | `ExplainConsolidation`       | POST   | `/v1/consolidation/explain`       |
+| `GetForgottenMemories`       | GET    | `/v1/memories/forgotten`          |
+| `DeleteForgottenMemories`    | POST   | `/v1/memories/forgotten/delete`   |
 | `Purge`                      | POST   | `/v1/purge`                       |
 | `WhoAmI`                     | GET    | `/v1/whoami`                      |
 
@@ -653,7 +655,7 @@ everything a lower one can:
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `ExplainConsolidation`, `WhoAmI`                                                                                               |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `Export`, `Transfer`, `Clear`                                                                                                                                        |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `GetForgottenMemories`, `DeleteForgottenMemories`, `Export`, `Transfer`, `Clear`                                                                                     |
 
 `ExplainConsolidation` is `reader` while the dry run beside it is `admin`, because the two differ in
 exactly that respect: the explanation answers only about memory ids the caller supplies — which a
@@ -782,6 +784,7 @@ What changes for a scoped caller:
 | Moving a record       | A write may re-file within the scope but cannot push a record out of it (`clear_group` is refused). |
 | Links                 | Both ends must be in scope. Edges reaching outside are dropped from responses rather than refused. |
 | Export/Transfer/Clear | Walk only the caller's partition — which is also a useful per-group export.                    |
+| Forgotten log         | Filtered by the scope, so a bound caller reads and clears only its own partition's losses.     |
 | Purge/Sleep/Preview   | Refused. All three act on the whole store; see below.                                          |
 
 `WhoAmI` reports `groups` and `group_scoped`, so a client can adapt — read `group_scoped`, never

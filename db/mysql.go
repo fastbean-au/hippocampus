@@ -303,6 +303,11 @@ func (d *DB) initMySQLSchema() error {
 		return err
 	}
 
+	// The forgotten log (see tombstone.go).
+	if err := d.initTombstones(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

@@ -82,6 +82,35 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **The forgotten log: an optional record of what each cycle deleted, and why.** Off by default
+  (`consolidation.tombstones.enabled`). When on, every memory the two decay paths delete leaves one
+  record carrying its id, group, event, significance, stored size, the computed `value` and the
+  `threshold` it was measured against, which rule took it, and when. `GetForgottenMemories`
+  (`GET /v1/memories/forgotten`, `hippo forgotten list`) reads it; `DeleteForgottenMemories`
+  (`POST /v1/memories/forgotten/delete`, `hippo forgotten clear`) empties it. Both are `admin`, and
+  both honour group scoping as a predicate, so a scoped token reads and clears only its own
+  partition's losses. This completes the forgetting-transparency trio: the dry run says what would
+  go, `ExplainConsolidation` says where a memory stands, and this is the only one that can speak
+  about a memory that is no longer there. See
+  [the forgotten log](docs/operations.md#what-was-forgotten--the-forgotten-log).
+  - **Bodies are never kept.** A record says a memory was forgotten, not what it said; this is
+    deliberately not an undelete.
+  - **It records forgetting, not deletion.** `Clear` (which deletes memories an `Export`/`Transfer`
+    has already moved) and the client-initiated deletes write nothing — nothing was lost in those
+    cases, and a log claiming otherwise would be worse than none.
+  - **Turning it off deletes nothing.** Disabling stops the writing *and* the automatic trimming, so
+    what was recorded stays readable; emptying the log is always an explicit request. The threshold
+    is recorded per record rather than inferred because it moves with capacity pressure — a value
+    from last month means nothing measured against today's threshold.
+  - **Bounded by default so the feature cannot eat the store it describes.**
+    `consolidation.tombstones.maxRows` (100,000) and `maxAgeInDays` (30) are applied at the end of
+    each cycle; either can be set to 0 to remove that bound, which is warned about at startup. The
+    log is excluded from the store's measured size, so it never raises capacity pressure or
+    triggers eviction. Two metrics come with it: `hippocampus.tombstones` and
+    `hippocampus.tombstones.deleted`.
+  - The console's **Decay** tab shows the log beside the dry run, for an administrator. It is
+    deliberately not on the MCP surface, alongside the other admin RPCs.
+
 - **The memory and event listings sort on more than two columns, in either direction.** `order_by`
   previously accepted `significance` or `timestamp` and always sorted descending. It now names any
   of seven columns per listing — memories add `time_recalled`, `recall_count`, `link_significance`,

@@ -44,6 +44,9 @@ type telemetry struct {
 	retainedBytes    metric.Int64Gauge
 	purges           metric.Int64Counter
 
+	tombstones        metric.Int64Gauge
+	tombstonesDeleted metric.Int64Counter
+
 	summarisationCandidates metric.Int64Gauge
 	memoriesSummarised      metric.Int64Counter
 	summariesCreated        metric.Int64Counter
@@ -88,6 +91,12 @@ func newTelemetry() *telemetry {
 		memoriesRetained: newInt64Gauge(meter, "hippocampus.memories.retained", "Memories inside the minimum retention window, and so exempt from both consolidation and eviction."),
 		retainedBytes:    newInt64Gauge(meter, "hippocampus.retained_bytes", "Stored bytes held by the minimum retention window. Approaching capacity_bytes means the capacity target has become unreachable, since retention overrides it."),
 		purges:           newInt64Counter(meter, "hippocampus.purges", "Number of purges performed."),
+
+		// The forgotten log's own size and turnover. What was forgotten and by which rule is
+		// already reported by memories.consolidated and memories.evicted; these two answer the
+		// question the log itself raises - is it growing without bound, and is anything trimming it.
+		tombstones:        newInt64Gauge(meter, "hippocampus.tombstones", "Records held by the forgotten log, measured each sleep cycle while it is enabled."),
+		tombstonesDeleted: newInt64Counter(meter, "hippocampus.tombstones.deleted", "Forgotten-log records removed, by whether the removal was a manual request or the configured caps."),
 
 		summarisationCandidates: newInt64Gauge(meter, "hippocampus.summarisation_candidates", "Number of events identified as summarisation candidates by the most recent sleep cycle."),
 		memoriesSummarised:      newInt64Counter(meter, "hippocampus.memories.summarised", "Number of memories replaced by a summary memory (ReplaceMemoriesWithSummary or SummariseMemories)."),

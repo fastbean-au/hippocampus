@@ -327,7 +327,7 @@ func TestMySQL_BatchedDeleteRespectsRecallGuard(t *testing.T) {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := database.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
+	deleted, err := database.deleteMemoriesIfUnrecalled(context.Background(), snapshot, forgetReason{})
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
@@ -365,7 +365,7 @@ func TestMySQL_BatchedDeleteAllRecalledInChunkNoOp(t *testing.T) {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := database.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
+	deleted, err := database.deleteMemoriesIfUnrecalled(context.Background(), snapshot, forgetReason{})
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}

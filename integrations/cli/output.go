@@ -171,6 +171,12 @@ func (r *renderer) renderText(msg proto.Message) error {
 	case *contract.ExplainConsolidationResponse:
 		r.renderExplanation(m)
 
+	case *contract.GetForgottenMemoriesResponse:
+		r.renderForgotten(m)
+
+	case *contract.DeleteForgottenMemoriesResponse:
+		r.line("deleted: %d", m.GetDeleted())
+
 	default:
 		// No bespoke text form: fall back to protojson so nothing is ever silently dropped.
 		return r.writeJSON(msg)
@@ -228,6 +234,47 @@ func (r *renderer) renderPreview(preview *contract.PreviewConsolidationResponse)
 			forgetRuleLabel(candidate.GetRule()),
 			orNone(candidate.GetGroup()),
 		)
+	}
+}
+
+// renderForgotten writes the forgotten log, newest first.
+//
+// The empty case is spelled out rather than left blank, because an empty log is ambiguous: nothing
+// has been forgotten, or nothing is being written down. The response's enabled flag is the only
+// thing that tells the two apart, and an operator reading a blank table would assume the first.
+func (r *renderer) renderForgotten(forgotten *contract.GetForgottenMemoriesResponse) {
+	if !forgotten.GetEnabled() {
+		r.line("the forgotten log is not enabled (consolidation.tombstones.enabled)")
+
+		if len(forgotten.GetMemories()) == 0 {
+			return
+		}
+
+		r.line("showing %d record(s) written while it was", len(forgotten.GetMemories()))
+	}
+
+	if len(forgotten.GetMemories()) == 0 {
+		r.line("nothing has been forgotten")
+
+		return
+	}
+
+	r.line("%d of %d record(s), most recent first:", len(forgotten.GetMemories()), forgotten.GetTotal())
+
+	for _, memory := range forgotten.GetMemories() {
+		r.line("  %-24s  %-20s  value %-11.4g  significance %-5d  %-8s  %s",
+			memory.GetId(),
+			time.Unix(0, memory.GetForgottenAt()).Format(time.RFC3339),
+			memory.GetValue(),
+			memory.GetSignificance(),
+			forgetRuleLabel(memory.GetRule()),
+			orNone(memory.GetGroup()),
+		)
+	}
+
+	if forgotten.GetNextSeq() > 0 {
+		r.line("")
+		r.line("more records: --after-seq %d", forgotten.GetNextSeq())
 	}
 }
 

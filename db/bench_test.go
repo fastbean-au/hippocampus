@@ -301,7 +301,7 @@ func BenchmarkDeleteMemoriesIfUnrecalled(b *testing.B) {
 				snapshots := seedDeletableMemories(b, d, size)
 				b.StartTimer()
 
-				if _, err := d.deleteMemoriesIfUnrecalled(context.Background(), snapshots); err != nil {
+				if _, err := d.deleteMemoriesIfUnrecalled(context.Background(), snapshots, forgetReason{}); err != nil {
 					b.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 				}
 			}

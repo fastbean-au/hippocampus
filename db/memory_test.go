@@ -12,10 +12,11 @@ import (
 // decisionServer implements the Server interface with per-candidate decision functions, so tests
 // can consolidate selectively.
 type decisionServer struct {
-	memory   func(MemoryConsolidationCandidate) bool
-	event    func(EventConsolidationCandidate) bool
-	value    func(MemoryConsolidationCandidate) float64
-	retained func(MemoryConsolidationCandidate) bool
+	memory    func(MemoryConsolidationCandidate) bool
+	event     func(EventConsolidationCandidate) bool
+	value     func(MemoryConsolidationCandidate) float64
+	retained  func(MemoryConsolidationCandidate) bool
+	threshold float64
 }
 
 func (s *decisionServer) ShouldConsolidateMemory(candidate MemoryConsolidationCandidate) bool {
@@ -48,6 +49,10 @@ func (s *decisionServer) MemoryRetained(candidate MemoryConsolidationCandidate) 
 	}
 
 	return s.retained(candidate)
+}
+
+func (s *decisionServer) DeletionThreshold() float64 {
+	return s.threshold
 }
 
 // getMemory returns the memory with the given id, or nil if it does not exist.
@@ -286,7 +291,7 @@ func TestDeleteMemoriesIfUnrecalled(t *testing.T) {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
+	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), snapshot, forgetReason{})
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
@@ -401,7 +406,7 @@ func TestDeleteMemoriesIfUnrecalled_ChunkBoundary(t *testing.T) {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), snapshot)
+	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), snapshot, forgetReason{})
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
@@ -1044,7 +1049,7 @@ func TestMemoryDeleteObserver(t *testing.T) {
 	deleted, err := db.deleteMemoriesIfUnrecalled(context.Background(), []memoryRecallSnapshot{
 		{id: "m1", timeRecalled: 0, recallCount: 0},
 		{id: "m2", timeRecalled: 0, recallCount: 0}, // stale: m2 was recalled since
-	})
+	}, forgetReason{})
 	if err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
@@ -1065,7 +1070,7 @@ func TestMemoryDeleteObserver(t *testing.T) {
 
 	if _, err := db.deleteMemoriesIfUnrecalled(context.Background(), []memoryRecallSnapshot{
 		{id: "m2", timeRecalled: 0, recallCount: 0},
-	}); err != nil {
+	}, forgetReason{}); err != nil {
 		t.Fatalf("deleteMemoriesIfUnrecalled: %s", err)
 	}
 

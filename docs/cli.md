@@ -166,17 +166,27 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 
 ### Admin
 
-| Command  | Purpose                                                         |
-| -------- | --------------------------------------------------------------- |
-| `whoami` | report the caller's identity, effective tier, and group scope   |
-| `sleep`  | trigger a consolidation cycle now, or preview one (`--dry-run`) |
-| `purge`  | delete every event and memory (requires `--yes`)                |
+| Command            | Purpose                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `whoami`           | report the caller's identity, effective tier, and group scope                              |
+| `sleep`            | trigger a consolidation cycle now, or preview one (`--dry-run`)                            |
+| `forgotten list`   | list memories a cycle forgot, and why (`--memory-id`, `--group`, `--rule`, `--since`)      |
+| `forgotten clear`  | delete records from the forgotten log (`--before` or `--all`)                              |
+| `purge`            | delete every event and memory (requires `--yes`)                                           |
 
 `sleep --dry-run` reports what a cycle would forget and deletes nothing — see
 [Previewing what would be forgotten](operations.md#previewing-what-would-be-forgotten). It calls a
 separate read-only RPC (`PreviewConsolidation`), so it cannot trigger a cycle by accident;
 `--limit` bounds how many individual memories are detailed (default 100, max 1000) without
 affecting the counts, which are always complete.
+
+`forgotten list` reads the optional [forgotten log](operations.md#what-was-forgotten--the-forgotten-log)
+— what the cycle actually deleted, as against the dry run's account of what it would delete next.
+It is the only way to ask about a memory that no longer exists (`--memory-id`), and it never
+returns a body. `forgotten clear` requires `--before` or `--all`: it destroys the record of what
+was destroyed, so it must never be something a bare command does. Neither is affected by the log's
+configured caps, which trim but never empty it, and which stop being applied at all once recording
+is turned off.
 
 `whoami` reports the token's [group scope](configuration.md#group-scoping) on its own line —
 `groups: unscoped (whole store)` when the token carries none, which is the state to check first when

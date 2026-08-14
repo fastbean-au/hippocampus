@@ -122,6 +122,18 @@ func (c *httpClient) PreviewConsolidation(ctx context.Context, in *contract.Prev
 	return out, c.doQuery(ctx, http.MethodGet, "/v1/sleep/preview", in, nil, out)
 }
 
+func (c *httpClient) GetForgottenMemories(ctx context.Context, in *contract.GetForgottenMemoriesRequest, _ ...grpc.CallOption) (*contract.GetForgottenMemoriesResponse, error) {
+	out := &contract.GetForgottenMemoriesResponse{}
+
+	return out, c.doQuery(ctx, http.MethodGet, "/v1/memories/forgotten", in, nil, out)
+}
+
+func (c *httpClient) DeleteForgottenMemories(ctx context.Context, in *contract.DeleteForgottenMemoriesRequest, _ ...grpc.CallOption) (*contract.DeleteForgottenMemoriesResponse, error) {
+	out := &contract.DeleteForgottenMemoriesResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/memories/forgotten/delete", nil, in, out)
+}
+
 func (c *httpClient) ExplainConsolidation(ctx context.Context, in *contract.ExplainConsolidationRequest, _ ...grpc.CallOption) (*contract.ExplainConsolidationResponse, error) {
 	out := &contract.ExplainConsolidationResponse{}
 

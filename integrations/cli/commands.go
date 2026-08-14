@@ -223,6 +223,30 @@ func commands() map[string]command {
 			},
 			run: runSleep,
 		},
+		"forgotten list": {
+			summary: "list memories the sleep cycle forgot, and why",
+			hint:    "[--memory-id ID] [--group G] [--rule consolidation|eviction] [--since T] [--limit N]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("memory-id", "", "a specific memory: did it exist, and when did it go")
+				fs.String("event-id", "", "only memories that belonged to this event")
+				fs.String("group", "", "only memories in this group")
+				fs.String("rule", "", "which path took them: consolidation or eviction (default both)")
+				fs.String("since", "", "only memories forgotten at or after this RFC3339 time")
+				fs.String("until", "", "only memories forgotten before this RFC3339 time")
+				fs.Int64("after-seq", 0, "pagination: the next_seq reported by the previous page")
+				fs.Int32("limit", 0, "records to return (default 100, max 1000)")
+			},
+			run: runForgottenList,
+		},
+		"forgotten clear": {
+			summary: "delete records from the forgotten log (destructive)",
+			hint:    "--before T | --all",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("before", "", "delete records forgotten before this RFC3339 time")
+				fs.Bool("all", false, "delete every record in the log")
+			},
+			run: runForgottenClear,
+		},
 		"purge": {
 			summary: "delete every event and memory (destructive)",
 			hint:    "--yes",
@@ -1014,6 +1038,85 @@ func runSleep(ctx context.Context, client contract.HippocampusClient, fs *pflag.
 	return r.render(resp)
 }
 
+// runForgottenList reads the forgotten log - what the sleep cycle actually deleted, as against
+// PreviewConsolidation's account of what it would delete next.
+func runForgottenList(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	since, err := parseTime(fs, "since")
+	if err != nil {
+		return err
+	}
+
+	until, err := parseTime(fs, "until")
+	if err != nil {
+		return err
+	}
+
+	rule, err := forgetRuleFromFlag(fs, "rule")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.GetForgottenMemories(ctx, &contract.GetForgottenMemoriesRequest{
+		MemoryId: str(fs, "memory-id"),
+		EventId:  str(fs, "event-id"),
+		Group:    str(fs, "group"),
+		Rule:     rule,
+		Since:    since,
+		Until:    until,
+		AfterSeq: i64(fs, "after-seq"),
+		Limit:    i32(fs, "limit"),
+	})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runForgottenClear empties the log. It requires --before or --all for the same reason the RPC
+// does: this is the operation that destroys the record of what was destroyed, and it must never be
+// something a bare command does by default.
+func runForgottenClear(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	before, err := parseTime(fs, "before")
+	if err != nil {
+		return err
+	}
+
+	all := b(fs, "all")
+
+	if before == 0 && !all {
+		return fmt.Errorf("clearing the forgotten log requires --before or --all")
+	}
+
+	resp, err := client.DeleteForgottenMemories(ctx, &contract.DeleteForgottenMemoriesRequest{
+		BeforeTime: before,
+		All:        all,
+	})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// forgetRuleFromFlag maps the --rule flag onto the wire enum; an empty flag means either rule.
+func forgetRuleFromFlag(fs *pflag.FlagSet, name string) (contract.ForgetRule, error) {
+	switch strings.ToLower(str(fs, name)) {
+
+	case "":
+		return contract.ForgetRule_FORGET_RULE_UNSPECIFIED, nil
+
+	case "consolidation":
+		return contract.ForgetRule_FORGET_RULE_CONSOLIDATION, nil
+
+	case "eviction":
+		return contract.ForgetRule_FORGET_RULE_EVICTION, nil
+
+	}
+
+	return 0, fmt.Errorf("invalid --%s %q (want consolidation or eviction)", name, str(fs, name))
+}
+
 func runPurge(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
 	if !b(fs, "yes") {
 		return fmt.Errorf("purge deletes every event and memory; re-run with --yes to confirm")
@@ -1425,6 +1528,12 @@ func str(fs *pflag.FlagSet, name string) string {
 
 func i32(fs *pflag.FlagSet, name string) int32 {
 	value, _ := fs.GetInt32(name)
+
+	return value
+}
+
+func i64(fs *pflag.FlagSet, name string) int64 {
+	value, _ := fs.GetInt64(name)
 
 	return value
 }

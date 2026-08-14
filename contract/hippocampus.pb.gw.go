@@ -139,6 +139,68 @@ func local_request_Hippocampus_ExplainConsolidation_0(ctx context.Context, marsh
 	return msg, metadata, err
 }
 
+var filter_Hippocampus_GetForgottenMemories_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
+
+func request_Hippocampus_GetForgottenMemories_0(ctx context.Context, marshaler runtime.Marshaler, client HippocampusClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq GetForgottenMemoriesRequest
+		metadata runtime.ServerMetadata
+	)
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_Hippocampus_GetForgottenMemories_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	msg, err := client.GetForgottenMemories(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_Hippocampus_GetForgottenMemories_0(ctx context.Context, marshaler runtime.Marshaler, server HippocampusServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq GetForgottenMemoriesRequest
+		metadata runtime.ServerMetadata
+	)
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_Hippocampus_GetForgottenMemories_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	msg, err := server.GetForgottenMemories(ctx, &protoReq)
+	return msg, metadata, err
+}
+
+func request_Hippocampus_DeleteForgottenMemories_0(ctx context.Context, marshaler runtime.Marshaler, client HippocampusClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DeleteForgottenMemoriesRequest
+		metadata runtime.ServerMetadata
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	msg, err := client.DeleteForgottenMemories(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_Hippocampus_DeleteForgottenMemories_0(ctx context.Context, marshaler runtime.Marshaler, server HippocampusServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DeleteForgottenMemoriesRequest
+		metadata runtime.ServerMetadata
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	msg, err := server.DeleteForgottenMemories(ctx, &protoReq)
+	return msg, metadata, err
+}
+
 func request_Hippocampus_WhoAmI_0(ctx context.Context, marshaler runtime.Marshaler, client HippocampusClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var (
 		protoReq EmptyRequest
@@ -1251,6 +1313,46 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_Hippocampus_ExplainConsolidation_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodGet, pattern_Hippocampus_GetForgottenMemories_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetForgottenMemories", runtime.WithHTTPPathPattern("/v1/memories/forgotten"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Hippocampus_GetForgottenMemories_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_GetForgottenMemories_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_Hippocampus_DeleteForgottenMemories_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteForgottenMemories", runtime.WithHTTPPathPattern("/v1/memories/forgotten/delete"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Hippocampus_DeleteForgottenMemories_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_DeleteForgottenMemories_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	mux.Handle(http.MethodGet, pattern_Hippocampus_WhoAmI_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -1919,6 +2021,40 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_Hippocampus_ExplainConsolidation_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodGet, pattern_Hippocampus_GetForgottenMemories_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/GetForgottenMemories", runtime.WithHTTPPathPattern("/v1/memories/forgotten"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Hippocampus_GetForgottenMemories_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_GetForgottenMemories_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_Hippocampus_DeleteForgottenMemories_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteForgottenMemories", runtime.WithHTTPPathPattern("/v1/memories/forgotten/delete"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Hippocampus_DeleteForgottenMemories_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_DeleteForgottenMemories_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	mux.Handle(http.MethodGet, pattern_Hippocampus_WhoAmI_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -2403,6 +2539,8 @@ var (
 	pattern_Hippocampus_Sleep_0                      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "sleep"}, ""))
 	pattern_Hippocampus_PreviewConsolidation_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "sleep", "preview"}, ""))
 	pattern_Hippocampus_ExplainConsolidation_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "consolidation", "explain"}, ""))
+	pattern_Hippocampus_GetForgottenMemories_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "memories", "forgotten"}, ""))
+	pattern_Hippocampus_DeleteForgottenMemories_0    = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v1", "memories", "forgotten", "delete"}, ""))
 	pattern_Hippocampus_WhoAmI_0                     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "whoami"}, ""))
 	pattern_Hippocampus_StoreEvent_0                 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "events"}, ""))
 	pattern_Hippocampus_EndEvent_0                   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3}, []string{"v1", "events", "id", "end"}, ""))
@@ -2438,6 +2576,8 @@ var (
 	forward_Hippocampus_Sleep_0                      = runtime.ForwardResponseMessage
 	forward_Hippocampus_PreviewConsolidation_0       = runtime.ForwardResponseMessage
 	forward_Hippocampus_ExplainConsolidation_0       = runtime.ForwardResponseMessage
+	forward_Hippocampus_GetForgottenMemories_0       = runtime.ForwardResponseMessage
+	forward_Hippocampus_DeleteForgottenMemories_0    = runtime.ForwardResponseMessage
 	forward_Hippocampus_WhoAmI_0                     = runtime.ForwardResponseMessage
 	forward_Hippocampus_StoreEvent_0                 = runtime.ForwardResponseMessage
 	forward_Hippocampus_EndEvent_0                   = runtime.ForwardResponseMessage

@@ -94,6 +94,41 @@ func noopEvents(_ []types.Event) error { return nil }
 
 func noopMemories(_ []types.Memory) error { return nil }
 
+// forgetBothGroups turns the forgotten log on and consolidates every memory in the store, so both
+// groups have a tombstone for the scope checks to tell apart. It uses the real consolidation pass
+// rather than writing rows directly: a tombstone that did not come from a delete would not prove
+// the group was carried across from the memory it records.
+func forgetBothGroups(t *testing.T, s *Server) {
+	t.Helper()
+
+	database, ok := s.db.(*db.DB)
+	if !ok {
+		t.Fatal("the forgotten log needs the concrete store to set its policy")
+	}
+
+	database.SetTombstonePolicy(db.TombstonePolicy{Enabled: true})
+	s.consolidation.tombstones = true
+
+	if _, _, _, err := s.db.ConsolidateEventMemories(context.Background(), consolidateEverything{}); err != nil {
+		t.Fatalf("ConsolidateEventMemories: %s", err)
+	}
+}
+
+// consolidateEverything is a db.Server that forgets whatever it is shown.
+type consolidateEverything struct{}
+
+func (consolidateEverything) ShouldConsolidateMemory(db.MemoryConsolidationCandidate) bool {
+	return true
+}
+
+func (consolidateEverything) ShouldConsolidateEvent(db.EventConsolidationCandidate) bool { return true }
+
+func (consolidateEverything) MemoryValue(db.MemoryConsolidationCandidate) float64 { return 0.25 }
+
+func (consolidateEverything) MemoryRetained(db.MemoryConsolidationCandidate) bool { return false }
+
+func (consolidateEverything) DeletionThreshold() float64 { return 1.0 }
+
 // assertNoLeak requires that no rendered response mentions group b's data.
 func assertNoLeak(t *testing.T, rpc string, rendered string) {
 	t.Helper()
@@ -523,6 +558,48 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 		}
 	})
 
+	t.Run("the forgotten log is scoped to the caller's partition", func(t *testing.T) {
+		forgetBothGroups(t, s)
+
+		res, err := s.GetForgottenMemories(ctx, &contract.GetForgottenMemoriesRequest{})
+		if err != nil {
+			t.Fatalf("GetForgottenMemories: %s", err)
+		}
+
+		if len(res.GetMemories()) != 1 || res.GetMemories()[0].GetId() != "m-a" {
+			t.Fatalf("GetForgottenMemories returned %d records, want only m-a", len(res.GetMemories()))
+		}
+
+		// total counts within the scope too: an unscoped total would report how many of another
+		// group's memories had been forgotten without naming one of them.
+		if res.GetTotal() != 1 {
+			t.Errorf("GetForgottenMemories total = %d, want 1 (the caller's partition only)", res.GetTotal())
+		}
+
+		assertNoLeak(t, "GetForgottenMemories", res.String())
+	})
+
+	t.Run("clearing the forgotten log leaves another group's records alone", func(t *testing.T) {
+		deleted, err := s.DeleteForgottenMemories(ctx, &contract.DeleteForgottenMemoriesRequest{All: true})
+		if err != nil {
+			t.Fatalf("DeleteForgottenMemories: %s", err)
+		}
+
+		if deleted.GetDeleted() != 1 {
+			t.Errorf("DeleteForgottenMemories deleted %d records, want 1", deleted.GetDeleted())
+		}
+
+		// The unscoped view still holds group b's record.
+		remaining, err := s.GetForgottenMemories(context.Background(), &contract.GetForgottenMemoriesRequest{})
+		if err != nil {
+			t.Fatalf("GetForgottenMemories (unscoped): %s", err)
+		}
+
+		if len(remaining.GetMemories()) != 1 || remaining.GetMemories()[0].GetId() != "m-b" {
+			t.Errorf("a scoped clear removed another group's tombstones: %v", remaining.GetMemories())
+		}
+	})
+
 	t.Run("ImportBatch stamps the caller's group", func(t *testing.T) {
 		_, err := s.ImportBatch(ctx, &contract.ImportBatchRequest{
 			Memories: []*contract.Memory{{Id: "imported-1", Body: "x", Significance: 5, Group: "b"}},
@@ -686,10 +763,12 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"SummariseMemories":          true,
 
 		// TestGroupScopeIsolation_Admin
-		"Purge":                true,
-		"Sleep":                true,
-		"PreviewConsolidation": true,
-		"ImportBatch":          true,
+		"Purge":                   true,
+		"Sleep":                   true,
+		"PreviewConsolidation":    true,
+		"ImportBatch":             true,
+		"GetForgottenMemories":    true,
+		"DeleteForgottenMemories": true,
 
 		// Export, Transfer and Clear are covered through walkStore, which is the entirety of what
 		// each of them scopes - they differ only in what they do with the manifest it returns (an S3

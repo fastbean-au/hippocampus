@@ -365,6 +365,36 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     Warn for deployments without a metrics stack. Best-effort: a failure leaves the gauges stale and
     never fails the cycle. `hippocampus.capacity_bytes` is exported beside `used_bytes` so a
     dashboard need not hard-code the limit.
+  - The **forgotten log** (`db/tombstone.go` + `hippocampus/forgotten.go`,
+    `consolidation.tombstones.*`, off by default) is the third leg of the transparency trio and the
+    only one that can speak about a memory that no longer exists: one row per memory the two decay
+    paths delete, carrying id/group/event/significance/stored size, the `value` the pass computed
+    and the `threshold` then in force, the rule, and when. Six things carry it. (1) The write is
+    **inside `deleteMemoriesIfUnrecalled`**, not on `SetMemoryDeleteObserver` — that seam fires
+    post-commit with ids only, by which point the row is gone and the fields a tombstone needs are
+    unreadable. The rule travels in as a `forgetReason` parameter because the chokepoint also serves
+    `Clear`, which is data movement rather than forgetting and passes the zero reason; the
+    client-initiated deletes never reach it at all. (2) The capture is a **primary-key lookup over
+    the rows a chunk is about to delete**, joined to `significance_levels` for the frozen rank —
+    which is what keeps the consolidation scans on the covering index, since they deliberately never
+    read `group_name` or `length(body)`. Only `value` comes from the pass, computed only when the log
+    is on. (3) Capture before, write after, **filtered by the ids that actually went**, so the
+    recall-race guard can never leave a record claiming a surviving memory was forgotten. (4) A write
+    failure **fails the batch** — it is in the delete's transaction, so on Postgres best-effort is not
+    available, and the honest reading is right anyway. (5) It must not eat the store it lives in:
+    `maxRows`/`maxAgeInDays` are defaulted even though the feature is off, trimmed by
+    `PruneTombstones` from the cycle (before `preserve()`), and the log is **excluded from
+    `UsedBytes`** — the server drivers count live rows and exclude it already, but SQLite's page
+    accounting would otherwise let the record of what was evicted raise capacity pressure and evict
+    live memories to make room for itself. That exclusion is `COUNT(*)` × a flat allowance, not a
+    scan of the log (item 25.9). The row cap needs the surrogate `seq`, since a whole batch shares one
+    `forgotten_at`; `seq` also gives the reader keyset pagination and lets an id be forgotten twice.
+    (6) **Disabling deletes nothing**: `PruneTombstones` is gated on `enabled`, not only on the caps,
+    so turning the feature off stops the writing _and_ the trimming; emptying the log is always
+    `DeleteForgottenMemories`, which refuses an empty request. `Purge` is the one exception, and is
+    itself the explicit request to leave nothing behind. Both RPCs are `admin` but **scoped by
+    predicate**, not refused like the preview — a tombstone carries its memory's group. Bodies are
+    never recorded; not on the MCP surface. See TODO 57.2.
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.

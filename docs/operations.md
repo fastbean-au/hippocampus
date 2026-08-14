@@ -395,6 +395,74 @@ The embedded console's **Decay** tab is this RPC: a value column in the memory a
 pressure and threshold, and the plotted curve. Clicking a memory's value plots that memory's own
 curve. For an administrator the same tab also runs the dry run above.
 
+### What was forgotten — the forgotten log
+
+The dry run says what would go and the explanation says where a memory stands; both speak only
+about memories that are still there. The **forgotten log** is the third and it is the only one that
+can speak about a memory that is not: one record per memory a cycle actually deleted, kept in the
+store beside the memories that survived.
+
+It is optional and off by default:
+
+```json
+"consolidation": {
+  "tombstones": {
+    "enabled": true,
+    "maxRows": 100000,
+    "maxAgeInDays": 30
+  }
+}
+```
+
+```bash
+hippo forgotten list                                     # the most recent page
+hippo forgotten list --memory-id abc123                  # did this memory exist, and when did it go
+hippo forgotten list --rule eviction --group ingest      # only what went to meet the byte capacity
+hippo forgotten clear --before 2026-07-01T00:00:00Z      # or --all
+```
+
+Each record carries the memory's id, group, event, significance, stored size, the `value` the decay
+algorithm gave it and the `threshold` it was measured against **at that moment**, the `rule` that
+took it, its creation and recall timestamps, and when it went. The threshold is recorded per record
+rather than inferred, because it moves with capacity pressure: without it a value from last month
+means nothing today.
+
+**Bodies are never kept.** A tombstone records that a memory was forgotten, not what it said; this
+is not an undelete, and building one on top of it is a different feature entirely.
+
+Four things to know before turning it on.
+
+- **It records forgetting, not deletion.** The two decay paths write records; `Clear` (which
+  deletes memories an `Export`/`Transfer` has already moved elsewhere) and the client-initiated
+  deletes (`DeleteMemories`, `DeleteEvent --memories`, summary replacement) do not. Nothing was
+  lost in those cases, and a log claiming otherwise would be worse than no log.
+- **It is bounded, and the bounds matter.** The log lives in the store it describes, so an
+  unbounded one would slowly consume the headroom that drives forgetting. `maxRows` and
+  `maxAgeInDays` are applied at the end of every cycle and a record past either bound is trimmed;
+  setting both to 0 removes the bounds, which is supported and warned about at startup. The log is
+  excluded from the store's measured size, so it never raises capacity pressure or triggers
+  eviction — but it does still occupy disk.
+- **Turning it off does not delete anything.** Disabling stops the writing _and_ the trimming, so
+  what was already recorded stays readable. Emptying the log is always an explicit request
+  (`hippo forgotten clear`, `POST /v1/memories/forgotten/delete`) — a configuration change must
+  never destroy a record somebody kept. The one exception is `Purge`, which empties everything by
+  definition.
+- **Recording is part of the delete.** A record that cannot be written fails that batch of
+  deletions rather than letting the memories go unrecorded; the cycle reports the failure and the
+  memories are reconsidered next time.
+
+Both RPCs are `admin`-tier, for the reason the dry run is: the log names ids, groups and
+significances across the store, for memories that can no longer be reached (or scoped away) through
+`GetMemories`. They honour group scoping as a predicate, so a group-scoped token sees — and can
+clear — only its own partition's losses.
+
+Two metrics come with it: `hippocampus.tombstones` (records held, measured each cycle) and
+`hippocampus.tombstones.deleted` (records removed, by whether it was a manual clear or the caps).
+What was forgotten and by which rule is already reported by `hippocampus.memories.consolidated` and
+`hippocampus.memories.evicted`.
+
+The console's **Decay** tab shows the log beside the dry run, for an administrator.
+
 ## Backup, restore, and migration
 
 Two complementary approaches:

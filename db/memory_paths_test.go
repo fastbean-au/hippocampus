@@ -347,7 +347,7 @@ func TestDeleteMemoriesIfUnrecalled_Failures(t *testing.T) {
 			d, mock := newMockDB(t, driverSQLite)
 			test.expect(mock)
 
-			if _, err := d.deleteMemoriesIfUnrecalled(context.Background(), snapshots); err == nil {
+			if _, err := d.deleteMemoriesIfUnrecalled(context.Background(), snapshots, forgetReason{}); err == nil {
 				t.Fatal("expected the failure to propagate")
 			}
 

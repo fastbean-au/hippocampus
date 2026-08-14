@@ -154,6 +154,13 @@ var policies = map[string]rpcPolicy{
 	// trigger a real cycle.
 	"PreviewConsolidation": {TierAdmin, http.MethodGet, "/v1/sleep/preview"},
 
+	// The forgotten log is admin for the same reason the preview is: it names ids, groups and
+	// significances of memories across the store, and it does so for memories that no longer exist
+	// and therefore can no longer be reached (or scoped away) through GetMemories. Emptying it is a
+	// destructive operation on an audit record, which puts it in the same tier by any reading.
+	"GetForgottenMemories":    {TierAdmin, http.MethodGet, "/v1/memories/forgotten"},
+	"DeleteForgottenMemories": {TierAdmin, http.MethodPost, "/v1/memories/forgotten/delete"},
+
 	"Export":   {TierAdmin, http.MethodPost, "/v1/export"},
 	"Transfer": {TierAdmin, http.MethodPost, "/v1/transfer"},
 	"Clear":    {TierAdmin, http.MethodPost, "/v1/clear"},

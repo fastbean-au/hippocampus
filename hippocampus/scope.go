@@ -72,6 +72,13 @@ var scopes = map[string]scopeMode{
 	"GetMemories":    scopeFilter,
 	"SearchMemories": scopeFilter,
 
+	// The forgotten log. A tombstone carries the group its memory had, so both RPCs take the scope
+	// as a predicate like any other listing - which is also why neither is scopeUnbound despite
+	// both being admin: unlike the preview, they speak only about records that were already the
+	// caller's. A scoped clear therefore empties that caller's partition of the log and no more.
+	"GetForgottenMemories":    scopeFilter,
+	"DeleteForgottenMemories": scopeFilter,
+
 	// GetSummarisationCandidates serves a cache the sleep cycle populated store-wide, so it filters
 	// that cache by the caller's scope on the way out rather than at the scan - the scan is
 	// server-owned and must keep seeing every group, or the groups it skipped would never be

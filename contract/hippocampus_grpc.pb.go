@@ -23,6 +23,8 @@ const (
 	Hippocampus_Sleep_FullMethodName                      = "/hippocampus.v1.Hippocampus/Sleep"
 	Hippocampus_PreviewConsolidation_FullMethodName       = "/hippocampus.v1.Hippocampus/PreviewConsolidation"
 	Hippocampus_ExplainConsolidation_FullMethodName       = "/hippocampus.v1.Hippocampus/ExplainConsolidation"
+	Hippocampus_GetForgottenMemories_FullMethodName       = "/hippocampus.v1.Hippocampus/GetForgottenMemories"
+	Hippocampus_DeleteForgottenMemories_FullMethodName    = "/hippocampus.v1.Hippocampus/DeleteForgottenMemories"
 	Hippocampus_WhoAmI_FullMethodName                     = "/hippocampus.v1.Hippocampus/WhoAmI"
 	Hippocampus_StoreEvent_FullMethodName                 = "/hippocampus.v1.Hippocampus/StoreEvent"
 	Hippocampus_EndEvent_FullMethodName                   = "/hippocampus.v1.Hippocampus/EndEvent"
@@ -90,6 +92,23 @@ type HippocampusClient interface {
 	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
 	// whose configuration is not the one its store is consolidated under.
 	ExplainConsolidation(ctx context.Context, in *ExplainConsolidationRequest, opts ...grpc.CallOption) (*ExplainConsolidationResponse, error)
+	// GetForgottenMemories reads the forgotten log: one record per memory the sleep cycle actually
+	// deleted, with the decision that took it. Where PreviewConsolidation answers "what would go"
+	// and ExplainConsolidation "where does this memory stand", this answers "what went, and why" -
+	// the only one of the three that can speak about a memory that no longer exists.
+	//
+	// It is optional and off by default (consolidation.tombstones.enabled): a store that is not
+	// recording returns an empty log rather than an error, since "nothing was recorded" is the
+	// honest answer to what was forgotten. Records carry no body - a tombstone reports that
+	// something was lost and is deliberately not an undelete.
+	GetForgottenMemories(ctx context.Context, in *GetForgottenMemoriesRequest, opts ...grpc.CallOption) (*GetForgottenMemoriesResponse, error)
+	// DeleteForgottenMemories empties the forgotten log, or the part of it older than before_time.
+	//
+	// It exists because the log's automatic bounds (consolidation.tombstones.maxRows/maxAgeInDays)
+	// only apply while recording is enabled: turning the feature off deliberately leaves what was
+	// already recorded in place, so that a configuration change never destroys a record somebody
+	// kept. Removing it is therefore always an explicit request - this one.
+	DeleteForgottenMemories(ctx context.Context, in *DeleteForgottenMemoriesRequest, opts ...grpc.CallOption) (*DeleteForgottenMemoriesResponse, error)
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -244,6 +263,26 @@ func (c *hippocampusClient) ExplainConsolidation(ctx context.Context, in *Explai
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExplainConsolidationResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_ExplainConsolidation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) GetForgottenMemories(ctx context.Context, in *GetForgottenMemoriesRequest, opts ...grpc.CallOption) (*GetForgottenMemoriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetForgottenMemoriesResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetForgottenMemories_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) DeleteForgottenMemories(ctx context.Context, in *DeleteForgottenMemoriesRequest, opts ...grpc.CallOption) (*DeleteForgottenMemoriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteForgottenMemoriesResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_DeleteForgottenMemories_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -567,6 +606,23 @@ type HippocampusServer interface {
 	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
 	// whose configuration is not the one its store is consolidated under.
 	ExplainConsolidation(context.Context, *ExplainConsolidationRequest) (*ExplainConsolidationResponse, error)
+	// GetForgottenMemories reads the forgotten log: one record per memory the sleep cycle actually
+	// deleted, with the decision that took it. Where PreviewConsolidation answers "what would go"
+	// and ExplainConsolidation "where does this memory stand", this answers "what went, and why" -
+	// the only one of the three that can speak about a memory that no longer exists.
+	//
+	// It is optional and off by default (consolidation.tombstones.enabled): a store that is not
+	// recording returns an empty log rather than an error, since "nothing was recorded" is the
+	// honest answer to what was forgotten. Records carry no body - a tombstone reports that
+	// something was lost and is deliberately not an undelete.
+	GetForgottenMemories(context.Context, *GetForgottenMemoriesRequest) (*GetForgottenMemoriesResponse, error)
+	// DeleteForgottenMemories empties the forgotten log, or the part of it older than before_time.
+	//
+	// It exists because the log's automatic bounds (consolidation.tombstones.maxRows/maxAgeInDays)
+	// only apply while recording is enabled: turning the feature off deliberately leaves what was
+	// already recorded in place, so that a configuration change never destroys a record somebody
+	// kept. Removing it is therefore always an explicit request - this one.
+	DeleteForgottenMemories(context.Context, *DeleteForgottenMemoriesRequest) (*DeleteForgottenMemoriesResponse, error)
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -698,6 +754,12 @@ func (UnimplementedHippocampusServer) PreviewConsolidation(context.Context, *Pre
 }
 func (UnimplementedHippocampusServer) ExplainConsolidation(context.Context, *ExplainConsolidationRequest) (*ExplainConsolidationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExplainConsolidation not implemented")
+}
+func (UnimplementedHippocampusServer) GetForgottenMemories(context.Context, *GetForgottenMemoriesRequest) (*GetForgottenMemoriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetForgottenMemories not implemented")
+}
+func (UnimplementedHippocampusServer) DeleteForgottenMemories(context.Context, *DeleteForgottenMemoriesRequest) (*DeleteForgottenMemoriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteForgottenMemories not implemented")
 }
 func (UnimplementedHippocampusServer) WhoAmI(context.Context, *EmptyRequest) (*WhoAmIResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WhoAmI not implemented")
@@ -872,6 +934,42 @@ func _Hippocampus_ExplainConsolidation_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HippocampusServer).ExplainConsolidation(ctx, req.(*ExplainConsolidationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_GetForgottenMemories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetForgottenMemoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).GetForgottenMemories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_GetForgottenMemories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).GetForgottenMemories(ctx, req.(*GetForgottenMemoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_DeleteForgottenMemories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteForgottenMemoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).DeleteForgottenMemories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_DeleteForgottenMemories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).DeleteForgottenMemories(ctx, req.(*DeleteForgottenMemoriesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1402,6 +1500,14 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExplainConsolidation",
 			Handler:    _Hippocampus_ExplainConsolidation_Handler,
+		},
+		{
+			MethodName: "GetForgottenMemories",
+			Handler:    _Hippocampus_GetForgottenMemories_Handler,
+		},
+		{
+			MethodName: "DeleteForgottenMemories",
+			Handler:    _Hippocampus_DeleteForgottenMemories_Handler,
 		},
 		{
 			MethodName: "WhoAmI",

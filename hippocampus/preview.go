@@ -51,6 +51,14 @@ func (d previewDecider) ShouldConsolidateEvent(candidate db.EventConsolidationCa
 	return d.server.shouldConsolidateEventUnder(candidate, d.capacityPressure)
 }
 
+// DeletionThreshold reports the threshold under the preview's own snapshot pressure, for the same
+// reason every other method here does: reading the server's live field mid-scan would be a data
+// race against the sleep goroutine. The preview never writes tombstones - it deletes nothing - so
+// this exists only to satisfy db.Server.
+func (d previewDecider) DeletionThreshold() float64 {
+	return d.server.deletionThresholdUnder(d.capacityPressure)
+}
+
 // PreviewConsolidation reports what a consolidation cycle would forget if one ran now, and deletes
 // nothing.
 //

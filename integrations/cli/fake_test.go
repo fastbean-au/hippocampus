@@ -40,6 +40,18 @@ func (f *fakeClient) PreviewConsolidation(_ context.Context, in *contract.Previe
 	return &contract.PreviewConsolidationResponse{}, f.err
 }
 
+func (f *fakeClient) GetForgottenMemories(_ context.Context, in *contract.GetForgottenMemoriesRequest, _ ...grpc.CallOption) (*contract.GetForgottenMemoriesResponse, error) {
+	f.capture(in)
+
+	return &contract.GetForgottenMemoriesResponse{Enabled: true}, f.err
+}
+
+func (f *fakeClient) DeleteForgottenMemories(_ context.Context, in *contract.DeleteForgottenMemoriesRequest, _ ...grpc.CallOption) (*contract.DeleteForgottenMemoriesResponse, error) {
+	f.capture(in)
+
+	return &contract.DeleteForgottenMemoriesResponse{}, f.err
+}
+
 func (f *fakeClient) ExplainConsolidation(_ context.Context, in *contract.ExplainConsolidationRequest, _ ...grpc.CallOption) (*contract.ExplainConsolidationResponse, error) {
 	f.capture(in)
 

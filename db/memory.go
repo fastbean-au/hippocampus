@@ -512,6 +512,12 @@ type memoryRecallSnapshot struct {
 	id           string
 	timeRecalled int64
 	recallCount  int32
+
+	// value is the decayed value the pass computed to select this memory, carried through to its
+	// tombstone (see tombstone.go). It is the number the decision turned on, and the scan already
+	// has it, so recording it costs nothing here; it is unused when the forgotten log is off, and
+	// meaningless for Clear, which selects rows by manifest rather than by value.
+	value float64
 }
 
 // deleteMemoriesIfUnrecalled deletes each memory only if its time_recalled/recall_count still
@@ -533,7 +539,18 @@ type memoryRecallSnapshot struct {
 // of the rows actually deleted, so the optional search index learns about deletions that never
 // pass through the RPC layer. All three consolidation/eviction paths funnel through here, so
 // this is the single propagation point for them.
-func (d *DB) deleteMemoriesIfUnrecalled(ctx context.Context, items []memoryRecallSnapshot) ([]string, error) {
+//
+// reason names why the memories are going, and is what the optional forgotten log records (see
+// tombstone.go). Being a chokepoint for Clear as well as for the two forgetting paths, it cannot
+// infer the rule: Clear passes the zero reason and writes nothing, which is the distinction
+// between data movement and forgetting. Each chunk's tombstones are captured before its delete
+// and written after it, inside the same transaction, so the log can never claim a memory the
+// recall-race guard spared.
+func (d *DB) deleteMemoriesIfUnrecalled(
+	ctx context.Context,
+	items []memoryRecallSnapshot,
+	reason forgetReason,
+) ([]string, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
@@ -544,16 +561,37 @@ func (d *DB) deleteMemoriesIfUnrecalled(ctx context.Context, items []memoryRecal
 	}
 	defer cancel()
 
+	recording := reason.recording()
 	deletedIds := make([]string, 0, len(items))
 
 	for start := 0; start < len(items); start += deleteChunkSize {
 		end := min(start+deleteChunkSize, len(items))
+		chunk := items[start:end]
 
-		ids, err := d.deleteChunkIfUnrecalled(tx, items[start:end])
+		var captured map[string]tombstoneRow
+
+		if recording {
+			captured, err = d.recordTombstones(tx, chunk)
+			if err != nil {
+				_ = tx.Rollback()
+
+				return nil, err
+			}
+		}
+
+		ids, err := d.deleteChunkIfUnrecalled(tx, chunk)
 		if err != nil {
 			_ = tx.Rollback()
 
 			return nil, err
+		}
+
+		if recording {
+			if err := d.writeTombstones(tx, captured, ids, reason); err != nil {
+				_ = tx.Rollback()
+
+				return nil, err
+			}
 		}
 
 		deletedIds = append(deletedIds, ids...)
@@ -1649,6 +1687,7 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 	defer func() { _ = rows.Close() }()
 
 	var deletions []memoryRecallSnapshot
+	reason := d.forgetReasonFor(ForgetRuleConsolidation, s)
 
 	for rows.Next() {
 		var id string
@@ -1671,11 +1710,19 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 		candidate.MemorySignificance = rankOf(ranks, levelID)
 
 		if s.ShouldConsolidateMemory(candidate) {
-			deletions = append(deletions, memoryRecallSnapshot{
+			deletion := memoryRecallSnapshot{
 				id:           id,
 				timeRecalled: candidate.TimeRecalled,
 				recallCount:  candidate.RecallCount,
-			})
+			}
+
+			// The value is only computed when it will be recorded: unlike eviction, this pass
+			// decides on a boolean and never needs the number otherwise.
+			if reason.recording() {
+				deletion.value = s.MemoryValue(candidate)
+			}
+
+			deletions = append(deletions, deletion)
 		}
 	}
 
@@ -1687,7 +1734,7 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 
 	_ = rows.Close()
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions)
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions, reason)
 	if err != nil {
 		log.Errorf("failed to delete consolidated memories: %s", err.Error())
 
@@ -1833,6 +1880,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 			id:           c.id,
 			timeRecalled: c.timeRecalled,
 			recallCount:  c.recallCount,
+			value:        c.value,
 		})
 
 		if c.eventId != "" {
@@ -1840,7 +1888,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		}
 	}
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions)
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions, d.forgetReasonFor(ForgetRuleEviction, s))
 	if err != nil {
 		log.Errorf("failed to delete evicted memories: %s", err.Error())
 
@@ -1928,6 +1976,7 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 
 	eventDeletions := make(map[string]EventDeletion)
 	var memoryDeletions []memoryRecallSnapshot
+	reason := d.forgetReasonFor(ForgetRuleConsolidation, s)
 
 	ranks, err := d.loadSignificanceRanks(ctx)
 	if err != nil {
@@ -2000,11 +2049,17 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 		}
 
 		if s.ShouldConsolidateMemory(candidate) {
-			memoryDeletions = append(memoryDeletions, memoryRecallSnapshot{
+			deletion := memoryRecallSnapshot{
 				id:           id,
 				timeRecalled: candidate.TimeRecalled,
 				recallCount:  candidate.RecallCount,
-			})
+			}
+
+			if reason.recording() {
+				deletion.value = s.MemoryValue(candidate)
+			}
+
+			memoryDeletions = append(memoryDeletions, deletion)
 		} else if eventExists {
 			eventDeletion := eventDeletions[eventId]
 			eventDeletion.undeletedMemory = true
@@ -2023,7 +2078,7 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 	// retErr carries the first failure encountered from here on. The bulk delete and the per-event
 	// cleanup below are best-effort - a failure on one event must not stop the others - so they log
 	// and carry on, but the error is still surfaced so the sleep cycle's success metric reflects it.
-	deletedIds, retErr := d.deleteMemoriesIfUnrecalled(ctx, memoryDeletions)
+	deletedIds, retErr := d.deleteMemoriesIfUnrecalled(ctx, memoryDeletions, reason)
 	if retErr != nil {
 		log.Errorf("failed to delete consolidated memories: %s", retErr.Error())
 	}

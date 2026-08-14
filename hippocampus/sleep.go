@@ -36,6 +36,10 @@ func (s *Server) sleep() error {
 
 	e2 := s.evict(ctx)
 
+	// Before preserve(), so pages the trimmed log frees are returned by the same compaction that
+	// returns the ones consolidation freed.
+	s.pruneTombstones(ctx)
+
 	e3 := s.preserve(ctx)
 
 	// Best-effort registry maintenance: keeps significance ranks compact and inside int32 after
@@ -527,13 +531,26 @@ func (s *Server) shouldConsolidateUnder(significance float64, timestamp int64, p
 		return false
 	}
 
-	val := s.calculateValue(significance, ageUnits)
+	return s.calculateValue(significance, ageUnits) < s.deletionThresholdUnder(pressure)
+}
 
+// DeletionThreshold is the value a memory must stay above to survive consolidation, as it stands
+// for the current cycle: the configured threshold scaled by the capacity pressure the last cycle
+// computed. The forgotten log records it beside each memory's value (see db/tombstone.go), because
+// pressure moves and a value with nothing to measure it against records nothing.
+func (s *Server) DeletionThreshold() float64 {
+	return s.deletionThresholdUnder(s.consolidation.capacityPressure)
+}
+
+// deletionThresholdUnder is DeletionThreshold against an explicitly supplied capacity pressure,
+// for the same callers shouldConsolidateUnder has. A non-positive pressure means "no reading yet"
+// - the first cycle, or both capacities disabled - and leaves the threshold unscaled.
+func (s *Server) deletionThresholdUnder(pressure float64) float64 {
 	if pressure <= 0 {
 		pressure = 1.0
 	}
 
-	return val < s.consolidation.deletionThreshold*pressure
+	return s.consolidation.deletionThreshold * pressure
 }
 
 // calculateCapacityPressure returns the multiplier applied to the deletion threshold based on how

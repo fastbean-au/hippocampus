@@ -289,6 +289,13 @@ func setStartupDefaults() {
 	viper.SetDefault("search.significanceWeight", 0.3)
 	viper.SetDefault("search.recallWeight", 0.2)
 
+	// The forgotten log (see docs/operations.md). Off by default - it costs a row per forgotten
+	// memory - but its bounds are defaulted anyway, so that turning it on gets a log that is
+	// already bounded rather than one that grows until somebody notices. An explicit 0 on either
+	// disables that bound.
+	viper.SetDefault("consolidation.tombstones.maxRows", 100000)
+	viper.SetDefault("consolidation.tombstones.maxAgeInDays", 30)
+
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
 	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
@@ -416,6 +423,25 @@ func run(ctx context.Context, version versionInfo) error {
 		viper.GetBool("storage.compression.enabled"),
 		viper.GetInt("storage.compression.minBytes"),
 	)
+
+	// The forgotten log: a record of what the sleep cycle deleted, and why. Off by default, and
+	// bounded when on - an unbounded log inside the store it describes would consume the headroom
+	// that drives forgetting.
+	tombstones := db.TombstonePolicy{
+		Enabled:      viper.GetBool("consolidation.tombstones.enabled"),
+		MaxRows:      viper.GetInt("consolidation.tombstones.maxRows"),
+		MaxAgeInDays: viper.GetInt("consolidation.tombstones.maxAgeInDays"),
+	}
+
+	if tombstones.Enabled && tombstones.MaxRows <= 0 && tombstones.MaxAgeInDays <= 0 {
+		log.Warn(
+			"the forgotten log is enabled with neither consolidation.tombstones.maxRows nor " +
+				"maxAgeInDays set, so it will grow without bound; it is excluded from the capacity " +
+				"target but not from the disk",
+		)
+	}
+
+	database.SetTombstonePolicy(tombstones)
 
 	log.Debug("database initialised")
 
@@ -1503,6 +1529,17 @@ func validateConfig() error {
 	// keys, not storage.directory.
 	if viper.GetString("storage.driver") == "sqlite" && viper.GetString("storage.directory") == "" {
 		return fmt.Errorf("storage.directory must be set for storage.driver 'sqlite' (an empty directory selects the test-only in-memory database)")
+	}
+
+	// The forgotten log's bounds. A negative value is meaningless (0 disables that bound), and
+	// getting the sign wrong on the one thing standing between an optional log and unbounded growth
+	// should not be discoverable only by watching the store fill.
+	if maxRows := viper.GetInt("consolidation.tombstones.maxRows"); maxRows < 0 {
+		return fmt.Errorf("consolidation.tombstones.maxRows must not be negative, got %d", maxRows)
+	}
+
+	if maxAge := viper.GetInt("consolidation.tombstones.maxAgeInDays"); maxAge < 0 {
+		return fmt.Errorf("consolidation.tombstones.maxAgeInDays must not be negative, got %d", maxAge)
 	}
 
 	return nil

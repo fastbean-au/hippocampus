@@ -1082,6 +1082,38 @@ const STEPS = [
           },
         ],
       },
+      {
+        title: "Forgotten log",
+        blurb:
+          "Keep a record of what each cycle deleted — id, group, event, significance, the value and threshold that decided it, and when. No bodies are kept: this says a memory was forgotten, not what it said.",
+        fields: [
+          {
+            key: "consolidation.tombstones.enabled",
+            label: "Record what is forgotten",
+            type: "bool",
+            def: false,
+            help: "Off by default: it costs a row per forgotten memory. Turning it off later leaves what was already recorded in place — clearing the log is always a separate, explicit request.",
+          },
+          {
+            key: "consolidation.tombstones.maxRows",
+            label: "Keep at most (records)",
+            type: "int",
+            def: 100000,
+            svc: 100000,
+            when: (s) => value(s, "consolidation.tombstones.enabled"),
+            help: "Trimmed at the end of each cycle. 0 removes the bound, which lets the log grow until the disk stops it.",
+          },
+          {
+            key: "consolidation.tombstones.maxAgeInDays",
+            label: "Keep for at most (days)",
+            type: "int",
+            def: 30,
+            svc: 30,
+            when: (s) => value(s, "consolidation.tombstones.enabled"),
+            help: "Applied alongside the record cap — a record past either bound is trimmed. 0 removes this bound.",
+          },
+        ],
+      },
     ],
   },
   {

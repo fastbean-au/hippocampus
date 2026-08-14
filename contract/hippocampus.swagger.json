@@ -1063,6 +1063,131 @@
         ]
       }
     },
+    "/v1/memories/forgotten": {
+      "get": {
+        "summary": "GetForgottenMemories reads the forgotten log: one record per memory the sleep cycle actually\ndeleted, with the decision that took it. Where PreviewConsolidation answers \"what would go\"\nand ExplainConsolidation \"where does this memory stand\", this answers \"what went, and why\" -\nthe only one of the three that can speak about a memory that no longer exists.",
+        "description": "It is optional and off by default (consolidation.tombstones.enabled): a store that is not\nrecording returns an empty log rather than an error, since \"nothing was recorded\" is the\nhonest answer to what was forgotten. Records carry no body - a tombstone reports that\nsomething was lost and is deliberately not an undelete.",
+        "operationId": "Hippocampus_GetForgottenMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetForgottenMemoriesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "memoryId",
+            "description": "a specific memory - \"did this exist, and when did it go\"",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "eventId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "rule",
+            "description": "UNSPECIFIED returns both rules\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "FORGET_RULE_UNSPECIFIED",
+              "FORGET_RULE_CONSOLIDATION",
+              "FORGET_RULE_EVICTION"
+            ],
+            "default": "FORGET_RULE_UNSPECIFIED"
+          },
+          {
+            "name": "since",
+            "description": "UnixNano, inclusive lower bound on forgotten_at",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "until",
+            "description": "UnixNano, exclusive upper bound on forgotten_at",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "afterSeq",
+            "description": "pagination: return records below this seq (pass the lowest seq of the previous page)",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "limit",
+            "description": "\u003c= 0 selects the default (100), values above the cap (1000) are clamped down to it",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/memories/forgotten/delete": {
+      "post": {
+        "summary": "DeleteForgottenMemories empties the forgotten log, or the part of it older than before_time.",
+        "description": "It exists because the log's automatic bounds (consolidation.tombstones.maxRows/maxAgeInDays)\nonly apply while recording is enabled: turning the feature off deliberately leaves what was\nalready recorded in place, so that a configuration change never destroys a record somebody\nkept. Removing it is therefore always an explicit request - this one.",
+        "operationId": "Hippocampus_DeleteForgottenMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteForgottenMemoriesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "DeleteForgottenMemoriesRequest empties the forgotten log. Supply before_time to delete only what\nwas forgotten before it, or all to empty the log entirely - one of the two is required, so an\nempty request can never silently discard the whole log.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1DeleteForgottenMemoriesRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/memories/recall": {
       "post": {
         "summary": "RecallMemories returns the requested memories and reinforces each one: its recall time is\nreset to now (resetting its decay clock) and its recall count is incremented (raising its\neffective significance during consolidation). A reader-tier caller for whom reinforcement is\ndisabled (auth.readerRecallReinforces) gets a plain, non-reinforcing read instead; writer and\nadmin callers always reinforce.",
@@ -1758,6 +1883,30 @@
       },
       "description": "DecayPoint is one sample of a decay curve: the value the configured algorithm gives an item of the\nrequested significance once its decay clock reads age_days."
     },
+    "v1DeleteForgottenMemoriesRequest": {
+      "type": "object",
+      "properties": {
+        "beforeTime": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; deletes records forgotten before this"
+        },
+        "all": {
+          "type": "boolean",
+          "title": "delete every record; ignored when before_time is set"
+        }
+      },
+      "description": "DeleteForgottenMemoriesRequest empties the forgotten log. Supply before_time to delete only what\nwas forgotten before it, or all to empty the log entirely - one of the two is required, so an\nempty request can never silently discard the whole log."
+    },
+    "v1DeleteForgottenMemoriesResponse": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
     "v1DeleteMemoriesRequest": {
       "type": "object",
       "properties": {
@@ -2040,6 +2189,71 @@
       "default": "FORGET_RULE_UNSPECIFIED",
       "description": "ForgetRule names why a memory appears in a consolidation preview - which of the two independent\ndeletion paths selected it. The distinction matters when tuning: a memory forgotten by\nCONSOLIDATION decayed below the threshold and is answered by the decay settings\n(aggressiveness, deletionThreshold, unitsOfAgeInDays), while one forgotten by EVICTION was\nstill valuable enough to keep and went only because the store is over its byte capacity - which\nis answered by capacityBytes, or by storing less.\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity"
     },
+    "v1ForgottenMemory": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "string",
+          "format": "int64",
+          "title": "the log's own monotonic key; pass the lowest seen back as after_seq to page"
+        },
+        "id": {
+          "type": "string",
+          "title": "the forgotten memory's id"
+        },
+        "eventId": {
+          "type": "string",
+          "title": "empty for a memory with no event"
+        },
+        "group": {
+          "type": "string"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32",
+          "title": "the memory's significance, as ranked when it went"
+        },
+        "value": {
+          "type": "number",
+          "format": "double",
+          "title": "its computed decayed value at that moment (see docs/consolidation.md)"
+        },
+        "threshold": {
+          "type": "number",
+          "format": "double",
+          "title": "the capacity-pressure-scaled deletion threshold then in force"
+        },
+        "bodyBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "stored size of the body it held, after compression"
+        },
+        "rule": {
+          "$ref": "#/definitions/v1ForgetRule",
+          "title": "which path took it"
+        },
+        "timeStamp": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano the memory was created"
+        },
+        "timeRecalled": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano of its last recall; 0 if never recalled"
+        },
+        "recallCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "forgottenAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano the cycle deleted it"
+        }
+      },
+      "description": "ForgottenMemory is one record from the forgotten log: a memory the sleep cycle deleted, and the\ndecision that took it. value and threshold are the two sides of the comparison as they stood at\nthat moment - the threshold moves with capacity pressure, so recording it is what keeps value\ninterpretable afterwards.\n\nThere is no body, and there never will be: this says a memory was forgotten, not what it said."
+    },
     "v1GeneralResponse": {
       "type": "object",
       "properties": {
@@ -2072,6 +2286,31 @@
           "title": "events matching the filter, ignoring limit/offset — for pagination"
         }
       }
+    },
+    "v1GetForgottenMemoriesResponse": {
+      "type": "object",
+      "properties": {
+        "memories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ForgottenMemory"
+          }
+        },
+        "total": {
+          "type": "string",
+          "format": "int64"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "nextSeq": {
+          "type": "string",
+          "format": "int64",
+          "title": "pass as after_seq for the next page; 0 when the page is the last"
+        }
+      },
+      "description": "GetForgottenMemoriesResponse carries one page of the log. total counts every record the log\nholds within the caller's scope, not the filtered subset, so a client can show how much history\nexists behind the page it is looking at.\n\nenabled reports whether the service is currently recording. It matters because an empty page is\nambiguous without it: nothing has been forgotten, or nothing is being written down."
     },
     "v1GetLinksResponse": {
       "type": "object",

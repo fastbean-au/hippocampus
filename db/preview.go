@@ -40,9 +40,14 @@ func PreviewLimit(requested int) int {
 type ForgetRule int
 
 const (
+	// ForgetRuleNone is the zero value: no rule. A deletion carrying it is not forgetting at all -
+	// it is Clear moving data, or a client deleting by id - and the forgotten log ignores it (see
+	// tombstone.go). As a filter it means "either rule".
+	ForgetRuleNone ForgetRule = iota
+
 	// ForgetRuleConsolidation is the value-based path: the memory's decayed value fell below the
 	// capacity-pressure-scaled deletion threshold.
-	ForgetRuleConsolidation ForgetRule = iota + 1
+	ForgetRuleConsolidation
 
 	// ForgetRuleEviction is the capacity path: the memory was still above the threshold and went
 	// only to bring the store back under its byte capacity.

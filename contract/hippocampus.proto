@@ -58,6 +58,34 @@ service Hippocampus {
 		};
 	}
 
+	// GetForgottenMemories reads the forgotten log: one record per memory the sleep cycle actually
+	// deleted, with the decision that took it. Where PreviewConsolidation answers "what would go"
+	// and ExplainConsolidation "where does this memory stand", this answers "what went, and why" -
+	// the only one of the three that can speak about a memory that no longer exists.
+	//
+	// It is optional and off by default (consolidation.tombstones.enabled): a store that is not
+	// recording returns an empty log rather than an error, since "nothing was recorded" is the
+	// honest answer to what was forgotten. Records carry no body - a tombstone reports that
+	// something was lost and is deliberately not an undelete.
+	rpc GetForgottenMemories(GetForgottenMemoriesRequest) returns (GetForgottenMemoriesResponse) {
+		option (google.api.http) = {
+			get: "/v1/memories/forgotten"
+		};
+	}
+
+	// DeleteForgottenMemories empties the forgotten log, or the part of it older than before_time.
+	//
+	// It exists because the log's automatic bounds (consolidation.tombstones.maxRows/maxAgeInDays)
+	// only apply while recording is enabled: turning the feature off deliberately leaves what was
+	// already recorded in place, so that a configuration change never destroys a record somebody
+	// kept. Removing it is therefore always an explicit request - this one.
+	rpc DeleteForgottenMemories(DeleteForgottenMemoriesRequest) returns (DeleteForgottenMemoriesResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/forgotten/delete"
+			body: "*"
+		};
+	}
+
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -864,6 +892,66 @@ message PreviewConsolidationResponse {
 
 	repeated ForgetCandidate               candidates                = 11;
 	bool                                   truncated                 = 12; // true when more memories would be forgotten than limit returned
+}
+
+// ForgottenMemory is one record from the forgotten log: a memory the sleep cycle deleted, and the
+// decision that took it. value and threshold are the two sides of the comparison as they stood at
+// that moment - the threshold moves with capacity pressure, so recording it is what keeps value
+// interpretable afterwards.
+//
+// There is no body, and there never will be: this says a memory was forgotten, not what it said.
+message ForgottenMemory {
+	int64                                  seq                       = 1;  // the log's own monotonic key; pass the lowest seen back as after_seq to page
+	string                                 id                        = 2;  // the forgotten memory's id
+	string                                 event_id                  = 3;  // empty for a memory with no event
+	string                                 group                     = 4;
+	int32                                  significance              = 5;  // the memory's significance, as ranked when it went
+	double                                 value                     = 6;  // its computed decayed value at that moment (see docs/consolidation.md)
+	double                                 threshold                 = 7;  // the capacity-pressure-scaled deletion threshold then in force
+	int64                                  body_bytes                = 8;  // stored size of the body it held, after compression
+	ForgetRule                             rule                      = 9;  // which path took it
+	int64                                  time_stamp                = 10; // UnixNano the memory was created
+	int64                                  time_recalled             = 11; // UnixNano of its last recall; 0 if never recalled
+	int32                                  recall_count              = 12;
+	int64                                  forgotten_at              = 13; // UnixNano the cycle deleted it
+}
+
+// GetForgottenMemoriesRequest selects records from the forgotten log. Every field is optional; an
+// empty request returns the most recent page of the whole log. Records come back newest first.
+message GetForgottenMemoriesRequest {
+	string                                 memory_id                 = 1; // a specific memory - "did this exist, and when did it go"
+	string                                 event_id                  = 2;
+	string                                 group                     = 3;
+	ForgetRule                             rule                      = 4; // UNSPECIFIED returns both rules
+	int64                                  since                     = 5; // UnixNano, inclusive lower bound on forgotten_at
+	int64                                  until                     = 6; // UnixNano, exclusive upper bound on forgotten_at
+	int64                                  after_seq                 = 7; // pagination: return records below this seq (pass the lowest seq of the previous page)
+	int32                                  limit                     = 8; // <= 0 selects the default (100), values above the cap (1000) are clamped down to it
+}
+
+// GetForgottenMemoriesResponse carries one page of the log. total counts every record the log
+// holds within the caller's scope, not the filtered subset, so a client can show how much history
+// exists behind the page it is looking at.
+//
+// enabled reports whether the service is currently recording. It matters because an empty page is
+// ambiguous without it: nothing has been forgotten, or nothing is being written down.
+message GetForgottenMemoriesResponse {
+	repeated ForgottenMemory               memories                  = 1;
+	int64                                  total                     = 2;
+	bool                                   enabled                   = 3;
+	int64                                  next_seq                  = 4; // pass as after_seq for the next page; 0 when the page is the last
+}
+
+// DeleteForgottenMemoriesRequest empties the forgotten log. Supply before_time to delete only what
+// was forgotten before it, or all to empty the log entirely - one of the two is required, so an
+// empty request can never silently discard the whole log.
+message DeleteForgottenMemoriesRequest {
+	int64                                  before_time               = 1; // UnixNano; deletes records forgotten before this
+	bool                                   all                       = 2; // delete every record; ignored when before_time is set
+}
+
+message DeleteForgottenMemoriesResponse {
+	int64                                  deleted                   = 1;
 }
 
 // DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance

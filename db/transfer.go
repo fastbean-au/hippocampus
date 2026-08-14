@@ -347,7 +347,10 @@ func (d *DB) ClearMemories(ctx context.Context, snapshots []MemoryRecallSnapshot
 		}
 	}
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, items)
+	// The zero reason: a clear is data MOVEMENT, not forgetting. The memories it deletes have been
+	// exported or transferred, so they still exist somewhere and nothing was lost - the forgotten
+	// log would be claiming otherwise. See tombstone.go.
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, items, forgetReason{})
 
 	return len(deletedIds), err
 }

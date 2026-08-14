@@ -99,6 +99,15 @@ type DB struct {
 	// indefinitely. Set once at startup via SetQueryTimeout, before serving, so it needs no lock.
 	queryTimeout time.Duration
 
+	// tombstones is the forgotten log's policy (see tombstone.go). The zero value records nothing,
+	// which is the default. Set once at startup via SetTombstonePolicy, before serving, so it needs
+	// no lock - the same treatment compression gets.
+	tombstones TombstonePolicy
+
+	// tombstoneTable records that initTombstones has run, so the read-only opens (which skip
+	// initSchema entirely) never query a table they cannot be sure exists.
+	tombstoneTable bool
+
 	// compression is the write-side memory-body compression policy (see compress.go). The zero
 	// value stores every body verbatim. It governs writes only — reads follow each row's own
 	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
@@ -493,6 +502,13 @@ type Server interface {
 	// capacity eviction must exclude it from the candidate pool even when the store is over its
 	// byte target — the retention floor overrides the capacity limit.
 	MemoryRetained(MemoryConsolidationCandidate) bool
+
+	// DeletionThreshold is the capacity-pressure-scaled value a memory must stay above to survive
+	// consolidation, as it stands for this cycle. It is not a decision — the passes still ask
+	// ShouldConsolidateMemory — but the forgotten log records it beside each memory's value, since
+	// the threshold moves with pressure and a value with nothing to measure it against is not a
+	// record of anything.
+	DeletionThreshold() float64
 }
 
 // Store is the storage-backend contract hippocampus.Server and stats.Start depend on, satisfied
@@ -554,6 +570,17 @@ type Store interface {
 
 	// RetainedStats counts the memories inside the minimum retention window, and their stored size.
 	RetainedStats(ctx context.Context, cutoff int64) (int, int64, error)
+
+	// The forgotten log (see tombstone.go). Writing is not on this interface: it happens inside the
+	// delete chokepoint the consolidation and eviction passes already funnel through, so nothing
+	// above the package can record a tombstone for a memory that did not actually go. PruneTombstones
+	// applies the configured caps and is called at the end of each sleep cycle; DeleteForgottenMemories
+	// is the manual cleanup, which is deliberately the only way to empty a log that is no longer
+	// being written.
+	GetForgottenMemories(ctx context.Context, filter ForgottenFilter) ([]ForgottenMemory, error)
+	CountForgottenMemories(ctx context.Context, groups []string) (int64, error)
+	DeleteForgottenMemories(ctx context.Context, before int64, groups []string) (int64, error)
+	PruneTombstones(ctx context.Context) (int64, error)
 
 	// GetMemoryConsolidationCandidates returns the consolidation decision inputs for named memories,
 	// so ExplainConsolidation can value them without scanning the store.
@@ -881,6 +908,12 @@ func (d *DB) initSchema() error {
 		return err
 	}
 
+	// The forgotten log (see tombstone.go). Created whether or not the policy enables it, so
+	// turning it on needs no migration and turning it off leaves what was recorded readable.
+	if err := d.initTombstones(); err != nil {
+		return err
+	}
+
 	// Last, because it reads memory bodies to populate itself on a store that predates it, and so
 	// wants every column and index above it already in place.
 	if err := d.initContentSearch(); err != nil {
@@ -995,7 +1028,12 @@ func (d *DB) UsedBytes(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 
-	return (pageCount - freelistCount) * pageSize, nil
+	// The forgotten log is excluded: page accounting measures the whole file, so counting it would
+	// let the record of what was evicted drive the eviction of live memories. The server drivers
+	// count live memory/event/link rows explicitly and so exclude it already. See tombstoneBytes.
+	used := (pageCount-freelistCount)*pageSize - d.tombstoneBytes(ctx)
+
+	return max(used, 0), nil
 }
 
 // WALBytes returns the current size in bytes of the on-disk WAL file, or 0 for the server
@@ -1141,6 +1179,19 @@ func (d *DB) Purge(ctx context.Context) error {
 		_ = tx.Rollback()
 
 		return err
+	}
+
+	// The forgotten log goes with it. This is the one automatic emptying of the log, and it is not
+	// an exception to "cleanup is manual": Purge is itself the explicit, operator-initiated request
+	// to leave nothing behind, and a log of what a now-empty store used to hold is not a record
+	// anybody asked to keep.
+	if d.tombstoneTable {
+		if _, err := tx.Exec(`DELETE FROM ` + tombstonesTable); err != nil {
+			log.Errorf("failed to purge - deleting the forgotten log: %s", err.Error())
+			_ = tx.Rollback()
+
+			return err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
