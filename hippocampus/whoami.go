@@ -19,8 +19,9 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 
 	// The available search modes are a property of the deployment, not the caller, so they are
 	// reported identically on both paths - including the unauthenticated one, where there is no
-	// caller to describe.
+	// caller to describe. The summariser is reported for the same reason and on the same terms.
 	modes := s.searchModes()
+	summariser := s.summariser().Enabled()
 
 	// The group scope is reported on both paths. On the unauthenticated one it is always absent,
 	// which is the truth rather than a placeholder: with no token there is no scope, and a client
@@ -31,20 +32,22 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 
 	if !ok {
 		return &contract.WhoAmIResponse{
-			Role:        auth.TierAdmin.String(),
-			AuthEnabled: false,
-			SearchModes: modes,
-			Groups:      groups,
-			GroupScoped: scoped,
+			Role:              auth.TierAdmin.String(),
+			AuthEnabled:       false,
+			SearchModes:       modes,
+			Groups:            groups,
+			GroupScoped:       scoped,
+			SummariserEnabled: summariser,
 		}, nil
 	}
 
 	return &contract.WhoAmIResponse{
-		ClientId:    auth.ClientIDFromContext(ctx),
-		Role:        tier.String(),
-		AuthEnabled: true,
-		SearchModes: modes,
-		Groups:      groups,
-		GroupScoped: scoped,
+		ClientId:          auth.ClientIDFromContext(ctx),
+		Role:              tier.String(),
+		AuthEnabled:       true,
+		SearchModes:       modes,
+		Groups:            groups,
+		GroupScoped:       scoped,
+		SummariserEnabled: summariser,
 	}, nil
 }

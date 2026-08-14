@@ -356,7 +356,13 @@ Two RPCs support this:
   `consolidation.summarisationMinAgeInDays` ago. Requiring every memory in the group to have
   gone quiet avoids flagging an event that is still being actively written to. The list is
   capped at `consolidation.summarisationMaxCandidates` events (0 leaves it unbounded) and is a
-  point-in-time snapshot, refreshed each sleep cycle and not updated in between.
+  point-in-time snapshot, refreshed each sleep cycle and not updated in between — with one
+  exception: an event this service summarises is dropped from the list immediately, by either RPC or
+  by auto-summarisation, so it is never re-offered as a candidate it has already condensed. The
+  response also carries `scan_enabled`, because an empty list means one of two opposite things —
+  nothing is due yet, or this instance does not scan at all (the threshold is 0, or it is a replica
+  and runs no sleep cycle). A client presenting an empty list should branch on that flag, not on the
+  list.
 - `ReplaceMemoriesWithSummary` deletes every memory associated with the given event and inserts
   the caller-supplied summary memory in their place, in a single transaction. The summary is
   validated (and checked against `memory.minimumSignificance`) before anything is deleted, so a
@@ -364,6 +370,13 @@ Two RPCs support this:
   `is_summary`; it decays and can be recalled like any other memory, and — since it no longer
   meets the memory-count threshold on its own — will not be re-offered as a candidate until
   enough fresh, unsummarised memories accumulate against the same event again.
+
+Both are reachable from the embedded console. The Events tab carries a **Summarisation candidates**
+card — the scan's list, refreshed on demand — and opening an event from it (or by clicking its name
+in the events list, or an event id in any results table) shows its memories with a **Summarise…**
+button beneath them, which takes the summary text and calls `ReplaceMemoriesWithSummary`. A second
+**Summarise with the LLM** button appears beside it where the deployment has one configured — see
+below. Both confirm first, naming how many memories go, because neither can be undone.
 
 Summarisation runs between consolidation and eviction each sleep cycle: it surfaces candidates
 after decay-based consolidation has already cleared out the truly worthless memories, and before
@@ -385,7 +398,10 @@ default; when disabled the service behaves exactly as above.
   significance among the replaced memories unless the request sets `significance`/`placement`. It
   fails with `FAILED_PRECONDITION` when no summariser is configured or the event has no text
   memories, `NOT_FOUND` for an unknown event, and `UNAVAILABLE` when the LLM call fails. Like
-  `ReplaceMemoriesWithSummary`, it is a writer-tier RPC.
+  `ReplaceMemoriesWithSummary`, it is a writer-tier RPC. `WhoAmI` reports `summariser_enabled` so a
+  client can offer it only where it will serve rather than discovering its absence through a
+  `FAILED_PRECONDITION` — which is how the console decides whether to show its **Summarise with the
+  LLM** button.
 - **Automatic summarisation during sleep** (`ollama.autoSummarise`, off by default) makes the sleep
   cycle summarise the candidates the scan just identified, instead of only surfacing them for a
   client. It is best-effort: a per-event failure (unreachable model, an event that changed since

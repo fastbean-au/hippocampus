@@ -82,6 +82,26 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **`GetEvents` can report each event's memory count without transferring the memories.** A new
+  opt-in `GetEventsRequest.memory_counts` populates a read-only `Event.memory_count` from one
+  aggregate query that reads no bodies at all. Previously the only way to say how much an event held
+  was `memories: true`, which fetches every body on the page to count them. It is opt-in because it
+  is a second query per page, separate from `memories` rather than derived from it, and counted
+  within the caller's group scope exactly as the nested memories are filtered. Reachable as
+  `hippo event list --memory-counts`; the embedded console's events table now always asks for it.
+- **`GetSummarisationCandidates` reports `scan_enabled`.** An empty candidate list means one of two
+  opposite things — nothing is due yet, or this instance does not scan at all (the threshold is 0, or
+  it is a replica and runs no sleep cycle) — and only one of them is worth waiting on. A client
+  presenting an empty list should branch on the flag, not on the list. The `hippo` CLI prints the
+  configuration it would need; the MCP bridge projects it; the console renders a different empty
+  state for each.
+- **`GetEventById` can report the memory count too** (`memory_counts`), mirroring `GetEvents`.
+  Reachable as `hippo event get --memory-counts`. The MCP bridge's `list_events` now always asks for
+  counts (and still never for bodies).
+- **`WhoAmI` reports `summariser_enabled`.** Whether the embedded LLM (`ollama.enabled`) is
+  configured, so a client can offer service-authored summarisation only where `SummariseMemories`
+  will serve rather than discovering its absence through a `FAILED_PRECONDITION` — the same
+  deployment-property reporting as `search_modes`, and on the same terms.
 - **A Bluesky firehose bridge, and with it engagement-as-recall.** `integrations/eventsource` gains a
   fifth adapter (`cmd/bluesky`) that consumes
   [Jetstream](https://github.com/bluesky-social/jetstream), the public JSON projection of the atproto
@@ -390,8 +410,30 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   header's always-present bearer-token box is gone; the token is entered on the card instead. Purely
   a console change: the server enforced (and still enforces) authorisation on every RPC regardless of
   what the page shows.
+- **The web console shows compact ages instead of absolute datetimes**, with the exact timestamp on
+  the tooltip. Age since the last recall is what every consolidation method actually runs on, so it
+  is the number that says whether a row is near being forgotten; it is also the narrowest form of the
+  widest column in those tables.
+- **Summarise buttons in the console's event view** — one calling `ReplaceMemoriesWithSummary` with
+  text you write, one calling `SummariseMemories` and shown only where the embedded LLM is
+  configured. Both confirm first, naming how many memories go. They live in the event view rather
+  than on an events-list row because the operation replaces every memory of the event, and that is
+  the one place the console shows what is about to go.
+- Tidied the console's memory filter: the timestamp from/to controls are a matched pair on a row of
+  their own, and no field stretches to fill the slack left when it wraps alone.
+- **A summarisation-candidates card on the console's Events tab** — the scan's list, refreshed on
+  demand, with each event opening into the view the summarise buttons are in.
 
 ### Fixed
+
+- **Summarising through either RPC left the event in the candidate cache**, so
+  `GetSummarisationCandidates` went on offering an event the service had just condensed until the
+  next sleep cycle refreshed the scan. Only the auto-summarisation path pruned; the pruning now lives
+  at the chokepoint both paths share.
+- **Opening an event in the web console destroyed the search results.** The event view was written
+  into the search results panel, and an event id is clickable in all three tables — so opening one
+  from the Events or Memories tab silently replaced a search that had been run, and returning to the
+  Search tab found that single event in place of the results. The event now has a card of its own.
 
 - **A Bluesky feed poll stalled permanently on the first reply in a page.** Under `--events thread`
   the Transformer puts a reply's memory in its thread root's event, and the service refuses a memory

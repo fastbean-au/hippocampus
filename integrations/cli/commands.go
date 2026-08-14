@@ -195,16 +195,17 @@ func commands() map[string]command {
 		},
 		"event get": {
 			summary: "fetch a single event by id",
-			hint:    "--id ID [--memories]",
+			hint:    "--id ID [--memories|--memory-counts]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("id", "", "id of the event to fetch (required)")
 				fs.Bool("memories", false, "also load the event's memories")
+				fs.Bool("memory-counts", false, "report how many memories the event holds, without transferring them")
 			},
 			run: runEventGet,
 		},
 		"event list": {
 			summary: "list events with optional filters",
-			hint:    "[--group G] [--significance-min N] [--limit N] [--memories]",
+			hint:    "[--group G] [--significance-min N] [--limit N] [--memories|--memory-counts]",
 			flags:   eventFilterFlags,
 			run:     runEventList,
 		},
@@ -373,6 +374,7 @@ func eventFilterFlags(fs *pflag.FlagSet) {
 	fs.Int32("limit", 0, "page size (0 selects the server default)")
 	fs.Int32("offset", 0, "rows to skip for pagination")
 	fs.Bool("memories", false, "include each event's memories")
+	fs.Bool("memory-counts", false, "report how many memories each event holds, without transferring them")
 	fs.String("extremum", "", "'highest' or 'lowest' significance tie (ignores the significance range)")
 	fs.StringSlice("metadata", nil, "restrict to events carrying this 'key=value' label (repeatable; all must match)")
 }
@@ -886,7 +888,11 @@ func runEventGet(ctx context.Context, client contract.HippocampusClient, fs *pfl
 		return fmt.Errorf("--id is required")
 	}
 
-	resp, err := client.GetEventById(ctx, &contract.GetEventByIdRequest{Id: id, Memories: b(fs, "memories")})
+	resp, err := client.GetEventById(ctx, &contract.GetEventByIdRequest{
+		Id:           id,
+		Memories:     b(fs, "memories"),
+		MemoryCounts: b(fs, "memory-counts"),
+	})
 	if err != nil {
 		return err
 	}
@@ -932,6 +938,7 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 		Limit:                i32(fs, "limit"),
 		Offset:               i32(fs, "offset"),
 		Memories:             b(fs, "memories"),
+		MemoryCounts:         b(fs, "memory-counts"),
 		SignificanceExtremum: ext,
 		Metadata:             strs(fs, "metadata"),
 	}

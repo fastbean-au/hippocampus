@@ -50,6 +50,25 @@ func TestGetEventById_RPC(t *testing.T) {
 		t.Errorf("expected 2 memories attached, got %d", len(withMems.GetEvent().GetMemories()))
 	}
 
+	// The count is reported without the memories, which is the point of the flag, and is not
+	// reported at all unless asked for.
+	if res.GetEvent().GetMemoryCount() != 0 {
+		t.Errorf("expected no count when none was asked for, got %d", res.GetEvent().GetMemoryCount())
+	}
+
+	counted, err := s.GetEventById(context.Background(), &contract.GetEventByIdRequest{Id: "e1", MemoryCounts: true})
+	if err != nil {
+		t.Fatalf("GetEventById(memory_counts): %s", err)
+	}
+
+	if counted.GetEvent().GetMemoryCount() != 2 {
+		t.Errorf("expected a memory count of 2, got %d", counted.GetEvent().GetMemoryCount())
+	}
+
+	if len(counted.GetEvent().GetMemories()) != 0 {
+		t.Errorf("expected no memories attached alongside the count, got %d", len(counted.GetEvent().GetMemories()))
+	}
+
 	// An unknown id surfaces a NotFound error rather than an opaque Unknown, so clients (and the
 	// HTTP gateway's status mapping) see a 404, not a 500.
 	_, err = s.GetEventById(context.Background(), &contract.GetEventByIdRequest{Id: "missing"})

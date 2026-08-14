@@ -173,6 +173,54 @@ func TestGetMemoriesByEventIds(t *testing.T) {
 	}
 }
 
+// TestCountMemoriesByEventIds verifies the aggregate counts memories per event, honours the
+// caller's group scope, omits events holding nothing, and short-circuits on an empty id set.
+func TestCountMemoriesByEventIds(t *testing.T) {
+	db := newTestDB(t)
+
+	mustCreateEvent(t, db, types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 1})
+	mustCreateEvent(t, db, types.Event{Id: "e2", Name: "two", TimeStart: 100, Significance: 1})
+	mustCreateEvent(t, db, types.Event{Id: "e3", Name: "three", TimeStart: 100, Significance: 1})
+	mustCreateMemory(t, db, types.Memory{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "a", Group: "alpha"})
+	mustCreateMemory(t, db, types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "b", Group: "beta"})
+	mustCreateMemory(t, db, types.Memory{Id: "m3", TimeStamp: 100, Significance: 1, EventId: "e2", Body: "c", Group: "alpha"})
+
+	ids := []string{"e1", "e2", "e3"}
+
+	counts, err := db.CountMemoriesByEventIds(context.Background(), ids, nil)
+	if err != nil {
+		t.Fatalf("CountMemoriesByEventIds: %s", err)
+	}
+
+	if counts["e1"] != 2 || counts["e2"] != 1 {
+		t.Errorf("expected e1=2 and e2=1 unscoped, got e1=%d e2=%d", counts["e1"], counts["e2"])
+	}
+
+	// An event holding nothing is absent rather than zero, so the caller's zero comes from the
+	// missing key. Asserting the absence is what pins that, since both read as 0.
+	if _, present := counts["e3"]; present {
+		t.Error("expected an event with no memories to be absent from the result")
+	}
+
+	scoped, err := db.CountMemoriesByEventIds(context.Background(), ids, []string{"alpha"})
+	if err != nil {
+		t.Fatalf("CountMemoriesByEventIds(scoped): %s", err)
+	}
+
+	if scoped["e1"] != 1 || scoped["e2"] != 1 {
+		t.Errorf("expected the beta memory excluded by the scope (e1=1, e2=1), got e1=%d e2=%d", scoped["e1"], scoped["e2"])
+	}
+
+	empty, err := db.CountMemoriesByEventIds(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("CountMemoriesByEventIds(nil): %s", err)
+	}
+
+	if len(empty) != 0 {
+		t.Errorf("expected no counts for an empty id set, got %d", len(empty))
+	}
+}
+
 // TestMergeEventMemories verifies memories are re-pointed from one event to another.
 func TestMergeEventMemories(t *testing.T) {
 	db := newTestDB(t)

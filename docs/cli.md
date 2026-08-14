@@ -153,8 +153,8 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                                         |
 | `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                                  |
 | `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                                                |
-| `event get`          | fetch a single event (`--id`, `--memories`)                                                                                                    |
-| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`)                      |
+| `event get`          | fetch a single event (`--id`, `--memories`, `--memory-counts`)                                                                                                    |
+| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`, `--memory-counts`)   |
 
 ### Summarisation
 

@@ -652,6 +652,15 @@ func TestMemoryReaders_RowFailuresPropagate(t *testing.T) {
 				return err
 			},
 		},
+		{
+			name:  "CountMemoriesByEventIds",
+			match: `SELECT`,
+			call: func(d *DB) error {
+				_, err := d.CountMemoriesByEventIds(context.Background(), []string{"e1"}, nil)
+
+				return err
+			},
+		},
 	}
 
 	for _, reader := range readers {

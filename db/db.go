@@ -503,6 +503,7 @@ type Store interface {
 	GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Memory, error)
 	GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error)
 	GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]types.Memory, error)
+	CountMemoriesByEventIds(ctx context.Context, eventIds []string, groups []string) (map[string]int, error)
 	GetMemoriesByIds(ctx context.Context, ids []string) (*[]types.Memory, error)
 	CountMemories(ctx context.Context) (int, int)
 	CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (int, error)

@@ -576,6 +576,100 @@ func TestGetEvents_BatchesMemoriesCorrectly(t *testing.T) {
 	}
 }
 
+// TestGetEvents_MemoryCounts verifies memory_counts reports each event's memory count without
+// attaching the memories themselves, that an event holding none reports zero, and that the count is
+// not populated unless it was asked for.
+func TestGetEvents_MemoryCounts(t *testing.T) {
+	s := newEventTestServer(t)
+
+	for _, e := range []types.Event{
+		{Id: "e1", Name: "one", TimeStart: 100, Significance: 5},
+		{Id: "e2", Name: "two", TimeStart: 100, Significance: 5},
+		{Id: "empty", Name: "empty", TimeStart: 100, Significance: 5},
+	} {
+		if _, err := s.db.CreateEvent(context.Background(), e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	for _, m := range []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "a"},
+		{Id: "m2", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "b"},
+		{Id: "m3", TimeStamp: 100, Significance: 5, EventId: "e2", Body: "c"},
+		{Id: "loose", TimeStamp: 100, Significance: 5, Body: "d"},
+	} {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	res, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{MemoryCounts: true})
+	if err != nil {
+		t.Fatalf("GetEvents: %s", err)
+	}
+
+	counts := map[string]int32{}
+
+	for _, e := range res.GetEvents() {
+		counts[e.GetId()] = e.GetMemoryCount()
+
+		// The whole point of the flag is that it costs no bodies: asking for counts must never
+		// attach the memories as well.
+		if len(e.GetMemories()) != 0 {
+			t.Errorf("expected no memories attached to %s, got %d", e.GetId(), len(e.GetMemories()))
+		}
+	}
+
+	if counts["e1"] != 2 || counts["e2"] != 1 || counts["empty"] != 0 {
+		t.Errorf("expected counts e1=2 e2=1 empty=0, got e1=%d e2=%d empty=%d", counts["e1"], counts["e2"], counts["empty"])
+	}
+
+	plain, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{})
+	if err != nil {
+		t.Fatalf("GetEvents (no counts): %s", err)
+	}
+
+	for _, e := range plain.GetEvents() {
+		if e.GetMemoryCount() != 0 {
+			t.Errorf("expected %s to report no count when none was asked for, got %d", e.GetId(), e.GetMemoryCount())
+		}
+	}
+}
+
+// TestGetEvents_MemoryCountsWithMemories verifies the two flags compose: the count is still
+// reported alongside the attached memories, and it agrees with them.
+func TestGetEvents_MemoryCountsWithMemories(t *testing.T) {
+	s := newEventTestServer(t)
+
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	for _, m := range []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "a"},
+		{Id: "m2", TimeStamp: 100, Significance: 5, EventId: "e1", Body: "b"},
+	} {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	res, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{Memories: true, MemoryCounts: true})
+	if err != nil {
+		t.Fatalf("GetEvents: %s", err)
+	}
+
+	if len(res.GetEvents()) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(res.GetEvents()))
+	}
+
+	got := res.GetEvents()[0]
+
+	if got.GetMemoryCount() != 2 || len(got.GetMemories()) != 2 {
+		t.Errorf("expected count 2 and 2 attached memories, got count %d and %d attached", got.GetMemoryCount(), len(got.GetMemories()))
+	}
+}
+
 // TestGetEvents_SignificanceExtremum verifies the RPC passes SignificanceExtremum through to the
 // db filter and returns every event tied at the highest significance, not just one.
 func TestGetEvents_SignificanceExtremum(t *testing.T) {

@@ -437,7 +437,7 @@ func TestCreateEvent_RejectsEmptyName(t *testing.T) {
 
 func TestListEvents_MapsResponse(t *testing.T) {
 	f := &fakeClient{getEventsRes: &contract.GetEventsResponse{
-		Events:     []*contract.Event{{Id: "e1", Name: "n1", Significance: 2}},
+		Events:     []*contract.Event{{Id: "e1", Name: "n1", Significance: 2, MemoryCount: 7}},
 		TotalCount: 3,
 	}}
 	b := newBridge(f)
@@ -451,8 +451,18 @@ func TestListEvents_MapsResponse(t *testing.T) {
 		t.Fatalf("unexpected output: %+v", out)
 	}
 
+	if out.Events[0].MemoryCount != 7 {
+		t.Fatalf("memory count not projected: %+v", out.Events[0])
+	}
+
 	if f.getEventsReq.GetGroup() != "ops" {
 		t.Fatalf("group filter not mapped: %+v", f.getEventsReq)
+	}
+
+	// Counts are always asked for and bodies never are: the count is what tells a model whether an
+	// event is worth opening, while `memories` would put every body on the page into its context.
+	if !f.getEventsReq.GetMemoryCounts() || f.getEventsReq.GetMemories() {
+		t.Fatalf("expected memory_counts and not memories: %+v", f.getEventsReq)
 	}
 }
 
@@ -471,6 +481,24 @@ func TestGetSummarisationCandidates_MapsResponse(t *testing.T) {
 
 	if len(out.Candidates) != 1 || out.Candidates[0].EventId != "e1" || out.Candidates[0].MemoryCount != 12 {
 		t.Fatalf("unexpected output: %+v", out)
+	}
+}
+
+// TestGetSummarisationCandidates_ProjectsScanEnabled pins the flag that tells an empty list apart
+// from a service that will never produce one - the difference between asking again later and not.
+func TestGetSummarisationCandidates_ProjectsScanEnabled(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		f := &fakeClient{candidatesRes: &contract.GetSummarisationCandidatesResponse{ScanEnabled: enabled}}
+		b := newBridge(f)
+
+		_, out, err := b.getSummarisationCandidates(context.Background(), nil, struct{}{})
+		if err != nil {
+			t.Fatalf("getSummarisationCandidates returned error: %v", err)
+		}
+
+		if out.ScanEnabled != enabled {
+			t.Errorf("scan_enabled = %v, want %v", out.ScanEnabled, enabled)
+		}
 	}
 }
 

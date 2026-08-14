@@ -212,6 +212,13 @@
               "type": "string"
             },
             "collectionFormat": "multi"
+          },
+          {
+            "name": "memoryCounts",
+            "description": "when true, populate each returned event's memory_count. Separate from `memories` and opt-in because it is a second query per page: it reports how many memories an event holds without transferring any of them, which is what a listing wants and what `memories` is far too expensive for",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -391,6 +398,13 @@
           {
             "name": "memories",
             "description": "true also loads the event's memories into the response",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "memoryCounts",
+            "description": "true populates memory_count, exactly as GetEventsRequest.memory_counts does (and for the same reason: it reports how many memories the event holds without transferring any of them)",
             "in": "query",
             "required": false,
             "type": "boolean"
@@ -1806,6 +1820,11 @@
         "clearGroup": {
           "type": "boolean",
           "title": "write-only: on UpdateEvent, reset group to empty (see Memory.clear_group)"
+        },
+        "memoryCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "read-only: memories currently attached to this event, populated only when asked for (GetEventsRequest.memory_counts, GetEventByIdRequest.memory_counts - see there for why it is opt-in); 0 otherwise, which is indistinguishable from an event holding none, so ask for the count if you need to tell them apart. Counted within the caller's group scope, exactly as the nested memories are filtered. Ignored on write"
         }
       },
       "description": "Event is a named time span with its own significance, optionally carrying links to\nother events and/or nested memories. memories/links are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory."
@@ -2071,6 +2090,10 @@
             "type": "object",
             "$ref": "#/definitions/v1SummarisationCandidate"
           }
+        },
+        "scanEnabled": {
+          "type": "boolean",
+          "description": "scan_enabled reports whether this instance runs the candidate scan at all: it needs\nconsolidation.summarisationMinMemories \u003e 0 AND consolidation.enabled, since the scan is part of\nthe sleep cycle and a replica runs none. It exists because an empty candidates list is\nambiguous in the way that matters, exactly as WhoAmI.groups is - \"nothing is due yet\" and \"this\ninstance will never offer you anything\" are opposite answers, and only one of them is worth\nwaiting on. A client presenting an empty list must branch on this rather than on the list."
         }
       }
     },
@@ -2669,6 +2692,10 @@
         "groupScoped": {
           "type": "boolean",
           "description": "group_scoped reports whether a scope is in force for this caller. It exists because an empty\ngroups list is ambiguous on its own and the two readings are opposites: unscoped (see\neverything) versus scoped to nothing. A client showing \"you can see N groups\" must branch on\nthis, not on len(groups).\n\nWhen true, writes are stamped with the caller's group, Purge/Sleep/PreviewConsolidation are\nrefused, and records outside the scope report NotFound - so a console can explain an empty\nstore rather than leave it looking like data loss."
+        },
+        "summariserEnabled": {
+          "type": "boolean",
+          "description": "summariser_enabled reports whether this deployment has the embedded LLM configured\n(ollama.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as\nsearch_modes and with the same properties: it is a property of the deployment rather than the\ncaller, so a client can offer service-authored summarisation only where it exists instead of\ndiscovering its absence through a FAILED_PRECONDITION. It says nothing about\nReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary."
         }
       },
       "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."

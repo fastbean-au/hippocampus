@@ -275,6 +275,79 @@ func TestGetSummarisationCandidates_Empty(t *testing.T) {
 	}
 }
 
+// TestSummarising_DropsTheCandidate verifies that summarising an event through the RPC removes it
+// from the cached candidate list. Without this the console (or any client) re-offered an event it
+// had just condensed until the next sleep cycle refreshed the scan — the auto-summarisation path
+// already pruned, and the pruning now lives at the one chokepoint both paths share.
+func TestSummarising_DropsTheCandidate(t *testing.T) {
+	s := newTestServer(t)
+	ctx := context.Background()
+
+	for _, id := range []string{"e1", "e2"} {
+		if _, err := s.db.CreateEvent(ctx, types.Event{Id: id, Name: id, TimeStart: 100, Significance: 3}); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", id, err)
+		}
+
+		if _, err := s.db.CreateMemory(ctx, types.Memory{Id: id + "-m", TimeStamp: 100, Significance: 1, EventId: id, Body: "detail"}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	s.summarisationCandidates = []db.SummarisationCandidate{
+		{EventId: "e1", EventName: "e1", MemoryCount: 1},
+		{EventId: "e2", EventName: "e2", MemoryCount: 1},
+	}
+
+	if _, err := s.ReplaceMemoriesWithSummary(ctx, &contract.ReplaceMemoriesWithSummaryRequest{
+		EventId: "e1",
+		Summary: &contract.Memory{Body: "the gist", Significance: 5},
+	}); err != nil {
+		t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
+	}
+
+	res, err := s.GetSummarisationCandidates(ctx, &contract.EmptyRequest{})
+	if err != nil {
+		t.Fatalf("GetSummarisationCandidates: %s", err)
+	}
+
+	if len(res.GetCandidates()) != 1 || res.GetCandidates()[0].GetEventId() != "e2" {
+		t.Errorf("expected only e2 to remain a candidate, got %+v", res.GetCandidates())
+	}
+}
+
+// TestGetSummarisationCandidates_ScanEnabled verifies the flag that disambiguates an empty list.
+// Both conditions are required: the threshold enables the scan, but the scan is a step of the sleep
+// cycle, so a replica reports false however the threshold is set - otherwise a client would wait
+// forever on an instance that will never populate the cache.
+func TestGetSummarisationCandidates_ScanEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		consolidating   bool
+		minMemories     int
+		wantScanEnabled bool
+	}{
+		{"consolidator with the scan configured", true, 5, true},
+		{"consolidator with the scan disabled", true, 0, false},
+		{"replica with the scan configured", false, 5, false},
+		{"replica with the scan disabled", false, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer(t)
+			s.consolidationEnabled = tc.consolidating
+			s.consolidation.summarisationMinMemories = tc.minMemories
+
+			res, err := s.GetSummarisationCandidates(context.Background(), &contract.EmptyRequest{})
+			if err != nil {
+				t.Fatalf("GetSummarisationCandidates: %s", err)
+			}
+
+			if res.GetScanEnabled() != tc.wantScanEnabled {
+				t.Errorf("scan_enabled = %v, want %v", res.GetScanEnabled(), tc.wantScanEnabled)
+			}
+		})
+	}
+}
+
 // TestStoreMemory_InsignificantRejected verifies the "quietly forgotten" contract: a
 // memory below the minimum significance returns no error and no id, but sets rejected so the caller
 // can tell it apart from a store that simply produced no id, and nothing is persisted.

@@ -397,6 +397,7 @@ message Event {
 	map<string, string>                    metadata                  = 13; // optional multi-dimensional classification, exactly as Memory.metadata: same key charset, same 32-key/512-byte-value/4096-byte bounds, same replace-wholesale semantics on update, same opacity to the server
 	bool                                   clear_metadata            = 14; // write-only: on UpdateEvent, remove all metadata (see Memory.clear_metadata for why the empty map cannot say it)
 	bool                                   clear_group               = 15; // write-only: on UpdateEvent, reset group to empty (see Memory.clear_group)
+	int32                                  memory_count              = 16; // read-only: memories currently attached to this event, populated only when asked for (GetEventsRequest.memory_counts, GetEventByIdRequest.memory_counts - see there for why it is opt-in); 0 otherwise, which is indistinguishable from an event holding none, so ask for the count if you need to tell them apart. Counted within the caller's group scope, exactly as the nested memories are filtered. Ignored on write
 }
 
 // Link is a directed, significance-carrying association between two memories or between two events.
@@ -474,6 +475,7 @@ message DeleteEventRequest {
 message GetEventByIdRequest {
 	string                                 id                        = 1; // the event to fetch
 	bool                                   memories                  = 2; // true also loads the event's memories into the response
+	bool                                   memory_counts             = 3; // true populates memory_count, exactly as GetEventsRequest.memory_counts does (and for the same reason: it reports how many memories the event holds without transferring any of them)
 }
 
 message GetEventResponse {
@@ -494,6 +496,7 @@ message GetEventsRequest {
 	int32                                  offset                    = 11; // rows to skip for pagination; negative values are clamped to 0; no upper bound
 	SignificanceExtremum                   significance_extremum     = 12; // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group, metadata) - not a range; 0 (default) applies no extremum
 	repeated string                        metadata                  = 13; // optional: restrict to events whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata
+	bool                                   memory_counts             = 14; // when true, populate each returned event's memory_count. Separate from `memories` and opt-in because it is a second query per page: it reports how many memories an event holds without transferring any of them, which is what a listing wants and what `memories` is far too expensive for
 }
 
 message GetEventsResponse {
@@ -660,6 +663,14 @@ message SummarisationCandidate {
 
 message GetSummarisationCandidatesResponse {
 	repeated SummarisationCandidate         candidates               = 1;
+
+	// scan_enabled reports whether this instance runs the candidate scan at all: it needs
+	// consolidation.summarisationMinMemories > 0 AND consolidation.enabled, since the scan is part of
+	// the sleep cycle and a replica runs none. It exists because an empty candidates list is
+	// ambiguous in the way that matters, exactly as WhoAmI.groups is - "nothing is due yet" and "this
+	// instance will never offer you anything" are opposite answers, and only one of them is worth
+	// waiting on. A client presenting an empty list must branch on this rather than on the list.
+	bool                                    scan_enabled             = 2;
 }
 
 // SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the
@@ -952,6 +963,14 @@ message WhoAmIResponse {
 	// refused, and records outside the scope report NotFound - so a console can explain an empty
 	// store rather than leave it looking like data loss.
 	bool                                   group_scoped              = 6;
+
+	// summariser_enabled reports whether this deployment has the embedded LLM configured
+	// (ollama.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as
+	// search_modes and with the same properties: it is a property of the deployment rather than the
+	// caller, so a client can offer service-authored summarisation only where it exists instead of
+	// discovering its absence through a FAILED_PRECONDITION. It says nothing about
+	// ReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary.
+	bool                                   summariser_enabled        = 7;
 }
 
 message EmptyRequest {}

@@ -434,12 +434,39 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 	tel.memoriesSummarised.Add(ctx, int64(replaced))
 	tel.summariesCreated.Add(ctx, 1)
 
+	// The event has just been condensed, so it is no longer worth offering. Done here rather than in
+	// each caller because this is the one path every summarisation takes - the two RPCs and the sleep
+	// cycle's auto-summarisation alike - and an event the service itself summarised is the one case
+	// where "a snapshot that may have gone stale" is something it can simply not be wrong about.
+	s.dropSummarisationCandidate(eventId)
+
 	// The single FIFO worker guarantees the event-scoped delete lands before the summary's
 	// index write, so the replaced memories cannot outlive the summary in the index.
 	s.searchIdx().DeleteByEventId(eventId)
 	s.indexMemory(ctx, summary)
 
 	return summary.Id, replaced, nil
+}
+
+// dropSummarisationCandidate removes one event from the cached candidate list, so
+// GetSummarisationCandidates stops offering an event that no longer has unsummarised memories to
+// condense. A no-op for an event that was never a candidate, which is the common case: most
+// summarisation is a client acting on its own judgement rather than on the scan's.
+func (s *Server) dropSummarisationCandidate(eventId string) {
+	s.summarisationCandidatesMu.Lock()
+	defer s.summarisationCandidatesMu.Unlock()
+
+	kept := s.summarisationCandidates[:0]
+
+	for i := range s.summarisationCandidates {
+		if s.summarisationCandidates[i].EventId == eventId {
+			continue
+		}
+
+		kept = append(kept, s.summarisationCandidates[i])
+	}
+
+	s.summarisationCandidates = kept
 }
 
 // GetSummarisationCandidates returns the events identified by the most recent sleep cycle as
@@ -474,6 +501,12 @@ func (s *Server) GetSummarisationCandidates(ctx context.Context, in *contract.Em
 	}
 
 	res.Candidates = cs
+
+	// Reported alongside the list because an empty list on its own cannot say which of the two
+	// reasons produced it, and they call for opposite responses from a client: wait, or stop asking.
+	// Both conditions are required - the scan is a step of the sleep cycle, so a replica
+	// (consolidation.enabled false) never populates the cache however the threshold is set.
+	res.ScanEnabled = s.consolidationEnabled && s.consolidation.summarisationMinMemories > 0
 
 	return &res, nil
 }

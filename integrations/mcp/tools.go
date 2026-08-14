@@ -187,6 +187,7 @@ type eventView struct {
 	Group        string `json:"group,omitempty"`
 	TimeStart    int64  `json:"time_start"`
 	TimeEnd      int64  `json:"time_end,omitempty"`
+	MemoryCount  int32  `json:"memory_count"`
 
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
@@ -273,6 +274,7 @@ func toEventView(in *contract.Event) eventView {
 		Group:        in.GetGroup(),
 		TimeStart:    in.GetTimeStart(),
 		TimeEnd:      in.GetTimeEnd(),
+		MemoryCount:  in.GetMemoryCount(),
 	}
 }
 
@@ -591,6 +593,12 @@ func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in list
 		Limit:           in.Limit,
 		Offset:          in.Offset,
 		Metadata:        metadataFilterPairs(in.Metadata),
+
+		// Always asked for, never exposed as an input: how much an event holds is most of what
+		// decides whether a model should open it, and the count costs one aggregate that reads no
+		// bodies. `memories` is deliberately still not requested - that would put every body of
+		// every event on the page into the model's context.
+		MemoryCounts: true,
 	})
 	if err != nil {
 		return nil, eventsPageOutput{}, fmt.Errorf("GetEvents failed: %w", err)
@@ -615,6 +623,11 @@ type summarisationCandidateView struct {
 
 type summarisationCandidatesOutput struct {
 	Candidates []summarisationCandidateView `json:"candidates"`
+
+	// Reported so a model can tell "nothing is due yet" from "this service will never offer
+	// anything", which an empty list alone cannot say - and which decide whether asking again later
+	// is worth doing.
+	ScanEnabled bool `json:"scan_enabled" jsonschema:"false when this service does not scan for candidates at all, in which case an empty list is permanent and asking again will not help"`
 }
 
 func (b *bridge) getSummarisationCandidates(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, summarisationCandidatesOutput, error) {
@@ -636,7 +649,7 @@ func (b *bridge) getSummarisationCandidates(ctx context.Context, _ *mcp.CallTool
 		})
 	}
 
-	return nil, summarisationCandidatesOutput{Candidates: out}, nil
+	return nil, summarisationCandidatesOutput{Candidates: out, ScanEnabled: res.GetScanEnabled()}, nil
 }
 
 // okOutput is the plain acknowledgement the link mutations return: they change the graph rather

@@ -178,6 +178,11 @@
       .field.wide {
         flex-basis: 100%;
       }
+      /* Two halves of one value (a from/to range): sized together and not stretched, so they line up
+     with each other rather than each absorbing whatever slack its own row happened to have. */
+      .field.pair {
+        flex: 0 1 220px;
+      }
       label {
         color: var(--muted);
         font-size: 12px;
@@ -314,6 +319,13 @@
         color: var(--muted);
         white-space: nowrap;
       }
+      /* An age carries the absolute timestamp in its title. The underline and the help cursor are
+         what say so — without them the exact value is present but undiscoverable. */
+      .age {
+        white-space: nowrap;
+        border-bottom: 1px dotted var(--border);
+        cursor: help;
+      }
       /* Row buttons stay on one line. They wrapped to one per line only because the free-text column
          was taking the table's width; now that it does not, a stack of four buttons is what would
          make a record tall. */
@@ -404,6 +416,13 @@
       .events-head h2 {
         margin: 0;
       }
+      /* The summarise controls sit under the event's memories, separated by a rule: they act on the
+     whole list above them rather than on any row in it, and they delete all of it. */
+      .summarise {
+        border-top: 1px solid var(--border);
+        margin-top: 12px;
+        padding-top: 12px;
+      }
       .pager {
         display: flex;
         align-items: center;
@@ -484,6 +503,13 @@
      server allows it only to an admin and the console hides the control rather than offering one
      that is certain to be refused. */
       body:not(.admin) .admin-only {
+        display: none !important;
+      }
+      /* Same convention again for the embedded LLM: SummariseMemories is a FAILED_PRECONDITION on a
+     deployment that has not configured one, and there is nothing the user could do about it, so the
+     button is hidden rather than offered. The manual summary is NOT gated on this - it needs no
+     summariser, the caller writes it. */
+      body:not(.summariser) .summariser-only {
         display: none !important;
       }
       /* Decay: the value column and the pills that say what is overriding it. Same convention as the
@@ -704,6 +730,81 @@
             <button class="btn" onclick="doSearch()">Search</button>
           </div>
         </div>
+        <!-- The opened event gets a card of its own rather than borrowing the results panel below.
+         openEvent is reachable from all three tables, so writing it into the results meant opening
+         an event from the Events or Memories tab silently destroyed a search the user had run and
+         left the Search tab showing that single event instead. Hidden until something is open, and
+         closed by the next search. -->
+        <div class="card" id="event-card" style="display: none">
+          <div class="events-head">
+            <h2>Event</h2>
+            <button class="btn ghost small" onclick="closeEvent()">
+              Close
+            </button>
+          </div>
+          <div id="event-view"></div>
+
+          <!-- Summarisation lives here rather than on an events-list row because it destroys every
+           memory of the event: the one place it should be offered is the one place the console shows
+           what is about to be replaced. Two buttons for the two RPCs, which differ in who writes the
+           summary — POST /v1/events/{id}/summary takes one from the caller, POST .../summarise has
+           the service's embedded LLM author it. Writer-tier both; the LLM one is also .summariser-only
+           since a deployment without ollama would only refuse it. -->
+          <div class="summarise writer-only" id="event-summarise">
+            <div class="actions">
+              <button class="btn ghost small" onclick="openSummaryForm()">
+                Summarise…
+              </button>
+              <button
+                class="btn ghost small summariser-only"
+                onclick="summariseWithLLM()"
+              >
+                Summarise with the LLM
+              </button>
+              <span class="muted"
+                >Replaces every memory of this event with one summary.</span
+              >
+            </div>
+
+            <!-- The manual form: revealed by "Summarise…" rather than always shown, so the card is
+             not dominated by a textarea nobody is using. -->
+            <div id="summary-form" style="display: none">
+              <div class="field wide">
+                <label for="summary-body">Summary</label>
+                <textarea
+                  id="summary-body"
+                  rows="4"
+                  placeholder="the text that will replace this event's memories"
+                ></textarea>
+              </div>
+              <div class="row">
+                <!-- Unlike the LLM path, this RPC stores the significance verbatim, so an omitted
+                 one leaves the summary UNRANKED rather than inheriting the highest it replaced.
+                 Say so: a summary that outranks nothing is the first thing forgotten. -->
+                <div class="field pair">
+                  <label for="summary-sig">Significance (optional)</label>
+                  <input
+                    id="summary-sig"
+                    type="number"
+                    placeholder="blank leaves it unranked"
+                  />
+                </div>
+                <div class="field pair">
+                  <label for="summary-group">Group (optional)</label>
+                  <input id="summary-group" placeholder="group label" />
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn" onclick="replaceWithSummary()">
+                  Replace memories
+                </button>
+                <button class="btn ghost" onclick="closeSummaryForm()">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <h2>Results</h2>
           <div id="search-results">
@@ -784,19 +885,15 @@
                 <input id="mf-sigmax" type="number" />
               </div>
             </div>
+            <!-- Two fixed-width fields rather than three stretching ones: at this card's width the
+             third wrapped onto a line of its own and grew to fill it, so one filter rendered several
+             times the size of its neighbours for no reason but the wrap. -->
             <div class="row">
-              <div class="field">
+              <div class="field pair">
                 <label for="mf-group">Group</label>
                 <input id="mf-group" placeholder="exact group label" />
               </div>
-              <div class="field">
-                <label for="mf-metadata">Metadata</label>
-                <input
-                  id="mf-metadata"
-                  placeholder="key=value, comma separated (all must match)"
-                />
-              </div>
-              <div class="field">
+              <div class="field pair">
                 <label for="mf-recalled">Recall state</label>
                 <select id="mf-recalled">
                   <option value="">Any</option>
@@ -804,11 +901,28 @@
                   <option value="TRUE">Recalled at least once</option>
                 </select>
               </div>
-              <div class="field">
+            </div>
+            <!-- Metadata takes the full width: it is a list, and the only field here whose useful
+             length is unbounded. -->
+            <div class="row">
+              <div class="field wide">
+                <label for="mf-metadata">Metadata</label>
+                <input
+                  id="mf-metadata"
+                  placeholder="key=value, comma separated (all must match)"
+                />
+              </div>
+            </div>
+            <!-- The two ends of one range, so they get a row to themselves: sharing a row with the
+             fields above left them wrapping onto different lines at different widths, which read as
+             two unrelated controls rather than a from/to pair. .pair stops them stretching, so they
+             stay the same size as each other whatever else is on the row. -->
+            <div class="row">
+              <div class="field pair">
                 <label for="mf-from">Timestamp from</label>
                 <input id="mf-from" type="datetime-local" />
               </div>
-              <div class="field">
+              <div class="field pair">
                 <label for="mf-to">Timestamp to</label>
                 <input id="mf-to" type="datetime-local" />
               </div>
@@ -1047,6 +1161,27 @@
             </div>
           </div>
           <div id="events-list">
+            <div class="empty">Nothing loaded yet.</div>
+          </div>
+        </div>
+
+        <!-- The other half of summarisation: the buttons live on an event, this says which events
+         are worth pointing them at. Loaded on demand rather than with the events list — it is a
+         snapshot the sleep cycle refreshes, so it does not change between two listings. -->
+        <div class="card">
+          <div class="events-head">
+            <h2>Summarisation candidates</h2>
+            <button class="btn ghost small" onclick="loadCandidates()">
+              Refresh
+            </button>
+          </div>
+          <p class="muted" style="margin-top: -6px">
+            Events whose memories have accumulated and gone quiet long enough to
+            be worth condensing, as identified by the most recent sleep cycle
+            (<code class="inline">GET /v1/summarisation/candidates</code>). Open
+            one to summarise it.
+          </p>
+          <div id="candidates-list">
             <div class="empty">Nothing loaded yet.</div>
           </div>
         </div>
@@ -1359,6 +1494,7 @@
         role: null,
         authEnabled: false,
         searchModes: [],
+        summariser: false,
         groups: [],
         groupScoped: false,
         status: 0,
@@ -1388,6 +1524,9 @@
               (!authEnabled || role === "admin") && !who.groupScoped,
             // Which search modes this deployment can serve - a property of the server, not the token.
             searchModes: who.searchModes || [],
+            // Whether the embedded LLM is configured, likewise a property of the server. Gates the
+            // LLM summarise button only; the manual one needs no summariser.
+            summariser: !!who.summariserEnabled,
             // The group scope, if this token carries one. groupScoped is authoritative; groups alone
             // cannot distinguish unscoped from scoped-to-nothing.
             groups: who.groups || [],
@@ -1401,6 +1540,7 @@
             canWrite: false,
             isAdmin: false,
             searchModes: [],
+            summariser: false,
             groups: [],
             groupScoped: false,
             status: e.status || 0,
@@ -1479,6 +1619,7 @@
       function applyCaps() {
         document.body.classList.toggle("readonly", !caps.canWrite);
         document.body.classList.toggle("admin", !!caps.isAdmin);
+        document.body.classList.toggle("summariser", !!caps.summariser);
 
         applySearchModes();
         applyScope();
@@ -1803,6 +1944,49 @@
         const ms = Number(BigInt(nanoStr) / 1000000n);
 
         return new Date(ms).toLocaleString();
+      }
+
+      // ageCell renders a timestamp as a compact age ("3h", "12d") with the absolute value in the
+      // title, and is what every table column showing a time uses. Two reasons for the compact form
+      // over the absolute one. It is what the decay maths runs on — age since the last recall is the
+      // input to every consolidation method — so it is the number that says whether a row is close
+      // to being forgotten, which a datetime makes the reader work out. And a datetime is the widest
+      // cell in these tables while being the one nobody reads digit by digit; the exact value is one
+      // hover away, and still in the DOM for anyone who needs it.
+      //
+      // Returns HTML, so it must be interpolated unescaped — everything it interpolates is derived
+      // from a number and escaped anyway.
+      function ageCell(nanoStr) {
+        if (!nanoStr || nanoStr === "0") return "—";
+
+        const ms = Number(BigInt(nanoStr) / 1000000n);
+        const seconds = Math.round((Date.now() - ms) / 1000);
+
+        // A timestamp ahead of now is not a bug to hide: StoreMemory accepts a small skew window,
+        // and an event's time_end is routinely in the future. Say so rather than showing "0s".
+        const label =
+          (seconds < 0 ? "in " : "") + compactAge(Math.abs(seconds));
+
+        return `<span class="age" title="${esc(nanoToText(nanoStr))}">${esc(label)}</span>`;
+      }
+
+      // compactAge turns a count of seconds into the largest unit leaving a whole number. Coarse on
+      // purpose: this is a column to be scanned down, and the exact value is in the tooltip.
+      function compactAge(seconds) {
+        const units = [
+          [31536000, "y"],
+          [2592000, "mo"],
+          [604800, "w"],
+          [86400, "d"],
+          [3600, "h"],
+          [60, "m"],
+        ];
+
+        for (const [size, suffix] of units) {
+          if (seconds >= size) return Math.floor(seconds / size) + suffix;
+        }
+
+        return seconds + "s";
       }
 
       function localToNano(val) {
@@ -2158,9 +2342,23 @@
       boot();
 
       // ------------------------------------------------------------------ search
-      // openEvent loads one event and every memory attached to it, then shows them in the search
-      // results panel. Reached by clicking an event id in any result table, or by searching with only
-      // an event id filled in.
+      // openEvent loads one event and every memory attached to it, then shows them in the event card
+      // on the search tab. Reached by clicking an event id in any of the three result tables, or by
+      // searching with only an event id filled in.
+      //
+      // It renders into its own card rather than into #search-results, which is what it used to do:
+      // an event opened from the Events or Memories tab then overwrote whatever search was showing,
+      // so returning to Search found the single event in place of the results. The card is the whole
+      // fix - the two views no longer share a container, so neither can destroy the other.
+      // eventSubject is the event the card is currently showing, so the summarise controls know what
+      // they are acting on without re-reading the DOM - the same shape as linksSubject.
+      // eventSubjectMemories is how many memories that render showed, which is what the summarise
+      // confirmation quotes, and eventSubjectGroup is the event's own group, which the manual
+      // summary form defaults to.
+      let eventSubject = "";
+      let eventSubjectMemories = 0;
+      let eventSubjectGroup = "";
+
       async function openEvent(id) {
         try {
           const data = await api(
@@ -2170,18 +2368,30 @@
           const ev = data.event || {};
           const memories = ev.memories || [];
           const end =
-            ev.timeEnd && ev.timeEnd !== "0" ? nanoToText(ev.timeEnd) : "open";
+            ev.timeEnd && ev.timeEnd !== "0" ? ageCell(ev.timeEnd) : "open";
 
-          // The links live in both the search and memories tables; surface the result on the search tab.
+          // The links live in all three tables; surface the result on the search tab wherever it was
+          // clicked from, so an event always opens in one known place.
           document.querySelector('nav button[data-tab="search"]').click();
 
-          $("search-results").innerHTML = `<div class="event-head">
+          eventSubject = ev.id || id;
+          eventSubjectMemories = memories.length;
+          eventSubjectGroup = ev.group || "";
+
+          $("event-card").style.display = "";
+          $("event-view").innerHTML = `<div class="event-head">
       <h3>${esc(ev.name || ev.id)}</h3>
       <div class="muted">${esc(ev.description || "")}</div>
-      <div class="kv">id ${esc(ev.id)} · significance ${esc(ev.significance ?? "")} · group ${esc(ev.group || "—")} · ${nanoToText(ev.timeStart)} → ${esc(end)} · ${memories.length} memor${memories.length === 1 ? "y" : "ies"}</div>
+      <div class="kv">id ${esc(ev.id)} · significance ${esc(ev.significance ?? "")} · group ${esc(ev.group || "—")} · ${ageCell(ev.timeStart)} → ${end} · ${memories.length} memor${memories.length === 1 ? "y" : "ies"}</div>
     </div>
     <div id="event-memories"></div>`;
           renderMemories("event-memories", memories, {});
+          closeSummaryForm();
+
+          // Nothing to condense means nothing to offer: both RPCs would refuse an event holding no
+          // memories, and the LLM one has no text to prompt with.
+          $("event-summarise").style.display = memories.length ? "" : "none";
+
           ok(
             "Event",
             (ev.name || ev.id) + " — " + memories.length + " memories",
@@ -2189,6 +2399,132 @@
         } catch (e) {
           fail("Open event failed", e);
         }
+      }
+
+      function closeEvent() {
+        eventSubject = "";
+        eventSubjectMemories = 0;
+        eventSubjectGroup = "";
+        $("event-card").style.display = "none";
+        $("event-view").innerHTML = "";
+        closeSummaryForm();
+      }
+
+      // ---------------------------------------------------------------- summarisation
+      //
+      // Two buttons for two RPCs that differ only in who authors the summary: the service has no
+      // visibility into memory content, so ReplaceMemoriesWithSummary takes one from the caller,
+      // while SummariseMemories has the optional embedded LLM write it. Both then go through the
+      // same insertSummary path server-side - one transaction, every memory of the event replaced by
+      // one flagged is_summary - which is why both are confirmed here first. There is no undo.
+
+      // The group defaults to the event's own. A summary is stored as a plain memory and inherits
+      // nothing, so leaving it blank would quietly drop the replacement out of the group every
+      // memory it replaced was in - and out of a scoped caller's own partition.
+      function openSummaryForm() {
+        $("summary-form").style.display = "";
+        $("summary-group").value = eventSubjectGroup;
+        $("summary-body").focus();
+      }
+
+      function closeSummaryForm() {
+        $("summary-form").style.display = "none";
+        ["summary-body", "summary-sig", "summary-group"].forEach(
+          (id) => ($(id).value = ""),
+        );
+      }
+
+      // confirmSummarise asks once, naming the cost in the terms that matter: how many memories go.
+      // The count is the one openEvent rendered from, so it cannot disagree with what is on screen.
+      function confirmSummarise(how) {
+        if (!eventSubject) return false;
+
+        return confirm(
+          "Summarise event " +
+            eventSubject +
+            " " +
+            how +
+            "?\n\nAll " +
+            eventSubjectMemories +
+            " of its memories are deleted and replaced by the single summary. " +
+            "This cannot be undone.",
+        );
+      }
+
+      async function replaceWithSummary() {
+        const body = $("summary-body").value.trim();
+
+        if (!body) {
+          fail("Summarise", new Error("the summary body cannot be empty"));
+
+          return;
+        }
+
+        if (!confirmSummarise("with the text you have written")) return;
+
+        // The gateway binds this RPC's body to the summary itself (body: "summary"), so the payload
+        // is a Memory, not a wrapper carrying one.
+        const summary = { body };
+        const significance = intOrUndef("summary-sig");
+
+        if (significance !== undefined) summary.significance = significance;
+
+        const group = strOrUndef("summary-group");
+        if (group) summary.group = group;
+
+        try {
+          const res = await api(
+            "POST",
+            "/v1/events/" + encodeURIComponent(eventSubject) + "/summary",
+            summary,
+          );
+
+          ok(
+            "Summarised",
+            (res.memoriesReplaced || 0) + " memories replaced by " + res.id,
+          );
+
+          await afterSummarise();
+        } catch (e) {
+          fail("Summarise failed", e);
+        }
+      }
+
+      async function summariseWithLLM() {
+        if (!confirmSummarise("with the embedded LLM")) return;
+
+        try {
+          // No significance sent: unset means the summary inherits the highest significance among
+          // the memories it replaces, which is the right default and the one the RPC documents.
+          const res = await api(
+            "POST",
+            "/v1/events/" + encodeURIComponent(eventSubject) + "/summarise",
+            {},
+          );
+
+          ok(
+            "Summarised",
+            (res.memoriesReplaced || 0) + " memories replaced by " + res.id,
+          );
+
+          await afterSummarise();
+        } catch (e) {
+          fail("Summarise failed", e);
+        }
+      }
+
+      // afterSummarise re-opens the event so the card shows the summary that now stands in for its
+      // memories - the point of the operation is what replaced them, so leaving the pre-replacement
+      // list on screen would be showing rows that no longer exist.
+      async function afterSummarise() {
+        closeSummaryForm();
+
+        await openEvent(eventSubject);
+
+        // The event we just condensed is no longer a candidate (the service drops it on the way
+        // through), so a loaded list is now wrong. Only refreshed if one is on screen — this is the
+        // Events tab, and the user may never have opened it.
+        if ($("candidates-list").querySelector("table")) await loadCandidates();
       }
 
       async function doSearch() {
@@ -2230,6 +2566,11 @@
 
         try {
           const data = await api("POST", "/v1/memories/search", body);
+
+          // A fresh search supersedes whatever event was open — it is a new question. The two cards
+          // could coexist, but leaving a stale event above the results is what made the old shared
+          // panel confusing in the first place.
+          closeEvent();
           renderMemories("search-results", data.memories || [], {
             reinforced: body.reinforce,
           });
@@ -2293,7 +2634,7 @@
     <td class="id">${eventCell}</td>
     <td>${groupCell(m)}</td>
     <td>${esc(m.recallCount || 0)}</td>
-    <td>${nanoToText(m.timeStamp)} ${flags.join(" ")}</td>
+    <td>${ageCell(m.timeStamp)} ${flags.join(" ")}</td>
     <td class="id">${idCell(m.id)}</td>
     <td>
       <div class="actions">
@@ -2327,7 +2668,9 @@
         $(target).innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
       <th>Sig</th><th title="computed value against the deletion threshold">Value</th>
-      <th>Event</th><th>Group</th><th>Recalls</th><th>Timestamp</th><th>Id</th><th></th>
+      <th>Event</th><th>Group</th><th>Recalls</th>
+      <th title="how long ago the memory was stored — hover a value for the exact timestamp">Age</th>
+      <th>Id</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -2631,7 +2974,7 @@
         )}</td>
         <td>${esc(String(l.significance ?? 0))}</td>
         <td>${esc(l.direction === "LINK_DIRECTION_OUTBOUND" ? "→ outbound" : "← inbound")}</td>
-        <td>${nanoToText(l.created)}</td>
+        <td>${ageCell(l.created)}</td>
         <td>
           <div class="actions">
             <button class="btn small danger writer-only" data-act="unlink-memory"
@@ -3233,7 +3576,11 @@
 
       // ------------------------------------------------------------------ events
       function eventRow(e) {
-        const memCount = (e.memories && e.memories.length) || 0;
+        // Served, never derived: fetchEvents asks for memory_counts, so the count is the store's
+        // own and is right whether or not the memories themselves were transferred. Falling back to
+        // the attached memories keeps the column honest if a future caller asks for those alone.
+        const memCount =
+          Number(e.memoryCount || 0) || (e.memories && e.memories.length) || 0;
 
         // The name is a link: clicking it opens the event and lists all of its memories (openEvent).
         const nameCell = e.id
@@ -3248,8 +3595,8 @@
     <td>${nameCell}</td>
     <td>${esc(e.significance ?? "")}</td>
     <td>${esc(e.group || "—")}</td>
-    <td>${nanoToText(e.timeStart)}</td>
-    <td>${e.timeEnd && e.timeEnd !== "0" ? nanoToText(e.timeEnd) : '<span class="pill">open</span>'}</td>
+    <td>${ageCell(e.timeStart)}</td>
+    <td>${e.timeEnd && e.timeEnd !== "0" ? ageCell(e.timeEnd) : '<span class="pill">open</span>'}</td>
     <td>${memCount || "—"}</td>
     <td class="id">${idCell(e.id)}</td>
     <td>
@@ -3280,7 +3627,8 @@
         const rows = events.map(eventRow).join("");
         $("events-list").innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
-      <th>Name</th><th>Sig</th><th>Group</th><th>Start</th><th>End</th><th>Mem</th><th>Id</th><th></th>
+      <th>Name</th><th>Sig</th><th>Group</th><th>Start</th><th>End</th>
+      <th title="memories this event currently holds">Mem</th><th>Id</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -3292,6 +3640,64 @@
 
       function eventsPageSize() {
         return intOrUndef("ef-pagesize") || 25;
+      }
+
+      // ---------------------------------------------------------- summarisation candidates
+      //
+      // The list the sleep cycle's scan produced: events holding enough quiet, unsummarised memories
+      // to be worth condensing. It is a point-in-time snapshot refreshed by the cycle, not a live
+      // query, which is why this loads on demand and offers a Refresh rather than following the
+      // events list.
+      async function loadCandidates() {
+        $("candidates-list").innerHTML = '<div class="empty">Loading…</div>';
+
+        try {
+          const data = await api("GET", "/v1/summarisation/candidates");
+
+          renderCandidates(data);
+          ok("Candidates", (data.candidates || []).length + " event(s)");
+        } catch (e) {
+          $("candidates-list").innerHTML =
+            '<div class="empty">Could not load candidates.</div>';
+
+          fail("Candidates failed", e);
+        }
+      }
+
+      function renderCandidates(data) {
+        const candidates = data.candidates || [];
+
+        if (!candidates.length) {
+          // An empty list means one of two opposite things, and only the server can say which:
+          // nothing is due yet, or this instance does not scan at all (the threshold is unset, or it
+          // is a replica and runs no sleep cycle). Reading it off the list would guess.
+          $("candidates-list").innerHTML = data.scanEnabled
+            ? '<div class="empty">No candidates right now — nothing has accumulated enough quiet memories yet.</div>'
+            : '<div class="empty">This instance does not scan for candidates. It needs ' +
+              "<code class=\"inline\">consolidation.summarisationMinMemories</code> above zero and " +
+              "<code class=\"inline\">consolidation.enabled</code> — a replica runs no sleep cycle, " +
+              "so it never produces this list.</div>";
+
+          return;
+        }
+
+        // The event name opens the event, which is where the summarise buttons are — the list says
+        // what is worth condensing, the event view is where it is done.
+        const rows = candidates
+          .map(
+            (c) => `<tr>
+        <td><a class="evlink" data-act="open-event" data-event="${esc(c.eventId)}">${esc(c.eventName || "(unnamed)")}</a></td>
+        <td>${esc(String(c.memoryCount ?? 0))}</td>
+        <td class="id">${idCell(c.eventId)}</td>
+      </tr>`,
+          )
+          .join("");
+
+        $("candidates-list").innerHTML =
+          `<div class="tablewrap"><table>
+    <thead><tr><th>Event</th>
+      <th title="unsummarised memories the scan counted">Mem</th><th>Id</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
       }
 
       // loadEvents lists from the first page — used by the "List events" button and refreshed after a
@@ -3343,6 +3749,10 @@
         if (group) params.set("group", group);
 
         if ($("ef-memories").checked) params.set("memories", "true");
+
+        // Always asked for: how much an event holds is what a listing is for, and the count is one
+        // aggregate query that reads no bodies — unlike `memories`, which transfers all of them.
+        params.set("memory_counts", "true");
 
         params.set("order_by", $("ef-sort").value);
         params.set("limit", eventsPageSize());

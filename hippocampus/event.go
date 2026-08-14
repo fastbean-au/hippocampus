@@ -317,6 +317,20 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 	}
 	res.Event = event.ToProto()
 
+	// Counted rather than derived from the nested memories below, for the reason GetEvents gives:
+	// the count exists so a caller can learn how much an event holds without fetching it, and
+	// deriving it would make the cheap answer depend on the expensive one having been asked for.
+	if in.GetMemoryCounts() {
+		groups, _ := s.scopedGroups(ctx)
+
+		counts, err := s.db.CountMemoriesByEventIds(ctx, []string{eid}, groups)
+		if err != nil {
+			return &res, mapError(err)
+		}
+
+		res.Event.MemoryCount = int32(counts[eid])
+	}
+
 	if in.GetMemories() {
 		memories, err := s.db.GetMemoriesByEventId(ctx, eid)
 		if err != nil {
@@ -446,18 +460,36 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		es[i] = e.ToProto()
 	}
 
-	// Attach memories in a single batched query rather than one GetMemoriesByEventId per event (an
-	// N+1 that was up to 200 extra queries per page, serialised on SQLite's single connection).
-	// Group the result back onto its event by event_id.
-	if in.GetMemories() && len(*events) > 0 {
-		eventIds := make([]string, len(*events))
-		indexByEventId := make(map[string]int, len(*events))
+	// Both of the optional per-event lookups below are batched over the whole page rather than run
+	// per event (an N+1 that was up to 200 extra queries per page, serialised on SQLite's single
+	// connection), so each is one round trip whatever the page size. Both group their result back
+	// onto its event through this index.
+	eventIds := make([]string, len(*events))
+	indexByEventId := make(map[string]int, len(*events))
 
-		for i, e := range *events {
-			eventIds[i] = e.Id
-			indexByEventId[e.Id] = i
+	for i, e := range *events {
+		eventIds[i] = e.Id
+		indexByEventId[e.Id] = i
+	}
+
+	// The counts are deliberately a separate query from the memories rather than being derived by
+	// counting them: memory_counts exists precisely so a listing can say how much an event holds
+	// without transferring any of it, and deriving it would make the cheap answer available only to
+	// callers who had already paid for the expensive one.
+	if in.GetMemoryCounts() && len(eventIds) > 0 {
+		counts, err := s.db.CountMemoriesByEventIds(ctx, eventIds, filter.Groups)
+		if err != nil {
+			return &res, mapError(err)
 		}
 
+		for id, count := range counts {
+			if i, ok := indexByEventId[id]; ok {
+				es[i].MemoryCount = int32(count)
+			}
+		}
+	}
+
+	if in.GetMemories() && len(eventIds) > 0 {
 		memories, err := s.db.GetMemoriesByEventIds(ctx, eventIds)
 		if err != nil {
 			return &res, mapError(err)

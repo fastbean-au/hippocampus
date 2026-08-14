@@ -185,8 +185,9 @@ func (s *Server) autoSummariseCandidates(ctx context.Context) {
 
 	summarised := 0
 
-	summarisedIds := make(map[string]bool, len(candidates))
-
+	// Each success drops its own event from the cached list inside insertSummary, which is why
+	// there is no pruning pass here: the loop is iterating a copy taken above, so the list it is
+	// removing from is not the one being walked.
 	for i := range candidates {
 		eventId := candidates[i].EventId
 
@@ -198,28 +199,7 @@ func (s *Server) autoSummariseCandidates(ctx context.Context) {
 			log.Infof("auto-summarised event '%s' (%d memories replaced)", eventId, replaced)
 		}
 
-		summarisedIds[eventId] = true
-
 		summarised++
-	}
-
-	// Drop the events we condensed from the cached list so GetSummarisationCandidates stops
-	// offering an event that no longer has unsummarised memories to condense.
-	if summarised > 0 {
-		s.summarisationCandidatesMu.Lock()
-
-		kept := s.summarisationCandidates[:0]
-
-		for i := range s.summarisationCandidates {
-			if summarisedIds[s.summarisationCandidates[i].EventId] {
-				continue
-			}
-
-			kept = append(kept, s.summarisationCandidates[i])
-		}
-
-		s.summarisationCandidates = kept
-		s.summarisationCandidatesMu.Unlock()
 	}
 
 	span.AddEvent("events_auto_summarised", trace.WithAttributes(attribute.Int("summarised", summarised)))

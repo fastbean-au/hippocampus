@@ -554,6 +554,64 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 // TestGroupScopeIsolation_UnscopedCallerIsUnchanged is the other half of the guarantee: everything
 // above must not have narrowed anything for a deployment that does not use group scoping, which is
 // every existing one. An unscoped caller sees both groups through every read.
+// TestGroupScopeIsolation_EventMemoryCounts pins the one thing GetEvents' memory_count could leak
+// that its nested memories cannot: a number. The event is in the caller's scope, so the row itself
+// is theirs to read, but it holds a memory carrying a group they do not — and an unscoped count
+// would report that memory's existence without ever naming it, which assertNoLeak could not catch.
+//
+// This needs its own store rather than seedTwoGroups', whose events each hold only their own
+// group's memory: the mismatch is the whole point of the case.
+func TestGroupScopeIsolation_EventMemoryCounts(t *testing.T) {
+	s := newEventTestServer(t)
+	ctx := context.Background()
+
+	if _, err := s.db.CreateEvent(ctx, types.Event{Id: "e-a", Name: "event a", TimeStart: 100, Significance: 5, Group: "a"}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	for _, m := range []types.Memory{
+		{Id: "m-a", Body: "mine", TimeStamp: 100, Significance: 5, EventId: "e-a", Group: "a"},
+		{Id: "m-b", Body: "not mine", TimeStamp: 100, Significance: 5, EventId: "e-a", Group: "b"},
+	} {
+		if _, err := s.db.CreateMemory(ctx, m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	scoped, err := s.GetEvents(scopedContext("a"), &contract.GetEventsRequest{MemoryCounts: true})
+	if err != nil {
+		t.Fatalf("GetEvents (scoped): %s", err)
+	}
+
+	if len(scoped.GetEvents()) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(scoped.GetEvents()))
+	}
+
+	if got := scoped.GetEvents()[0].GetMemoryCount(); got != 1 {
+		t.Errorf("a caller scoped to group a saw a memory count of %d, want 1 - the count must be scoped exactly as the memories are", got)
+	}
+
+	unscoped, err := s.GetEvents(ctx, &contract.GetEventsRequest{MemoryCounts: true})
+	if err != nil {
+		t.Fatalf("GetEvents (unscoped): %s", err)
+	}
+
+	if got := unscoped.GetEvents()[0].GetMemoryCount(); got != 2 {
+		t.Errorf("an unscoped caller saw a memory count of %d, want 2", got)
+	}
+
+	// GetEventById carries the same count and so the same leak; it takes the scope separately, so
+	// it needs its own assertion rather than inheriting this one.
+	byId, err := s.GetEventById(scopedContext("a"), &contract.GetEventByIdRequest{Id: "e-a", MemoryCounts: true})
+	if err != nil {
+		t.Fatalf("GetEventById (scoped): %s", err)
+	}
+
+	if got := byId.GetEvent().GetMemoryCount(); got != 1 {
+		t.Errorf("GetEventById reported a memory count of %d to a caller scoped to group a, want 1", got)
+	}
+}
+
 func TestGroupScopeIsolation_UnscopedCallerIsUnchanged(t *testing.T) {
 	s := seedTwoGroups(t)
 	ctx := context.Background()

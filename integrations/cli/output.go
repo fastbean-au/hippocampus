@@ -127,6 +127,13 @@ func (r *renderer) renderText(msg proto.Message) error {
 	case *contract.GetSummarisationCandidatesResponse:
 		r.line("%d candidate(s)", len(m.GetCandidates()))
 
+		// An empty list means one of two opposite things, so say which. Only worth a line when the
+		// list is empty: with candidates in hand the scan is evidently running.
+		if len(m.GetCandidates()) == 0 && !m.GetScanEnabled() {
+			r.line("  (the candidate scan is not running on this instance — it needs")
+			r.line("   consolidation.summarisationMinMemories > 0 and consolidation.enabled)")
+		}
+
 		for _, candidate := range m.GetCandidates() {
 			r.line("  %s  %-30s  %d memories", candidate.GetEventId(), candidate.GetEventName(), candidate.GetMemoryCount())
 		}
@@ -368,6 +375,13 @@ func (r *renderer) renderEvent(event *contract.Event) {
 
 	if group := event.GetGroup(); group != "" {
 		r.line("  group:        %s", group)
+	}
+
+	// Only printed when the server actually counted: the field is 0 both for an event holding
+	// nothing and for a request that never asked, and printing "0" for the latter would be a claim
+	// the response did not make.
+	if count := event.GetMemoryCount(); count > 0 {
+		r.line("  memories:     %d", count)
 	}
 
 	r.renderMetadata(event.GetMetadata())

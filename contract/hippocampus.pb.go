@@ -454,6 +454,7 @@ type Event struct {
 	Metadata             map[string]string      `protobuf:"bytes,13,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // optional multi-dimensional classification, exactly as Memory.metadata: same key charset, same 32-key/512-byte-value/4096-byte bounds, same replace-wholesale semantics on update, same opacity to the server
 	ClearMetadata        bool                   `protobuf:"varint,14,opt,name=clear_metadata,json=clearMetadata,proto3" json:"clear_metadata,omitempty"`                                           // write-only: on UpdateEvent, remove all metadata (see Memory.clear_metadata for why the empty map cannot say it)
 	ClearGroup           bool                   `protobuf:"varint,15,opt,name=clear_group,json=clearGroup,proto3" json:"clear_group,omitempty"`                                                    // write-only: on UpdateEvent, reset group to empty (see Memory.clear_group)
+	MemoryCount          int32                  `protobuf:"varint,16,opt,name=memory_count,json=memoryCount,proto3" json:"memory_count,omitempty"`                                                 // read-only: memories currently attached to this event, populated only when asked for (GetEventsRequest.memory_counts, GetEventByIdRequest.memory_counts - see there for why it is opt-in); 0 otherwise, which is indistinguishable from an event holding none, so ask for the count if you need to tell them apart. Counted within the caller's group scope, exactly as the nested memories are filtered. Ignored on write
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -591,6 +592,13 @@ func (x *Event) GetClearGroup() bool {
 		return x.ClearGroup
 	}
 	return false
+}
+
+func (x *Event) GetMemoryCount() int32 {
+	if x != nil {
+		return x.MemoryCount
+	}
+	return 0
 }
 
 // Link is a directed, significance-carrying association between two memories or between two events.
@@ -1108,8 +1116,9 @@ func (x *DeleteEventRequest) GetMemories() bool {
 
 type GetEventByIdRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`              // the event to fetch
-	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"` // true also loads the event's memories into the response
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                          // the event to fetch
+	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"`                             // true also loads the event's memories into the response
+	MemoryCounts  bool                   `protobuf:"varint,3,opt,name=memory_counts,json=memoryCounts,proto3" json:"memory_counts,omitempty"` // true populates memory_count, exactly as GetEventsRequest.memory_counts does (and for the same reason: it reports how many memories the event holds without transferring any of them)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1154,6 +1163,13 @@ func (x *GetEventByIdRequest) GetId() string {
 func (x *GetEventByIdRequest) GetMemories() bool {
 	if x != nil {
 		return x.Memories
+	}
+	return false
+}
+
+func (x *GetEventByIdRequest) GetMemoryCounts() bool {
+	if x != nil {
+		return x.MemoryCounts
 	}
 	return false
 }
@@ -1217,6 +1233,7 @@ type GetEventsRequest struct {
 	Offset               int32                  `protobuf:"varint,11,opt,name=offset,proto3" json:"offset,omitempty"`                                                                                                  // rows to skip for pagination; negative values are clamped to 0; no upper bound
 	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,12,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=hippocampus.v1.SignificanceExtremum" json:"significance_extremum,omitempty"` // when set, ignore significance_min/significance_max and return only events tied at that significance value among the other filters (time range, group, metadata) - not a range; 0 (default) applies no extremum
 	Metadata             []string               `protobuf:"bytes,13,rep,name=metadata,proto3" json:"metadata,omitempty"`                                                                                               // optional: restrict to events whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata
+	MemoryCounts         bool                   `protobuf:"varint,14,opt,name=memory_counts,json=memoryCounts,proto3" json:"memory_counts,omitempty"`                                                                  // when true, populate each returned event's memory_count. Separate from `memories` and opt-in because it is a second query per page: it reports how many memories an event holds without transferring any of them, which is what a listing wants and what `memories` is far too expensive for
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1340,6 +1357,13 @@ func (x *GetEventsRequest) GetMetadata() []string {
 		return x.Metadata
 	}
 	return nil
+}
+
+func (x *GetEventsRequest) GetMemoryCounts() bool {
+	if x != nil {
+		return x.MemoryCounts
+	}
+	return false
 }
 
 type GetEventsResponse struct {
@@ -2516,8 +2540,15 @@ func (x *SummarisationCandidate) GetMemoryCount() int32 {
 }
 
 type GetSummarisationCandidatesResponse struct {
-	state         protoimpl.MessageState    `protogen:"open.v1"`
-	Candidates    []*SummarisationCandidate `protobuf:"bytes,1,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	state      protoimpl.MessageState    `protogen:"open.v1"`
+	Candidates []*SummarisationCandidate `protobuf:"bytes,1,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	// scan_enabled reports whether this instance runs the candidate scan at all: it needs
+	// consolidation.summarisationMinMemories > 0 AND consolidation.enabled, since the scan is part of
+	// the sleep cycle and a replica runs none. It exists because an empty candidates list is
+	// ambiguous in the way that matters, exactly as WhoAmI.groups is - "nothing is due yet" and "this
+	// instance will never offer you anything" are opposite answers, and only one of them is worth
+	// waiting on. A client presenting an empty list must branch on this rather than on the list.
+	ScanEnabled   bool `protobuf:"varint,2,opt,name=scan_enabled,json=scanEnabled,proto3" json:"scan_enabled,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2557,6 +2588,13 @@ func (x *GetSummarisationCandidatesResponse) GetCandidates() []*SummarisationCan
 		return x.Candidates
 	}
 	return nil
+}
+
+func (x *GetSummarisationCandidatesResponse) GetScanEnabled() bool {
+	if x != nil {
+		return x.ScanEnabled
+	}
+	return false
 }
 
 // SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the
@@ -4371,9 +4409,16 @@ type WhoAmIResponse struct {
 	// When true, writes are stamped with the caller's group, Purge/Sleep/PreviewConsolidation are
 	// refused, and records outside the scope report NotFound - so a console can explain an empty
 	// store rather than leave it looking like data loss.
-	GroupScoped   bool `protobuf:"varint,6,opt,name=group_scoped,json=groupScoped,proto3" json:"group_scoped,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	GroupScoped bool `protobuf:"varint,6,opt,name=group_scoped,json=groupScoped,proto3" json:"group_scoped,omitempty"`
+	// summariser_enabled reports whether this deployment has the embedded LLM configured
+	// (ollama.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as
+	// search_modes and with the same properties: it is a property of the deployment rather than the
+	// caller, so a client can offer service-authored summarisation only where it exists instead of
+	// discovering its absence through a FAILED_PRECONDITION. It says nothing about
+	// ReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary.
+	SummariserEnabled bool `protobuf:"varint,7,opt,name=summariser_enabled,json=summariserEnabled,proto3" json:"summariser_enabled,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *WhoAmIResponse) Reset() {
@@ -4448,6 +4493,13 @@ func (x *WhoAmIResponse) GetGroupScoped() bool {
 	return false
 }
 
+func (x *WhoAmIResponse) GetSummariserEnabled() bool {
+	if x != nil {
+		return x.SummariserEnabled
+	}
+	return false
+}
+
 type EmptyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -4499,7 +4551,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05ABOVE\x10\x01\x12\t\n" +
 	"\x05BELOW\x10\x02\x12\v\n" +
-	"\aBETWEEN\x10\x03\"\x8e\x05\n" +
+	"\aBETWEEN\x10\x03\"\xb1\x05\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -4518,7 +4570,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\bmetadata\x18\r \x03(\v2#.hippocampus.v1.Event.MetadataEntryR\bmetadata\x12%\n" +
 	"\x0eclear_metadata\x18\x0e \x01(\bR\rclearMetadata\x12\x1f\n" +
 	"\vclear_group\x18\x0f \x01(\bR\n" +
-	"clearGroup\x1a;\n" +
+	"clearGroup\x12!\n" +
+	"\fmemory_count\x18\x10 \x01(\x05R\vmemoryCount\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\":\n" +
@@ -4566,12 +4619,13 @@ const file_hippocampus_proto_rawDesc = "" +
 	"merge_from\x18\x02 \x01(\tR\tmergeFrom\"@\n" +
 	"\x12DeleteEventRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
-	"\bmemories\x18\x02 \x01(\bR\bmemories\"A\n" +
+	"\bmemories\x18\x02 \x01(\bR\bmemories\"f\n" +
 	"\x13GetEventByIdRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
-	"\bmemories\x18\x02 \x01(\bR\bmemories\"?\n" +
+	"\bmemories\x18\x02 \x01(\bR\bmemories\x12#\n" +
+	"\rmemory_counts\x18\x03 \x01(\bR\fmemoryCounts\"?\n" +
 	"\x10GetEventResponse\x12+\n" +
-	"\x05event\x18\x01 \x01(\v2\x15.hippocampus.v1.EventR\x05event\"\xea\x03\n" +
+	"\x05event\x18\x01 \x01(\v2\x15.hippocampus.v1.EventR\x05event\"\x8f\x04\n" +
 	"\x10GetEventsRequest\x12$\n" +
 	"\x0etime_start_min\x18\x01 \x01(\x03R\ftimeStartMin\x12$\n" +
 	"\x0etime_start_max\x18\x02 \x01(\x03R\ftimeStartMax\x12 \n" +
@@ -4588,7 +4642,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	" \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\v \x01(\x05R\x06offset\x12Y\n" +
 	"\x15significance_extremum\x18\f \x01(\x0e2$.hippocampus.v1.SignificanceExtremumR\x14significanceExtremum\x12\x1a\n" +
-	"\bmetadata\x18\r \x03(\tR\bmetadata\"c\n" +
+	"\bmetadata\x18\r \x03(\tR\bmetadata\x12#\n" +
+	"\rmemory_counts\x18\x0e \x01(\bR\fmemoryCounts\"c\n" +
 	"\x11GetEventsResponse\x12-\n" +
 	"\x06events\x18\x01 \x03(\v2\x15.hippocampus.v1.EventR\x06events\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
@@ -4674,11 +4729,12 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
 	"event_name\x18\x02 \x01(\tR\teventName\x12!\n" +
-	"\fmemory_count\x18\x03 \x01(\x05R\vmemoryCount\"l\n" +
+	"\fmemory_count\x18\x03 \x01(\x05R\vmemoryCount\"\x8f\x01\n" +
 	"\"GetSummarisationCandidatesResponse\x12F\n" +
 	"\n" +
 	"candidates\x18\x01 \x03(\v2&.hippocampus.v1.SummarisationCandidateR\n" +
-	"candidates\"\x9e\x01\n" +
+	"candidates\x12!\n" +
+	"\fscan_enabled\x18\x02 \x01(\bR\vscanEnabled\"\x9e\x01\n" +
 	"\x18SummariseMemoriesRequest\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\"\n" +
 	"\fsignificance\x18\x02 \x01(\x05R\fsignificance\x12C\n" +
@@ -4830,14 +4886,15 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\n" +
 	"valuations\x18\f \x03(\v2\x1f.hippocampus.v1.MemoryValuationR\n" +
 	"valuations\x120\n" +
-	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\"\xde\x01\n" +
+	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\"\x8d\x02\n" +
 	"\x0eWhoAmIResponse\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12!\n" +
 	"\fauth_enabled\x18\x03 \x01(\bR\vauthEnabled\x12=\n" +
 	"\fsearch_modes\x18\x04 \x03(\x0e2\x1a.hippocampus.v1.SearchModeR\vsearchModes\x12\x16\n" +
 	"\x06groups\x18\x05 \x03(\tR\x06groups\x12!\n" +
-	"\fgroup_scoped\x18\x06 \x01(\bR\vgroupScoped\"\x0e\n" +
+	"\fgroup_scoped\x18\x06 \x01(\bR\vgroupScoped\x12-\n" +
+	"\x12summariser_enabled\x18\a \x01(\bR\x11summariserEnabled\"\x0e\n" +
 	"\fEmptyRequest*,\n" +
 	"\x04Bool\x12\x0f\n" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +

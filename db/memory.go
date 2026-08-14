@@ -1117,6 +1117,63 @@ func (d *DB) GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]t
 	return &memories, nil
 }
 
+// CountMemoriesByEventIds reports how many memories each of the given events holds, in one
+// aggregate query. It is the cheap half of GetMemoriesByEventIds: an event listing usually wants to
+// say how much an event holds, not to transfer it, and this reads no bodies at all — with no group
+// scope it is answered entirely from the covering index, whose leading column is event_id.
+//
+// groups is the caller's group scope, applied for the same reason GetEvents' nested memories are
+// filtered to it: an in-scope event may hold a memory carrying a group the caller cannot read, and
+// a count that included it would report rows the same caller is refused everywhere else. An empty
+// scope is unrestricted, as everywhere in this package.
+//
+// Events holding nothing are simply absent from the result rather than present as zero: the map is
+// built from the rows the GROUP BY produced, and a caller reading a missing key gets zero anyway.
+func (d *DB) CountMemoriesByEventIds(ctx context.Context, eventIds []string, groups []string) (map[string]int, error) {
+	log.Trace("func() db.CountMemoriesByEventIds")
+
+	counts := make(map[string]int, len(eventIds))
+
+	if len(eventIds) == 0 {
+		return counts, nil
+	}
+
+	args := make([]any, 0, len(eventIds)+len(groups))
+	for _, id := range eventIds {
+		args = append(args, id)
+	}
+
+	query := `SELECT event_id, COUNT(*) FROM memories WHERE event_id IN (` + placeholders(len(eventIds)) + `)`
+	query, args = appendGroupScope(query, args, "", groups)
+	query += ` GROUP BY event_id`
+
+	ctx, cancel := d.opContext(ctx)
+	defer cancel()
+
+	rows, err := d.query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var eventId string
+		var count int
+
+		if err := rows.Scan(&eventId, &count); err != nil {
+			return nil, err
+		}
+
+		counts[eventId] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return counts, nil
+}
+
 func (d *DB) GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error) {
 	log.Trace("func() db.GetMemoriesByEventId")
 

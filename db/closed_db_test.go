@@ -46,6 +46,7 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 		{"GetMemories", func() error { _, err := db.GetMemories(ctx, MemoryFilter{}); return err }},
 		{"GetMemoriesByEventId", func() error { _, err := db.GetMemoriesByEventId(ctx, "e1"); return err }},
 		{"GetMemoriesByEventIds", func() error { _, err := db.GetMemoriesByEventIds(ctx, []string{"e1"}); return err }},
+		{"CountMemoriesByEventIds", func() error { _, err := db.CountMemoriesByEventIds(ctx, []string{"e1"}, nil); return err }},
 		{"GetMemoriesByIds", func() error { _, err := db.GetMemoriesByIds(ctx, []string{"m1"}); return err }},
 		{"GetIndexableMemoriesPage", func() error { _, err := db.GetIndexableMemoriesPage(ctx, "", 10); return err }},
 		{"CountMemoriesFiltered", func() error { _, err := db.CountMemoriesFiltered(ctx, MemoryFilter{}); return err }},
