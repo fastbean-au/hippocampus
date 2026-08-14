@@ -4912,6 +4912,21 @@ type WhoAmIResponse struct {
 	// discovering its absence through a FAILED_PRECONDITION. It says nothing about
 	// ReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary.
 	SummariserEnabled bool `protobuf:"varint,7,opt,name=summariser_enabled,json=summariserEnabled,proto3" json:"summariser_enabled,omitempty"`
+	// consolidation_enabled reports whether this instance runs the sleep cycle
+	// (consolidation.enabled). It is the deployment property behind a whole family of refusals:
+	// Sleep, PreviewConsolidation and ExplainConsolidation are all FAILED_PRECONDITION on a replica,
+	// because its store is consolidated by whichever instance holds the single-consolidator lock and
+	// under that instance's configuration rather than this one's. A client that would otherwise
+	// offer decay figures, a dry run, or a forced cycle can hide all three instead of presenting
+	// controls certain to be refused - the same argument as search_modes and summariser_enabled.
+	ConsolidationEnabled bool `protobuf:"varint,8,opt,name=consolidation_enabled,json=consolidationEnabled,proto3" json:"consolidation_enabled,omitempty"`
+	// tombstones_enabled reports whether the forgotten log is being recorded
+	// (consolidation.tombstones.enabled). Unlike the flags above this one gates a reader rather than
+	// a writer: GetForgottenMemories does not refuse when the log is off, it returns an empty page
+	// with enabled false. That distinction is exactly why it belongs here - "nothing was written
+	// down" and "nothing has been forgotten" render identically until a client is told which it is
+	// looking at, and only the first is worth hiding the control for.
+	TombstonesEnabled bool `protobuf:"varint,9,opt,name=tombstones_enabled,json=tombstonesEnabled,proto3" json:"tombstones_enabled,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -4991,6 +5006,20 @@ func (x *WhoAmIResponse) GetGroupScoped() bool {
 func (x *WhoAmIResponse) GetSummariserEnabled() bool {
 	if x != nil {
 		return x.SummariserEnabled
+	}
+	return false
+}
+
+func (x *WhoAmIResponse) GetConsolidationEnabled() bool {
+	if x != nil {
+		return x.ConsolidationEnabled
+	}
+	return false
+}
+
+func (x *WhoAmIResponse) GetTombstonesEnabled() bool {
+	if x != nil {
+		return x.TombstonesEnabled
 	}
 	return false
 }
@@ -5420,7 +5449,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\n" +
 	"valuations\x18\f \x03(\v2\x1f.hippocampus.v1.MemoryValuationR\n" +
 	"valuations\x120\n" +
-	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\"\x8d\x02\n" +
+	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\"\xf1\x02\n" +
 	"\x0eWhoAmIResponse\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12!\n" +
@@ -5428,7 +5457,9 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\fsearch_modes\x18\x04 \x03(\x0e2\x1a.hippocampus.v1.SearchModeR\vsearchModes\x12\x16\n" +
 	"\x06groups\x18\x05 \x03(\tR\x06groups\x12!\n" +
 	"\fgroup_scoped\x18\x06 \x01(\bR\vgroupScoped\x12-\n" +
-	"\x12summariser_enabled\x18\a \x01(\bR\x11summariserEnabled\"\x0e\n" +
+	"\x12summariser_enabled\x18\a \x01(\bR\x11summariserEnabled\x123\n" +
+	"\x15consolidation_enabled\x18\b \x01(\bR\x14consolidationEnabled\x12-\n" +
+	"\x12tombstones_enabled\x18\t \x01(\bR\x11tombstonesEnabled\"\x0e\n" +
 	"\fEmptyRequest*,\n" +
 	"\x04Bool\x12\x0f\n" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +

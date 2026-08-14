@@ -7,12 +7,12 @@ the ones that matter (or that you keep recalling) survive.
 
 There is one bridge for each of five sources:
 
-| Source   | Command        | Delivery semantics                               |
-| -------- | -------------- | ------------------------------------------------ |
-| NATS     | `cmd/nats`     | at-most-once (core NATS has no per-message ack)  |
-| MQTT     | `cmd/mqtt`     | at-least-once (QoS ≥ 1, manual ack)              |
-| RabbitMQ | `cmd/rabbitmq` | at-least-once (manual ack, nack-with-requeue)    |
-| Kafka    | `cmd/kafka`    | at-least-once (offset committed after store)     |
+| Source   | Command        | Delivery semantics                                                        |
+| -------- | -------------- | ------------------------------------------------------------------------- |
+| NATS     | `cmd/nats`     | at-most-once (core NATS has no per-message ack)                           |
+| MQTT     | `cmd/mqtt`     | at-least-once (QoS ≥ 1, manual ack)                                       |
+| RabbitMQ | `cmd/rabbitmq` | at-least-once (manual ack, nack-with-requeue)                             |
+| Kafka    | `cmd/kafka`    | at-least-once (offset committed after store)                              |
 | Bluesky  | `cmd/bluesky`  | at-least-once, cursor-gated (see [Bluesky](#bluesky-the-firehose-bridge)) |
 
 Like the [OpenTelemetry exporter](../integrations/otel/hippocampusexporter/README.md), this is its
@@ -93,10 +93,10 @@ list, or `--version` to print the build version.
 
 Two shapes, and the choice matters more than it looks:
 
-| | Use it when |
-| --- | --- |
-| `--token` | A hand run, or a deployment minting long-lived HMAC tokens itself. |
-| `--oidc-client-id/-secret` + `--oidc-issuer` | Anything long-running against an IdP-backed service. |
+|                                              | Use it when                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------ |
+| `--token`                                    | A hand run, or a deployment minting long-lived HMAC tokens itself. |
+| `--oidc-client-id/-secret` + `--oidc-issuer` | Anything long-running against an IdP-backed service.               |
 
 A **static token eventually expires**, and when it does the bridge does not stop — it keeps consuming
 and fails every write with `Unauthenticated`, silently, for as long as it is left running. That is
@@ -152,18 +152,18 @@ go run ./cmd/bluesky --address localhost:50051 --group bluesky --group-from-subj
 The default transformer maps one message to one memory. Its behaviour is controlled by the shared
 flags:
 
-| Flag                       | Effect                                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------------------ |
-| `--significance`           | Significance stamped on each memory (default 1).                                                 |
-| `--significance-header`    | Message header whose integer value overrides `--significance` per message.                       |
-| `--group`                  | Group label for every memory.                                                                    |
-| `--group-from-subject`     | When `--group` is empty, use the subject/topic as the group (default on).                        |
-| `--group-header`           | Message header whose value overrides the group per message.                                      |
-| `--binary`                 | Base64-encode the payload and mark the memory `is_binary` (never content-indexed).               |
-| `--max-body-bytes`         | Truncate an over-long payload before it becomes a body (0 = unlimited).                          |
-| `--metadata`               | Metadata label as `key=value`, stamped on every memory (repeatable).                             |
-| `--metadata-header`        | Message header to copy onto each memory's metadata (repeatable).                                 |
-| `--metadata-header-prefix` | Copy every header carrying this prefix onto the metadata, with the prefix stripped from the key. |
+| Flag                       | Effect                                                                                                |
+| -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `--significance`           | Significance stamped on each memory (default 1).                                                      |
+| `--significance-header`    | Message header whose integer value overrides `--significance` per message.                            |
+| `--group`                  | Group label for every memory.                                                                         |
+| `--group-from-subject`     | When `--group` is empty, use the subject/topic as the group (default on).                             |
+| `--group-header`           | Message header whose value overrides the group per message.                                           |
+| `--binary`                 | Base64-encode the payload and mark the memory `is_binary` (never content-indexed).                    |
+| `--max-body-bytes`         | Truncate an over-long payload before it becomes a body (0 = unlimited).                               |
+| `--metadata`               | Metadata label as `key=value`, stamped on every memory (repeatable).                                  |
+| `--metadata-header`        | Message header to copy onto each memory's metadata (repeatable).                                      |
+| `--metadata-header-prefix` | Copy every header carrying this prefix onto the metadata, with the prefix stripped from the key.      |
 | `--subject-metadata-key`   | Record the subject/topic as a metadata label under this key, as well as (or instead of) as the group. |
 
 Header selection is an **allowlist or a prefix, never "copy every header"**. Broker headers are
@@ -264,7 +264,7 @@ costs one `UPDATE` that matches no rows and is reported as the `missing` outcome
 Two consequences worth knowing:
 
 - **The token must be unscoped and at least writer tier.** A group-scoped token makes the service
-  scope-check ids *before* recalling them, which turns an id it does not hold into `NotFound` for the
+  scope-check ids _before_ recalling them, which turns an id it does not hold into `NotFound` for the
   whole batch; and a reader-tier token gets a plain, non-reinforcing read unless the deployment sets
   `auth.readerRecallReinforces`. The bridge absorbs `NotFound` either way, so a misconfigured token
   degrades to "reinforcement quietly stops working" rather than "the bridge stops consuming" — worth
@@ -314,7 +314,7 @@ over in a sitting.
 
 Keep `app.bsky.feed.post` in `--collections` even in feed mode: the firehose is where **deletions**
 are reported, and dropping it means an upstream withdrawal is never honoured. A post arriving on the
-firehose is not stored in feed mode, but a *reply* still reinforces its parent — that is engagement,
+firehose is not stored in feed mode, but a _reply_ still reinforces its parent — that is engagement,
 and the parent is very likely one of the feed's posts.
 
 **Backfill and seeding.** `--feed-backfill` (on by default) reads the whole feed once at startup, so
@@ -325,14 +325,14 @@ be doing nothing. Seeding carries each post's observed engagement across as a **
 count, `round(log1p(likes + reposts))`:
 
 | likes + reposts | seeded recall count |
-|---|---|
-| 0 | 0 |
-| 1 | 1 |
-| 6 | 2 |
-| 50 | 4 |
-| 5,658 | 9 |
+| --------------- | ------------------- |
+| 0               | 0                   |
+| 1               | 1                   |
+| 6               | 2                   |
+| 50              | 4                   |
+| 5,658           | 9                   |
 
-The damping is load-bearing, not decoration: effective significance rises *linearly* with recall
+The damping is load-bearing, not decoration: effective significance rises _linearly_ with recall
 count, so passing five thousand likes through raw would give one post an effective significance in
 the tens of thousands and it would never be forgotten — which is not a demonstration of a decay
 model. log1p compresses four orders of magnitude into single digits, still ranking posts correctly
@@ -410,7 +410,7 @@ than an editorially written slug, so relating on it relates posts that merely ar
 own posts carry cards and keep being related exactly as before.
 
 Two things neither flag can do, both for the same reason — Jetstream's `wantedDids` selects on the
-repository a record was written **in**, and a like, repost or reply lives in the *engager's*
+repository a record was written **in**, and a like, repost or reply lives in the _engager's_
 repository:
 
 - `--feed-authors` does **not** bring in replies to those accounts. Only `--capture-replies` reaches
@@ -437,8 +437,8 @@ what stops a section name relating everything to everything. Posts without a lin
 their own text.
 
 Measured against a live news feed that relates about a quarter of posts, and the matches are
-**cross-outlet** — one paper's *"Alito made up to $2.9 million from fossil fuel assets"* against
-another's *"Supreme Court justice Samuel Alito gained up to $2.9 million from…"*.
+**cross-outlet** — one paper's _"Alito made up to $2.9 million from fossil fuel assets"* against
+another's *"Supreme Court justice Samuel Alito gained up to $2.9 million from…"_.
 
 **Why it is worth having.** Links are what make `consolidation.linkRecallPropagation` do anything: with
 them, a like on one outlet's coverage pulls the others back from the threshold too, and
@@ -463,36 +463,55 @@ copy has quietly turned a public post into a permanent private archive.
 
 ### Flags
 
-| Flag | Default | Effect |
-| --- | --- | --- |
-| `--jetstream-url` | `wss://jetstream2.us-east.bsky.network/subscribe` | endpoint (Jetstream is self-hostable) |
-| `--collections` | post, like, repost | Jetstream `wantedCollections` (max 100) |
-| `--dids` | *(all)* | restrict to these repositories — the "follow a few accounts" flag |
-| `--cursor` | `0` | resume point; 0 starts at the live tip |
-| `--feed` | *(off)* | at:// URI of a feed generator to take posts from instead of the firehose |
-| `--feed-appview` | `https://public.api.bsky.app` | AppView serving `getFeed` |
-| `--feed-poll-seconds` | `60` | how often the feed is re-read |
-| `--feed-backfill` | `true` | read the whole feed once at startup |
-| `--feed-seed-recalls` | `true` | carry a backfilled post's engagement across as a damped recall count |
-| `--capture-replies` | `false` | also store a firehose post replying to a thread this bridge holds |
-| `--capture-index-size` | `5000` | stored feed posts a reply is matched against |
-| `--capture-significance` | `0` | significance a captured post arrives with (0 = same as `--significance`) |
-| `--feed-authors` | `false` | also store firehose posts by any account the feed has surfaced |
-| `--feed-authors-max` | `500` | feed authors remembered |
-| `--topic-links` | `false` | relate posts sharing topic terms |
-| `--topic-index-size` | `5000` | memories the term index remembers |
-| `--topic-min-shared` | `2` | terms two posts must share to be related |
-| `--topic-max-links` | `8` | links given to one post |
-| `--topic-max-frequency-percent` | `2` | ignore terms carried by more than this share of the index |
-| `--topic-link-significance` | `50` | significance carried by each topic link |
-| `--events` | `none` | `none` or `thread` |
-| `--recall` | `true` | reinforce a post when it is liked, reposted or replied to |
-| `--recall-batch-size` | `256` | ids per `RecallMemories` call (0 = one RPC per engagement) |
-| `--recall-batch-window-ms` | `250` | how long ids buffer before a partial flush |
-| `--honour-deletes` | `true` | delete a memory when its post is deleted upstream |
-| `--langs` | *(all)* | keep only posts declaring one of these languages |
-| `--min-text-bytes` | `1` | drop posts shorter than this |
-| `--root-cache-size` | `8192` | cache of known thread roots (an optimisation only) |
+| Flag                            | Default                                           | Effect                                                                   |
+| ------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------ |
+| `--jetstream-url`               | `wss://jetstream2.us-east.bsky.network/subscribe` | endpoint (Jetstream is self-hostable)                                    |
+| `--collections`                 | post, like, repost                                | Jetstream `wantedCollections` (max 100)                                  |
+| `--dids`                        | _(all)_                                           | restrict to these repositories — the "follow a few accounts" flag        |
+| `--cursor`                      | `0`                                               | resume point; 0 starts at the live tip                                   |
+| `--feed`                        | _(off)_                                           | at:// URI of a feed generator to take posts from instead of the firehose |
+| `--feed-appview`                | `https://public.api.bsky.app`                     | AppView serving `getFeed`                                                |
+| `--feed-poll-seconds`           | `60`                                              | how often the feed is re-read                                            |
+| `--feed-backfill`               | `true`                                            | read the whole feed once at startup                                      |
+| `--feed-seed-recalls`           | `true`                                            | carry a backfilled post's engagement across as a damped recall count     |
+| `--capture-replies`             | `false`                                           | also store a firehose post replying to a thread this bridge holds        |
+| `--capture-index-size`          | `5000`                                            | stored feed posts a reply is matched against                             |
+| `--capture-significance`        | `0`                                               | significance a captured post arrives with (0 = same as `--significance`) |
+| `--feed-authors`                | `false`                                           | also store firehose posts by any account the feed has surfaced           |
+| `--feed-authors-max`            | `500`                                             | feed authors remembered                                                  |
+| `--topic-links`                 | `false`                                           | relate posts sharing topic terms                                         |
+| `--topic-index-size`            | `5000`                                            | memories the term index remembers                                        |
+| `--topic-min-shared`            | `2`                                               | terms two posts must share to be related                                 |
+| `--topic-max-links`             | `8`                                               | links given to one post                                                  |
+| `--topic-max-frequency-percent` | `2`                                               | ignore terms carried by more than this share of the index                |
+| `--topic-link-significance`     | `50`                                              | significance carried by each topic link                                  |
+| `--events`                      | `none`                                            | `none` or `thread`                                                       |
+| `--recall`                      | `true`                                            | reinforce a post when it is liked, reposted or replied to                |
+| `--recall-batch-size`           | `256`                                             | ids per `RecallMemories` call (0 = one RPC per engagement)               |
+| `--recall-batch-window-ms`      | `250`                                             | how long ids buffer before a partial flush                               |
+| `--honour-deletes`              | `true`                                            | delete a memory when its post is deleted upstream                        |
+| `--langs`                       | _(all)_                                           | keep only posts **declaring** one of these languages (see below)         |
+| `--min-text-bytes`              | `1`                                               | drop posts shorter than this                                             |
+| `--root-cache-size`             | `8192`                                            | cache of known thread roots (an optimisation only)                       |
+
+#### A post's language is self-declared, and is often wrong
+
+`--langs` and the `lang` / `langs` metadata are the post record's own `langs` field, copied through
+unchanged. That field is set by whichever client posted, which typically fills it in from the
+_account's_ interface language rather than from the text — so a post reading
+
+> Précédemment dans «Les deux mégots» : le détective privé Abgrall…
+
+can and does arrive declaring `langs: ["en"]`
+([one live example](https://bsky.app/profile/did:plc:fleaqu2yloy5vpnb3wamdp6m/post/3mszvl5j6hr2h)).
+`--langs en` keeps it, and the stored memory carries `lang=en`.
+
+This is not something the bridge can correct without detecting the language of every post itself —
+a model, a dependency and a per-message cost, in a module whose premise is that client trees stay
+small — and detection would then _disagree_ with the declaration the network filters on, which is
+its own kind of wrong. So the declaration is passed through faithfully and the metadata means what
+the author's client said, not what the text is. Read `--langs` as a volume control rather than as a
+guarantee: on the open firehose it cuts the stream to a fraction, which is what it is for.
 
 ### Jetstream is a convenience service, not the protocol
 
@@ -501,7 +520,7 @@ withdrawn. It is still the right choice here — the canonical firehose
 (`com.atproto.sync.subscribeRepos`) is DAG-CBOR-encoded Merkle Search Tree blocks in CAR files, and
 consuming it would mean an MST implementation, a CAR reader and a CBOR codec, three substantial
 dependencies in a module whose whole premise is that client trees stay small. A `subscribeRepos`
-consumer would be a *different adapter* rather than a rewrite of this one; `bridge.Message` is
+consumer would be a _different adapter_ rather than a rewrite of this one; `bridge.Message` is
 exactly where that substitution happens.
 
 ### Privacy
@@ -542,7 +561,11 @@ exports OTEL metrics over OTLP/gRPC with `--metrics`.
 Hippocampus instance the bridge writes to can actually serve:
 
 ```json
-{"component":"hippocampus-nats-bridge","dependencies":{"hippocampus":"ok"},"status":"ready"}
+{
+  "component": "hippocampus-nats-bridge",
+  "dependencies": { "hippocampus": "ok" },
+  "status": "ready"
+}
 ```
 
 **The broker is deliberately not part of readiness.** Both of its failure modes are already handled:
@@ -551,17 +574,17 @@ problem, and visible as a restart — while a mid-run disconnect is the adapter'
 nothing else would notice is the Hippocampus end going away, because a bridge with no traffic and a
 bridge that cannot write look identical from outside. That is the gap the probe closes.
 
-| Metric | Type | Attributes |
-| --- | --- | --- |
-| `hippocampus.bridge.messages` | counter | `broker`, `outcome` (stored/rejected/filtered/failed) |
-| `hippocampus.bridge.memories` | counter | `broker`, `outcome` (stored/rejected/orphaned) |
-| `hippocampus.bridge.message.duration` | histogram (s) | `broker`, `outcome` |
-| `hippocampus.bridge.body_bytes` | histogram | `broker` |
-| `hippocampus.bridge.recalls` | counter | `broker`, `outcome` (reinforced/missing/failed) |
-| `hippocampus.bridge.events` | counter | `broker`, `outcome` (created/exists/rejected/failed) |
-| `hippocampus.bridge.recall.batch_size` | histogram | `broker` |
-| `hippocampus.client.rpc.requests` | counter | `endpoint`, `rpc`, `code`, `outcome` |
-| `hippocampus.client.rpc.duration` | histogram (s) | as above |
+| Metric                                 | Type          | Attributes                                            |
+| -------------------------------------- | ------------- | ----------------------------------------------------- |
+| `hippocampus.bridge.messages`          | counter       | `broker`, `outcome` (stored/rejected/filtered/failed) |
+| `hippocampus.bridge.memories`          | counter       | `broker`, `outcome` (stored/rejected/orphaned)        |
+| `hippocampus.bridge.message.duration`  | histogram (s) | `broker`, `outcome`                                   |
+| `hippocampus.bridge.body_bytes`        | histogram     | `broker`                                              |
+| `hippocampus.bridge.recalls`           | counter       | `broker`, `outcome` (reinforced/missing/failed)       |
+| `hippocampus.bridge.events`            | counter       | `broker`, `outcome` (created/exists/rejected/failed)  |
+| `hippocampus.bridge.recall.batch_size` | histogram     | `broker`                                              |
+| `hippocampus.client.rpc.requests`      | counter       | `endpoint`, `rpc`, `code`, `outcome`                  |
+| `hippocampus.client.rpc.duration`      | histogram (s) | as above                                              |
 
 `outcome` is four-valued rather than a success bool, because the three non-failures are
 operationally different and an SLO has to separate them: a memory the **service** declined for

@@ -68,6 +68,16 @@ func (r *renderer) renderText(msg proto.Message) error {
 			r.line("groups:       unscoped (whole store)")
 		}
 
+		// Everything above describes the caller; everything below describes the instance answering,
+		// and is the same for every caller of it. Worth a line of its own rather than JSON-only:
+		// which of two addresses is the consolidator, and whether this one records what it forgets,
+		// are questions an operator asks of a running deployment, and asking them by watching an RPC
+		// be refused is the thing whoami exists to avoid.
+		r.line("consolidating: %t", m.GetConsolidationEnabled())
+		r.line("forgotten log: %t", m.GetTombstonesEnabled())
+		r.line("summariser:    %t", m.GetSummariserEnabled())
+		r.line("search modes:  %s", orNone(strings.Join(searchModeNames(m.GetSearchModes()), ", ")))
+
 	case *contract.StoreMemoryResponse:
 		if m.GetRejected() {
 			r.line("rejected (significance below the minimum)")
@@ -510,6 +520,29 @@ func formatNanos(nanos int64) string {
 	}
 
 	return time.Unix(0, nanos).Format(time.RFC3339)
+}
+
+// searchModeNames renders the modes whoami reported in the vocabulary --mode accepts, rather than
+// as the proto enum names. Inverted from the searchModes flag map for exactly that reason: what
+// this prints is what can be typed straight back into `hippo memory search --mode`.
+func searchModeNames(modes []contract.SearchMode) []string {
+	out := make([]string, 0, len(modes))
+
+	for _, mode := range modes {
+		for name, v := range searchModes {
+			if name == "" || v != mode {
+				continue
+			}
+
+			out = append(out, name)
+
+			break
+		}
+	}
+
+	sort.Strings(out)
+
+	return out
 }
 
 func orNone(value string) string {

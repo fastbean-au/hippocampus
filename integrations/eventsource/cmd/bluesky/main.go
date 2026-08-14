@@ -100,7 +100,7 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.Int("recall-batch-size", 256, "ids per RecallMemories call (0 issues one RPC per engagement)")
 	fs.Int("recall-batch-window-ms", 250, "how long ids are buffered before a partial batch is flushed")
 	fs.Bool("honour-deletes", true, "delete a memory when its post is deleted upstream")
-	fs.StringSlice("langs", nil, "keep only posts declaring one of these languages (empty keeps all)")
+	fs.StringSlice("langs", nil, "keep only posts DECLARING one of these languages (empty keeps all); the declaration is the posting client's, and is routinely wrong - see docs/eventsource.md")
 	fs.Int("min-text-bytes", 1, "drop a post whose text is shorter than this")
 	fs.Int("root-cache-size", 8192,
 		"bounded cache of thread roots known to exist (an optimisation; correctness does not depend on it)")

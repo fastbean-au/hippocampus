@@ -303,6 +303,15 @@ suggests:
   unavailable entirely), `role` reports the caller's effective tier, and `groupScoped`/`groups`
   report the token's group scope. Read `groupScoped`, **not** whether `groups` is empty — an empty
   list means unscoped (the whole store), which is the opposite of scoped-to-nothing.
+  Three more describe the deployment rather than the caller, and are the same for everyone calling a
+  given instance: `summariserEnabled` (an embedded LLM is configured, so `SummariseMemories` can
+  serve), `consolidationEnabled` (this instance runs the sleep cycle — when it is false, `Sleep`,
+  `PreviewConsolidation` **and** `ExplainConsolidation` are all `FailedPrecondition`, because a
+  replica's store is consolidated by another instance under that instance's configuration), and
+  `tombstonesEnabled` (the forgotten log is being recorded). The last is the odd one out and the
+  reason it is reported at all: `GetForgottenMemories` does not refuse when the log is off, it
+  returns an empty page — so "nothing was written down" and "nothing has been forgotten" are
+  indistinguishable without it.
 - **A purge blocks everything.** While `Purge` runs, every other RPC is rejected with `Unavailable`
   (`503`). It is brief; retry.
 - **Set deadlines.** The service bounds its own storage operations

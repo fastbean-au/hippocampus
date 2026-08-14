@@ -18,7 +18,11 @@
 # Ctrl-C. To remove the data: rm -rf demo/data-bluesky.
 #
 # Environment overrides:
-#   LANGS=en                 keep only posts declaring these languages (default: all)
+#   LANGS=en                 keep only posts DECLARING these languages (default: all). The
+#                            declaration comes from the posting client, usually from the account's
+#                            interface language rather than from the text, so a French post
+#                            declaring "en" is kept and stored with lang=en. Read it as a volume
+#                            control, not a guarantee - see docs/eventsource.md
 #   DIDS=did:plc:...         follow only these accounts instead of the whole network
 #   FEED=at://...            take posts from a curated feed generator instead of the firehose
 #                            (engagement still comes from the firehose). Much lower volume and

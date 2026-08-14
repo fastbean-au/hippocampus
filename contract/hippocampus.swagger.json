@@ -6,7 +6,8 @@
   },
   "tags": [
     {
-      "name": "Hippocampus"
+      "name": "Hippocampus",
+      "description": "HTTP annotations below map every RPC onto a REST-ish JSON endpoint under /v1, served by the\ngrpc-gateway alongside the native gRPC API. Path-bound fields (e.g. {id}) are taken from the\nURL; for GET/DELETE the remaining fields are taken from the query string, and for POST/PATCH\nthey are taken from the JSON body."
     }
   ],
   "consumes": [
@@ -1758,7 +1759,7 @@
         "BETWEEN"
       ],
       "default": "UNSPECIFIED",
-      "title": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
+      "description": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
     },
     "protobufAny": {
       "type": "object",
@@ -2971,6 +2972,14 @@
         "summariserEnabled": {
           "type": "boolean",
           "description": "summariser_enabled reports whether this deployment has the embedded LLM configured\n(ollama.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as\nsearch_modes and with the same properties: it is a property of the deployment rather than the\ncaller, so a client can offer service-authored summarisation only where it exists instead of\ndiscovering its absence through a FAILED_PRECONDITION. It says nothing about\nReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary."
+        },
+        "consolidationEnabled": {
+          "type": "boolean",
+          "description": "consolidation_enabled reports whether this instance runs the sleep cycle\n(consolidation.enabled). It is the deployment property behind a whole family of refusals:\nSleep, PreviewConsolidation and ExplainConsolidation are all FAILED_PRECONDITION on a replica,\nbecause its store is consolidated by whichever instance holds the single-consolidator lock and\nunder that instance's configuration rather than this one's. A client that would otherwise\noffer decay figures, a dry run, or a forced cycle can hide all three instead of presenting\ncontrols certain to be refused - the same argument as search_modes and summariser_enabled."
+        },
+        "tombstonesEnabled": {
+          "type": "boolean",
+          "description": "tombstones_enabled reports whether the forgotten log is being recorded\n(consolidation.tombstones.enabled). Unlike the flags above this one gates a reader rather than\na writer: GetForgottenMemories does not refuse when the log is off, it returns an empty page\nwith enabled false. That distinction is exactly why it belongs here - \"nothing was written\ndown\" and \"nothing has been forgotten\" render identically until a client is told which it is\nlooking at, and only the first is worth hiding the control for."
         }
       },
       "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."

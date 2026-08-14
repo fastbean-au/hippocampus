@@ -760,7 +760,7 @@ What it does **not** give you, because the partition is soft:
 
 - **The decay dynamics are shared.** Capacity pressure, the eviction ranking, the significance
   registry and the sleep cadence are store-global. A group writing heavily raises the pressure that
-  decides what *every* group forgets, and eviction ranks across the whole store by value. There is
+  decides what _every_ group forgets, and eviction ranks across the whole store by value. There is
   no per-group capacity target and no per-group quota.
 - **`link_significance` crosses the boundary.** It is a denormalised aggregate in the covering index,
   so a link to a record in another group raises this one's effective significance even though the
@@ -837,7 +837,15 @@ multi-group store, with the centralised side stamping each ingestor's group from
   request. On the credential it holds the console calls `GET /v1/whoami` and adapts what it offers to
   the effective role — hiding the write controls for a `reader` and showing the role in the header —
   but that too is a convenience; the server enforces the tier on every RPC, so a hidden control (or a
-  raised gate) is not a security boundary. Because the token lives in the browser, serve `/ui` only
+  raised gate) is not a security boundary. The same call also tells it what the _deployment_ can
+  serve, which it uses for a different purpose: not withholding what you may not do, but not offering
+  what nothing could do. **On a replica (`consolidation.enabled: false`) the whole Decay tab is
+  absent**, along with the per-row value column and the summarisation-candidates card, because
+  `ExplainConsolidation`, `PreviewConsolidation` and the candidate scan all belong to a sleep cycle
+  that instance does not run — so an operator seeing no Decay tab is looking at a replica, and should
+  ask the consolidator. The forgotten-log panel likewise appears only where
+  `consolidation.tombstones.enabled` is set, and the LLM summarise button only where `ollama.enabled`
+  is. Because the token lives in the browser, serve `/ui` only
   over TLS and treat it as a trusted-operator tool, not a public endpoint; put it behind your ingress'
   access controls if the gateway is internet-facing.
 - **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left

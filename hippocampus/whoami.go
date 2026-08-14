@@ -19,9 +19,14 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 
 	// The available search modes are a property of the deployment, not the caller, so they are
 	// reported identically on both paths - including the unauthenticated one, where there is no
-	// caller to describe. The summariser is reported for the same reason and on the same terms.
+	// caller to describe. The summariser is reported for the same reason and on the same terms, as
+	// are the two consolidation flags: whether this instance runs a sleep cycle at all (a replica
+	// refuses Sleep, PreviewConsolidation and ExplainConsolidation alike), and whether it records
+	// what it forgets.
 	modes := s.searchModes()
 	summariser := s.summariser().Enabled()
+	consolidating := s.consolidationEnabled
+	tombstones := s.consolidation.tombstones
 
 	// The group scope is reported on both paths. On the unauthenticated one it is always absent,
 	// which is the truth rather than a placeholder: with no token there is no scope, and a client
@@ -32,22 +37,26 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 
 	if !ok {
 		return &contract.WhoAmIResponse{
-			Role:              auth.TierAdmin.String(),
-			AuthEnabled:       false,
-			SearchModes:       modes,
-			Groups:            groups,
-			GroupScoped:       scoped,
-			SummariserEnabled: summariser,
+			Role:                 auth.TierAdmin.String(),
+			AuthEnabled:          false,
+			SearchModes:          modes,
+			Groups:               groups,
+			GroupScoped:          scoped,
+			SummariserEnabled:    summariser,
+			ConsolidationEnabled: consolidating,
+			TombstonesEnabled:    tombstones,
 		}, nil
 	}
 
 	return &contract.WhoAmIResponse{
-		ClientId:          auth.ClientIDFromContext(ctx),
-		Role:              tier.String(),
-		AuthEnabled:       true,
-		SearchModes:       modes,
-		Groups:            groups,
-		GroupScoped:       scoped,
-		SummariserEnabled: summariser,
+		ClientId:             auth.ClientIDFromContext(ctx),
+		Role:                 tier.String(),
+		AuthEnabled:          true,
+		SearchModes:          modes,
+		Groups:               groups,
+		GroupScoped:          scoped,
+		SummariserEnabled:    summariser,
+		ConsolidationEnabled: consolidating,
+		TombstonesEnabled:    tombstones,
 	}, nil
 }

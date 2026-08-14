@@ -1077,6 +1077,23 @@ message WhoAmIResponse {
 	// discovering its absence through a FAILED_PRECONDITION. It says nothing about
 	// ReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary.
 	bool                                   summariser_enabled        = 7;
+
+	// consolidation_enabled reports whether this instance runs the sleep cycle
+	// (consolidation.enabled). It is the deployment property behind a whole family of refusals:
+	// Sleep, PreviewConsolidation and ExplainConsolidation are all FAILED_PRECONDITION on a replica,
+	// because its store is consolidated by whichever instance holds the single-consolidator lock and
+	// under that instance's configuration rather than this one's. A client that would otherwise
+	// offer decay figures, a dry run, or a forced cycle can hide all three instead of presenting
+	// controls certain to be refused - the same argument as search_modes and summariser_enabled.
+	bool                                   consolidation_enabled     = 8;
+
+	// tombstones_enabled reports whether the forgotten log is being recorded
+	// (consolidation.tombstones.enabled). Unlike the flags above this one gates a reader rather than
+	// a writer: GetForgottenMemories does not refuse when the log is off, it returns an empty page
+	// with enabled false. That distinction is exactly why it belongs here - "nothing was written
+	// down" and "nothing has been forgotten" render identically until a client is told which it is
+	// looking at, and only the first is worth hiding the control for.
+	bool                                   tombstones_enabled        = 9;
 }
 
 message EmptyRequest {}

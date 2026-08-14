@@ -82,6 +82,15 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **`WhoAmI` reports `consolidation_enabled` and `tombstones_enabled`**, so a client can tell a
+  consolidator from a replica and a recording store from a silent one without probing. The first is
+  the deployment property behind a family of refusals — `Sleep`, `PreviewConsolidation` and
+  `ExplainConsolidation` are all `FailedPrecondition` where `consolidation.enabled` is false, because
+  a replica's store is consolidated by another instance under _that_ instance's configuration. The
+  second exists for the opposite reason: `GetForgottenMemories` does not refuse when the log is off,
+  it answers with an empty page, and "nothing was written down" is indistinguishable from "nothing
+  has been forgotten" without being told which. Both are reported on the authenticated and the
+  unauthenticated path, like `search_modes` and `summariser_enabled`; `hippo whoami` prints them.
 - **The forgotten log: an optional record of what each cycle deleted, and why.** Off by default
   (`consolidation.tombstones.enabled`). When on, every memory the two decay paths delete leaves one
   record carrying its id, group, event, significance, stored size, the computed `value` and the
@@ -98,7 +107,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   - **It records forgetting, not deletion.** `Clear` (which deletes memories an `Export`/`Transfer`
     has already moved) and the client-initiated deletes write nothing — nothing was lost in those
     cases, and a log claiming otherwise would be worse than none.
-  - **Turning it off deletes nothing.** Disabling stops the writing *and* the automatic trimming, so
+  - **Turning it off deletes nothing.** Disabling stops the writing _and_ the automatic trimming, so
     what was recorded stays readable; emptying the log is always an explicit request. The threshold
     is recorded per record rather than inferred because it moves with capacity pressure — a value
     from last month means nothing measured against today's threshold.
@@ -155,10 +164,10 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 - **A Bluesky firehose bridge, and with it engagement-as-recall.** `integrations/eventsource` gains a
   fifth adapter (`cmd/bluesky`) that consumes
   [Jetstream](https://github.com/bluesky-social/jetstream), the public JSON projection of the atproto
-  firehose. It is the first bridge that *reinforces* as well as writes: a post becomes a memory, and
+  firehose. It is the first bridge that _reinforces_ as well as writes: a post becomes a memory, and
   the likes, reposts and replies that follow it become `RecallMemories` calls against that post — so
   every post arrives with the same significance and only what people came back to survives.
-  - **It needs no state.** A memory's id *is* the post's `at://` URI, and a like names its target by
+  - **It needs no state.** A memory's id _is_ the post's `at://` URI, and a like names its target by
     that same URI, so reinforcing is a call rather than a lookup. A like for a post the bridge never
     ingested, or one the store has already forgotten, costs one `UPDATE` matching no rows. The same
     identity makes replay idempotent, which is what the cursor-gated at-least-once loop relies on.
@@ -256,7 +265,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   - **Health surfaces.** `--health-port` (**8090 by default**, 0 disables) serves `/healthz`
     (liveness, never fails while the process runs) and `/readyz` (whether the Hippocampus instance
     can actually serve, checked via the token-free gRPC health service and named per dependency, so
-    a failing probe says *which* end is down).
+    a failing probe says _which_ end is down).
     **This is a change of network surface**: these binaries previously listened on nothing at all.
     Set `--health-port 0` to keep that, and give each process its own port when several run on one
     host.
@@ -280,7 +289,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   `hippocampus`. Documented in [Ingestor](docs/ingestor.md).
   - **It holds no state.** `ImportBatch` is a full-state upsert by id, so promote-then-drain is
     at-least-once against an idempotent receiver and a crash between the two re-promotes identical
-    rows. There is no cursor and no bookmark: the edge store *is* the queue, and what it holds is
+    rows. There is no cursor and no bookmark: the edge store _is_ the queue, and what it holds is
     exactly what has not been judged yet.
   - **Judgement happens at event completion, not at ingest**, which is what makes a rule change
     reach in-flight data: an event still open when the rules reload is judged by the new ones. The
@@ -320,7 +329,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
     schema change, no migration, no index rebuild and no OpenSearch reindex: the scope is the
     existing `group_name` column, which is already in the covering index, both search backends and
     the archive. An unscoped token behaves exactly as every token did before.
-  - **An empty scope means the whole store**, so an unscoped token is the *most* privileged shape a
+  - **An empty scope means the whole store**, so an unscoped token is the _most_ privileged shape a
     token has, not the least. `auth.requireGroupScope` turns its absence into a rejection — worth
     setting once a store is partitioned, since a provider that stops emitting the claim would
     otherwise hand every caller everything while every request succeeded.
@@ -470,12 +479,37 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   than on an events-list row because the operation replaces every memory of the event, and that is
   the one place the console shows what is about to go.
 - Tidied the console's memory filter: the timestamp from/to controls are a matched pair on a row of
-  their own, and no field stretches to fill the slack left when it wraps alone.
+  their own.
+- **The console hides controls this deployment cannot serve**, extending what it already did for the
+  search-mode picker and the LLM summarise button. On a replica the whole Decay tab is absent — nav
+  button included — along with the tables' per-row Value column and the summarisation-candidates
+  card, since every one of them is served by an RPC a replica refuses; the forgotten-log panel
+  appears only where `consolidation.tombstones.enabled` is set. An operator seeing no Decay tab is
+  looking at a replica.
+- **The console's create and filter cards are full width** on the Memories and Events tabs, matching
+  the search card, instead of sharing a half-width two-column grid.
+- **Enter runs the card it is typed in** on the Search, Memories and Events tabs — search, create,
+  filter, and add-link. None of those cards is a `<form>`, so Enter previously did nothing and every
+  field had to be left by hand to reach its button. A memory body and an event description still
+  take Enter as a newline, and the two destructive forms (the summary that replaces an event's
+  memories, and clearing the forgotten log) are deliberately left out.
+- **An opened event now stands first on the console's Search tab** and is scrolled to, rather than
+  appearing between the search form and the results — it arrives by navigation from another tab, so
+  it has nothing to do with the query it was sitting under. The links panel is scrolled to for the
+  same reason.
+- **A table row's action buttons stay inside the card at any width**, pinned to the right edge of the
+  scroll container while the rest of the row scrolls beneath them. These tables have a min-content
+  width that no styling removes, so a narrow-enough viewport scrolls them — and what went out of view
+  was always the buttons, being last.
 - **A summarisation-candidates card on the console's Events tab** — the scan's list, refreshed on
   demand, with each event opening into the view the summarise buttons are in.
 
 ### Fixed
 
+- **The console's scroll-to-top did nothing under `prefers-reduced-motion: reduce`.** Chrome does
+  not shorten a `behavior: "smooth"` scroll when reduced motion is requested — it drops it — so
+  editing a memory or an event from a row left the page exactly where it was, for precisely the
+  reader who most needs it to have moved. The behaviour is now chosen from the media query.
 - **Summarising through either RPC left the event in the candidate cache**, so
   `GetSummarisationCandidates` went on offering an event the service had just condensed until the
   next sleep cycle refreshed the scan. Only the auto-summarisation path pruned; the pruning now lives
@@ -525,7 +559,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 - **A bridge truncating a body with `--max-body-bytes` could produce a message that never delivered.**
   The truncation sliced raw bytes, so a multi-byte character straddling the budget was cut in half
-  and the memory failed to *marshal* (`string field contains invalid UTF-8`) before it ever reached
+  and the memory failed to _marshal_ (`string field contains invalid UTF-8`) before it ever reached
   the service. Because the fault was in the message rather than the service, redelivery could not
   clear it: on an at-least-once broker it was a poison message nacked and retried forever. The cut
   now backs up to a rune boundary. Affected all bridges, on any non-ASCII payload; found by running

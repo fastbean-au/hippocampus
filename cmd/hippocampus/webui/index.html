@@ -152,6 +152,11 @@
         padding: 16px;
         margin-bottom: 16px;
       }
+      /* Cleared by the sticky header, so revealCard's scrollIntoView does not tuck a card's heading
+     underneath it. */
+      .card {
+        scroll-margin-top: 60px;
+      }
       .card h2 {
         margin: 0 0 12px;
         font-size: 14px;
@@ -177,11 +182,6 @@
       }
       .field.wide {
         flex-basis: 100%;
-      }
-      /* Two halves of one value (a from/to range): sized together and not stretched, so they line up
-     with each other rather than each absorbing whatever slack its own row happened to have. */
-      .field.pair {
-        flex: 0 1 220px;
       }
       label {
         color: var(--muted);
@@ -345,6 +345,33 @@
       td .actions {
         flex-wrap: nowrap;
       }
+      /* The row's buttons are pinned to the right edge of the .tablewrap above, so they are inside
+         the card at every width and the rest of the row scrolls underneath them.
+         `width: 100%` cannot shrink these tables below their own min-content width - two nowrap
+         monospace id columns, a metadata cell and four buttons - so on anything narrower the wrap
+         scrolls, and what it took out of view was always the actions, being last. Scrolling to reach
+         a button is not the same as the button being reachable: the column that has to be visible is
+         the one you act with.
+         Two things are load-bearing rather than decorative. The background, because a sticky cell is
+         transparent and the row would otherwise be drawn straight through it. And the borders as
+         INSET SHADOWS rather than as borders: under `border-collapse: collapse` the table owns the
+         grid's borders and paints them below a sticky cell, so a real border here scrolls away with
+         its row and leaves the column detached. */
+      th.actions-col,
+      td.actions-col {
+        position: sticky;
+        right: 0;
+        background: var(--panel);
+        box-shadow:
+          inset 1px 0 0 var(--border),
+          inset 0 -1px 0 var(--border);
+      }
+      /* A row followed by its body row drops its bottom border, so the pair reads as one record; the
+         pinned cell has to drop the shadow standing in for it, or the record is ruled off in one
+         column only. */
+      tr.has-body > td.actions-col {
+        box-shadow: inset 1px 0 0 var(--border);
+      }
       /* Ids are middle-truncated for display (see shortId): the full value is on the title and behind
          the copy button, so nothing is lost, while the column stops setting the table's width. */
       .idc {
@@ -496,16 +523,6 @@
         padding: 16px 0;
         text-align: center;
       }
-      .split {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-      }
-      @media (max-width: 760px) {
-        .split {
-          grid-template-columns: 1fr;
-        }
-      }
       code.inline {
         background: var(--panel-2);
         padding: 1px 5px;
@@ -523,6 +540,20 @@
      button is hidden rather than offered. The manual summary is NOT gated on this - it needs no
      summariser, the caller writes it. */
       body:not(.summariser) .summariser-only {
+        display: none !important;
+      }
+      /* And again for the two consolidation properties whoami reports. .consolidation-only takes the
+     whole Decay tab (its nav button included), the tables' Value column, and the summarisation
+     candidates card: every one of them is served by an RPC a replica refuses outright, so on a
+     replica they would render as a page of dashes and FAILED_PRECONDITIONs the operator could do
+     nothing about. .tombstones-only is the narrower case — the forgotten log answers rather than
+     refuses when it is off, with an empty page, which reads as "nothing has been forgotten" when
+     it means "nothing was written down". Neither class is a security boundary, exactly like
+     .writer-only: the server decides, this only stops the console offering what it would refuse. */
+      body:not(.consolidating) .consolidation-only {
+        display: none !important;
+      }
+      body:not(.tombstones) .tombstones-only {
         display: none !important;
       }
       /* Decay: the value column and the pills that say what is overriding it. Same convention as the
@@ -646,7 +677,7 @@
       <button data-tab="search" class="active">Search</button>
       <button data-tab="memories">Memories</button>
       <button data-tab="events">Events</button>
-      <button data-tab="decay">Decay</button>
+      <button data-tab="decay" class="consolidation-only">Decay</button>
     </nav>
 
     <!-- ===================== LOGIN GATE ===================== -->
@@ -695,7 +726,88 @@
     <main>
       <!-- ===================== SEARCH ===================== -->
       <section id="tab-search" class="tab active">
-        <div class="card">
+        <!-- The opened event gets a card of its own rather than borrowing the results panel below.
+         openEvent is reachable from all three tables, so writing it into the results meant opening
+         an event from the Events or Memories tab silently destroyed a search the user had run and
+         left the Search tab showing that single event instead. Hidden until something is open, and
+         closed by the next search.
+
+         It stands FIRST on the tab, ahead of the search form. It was between the form and the
+         results, which is where it least belongs: opening an event is a navigation from another
+         tab, so what arrives has nothing to do with the query above it, and landing halfway down a
+         page under a form you did not fill in reads as the search having done something. First,
+         plus the scroll in openEvent, means the thing you asked for is the thing at the top. -->
+        <div class="card" id="event-card" style="display: none">
+          <div class="events-head">
+            <h2>Event</h2>
+            <button class="btn ghost small" onclick="closeEvent()">
+              Close
+            </button>
+          </div>
+          <div id="event-view"></div>
+
+          <!-- Summarisation lives here rather than on an events-list row because it destroys every
+           memory of the event: the one place it should be offered is the one place the console shows
+           what is about to be replaced. Two buttons for the two RPCs, which differ in who writes the
+           summary — POST /v1/events/{id}/summary takes one from the caller, POST .../summarise has
+           the service's embedded LLM author it. Writer-tier both; the LLM one is also .summariser-only
+           since a deployment without ollama would only refuse it. -->
+          <div class="summarise writer-only" id="event-summarise">
+            <div class="actions">
+              <button class="btn ghost small" onclick="openSummaryForm()">
+                Summarise…
+              </button>
+              <button
+                class="btn ghost small summariser-only"
+                onclick="summariseWithLLM()"
+              >
+                Summarise with the LLM
+              </button>
+              <span class="muted"
+                >Replaces every memory of this event with one summary.</span
+              >
+            </div>
+
+            <!-- The manual form: revealed by "Summarise…" rather than always shown, so the card is
+             not dominated by a textarea nobody is using. -->
+            <div id="summary-form" style="display: none">
+              <div class="field wide">
+                <label for="summary-body">Summary</label>
+                <textarea
+                  id="summary-body"
+                  rows="4"
+                  placeholder="the text that will replace this event's memories"
+                ></textarea>
+              </div>
+              <div class="row">
+                <!-- Unlike the LLM path, this RPC stores the significance verbatim, so an omitted
+                 one leaves the summary UNRANKED rather than inheriting the highest it replaced.
+                 Say so: a summary that outranks nothing is the first thing forgotten. -->
+                <div class="field">
+                  <label for="summary-sig">Significance (optional)</label>
+                  <input
+                    id="summary-sig"
+                    type="number"
+                    placeholder="blank leaves it unranked"
+                  />
+                </div>
+                <div class="field">
+                  <label for="summary-group">Group (optional)</label>
+                  <input id="summary-group" placeholder="group label" />
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn" onclick="replaceWithSummary()">
+                  Replace memories
+                </button>
+                <button class="btn ghost" onclick="closeSummaryForm()">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card" data-enter="search">
           <h2>Content search</h2>
           <p class="muted" style="margin-top: -6px">
             Queries the secondary content-search index (<code class="inline"
@@ -743,81 +855,6 @@
             <button class="btn" onclick="doSearch()">Search</button>
           </div>
         </div>
-        <!-- The opened event gets a card of its own rather than borrowing the results panel below.
-         openEvent is reachable from all three tables, so writing it into the results meant opening
-         an event from the Events or Memories tab silently destroyed a search the user had run and
-         left the Search tab showing that single event instead. Hidden until something is open, and
-         closed by the next search. -->
-        <div class="card" id="event-card" style="display: none">
-          <div class="events-head">
-            <h2>Event</h2>
-            <button class="btn ghost small" onclick="closeEvent()">
-              Close
-            </button>
-          </div>
-          <div id="event-view"></div>
-
-          <!-- Summarisation lives here rather than on an events-list row because it destroys every
-           memory of the event: the one place it should be offered is the one place the console shows
-           what is about to be replaced. Two buttons for the two RPCs, which differ in who writes the
-           summary — POST /v1/events/{id}/summary takes one from the caller, POST .../summarise has
-           the service's embedded LLM author it. Writer-tier both; the LLM one is also .summariser-only
-           since a deployment without ollama would only refuse it. -->
-          <div class="summarise writer-only" id="event-summarise">
-            <div class="actions">
-              <button class="btn ghost small" onclick="openSummaryForm()">
-                Summarise…
-              </button>
-              <button
-                class="btn ghost small summariser-only"
-                onclick="summariseWithLLM()"
-              >
-                Summarise with the LLM
-              </button>
-              <span class="muted"
-                >Replaces every memory of this event with one summary.</span
-              >
-            </div>
-
-            <!-- The manual form: revealed by "Summarise…" rather than always shown, so the card is
-             not dominated by a textarea nobody is using. -->
-            <div id="summary-form" style="display: none">
-              <div class="field wide">
-                <label for="summary-body">Summary</label>
-                <textarea
-                  id="summary-body"
-                  rows="4"
-                  placeholder="the text that will replace this event's memories"
-                ></textarea>
-              </div>
-              <div class="row">
-                <!-- Unlike the LLM path, this RPC stores the significance verbatim, so an omitted
-                 one leaves the summary UNRANKED rather than inheriting the highest it replaced.
-                 Say so: a summary that outranks nothing is the first thing forgotten. -->
-                <div class="field pair">
-                  <label for="summary-sig">Significance (optional)</label>
-                  <input
-                    id="summary-sig"
-                    type="number"
-                    placeholder="blank leaves it unranked"
-                  />
-                </div>
-                <div class="field pair">
-                  <label for="summary-group">Group (optional)</label>
-                  <input id="summary-group" placeholder="group label" />
-                </div>
-              </div>
-              <div class="actions">
-                <button class="btn" onclick="replaceWithSummary()">
-                  Replace memories
-                </button>
-                <button class="btn ghost" onclick="closeSummaryForm()">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
         <div class="card">
           <h2>Results</h2>
           <div id="search-results">
@@ -828,157 +865,147 @@
 
       <!-- ===================== MEMORIES ===================== -->
       <section id="tab-memories" class="tab">
-        <div class="split">
-          <div class="card writer-only">
-            <h2 id="mem-form-title">Create memory</h2>
-            <input id="mem-id" type="hidden" />
-            <div class="field wide">
-              <label for="mem-body">Body</label>
-              <textarea id="mem-body" placeholder="memory content"></textarea>
+        <div class="card writer-only" data-enter="memory-save">
+          <h2 id="mem-form-title">Create memory</h2>
+          <input id="mem-id" type="hidden" />
+          <div class="field wide">
+            <label for="mem-body">Body</label>
+            <textarea id="mem-body" placeholder="memory content"></textarea>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="mem-sig">Significance</label>
+              <input id="mem-sig" type="number" placeholder="e.g. 50" />
             </div>
-            <div class="row">
-              <div class="field">
-                <label for="mem-sig">Significance</label>
-                <input id="mem-sig" type="number" placeholder="e.g. 50" />
-              </div>
-              <div class="field">
-                <label for="mem-event">Event id (optional)</label>
-                <input id="mem-event" placeholder="link to an event" />
-              </div>
-              <div class="field">
-                <label for="mem-group">Group (optional)</label>
-                <input id="mem-group" placeholder="group label" />
-              </div>
+            <div class="field">
+              <label for="mem-event">Event id (optional)</label>
+              <input id="mem-event" placeholder="link to an event" />
             </div>
-            <div class="row">
-              <div class="field wide">
-                <label for="mem-metadata">Metadata (optional)</label>
-                <textarea
-                  id="mem-metadata"
-                  rows="3"
-                  placeholder="one key=value per line, e.g.&#10;source=slack&#10;project=apollo"
-                ></textarea>
-              </div>
-            </div>
-            <div class="actions">
-              <button id="mem-save" class="btn" onclick="saveMemory()">
-                Create
-              </button>
-              <button class="btn ghost" onclick="resetMemoryForm()">
-                Clear
-              </button>
-              <span id="mem-edit-hint" class="muted" style="display: none"
-                >Editing existing memory (partial update)</span
-              >
+            <div class="field">
+              <label for="mem-group">Group (optional)</label>
+              <input id="mem-group" placeholder="group label" />
             </div>
           </div>
-          <div class="card">
-            <h2>Filter</h2>
-            <div class="row">
-              <div class="field wide">
-                <label for="mf-extremum">Significance</label>
-                <select id="mf-extremum" onchange="syncMemoryExtremum()">
-                  <option value="">Range (use min/max below)</option>
-                  <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
-                    Highest only — the most durable memories
-                  </option>
-                  <option value="SIGNIFICANCE_EXTREMUM_LOWEST">
-                    Lowest only — first to be forgotten
-                  </option>
-                </select>
-              </div>
+          <div class="row">
+            <div class="field wide">
+              <label for="mem-metadata">Metadata (optional)</label>
+              <textarea
+                id="mem-metadata"
+                rows="3"
+                placeholder="one key=value per line, e.g.&#10;source=slack&#10;project=apollo"
+              ></textarea>
             </div>
-            <div class="row">
-              <div class="field">
-                <label for="mf-sigmin">Significance min</label>
-                <input id="mf-sigmin" type="number" />
-              </div>
-              <div class="field">
-                <label for="mf-sigmax">Significance max</label>
-                <input id="mf-sigmax" type="number" />
-              </div>
+          </div>
+          <div class="actions">
+            <button id="mem-save" class="btn" onclick="saveMemory()">
+              Create
+            </button>
+            <button class="btn ghost" onclick="resetMemoryForm()">Clear</button>
+            <span id="mem-edit-hint" class="muted" style="display: none"
+              >Editing existing memory (partial update)</span
+            >
+          </div>
+        </div>
+        <div class="card" data-enter="memory-filter">
+          <h2>Filter</h2>
+          <div class="row">
+            <div class="field wide">
+              <label for="mf-extremum">Significance</label>
+              <select id="mf-extremum" onchange="syncMemoryExtremum()">
+                <option value="">Range (use min/max below)</option>
+                <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
+                  Highest only — the most durable memories
+                </option>
+                <option value="SIGNIFICANCE_EXTREMUM_LOWEST">
+                  Lowest only — first to be forgotten
+                </option>
+              </select>
             </div>
-            <!-- Two fixed-width fields rather than three stretching ones: at this card's width the
-             third wrapped onto a line of its own and grew to fill it, so one filter rendered several
-             times the size of its neighbours for no reason but the wrap. -->
-            <div class="row">
-              <div class="field pair">
-                <label for="mf-group">Group</label>
-                <input id="mf-group" placeholder="exact group label" />
-              </div>
-              <div class="field pair">
-                <label for="mf-recalled">Recall state</label>
-                <select id="mf-recalled">
-                  <option value="">Any</option>
-                  <option value="FALSE">Never recalled</option>
-                  <option value="TRUE">Recalled at least once</option>
-                </select>
-              </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="mf-sigmin">Significance min</label>
+              <input id="mf-sigmin" type="number" />
             </div>
-            <!-- Metadata takes the full width: it is a list, and the only field here whose useful
-             length is unbounded. -->
-            <div class="row">
-              <div class="field wide">
-                <label for="mf-metadata">Metadata</label>
-                <input
-                  id="mf-metadata"
-                  placeholder="key=value, comma separated (all must match)"
-                />
-              </div>
+            <div class="field">
+              <label for="mf-sigmax">Significance max</label>
+              <input id="mf-sigmax" type="number" />
             </div>
-            <!-- The two ends of one range, so they get a row to themselves: sharing a row with the
-             fields above left them wrapping onto different lines at different widths, which read as
-             two unrelated controls rather than a from/to pair. .pair stops them stretching, so they
-             stay the same size as each other whatever else is on the row. -->
-            <div class="row">
-              <div class="field pair">
-                <label for="mf-from">Timestamp from</label>
-                <input id="mf-from" type="datetime-local" />
-              </div>
-              <div class="field pair">
-                <label for="mf-to">Timestamp to</label>
-                <input id="mf-to" type="datetime-local" />
-              </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="mf-group">Group</label>
+              <input id="mf-group" placeholder="exact group label" />
             </div>
-            <div class="row">
-              <div class="field pair">
-                <label for="mf-sort">Sort by</label>
-                <select id="mf-sort" onchange="loadMemories()">
-                  <option value="significance">Significance</option>
-                  <option value="timestamp">Stored</option>
-                  <option value="time_recalled">Last recalled</option>
-                  <option value="recall_count">Recalls</option>
-                  <option value="link_significance">Link significance</option>
-                  <option value="group">Group</option>
-                  <option value="id">Id</option>
-                </select>
-              </div>
-              <div class="field pair">
-                <label for="mf-sortdir">Direction</label>
-                <select id="mf-sortdir" onchange="loadMemories()">
-                  <option value="">Default</option>
-                  <option value="SORT_DIRECTION_DESC">Descending</option>
-                  <option value="SORT_DIRECTION_ASC">Ascending</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="mf-pagesize">Page size</label>
-                <select id="mf-pagesize">
-                  <option value="10">10</option>
-                  <option value="25" selected>25</option>
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                </select>
-              </div>
+            <div class="field">
+              <label for="mf-recalled">Recall state</label>
+              <select id="mf-recalled">
+                <option value="">Any</option>
+                <option value="FALSE">Never recalled</option>
+                <option value="TRUE">Recalled at least once</option>
+              </select>
             </div>
-            <div class="actions">
-              <button class="btn" onclick="loadMemories()">
-                List memories
-              </button>
-              <button class="btn ghost" onclick="clearMemoryFilter()">
-                Reset filter
-              </button>
+          </div>
+          <!-- Metadata takes the full width: it is a list, and the only field here whose useful
+           length is unbounded. -->
+          <div class="row">
+            <div class="field wide">
+              <label for="mf-metadata">Metadata</label>
+              <input
+                id="mf-metadata"
+                placeholder="key=value, comma separated (all must match)"
+              />
             </div>
+          </div>
+          <!-- The two ends of one range, so they get a row to themselves rather than sharing one
+           with the fields above, where they wrapped onto different lines at different widths and
+           read as two unrelated controls instead of a from/to pair. -->
+          <div class="row">
+            <div class="field">
+              <label for="mf-from">Timestamp from</label>
+              <input id="mf-from" type="datetime-local" />
+            </div>
+            <div class="field">
+              <label for="mf-to">Timestamp to</label>
+              <input id="mf-to" type="datetime-local" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="mf-sort">Sort by</label>
+              <select id="mf-sort" onchange="loadMemories()">
+                <option value="significance">Significance</option>
+                <option value="timestamp">Stored</option>
+                <option value="time_recalled">Last recalled</option>
+                <option value="recall_count">Recalls</option>
+                <option value="link_significance">Link significance</option>
+                <option value="group">Group</option>
+                <option value="id">Id</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="mf-sortdir">Direction</label>
+              <select id="mf-sortdir" onchange="loadMemories()">
+                <option value="">Default</option>
+                <option value="SORT_DIRECTION_DESC">Descending</option>
+                <option value="SORT_DIRECTION_ASC">Ascending</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="mf-pagesize">Page size</label>
+              <select id="mf-pagesize">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="loadMemories()">List memories</button>
+            <button class="btn ghost" onclick="clearMemoryFilter()">
+              Reset filter
+            </button>
           </div>
         </div>
         <div class="card">
@@ -1009,7 +1036,12 @@
           </div>
         </div>
 
-        <div class="card" id="links-card" style="display: none">
+        <div
+          class="card"
+          id="links-card"
+          data-enter="memory-link"
+          style="display: none"
+        >
           <div class="events-head">
             <h2>Links</h2>
             <button class="btn ghost small" onclick="closeLinks()">
@@ -1051,125 +1083,117 @@
 
       <!-- ===================== EVENTS ===================== -->
       <section id="tab-events" class="tab">
-        <div class="split">
-          <div class="card writer-only">
-            <h2 id="ev-form-title">Create event</h2>
-            <input id="ev-id" type="hidden" />
-            <div class="row">
-              <div class="field">
-                <label for="ev-name">Name</label>
-                <input id="ev-name" placeholder="event name" />
-              </div>
-              <div class="field">
-                <label for="ev-sig">Significance</label>
-                <input id="ev-sig" type="number" placeholder="e.g. 60" />
-              </div>
+        <div class="card writer-only" data-enter="event-save">
+          <h2 id="ev-form-title">Create event</h2>
+          <input id="ev-id" type="hidden" />
+          <div class="row">
+            <div class="field">
+              <label for="ev-name">Name</label>
+              <input id="ev-name" placeholder="event name" />
             </div>
-            <div class="field wide">
-              <label for="ev-desc">Description</label>
-              <textarea id="ev-desc" placeholder="event description"></textarea>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label for="ev-group">Group (optional)</label>
-                <input id="ev-group" placeholder="group label" />
-              </div>
-              <div class="field">
-                <label for="ev-start">Time start (optional)</label>
-                <input id="ev-start" type="datetime-local" />
-              </div>
-              <div class="field">
-                <label for="ev-end">Time end (optional)</label>
-                <input id="ev-end" type="datetime-local" />
-              </div>
-            </div>
-            <div class="actions">
-              <button id="ev-save" class="btn" onclick="saveEvent()">
-                Create
-              </button>
-              <button class="btn ghost" onclick="resetEventForm()">
-                Clear
-              </button>
-              <span
-                id="ev-edit-hint"
-                class="muted"
-                style="display: none"
-              ></span>
+            <div class="field">
+              <label for="ev-sig">Significance</label>
+              <input id="ev-sig" type="number" placeholder="e.g. 60" />
             </div>
           </div>
-          <div class="card">
-            <h2>Filter</h2>
-            <div class="row">
-              <div class="field wide">
-                <label for="ef-extremum">Significance</label>
-                <select id="ef-extremum" onchange="syncEventExtremum()">
-                  <option value="">Range (use min/max below)</option>
-                  <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
-                    Highest only — the most durable events
-                  </option>
-                  <option value="SIGNIFICANCE_EXTREMUM_LOWEST">
-                    Lowest only — first to be forgotten
-                  </option>
-                </select>
-              </div>
+          <div class="field wide">
+            <label for="ev-desc">Description</label>
+            <textarea id="ev-desc" placeholder="event description"></textarea>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="ev-group">Group (optional)</label>
+              <input id="ev-group" placeholder="group label" />
             </div>
-            <div class="row">
-              <div class="field">
-                <label for="ef-sigmin">Significance min</label>
-                <input id="ef-sigmin" type="number" />
-              </div>
-              <div class="field">
-                <label for="ef-sigmax">Significance max</label>
-                <input id="ef-sigmax" type="number" />
-              </div>
-              <div class="field">
-                <label for="ef-group">Group</label>
-                <input id="ef-group" placeholder="exact group label" />
-              </div>
+            <div class="field">
+              <label for="ev-start">Time start (optional)</label>
+              <input id="ev-start" type="datetime-local" />
             </div>
-            <div class="row">
-              <div class="field pair">
-                <label for="ef-sort">Sort by</label>
-                <select id="ef-sort" onchange="loadEvents()">
-                  <option value="significance">Significance</option>
-                  <option value="timestamp">Start</option>
-                  <option value="time_end">End</option>
-                  <option value="name">Name</option>
-                  <option value="link_significance">Link significance</option>
-                  <option value="group">Group</option>
-                  <option value="id">Id</option>
-                </select>
-              </div>
-              <div class="field pair">
-                <label for="ef-sortdir">Direction</label>
-                <select id="ef-sortdir" onchange="loadEvents()">
-                  <option value="">Default</option>
-                  <option value="SORT_DIRECTION_DESC">Descending</option>
-                  <option value="SORT_DIRECTION_ASC">Ascending</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="ef-pagesize">Page size</label>
-                <select id="ef-pagesize">
-                  <option value="10">10</option>
-                  <option value="25" selected>25</option>
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                </select>
-              </div>
+            <div class="field">
+              <label for="ev-end">Time end (optional)</label>
+              <input id="ev-end" type="datetime-local" />
             </div>
-            <div class="actions">
-              <div class="checkbox">
-                <input id="ef-memories" type="checkbox" />
-                <label for="ef-memories" style="margin: 0"
-                  >Include memories</label
-                >
-              </div>
-              <button class="btn" onclick="loadEvents()">List events</button>
-              <button class="btn ghost" onclick="clearEventFilter()">
-                Reset filter
-              </button>
+          </div>
+          <div class="actions">
+            <button id="ev-save" class="btn" onclick="saveEvent()">
+              Create
+            </button>
+            <button class="btn ghost" onclick="resetEventForm()">Clear</button>
+            <span id="ev-edit-hint" class="muted" style="display: none"></span>
+          </div>
+        </div>
+        <div class="card" data-enter="event-filter">
+          <h2>Filter</h2>
+          <div class="row">
+            <div class="field wide">
+              <label for="ef-extremum">Significance</label>
+              <select id="ef-extremum" onchange="syncEventExtremum()">
+                <option value="">Range (use min/max below)</option>
+                <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
+                  Highest only — the most durable events
+                </option>
+                <option value="SIGNIFICANCE_EXTREMUM_LOWEST">
+                  Lowest only — first to be forgotten
+                </option>
+              </select>
             </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="ef-sigmin">Significance min</label>
+              <input id="ef-sigmin" type="number" />
+            </div>
+            <div class="field">
+              <label for="ef-sigmax">Significance max</label>
+              <input id="ef-sigmax" type="number" />
+            </div>
+            <div class="field">
+              <label for="ef-group">Group</label>
+              <input id="ef-group" placeholder="exact group label" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="ef-sort">Sort by</label>
+              <select id="ef-sort" onchange="loadEvents()">
+                <option value="significance">Significance</option>
+                <option value="timestamp">Start</option>
+                <option value="time_end">End</option>
+                <option value="name">Name</option>
+                <option value="link_significance">Link significance</option>
+                <option value="group">Group</option>
+                <option value="id">Id</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ef-sortdir">Direction</label>
+              <select id="ef-sortdir" onchange="loadEvents()">
+                <option value="">Default</option>
+                <option value="SORT_DIRECTION_DESC">Descending</option>
+                <option value="SORT_DIRECTION_ASC">Ascending</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ef-pagesize">Page size</label>
+              <select id="ef-pagesize">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+          </div>
+          <div class="actions">
+            <div class="checkbox">
+              <input id="ef-memories" type="checkbox" />
+              <label for="ef-memories" style="margin: 0"
+                >Include memories</label
+              >
+            </div>
+            <button class="btn" onclick="loadEvents()">List events</button>
+            <button class="btn ghost" onclick="clearEventFilter()">
+              Reset filter
+            </button>
           </div>
         </div>
         <div class="card">
@@ -1202,8 +1226,10 @@
 
         <!-- The other half of summarisation: the buttons live on an event, this says which events
          are worth pointing them at. Loaded on demand rather than with the events list — it is a
-         snapshot the sleep cycle refreshes, so it does not change between two listings. -->
-        <div class="card">
+         snapshot the sleep cycle refreshes, so it does not change between two listings.
+         consolidation-only because the scan IS a step of that cycle: a replica runs none, so this
+         list is permanently empty there whatever the threshold is set to. -->
+        <div class="card consolidation-only">
           <div class="events-head">
             <h2>Summarisation candidates</h2>
             <button class="btn ghost small" onclick="loadCandidates()">
@@ -1223,7 +1249,7 @@
       </section>
 
       <!-- ===================== DECAY ===================== -->
-      <section id="tab-decay" class="tab">
+      <section id="tab-decay" class="tab consolidation-only">
         <div class="card">
           <h2>Forgetting</h2>
           <p class="muted" style="margin-top: -6px">
@@ -1305,15 +1331,16 @@
           </div>
         </div>
 
-        <div class="card admin-only">
+        <div class="card admin-only tombstones-only">
           <h2>What was forgotten</h2>
           <p class="muted" style="margin-top: -6px">
             The forgotten log (<code class="inline"
               >GET /v1/memories/forgotten</code
             >): one record per memory a cycle actually deleted, with the value
-            and threshold that decided it. Optional and off by default
-            (<code class="inline">consolidation.tombstones.enabled</code>).
-            Records carry no body — this says a memory was lost, not what it
+            and threshold that decided it. Optional and off by default (<code
+              class="inline"
+              >consolidation.tombstones.enabled</code
+            >). Records carry no body — this says a memory was lost, not what it
             said. Administrator only.
           </p>
           <div class="row">
@@ -1580,6 +1607,13 @@
         authEnabled: false,
         searchModes: [],
         summariser: false,
+        // These two start false rather than optimistic, unlike canWrite: they must agree with the
+        // body classes the page ships without (.consolidating / .tombstones), or memoryRow's colspan
+        // would be counting a Value column the stylesheet is hiding. Nothing renders before the
+        // first whoami anyway — the page ships gated, so nav and main are both hidden until
+        // applyCaps has run.
+        consolidation: false,
+        tombstones: false,
         groups: [],
         groupScoped: false,
         status: 0,
@@ -1605,13 +1639,18 @@
             // act on the whole store. Offering the dry-run panel to a scoped admin would break the
             // rule the .admin-only CSS exists to keep - never show a control certain to be refused.
             // The scope pill's tooltip says why it is absent.
-            isAdmin:
-              (!authEnabled || role === "admin") && !who.groupScoped,
+            isAdmin: (!authEnabled || role === "admin") && !who.groupScoped,
             // Which search modes this deployment can serve - a property of the server, not the token.
             searchModes: who.searchModes || [],
             // Whether the embedded LLM is configured, likewise a property of the server. Gates the
             // LLM summarise button only; the manual one needs no summariser.
             summariser: !!who.summariserEnabled,
+            // Whether this instance runs a sleep cycle, and whether it records what it forgets.
+            // Both are properties of the server. Reading an absent field as false is safe here in a
+            // way it would not be in a standalone client: this page is embedded in the binary that
+            // answers it, so the two can never be different versions.
+            consolidation: !!who.consolidationEnabled,
+            tombstones: !!who.tombstonesEnabled,
             // The group scope, if this token carries one. groupScoped is authoritative; groups alone
             // cannot distinguish unscoped from scoped-to-nothing.
             groups: who.groups || [],
@@ -1626,6 +1665,8 @@
             isAdmin: false,
             searchModes: [],
             summariser: false,
+            consolidation: false,
+            tombstones: false,
             groups: [],
             groupScoped: false,
             status: e.status || 0,
@@ -1705,7 +1746,14 @@
         document.body.classList.toggle("readonly", !caps.canWrite);
         document.body.classList.toggle("admin", !!caps.isAdmin);
         document.body.classList.toggle("summariser", !!caps.summariser);
+        document.body.classList.toggle("consolidating", !!caps.consolidation);
+        document.body.classList.toggle("tombstones", !!caps.tombstones);
 
+        // Set before any table renders, so a replica never issues the explain call it would only be
+        // refused. Only ever narrowed here: a refusal already seen is not un-learned by a re-check.
+        if (!caps.consolidation) decayAvailable = false;
+
+        applyConsolidation();
         applySearchModes();
         applyScope();
         applyGate();
@@ -1726,6 +1774,27 @@
         pill.style.display = "inline-block";
         pill.classList.toggle("ro", !caps.canWrite);
         pill.textContent = caps.role ? "role: " + caps.role : "not signed in";
+      }
+
+      // applyConsolidation deals with the one part of the consolidation gating that CSS cannot do.
+      //
+      // The hiding itself is the .consolidation-only / .tombstones-only classes, on the same terms as
+      // .writer-only and .summariser-only above: a replica runs no sleep cycle, so it refuses
+      // ExplainConsolidation, PreviewConsolidation and Sleep alike, and a console offering them there
+      // would be a Decay tab of four "unavailable" cards and a Value column of dashes on every table
+      // — describing a forgetting schedule this instance does not carry out.
+      //
+      // What needs script is the tab itself: hiding the Decay button leaves it *selected* if the user
+      // was on it when the token changed, which shows a blank page with no way back. A hidden active
+      // tab therefore falls back to Search.
+      function applyConsolidation() {
+        if (caps.consolidation) return;
+
+        const decayTab = document.querySelector('nav button[data-tab="decay"]');
+
+        if (decayTab && decayTab.classList.contains("active")) {
+          document.querySelector('nav button[data-tab="search"]').click();
+        }
       }
 
       // applyScope shows which groups this token is restricted to, when it is restricted at all.
@@ -1964,7 +2033,11 @@
       // restart from offset 0, which is what a changed sort must do: page 3 of the old ordering has
       // no meaning in the new one.
       const sortScopes = {
-        memories: { by: "mf-sort", dir: "mf-sortdir", load: () => loadMemories() },
+        memories: {
+          by: "mf-sort",
+          dir: "mf-sortdir",
+          load: () => loadMemories(),
+        },
         events: { by: "ef-sort", dir: "ef-sortdir", load: () => loadEvents() },
       };
 
@@ -2081,6 +2154,72 @@
             deleteEvent(el.dataset.id);
             break;
         }
+      });
+
+      // ------------------------------------------------------- Enter submits the card it is typed in
+      //
+      // None of these cards is a <form>, so Enter did nothing at all in them: every one of the fields
+      // on the Search, Memories and Events tabs had to be left by hand to reach the button. Rather
+      // than wrap five cards in forms - which brings native submission, its navigation, and a
+      // preventDefault on each - one delegated keydown maps the card a field sits in to that card's
+      // primary action, mirroring the delegated click handler above.
+      //
+      // enterActions is an ALLOW-LIST rather than a lookup of window[name]: the name arrives from a
+      // DOM attribute, and resolving one of those to a callable is how a data attribute becomes a
+      // way to call anything on the page. These attributes are all in static markup and so are safe
+      // either way, but the map is also the readable statement of which card has a primary action.
+      //
+      // The two destructive forms are deliberately NOT in it - the summary that replaces every
+      // memory of an event, and the forgotten log's Clear - because a keystroke should not be able
+      // to delete anything, and a confirm() is no answer when the Enter that opened it can dismiss
+      // it too. Adding a link IS here: it writes, but it destroys nothing.
+      const enterActions = {
+        search: () => doSearch(),
+        "memory-save": () => saveMemory(),
+        "memory-filter": () => loadMemories(),
+        "memory-link": () => addLink(),
+        "event-save": () => saveEvent(),
+        "event-filter": () => loadEvents(),
+      };
+
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+
+        // isComposing is the load-bearing one: Enter is how an IME accepts a candidate, so without
+        // this a Japanese or Chinese user would fire the action every time they committed a word.
+        // A modifier held means the user is asking for something else, and repeat is a held key -
+        // neither should submit, and repeat least of all when the action is a write.
+        if (
+          ev.isComposing ||
+          ev.repeat ||
+          ev.shiftKey ||
+          ev.ctrlKey ||
+          ev.altKey ||
+          ev.metaKey
+        ) {
+          return;
+        }
+
+        const field = ev.target;
+
+        // A textarea takes Enter as a newline - a memory body and an event description are both
+        // multi-line, and swallowing that would be a worse bug than the one this fixes. Buttons and
+        // links already activate on Enter natively; intercepting would fire twice.
+        if (
+          !field.matches ||
+          !field.matches("input, select") ||
+          field.closest("a, button")
+        ) {
+          return;
+        }
+
+        const card = field.closest("[data-enter]");
+        const action = card && enterActions[card.dataset.enter];
+
+        if (!action) return;
+
+        ev.preventDefault();
+        action();
       });
 
       // The gateway (de)serialises proto int64 fields as JSON strings. UnixNano <-> local datetime.
@@ -2504,6 +2643,30 @@
       // an event opened from the Events or Memories tab then overwrote whatever search was showing,
       // so returning to Search found the single event in place of the results. The card is the whole
       // fix - the two views no longer share a container, so neither can destroy the other.
+      // scrollBehaviour picks the scroll animation, and exists because "smooth" is not a safe default.
+      // Under prefers-reduced-motion: reduce, Chrome does not shorten a smooth scroll - it DROPS it,
+      // leaving the page exactly where it was. So a hard-coded "smooth" silently fails to scroll at
+      // all for anyone who has reduced motion set, which is precisely the reader who most needs the
+      // page to have moved to what they asked for.
+      function scrollBehaviour() {
+        return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "instant"
+          : "smooth";
+      }
+
+      // revealCard scrolls a panel that has just been opened into view. Both panels it serves - the
+      // event card and the links card - are opened from a row on a DIFFERENT tab, and switching tabs
+      // does not move the scroll position, so without this the panel is reliably somewhere other than
+      // where the user is looking: off the top on the Search tab, off the bottom on the Memories one.
+      // Guarded on the element being displayed so it can be called unconditionally.
+      function revealCard(id) {
+        const el = $(id);
+
+        if (el && el.style.display !== "none") {
+          el.scrollIntoView({ behavior: scrollBehaviour(), block: "start" });
+        }
+      }
+
       // eventSubject is the event the card is currently showing, so the summarise controls know what
       // they are acting on without re-reading the DOM - the same shape as linksSubject.
       // eventSubjectMemories is how many memories that render showed, which is what the summarise
@@ -2545,6 +2708,11 @@
           // Nothing to condense means nothing to offer: both RPCs would refuse an event holding no
           // memories, and the LLM one has no text to prompt with.
           $("event-summarise").style.display = memories.length ? "" : "none";
+
+          // The card is first on the tab, but the tab switch above does not reset the scroll
+          // position, so arriving from a row halfway down the Events tab would land on the middle of
+          // this one. Scroll to what was asked for rather than to wherever the last page was left.
+          revealCard("event-card");
 
           ok(
             "Event",
@@ -2777,20 +2945,23 @@
           : "—";
 
         // The body is the second row of the pair, spanning the table; a memory with no body renders
-        // as a single row (and keeps its bottom border, hence the conditional class).
+        // as a single row (and keeps its bottom border, hence the conditional class). The span
+        // tracks whether the Value column is there: a colspan larger than the column count does not
+        // clamp, it EXTENDS the table by a phantom column, so leaving it at 8 on a replica would
+        // give every body row one more cell than its header.
         const body = m.body ? String(m.body) : "";
 
         return `<tr${body ? ' class="has-body"' : ""}>
     <td>${esc(m.significance ?? "")}</td>
     <!-- Filled in by decorateValues() once the server has valued the page; a dash until then, and
          permanently if this deployment will not answer (a replica, or a token that is refused). -->
-    <td class="decay" data-value-for="${esc(m.id)}"><span class="muted">…</span></td>
+    <td class="decay consolidation-only" data-value-for="${esc(m.id)}"><span class="muted">…</span></td>
     <td class="id">${eventCell}</td>
     <td>${groupCell(m)}</td>
     <td>${esc(m.recallCount || 0)}</td>
     <td>${ageCell(m.timeStamp)} ${flags.join(" ")}</td>
     <td class="id">${idCell(m.id)}</td>
-    <td>
+    <td class="actions-col">
       <div class="actions">
         <button class="btn small ghost writer-only" data-act="edit-memory" data-id="${esc(m.id)}">Edit</button>
         <button class="btn small ghost" data-act="recall-memory" data-id="${esc(m.id)}">Recall</button>
@@ -2800,7 +2971,7 @@
     </td>
   </tr>${
     body
-      ? `<tr><td class="bodycell" colspan="8"><div class="bodytext">${esc(body)}</div></td></tr>`
+      ? `<tr><td class="bodycell" colspan="${caps.consolidation ? 8 : 7}"><div class="bodytext">${esc(body)}</div></td></tr>`
       : ""
   }`;
       }
@@ -2827,13 +2998,13 @@
         $(target).innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
       ${sortHeader(scope, "significance", "Sig")}
-      <th title="computed value against the deletion threshold">Value</th>
+      <th class="consolidation-only" title="computed value against the deletion threshold">Value</th>
       <th>Event</th>
       ${sortHeader(scope, "group", "Group")}
       ${sortHeader(scope, "recall_count", "Recalls")}
       ${sortHeader(scope, "timestamp", "Age", "how long ago the memory was stored — hover a value for the exact timestamp")}
       ${sortHeader(scope, "id", "Id")}
-      <th></th>
+      <th class="actions-col"></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -3059,7 +3230,7 @@
         $("mem-save").textContent = "Update";
         $("mem-edit-hint").style.display = "";
         document.querySelector('nav button[data-tab="memories"]').click();
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({ top: 0, behavior: scrollBehaviour() });
       }
 
       function resetMemoryForm() {
@@ -3107,6 +3278,11 @@
 
         document.querySelector('nav button[data-tab="memories"]').click();
 
+        // The card sits below the memories list, where it belongs - links are opened from a row in
+        // that list. Below a full page of rows it is also off the bottom of the screen, and reached
+        // from an event on the Search tab there is nothing to say it opened at all.
+        revealCard("links-card");
+
         try {
           const data = await api(
             "GET",
@@ -3149,7 +3325,7 @@
         <td>${esc(String(l.significance ?? 0))}</td>
         <td>${esc(l.direction === "LINK_DIRECTION_OUTBOUND" ? "→ outbound" : "← inbound")}</td>
         <td>${ageCell(l.created)}</td>
-        <td>
+        <td class="actions-col">
           <div class="actions">
             <button class="btn small danger writer-only" data-act="unlink-memory"
               data-id="${esc(linksSubject)}" data-target="${esc(l.id)}">Unlink</button>
@@ -3162,7 +3338,7 @@
         $("links-list").innerHTML =
           `<div class="muted" style="margin-bottom:8px">Total link significance
     ${esc(String(data.linkSignificance ?? 0))} — damped before it counts toward the decay maths.</div>
-    <div class="tablewrap"><table><thead><tr><th>Memory</th><th>Significance</th><th>Direction</th><th>Created</th><th></th></tr></thead>
+    <div class="tablewrap"><table><thead><tr><th>Memory</th><th>Significance</th><th>Direction</th><th>Created</th><th class="actions-col"></th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
       }
 
@@ -3246,6 +3422,11 @@
       // decayAvailable goes false the first time the RPC is refused. That is a property of the deployment
       // (a replica has no forgetting of its own to describe) or of the token, never of one row, so the
       // column stops asking rather than failing once per render.
+      //
+      // whoami now says so up front (caps.consolidation), so applyCaps sets this before anything is
+      // rendered and a replica never makes the refused call at all. The first-refusal path stays as
+      // the backstop for the other reason it can be refused - the token, which whoami cannot answer
+      // for, since ExplainConsolidation is reader-tier but a scope check still applies per id.
       let decayAvailable = true;
 
       // decayInputs is the last set of decision inputs seen, from whichever call produced them - the
@@ -3869,7 +4050,7 @@
     <td>${e.timeEnd && e.timeEnd !== "0" ? ageCell(e.timeEnd) : '<span class="pill">open</span>'}</td>
     <td>${memCount || "—"}</td>
     <td class="id">${idCell(e.id)}</td>
-    <td>
+    <td class="actions-col">
       <div class="actions">
         <button class="btn small ghost writer-only" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
         <button class="btn small ghost writer-only" data-act="end-event" data-id="${esc(e.id)}">End</button>
@@ -3904,7 +4085,7 @@
       ${sortHeader("events", "time_end", "End", "an event that has not ended sorts as the oldest-ended, not as the most recent")}
       <th title="memories this event currently holds">Mem</th>
       ${sortHeader("events", "id", "Id")}
-      <th></th>
+      <th class="actions-col"></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -3950,8 +4131,8 @@
           $("candidates-list").innerHTML = data.scanEnabled
             ? '<div class="empty">No candidates right now — nothing has accumulated enough quiet memories yet.</div>'
             : '<div class="empty">This instance does not scan for candidates. It needs ' +
-              "<code class=\"inline\">consolidation.summarisationMinMemories</code> above zero and " +
-              "<code class=\"inline\">consolidation.enabled</code> — a replica runs no sleep cycle, " +
+              '<code class="inline">consolidation.summarisationMinMemories</code> above zero and ' +
+              '<code class="inline">consolidation.enabled</code> — a replica runs no sleep cycle, ' +
               "so it never produces this list.</div>";
 
           return;
@@ -3969,8 +4150,7 @@
           )
           .join("");
 
-        $("candidates-list").innerHTML =
-          `<div class="tablewrap"><table>
+        $("candidates-list").innerHTML = `<div class="tablewrap"><table>
     <thead><tr><th>Event</th>
       <th title="unsummarised memories the scan counted">Mem</th><th>Id</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
@@ -4156,7 +4336,7 @@
         hint.textContent =
           "Only significance and end-time are updatable via the API";
         document.querySelector('nav button[data-tab="events"]').click();
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({ top: 0, behavior: scrollBehaviour() });
       }
 
       function resetEventForm() {

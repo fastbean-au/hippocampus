@@ -124,6 +124,14 @@ func (t *Transformer) Transform(msg bridge.Message) ([]*contract.Memory, error) 
 // languageWanted reports whether the post declares one of the configured languages. A post
 // declaring none is kept: langs is optional in the lexicon, and dropping untagged posts would
 // silently discard a large slice of the firehose.
+//
+// DECLARES is the operative word, and the filter can be no better than the declaration. The record's
+// langs field is set by whichever client posted, generally from the account's interface language
+// rather than from the text, so French posts declaring "en" reach a --langs en bridge routinely and
+// are then stored carrying lang=en. Detecting the language here instead would need a model and a
+// per-message cost this module will not carry, and would disagree with the field the rest of the
+// network filters on. The declaration is therefore passed through as it stands; see
+// docs/eventsource.md.
 func (t *Transformer) languageWanted(msg bridge.Message) bool {
 	if len(t.langs) == 0 {
 		return true

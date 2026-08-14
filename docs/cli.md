@@ -123,18 +123,18 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 
 ### Memories
 
-| Command          | Purpose                                                                                                                                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `memory store`   | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--metadata k=v`, `--timestamp`, `--binary`)                                                                                                                          |
-| `memory update`  | partial update of an existing memory (`--id` plus any content fields)                                                                                                                                                                                        |
-| `memory delete`  | delete memories by id (`--id` repeatable, or positional ids)                                                                                                                                                                                                 |
+| Command          | Purpose                                                                                                                                                                                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory store`   | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--metadata k=v`, `--timestamp`, `--binary`)                                                                                                                                         |
+| `memory update`  | partial update of an existing memory (`--id` plus any content fields)                                                                                                                                                                                                       |
+| `memory delete`  | delete memories by id (`--id` repeatable, or positional ids)                                                                                                                                                                                                                |
 | `memory list`    | list memories with filters (`--group`, `--metadata k=v`, `--recalled`, `--summary`, `--binary`, `--recall-count-min/-max`, `--recalled-after/-before`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--order-dir`, `--limit`, `--offset`, `--extremum`) |
-| `memory recall`  | recall memories by id (reinforces them)                                                                                                                                                                                                                      |
-| `memory link`    | link a memory to others (`--id`, `--link memoryID:sig` repeatable)                                                                                                                                                                                           |
-| `memory unlink`  | remove links between a memory and others (`--id`, `--target` repeatable or positional)                                                                                                                                                                       |
-| `memory links`   | list a memory's links (`--id`, `--direction both\|outbound\|inbound`)                                                                                                                                                                                        |
-| `memory search`  | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--metadata k=v`, `--reinforce`)                                                                                                                |
-| `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)                                                                                                                       |
+| `memory recall`  | recall memories by id (reinforces them)                                                                                                                                                                                                                                     |
+| `memory link`    | link a memory to others (`--id`, `--link memoryID:sig` repeatable)                                                                                                                                                                                                          |
+| `memory unlink`  | remove links between a memory and others (`--id`, `--target` repeatable or positional)                                                                                                                                                                                      |
+| `memory links`   | list a memory's links (`--id`, `--direction both\|outbound\|inbound`)                                                                                                                                                                                                       |
+| `memory search`  | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--metadata k=v`, `--reinforce`)                                                                                                                               |
+| `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)                                                                                                                                      |
 
 `memory explain` reports each memory's computed value, the threshold it is measured against, and how
 long it has before it is forgotten; with `--curve-significance` it also returns the decay curve of
@@ -153,7 +153,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                                         |
 | `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                                  |
 | `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                                                |
-| `event get`          | fetch a single event (`--id`, `--memories`, `--memory-counts`)                                                                                                    |
+| `event get`          | fetch a single event (`--id`, `--memories`, `--memory-counts`)                                                                                 |
 | `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`, `--memory-counts`)   |
 
 ### Summarisation
@@ -166,13 +166,13 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 
 ### Admin
 
-| Command            | Purpose                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------ |
-| `whoami`           | report the caller's identity, effective tier, and group scope                              |
-| `sleep`            | trigger a consolidation cycle now, or preview one (`--dry-run`)                            |
-| `forgotten list`   | list memories a cycle forgot, and why (`--memory-id`, `--group`, `--rule`, `--since`)      |
-| `forgotten clear`  | delete records from the forgotten log (`--before` or `--all`)                              |
-| `purge`            | delete every event and memory (requires `--yes`)                                           |
+| Command           | Purpose                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| `whoami`          | report the caller's identity, effective tier and group scope, plus what the instance can serve |
+| `sleep`           | trigger a consolidation cycle now, or preview one (`--dry-run`)                                |
+| `forgotten list`  | list memories a cycle forgot, and why (`--memory-id`, `--group`, `--rule`, `--since`)          |
+| `forgotten clear` | delete records from the forgotten log (`--before` or `--all`)                                  |
+| `purge`           | delete every event and memory (requires `--yes`)                                               |
 
 `sleep --dry-run` reports what a cycle would forget and deletes nothing — see
 [Previewing what would be forgotten](operations.md#previewing-what-would-be-forgotten). It calls a
@@ -197,7 +197,19 @@ client_id:    agent-a
 role:         writer
 auth_enabled: true
 groups:       alpha
+consolidating: true
+forgotten log: false
+summariser:    false
+search modes:  keyword
 ```
+
+The four lines below the scope describe the **instance answering**, not the caller, and are the same
+for everyone who calls it. `consolidating` is the one to reach for when two addresses front one
+shared database: it says which of them holds the single-consolidator lock and therefore which one
+`sleep`, `sleep --dry-run` and `memory explain` will work against — a replica refuses all three. The
+others say whether the [forgotten log](operations.md#what-was-forgotten--the-forgotten-log) is being
+recorded, whether an embedded LLM can author a summary, and which `memory search --mode` values this
+deployment can serve.
 
 All three of `sleep`, `sleep --dry-run` and `purge` act on the **whole store**, so all three are
 refused to a group-scoped token whatever its tier — an operator runs them with an unscoped one. The
