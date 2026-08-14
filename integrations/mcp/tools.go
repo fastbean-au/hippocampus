@@ -253,6 +253,25 @@ func triStateFilter(in *bool) contract.Bool {
 	}
 }
 
+// sortDirection maps a listing tool's order_dir string onto the contract's enum. Anything other
+// than the two names it documents is treated as unset rather than rejected: the direction only
+// reorders a page a model already asked for, so failing the call over a typo costs it the answer
+// while falling back to the sort field's natural direction still gives one.
+func sortDirection(in string) contract.SortDirection {
+	switch in {
+
+	case "asc":
+		return contract.SortDirection_SORT_DIRECTION_ASC
+
+	case "desc":
+		return contract.SortDirection_SORT_DIRECTION_DESC
+
+	default:
+		return contract.SortDirection_SORT_DIRECTION_UNSPECIFIED
+
+	}
+}
+
 func toMemoryViews(in []*contract.Memory) []memoryView {
 	out := make([]memoryView, 0, len(in))
 
@@ -484,7 +503,8 @@ type listMemoriesInput struct {
 	Group           string `json:"group,omitempty" jsonschema:"optional: restrict to memories carrying this group label"`
 	SignificanceMin int32  `json:"significance_min,omitempty" jsonschema:"inclusive lower bound on significance; 0 means no bound"`
 	SignificanceMax int32  `json:"significance_max,omitempty" jsonschema:"inclusive upper bound on significance; 0 means no bound"`
-	OrderBy         string `json:"order_by,omitempty" jsonschema:"'significance' (the default) or 'timestamp'"`
+	OrderBy         string `json:"order_by,omitempty" jsonschema:"sort field: 'significance' (the default), 'timestamp', 'time_recalled', 'recall_count', 'link_significance', 'group', or 'id'"`
+	OrderDir        string `json:"order_dir,omitempty" jsonschema:"'asc' or 'desc'; omit to use the sort field's natural direction (descending for the magnitude and time fields, ascending for group and id)"`
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
 
@@ -508,6 +528,7 @@ func (b *bridge) listMemories(ctx context.Context, _ *mcp.CallToolRequest, in li
 		SignificanceMin: in.SignificanceMin,
 		SignificanceMax: in.SignificanceMax,
 		OrderBy:         in.OrderBy,
+		OrderDir:        sortDirection(in.OrderDir),
 		Limit:           in.Limit,
 		Offset:          in.Offset,
 		Metadata:        metadataFilterPairs(in.Metadata),
@@ -569,7 +590,8 @@ type listEventsInput struct {
 	Group           string `json:"group,omitempty" jsonschema:"optional: restrict to events carrying this group label"`
 	SignificanceMin int32  `json:"significance_min,omitempty" jsonschema:"inclusive lower bound on significance; 0 means no bound"`
 	SignificanceMax int32  `json:"significance_max,omitempty" jsonschema:"inclusive upper bound on significance; 0 means no bound"`
-	OrderBy         string `json:"order_by,omitempty" jsonschema:"'significance' (the default) or 'timestamp'"`
+	OrderBy         string `json:"order_by,omitempty" jsonschema:"sort field: 'significance' (the default), 'timestamp' (the event's start), 'time_end', 'name', 'link_significance', 'group', or 'id'"`
+	OrderDir        string `json:"order_dir,omitempty" jsonschema:"'asc' or 'desc'; omit to use the sort field's natural direction (descending for the magnitude and time fields, ascending for name, group and id)"`
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
 
@@ -590,6 +612,7 @@ func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in list
 		SignificanceMin: in.SignificanceMin,
 		SignificanceMax: in.SignificanceMax,
 		OrderBy:         in.OrderBy,
+		OrderDir:        sortDirection(in.OrderDir),
 		Limit:           in.Limit,
 		Offset:          in.Offset,
 		Metadata:        metadataFilterPairs(in.Metadata),

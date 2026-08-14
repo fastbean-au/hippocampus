@@ -201,3 +201,33 @@ func TestCompletionEmittedByCompletionCommand(t *testing.T) {
 		t.Fatalf("bash script = %q", out.String())
 	}
 }
+
+// TestCompleteOrderByIsCommandSpecific pins the one flag whose candidates depend on the command
+// carrying it: the two listings sort on different columns, so completing --order-by against the
+// shared table would offer values the service rejects.
+func TestCompleteOrderByIsCommandSpecific(t *testing.T) {
+	memories := completeArgs([]string{"memory", "list", "--order-by"})
+
+	if !contains(memories, "recall_count") || !contains(memories, "time_recalled") {
+		t.Errorf("memory --order-by values = %v", memories)
+	}
+
+	if contains(memories, "name") || contains(memories, "time_end") {
+		t.Errorf("memory --order-by offered an event-only column: %v", memories)
+	}
+
+	events := completeArgs([]string{"event", "list", "--order-by"})
+
+	if !contains(events, "name") || !contains(events, "time_end") {
+		t.Errorf("event --order-by values = %v", events)
+	}
+
+	if contains(events, "recall_count") || contains(events, "time_recalled") {
+		t.Errorf("event --order-by offered a memory-only column: %v", events)
+	}
+
+	// --order-dir is the same closed set on both, so it stays in the shared table.
+	if got := completeArgs([]string{"memory", "list", "--order-dir"}); !contains(got, "asc") || !contains(got, "desc") {
+		t.Errorf("--order-dir values = %v", got)
+	}
+}

@@ -28,7 +28,7 @@ var enumFlagValues = map[string][]string{
 	"log-level":  {"trace", "debug", "info", "warn", "error", "fatal", "panic"},
 	"place-mode": {"above", "below", "between"},
 	"extremum":   {"highest", "lowest"},
-	"order-by":   {"significance", "timestamp"},
+	"order-dir":  {"asc", "desc"},
 	"direction":  {"both", "outbound", "inbound"},
 
 	// The tri-state list filters. They are string flags rather than pflag bools precisely so
@@ -37,6 +37,15 @@ var enumFlagValues = map[string][]string{
 	"summary":   {"true", "false"},
 	"binary":    {"true", "false"},
 	"has-event": {"true", "false"},
+}
+
+// commandEnumFlagValues overrides enumFlagValues for a flag whose candidates depend on which command
+// carries it, keyed by the registry's command key. --order-by is the only one: the memories and
+// events listings share the flag name but sort on different columns, and offering the union would
+// suggest "name" for a memory and "recall_count" for an event, both of which the service rejects.
+var commandEnumFlagValues = map[string]map[string][]string{
+	"memory list": {"order-by": memoryOrderByValues},
+	"event list":  {"order-by": eventOrderByValues},
 }
 
 // completionShells are the shells `hippo completion` can emit a script for.
@@ -82,6 +91,14 @@ func completeArgs(prior []string) []string {
 	// flags) or nothing (for free-form values), rather than the next flag/command.
 	if len(prior) > 0 {
 		if name, isFlag, inline := flagInfo(prior[len(prior)-1]); isFlag && !inline {
+			// A command-specific override wins over the shared table, so --order-by offers the
+			// columns the command being completed can actually sort on.
+			if key, resolved := resolveKey(positional); resolved {
+				if values, ok := commandEnumFlagValues[key][name]; ok {
+					return values
+				}
+			}
+
 			if values, ok := enumFlagValues[name]; ok {
 				return values
 			}

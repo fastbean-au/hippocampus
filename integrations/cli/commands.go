@@ -340,13 +340,31 @@ func eventWriteFlags(fs *pflag.FlagSet) {
 	addPlacementFlags(fs)
 }
 
+// memoryOrderByValues and eventOrderByValues are the order_by values the service accepts for each
+// listing, used for the flag help and for shell completion.
+//
+// They are hand-copied from db/order.go rather than imported: this module depends on the root one
+// for the contract alone, and importing db would pull all three storage drivers into a client
+// binary. That copy is safe here in a way it would not be in the service, because the CLI does not
+// validate - it sends the string on and the server is the only enforcement point - so a stale entry
+// costs a wrong suggestion, never a wrongly-ordered page.
+var (
+	memoryOrderByValues = []string{
+		"group", "id", "link_significance", "recall_count", "significance", "time_recalled", "timestamp",
+	}
+	eventOrderByValues = []string{
+		"group", "id", "link_significance", "name", "significance", "time_end", "timestamp",
+	}
+)
+
 func memoryFilterFlags(fs *pflag.FlagSet) {
 	fs.String("timestamp-min", "", "inclusive lower bound on time_stamp (RFC3339)")
 	fs.String("timestamp-max", "", "inclusive upper bound on time_stamp (RFC3339)")
 	fs.Int32("significance-min", 0, "inclusive lower bound on significance (0 = no bound)")
 	fs.Int32("significance-max", 0, "inclusive upper bound on significance (0 = no bound)")
 	fs.String("group", "", "restrict to a group label")
-	fs.String("order-by", "", "'significance' or 'timestamp'")
+	fs.String("order-by", "", "sort field: "+strings.Join(memoryOrderByValues, ", "))
+	fs.String("order-dir", "", "'asc' or 'desc'; omitted uses the sort field's natural direction")
 	fs.Int32("limit", 0, "page size (0 selects the server default)")
 	fs.Int32("offset", 0, "rows to skip for pagination")
 	fs.String("extremum", "", "'highest' or 'lowest' significance tie (ignores the significance range)")
@@ -370,7 +388,8 @@ func eventFilterFlags(fs *pflag.FlagSet) {
 	fs.Int32("significance-min", 0, "inclusive lower bound on significance (0 = no bound)")
 	fs.Int32("significance-max", 0, "inclusive upper bound on significance (0 = no bound)")
 	fs.String("group", "", "restrict to a group label")
-	fs.String("order-by", "", "'significance' or 'timestamp'")
+	fs.String("order-by", "", "sort field: "+strings.Join(eventOrderByValues, ", "))
+	fs.String("order-dir", "", "'asc' or 'desc'; omitted uses the sort field's natural direction")
 	fs.Int32("limit", 0, "page size (0 selects the server default)")
 	fs.Int32("offset", 0, "rows to skip for pagination")
 	fs.Bool("memories", false, "include each event's memories")
@@ -671,6 +690,11 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 		return err
 	}
 
+	orderDir, err := orderDirFromFlags(fs)
+	if err != nil {
+		return err
+	}
+
 	req := &contract.GetMemoriesRequest{
 		TimestampMin:         tsMin,
 		TimestampMax:         tsMax,
@@ -678,6 +702,7 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 		SignificanceMax:      i32(fs, "significance-max"),
 		Group:                str(fs, "group"),
 		OrderBy:              str(fs, "order-by"),
+		OrderDir:             orderDir,
 		Limit:                i32(fs, "limit"),
 		Offset:               i32(fs, "offset"),
 		SignificanceExtremum: ext,
@@ -926,6 +951,11 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 		return err
 	}
 
+	orderDir, err := orderDirFromFlags(fs)
+	if err != nil {
+		return err
+	}
+
 	req := &contract.GetEventsRequest{
 		TimeStartMin:         tsStartMin,
 		TimeStartMax:         tsStartMax,
@@ -935,6 +965,7 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 		SignificanceMax:      i32(fs, "significance-max"),
 		Group:                str(fs, "group"),
 		OrderBy:              str(fs, "order-by"),
+		OrderDir:             orderDir,
 		Limit:                i32(fs, "limit"),
 		Offset:               i32(fs, "offset"),
 		Memories:             b(fs, "memories"),
@@ -1212,6 +1243,26 @@ func placementFromFlags(fs *pflag.FlagSet) (*contract.SignificancePlacement, err
 		Upper:    i32(fs, "place-upper"),
 		UpperId:  str(fs, "place-upper-id"),
 	}, nil
+}
+
+// orderDirFromFlags maps the --order-dir flag onto the SortDirection enum. An omitted flag leaves it
+// UNSPECIFIED, which the service reads as the sort field's own natural direction rather than as
+// ascending - see GetMemoriesRequest.order_by for which that is per field.
+func orderDirFromFlags(fs *pflag.FlagSet) (contract.SortDirection, error) {
+	switch value := str(fs, "order-dir"); value {
+
+	case "":
+		return contract.SortDirection_SORT_DIRECTION_UNSPECIFIED, nil
+
+	case "asc":
+		return contract.SortDirection_SORT_DIRECTION_ASC, nil
+
+	case "desc":
+		return contract.SortDirection_SORT_DIRECTION_DESC, nil
+
+	default:
+		return 0, fmt.Errorf("invalid --order-dir %q (expected 'asc' or 'desc')", value)
+	}
 }
 
 // extremumFromFlags maps the --extremum flag onto the SignificanceExtremum enum.

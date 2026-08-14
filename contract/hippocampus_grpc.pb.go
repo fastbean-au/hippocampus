@@ -118,7 +118,7 @@ type HippocampusClient interface {
 	// GetEvents lists events filtered by time range, significance range, group, and metadata,
 	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
 	// significance_min/max range for "only events tied at the highest (or lowest) significance
-	// value" instead.
+	// value" instead. order_by/order_dir choose the sort field and direction.
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
@@ -138,6 +138,7 @@ type HippocampusClient interface {
 	// recall state (recalled/recall_count/time_recalled, plus is_summary and is_binary), paginated
 	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
 	// range for "only memories tied at the highest (or lowest) significance value" instead.
+	// order_by/order_dir choose the sort field and direction.
 	GetMemories(ctx context.Context, in *GetMemoriesRequest, opts ...grpc.CallOption) (*GetMemoriesResponse, error)
 	// RecallMemories returns the requested memories and reinforces each one: its recall time is
 	// reset to now (resetting its decay clock) and its recall count is incremented (raising its
@@ -594,7 +595,7 @@ type HippocampusServer interface {
 	// GetEvents lists events filtered by time range, significance range, group, and metadata,
 	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
 	// significance_min/max range for "only events tied at the highest (or lowest) significance
-	// value" instead.
+	// value" instead. order_by/order_dir choose the sort field and direction.
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
@@ -614,6 +615,7 @@ type HippocampusServer interface {
 	// recall state (recalled/recall_count/time_recalled, plus is_summary and is_binary), paginated
 	// by limit/offset (see GetMemoriesRequest). significance_extremum swaps the significance_min/max
 	// range for "only memories tied at the highest (or lowest) significance value" instead.
+	// order_by/order_dir choose the sort field and direction.
 	GetMemories(context.Context, *GetMemoriesRequest) (*GetMemoriesResponse, error)
 	// RecallMemories returns the requested memories and reinforces each one: its recall time is
 	// reset to now (resetting its decay clock) and its recall count is incremented (raising its

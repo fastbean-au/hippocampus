@@ -1333,6 +1333,13 @@ func TestGetEvents_ValidationErrors(t *testing.T) {
 			}
 		})
 	}
+
+	// The order_by rejection reports the caller's mistake as such; the range checks above still
+	// report Unknown, which predates this.
+	_, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{OrderBy: "bogus"})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Errorf("unsupported order_by returned %v, want InvalidArgument", got)
+	}
 }
 
 // TestGetEvents_LimitAndOffsetClamped verifies an over-large limit is clamped to maxEventPageSize

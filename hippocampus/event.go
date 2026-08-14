@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -400,14 +401,10 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 
 	orderBy := in.GetOrderBy()
 
-	switch orderBy {
-
-	case "", "significance", "timestamp":
-		// supported
-
-	default:
-		return &res, fmt.Errorf("OrderBy must be \"significance\" or \"timestamp\"")
-
+	// InvalidArgument rather than a bare error - see GetMemories for why.
+	if !db.ValidEventOrderBy(orderBy) {
+		return &res, status.Errorf(codes.InvalidArgument,
+			"OrderBy must be one of %s", strings.Join(db.EventOrderByValues(), ", "))
 	}
 
 	limit := int(in.GetLimit())
@@ -436,6 +433,7 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		SignificanceExtremum: extremum,
 		Group:                in.GetGroup(),
 		OrderBy:              orderBy,
+		OrderDirection:       sortDirection(in.GetOrderDir()),
 		Limit:                limit,
 		Offset:               offset,
 

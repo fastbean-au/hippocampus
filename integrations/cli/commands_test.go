@@ -616,3 +616,53 @@ func TestTriStateFromFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestListSortFlags(t *testing.T) {
+	req, _, err := runCommand(t, "memory list",
+		[]string{"--order-by", "recall_count", "--order-dir", "asc"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	memories := req.(*contract.GetMemoriesRequest)
+
+	if memories.GetOrderBy() != "recall_count" ||
+		memories.GetOrderDir() != contract.SortDirection_SORT_DIRECTION_ASC {
+		t.Fatalf("unexpected memory sort: order_by=%q order_dir=%v",
+			memories.GetOrderBy(), memories.GetOrderDir())
+	}
+
+	req, _, err = runCommand(t, "event list",
+		[]string{"--order-by", "name", "--order-dir", "desc"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	events := req.(*contract.GetEventsRequest)
+
+	if events.GetOrderBy() != "name" ||
+		events.GetOrderDir() != contract.SortDirection_SORT_DIRECTION_DESC {
+		t.Fatalf("unexpected event sort: order_by=%q order_dir=%v",
+			events.GetOrderBy(), events.GetOrderDir())
+	}
+
+	// An omitted direction stays UNSPECIFIED rather than defaulting to one, so the service applies
+	// the sort field's natural direction.
+	req, _, err = runCommand(t, "memory list", []string{"--order-by", "id"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if dir := req.(*contract.GetMemoriesRequest).GetOrderDir(); dir != contract.SortDirection_SORT_DIRECTION_UNSPECIFIED {
+		t.Fatalf("omitted --order-dir = %v, want UNSPECIFIED", dir)
+	}
+}
+
+func TestListBadSortDirection(t *testing.T) {
+	for _, key := range []string{"memory list", "event list"} {
+		if _, _, err := runCommand(t, key, []string{"--order-dir", "sideways"}, &fakeClient{}); err == nil ||
+			!strings.Contains(err.Error(), "invalid --order-dir") {
+			t.Errorf("%s: err = %v", key, err)
+		}
+	}
+}

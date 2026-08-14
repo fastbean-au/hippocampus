@@ -128,7 +128,7 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 | `memory store`   | store a new memory (`--body`/`--body-file`, `--significance`, `--event-id`, `--group`, `--metadata k=v`, `--timestamp`, `--binary`)                                                                                                                          |
 | `memory update`  | partial update of an existing memory (`--id` plus any content fields)                                                                                                                                                                                        |
 | `memory delete`  | delete memories by id (`--id` repeatable, or positional ids)                                                                                                                                                                                                 |
-| `memory list`    | list memories with filters (`--group`, `--metadata k=v`, `--recalled`, `--summary`, `--binary`, `--recall-count-min/-max`, `--recalled-after/-before`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--limit`, `--offset`, `--extremum`) |
+| `memory list`    | list memories with filters (`--group`, `--metadata k=v`, `--recalled`, `--summary`, `--binary`, `--recall-count-min/-max`, `--recalled-after/-before`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--order-dir`, `--limit`, `--offset`, `--extremum`) |
 | `memory recall`  | recall memories by id (reinforces them)                                                                                                                                                                                                                      |
 | `memory link`    | link a memory to others (`--id`, `--link memoryID:sig` repeatable)                                                                                                                                                                                           |
 | `memory unlink`  | remove links between a memory and others (`--id`, `--target` repeatable or positional)                                                                                                                                                                       |
@@ -234,6 +234,12 @@ hippo memory list --metadata source=slack --metadata project=apollo
 # What have I never recalled? --recall-count-max cannot ask this: 0 means "no bound" everywhere in
 # this API, so the tri-state --recalled is what carries it. Also --summary and --binary.
 hippo memory list --recalled false --order-by significance
+
+# Sorting. --order-by names the column, --order-dir reverses it; omitting the direction uses that
+# column's natural one (most-significant/most-recent first, but alphabetical for id/group/name).
+# The two listings sort on different columns - completion offers each command's own set.
+hippo memory list --order-by time_recalled --limit 20
+hippo event list --order-by name --order-dir desc
 
 # Metadata replaces wholesale on update, so removing labels needs an explicit instruction.
 hippo memory update --id "$ID" --clear-metadata

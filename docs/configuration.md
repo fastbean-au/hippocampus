@@ -289,6 +289,45 @@ never-recalled memory has `time_recalled` of `0`, so an upper bound would otherw
 memory that was never recalled at all — "recalled before Tuesday" answering with memories that were
 never recalled would be a trap rather than a filter.
 
+### Sorting
+
+`GetMemories` and `GetEvents` both take an `order_by` field naming the column to sort on, and an
+`order_dir` (`SORT_DIRECTION_ASC`/`SORT_DIRECTION_DESC`) reversing it. Both default to
+`significance`, descending — what these listings did before there was anything to set.
+
+| `order_by`          | `GetMemories`                | `GetEvents`             | Natural direction |
+| ------------------- | ---------------------------- | ----------------------- | ----------------- |
+| `significance`      | yes (the default)            | yes (the default)       | descending        |
+| `timestamp`         | the memory's `time_stamp`    | the event's `time_start` | descending        |
+| `time_recalled`     | yes                          | —                       | descending        |
+| `recall_count`      | yes                          | —                       | descending        |
+| `time_end`          | —                            | yes                     | descending        |
+| `name`              | —                            | yes                     | ascending         |
+| `link_significance` | yes                          | yes                     | descending        |
+| `group`             | yes                          | yes                     | ascending         |
+| `id`                | yes                          | yes                     | ascending         |
+
+An omitted `order_dir` means each field's **natural** direction rather than ascending: the magnitude
+and time fields read most-significant/most-recent first, which is what a listing is nearly always
+asked for, while the lexical ones (`id`, `group`, an event's `name`) read alphabetically. Setting it
+explicitly overrides that either way, and it applies to the whole ordering including the tiebreakers
+— so `ASC` returns exactly the reverse of `DESC` rather than a differently-tied version of it. Every
+ordering ends in an id tiebreaker, so `limit`/`offset` paging stays stable across pages.
+
+Two orderings include rows a filter would exclude, deliberately. A never-recalled memory stores
+`time_recalled` of `0` and so sorts as the least recently recalled rather than dropping out of the
+page (use `recalled` to ask about those); an event that has not ended stores `time_end` of `0` and
+sorts as the oldest-ended (use `time_end_min` to exclude those). An ordering that silently filtered
+would be the more surprising of the two behaviours.
+
+An `order_by` naming anything else is rejected with `InvalidArgument` listing the accepted values.
+Only `significance` and `timestamp` are backed by an index, so sorting a large store on another
+column costs a sort — worth knowing before wiring one into a hot path.
+
+Two things are **not** sortable, because neither is a stored column: a memory's computed decay value
+(it is derived per request from the configuration and the store's current capacity pressure — ask
+`ExplainConsolidation` for it) and an event's `memory_count` (an aggregate over another table).
+
 ### Metadata
 
 Every memory and event carries an optional `metadata` map of string keys to string values: the

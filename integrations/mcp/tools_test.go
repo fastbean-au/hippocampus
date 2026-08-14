@@ -881,3 +881,52 @@ func TestTriStateFilter(t *testing.T) {
 		t.Errorf("false should be FALSE, got %v", got)
 	}
 }
+
+// TestListSortDirectionMapping pins the order_dir string→enum mapping on both listing tools,
+// including the deliberate fallback: an unrecognised direction is treated as unset rather than
+// failing the call.
+func TestListSortDirectionMapping(t *testing.T) {
+	cases := []struct {
+		in   string
+		want contract.SortDirection
+	}{
+		{"asc", contract.SortDirection_SORT_DIRECTION_ASC},
+		{"desc", contract.SortDirection_SORT_DIRECTION_DESC},
+		{"", contract.SortDirection_SORT_DIRECTION_UNSPECIFIED},
+		{"sideways", contract.SortDirection_SORT_DIRECTION_UNSPECIFIED},
+	}
+
+	for _, c := range cases {
+		f := &fakeClient{
+			getMemoriesRes: &contract.GetMemoriesResponse{},
+			getEventsRes:   &contract.GetEventsResponse{},
+		}
+		b := newBridge(f)
+
+		if _, _, err := b.listMemories(context.Background(), nil,
+			listMemoriesInput{OrderBy: "recall_count", OrderDir: c.in}); err != nil {
+			t.Fatalf("listMemories(%q): %v", c.in, err)
+		}
+
+		if got := f.getMemoriesReq.GetOrderDir(); got != c.want {
+			t.Errorf("listMemories order_dir %q = %v, want %v", c.in, got, c.want)
+		}
+
+		if got := f.getMemoriesReq.GetOrderBy(); got != "recall_count" {
+			t.Errorf("listMemories order_by = %q, want recall_count", got)
+		}
+
+		if _, _, err := b.listEvents(context.Background(), nil,
+			listEventsInput{OrderBy: "name", OrderDir: c.in}); err != nil {
+			t.Fatalf("listEvents(%q): %v", c.in, err)
+		}
+
+		if got := f.getEventsReq.GetOrderDir(); got != c.want {
+			t.Errorf("listEvents order_dir %q = %v, want %v", c.in, got, c.want)
+		}
+
+		if got := f.getEventsReq.GetOrderBy(); got != "name" {
+			t.Errorf("listEvents order_by = %q, want name", got)
+		}
+	}
+}

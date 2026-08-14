@@ -354,6 +354,7 @@ type MemoryFilter struct {
 	SignificanceExtremum SignificanceExtremum
 	Group                string
 	OrderBy              string
+	OrderDirection       SortDirection
 	Limit                int
 	Offset               int
 
@@ -417,6 +418,7 @@ type EventFilter struct {
 	SignificanceExtremum SignificanceExtremum
 	Group                string
 	OrderBy              string
+	OrderDirection       SortDirection
 	Limit                int
 	Offset               int
 
@@ -438,6 +440,18 @@ const (
 	SignificanceExtremumNone SignificanceExtremum = iota
 	SignificanceExtremumHighest
 	SignificanceExtremumLowest
+)
+
+// SortDirection mirrors contract.SortDirection without the db package depending on the contract
+// package (see SignificanceExtremum for the same pattern). SortDirectionNatural is the zero value
+// because a filter's zero value must mean "no caller preference", which for ordering is each
+// order_by value's own natural direction - see order.go.
+type SortDirection int
+
+const (
+	SortDirectionNatural SortDirection = iota
+	SortDirectionAscending
+	SortDirectionDescending
 )
 
 // TriState mirrors contract.Bool without the db package depending on the contract package, for the

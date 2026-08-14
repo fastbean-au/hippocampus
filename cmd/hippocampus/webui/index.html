@@ -288,6 +288,19 @@
         text-transform: uppercase;
         letter-spacing: 0.4px;
       }
+      /* A header the listing can sort on. white-space: nowrap keeps the direction arrow on the
+         label's line rather than wrapping alone onto a second one and stretching every row. */
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+      }
+      th.sortable:hover {
+        color: var(--text);
+      }
+      th.sorted {
+        color: var(--accent);
+      }
       /* A memory body (and an event description) is free text of any length, so it gets a row of its
          own spanning the table rather than a column competing with the metadata for width: as a
          column, a single long unbreakable neighbour (an at:// id) squeezed it to a few characters
@@ -928,13 +941,24 @@
               </div>
             </div>
             <div class="row">
-              <div class="field">
-                <label for="mf-sort">Sort</label>
-                <select id="mf-sort">
-                  <option value="significance">
-                    Significance, then newest
-                  </option>
-                  <option value="timestamp">Newest first</option>
+              <div class="field pair">
+                <label for="mf-sort">Sort by</label>
+                <select id="mf-sort" onchange="loadMemories()">
+                  <option value="significance">Significance</option>
+                  <option value="timestamp">Stored</option>
+                  <option value="time_recalled">Last recalled</option>
+                  <option value="recall_count">Recalls</option>
+                  <option value="link_significance">Link significance</option>
+                  <option value="group">Group</option>
+                  <option value="id">Id</option>
+                </select>
+              </div>
+              <div class="field pair">
+                <label for="mf-sortdir">Direction</label>
+                <select id="mf-sortdir" onchange="loadMemories()">
+                  <option value="">Default</option>
+                  <option value="SORT_DIRECTION_DESC">Descending</option>
+                  <option value="SORT_DIRECTION_ASC">Ascending</option>
                 </select>
               </div>
               <div class="field">
@@ -1104,13 +1128,24 @@
               </div>
             </div>
             <div class="row">
-              <div class="field">
-                <label for="ef-sort">Sort</label>
-                <select id="ef-sort">
-                  <option value="significance">
-                    Significance, then newest
-                  </option>
-                  <option value="timestamp">Newest first</option>
+              <div class="field pair">
+                <label for="ef-sort">Sort by</label>
+                <select id="ef-sort" onchange="loadEvents()">
+                  <option value="significance">Significance</option>
+                  <option value="timestamp">Start</option>
+                  <option value="time_end">End</option>
+                  <option value="name">Name</option>
+                  <option value="link_significance">Link significance</option>
+                  <option value="group">Group</option>
+                  <option value="id">Id</option>
+                </select>
+              </div>
+              <div class="field pair">
+                <label for="ef-sortdir">Direction</label>
+                <select id="ef-sortdir" onchange="loadEvents()">
+                  <option value="">Default</option>
+                  <option value="SORT_DIRECTION_DESC">Descending</option>
+                  <option value="SORT_DIRECTION_ASC">Ascending</option>
                 </select>
               </div>
               <div class="field">
@@ -1866,6 +1901,71 @@
       const memRegistry = new Map();
       const evRegistry = new Map();
 
+      // ---------------------------------------------------------- sortable column headers
+      //
+      // The two listings sort server-side (order_by/order_dir on GetMemories/GetEvents), so a header
+      // click is a re-query rather than a client-side re-sort — which it has to be, since a page is
+      // 25 rows out of a store that can hold hundreds of thousands and sorting those 25 would be a
+      // lie. The sort selects in each filter form are the state; a header click just writes to them
+      // and reloads, so there is one place the current sort lives and the two controls cannot
+      // disagree.
+      //
+      // sortScopes names, per table, the two form controls and the loader to call. Both loaders
+      // restart from offset 0, which is what a changed sort must do: page 3 of the old ordering has
+      // no meaning in the new one.
+      const sortScopes = {
+        memories: { by: "mf-sort", dir: "mf-sortdir", load: () => loadMemories() },
+        events: { by: "ef-sort", dir: "ef-sortdir", load: () => loadEvents() },
+      };
+
+      // sortHeader renders one <th>, clickable when the column maps to a field the service can sort
+      // on. Columns that do not (a memory's computed Value, an event's memory count) stay plain
+      // headers: they are derived rather than stored, so there is no column to ORDER BY.
+      function sortHeader(scope, field, label, title) {
+        const titleAttr = title ? ` title="${esc(title)}"` : "";
+
+        if (!scope || !field) return `<th${titleAttr}>${esc(label)}</th>`;
+
+        const controls = sortScopes[scope];
+        const active = $(controls.by).value === field;
+        // The arrow reports what the page is actually showing. On "Default" the direction is the
+        // service's choice, so it is shown as neither arrow rather than guessed at.
+        const dir = $(controls.dir).value;
+        const arrow = !active
+          ? ""
+          : dir === "SORT_DIRECTION_ASC"
+            ? " ▲"
+            : dir === "SORT_DIRECTION_DESC"
+              ? " ▼"
+              : " •";
+
+        return `<th class="sortable${active ? " sorted" : ""}"${titleAttr}
+          data-act="sort" data-sort-scope="${esc(scope)}" data-sort-field="${esc(field)}"
+        >${esc(label)}${arrow}</th>`;
+      }
+
+      // applySort is the header click: a new column adopts the service's natural direction for it
+      // (Default), and clicking the column already sorted on cycles through the two explicit
+      // directions. Starting at Default rather than at "descending" is what keeps the page from
+      // having an opinion about, say, whether a Group column should read A–Z or Z–A.
+      function applySort(scope, field) {
+        const controls = sortScopes[scope];
+
+        if (!controls) return;
+
+        if ($(controls.by).value !== field) {
+          $(controls.by).value = field;
+          $(controls.dir).value = "";
+        } else {
+          $(controls.dir).value =
+            $(controls.dir).value === "SORT_DIRECTION_ASC"
+              ? "SORT_DIRECTION_DESC"
+              : "SORT_DIRECTION_ASC";
+        }
+
+        controls.load();
+      }
+
       document.addEventListener("click", (ev) => {
         const el = ev.target.closest("[data-act]");
 
@@ -1879,6 +1979,10 @@
           case "open-event":
             ev.preventDefault();
             openEvent(el.dataset.event);
+            break;
+
+          case "sort":
+            applySort(el.dataset.sortScope, el.dataset.sortField);
             break;
 
           case "edit-memory": {
@@ -2664,13 +2768,22 @@
         // instead of it being embedded in the markup.
         memories.forEach((m) => memRegistry.set(m.id, m));
 
+        // Only the Memories tab's own table sorts by header: the search results are ordered by
+        // relevance blended with the store's own ranking (see search.significanceWeight), and an
+        // event's memories are one event's whole set. Re-sorting either through GetMemories would
+        // replace the result set rather than reorder it.
+        const scope = target === "memories-list" ? "memories" : "";
         const rows = memories.map(memoryRow).join("");
         $(target).innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
-      <th>Sig</th><th title="computed value against the deletion threshold">Value</th>
-      <th>Event</th><th>Group</th><th>Recalls</th>
-      <th title="how long ago the memory was stored — hover a value for the exact timestamp">Age</th>
-      <th>Id</th><th></th>
+      ${sortHeader(scope, "significance", "Sig")}
+      <th title="computed value against the deletion threshold">Value</th>
+      <th>Event</th>
+      ${sortHeader(scope, "group", "Group")}
+      ${sortHeader(scope, "recall_count", "Recalls")}
+      ${sortHeader(scope, "timestamp", "Age", "how long ago the memory was stored — hover a value for the exact timestamp")}
+      ${sortHeader(scope, "id", "Id")}
+      <th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -2751,6 +2864,13 @@
         if (to) params.set("timestamp_max", to);
 
         params.set("order_by", $("mf-sort").value);
+
+        // Omitted rather than sent empty when the direction is "Default": the service reads an
+        // absent order_dir as the sort field's own natural direction, which is knowledge this page
+        // deliberately does not duplicate — the same reason the Decay tab computes no decay maths.
+        const sortDir = $("mf-sortdir").value;
+        if (sortDir) params.set("order_dir", sortDir);
+
         params.set("limit", memoriesPageSize());
         params.set("offset", memoriesOffset);
 
@@ -2788,6 +2908,10 @@
         ].forEach((id) => ($(id).value = ""));
         $("mf-extremum").value = "";
         $("mf-recalled").value = "";
+        // The sort is part of the filter form, so Clear resets it too — back to the service's own
+        // default ordering rather than to whatever column was last clicked.
+        $("mf-sort").value = "significance";
+        $("mf-sortdir").value = "";
         syncMemoryExtremum();
       }
 
@@ -3627,8 +3751,14 @@
         const rows = events.map(eventRow).join("");
         $("events-list").innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
-      <th>Name</th><th>Sig</th><th>Group</th><th>Start</th><th>End</th>
-      <th title="memories this event currently holds">Mem</th><th>Id</th><th></th>
+      ${sortHeader("events", "name", "Name")}
+      ${sortHeader("events", "significance", "Sig")}
+      ${sortHeader("events", "group", "Group")}
+      ${sortHeader("events", "timestamp", "Start")}
+      ${sortHeader("events", "time_end", "End", "an event that has not ended sorts as the oldest-ended, not as the most recent")}
+      <th title="memories this event currently holds">Mem</th>
+      ${sortHeader("events", "id", "Id")}
+      <th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -3755,6 +3885,11 @@
         params.set("memory_counts", "true");
 
         params.set("order_by", $("ef-sort").value);
+
+        // Omitted when "Default" — see fetchMemories for why.
+        const sortDir = $("ef-sortdir").value;
+        if (sortDir) params.set("order_dir", sortDir);
+
         params.set("limit", eventsPageSize());
         params.set("offset", eventsOffset);
 
@@ -3787,6 +3922,8 @@
         );
         $("ef-extremum").value = "";
         $("ef-memories").checked = false;
+        $("ef-sort").value = "significance";
+        $("ef-sortdir").value = "";
         syncEventExtremum();
       }
 

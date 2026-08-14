@@ -82,6 +82,27 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **The memory and event listings sort on more than two columns, in either direction.** `order_by`
+  previously accepted `significance` or `timestamp` and always sorted descending. It now names any
+  of seven columns per listing — memories add `time_recalled`, `recall_count`, `link_significance`,
+  `group` and `id`; events add `time_end`, `name`, `link_significance`, `group` and `id` — and a new
+  `order_dir` (`SORT_DIRECTION_ASC`/`SORT_DIRECTION_DESC`) reverses any of them. Existing callers are
+  unchanged: both fields default to what these listings did before.
+  - An omitted `order_dir` means each column's **natural** direction rather than ascending —
+    descending for the magnitude and time columns, ascending for the lexical ones (`id`, `group`,
+    an event's `name`) — since alphabetical is the only reading of a name anyone wants first.
+  - Reversing applies to the tiebreakers too, so `ASC` is the exact reverse of `DESC`; every
+    ordering still ends in an id tiebreaker, so offset paging stays stable.
+  - A never-recalled memory (`time_recalled` 0) and an unended event (`time_end` 0) sort as the
+    least recent rather than dropping out of the page: an ordering that silently filtered would be
+    the more surprising behaviour, and `recalled`/`time_end_min` ask that question directly.
+  - An unaccepted `order_by` is now rejected with `InvalidArgument` listing the accepted values,
+    where it previously surfaced as `Unknown` (a 500 over the gateway). The other range validations
+    on those two RPCs are unchanged.
+  - Reachable as `hippo memory list --order-by … --order-dir …` (and `hippo event list`), with
+    per-command shell completion, and as `order_by`/`order_dir` on the MCP bridge's `list_memories`
+    and `list_events`. The embedded console gains a Sort by/Direction pair on both filter forms and
+    clickable column headers on both tables.
 - **`GetEvents` can report each event's memory count without transferring the memories.** A new
   opt-in `GetEventsRequest.memory_counts` populates a read-only `Event.memory_count` from one
   aggregate query that reads no bodies at all. Previously the only way to say how much an event held

@@ -371,16 +371,6 @@ func (d *DB) GetEvent(ctx context.Context, id string) (*types.Event, error) {
 	return &event, nil
 }
 
-// eventOrderClauses maps the API order_by values to fixed, injection-safe ORDER BY clauses. The
-// order_by string is never interpolated into SQL directly — only these constant clauses are. A
-// stable id tiebreaker keeps offset pagination deterministic across pages.
-var eventOrderClauses = map[string]string{
-	"significance": `significance DESC, time_start DESC, id ASC`,
-	"timestamp":    `time_start DESC, id ASC`,
-}
-
-const defaultEventOrderBy = "significance"
-
 // eventFilterConditions builds the shared WHERE clause and its args for the events filter, so
 // GetEvents and CountEventsFiltered stay in lock-step over the exact same predicate.
 //
@@ -482,10 +472,7 @@ func (d *DB) GetEvents(ctx context.Context, filter EventFilter) (*[]types.Event,
 
 	where, args := d.eventFilterConditions(filter)
 
-	order, ok := eventOrderClauses[filter.OrderBy]
-	if !ok {
-		order = eventOrderClauses[defaultEventOrderBy]
-	}
+	order := resolveOrder(eventOrderClauses, filter.OrderBy, filter.OrderDirection, defaultEventOrderBy)
 
 	query := `SELECT ` + eventColumns + ` FROM ` + eventsFrom + where + ` ORDER BY ` + order
 

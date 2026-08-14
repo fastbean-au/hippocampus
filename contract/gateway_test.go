@@ -257,6 +257,21 @@ func exerciseGatewayRPCs(t *testing.T, server *httptest.Server) {
 		t.Errorf("GetMemories: total_count = %d, want >= 2", got)
 	}
 
+	// The sort parameters travel as query-string values, which is the part worth exercising over
+	// the gateway rather than in-process: order_dir is an enum, so it binds by name and a wrong
+	// name is a 400 rather than a silently unsorted page.
+	var sortedRes contract.GetMemoriesResponse
+
+	if status, body := doJSON(t, server, http.MethodGet,
+		"/v1/memories?limit=10&order_by=time_recalled&order_dir=SORT_DIRECTION_ASC", nil,
+		&sortedRes); status != http.StatusOK {
+		t.Fatalf("GetMemories sorted: status = %d, body = %s", status, body)
+	}
+
+	if len(sortedRes.GetMemories()) < 2 {
+		t.Errorf("GetMemories sorted: got %d memories, want >= 2", len(sortedRes.GetMemories()))
+	}
+
 	var recallRes contract.GetMemoriesResponse
 
 	if status, _ := doJSON(t, server, http.MethodPost, "/v1/memories/recall", map[string]any{

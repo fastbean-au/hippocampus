@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/contract"
+	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -150,8 +151,122 @@ func TestGetMemories_RPC(t *testing.T) {
 		t.Error("expected an error for TimestampMax < TimestampMin")
 	}
 
-	// An unsupported order_by is rejected.
-	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{OrderBy: "bogus"}); err == nil {
-		t.Error("expected an error for an unsupported order_by")
+	// An unsupported order_by is rejected as the caller's mistake, not as an internal failure.
+	_, err = s.GetMemories(context.Background(), &contract.GetMemoriesRequest{OrderBy: "bogus"})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported order_by")
 	}
+
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Errorf("unsupported order_by returned %v, want InvalidArgument", got)
+	}
+}
+
+// TestGetMemoriesOrdering_RPC covers the ordering half of the list handler: every order_by value the
+// db package declares is accepted here (the two lists are one list, which is the point of exporting
+// it), and order_dir reaches the query.
+func TestGetMemoriesOrdering_RPC(t *testing.T) {
+	s := newTestServer(t)
+
+	memories := []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 1, Body: "a"},
+		{Id: "m2", TimeStamp: 200, Significance: 5, Body: "b"},
+		{Id: "m3", TimeStamp: 300, Significance: 9, Body: "c"},
+	}
+
+	for _, m := range memories {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	for _, orderBy := range db.MemoryOrderByValues() {
+		if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{OrderBy: orderBy}); err != nil {
+			t.Errorf("GetMemories(order_by=%s): %s", orderBy, err)
+		}
+	}
+
+	// The natural direction of significance is descending, so ASC must reverse it.
+	asc, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		OrderBy:  "significance",
+		OrderDir: contract.SortDirection_SORT_DIRECTION_ASC,
+	})
+	if err != nil {
+		t.Fatalf("GetMemories(asc): %s", err)
+	}
+
+	want := []string{"m1", "m2", "m3"}
+
+	if got := memoryIds(asc.GetMemories()); !equalStringSlices(got, want) {
+		t.Errorf("ascending significance = %v, want %v", got, want)
+	}
+
+	desc, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
+		OrderBy:  "significance",
+		OrderDir: contract.SortDirection_SORT_DIRECTION_DESC,
+	})
+	if err != nil {
+		t.Fatalf("GetMemories(desc): %s", err)
+	}
+
+	if got := memoryIds(desc.GetMemories()); !equalStringSlices(got, []string{"m3", "m2", "m1"}) {
+		t.Errorf("descending significance = %v, want [m3 m2 m1]", got)
+	}
+}
+
+// TestGetEventsOrdering_RPC is TestGetMemoriesOrdering_RPC's counterpart for the events listing.
+func TestGetEventsOrdering_RPC(t *testing.T) {
+	s := newTestServer(t)
+
+	events := []types.Event{
+		{Id: "e1", Name: "a", TimeStart: 100, Significance: 1},
+		{Id: "e2", Name: "b", TimeStart: 200, Significance: 5},
+		{Id: "e3", Name: "c", TimeStart: 300, Significance: 9},
+	}
+
+	for _, e := range events {
+		if _, err := s.db.CreateEvent(context.Background(), e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	for _, orderBy := range db.EventOrderByValues() {
+		if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{OrderBy: orderBy}); err != nil {
+			t.Errorf("GetEvents(order_by=%s): %s", orderBy, err)
+		}
+	}
+
+	// name is naturally ascending, so DESC must reverse it - the case that would pass anyway if the
+	// direction were applied to a single package-wide default instead of per field.
+	res, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{
+		OrderBy:  "name",
+		OrderDir: contract.SortDirection_SORT_DIRECTION_DESC,
+	})
+	if err != nil {
+		t.Fatalf("GetEvents(name desc): %s", err)
+	}
+
+	got := make([]string, len(res.GetEvents()))
+
+	for i, e := range res.GetEvents() {
+		got[i] = e.GetId()
+	}
+
+	if want := []string{"e3", "e2", "e1"}; !equalStringSlices(got, want) {
+		t.Errorf("descending name = %v, want %v", got, want)
+	}
+}
+
+func equalStringSlices(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }

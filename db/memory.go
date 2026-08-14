@@ -1364,16 +1364,6 @@ func (d *DB) FindSummarisationCandidates(ctx context.Context, minMemories int, m
 	return candidates, nil
 }
 
-// memoryOrderClauses maps the API order_by values to fixed, injection-safe ORDER BY clauses. The
-// order_by string is never interpolated into SQL directly — only these constant clauses are. A
-// stable id tiebreaker keeps offset pagination deterministic across pages.
-var memoryOrderClauses = map[string]string{
-	"significance": `significance DESC, timestamp DESC, id ASC`,
-	"timestamp":    `timestamp DESC, id ASC`,
-}
-
-const defaultMemoryOrderBy = "significance"
-
 // memoryFilterConditions builds the shared WHERE clause and its args for the memory filter, so
 // GetMemories and CountMemoriesFiltered stay in lock-step over the exact same predicate.
 //
@@ -1556,10 +1546,7 @@ func (d *DB) GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Mem
 
 	where, args := d.memoryFilterConditions(filter)
 
-	order, ok := memoryOrderClauses[filter.OrderBy]
-	if !ok {
-		order = memoryOrderClauses[defaultMemoryOrderBy]
-	}
+	order := resolveOrder(memoryOrderClauses, filter.OrderBy, filter.OrderDirection, defaultMemoryOrderBy)
 
 	query := `SELECT ` + memoryColumns + ` FROM ` + memoriesFrom + where + ` ORDER BY ` + order
 

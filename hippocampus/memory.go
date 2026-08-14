@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -37,6 +38,24 @@ func triState(in contract.Bool) db.TriState {
 
 	default:
 		return db.TriStateUnset
+
+	}
+}
+
+// sortDirection maps the contract's sort direction onto the db package's equivalent, for the
+// GetMemories/GetEvents listings. UNSPECIFIED means the order_by field's natural direction rather
+// than ascending - see db/order.go for which that is per field.
+func sortDirection(in contract.SortDirection) db.SortDirection {
+	switch in {
+
+	case contract.SortDirection_SORT_DIRECTION_ASC:
+		return db.SortDirectionAscending
+
+	case contract.SortDirection_SORT_DIRECTION_DESC:
+		return db.SortDirectionDescending
+
+	default:
+		return db.SortDirectionNatural
 
 	}
 }
@@ -557,14 +576,13 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 
 	orderBy := in.GetOrderBy()
 
-	switch orderBy {
-
-	case "", "significance", "timestamp":
-		// supported
-
-	default:
-		return &res, fmt.Errorf("OrderBy must be \"significance\" or \"timestamp\"")
-
+	// InvalidArgument rather than a bare error, which the interceptor would surface as Unknown (a
+	// 500 over the gateway): naming an unsortable column is the caller's mistake, and the message
+	// lists the columns that are. The neighbouring range checks above predate this and still
+	// report Unknown.
+	if !db.ValidMemoryOrderBy(orderBy) {
+		return &res, status.Errorf(codes.InvalidArgument,
+			"OrderBy must be one of %s", strings.Join(db.MemoryOrderByValues(), ", "))
 	}
 
 	limit := int(in.GetLimit())
@@ -591,6 +609,7 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		SignificanceExtremum: extremum,
 		Group:                in.GetGroup(),
 		OrderBy:              orderBy,
+		OrderDirection:       sortDirection(in.GetOrderDir()),
 		Limit:                limit,
 		Offset:               offset,
 
