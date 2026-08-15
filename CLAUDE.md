@@ -103,7 +103,8 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   commits and tags. It deliberately does **not** push (that is what starts the release workflow) and
   it **refuses** on an empty `[Unreleased]`, a dirty tree, a non-`main` branch, a `HEAD` that is not
   `origin/main`, or — the one that matters — a changelog whose newest version heading is not the
-  current tag, which is how nine releases once shipped with their entries still under `[Unreleased]`
+  current tag, which is how seventeen releases once shipped with their entries still under
+  `[Unreleased]`
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
   list); its **Compatibility** section states what a version number covers — contract, config keys,
   stored schema — and what is exempt. `RELEASE.md` carries the process, including the changelog step

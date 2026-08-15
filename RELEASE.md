@@ -140,7 +140,8 @@ git push origin v1.2.3
 
 ### What the script refuses, and why
 
-The manual process drifted badly once: nine releases (v0.24.0 through v0.32.2) shipped without step
+The manual process drifted badly once: seventeen releases (v0.24.0 through v0.32.2) shipped without
+step
 6 ever being done, so every entry since v0.23.0 accumulated under one `[Unreleased]` heading. Nothing
 caught it, because the tag is what triggers a release and the changelog was not on that path. The
 script puts it on that path and stops on each way that goes wrong:

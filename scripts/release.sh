@@ -2,12 +2,13 @@
 #
 # Cut a Hippocampus release: roll the changelog, commit it, and create the tag.
 #
-# This exists because the manual process drifted. Nine releases (v0.24.0 through v0.32.2) shipped
-# without step 6 of RELEASE.md's pre-flight ever being done, so every entry since v0.23.0 accumulated
-# under one "[Unreleased]" heading and the compatibility promise the changelog makes - "read the
-# Breaking section of every release you skip over" - became unfulfillable. Nothing caught it, because
-# the tag is what triggers the release and the changelog is not on that path. So this script puts it
-# on that path, and refuses to tag when the changelog is not in the state a release needs.
+# This exists because the manual process drifted. Seventeen releases (v0.24.0 through v0.32.2)
+# shipped without step 6 of RELEASE.md's pre-flight ever being done, so every entry since v0.23.0
+# accumulated under one "[Unreleased]" heading and the compatibility promise the changelog makes -
+# "read the Breaking section of every release you skip over" - became unfulfillable. Nothing caught
+# it, because the tag is what triggers the release and the changelog is not on that path. So this
+# script puts it on that path, and refuses to tag when the changelog is not in the state a release
+# needs.
 #
 # It deliberately does NOT push. Pushing the tag is what starts the release workflow - builds,
 # GHCR images, the Homebrew tap - and that should be a separate, deliberate keystroke. The script
@@ -212,6 +213,14 @@ if not re.search(r"^\s*[-*]\s+\S", body, re.M):
 # now would file all of them under one new version.
 newest = re.search(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", text, re.M)
 
+# compare_base is what the new section's link reference compares against. Normally that is the
+# release this one follows - but when the changelog has drifted, the entries being rolled span every
+# release since the newest heading, so comparing against the current tag would under-claim what the
+# section covers. Using the heading instead makes the link show exactly the range the entries
+# describe.
+compare_base = current_version
+drift_span = None
+
 if newest and newest.group(1) != current_version and current_version != "0.0.0":
     msg = (
         f"CHANGELOG.md's newest version heading is [{newest.group(1)}] but the current release is "
@@ -223,6 +232,9 @@ if newest and newest.group(1) != current_version and current_version != "0.0.0":
         die(msg + " Reconcile the changelog, or pass --allow-drift to accept it.")
 
     print(f"release: warning: {msg} Proceeding because --allow-drift was given.", file=sys.stderr)
+
+    compare_base = newest.group(1)
+    drift_span = (newest.group(1), current_version)
 
 today = datetime.date.today().isoformat()
 
@@ -236,10 +248,28 @@ if dry_run:
 # Roll the heading and open a fresh, bare Unreleased above it. Bare, with no version marker: the
 # marker is a statement about work in flight and re-adding one here would declare the next release's
 # shape before anyone has decided it.
+# A section covering more than its own release says so. Rolling drifted entries under one version is
+# a deliberate choice to record them together rather than fabricate an attribution nobody can check -
+# but a reader comparing releases must not be left to infer that from the link reference alone.
+note = ""
+
+if drift_span:
+    # "since v0.23.0" rather than naming the first release covered: the changelog knows the heading
+    # it drifted from, not which tag came next, and an off-by-one in a compatibility note is worse
+    # than a slightly looser phrasing. Wrapped to the file's ~100 columns by hand, since prettier
+    # leaves prose alone.
+    note = (
+        f"\n\n_Covers every change since v{drift_span[0]}. The releases between it and "
+        f"v{new_version}\nshipped without their entries being rolled out of `[Unreleased]`, so the "
+        "changes below are\nrecorded together rather than attributed to the release each shipped "
+        "in._"
+    )
+
 text = (
     text[: heading.start()]
     + "## [Unreleased]\n\n"
     + f"## [{new_version}] - {today}"
+    + note
     + text[heading.end():]
 )
 
@@ -250,7 +280,7 @@ unreleased_ref = re.search(r"^\[Unreleased\]: .*$", text, re.M)
 if not unreleased_ref:
     die("no '[Unreleased]:' link reference at the foot of CHANGELOG.md")
 
-previous = f"v{current_version}" if current_version != "0.0.0" else None
+previous = f"v{compare_base}" if current_version != "0.0.0" else None
 new_ref = (
     f"[{new_version}]: {repo_url}/compare/{previous}...v{new_version}"
     if previous

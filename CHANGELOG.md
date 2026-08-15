@@ -82,6 +82,43 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **A "Now" tab: the console's landing view, and the store's premise made live.** The console opened
+  on an empty Search tab and said nothing about forgetting, so a store quietly consolidating every
+  two minutes looked exactly like a store doing nothing. Now leads with how many memories are held,
+  what the last cycle forgot, a countdown to the next, a capacity meter showing whichever axis is
+  actually binding, and a feed of what has just gone. It computes no decay maths of its own — every
+  figure is served — and it degrades in place rather than vanishing: a replica explains that its
+  store is consolidated elsewhere, a reader sees everything but the forgetting feed and the Sleep
+  control, and a store not recording tombstones says which config key would start it.
+- **`GetConsolidationStatus`** (`GET /v1/consolidation/status`, `hippo status`) — when the next
+  consolidation cycle is due, whether one is running, and what the last one did (counts for each of
+  the two decay paths, bytes reclaimed, duration, and what triggered it). It completes the
+  forgetting-transparency set: the dry run says what would go, `ExplainConsolidation` where a memory
+  stands, the forgotten log what went, and none of the three said **when**.
+  - **Reader tier**, because it names no stored record and returns counts rather than ids — the same
+    grounds on which `ExplainConsolidation` already serves a reader the store's used bytes and
+    memory count.
+  - **It does not refuse on a read/write replica**, unlike `Sleep`, `PreviewConsolidation` and
+    `ExplainConsolidation`. Reporting `consolidation_enabled: false` _is_ the answer there; refusing
+    would leave a client unable to tell a replica from a consolidator whose cycle had died, which is
+    the distinction the RPC exists to make.
+  - It reports `snapshot_ttl_seconds` so a polling client paces its `ExplainConsolidation` calls
+    from the server's own cache rather than from a guess.
+- **Event links are reachable from the console.** `LinkEvents`/`UnlinkEvents`/`GetEventLinks` had no
+  UI at all while memories had a full links card, even though the two are one mechanism. One card
+  now serves both.
+- **Event metadata is settable, filterable and visible in the console** — a metadata field on the
+  create form, a metadata filter on the listing, and the same key=value pills the memories table
+  already rendered. `Event.metadata` and `GetEventsRequest.metadata` had existed server-side
+  throughout.
+- **The forgotten log pages**, by keyset (`after_seq`/`next_seq`, which the RPC already returned),
+  so a log longer than one screen is readable rather than truncated at the limit.
+- **`scripts/release.sh`** — cuts a release: runs the pre-flight, rolls `[Unreleased]` into a dated
+  version section, rewrites both link references, commits and tags. It deliberately does not push,
+  and it refuses to tag when the changelog is not in the state a release needs — including when its
+  newest version heading is not the current tag, which is how seventeen releases came to ship with
+  their entries still under `[Unreleased]`. See [RELEASE.md](RELEASE.md#cut-the-release).
+
 - **`WhoAmI` reports `consolidation_enabled` and `tombstones_enabled`**, so a client can tell a
   consolidator from a replica and a recording store from a silent one without probing. The first is
   the deployment property behind a family of refusals — `Sleep`, `PreviewConsolidation` and
@@ -458,6 +495,27 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Changed
 
+- **The embedded console is now four files rather than one, and is served under a strict
+  Content-Security-Policy.** `index.html`, `styles.css`, `app.js` and `lib.js` — still no bundler
+  and no build step, still embedded in the binary. The split is what makes
+  `script-src 'self'; style-src 'self'` without `unsafe-inline` possible: every handler is a
+  `data-act` attribute routed through one table, and every dynamic style goes through the CSSOM.
+  An injected inline `<script>` no longer executes, which is the shape the console's one stored
+  XSS took.
+  - It is also what makes the JavaScript testable. `cmd/hippocampus/webuitest` runs `lib.js` under
+    node's built-in test runner with **no dependencies** — no lockfile, no `node_modules` in a Go
+    source tree — alongside drift guards pairing every control with a handler, every lib function
+    with its import, and every embedded asset with a route and both middleware allow-lists.
+  - The console's assets are revalidated by ETag rather than never cached, so a navigation costs
+    two 304s instead of re-transferring them; the entry document stays `no-store`.
+- **Controls disable themselves while their own request is in flight**, and a progress bar reports
+  the requests no control started. Previously only sign-in did.
+- **Search results gained "Show more" rather than pagination**, deliberately. `SearchMemories`
+  over-fetches and then truncates, so a second page is a separately ranked query whose candidate set
+  can differ — and a _reinforcing_ search recalls exactly the page it returns, so paging would
+  reinforce a second set of memories, resetting their decay clocks, as a side effect of navigating a
+  list. Re-running with a larger limit keeps it one query, one ranking, one reinforcement set.
+
 - First run after a clone no longer needs a config file: an absent `./config.json` starts the
   service on built-in defaults (a `--config_file` given explicitly must still exist).
 - **A memory's body (and an event's description) now gets a row of its own** in the web console's
@@ -508,6 +566,20 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   demand, with each event opening into the view the summarise buttons are in.
 
 ### Fixed
+
+- **A group-scoped administrator was shown no forgotten log**, though the service serves them one.
+  `GetForgottenMemories` is scope-filtered rather than refused to a scoped caller — a tombstone
+  carries its memory's group, so a scoped admin sees exactly their own partition's losses — but the
+  console gated it on a capability that folded "unscoped" into "is an admin", the test that
+  `PreviewConsolidation` genuinely needs. The two are now separate, and the console hides only what
+  the service will actually refuse.
+- **`formatBytes` reported an unknown figure as `0 B`.** `Number(value || 0)` folded `NaN` to zero
+  before the guard that existed to catch it, so a missing byte count read as a fact about the store
+  rather than as a missing number. Absent (an unset field, genuinely zero) and unknown are now
+  distinguished.
+- **A status poll arriving during startup could report "no timed cycle" on an instance that has
+  one** — the sleep timer is created inside its own goroutine, leaving a window before it was
+  scheduled. The next-cycle time is now recorded before the goroutine launches.
 
 - **A Bluesky bridge wedged permanently on a record the store already held.** Every adapter acks
   after the write, so a redelivery re-presents a memory that was already stored — and with the id
