@@ -810,11 +810,9 @@
         <div class="card" data-enter="search">
           <h2>Content search</h2>
           <p class="muted" style="margin-top: -6px">
-            Queries the secondary content-search index (<code class="inline"
-              >POST /v1/memories/search</code
-            >). Leave the query blank and give just an event id to list that
-            event's memories instead. Event ids in the results are clickable and
-            open the whole event.
+            Queries the secondary content-search index. Leave the query blank
+            and give just an event id to list that event's memories instead.
+            Event ids in the results are clickable and open the whole event.
           </p>
           <div class="row">
             <div class="field wide">
@@ -1238,9 +1236,8 @@
           </div>
           <p class="muted" style="margin-top: -6px">
             Events whose memories have accumulated and gone quiet long enough to
-            be worth condensing, as identified by the most recent sleep cycle
-            (<code class="inline">GET /v1/summarisation/candidates</code>). Open
-            one to summarise it.
+            be worth condensing, as identified by the most recent sleep cycle.
+            Open one to summarise it.
           </p>
           <div id="candidates-list">
             <div class="empty">Nothing loaded yet.</div>
@@ -1253,10 +1250,9 @@
         <div class="card">
           <h2>Forgetting</h2>
           <p class="muted" style="margin-top: -6px">
-            Every number here comes from the service (<code class="inline"
-              >POST /v1/consolidation/explain</code
-            >), computed by the same code that decides what to forget — so what
-            is drawn is what will happen, not an approximation of it. A memory
+            Every number here comes from the service, computed by the same code
+            that decides what to forget — so what is drawn is what will happen,
+            not an approximation of it. A memory
             is forgotten once its <em>value</em> falls below the
             <em>threshold</em>; the threshold rises with capacity pressure as
             the store fills.
@@ -1306,10 +1302,8 @@
         <div class="card admin-only">
           <h2>What would be forgotten now</h2>
           <p class="muted" style="margin-top: -6px">
-            A dry run of the consolidation cycle (<code class="inline"
-              >GET /v1/sleep/preview</code
-            >): it reports what a cycle running now would delete, and deletes
-            nothing. Administrator only.
+            A dry run of the consolidation cycle: it reports what a cycle
+            running now would delete, and deletes nothing. Administrator only.
           </p>
           <div class="row">
             <div class="field">
@@ -1334,10 +1328,9 @@
         <div class="card admin-only tombstones-only">
           <h2>What was forgotten</h2>
           <p class="muted" style="margin-top: -6px">
-            The forgotten log (<code class="inline"
-              >GET /v1/memories/forgotten</code
-            >): one record per memory a cycle actually deleted, with the value
-            and threshold that decided it. Optional and off by default (<code
+            The forgotten log: one record per memory a cycle actually deleted,
+            with the value and threshold that decided it. Optional and off by
+            default (<code
               class="inline"
               >consolidation.tombstones.enabled</code
             >). Records carry no body — this says a memory was lost, not what it

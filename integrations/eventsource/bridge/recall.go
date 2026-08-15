@@ -182,6 +182,20 @@ func (s *Store) HandleEvent(ctx context.Context, msg Message, ev *contract.Event
 			// replies to opens that post's event, and when the post itself turns up its own memory
 			// would vanish. So fall back to storing them individually, which is idempotent for the
 			// same reason (a duplicate memory is AlreadyExists too, absorbed in storeEach).
+			//
+			// The stamp below is what keeps that fallback equivalent to the nested write rather than
+			// merely non-lossy. A nested memory carries no event_id of its own - the service stamps
+			// the event's id on it as it creates them - so storing them individually without it
+			// wrote them LOOSE, and the very case this path exists for (the post that opens a thread
+			// arriving after a reply already opened its event) produced an event whose own opening
+			// post was not among its memories. Only an unset one is stamped: a transformer naming a
+			// different event meant it.
+			for _, v := range mems {
+				if v != nil && v.GetEventId() == "" {
+					v.EventId = ev.GetId()
+				}
+			}
+
 			return s.storeEach(ctx, mems)
 		}
 

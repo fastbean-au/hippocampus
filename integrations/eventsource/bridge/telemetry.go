@@ -26,11 +26,16 @@ const (
 	attrBroker  = "broker"
 )
 
-// Message outcomes. They are four-valued rather than a success bool because the three non-failures
-// are operationally different: a memory the SERVICE declined for insignificance is the decay model
+// Message outcomes. They are multi-valued rather than a success bool because the non-failures are
+// operationally different: a memory the SERVICE declined for insignificance is the decay model
 // working, a message a Transformer chose to yield nothing for was filtered on purpose, and neither
 // should share a series with a message that could not be delivered. An SLO on "the bridge is
 // broken" has to be able to exclude the first two.
+// OutcomeExists, declared with the recall/event outcomes below, is the fifth message outcome and is
+// deliberately the same string: "the store already had this" means one thing, whether it is said of
+// an event or of a memory a redelivery re-presented. It is not a failure (nothing is left to
+// redeliver) and not "stored" (nothing was written), and a bridge whose whole stream is duplicates
+// needs to look different from one that is keeping up.
 // "orphaned" is a MEMORY outcome only, never a message one: it is one memory refused because the
 // event it names is not in the store, which the batch write skips rather than aborting on (see
 // storeEach). It is separate from "rejected" because the two say opposite things about the bridge -

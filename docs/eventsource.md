@@ -278,9 +278,17 @@ Jetstream has no per-message ack; the resume point is a cursor. Writes are **at-
 cursor-gated**: the cursor advances only after a frame is fully handled, a store failure retries in
 place (`--max-retries`, `--error-backoff-seconds`) and then drops the connection so the socket
 reopens at the last good cursor and replays from the failure. Replay is safe because the id is the
-URI — a duplicate write returns `AlreadyExists`, which the bridge counts as success. Jetstream's own
-delivery is documented at-least-once, so duplicates arrive on the happy path too and one rule covers
-both.
+URI — a duplicate write returns `AlreadyExists`, which the bridge counts as success (as `exists`,
+not `stored`: nothing was written). Jetstream's own delivery is documented at-least-once, so
+duplicates arrive on the happy path too and one rule covers both.
+
+**A frame the service can never accept is skipped**, not replayed. Cursor gating is what makes a
+transient failure survivable, but for a refusal that cannot change — a malformed record, an id
+already stored, an RPC the service does not implement — holding the cursor does not retry the
+failure, it repeats it forever, and nothing after that frame is ever read. Those codes
+(`InvalidArgument`, `AlreadyExists`, `Unimplemented`, `OutOfRange`) therefore skip the frame with a
+Warn naming its cursor. Everything else, including `Unavailable` and the `FailedPrecondition` raised
+by an event consolidated mid-write, keeps its replay.
 
 **Batched recalls are best-effort.** Likes arrive at hundreds a second, so ids are buffered
 (`--recall-batch-size`, `--recall-batch-window-ms`) and flushed together — a frame counts as handled
@@ -361,7 +369,11 @@ reinforcement back to whatever the feed last reported.
 two). A top-level post opens its event and stores its own memory in a single `StoreEvent`; a reply
 whose root the bridge has not seen creates that root's event first. That applies to the **feed** as
 well as the firehose — a curated feed contains replies (a news account continuing its own thread is
-the common case), and the service refuses a memory naming an event it does not hold. A memory whose
+the common case), and the service refuses a memory naming an event it does not hold, and a feed post
+that is *not* a reply opens a thread of its own, named from the post's text. Without that last part
+a feed post was stored loose and its thread appeared only later, opened by a reply captured off the
+firehose — so the console showed a thread holding every reply except the post they were replying to.
+A memory whose
 event cannot be opened is skipped on its own rather than failing the write of the whole page: a feed
 poll returns the same page every read, so a page-level abort is not a transient error but a permanent
 stall, with the posts after the offending one never written on any tick. Those skips are counted as

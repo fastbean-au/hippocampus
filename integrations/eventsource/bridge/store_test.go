@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/contract"
 )
@@ -171,6 +173,44 @@ func TestStore_HandleStoreErrorPropagates(t *testing.T) {
 	err := s.Handle(context.Background(), Message{Subject: "s", Data: []byte("x")})
 	if !errors.Is(err, want) {
 		t.Fatalf("Handle error = %v, want wrapping %v", err, want)
+	}
+}
+
+// TestStore_HandleAlreadyExistsIsNotError is a regression test for a bridge that wedged permanently
+// on the live Bluesky demo, and it is the whole point of at-least-once delivery.
+//
+// A memory the store already holds is the expected outcome of a redelivery: every adapter here acks
+// after the write, so a redelivery after a reconnect re-presents a message that was already stored.
+// Returning that as an error told the adapter the frame had NOT been handled - so it retried it,
+// dropped the connection, resumed from the same cursor, and was handed the same already-stored
+// record again. The demo sat in that loop for hours, storing nothing new and reinforcing nothing,
+// which reads from the console exactly like an instance that has stopped consolidating.
+//
+// Note the shape: this can only ever be a permanent failure, because a duplicate id never becomes a
+// non-duplicate. Every other path in this package already treats it as a success (storeEach,
+// StoreMemories, EnsureEvent); Handle was the one that did not.
+func TestStore_HandleAlreadyExistsIsNotError(t *testing.T) {
+	fake := &fakeStorer{err: status.Error(codes.AlreadyExists, "a record with that id already exists")}
+	tr := NewDefaultTransformer(TransformConfig{})
+
+	s := NewStore(fake, tr, 0, "test")
+
+	collected := collectMetrics(t, func() {
+		if err := s.Handle(context.Background(), Message{Subject: "s", Data: []byte("x")}); err != nil {
+			t.Fatalf("Handle should absorb AlreadyExists, got %v", err)
+		}
+	})
+
+	if len(fake.calls) != 1 {
+		t.Errorf("StoreMemory calls = %d, want 1", len(fake.calls))
+	}
+
+	// Reported, not silent: a bridge whose whole stream is duplicates is doing nothing, and that has
+	// to be visible as something other than success.
+	if got, _ := counterValue(t, collected, "hippocampus.bridge.messages", map[string]string{
+		"outcome": OutcomeExists,
+	}); got != 1 {
+		t.Errorf("messages{outcome=exists} = %d, want 1", got)
 	}
 }
 

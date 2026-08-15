@@ -9,6 +9,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/contract"
 )
@@ -108,7 +110,8 @@ func (s *Store) Handle(ctx context.Context, msg Message) error {
 	}
 
 	// The message's outcome is the WORST of its memories': a message yielding three memories of
-	// which one failed has not been durably handled, and the adapter is about to redeliver it.
+	// which one failed has not been durably handled, and the adapter is about to redeliver it. See
+	// worstOutcome for how the three non-failures rank against each other.
 	outcome := OutcomeStored
 
 	for i, v := range mems {
@@ -118,19 +121,65 @@ func (s *Store) Handle(ctx context.Context, msg Message) error {
 
 		stored, err := s.store(ctx, v)
 		if err != nil {
+			// A memory the store already holds is DURABLY HANDLED, which is what every adapter here
+			// needs it to mean: they all ack after the write, so a redelivery re-presents a message
+			// that was already stored, and an id derived from the upstream record (the Bluesky
+			// bridge's at:// URI) makes that a duplicate rather than a second copy. Returning it as
+			// an error told the adapter to redeliver a frame that can never store, which on the
+			// Bluesky demo became a permanent wedge: retry, drop the connection, resume from the
+			// same cursor, be handed the same record, forever. Every other write path in this
+			// package (storeEach, StoreMemories, EnsureEvent) had always read it this way.
+			if status.Code(err) == codes.AlreadyExists {
+				s.recordExisting(ctx)
+
+				outcome = worstOutcome(outcome, OutcomeExists)
+
+				continue
+			}
+
 			s.record(ctx, OutcomeFailed, start)
 
 			return fmt.Errorf("storing memory %d of %d from subject %q: %w", i+1, len(mems), msg.Subject, err)
 		}
 
 		if !stored {
-			outcome = OutcomeRejected
+			outcome = worstOutcome(outcome, OutcomeRejected)
 		}
 	}
 
 	s.record(ctx, outcome, start)
 
 	return nil
+}
+
+// worstOutcome picks the more notable of two non-failure message outcomes, so a message yielding
+// several memories reports the one an operator would want to see rather than whichever came last.
+//
+// Stored is the baseline; "exists" beats it because nothing was written; "rejected" beats both
+// because the service actively declined a memory, which is the decay model doing something rather
+// than the bridge repeating itself. Failure never reaches here - it returns from Handle.
+func worstOutcome(current string, next string) string {
+	if outcomeRank[next] > outcomeRank[current] {
+		return next
+	}
+
+	return current
+}
+
+// outcomeRank is package-level rather than built per call: this runs once per memory on a stream
+// that can carry hundreds of messages a second.
+var outcomeRank = map[string]int{
+	OutcomeStored:   0,
+	OutcomeExists:   1,
+	OutcomeRejected: 2,
+}
+
+// recordExisting counts one memory the store already held.
+func (s *Store) recordExisting(ctx context.Context) {
+	tel.memories.Add(ctx, 1, observability.WithGroup(
+		attribute.String(attrBroker, s.broker),
+		attribute.String(attrOutcome, OutcomeExists),
+	))
 }
 
 // record reports one message's outcome and how long handling it took.

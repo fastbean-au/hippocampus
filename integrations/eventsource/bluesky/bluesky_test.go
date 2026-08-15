@@ -332,6 +332,53 @@ func TestConsumeDoesNotAdvanceOnStoreFailure(t *testing.T) {
 	}
 }
 
+// TestConsumeSkipsAFrameTheServiceWillNeverAccept is the other half of the cursor-gating contract,
+// and the half that was missing.
+//
+// Holding the cursor at a failing frame is how a transient failure is survived - but for a refusal
+// that can never change it is not a retry, it is a loop: reconnect, be handed the same record,
+// refuse it again. The live demo sat in exactly that state, so nothing after the poisonous frame was
+// ever read and neither storage nor reinforcement made any progress at all.
+func TestConsumeSkipsAFrameTheServiceWillNeverAccept(t *testing.T) {
+	client := &fakeClient{storeErr: status.Error(codes.InvalidArgument, "body is not valid UTF-8")}
+
+	b := testBridge(t, Config{Events: EventsNone, MaxRetries: 2, ErrorBackoff: time.Millisecond}, client)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// The stream ends cleanly after its two frames so the call returns without waiting out the
+	// context; what is under test is the cursor it returns, not how the connection ended.
+	last, _ := b.consume(ctx, &fakeStream{
+		frames: [][]byte{postJSON(10, "a", "poison", ""), postJSON(20, "b", "fine", "")},
+		err:    errors.New("connection reset"),
+	}, 0)
+
+	if last != 20 {
+		t.Errorf("cursor = %d, want the poisonous frame skipped and the next one handled", last)
+	}
+}
+
+// TestConsumeStillReplaysATransientFailure: the skip above must not swallow the case cursor gating
+// exists for. A service that is merely down has to have its frame replayed, not dropped.
+func TestConsumeStillReplaysATransientFailure(t *testing.T) {
+	client := &fakeClient{storeErr: status.Error(codes.Unavailable, "connection refused")}
+
+	b := testBridge(t, Config{Events: EventsNone, MaxRetries: 1, ErrorBackoff: time.Millisecond}, client)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	last, err := b.consume(ctx, &fakeStream{frames: [][]byte{postJSON(10, "a", "x", "")}}, 0)
+	if err == nil {
+		t.Fatal("expected a transient failure to end the connection")
+	}
+
+	if last != 0 {
+		t.Errorf("cursor = %d, want it held so the frame replays", last)
+	}
+}
+
 // TestConsumeSkipsUndecodableFrames: a malformed frame can never become valid, and blocking the
 // firehose on it is how a consumer gets dropped for being slow.
 func TestConsumeSkipsUndecodableFrames(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/integrations/eventsource/bridge"
 )
 
@@ -820,10 +821,11 @@ func TestPollFeedOpensTheThreadOfAReplyAndStoresThePageAfterIt(t *testing.T) {
 	client := &fakeClient{strictEvents: true}
 
 	b := testBridge(t, Config{
-		Events:      EventsThread,
-		Feed:        "at://did:plc:x/app.bsky.feed.generator/news",
-		FeedAppView: av.server.URL,
-		Group:       "news",
+		Events:        EventsThread,
+		Feed:          "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView:   av.server.URL,
+		Group:         "news",
+		RootCacheSize: 16,
 	}, client)
 
 	if err := b.pollFeed(context.Background()); err != nil {
@@ -840,22 +842,114 @@ func TestPollFeedOpensTheThreadOfAReplyAndStoresThePageAfterIt(t *testing.T) {
 		t.Errorf("last stored memory is %q, want the page to have continued past the reply", stored[2].GetId())
 	}
 
-	if len(events) != 1 || events[0].GetId() != root {
-		t.Fatalf("events = %v, want the reply's thread root to have been opened", events)
+	// Three threads: the reply's root, plus the one each of the two top-level posts opens for
+	// itself, exactly as the firehose path does in storePost.
+	if len(events) != 3 {
+		t.Fatalf("events = %v, want a thread for the reply's root and one for each top-level post", events)
 	}
 
-	if events[0].GetGroup() != "news" {
-		t.Errorf("thread event group = %q, want the bridge's configured group", events[0].GetGroup())
+	if !hasEvent(events, root) {
+		t.Errorf("events = %v, want the reply's thread root to have been opened", events)
 	}
 
-	// One event per thread, not one per post: the roots cache means a second poll of the same page
+	for _, v := range events {
+		if v.GetGroup() != "news" {
+			t.Errorf("thread event %q group = %q, want the bridge's configured group", v.GetId(), v.GetGroup())
+		}
+	}
+
+	// One event per thread, not one per poll: the roots cache means a second poll of the same page
 	// costs no further StoreEvent calls.
 	if err := b.pollFeed(context.Background()); err != nil {
 		t.Fatalf("second pollFeed: %s", err)
 	}
 
-	if _, events, _, _ = client.snapshot(); len(events) != 1 {
+	if _, events, _, _ = client.snapshot(); len(events) != 3 {
 		t.Errorf("StoreEvent called %d times over two polls, want the roots cache to have covered the second", len(events))
+	}
+}
+
+// hasEvent reports whether an event with that id was stored.
+func hasEvent(events []*contract.Event, id string) bool {
+	for _, v := range events {
+		if v.GetId() == id {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestPollFeedPutsATopLevelPostInItsOwnThread is the feed half of a bug reported against the demo:
+// an event whose own opening post is not among its memories.
+//
+// Under --events thread the firehose path opens a thread for every top-level post and nests that
+// post's memory in it (storePost). The feed path did not: a feed post that was not a reply carried
+// no event, so it was stored loose - and the thread event only appeared later, opened by a reply
+// captured off the firehose, which is what produced a thread holding every reply except the post
+// they were replying to.
+func TestPollFeedPutsATopLevelPostInItsOwnThread(t *testing.T) {
+	av := newFakeAppView(t, [][]feedItem{{post("a", "first headline", 0, 0)}})
+
+	client := &fakeClient{strictEvents: true}
+
+	b := testBridge(t, Config{
+		Events:      EventsThread,
+		Feed:        "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView: av.server.URL,
+		Group:       "news",
+	}, client)
+
+	if err := b.pollFeed(context.Background()); err != nil {
+		t.Fatalf("pollFeed: %s", err)
+	}
+
+	stored, events, _, _ := client.snapshot()
+
+	const uri = "at://did:plc:news/app.bsky.feed.post/a"
+
+	if len(events) != 1 || events[0].GetId() != uri {
+		t.Fatalf("events = %v, want the post to have opened its own thread", events)
+	}
+
+	// The event is named from the post, not "thread <rkey>": this is the one place the opening
+	// post's text is known, and a feed exists to be read.
+	if events[0].GetName() != "first headline" {
+		t.Errorf("thread event name = %q, want the post's own text", events[0].GetName())
+	}
+
+	if len(stored) != 1 || stored[0].GetEventId() != uri {
+		t.Fatalf("stored = %v, want the post's memory to name the thread it opened", stored)
+	}
+}
+
+// TestPollFeedStoresATopLevelPostWhoseThreadCannotBeOpened: opening the thread is best-effort, and
+// for a post that is its OWN root the graceful degradation is better than a reply's. A reply
+// belongs to a thread and is skipped without it; this post is simply stored loose, which is what a
+// bridge running with --events none does with every post anyway.
+func TestPollFeedStoresATopLevelPostWhoseThreadCannotBeOpened(t *testing.T) {
+	av := newFakeAppView(t, [][]feedItem{{post("a", "first headline", 0, 0)}})
+
+	client := &fakeClient{strictEvents: true, eventErr: errUnavailable}
+
+	b := testBridge(t, Config{
+		Events:      EventsThread,
+		Feed:        "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView: av.server.URL,
+	}, client)
+
+	if err := b.pollFeed(context.Background()); err != nil {
+		t.Fatalf("pollFeed should survive an event that cannot be opened, got %s", err)
+	}
+
+	stored, _, _, _ := client.snapshot()
+
+	if len(stored) != 1 {
+		t.Fatalf("stored %v, want the post to have been written anyway", stored)
+	}
+
+	if stored[0].GetEventId() != "" {
+		t.Errorf("stored memory names event %q, which was never opened", stored[0].GetEventId())
 	}
 }
 

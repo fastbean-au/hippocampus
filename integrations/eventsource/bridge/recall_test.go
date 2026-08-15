@@ -356,6 +356,51 @@ func TestHandleEventStoresMemoriesWhenTheEventAlreadyExists(t *testing.T) {
 	}
 }
 
+// TestHandleEventFallbackKeepsMemoriesInTheirEvent is the other half of the bug above, and the one
+// that survived it: the memories were stored, but they were stored LOOSE.
+//
+// A nested memory has no event_id of its own - the service stamps the event's id on it as it creates
+// them - so the fallback, which stores them individually, wrote them with no event at all. The
+// visible symptom is exactly the case that fallback exists for: the post that opens a thread arrives
+// after a reply has already opened its event, and the console then shows an event whose own opening
+// post is not among its memories.
+func TestHandleEventFallbackKeepsMemoriesInTheirEvent(t *testing.T) {
+	fake := &fakeStorer{eventErr: status.Error(codes.AlreadyExists, "exists")}
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	if err := s.HandleEvent(context.Background(), Message{Subject: "s"}, &contract.Event{Id: "at://x", Name: "x"}); err != nil {
+		t.Fatalf("HandleEvent should absorb AlreadyExists, got %s", err)
+	}
+
+	if len(fake.calls) != 1 {
+		t.Fatalf("StoreMemory called %d times, want 1", len(fake.calls))
+	}
+
+	if got := fake.calls[0].GetEventId(); got != "at://x" {
+		t.Errorf("stored memory's event_id = %q, want the event it was nested under", got)
+	}
+}
+
+// TestHandleEventFallbackLeavesAnExplicitEventAlone: the stamp is a default, not an override. A
+// transformer that put a memory in a DIFFERENT event than the one being opened meant it.
+func TestHandleEventFallbackLeavesAnExplicitEventAlone(t *testing.T) {
+	fake := &fakeStorer{eventErr: status.Error(codes.AlreadyExists, "exists")}
+
+	elsewhere := func(msg Message) ([]*contract.Memory, error) {
+		return []*contract.Memory{{Body: "a", Significance: 1, EventId: "at://other"}}, nil
+	}
+
+	s := NewStore(fake, TransformerFunc(elsewhere), 0, "bluesky")
+
+	if err := s.HandleEvent(context.Background(), Message{Subject: "s"}, &contract.Event{Id: "at://x", Name: "x"}); err != nil {
+		t.Fatalf("HandleEvent should absorb AlreadyExists, got %s", err)
+	}
+
+	if got := fake.calls[0].GetEventId(); got != "at://other" {
+		t.Errorf("stored memory's event_id = %q, want the one the transformer set", got)
+	}
+}
+
 // TestHandleEventAbsorbsADuplicateMemoryToo: on the fallback path a replayed frame re-writes a
 // memory the store already holds, which is what at-least-once delivery is supposed to look like.
 func TestHandleEventAbsorbsADuplicateMemoryToo(t *testing.T) {

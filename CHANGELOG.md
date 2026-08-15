@@ -493,6 +493,9 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   field had to be left by hand to reach its button. A memory body and an event description still
   take Enter as a newline, and the two destructive forms (the summary that replaces an event's
   memories, and clearing the forgotten log) are deliberately left out.
+- **The console's cards no longer name the endpoint they call.** Each blurb says what the card does
+  and stops there; a reader after the API has `/v1/openapi.json`. What stays in `<code>` is what an
+  operator would have to change — the config keys, and the `--mint-token` invocation.
 - **An opened event now stands first on the console's Search tab** and is scrolled to, rather than
   appearing between the search form and the results — it arrives by navigation from another tab, so
   it has nothing to do with the query it was sitting under. The links panel is scrolled to for the
@@ -506,6 +509,27 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Fixed
 
+- **A Bluesky bridge wedged permanently on a record the store already held.** Every adapter acks
+  after the write, so a redelivery re-presents a memory that was already stored — and with the id
+  derived from the upstream record, that is a duplicate rather than a second copy. `Store.Handle`
+  returned the resulting `AlreadyExists` as an error, so the adapter was told a frame it could never
+  store had not been handled: it retried, dropped the connection, resumed from the same cursor, and
+  was handed the same record again. The hosted demo sat in that loop for hours, reading nothing after
+  the poisonous frame and so reinforcing nothing at all. `Handle` now counts it as handled, reported
+  as `hippocampus.bridge.messages{outcome="exists"}` — success, but distinct from `stored`, since a
+  bridge whose whole stream is duplicates is doing nothing. The Bluesky consume loop additionally
+  **skips** a frame the service can never accept (`InvalidArgument`, `AlreadyExists`,
+  `Unimplemented`, `OutOfRange`) instead of replaying it; every other code, including the
+  `FailedPrecondition` of an event consolidated mid-write, keeps its replay.
+- **A thread's opening post was missing from the thread**, in two places. In the bridge core, a
+  nested memory carries no `event_id` of its own (the service stamps the event's on it), so
+  `HandleEvent`'s already-exists fallback — which stores them individually — wrote them with no
+  event at all; the very case that fallback exists for, a post arriving after a reply has opened its
+  event, produced a thread without its own opening post. In the Bluesky feed path, a post that was
+  not a reply opened no thread at all under `--events thread` (only the firehose path did), so its
+  event appeared later, opened by a captured reply, holding every reply except the post they
+  answered. Both now stamp the event they belong to; a feed post's own thread is named from its
+  text.
 - **The console's scroll-to-top did nothing under `prefers-reduced-motion: reduce`.** Chrome does
   not shorten a `behavior: "smooth"` scroll when reduced motion is requested — it drops it — so
   editing a memory or an event from a row left the page exactly where it was, for precisely the

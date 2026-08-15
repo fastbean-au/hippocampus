@@ -551,8 +551,8 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 	return nil
 }
 
-// ensureFeedEvents opens the thread events the feed's own replies belong to, before those memories
-// are written.
+// ensureFeedEvents opens the thread events the feed's posts belong to, before those memories are
+// written.
 //
 // A curated feed contains replies - a news account continuing its own thread is the common case -
 // and under --events thread the Transformer puts such a post's memory in its thread ROOT's event.
@@ -562,26 +562,67 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 // posts after it in that page were never stored, and since a poll returns the same page each time,
 // the poller stopped in the same place on every tick and the store stopped growing.
 //
-// Best-effort, and the reason it can be is that skipping is now survivable: an event this fails to
-// open leaves its memory to be skipped individually by storeEach rather than taking the page with
-// it. The roots cache makes this at most one RPC per thread, not per post.
+// A post that is NOT a reply opens a thread of its OWN here, which is what storePost does on the
+// firehose and what the feed path was missing: without it a top-level post was stored loose, and
+// its thread event appeared only later, opened by a reply captured off the firehose - so the
+// console showed a thread holding every reply except the post they were replying to. The memory is
+// stamped with it, since the Transformer only sets an event for a reply.
+//
+// Best-effort, and the reason it can be is that a failure is survivable either way: a reply whose
+// thread could not be opened is skipped individually by storeEach rather than taking the page with
+// it, and a top-level post has its stamp taken back off so it is stored loose rather than skipped -
+// which is what --events none does with every post anyway. The roots cache makes this at most one
+// RPC per thread, not per post.
 func (b *Bridge) ensureFeedEvents(ctx context.Context, mems []feedMemory) {
 	for _, v := range mems {
-		root := v.Memory.GetEventId()
+		root, own := b.feedEventFor(v)
 
 		if root == "" || b.roots.Contains(root) {
 			continue
 		}
 
-		if err := b.store.EnsureEvent(ctx, b.rootEvent(root, v.Message)); err != nil {
-			log.WithError(err).WithField("root", root).
-				Debug("opening a feed reply's thread failed; the reply is skipped")
+		event := b.rootEvent(root, v.Message)
+		if own {
+			event = b.threadEvent(v.Message)
+		}
+
+		if err := b.store.EnsureEvent(ctx, event); err != nil {
+			log.WithError(err).WithFields(log.Fields{"root": root, "own_thread": own}).
+				Debug("opening a feed post's thread failed")
+
+			if own {
+				v.Memory.EventId = ""
+			}
 
 			continue
 		}
 
 		b.roots.Add(root)
 	}
+}
+
+// feedEventFor reports the thread event a feed memory belongs in, and whether that thread is the
+// post's own. It is where a top-level post is stamped with the event it is about to open, so that
+// the stamp and the create cannot disagree about the id.
+func (b *Bridge) feedEventFor(mem feedMemory) (string, bool) {
+	if root := mem.Memory.GetEventId(); root != "" {
+		return root, false
+	}
+
+	// Only under thread modelling: with --events none the Transformer sets no event and neither
+	// should this.
+	if b.cfg.Events != EventsThread {
+		return "", false
+	}
+
+	id := mem.Memory.GetId()
+	if id == "" {
+		return "", false
+	}
+
+	mem.Memory.EventId = id
+
+	return id, true
 }
 
 // memoriesOf drops the messages the feed carried alongside its memories.
@@ -745,6 +786,24 @@ func (b *Bridge) consume(ctx context.Context, s stream, cursor int64) (int64, er
 				return cursor, nil
 			}
 
+			// A frame the service can never accept is SKIPPED rather than replayed, because holding
+			// the cursor at it does not retry the failure - it repeats it forever. That is not
+			// theoretical: the live demo spent hours re-presenting one already-stored post,
+			// reconnecting after each set of retries and being handed the same record again, so
+			// nothing after it in the firehose was ever read. Dropping the connection is the right
+			// answer only for a failure a later attempt could clear.
+			if permanentFrameFailure(err) {
+				log.WithError(err).WithFields(log.Fields{
+					"cursor":     ev.cursor(),
+					"collection": ev.Commit.Collection,
+				}).
+					Warn("skipping a Jetstream frame the service will never accept")
+
+				cursor = advance(cursor, ev.cursor())
+
+				continue
+			}
+
 			// The cursor is deliberately NOT advanced past this frame, so reconnecting replays from
 			// the failure rather than skipping it.
 			return cursor, err
@@ -766,6 +825,12 @@ func (b *Bridge) handleWithRetries(ctx context.Context, ev *event) error {
 			return nil
 		}
 
+		// Retrying a refusal that cannot change wastes the backoff and buries the reason under a
+		// stack of identical warnings. consume decides what to do with it.
+		if permanentFrameFailure(err) {
+			return err
+		}
+
 		if attempt >= b.cfg.MaxRetries {
 			return err
 		}
@@ -779,6 +844,29 @@ func (b *Bridge) handleWithRetries(ctx context.Context, ev *event) error {
 		if sleepErr := sleep(ctx, b.cfg.ErrorBackoff); sleepErr != nil {
 			return sleepErr
 		}
+	}
+}
+
+// permanentFrameFailure reports whether replaying a frame could ever produce a different answer.
+//
+// The list is deliberately short, and every entry is a statement about the FRAME rather than about
+// the service: the record is malformed, or already stored, or names something the service does not
+// implement. Everything else - Unavailable, DeadlineExceeded, Internal, an unauthenticated call
+// whose token is about to be refreshed, and notably FailedPrecondition, which usually means an
+// event the store consolidated between our seeing it and our writing to it (storePost re-opens it
+// and retries) - describes a moment rather than a record, and those must keep their replay: losing
+// a post to a service restart is a real cost, and the cursor gating exists to prevent exactly that.
+//
+// status.Code unwraps, which matters because every error here arrives wrapped by Store.Handle.
+func permanentFrameFailure(err error) bool {
+	switch status.Code(err) {
+
+	case codes.InvalidArgument, codes.AlreadyExists, codes.Unimplemented, codes.OutOfRange:
+		return true
+
+	default:
+		return false
+
 	}
 }
 
