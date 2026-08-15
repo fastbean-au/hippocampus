@@ -139,9 +139,11 @@
           <div id="now-cycle"></div>
         </div>
 
-        <!-- The forgetting feed. admin-only rather than unbound-only: GetForgottenMemories is
-         scopeFilter, so a group-scoped admin reads their own partition's losses. -->
-        <div class="card admin-only consolidation-only" id="now-forgotten-card">
+        <!-- The forgetting feed. Gated on neither admin class: GetForgottenMemories is reader-tier
+         and scopeFilter, so every caller who can read the store can see what it lost - a scoped one
+         seeing their own partition's losses. This tab is the store's premise made live, and a
+         writer who cannot see that their own memories went would be reading half of it. -->
+        <div class="card consolidation-only" id="now-forgotten-card">
           <div class="events-head">
             <h2>Just forgotten</h2>
             <a class="evlink" data-act="goto-decay" id="now-more-forgotten"
@@ -154,87 +156,6 @@
 
       <!-- ===================== SEARCH ===================== -->
       <section id="tab-search" class="tab">
-        <!-- The opened event gets a card of its own rather than borrowing the results panel below.
-         openEvent is reachable from all three tables, so writing it into the results meant opening
-         an event from the Events or Memories tab silently destroyed a search the user had run and
-         left the Search tab showing that single event instead. Hidden until something is open, and
-         closed by the next search.
-
-         It stands FIRST on the tab, ahead of the search form. It was between the form and the
-         results, which is where it least belongs: opening an event is a navigation from another
-         tab, so what arrives has nothing to do with the query above it, and landing halfway down a
-         page under a form you did not fill in reads as the search having done something. First,
-         plus the scroll in openEvent, means the thing you asked for is the thing at the top. -->
-        <div class="card hidden" id="event-card">
-          <div class="events-head">
-            <h2>Event</h2>
-            <button class="btn ghost small" data-act="close-event">
-              Close
-            </button>
-          </div>
-          <div id="event-view"></div>
-
-          <!-- Summarisation lives here rather than on an events-list row because it destroys every
-           memory of the event: the one place it should be offered is the one place the console shows
-           what is about to be replaced. Two buttons for the two RPCs, which differ in who writes the
-           summary — POST /v1/events/{id}/summary takes one from the caller, POST .../summarise has
-           the service's embedded LLM author it. Writer-tier both; the LLM one is also .summariser-only
-           since a deployment without ollama would only refuse it. -->
-          <div class="summarise writer-only" id="event-summarise">
-            <div class="actions">
-              <button class="btn ghost small" data-act="open-summary-form">
-                Summarise…
-              </button>
-              <button
-                class="btn ghost small summariser-only"
-                data-act="summarise-llm"
-              >
-                Summarise with the LLM
-              </button>
-              <span class="muted"
-                >Replaces every memory of this event with one summary.</span
-              >
-            </div>
-
-            <!-- The manual form: revealed by "Summarise…" rather than always shown, so the card is
-             not dominated by a textarea nobody is using. -->
-            <div class="hidden" id="summary-form">
-              <div class="field wide">
-                <label for="summary-body">Summary</label>
-                <textarea
-                  id="summary-body"
-                  rows="4"
-                  placeholder="the text that will replace this event's memories"
-                ></textarea>
-              </div>
-              <div class="row">
-                <!-- Unlike the LLM path, this RPC stores the significance verbatim, so an omitted
-                 one leaves the summary UNRANKED rather than inheriting the highest it replaced.
-                 Say so: a summary that outranks nothing is the first thing forgotten. -->
-                <div class="field">
-                  <label for="summary-sig">Significance (optional)</label>
-                  <input
-                    id="summary-sig"
-                    type="number"
-                    placeholder="blank leaves it unranked"
-                  />
-                </div>
-                <div class="field">
-                  <label for="summary-group">Group (optional)</label>
-                  <input id="summary-group" placeholder="group label" />
-                </div>
-              </div>
-              <div class="actions">
-                <button class="btn" data-act="replace-with-summary">
-                  Replace memories
-                </button>
-                <button class="btn ghost" data-act="close-summary-form">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
         <div class="card" data-enter="search">
           <h2>Content search</h2>
           <p class="muted pull-up">
@@ -511,6 +432,91 @@
 
       <!-- ===================== EVENTS ===================== -->
       <section id="tab-events" class="tab">
+        <!-- The opened event gets a card of its own rather than borrowing a results panel.
+         openEvent is reachable from all three tables, so writing it into #search-results meant
+         opening an event from the Events or Memories tab silently destroyed a search the user had
+         run. Hidden until something is open.
+
+         It lives on the EVENTS tab, which is the second half of that fix and took a second attempt:
+         the card was given its own container but left on Search, so opening an event still threw
+         the user onto the search tab and showed them one event above a search form they had not
+         used. An event's memories are not a search result. Here, opening an event from anywhere
+         lands on the tab that event belongs to, beside the list it was opened from.
+
+         It stands FIRST on the tab, ahead of the create form: opening an event is usually a
+         navigation from another tab, and landing halfway down a page under a form you did not fill
+         in reads as that form having done something. First, plus the scroll in openEvent, means the
+         thing you asked for is the thing at the top. -->
+        <div class="card hidden" id="event-card">
+          <div class="events-head">
+            <h2>Event</h2>
+            <button class="btn ghost small" data-act="close-event">
+              Close
+            </button>
+          </div>
+          <div id="event-view"></div>
+
+          <!-- Summarisation lives here rather than on an events-list row because it destroys every
+           memory of the event: the one place it should be offered is the one place the console shows
+           what is about to be replaced. Two buttons for the two RPCs, which differ in who writes the
+           summary — POST /v1/events/{id}/summary takes one from the caller, POST .../summarise has
+           the service's embedded LLM author it. Writer-tier both; the LLM one is also .summariser-only
+           since a deployment without ollama would only refuse it. -->
+          <div class="summarise writer-only" id="event-summarise">
+            <div class="actions">
+              <button class="btn ghost small" data-act="open-summary-form">
+                Summarise…
+              </button>
+              <button
+                class="btn ghost small summariser-only"
+                data-act="summarise-llm"
+              >
+                Summarise with the LLM
+              </button>
+              <span class="muted"
+                >Replaces every memory of this event with one summary.</span
+              >
+            </div>
+
+            <!-- The manual form: revealed by "Summarise…" rather than always shown, so the card is
+             not dominated by a textarea nobody is using. -->
+            <div class="hidden" id="summary-form">
+              <div class="field wide">
+                <label for="summary-body">Summary</label>
+                <textarea
+                  id="summary-body"
+                  rows="4"
+                  placeholder="the text that will replace this event's memories"
+                ></textarea>
+              </div>
+              <div class="row">
+                <!-- Unlike the LLM path, this RPC stores the significance verbatim, so an omitted
+                 one leaves the summary UNRANKED rather than inheriting the highest it replaced.
+                 Say so: a summary that outranks nothing is the first thing forgotten. -->
+                <div class="field">
+                  <label for="summary-sig">Significance (optional)</label>
+                  <input
+                    id="summary-sig"
+                    type="number"
+                    placeholder="blank leaves it unranked"
+                  />
+                </div>
+                <div class="field">
+                  <label for="summary-group">Group (optional)</label>
+                  <input id="summary-group" placeholder="group label" />
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn" data-act="replace-with-summary">
+                  Replace memories
+                </button>
+                <button class="btn ghost" data-act="close-summary-form">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="card writer-only" data-enter="event-save">
           <h2 id="ev-form-title">Create event</h2>
           <input id="ev-id" type="hidden" />
@@ -562,90 +568,146 @@
             <span id="ev-edit-hint" class="muted hidden"></span>
           </div>
         </div>
+        <!-- Two ways of arriving at an event, as the two halves of one card rather than as two
+         cards stacked down the tab. Listing is the filter you wrote; summarising is the list the
+         sleep cycle wrote for you. They answer different questions and neither is a filter of the
+         other, so showing both at once left the candidates card sitting under a filter that had
+         nothing to do with it — and its Refresh button reading as part of the listing above.
+
+         The panes swap the RESULTS card below as well as the controls here, so the tab shows one
+         list at a time and the thing you asked for is the thing on screen. -->
         <div class="card" data-enter="event-filter">
-          <h2>Filter</h2>
-          <div class="row">
-            <div class="field wide">
-              <label for="ef-extremum">Significance</label>
-              <select id="ef-extremum" data-change="sync-event-extremum">
-                <option value="">Range (use min/max below)</option>
-                <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
-                  Highest only — the most durable events
-                </option>
-                <option value="SIGNIFICANCE_EXTREMUM_LOWEST">
-                  Lowest only — first to be forgotten
-                </option>
-              </select>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label for="ef-sigmin">Significance min</label>
-              <input id="ef-sigmin" type="number" />
-            </div>
-            <div class="field">
-              <label for="ef-sigmax">Significance max</label>
-              <input id="ef-sigmax" type="number" />
-            </div>
-            <div class="field">
-              <label for="ef-group">Group</label>
-              <input id="ef-group" placeholder="exact group label" />
-            </div>
-          </div>
-          <!-- GetEventsRequest.metadata has always existed server-side; the console simply never
-           offered it. Full width, like the memories filter's, for the same reason. -->
-          <div class="row">
-            <div class="field wide">
-              <label for="ef-metadata">Metadata</label>
-              <input
-                id="ef-metadata"
-                placeholder="key=value, comma separated (all must match)"
-              />
-            </div>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label for="ef-sort">Sort by</label>
-              <select id="ef-sort" data-change="load-events">
-                <option value="significance">Significance</option>
-                <option value="timestamp">Start</option>
-                <option value="time_end">End</option>
-                <option value="name">Name</option>
-                <option value="link_significance">Link significance</option>
-                <option value="group">Group</option>
-                <option value="id">Id</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="ef-sortdir">Direction</label>
-              <select id="ef-sortdir" data-change="load-events">
-                <option value="">Default</option>
-                <option value="SORT_DIRECTION_DESC">Descending</option>
-                <option value="SORT_DIRECTION_ASC">Ascending</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="ef-pagesize">Page size</label>
-              <select id="ef-pagesize">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-              </select>
-            </div>
-          </div>
-          <div class="actions">
-            <div class="checkbox">
-              <input id="ef-memories" type="checkbox" />
-              <label class="flush" for="ef-memories">Include memories</label>
-            </div>
-            <button class="btn" data-act="load-events">List events</button>
-            <button class="btn ghost" data-act="clear-event-filter">
-              Reset filter
+          <div class="subtabs" role="tablist">
+            <button
+              class="subtab active"
+              id="ev-mode-list"
+              role="tab"
+              aria-selected="true"
+              aria-controls="ev-pane-list"
+              data-act="event-mode"
+              data-mode="list"
+            >
+              List
+            </button>
+            <!-- consolidation-only: the candidate scan IS a step of the sleep cycle, so on a
+             replica this pane could only ever be empty. -->
+            <button
+              class="subtab consolidation-only"
+              id="ev-mode-summarise"
+              role="tab"
+              aria-selected="false"
+              aria-controls="ev-pane-summarise"
+              data-act="event-mode"
+              data-mode="summarise"
+            >
+              Summarise
             </button>
           </div>
+          <div id="ev-pane-list" role="tabpanel" aria-labelledby="ev-mode-list">
+            <div class="row">
+              <div class="field wide">
+                <label for="ef-extremum">Significance</label>
+                <select id="ef-extremum" data-change="sync-event-extremum">
+                  <option value="">Range (use min/max below)</option>
+                  <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
+                    Highest only — the most durable events
+                  </option>
+                  <option value="SIGNIFICANCE_EXTREMUM_LOWEST">
+                    Lowest only — first to be forgotten
+                  </option>
+                </select>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="ef-sigmin">Significance min</label>
+                <input id="ef-sigmin" type="number" />
+              </div>
+              <div class="field">
+                <label for="ef-sigmax">Significance max</label>
+                <input id="ef-sigmax" type="number" />
+              </div>
+              <div class="field">
+                <label for="ef-group">Group</label>
+                <input id="ef-group" placeholder="exact group label" />
+              </div>
+            </div>
+            <!-- GetEventsRequest.metadata has always existed server-side; the console simply never
+           offered it. Full width, like the memories filter's, for the same reason. -->
+            <div class="row">
+              <div class="field wide">
+                <label for="ef-metadata">Metadata</label>
+                <input
+                  id="ef-metadata"
+                  placeholder="key=value, comma separated (all must match)"
+                />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="ef-sort">Sort by</label>
+                <select id="ef-sort" data-change="load-events">
+                  <option value="significance">Significance</option>
+                  <option value="timestamp">Start</option>
+                  <option value="time_end">End</option>
+                  <option value="name">Name</option>
+                  <option value="link_significance">Link significance</option>
+                  <option value="group">Group</option>
+                  <option value="id">Id</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="ef-sortdir">Direction</label>
+                <select id="ef-sortdir" data-change="load-events">
+                  <option value="">Default</option>
+                  <option value="SORT_DIRECTION_DESC">Descending</option>
+                  <option value="SORT_DIRECTION_ASC">Ascending</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="ef-pagesize">Page size</label>
+                <select id="ef-pagesize">
+                  <option value="10">10</option>
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+            </div>
+            <div class="actions">
+              <div class="checkbox">
+                <input id="ef-memories" type="checkbox" />
+                <label class="flush" for="ef-memories">Include memories</label>
+              </div>
+              <button class="btn" data-act="load-events">List events</button>
+              <button class="btn ghost" data-act="clear-event-filter">
+                Reset filter
+              </button>
+            </div>
+          </div>
+
+          <!-- The other half of summarisation: the buttons live on an opened event, this says which
+           events are worth pointing them at. Loaded on demand rather than with the events list — it
+           is a snapshot the sleep cycle refreshes, so it does not change between two listings. -->
+          <div
+            class="hidden"
+            id="ev-pane-summarise"
+            role="tabpanel"
+            aria-labelledby="ev-mode-summarise"
+          >
+            <p class="muted">
+              Events whose memories have accumulated and gone quiet long enough
+              to be worth condensing, as identified by the most recent sleep
+              cycle. Open one to summarise it.
+            </p>
+            <div class="actions">
+              <button class="btn" data-act="load-candidates">
+                Find candidates
+              </button>
+            </div>
+          </div>
         </div>
-        <div class="card">
+        <div class="card" id="events-card">
           <div class="events-head">
             <h2>Events</h2>
             <div class="pager">
@@ -675,23 +737,13 @@
           </div>
         </div>
 
-        <!-- The other half of summarisation: the buttons live on an event, this says which events
-         are worth pointing them at. Loaded on demand rather than with the events list — it is a
-         snapshot the sleep cycle refreshes, so it does not change between two listings.
-         consolidation-only because the scan IS a step of that cycle: a replica runs none, so this
-         list is permanently empty there whatever the threshold is set to. -->
-        <div class="card consolidation-only">
-          <div class="events-head">
-            <h2>Summarisation candidates</h2>
-            <button class="btn ghost small" data-act="load-candidates">
-              Refresh
-            </button>
-          </div>
-          <p class="muted pull-up">
-            Events whose memories have accumulated and gone quiet long enough to
-            be worth condensing, as identified by the most recent sleep cycle.
-            Open one to summarise it.
-          </p>
+        <!-- The Summarise pane's results, hidden with it. consolidation-only as well, so a replica
+         is never shown the card even if the pane is somehow selected. The Refresh button that used
+         to sit in this header is now the pane's own "Find candidates": in the header it overlapped
+         the explanatory text beside it, and it was a second control for a list the pane above
+         already owns. -->
+        <div class="card consolidation-only hidden" id="candidates-card">
+          <h2>Summarisation candidates</h2>
           <div id="candidates-list">
             <div class="empty">Nothing loaded yet.</div>
           </div>
@@ -779,14 +831,16 @@
           </div>
         </div>
 
-        <div class="card admin-only tombstones-only">
+        <!-- Reading the log is reader-tier; only emptying it is admin, so the gating is on the
+         Clear button rather than on the card. -->
+        <div class="card tombstones-only">
           <h2>What was forgotten</h2>
           <p class="muted pull-up">
             The forgotten log: one record per memory a cycle actually deleted,
             with the value and threshold that decided it. Optional and off by
             default (<code class="inline">consolidation.tombstones.enabled</code
             >). Records carry no body — this says a memory was lost, not what it
-            said. Administrator only.
+            said. Emptying the log is administrator only.
           </p>
           <div class="row">
             <div class="field">
@@ -818,7 +872,7 @@
           </div>
           <div class="actions">
             <button class="btn" data-act="load-forgotten">Load</button>
-            <button class="btn ghost" data-act="clear-forgotten">
+            <button class="btn ghost admin-only" data-act="clear-forgotten">
               Clear the log
             </button>
           </div>

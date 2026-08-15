@@ -373,9 +373,10 @@ Two RPCs support this:
   meets the memory-count threshold on its own — will not be re-offered as a candidate until
   enough fresh, unsummarised memories accumulate against the same event again.
 
-Both are reachable from the embedded console. The Events tab carries a **Summarisation candidates**
-card — the scan's list, refreshed on demand — and opening an event from it (or by clicking its name
-in the events list, or an event id in any results table) shows its memories with a **Summarise…**
+Both are reachable from the embedded console. The Events tab has two modes, **List** and
+**Summarise**; the second loads the scan's list on demand. Opening an event from it (or by clicking
+its name in the events list, or an event id in any results table) shows its memories at the top of
+the Events tab with a **Summarise…**
 button beneath them, which takes the summary text and calls `ReplaceMemoriesWithSummary`. A second
 **Summarise with the LLM** button appears beside it where the deployment has one configured — see
 below. Both confirm first, naming how many memories go, because neither can be undone.

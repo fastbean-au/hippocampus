@@ -33,6 +33,39 @@ func TestPoliciesCoverEveryRPC(t *testing.T) {
 	}
 }
 
+// TestDeliberateTiers pins the tier assignments that are judgement calls rather than obvious ones,
+// so that changing one is a deliberate edit to this table and not a side effect. The reasoning for
+// each lives beside the entry in policies; what matters here is the shape they make together.
+//
+// The forgetting-transparency reads sit at reader and the dry run does not, because what separates
+// the preview is that it is unscoped - it describes the whole store and is refused outright to a
+// group-scoped caller - and not that it is revealing. The forgotten log splits across the two: the
+// read is a scope-filtered listing of records that were already the caller's, while emptying it is
+// destructive on an audit record.
+func TestDeliberateTiers(t *testing.T) {
+	want := map[string]Tier{
+		"ExplainConsolidation":    TierReader,
+		"GetConsolidationStatus":  TierReader,
+		"GetForgottenMemories":    TierReader,
+		"PreviewConsolidation":    TierAdmin,
+		"DeleteForgottenMemories": TierAdmin,
+	}
+
+	for method, tier := range want {
+		p, ok := policies[method]
+		if !ok {
+			t.Errorf("RPC %q has no policy", method)
+
+			continue
+		}
+
+		if p.tier != tier {
+			t.Errorf("RPC %q is %s, expected %s - see the reasoning beside its policy entry",
+				method, p.tier, tier)
+		}
+	}
+}
+
 // TestRouteRPC verifies the route -> RPC inversion the request metrics label gateway calls with:
 // every policy's own route must resolve back to its RPC (so the two transports report one vocabulary
 // and no route is silently unnamed), capture segments must be tolerated in the gateway's rendering

@@ -33,6 +33,61 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Opening an event no longer throws you onto the Search tab.** The event drill-down — an event's
+  details and every memory attached to it — was rendered on the Search tab, so clicking an event's
+  name in the events list navigated away from the Events tab and showed those memories above a query
+  form that had nothing to do with them. An event's memories are not a search result. The card now
+  lives on the **Events** tab, at the top, and opening an event from anywhere (the events list, a
+  memory's event id, a link, the candidates list) lands there. A search no longer closes an open
+  event either: the two are on different tabs now, so doing so would reach across and discard
+  something the user had opened.
+- **A memory body no longer runs off the side of the card.** The free-text row spanned every column
+  including the pinned actions column, and was as wide as the _table_ rather than as wide as the
+  visible scroll area — so on any table wide enough to scroll (two monospace id columns and four
+  buttons, which is most window sizes) the right-hand end of every body was outside the card, with
+  the pinned buttons painted over what was left. Reading a memory meant scrolling a table sideways.
+  The row now stops one column short, with the pinned column continuing beside it, and the text is
+  pinned to the left of the scroll viewport and sized against it, so it stays whole and in place
+  while the columns scroll past.
+
+### Changed
+
+- **The Events tab has List and Summarise modes.** Summarisation candidates were a second card
+  stacked permanently below the events list, under a filter that did not apply to them, with a
+  Refresh button in its header that overlapped the text explaining what the list was. They are now
+  the second mode of the tab's control card: **List** is the filter you write, **Summarise** is the
+  list the sleep cycle wrote for you, and each shows its own results card. Selecting Summarise does
+  not load anything — the candidates are a snapshot the cycle refreshes, so loading them stays a
+  deliberate act with its own button.
+
+- **Reading the forgotten log is now `reader`-tier, not `admin`.** `GetForgottenMemories` was
+  assigned `admin` on the grounds that it enumerates ids, groups and significances across the store
+  — but `GetMemories` does that at `reader`, with the bodies as well, so enumeration was never what
+  separated the two tiers. What separates `PreviewConsolidation`, which the log was placed beside,
+  is that it is _unscoped_: it describes the whole store and is refused outright to a group-scoped
+  caller. The log is not. A tombstone carries its memory's group, so both its RPCs are scope
+  filtered, and a scoped caller reads exactly their own partition's losses — the same records they
+  could have read in full, with bodies, while those memories were alive. It reports the `value` and
+  `threshold` pair that `ExplainConsolidation` already serves at `reader`, and it carries no bodies.
+  This puts all three forgetting-transparency reads (`ExplainConsolidation`,
+  `GetConsolidationStatus`, `GetForgottenMemories`) at one tier.
+
+  `DeleteForgottenMemories` is unchanged and stays `admin`: it is destructive, and destructive on an
+  audit record rather than on data the caller put there.
+
+  This widens access, so no client breaks — but it is security-relevant, and a token that is refused
+  today will be allowed after upgrading. The case for keeping the read at `admin`, if it applies to
+  your deployment: the log outlives what it describes, so a long
+  `consolidation.tombstones.maxAgeInDays` leaves a trace of groups, sizes and timing that the live
+  store would by then have discarded. Where `reader` tokens go to clients you would not trust with
+  that history, keep the log short.
+
+  In the console this moves the **Now** tab's forgetting feed and the **Decay** tab's log panel into
+  view for every caller — a writer could not previously see that their own memories had been
+  forgotten — while the panel's _Clear the log_ button remains administrator-only.
+
 ## [0.33.0] - 2026-08-16
 
 _Covers every change since v0.23.0. The releases between it and v0.33.0

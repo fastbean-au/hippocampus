@@ -653,13 +653,23 @@ everything a lower one can:
 
 | Tier     | May call                                                                                                                                                                                                                                     |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `ExplainConsolidation`, `WhoAmI`                                                                                               |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `WhoAmI`                                             |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `GetForgottenMemories`, `DeleteForgottenMemories`, `Export`, `Transfer`, `Clear`                                                                                     |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `Export`, `Transfer`, `Clear`                                                                                                             |
 
-`ExplainConsolidation` is `reader` while the dry run beside it is `admin`, because the two differ in
-exactly that respect: the explanation answers only about memory ids the caller supplies — which a
-reader can already fetch in full — whereas the preview enumerates the store. `Export`/`Transfer` are
+The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and
+`GetForgottenMemories` — are all `reader`, while the dry run beside them is `admin`. What separates
+the preview is not that it is revealing but that it is **unscoped**: it describes the whole store
+and is refused outright to a group-scoped caller. The other three are not. The explanation answers
+only about memory ids the caller supplies, which a reader can already fetch in full; the status
+names no memory at all; and the forgotten log is filtered by the caller's scope, carries no bodies,
+and reports the same `value`/`threshold` pair for memories that have gone that the explanation
+reports for those still here. The one deployment where the log wants raising back to `admin` is one
+handing `reader` tokens to untrusted clients while keeping a long `maxAgeInDays`: the log outlives
+what it describes, so it leaves a trace of groups, sizes and timing that the live store would by
+then have discarded. Emptying it (`DeleteForgottenMemories`) is `admin` either way — it is
+destructive, and destructive on an audit record rather than on data the caller put there.
+`Export`/`Transfer` are
 `admin` because they read the whole store out; `Import`/`ImportBatch` are
 `writer` because they deliberately bypass the write-path validation `StoreMemory`/`StoreEvent`
 enforce (body-size limit, future-timestamp clock-skew guard, minimum-significance gate) to restore

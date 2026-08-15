@@ -739,6 +739,7 @@ const ACTIONS = {
   "load-events": () => loadEvents(),
   "clear-event-filter": () => clearEventFilter(),
   "events-page": (el) => eventsPage(Number(el.dataset.dir)),
+  "event-mode": (el) => eventMode(el.dataset.mode),
   "load-candidates": () => loadCandidates(),
 
   // --- Now tab
@@ -1258,14 +1259,17 @@ async function boot() {
 boot();
 
 // ------------------------------------------------------------------ search
-// openEvent loads one event and every memory attached to it, then shows them in the event card
-// on the search tab. Reached by clicking an event id in any of the three result tables, or by
-// searching with only an event id filled in.
+// openEvent loads one event and every memory attached to it, then shows them in the event card on
+// the EVENTS tab. Reached by clicking an event id in any of the three result tables, from the
+// candidates list, from a followed event link, or by searching with only an event id filled in.
 //
-// It renders into its own card rather than into #search-results, which is what it used to do:
-// an event opened from the Events or Memories tab then overwrote whatever search was showing,
-// so returning to Search found the single event in place of the results. The card is the whole
-// fix - the two views no longer share a container, so neither can destroy the other.
+// Two things it does not do, both of them things it used to. It does not render into
+// #search-results: an event opened from the Events or Memories tab overwrote whatever search was
+// showing, so returning to Search found the single event in place of the results. And it no longer
+// lands on the Search tab - an event's memories are not a search result, and putting them there
+// meant every click on an event name threw the user off the tab they were working on and onto a
+// query form they had not used. The card is on the tab the event belongs to.
+//
 // scrollBehaviour picks the scroll animation, and exists because "smooth" is not a safe default.
 // Under prefers-reduced-motion: reduce, Chrome does not shorten a smooth scroll - it DROPS it,
 // leaving the page exactly where it was. So a hard-coded "smooth" silently fails to scroll at
@@ -1309,9 +1313,11 @@ async function openEvent(id) {
     const memories = ev.memories || [];
     const end = ev.timeEnd && ev.timeEnd !== "0" ? ageCell(ev.timeEnd) : "open";
 
-    // The links live in all three tables; surface the result on the search tab wherever it was
-    // clicked from, so an event always opens in one known place.
-    document.querySelector('nav button[data-tab="search"]').click();
+    // The links live in all three tables; surface the result on the EVENTS tab wherever it was
+    // clicked from, so an event always opens in one known place - and that place is the tab the
+    // event belongs to. It used to be the Search tab, which put an event's memories where search
+    // results go, above a query form the user had not filled in.
+    document.querySelector('nav button[data-tab="events"]').click();
 
     eventSubject = ev.id || id;
     eventSubjectMemories = memories.length;
@@ -1508,11 +1514,10 @@ async function doSearch() {
   try {
     const data = await api("POST", "/v1/memories/search", body);
 
-    // A fresh search supersedes whatever event was open — it is a new question. The two cards
-    // could coexist, but leaving a stale event above the results is what made the old shared
-    // panel confusing in the first place.
-    closeEvent();
-
+    // An open event is deliberately left alone. A search used to close it, because the two shared
+    // this tab and a stale event above the results was what made the old shared panel confusing.
+    // The event card is on the Events tab now, so closing it from here would reach across tabs to
+    // discard something the user opened and has not looked away from.
     const results = data.memories || [];
 
     renderMemories("search-results", results, { reinforced: body.reinforce });
@@ -1587,8 +1592,9 @@ function memoryRow(m) {
   // The body is the second row of the pair, spanning the table; a memory with no body renders
   // as a single row (and keeps its bottom border, hence the conditional class). The span
   // tracks whether the Value column is there: a colspan larger than the column count does not
-  // clamp, it EXTENDS the table by a phantom column, so leaving it at 8 on a replica would
-  // give every body row one more cell than its header.
+  // clamp, it EXTENDS the table by a phantom column, so leaving it at 7 on a replica would
+  // give every body row one more cell than its header. It stops one short of the actions
+  // column, which gets an empty cell of its own — see bodyRow.
   const body = m.body ? String(m.body) : "";
 
   return `<tr${body ? ' class="has-body"' : ""}>
@@ -1609,11 +1615,44 @@ function memoryRow(m) {
         <button class="btn small danger writer-only" data-act="delete-memory" data-id="${esc(m.id)}">Delete</button>
       </div>
     </td>
-  </tr>${
-    body
-      ? `<tr><td class="bodycell" colspan="${caps.consolidation ? 8 : 7}"><div class="bodytext">${esc(body)}</div></td></tr>`
-      : ""
-  }`;
+  </tr>${bodyRow(body, caps.consolidation ? 7 : 6)}`;
+}
+
+// bodyRow is the free-text second row of a record - a memory's body, an event's description.
+//
+// The span deliberately stops one column short and an empty .actions-col follows it, which fixes
+// two things at once. The pinned column runs the full height of the record rather than ending at
+// the metadata row, so a record is ruled off in one piece; and, more to the point, the text can no
+// longer run underneath the pinned buttons, which is where it went when the cell spanned every
+// column. That cell was also as wide as the TABLE rather than as wide as the visible .tablewrap, so
+// on any table wide enough to scroll - two nowrap monospace id columns and four buttons is enough
+// at most window sizes - the right-hand end of every body was simply outside the card, and reading
+// a memory meant scrolling a table sideways. The rest is in CSS: .bodytext is sticky to the left of
+// the scroll viewport and sized in container-query units, so it stays put and stays whole while the
+// columns beside it scroll.
+function bodyRow(text, span) {
+  if (!text) return "";
+
+  return `<tr class="body-row"><td class="bodycell" colspan="${span}"><div class="bodytext">${esc(text)}</div></td><td class="actions-col"></td></tr>`;
+}
+
+// fitBodyText tells each table's CSS how wide its pinned actions column came out, which is the one
+// number the .bodytext rule cannot express: the width the text must leave free is the buttons', and
+// how wide four buttons render is a matter of font and label. Measured once per table rather than
+// watched, because the button set is fixed for the life of a render - the VIEWPORT half of that
+// sum is in container-query units, so a window resize needs nothing from here.
+//
+// Assigned through the CSSOM for the reason applyMeterWidths gives: a style="" attribute in
+// rendered HTML is blocked by the console's CSP, silently.
+function fitBodyText(container) {
+  container.querySelectorAll(".tablewrap").forEach((wrap) => {
+    const pinned = wrap.querySelector("tr.body-row > td.actions-col");
+
+    wrap.style.setProperty(
+      "--actions-w",
+      (pinned ? pinned.getBoundingClientRect().width : 0) + "px",
+    );
+  });
 }
 
 function renderMemories(target, memories, opts) {
@@ -1648,6 +1687,8 @@ function renderMemories(target, memories, opts) {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
+
+  fitBodyText($(target));
 
   // Deliberately not awaited: the table is useful the moment it renders, and the valuation is an
   // extra round trip that must not hold it back (or fail it).
@@ -2287,9 +2328,10 @@ async function loadNow() {
       }
     }
 
-    // The forgotten log is admin-tier. A scoped admin may read it - it is scopeFilter, so they see
-    // their own partition - which is why this checks the tier and not the unbound flag.
-    if (caps.isAdmin && caps.tombstones) {
+    // Reading the forgotten log is reader-tier and scopeFilter, so there is no tier to check here:
+    // anyone who reached this tab may read it, seeing their own partition if they are scoped. What
+    // remains is whether there is anything to read, which is a property of the server.
+    if (caps.tombstones) {
       try {
         nowState.forgotten = await api(
           "GET",
@@ -2525,8 +2567,9 @@ function renderNowCycle(status) {
   ${failed ? `<p class="muted warn gap-top">That cycle failed: ${esc(last.failure)}. The counts above are what it managed before it did.</p>` : ""}`);
 }
 
-// renderNowForgotten draws the feed. Three empty states, because they call for different responses:
-// not recording (turn it on), recording but nothing gone yet (wait), and no permission to see it.
+// renderNowForgotten draws the feed. Two empty states, because they call for different responses:
+// not recording (turn it on), and recording but nothing gone yet (wait). There is no longer a third
+// for permission: reading the log is reader-tier, so anyone shown this tab may see it.
 function renderNowForgotten() {
   const card = $("now-forgotten-card");
   const status = nowState.status;
@@ -3073,11 +3116,7 @@ function eventRow(e) {
         <button class="btn small danger writer-only" data-act="delete-event" data-id="${esc(e.id)}">Delete</button>
       </div>
     </td>
-  </tr>${
-    description
-      ? `<tr><td class="bodycell" colspan="8"><div class="bodytext">${esc(description)}</div></td></tr>`
-      : ""
-  }`;
+  </tr>${bodyRow(description, 7)}`;
 }
 
 function renderEvents(events) {
@@ -3092,6 +3131,7 @@ function renderEvents(events) {
   events.forEach((e) => evRegistry.set(e.id, e));
 
   const rows = events.map(eventRow).join("");
+
   $("events-list").innerHTML = `<div class="tablewrap"><table>
     <thead><tr>
       ${sortHeader("events", "name", "Name")}
@@ -3105,6 +3145,8 @@ function renderEvents(events) {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
+
+  fitBodyText($("events-list"));
 }
 
 // Offset of the currently displayed events page. loadEvents() restarts from the top; eventsPage()
@@ -3115,12 +3157,42 @@ function eventsPageSize() {
   return intOrUndef("ef-pagesize") || 25;
 }
 
+// eventMode switches the Events tab between its two ways of arriving at an event: the filter you
+// write (List) and the list the sleep cycle wrote for you (Summarise). Both the controls and the
+// results card swap, so the tab shows one list at a time - the candidates card used to sit
+// permanently below the events list, under a filter that did not apply to it.
+//
+// Selecting Summarise does NOT load the candidates. The list is a snapshot the sleep cycle
+// refreshes, so a load is a deliberate act with a button of its own; auto-loading on a tab click
+// would also fire on a replica, where the answer is only ever "this instance does not scan".
+const EVENT_MODES = {
+  list: { pane: "ev-pane-list", card: "events-card" },
+  summarise: { pane: "ev-pane-summarise", card: "candidates-card" },
+};
+
+function eventMode(mode) {
+  if (!EVENT_MODES[mode]) return;
+
+  Object.entries(EVENT_MODES).forEach(([name, ids]) => {
+    const on = name === mode;
+    const tab = $("ev-mode-" + name);
+
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+
+    // The results card carries .consolidation-only as well, and that class must keep deciding: a
+    // replica has to be shown nothing here whichever pane is selected, so this only ever adds and
+    // removes .hidden and leaves the gating class alone.
+    $(ids.pane).classList.toggle("hidden", !on);
+    $(ids.card).classList.toggle("hidden", !on);
+  });
+}
+
 // ---------------------------------------------------------- summarisation candidates
 //
 // The list the sleep cycle's scan produced: events holding enough quiet, unsummarised memories
 // to be worth condensing. It is a point-in-time snapshot refreshed by the cycle, not a live
-// query, which is why this loads on demand and offers a Refresh rather than following the
-// events list.
+// query, which is why it loads on demand from its own pane rather than following the events list.
 async function loadCandidates() {
   $("candidates-list").innerHTML = '<div class="empty">Loading…</div>';
 

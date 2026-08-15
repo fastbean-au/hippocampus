@@ -128,6 +128,25 @@ var policies = map[string]rpcPolicy{
 	// ids, groups and significances.
 	"GetConsolidationStatus": {TierReader, http.MethodGet, "/v1/consolidation/status"},
 
+	// Reading the forgotten log is the third leg of that same transparency set, and sits with the
+	// other two rather than with the preview. It was admin until the reasoning was re-examined, on
+	// the grounds that it enumerates ids, groups and significances across the store - but so does
+	// GetMemories above, at this tier, with the bodies as well, so enumeration is not what separates
+	// the admin reads from the reader ones. What separates PreviewConsolidation is that it is
+	// scopeUnbound: it speaks about the whole store and is refused outright to a scoped caller. A
+	// tombstone carries its memory's group, so this RPC is scopeFilter (hippocampus/scope.go) and a
+	// scoped caller sees exactly their own partition's losses - the same records they could have
+	// read in full, through GetMemories, while those memories were alive. What it adds over that is
+	// the value and the threshold that took them, which ExplainConsolidation already serves at this
+	// tier for the memories still here. It carries no bodies, and by contract never will.
+	//
+	// The argument the other way, recorded because it is the one worth revisiting: the log outlives
+	// what it describes, so a long maxAgeInDays leaves a trace of activity - groups, sizes, timing -
+	// that the live store would by then have discarded, and unscoped is the default since group
+	// scoping is opt-in. A deployment handing reader tokens to untrusted clients and keeping a long
+	// log is the case where this wants to be admin again.
+	"GetForgottenMemories": {TierReader, http.MethodGet, "/v1/memories/forgotten"},
+
 	// writes
 	"StoreEvent":                 {TierWriter, http.MethodPost, "/v1/events"},
 	"EndEvent":                   {TierWriter, http.MethodPost, "/v1/events/*/end"},
@@ -162,11 +181,9 @@ var policies = map[string]rpcPolicy{
 	// trigger a real cycle.
 	"PreviewConsolidation": {TierAdmin, http.MethodGet, "/v1/sleep/preview"},
 
-	// The forgotten log is admin for the same reason the preview is: it names ids, groups and
-	// significances of memories across the store, and it does so for memories that no longer exist
-	// and therefore can no longer be reached (or scoped away) through GetMemories. Emptying it is a
-	// destructive operation on an audit record, which puts it in the same tier by any reading.
-	"GetForgottenMemories":    {TierAdmin, http.MethodGet, "/v1/memories/forgotten"},
+	// Emptying the forgotten log is destructive, and destructive on an audit record rather than on
+	// data a caller put there, so it stays admin while the read above does not. It is still
+	// scopeFilter, so a scoped admin empties their own partition of the log and no more.
 	"DeleteForgottenMemories": {TierAdmin, http.MethodPost, "/v1/memories/forgotten/delete"},
 
 	"Export":   {TierAdmin, http.MethodPost, "/v1/export"},

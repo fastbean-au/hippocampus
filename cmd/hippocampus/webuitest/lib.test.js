@@ -75,10 +75,12 @@ test("capsFromWhoAmI: writer may write but is not admin", () => {
   assert.equal(caps.isAdmin, false);
 });
 
-// The regression this whole split exists for. GetForgottenMemories is scopeFilter, not scopeUnbound
-// (hippocampus/scope.go), because a tombstone carries its memory's group - so a group-scoped admin
-// may read it and sees their own partition. Folding the scope check into isAdmin hid that panel
-// from them entirely.
+// The regression this whole split exists for. The forgotten log's RPCs are scopeFilter, not
+// scopeUnbound (hippocampus/scope.go), because a tombstone carries its memory's group - so a
+// group-scoped admin may use them and sees their own partition. Folding the scope check into
+// isAdmin hid that panel from them entirely. Reading the log has since dropped to reader tier, so
+// what isAdmin gates there now is DeleteForgottenMemories - the distinction the split draws is
+// unchanged, and Export/Transfer/Clear are the same shape.
 test("capsFromWhoAmI: a group-scoped admin keeps admin tier but loses unbound", () => {
   const caps = capsFromWhoAmI(
     whoami({ role: "admin", groupScoped: true, groups: ["tenant-a"] }),

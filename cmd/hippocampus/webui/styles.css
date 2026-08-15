@@ -129,6 +129,35 @@ main {
   max-width: 1100px;
   margin: 0 auto;
 }
+/* Tabs WITHIN a card, for two views of one subject that are not filters of each other (the Events
+     tab's List and Summarise). Deliberately the same shape as the page nav above - underline, accent
+     on the selected one - at a smaller size, because it is the same idea one level down and a second
+     visual language for it would only invite reading them as unrelated. The negative top margin
+     pulls the row up to the card's padding so the rule sits where a card header's would. */
+.subtabs {
+  display: flex;
+  gap: 4px;
+  margin: -4px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.subtab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 6px 12px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.subtab:hover {
+  color: var(--text);
+}
+.subtab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
 .tab {
   display: none;
 }
@@ -258,6 +287,10 @@ button.btn.small {
          sideways. */
 .tablewrap {
   overflow-x: auto;
+  /* A query container so a body row can be sized against the VISIBLE width (100cqw) rather than
+     against the table's, which is what it inherits from the cell it sits in and which is wider
+     whenever this scrolls. See .bodytext. */
+  container-type: inline-size;
 }
 table {
   width: 100%;
@@ -303,7 +336,20 @@ tr.has-body > td {
 td.bodycell {
   padding-top: 0;
 }
+/* The free text is the one thing on the row that must always be readable in full, and it was the
+     one thing that was not: its cell is as wide as the TABLE, so on a table wide enough to scroll
+     (two nowrap monospace id columns plus four buttons, which is most window sizes) the end of every
+     body sat outside the card, and the pinned actions column was painted over what was left.
+     Pinning it to the left of the scroll viewport and sizing it against that viewport is the fix -
+     the columns scroll beside it while the text stays put and stays whole.
+     --actions-w is the pinned column's measured width, set per table by fitBodyText(); the 8px is
+     the cell's own left padding, which the sticky element starts at when the table is not scrolled.
+     Both are subtracted so the text stops short of the buttons rather than sliding under them. The
+     fallback of 0 only ever makes it too wide, which is what it was before. */
 .bodytext {
+  position: sticky;
+  left: 0;
+  width: calc(100cqw - var(--actions-w, 0px) - 8px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   line-height: 1.5;
@@ -523,15 +569,17 @@ code.inline {
      admin-tier RPCs on two different grounds.
 
      .admin-only        — needs admin tier. The RPC is scoped like any other listing, so a
-                          group-scoped admin may use it and sees their own partition. The forgotten
-                          log is the case: a tombstone carries its memory's group, which is why
-                          hippocampus/scope.go declares GetForgottenMemories scopeFilter.
+                          group-scoped admin may use it and sees their own partition. Emptying the
+                          forgotten log is the case: a tombstone carries its memory's group, which
+                          is why hippocampus/scope.go declares DeleteForgottenMemories scopeFilter.
      .unbound-only      — needs admin tier AND no group scope, because the RPC acts on the whole
                           store and is refused outright to a scoped caller (scope.go's scopeUnbound
                           set: Purge, Sleep, PreviewConsolidation).
 
      They were one class, gated on a capability that folded the scope check into "isAdmin". That hid
-     the forgotten log from every scoped admin — a panel the service would have served. */
+     the forgotten log from every scoped admin — a panel the service would have served. (Reading
+     that log has since dropped to reader tier, so it is no longer gated on either class; only its
+     Clear button is. The distinction the two classes draw is unchanged.) */
 body:not(.admin) .admin-only {
   display: none !important;
 }

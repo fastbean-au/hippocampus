@@ -283,10 +283,11 @@ export function curveSvg(curve, threshold) {
 //                    PreviewConsolidation (hippocampus/scope.go's scopeUnbound set).
 //
 // Until these were separated, a group-scoped admin was treated as not-admin throughout, which hid
-// the forgotten log from them. That is wrong: GetForgottenMemories is scopeFilter, not scopeUnbound
+// the forgotten log from them. That is wrong: the log's RPCs are scopeFilter, not scopeUnbound
 // (hippocampus/scope.go), precisely because a tombstone carries its memory's group - so a scoped
-// admin may read it and sees exactly their own partition's losses. The console was hiding a panel
-// the service was willing to serve.
+// admin may use them and sees exactly their own partition's losses. The console was hiding a panel
+// the service was willing to serve. Reading that log has since dropped to reader tier and so is
+// gated on neither capability; DeleteForgottenMemories is what isAdmin gates there now.
 export function capsFromWhoAmI(who) {
   const role = who.role || null;
   const authEnabled = !!who.authEnabled;

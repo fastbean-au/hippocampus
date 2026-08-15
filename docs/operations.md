@@ -451,17 +451,28 @@ Four things to know before turning it on.
   deletions rather than letting the memories go unrecorded; the cycle reports the failure and the
   memories are reconsidered next time.
 
-Both RPCs are `admin`-tier, for the reason the dry run is: the log names ids, groups and
-significances across the store, for memories that can no longer be reached (or scoped away) through
-`GetMemories`. They honour group scoping as a predicate, so a group-scoped token sees — and can
-clear — only its own partition's losses.
+**Reading the log is `reader`-tier; emptying it is `admin`.** Both honour group scoping as a
+predicate — a tombstone carries its memory's group — so a group-scoped token sees, and can clear,
+only its own partition's losses. That is what separates the log from the dry run beside it, which is
+refused to a scoped caller outright: the log speaks only about records that were already the
+caller's, it carries no bodies, and the `value`/`threshold` pair it reports is what
+`ExplainConsolidation` already serves at `reader` for the memories still here. Emptying it stays
+`admin` because that is destructive, and destructive on an audit record rather than on data the
+caller put there.
+
+One case argues for raising the read back to `admin`, and is worth checking against your deployment:
+the log outlives what it describes, so a long `maxAgeInDays` leaves a trace of groups, sizes and
+timing that the live store would by then have discarded. If `reader` tokens go to clients you would
+not trust with that history, keep the log short or move the RPC up a tier.
 
 Two metrics come with it: `hippocampus.tombstones` (records held, measured each cycle) and
 `hippocampus.tombstones.deleted` (records removed, by whether it was a manual clear or the caps).
 What was forgotten and by which rule is already reported by `hippocampus.memories.consolidated` and
 `hippocampus.memories.evicted`.
 
-The console's **Decay** tab shows the log beside the dry run, for an administrator.
+The console's **Decay** tab shows the log beside the dry run — the log to any caller, the dry run
+and the log's Clear button to an administrator — and the **Now** tab carries a short feed of the
+most recent losses.
 
 ## Backup, restore, and migration
 
@@ -840,7 +851,7 @@ multi-group store, with the centralised side stamping each ingestor's group from
   raised gate) is not a security boundary. The same call also tells it what the _deployment_ can
   serve, which it uses for a different purpose: not withholding what you may not do, but not offering
   what nothing could do. **On a replica (`consolidation.enabled: false`) the whole Decay tab is
-  absent**, along with the per-row value column and the summarisation-candidates card, because
+  absent**, along with the per-row value column and the Events tab's Summarise mode, because
   `ExplainConsolidation`, `PreviewConsolidation` and the candidate scan all belong to a sleep cycle
   that instance does not run — so an operator seeing no Decay tab is looking at a replica, and should
   ask the consolidator. The forgotten-log panel likewise appears only where

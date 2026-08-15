@@ -22,8 +22,9 @@ import (
 //
 // The read is group-scoped by PREDICATE, like any other listing: a tombstone carries the group its
 // memory had, so a bound caller sees their own partition's losses and nothing else. That is why
-// neither RPC is scopeUnbound despite both being admin - unlike PreviewConsolidation, which
-// enumerates the whole store by design, this answers about records that were already the caller's.
+// neither RPC is scopeUnbound - unlike PreviewConsolidation, which enumerates the whole store by
+// design, this answers about records that were already the caller's - and it is also why the read
+// sits at reader tier while the delete stays admin (auth/authz.go carries that reasoning).
 //
 // The delete refuses an empty request. Every other field is optional, so "delete before nothing"
 // would otherwise read as "delete everything", and the one operation that destroys the record of

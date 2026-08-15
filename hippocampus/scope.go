@@ -73,9 +73,10 @@ var scopes = map[string]scopeMode{
 	"SearchMemories": scopeFilter,
 
 	// The forgotten log. A tombstone carries the group its memory had, so both RPCs take the scope
-	// as a predicate like any other listing - which is also why neither is scopeUnbound despite
-	// both being admin: unlike the preview, they speak only about records that were already the
-	// caller's. A scoped clear therefore empties that caller's partition of the log and no more.
+	// as a predicate like any other listing - which is also why neither is scopeUnbound: unlike the
+	// preview, they speak only about records that were already the caller's. That is what lets the
+	// read sit at reader tier (auth/authz.go) rather than beside the preview, and it is what makes a
+	// scoped clear empty that caller's partition of the log and no more.
 	"GetForgottenMemories":    scopeFilter,
 	"DeleteForgottenMemories": scopeFilter,
 

@@ -106,6 +106,45 @@ test("no select carries data-act; the change controls use data-change", () => {
   );
 });
 
+// The Events tab's List/Summarise sub-tabs are wired by id in three places: the button's data-mode,
+// the EVENT_MODES table's key, and the pane and card ids that table names. Nothing throws if one of
+// them is wrong - eventMode returns early on an unknown mode, and $() on a missing id would throw
+// only once that branch ran - so the symptom is a tab that does nothing when clicked. The same
+// silent shape as a missing ACTIONS entry, and worth the same check.
+test("every event sub-tab is wired to a pane and a card that exist", () => {
+  const table = app.match(/const EVENT_MODES = \{(.*?)\n\};/s);
+
+  assert.ok(table, "EVENT_MODES table not found in app.js");
+
+  const modes = new Map(
+    [
+      ...table[1].matchAll(/(\w+): \{ pane: "([\w-]+)", card: "([\w-]+)" \}/g),
+    ].map((m) => [m[1], { pane: m[2], card: m[3] }]),
+  );
+
+  assert.ok(modes.size >= 2, `only parsed ${modes.size} modes`);
+
+  const buttons = matchAll(
+    html,
+    /class="subtab[^"]*"[^>]*?data-mode="(\w+)"/gs,
+  );
+
+  assert.deepEqual(
+    buttons.slice().sort(),
+    [...modes.keys()].sort(),
+    "a sub-tab button and its EVENT_MODES entry disagree",
+  );
+
+  for (const [mode, ids] of modes) {
+    for (const id of [ids.pane, ids.card, "ev-mode-" + mode]) {
+      assert.ok(
+        html.includes(`id="${id}"`),
+        `mode ${mode} names #${id}, which is not in the markup`,
+      );
+    }
+  }
+});
+
 // The split exists so the page can be served under a CSP without unsafe-inline. An inline handler
 // or style would be blocked by that policy — silently, since CSP violations are not exceptions.
 test("no inline handlers or styles remain anywhere in the console", () => {
