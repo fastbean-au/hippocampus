@@ -716,3 +716,59 @@ td.decay .val {
 #now-headline .stat .v {
   font-size: 20px;
 }
+
+/* ------------------------------------------------------- in-flight indicator
+   A 2px bar across the top of the page whenever any request is outstanding. It covers what busy()
+   cannot: the requests no control started - the Now tab's polls, the per-row value decoration -
+   where there is no button to disable. On a slow deployment this is the difference between the
+   console looking like it is loading and looking like it is broken.
+
+   Pinned to the viewport rather than the header so it is visible however far down the page the
+   reader has scrolled, and pointer-events: none so it can never intercept a click. */
+#progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  z-index: 20;
+  pointer-events: none;
+  background: transparent;
+  overflow: hidden;
+}
+#progress::after {
+  content: "";
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: var(--accent);
+  transform: translateX(-100%);
+}
+body.busy #progress::after {
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+/* A control waiting on its own request. Dimmed rather than hidden, so the page does not reflow
+   under the pointer that just clicked it. */
+[aria-busy="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+/* Respect a reader who has asked for less motion: the bar still shows, it simply does not travel.
+   The same argument as scrollBehaviour() - the person who set this is the one most disturbed by
+   something moving, and the state is what matters, not the animation. */
+@media (prefers-reduced-motion: reduce) {
+  body.busy #progress::after {
+    animation: none;
+    transform: translateX(0);
+    width: 100%;
+    opacity: 0.5;
+  }
+}

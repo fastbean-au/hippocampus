@@ -98,6 +98,12 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN=<dsn>`/`HIPPOCAMPUS_TEST_MYSQL_DSN=<dsn>` `go test ./db`
   against any disposable database. The `proto-breaking` job gates the contract (above)
+- Cut a release: `scripts/release.sh --minor` (or `--patch`/`--major`/`--version X.Y.Z`) — runs the
+  pre-flight, rolls `[Unreleased]` into a dated version section, rewrites both link references,
+  commits and tags. It deliberately does **not** push (that is what starts the release workflow) and
+  it **refuses** on an empty `[Unreleased]`, a dirty tree, a non-`main` branch, a `HEAD` that is not
+  `origin/main`, or — the one that matters — a changelog whose newest version heading is not the
+  current tag, which is how nine releases once shipped with their entries still under `[Unreleased]`
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
   list); its **Compatibility** section states what a version number covers — contract, config keys,
   stored schema — and what is exempt. `RELEASE.md` carries the process, including the changelog step
@@ -137,11 +143,21 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
 
 - `cmd/hippocampus/` — the `package main` entrypoint (`main.go` plus `backfill.go`,
   `interceptors.go`, `logging.go`, `observability.go`, and the `webui.go`/`webui/` embedded
-  console — one self-contained HTML/CSS/JS page, no build step, whose **Decay** tab is the client
-  side of `ExplainConsolidation`: a per-row value column in the memory/search tables, the current
-  capacity pressure and threshold, an inline-SVG decay curve, and an `admin`-gated dry-run panel
-  over `PreviewConsolidation`. It computes **no** decay maths of its own — every number and every
-  curve point is served — which is the whole reason those RPCs report what they do). `main.go` —
+  console — four embedded files, no build step and no bundler: `index.html`, `styles.css`, `app.js`
+  (the DOM, the network, the state) and `lib.js` (the pure logic, an ES module `app.js` imports).
+  That split is what lets the page be served under a **CSP with no `unsafe-inline`**
+  (`webUISecurityHeaders`) — every handler is a `data-act`/`data-change` attribute routed through one
+  `ACTIONS` table, and every dynamic style goes through the CSSOM — and what lets ~3,000 lines of
+  JavaScript be tested at all: `cmd/hippocampus/webuitest/` runs `lib.js` under `node --test` with
+  **zero dependencies**, plus drift guards pairing every control with a handler and every embedded
+  asset with a route and both middleware allow-lists. Its landing tab is **Now** — the store's
+  premise made live: memories held, what the last cycle forgot, a countdown to the next
+  (`GetConsolidationStatus`), a capacity meter, and a feed off the forgotten log — and its **Decay**
+  tab is the client side of `ExplainConsolidation`: a per-row value column in the memory/search
+  tables, the current capacity pressure and threshold, an inline-SVG decay curve, and an
+  `admin`-gated dry-run panel over `PreviewConsolidation`. It computes **no** decay maths of its own
+  — every number and every curve point is served — which is the whole reason those RPCs report what
+  they do). `main.go` —
   bootstrap only: reads the JSON config file into viper (**optional on the default path** — an
   absent `./config.json` starts the service on `setStartupDefaults`' built-in defaults with a Warn
   line naming them, while a `--config_file` given explicitly must exist; `setStartupDefaults` is a
@@ -518,9 +534,11 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
 - `contract/` — the gRPC contract (`hippocampus.proto`) and generated code. RPCs cover
   event/memory CRUD plus `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
   `ReplaceMemoriesWithSummary`, `GetSummarisationCandidates`, `SummariseMemories` (the embedded-LLM
-  generate-and-replace), `PreviewConsolidation`/`ExplainConsolidation` (the forgetting-transparency
-  pair: what a cycle would forget, and where an individual memory stands), `WhoAmI` (reports the
-  caller's
+  generate-and-replace), `PreviewConsolidation`/`ExplainConsolidation`/`GetConsolidationStatus` (the
+  forgetting-transparency set: what a cycle would forget, where an individual memory stands, and
+  when the next cycle is due plus what the last one did — the last of these being the only one that
+  answers "when", and the only one that does NOT refuse on a replica, since reporting
+  `consolidation_enabled: false` is the answer there), `WhoAmI` (reports the caller's
   effective authorisation tier, so the web console can adapt), and the transfer/archive surface
   (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see
@@ -865,7 +883,7 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     gRPC `Dial` (bearer-token + TLS trust options, mirroring the MCP bridge; auth is either a static
     `--token` or the OIDC **client-credentials** grant in `bridge/oidc.go`, selected by a set
     `--oidc-client-id`, which mints and refreshes its own access tokens — a static token expires and
-    then fails every write *silently* for as long as the daemon runs, which is why anything against
+    then fails every write _silently_ for as long as the daemon runs, which is why anything against
     an IdP-backed service wants the grant; config is validated eagerly but discovery is LAZY so an
     IdP blip does not stop a supervised bridge starting, and it deliberately matches the generators'
     implementation in the `hippocampus-gen` repo, down to the Auth0 audience quirk, so one Keycloak
@@ -999,7 +1017,7 @@ github.com/fastbean-au/hippocampus => ../..`), which is what makes `github.com/g
     bounds-checked here against what the target would accept, because a value the target rejects
     fails the whole `ImportBatch` and the event then sits on the edge being re-refused every pass;
     and a failure **fails the event loudly** rather than falling back to the stored significance —
-    unlike a *match* expression erroring, which merely does not match, there is no safe fallback for
+    unlike a _match_ expression erroring, which merely does not match, there is no safe fallback for
     a rank the operator asked for. `metadata` merges rather than replaces (CEL has no map union).
     `promoter/` is driven in tests against two in-memory fake instances, so no service is needed.
     Built/vetted/tested by the `ingestor` CI job; the release cross-compiles `hippocampus-ingestor`

@@ -21,7 +21,7 @@ pre-flight plus the one command that starts all of that.
   another repository, so this is required for the tap to auto-update. Its only actions are cloning
   the tap and pushing a commit, so it needs exactly one permission — **repository contents,
   read/write** — and nothing more:
-  - **Fine-grained PAT (recommended):** resource owner `fastbean-au`, *Only select repositories* →
+  - **Fine-grained PAT (recommended):** resource owner `fastbean-au`, _Only select repositories_ →
     `homebrew-tap`, permissions **Contents: Read and write** (Metadata: Read-only is mandatory and
     auto-added). Grant nothing else — in particular **not** _Workflows_: the bump only edits
     `Formula/*.rb`, never `.github/workflows/`, and a fine-grained token is rejected on a push that
@@ -29,20 +29,25 @@ pre-flight plus the one command that starts all of that.
     it. (If `fastbean-au` is an org, fine-grained PATs may need org approval.)
   - **Classic PAT:** `public_repo` scope suffices for the public tap (`repo` if it is ever private) —
     broader, since classic tokens cannot be scoped to a single repository.
-  - **Deploy key alternative:** a per-repo SSH key with write access added to the tap's *Settings →
-    Deploy keys* is the tightest scope, but the `bump-homebrew` checkout step must then use
+  - **Deploy key alternative:** a per-repo SSH key with write access added to the tap's _Settings →
+    Deploy keys_ is the tightest scope, but the `bump-homebrew` checkout step must then use
     `ssh-key:` instead of `token:`.
 
   **Optional** — when the secret is absent the job self-skips (it does not fail the release), so a
   fork or a repo without the tap configured is unaffected. If the tap's `main` is branch-protected to
   require PRs, exempt this credential or the direct push will fail.
+
 - **Git hooks** — point git at the tracked hooks once per clone: `git config core.hooksPath hooks`.
 - GHCR publishing needs no secret: the workflow authenticates with the built-in `GITHUB_TOKEN`.
 
 ## Local pre-flight
 
-Run these before cutting a tag. Most of the mechanical checks are also enforced by
-`hooks/pre-commit`, but the benchmark and coverage review are manual judgement calls.
+**[`scripts/release.sh`](scripts/release.sh) runs steps 1–3 and 6–7 for you** — the mechanical ones.
+What is left below is the two judgement calls it cannot make (the benchmarks and the coverage
+review) and the writing of the changelog entries themselves, which must be done _before_ the script
+is run: it rolls what is in `[Unreleased]` and refuses when that section is empty.
+
+Most of the mechanical checks are also enforced by `hooks/pre-commit`.
 
 1. `go mod tidy` — no unexpected `go.mod`/`go.sum` churn.
 2. `go vet ./...`
@@ -70,6 +75,12 @@ Run these before cutting a tag. Most of the mechanical checks are also enforced 
    heading here is what clears it again.
 7. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
    to release.
+
+The script goes further than steps 1–3 on one point: it also builds, vets and tests each integration
+module (`integrations/mcp`, `cli`, `eventsource`, `ingestor`, `otel/hippocampusexporter`) and runs
+the embedded console's JavaScript tests, because all of them are released from this same tag and a
+broken one must not ship. Pass `--skip-checks` to re-run after a failure you have already
+investigated.
 
 ## Compatibility
 
@@ -100,7 +111,8 @@ release process's business:
   recognise — no marker, a typo, a version below the baseline — leaves the gate binding too, so a
   mistake shows up as a red build rather than as a silently disabled check. Step 6 of the pre-flight
   clears the marker along with the heading, so it never outlives its release.
-- **A deliberate break needs three things**, in this order: agreement that it is worth doing *now*
+
+- **A deliberate break needs three things**, in this order: agreement that it is worth doing _now_
   (pre-1.0 is far cheaper than after — every generated client is a copy of the contract, and there
   are more of them each release); a **Breaking** entry in the changelog saying what a caller must
   change, not merely what changed; and a major version bump, or — while the leading version
@@ -111,12 +123,46 @@ release process's business:
 ## Cut the release
 
 ```sh
-git tag v1.2.3        # semver, v-prefixed
-git push --tags
+scripts/release.sh --minor          # or --patch, --major, or --version 1.2.3
 ```
 
-That's the whole manual release action. Choose the version with normal semver rules: patch for
-fixes, minor for backward-compatible features, major for breaking changes.
+That runs the pre-flight above, rolls the changelog (step 6), commits it, and creates the tag.
+Choose the increment with normal semver rules: patch for fixes, minor for backward-compatible
+features, major for breaking changes — remembering that pre-1.0, a breaking change goes in a minor.
+
+**It does not push.** Pushing is what starts the release workflow, so it stays a separate,
+deliberate action; the script prints the two commands:
+
+```sh
+git push origin main
+git push origin v1.2.3
+```
+
+### What the script refuses, and why
+
+The manual process drifted badly once: nine releases (v0.24.0 through v0.32.2) shipped without step
+6 ever being done, so every entry since v0.23.0 accumulated under one `[Unreleased]` heading. Nothing
+caught it, because the tag is what triggers a release and the changelog was not on that path. The
+script puts it on that path and stops on each way that goes wrong:
+
+- **The `[Unreleased]` section is empty.** There is nothing to release, and cutting anyway would
+  publish a version whose changelog entry is a blank heading.
+- **The changelog's newest version heading is not the current tag.** Releases shipped without being
+  rolled, so cutting now would file all of them under one version. `--allow-drift` accepts it
+  deliberately.
+- **The `[Unreleased]` heading declares a different version** than the one being cut — the
+  `## [Unreleased] (v2.0.0)` marker that stands the contract gate down must name the release it is
+  standing down for, and rolling the heading is what clears it.
+- **The tree is dirty, the branch is not `main`, or `HEAD` is not `origin/main`** — a tag must point
+  at a commit others have, or the workflow builds a revision nobody else can reproduce.
+- **The version is not ahead of the current tag**, or already exists.
+
+Everything the changelog needs is derived: the date, the `[Unreleased]` → version roll, the fresh
+bare `[Unreleased]`, and both link references at the foot.
+
+A **major** increment still needs its `## [Unreleased] (v2.0.0)` marker declared in the changelog
+while the work is in flight — that is what stands the contract gate down (see
+[Compatibility](#compatibility)); the script clears it when it rolls the heading.
 
 ## What the workflow does
 

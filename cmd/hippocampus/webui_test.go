@@ -159,3 +159,133 @@ func TestConsoleReferencesItsAssets(t *testing.T) {
 		}
 	}
 }
+
+// csp returns the console's Content-Security-Policy under a given UI configuration.
+func csp(t *testing.T, cfg UIConfig) string {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	handler := webUISecurityHeaders(cfg, webUIHandler())
+
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui", nil))
+
+	return rec.Header().Get("Content-Security-Policy")
+}
+
+// TestConsoleCSPDeniesInlineCode pins the policy the split into three files exists to make possible.
+// Without it the console would still work, so nothing else would notice it had been relaxed - and a
+// relaxation is exactly what an XSS needs, this console having already had one (item 24.1).
+func TestConsoleCSPDeniesInlineCode(t *testing.T) {
+	policy := csp(t, UIConfig{AuthMethod: "none"})
+
+	for _, want := range []string{
+		"default-src 'none'",
+		"script-src 'self'",
+		"style-src 'self'",
+		"img-src 'self' data:",
+		"form-action 'none'",
+		"base-uri 'none'",
+		"frame-ancestors 'none'",
+	} {
+		if !strings.Contains(policy, want) {
+			t.Errorf("policy is missing %q: %s", want, policy)
+		}
+	}
+
+	// The whole point: an onclick= or style= attribute is blocked without these, and blocked
+	// silently. If either ever appears here, the drift guard in webuitest asserting the markup
+	// carries no inline code has been defeated rather than satisfied.
+	for _, unwanted := range []string{"unsafe-inline", "unsafe-eval"} {
+		if strings.Contains(policy, unwanted) {
+			t.Errorf("policy permits %s, which defeats it: %s", unwanted, policy)
+		}
+	}
+}
+
+// The console IS the client of /v1, unlike the config-wizard whose otherwise-identical policy denies
+// every connection. A connect-src that forgot 'self' would leave a console that renders perfectly
+// and can call nothing.
+func TestConsoleCSPPermitsItsOwnAPI(t *testing.T) {
+	if policy := csp(t, UIConfig{AuthMethod: "none"}); !strings.Contains(policy, "connect-src 'self'") {
+		t.Errorf("policy does not permit same-origin requests: %s", policy)
+	}
+}
+
+// Under the in-browser PKCE flow the page fetches the issuer's discovery document and posts to its
+// token endpoint, both cross-origin. Omitting the issuer would block sign-in on exactly the
+// deployments that authenticate.
+func TestConsoleCSPPermitsTheIssuerUnderBrowserLogin(t *testing.T) {
+	policy := csp(t, UIConfig{
+		AuthMethod: "idp",
+		LoginMode:  "browser",
+		Issuer:     "https://example.eu.auth0.com/",
+	})
+
+	if !strings.Contains(policy, "connect-src 'self' https://example.eu.auth0.com") {
+		t.Errorf("policy does not permit the issuer: %s", policy)
+	}
+
+	// The origin only - a path from the issuer URL would not match a connect-src source anyway, and
+	// carrying one would suggest it narrowed the permission when it does not.
+	if strings.Contains(policy, "auth0.com/;") || strings.Contains(policy, "auth0.com/ ") {
+		t.Errorf("policy carries the issuer's path rather than its origin: %s", policy)
+	}
+}
+
+// The server-hosted flow performs the exchange service-side; the browser only follows a same-origin
+// redirect. Widening connect-src there would grant a permission nothing uses.
+func TestConsoleCSPWithholdsTheIssuerUnderServerLogin(t *testing.T) {
+	for _, cfg := range []UIConfig{
+		{AuthMethod: "idp", LoginMode: "server", Issuer: "https://example.eu.auth0.com/"},
+		{AuthMethod: "hmac", Issuer: "https://example.eu.auth0.com/"},
+		{AuthMethod: "none"},
+	} {
+		if policy := csp(t, cfg); strings.Contains(policy, "auth0.com") {
+			t.Errorf("%s/%s: policy names the issuer needlessly: %s", cfg.AuthMethod, cfg.LoginMode, policy)
+		}
+	}
+}
+
+// A malformed issuer must not produce a malformed policy - a broken directive can invalidate the
+// whole header on some browsers, which would silently turn the protection off.
+func TestConsoleCSPSurvivesAMalformedIssuer(t *testing.T) {
+	for _, issuer := range []string{"", "not a url", "://missing-scheme", "ftp:"} {
+		policy := csp(t, UIConfig{AuthMethod: "idp", LoginMode: "browser", Issuer: issuer})
+
+		if !strings.Contains(policy, "connect-src 'self'") {
+			t.Errorf("issuer %q broke the policy: %s", issuer, policy)
+		}
+
+		if strings.Contains(policy, "connect-src 'self' ;") || strings.Contains(policy, "  ") {
+			t.Errorf("issuer %q produced a malformed policy: %s", issuer, policy)
+		}
+	}
+}
+
+// Every console route carries the headers, not only the entry document: the assets are served from
+// the same origin and a policy applied to one response and not another is the kind of gap that
+// looks fine until someone reaches an asset directly.
+func TestConsoleSecurityHeadersOnEveryRoute(t *testing.T) {
+	cfg := UIConfig{AuthMethod: "none"}
+	mux := http.NewServeMux()
+
+	for path, handler := range map[string]http.Handler{
+		"/ui":            webUIHandler(),
+		"/ui/app.js":     webUIAssetHandler("app.js", "text/javascript; charset=utf-8"),
+		"/ui/lib.js":     webUIAssetHandler("lib.js", "text/javascript; charset=utf-8"),
+		"/ui/styles.css": webUIAssetHandler("styles.css", "text/css; charset=utf-8"),
+	} {
+		mux.Handle(path, webUISecurityHeaders(cfg, handler))
+	}
+
+	for _, path := range webUIAssetPaths {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		for _, header := range []string{"Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy"} {
+			if rec.Header().Get(header) == "" {
+				t.Errorf("%s: missing %s", path, header)
+			}
+		}
+	}
+}

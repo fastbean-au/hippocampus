@@ -913,11 +913,6 @@ func run(ctx context.Context, version versionInfo) error {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(contract.SwaggerJSON)
 		})
-		httpMux.Handle("/ui", webUIHandler())
-		httpMux.Handle("/ui/app.js", webUIAssetHandler("app.js", "text/javascript; charset=utf-8"))
-		httpMux.Handle("/ui/lib.js", webUIAssetHandler("lib.js", "text/javascript; charset=utf-8"))
-		httpMux.Handle("/ui/styles.css", webUIAssetHandler("styles.css", "text/css; charset=utf-8"))
-
 		// The front-channel OIDC config the console reads to start a login. The browser fetches it
 		// before it has a token, so it must stay unauthenticated and reachable during a purge, like
 		// the page itself. The issuer defaults to auth.issuer (the same one the verifier discovers
@@ -946,14 +941,30 @@ func run(ctx context.Context, version versionInfo) error {
 			}
 		}
 
-		httpMux.Handle("/ui/config", uiConfigHandler(UIConfig{
+		uiConfig := UIConfig{
 			AuthMethod: authMethod,
 			Issuer:     uiIssuer,
 			ClientID:   viper.GetString("auth.ui.clientId"),
 			Scopes:     uiScopes,
 			Audience:   viper.GetString("auth.ui.audience"),
 			LoginMode:  loginMode,
-		}))
+		}
+
+		httpMux.Handle("/ui/config", uiConfigHandler(uiConfig))
+
+		// The console's own routes. Registered here rather than beside the probes above because the
+		// security headers need uiConfig: under an in-browser OIDC login the policy has to permit
+		// connections to the identity provider, which is not known until the block above has run.
+		console := map[string]http.Handler{
+			"/ui":            webUIHandler(),
+			"/ui/app.js":     webUIAssetHandler("app.js", "text/javascript; charset=utf-8"),
+			"/ui/lib.js":     webUIAssetHandler("lib.js", "text/javascript; charset=utf-8"),
+			"/ui/styles.css": webUIAssetHandler("styles.css", "text/css; charset=utf-8"),
+		}
+
+		for path, handler := range console {
+			httpMux.Handle(path, webUISecurityHeaders(uiConfig, handler))
+		}
 
 		// When the server-side login is enabled, register its handlers; middlewareOpenPaths marks them
 		// open alongside the probes and the console (they run before, or in place of, holding a

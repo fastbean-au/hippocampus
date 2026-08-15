@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 // UIConfig is the front-channel configuration the embedded console needs to start an OIDC login. It
@@ -65,6 +67,63 @@ var webUIAssets embed.FS
 // auth allow-list is exact-match and closed by default (a prefix would silently open whatever landed
 // in the directory), a prefix under /ui/ would shadow /ui/config, and three files are not a tree.
 var webUIAssetPaths = []string{"/ui", "/ui/app.js", "/ui/lib.js", "/ui/styles.css"}
+
+// webUISecurityHeaders wraps a console route with the response headers a deployment reachable from
+// a browser wants. The Content-Security-Policy is the point of it.
+//
+// This became possible only once the console carried no inline script or style: `script-src 'self'`
+// without `unsafe-inline` blocks an onclick= attribute and a style= attribute outright, and blocks
+// them SILENTLY - a CSP violation is a console warning, not an exception - so a page with either
+// would half-work in a way no test would notice. That is why the drift guard in webuitest asserts
+// neither exists, and why this and that assertion have to move together.
+//
+// It deliberately differs from the config-wizard's otherwise-identical policy
+// (cmd/config-wizard/main.go, securityHeaders) in one respect: connect-src. The wizard talks to
+// nothing and denies every connection; this page IS the client of /v1, so it must permit 'self' -
+// and, under an in-browser OIDC login, the identity provider it runs discovery and the token
+// exchange against.
+//
+// Keep it in step with the markup. Adding an external font, a CDN script, or a fetch to a new origin
+// needs a matching relaxation here or the browser will quietly refuse it.
+func webUISecurityHeaders(cfg UIConfig, next http.Handler) http.Handler {
+	// The browser-side PKCE flow fetches the issuer's discovery document and posts to its token
+	// endpoint, both cross-origin. The server-hosted flow (loginMode "server") does neither - the
+	// service performs the exchange and the browser only follows a same-origin redirect - so the
+	// issuer is added for the browser flow alone rather than whenever an IdP is configured.
+	//
+	// The origin is derived from the issuer. A provider serving its token endpoint from a different
+	// host than its issuer would need that host added too; none of the providers this has been run
+	// against does.
+	connect := "'self'"
+
+	if cfg.AuthMethod == "idp" && cfg.LoginMode == "browser" && cfg.Issuer != "" {
+		if u, err := url.Parse(cfg.Issuer); err == nil && u.Scheme != "" && u.Host != "" {
+			connect += " " + u.Scheme + "://" + u.Host
+		}
+	}
+
+	policy := strings.Join([]string{
+		"default-src 'none'",
+		"script-src 'self'",
+		"style-src 'self'",
+		// The favicon is an inline SVG data URI, which img-src governs.
+		"img-src 'self' data:",
+		"connect-src " + connect,
+		// The sign-in form's submit is preventDefault-ed and the server-login path is a navigation,
+		// which form-action does not cover - so nothing on this page ever posts a form.
+		"form-action 'none'",
+		"base-uri 'none'",
+		"frame-ancestors 'none'",
+	}, "; ")
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", policy)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 // middlewareOpenPaths builds the exact-match allow-lists for the two HTTP middlewares: the paths
 // auth.HTTPMiddleware serves without a token, and the paths

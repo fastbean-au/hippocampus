@@ -401,6 +401,18 @@ function applyScope() {
 // api issues a JSON request to the gateway (same origin). Returns parsed body,
 // throws Error(message) on a non-2xx response so callers can surface it. The internal _retried flag
 // guards the single silent-refresh replay used in server-login mode.
+// inFlight counts requests currently in flight, driving the thin progress bar at the top of the
+// page. It exists for the requests no button started - the Now tab's polls, decorateValues - which
+// busy() cannot cover because there is no control to disable. Together they mean the page always
+// says when it is waiting on the service, which on a slow deployment is the difference between
+// "loading" and "broken".
+let inFlight = 0;
+
+function markInFlight(delta) {
+  inFlight = Math.max(0, inFlight + delta);
+  document.body.classList.toggle("busy", inFlight > 0);
+}
+
 async function api(method, path, body, _retried) {
   const headers = { "Content-Type": "application/json" };
   const tok = getToken();
@@ -415,7 +427,17 @@ async function api(method, path, body, _retried) {
     opts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(path, opts);
+  markInFlight(1);
+
+  let res;
+
+  try {
+    res = await fetch(path, opts);
+  } finally {
+    // Decremented as soon as the response headers are in, not after the body is parsed: the bar is
+    // about waiting on the network, and a retry below re-enters api() and counts itself.
+    markInFlight(-1);
+  }
 
   // In server-login mode the access token lives in a cookie that may have just expired; try one
   // silent refresh through /auth/refresh and replay the request before surfacing the 401.
@@ -670,9 +692,17 @@ const ACTIONS = {
   "recall-memory": (el) => recallMemory(el.dataset.id),
   "delete-memory": (el) => deleteMemory(el.dataset.id),
   "plot-memory": (el) => plotMemory(el.dataset.id),
-  "memory-links": (el) => openLinks(el.dataset.id),
-  "follow-link": (el) => openLinks(el.dataset.id),
-  "unlink-memory": (el) => unlinkMemory(el.dataset.id, el.dataset.target),
+  "memory-links": (el) => openLinks("memory", el.dataset.id),
+  "event-links": (el) => openLinks("event", el.dataset.id),
+  // Following a link stays one action rather than branching in the markup: the destination differs
+  // by kind, and the handler already knows which is open. For a memory, its own links are the useful
+  // next step; for an event, opening the EVENT is - its memories are what you came for, and its
+  // links are one click further.
+  "follow-link": (el) =>
+    linksSubject.kind === "event"
+      ? openEvent(el.dataset.id)
+      : openLinks("memory", el.dataset.id),
+  unlink: (el) => unlink(el.dataset.id, el.dataset.target),
 
   "edit-event": (el) => {
     const e = evRegistry.get(el.dataset.id);
@@ -685,6 +715,7 @@ const ACTIONS = {
 
   // --- Search tab
   "do-search": () => doSearch(),
+  "search-more": () => searchMore(),
   "close-event": () => closeEvent(),
   "open-summary-form": () => openSummaryForm(),
   "close-summary-form": () => closeSummaryForm(),
@@ -718,7 +749,9 @@ const ACTIONS = {
   // --- Decay tab
   "load-decay": () => loadDecay(),
   "run-preview": () => runPreview(),
-  "load-forgotten": () => loadForgotten(),
+  "load-forgotten": () => loadForgottenFirstPage(),
+  "forgotten-prev": () => forgottenPage(-1),
+  "forgotten-next": () => forgottenPage(1),
   "clear-forgotten": () => clearForgotten(),
 };
 
@@ -729,6 +762,27 @@ const ACTIONS = {
 // They must not share an attribute. A <select> emits a click when its dropdown is merely opened, so
 // a single data-act read by both listeners would re-run the query every time the user looked at the
 // control - a wasted round trip per glance, and on the Events tab a visibly flickering table.
+// busy disables a control for the life of the work it started, and restores it in a finally so a
+// failure cannot leave it dead. Wired once here rather than at each call site: every click already
+// funnels through this dispatcher, so one wrapper covers all forty-odd controls, where the
+// alternative was forty ad-hoc disables and thirty-nine chances to forget one.
+//
+// A control that is not a button (a link, a table cell) has no disabled property; setting it is
+// harmless and the aria-busy attribute is what carries the state for those.
+async function busy(el, work) {
+  if (el.disabled) return;
+
+  el.disabled = true;
+  el.setAttribute("aria-busy", "true");
+
+  try {
+    await work;
+  } finally {
+    el.disabled = false;
+    el.removeAttribute("aria-busy");
+  }
+}
+
 function dispatcher(attribute) {
   return (ev) => {
     const el = ev.target.closest(`[${attribute}]`);
@@ -737,7 +791,15 @@ function dispatcher(attribute) {
 
     const handler = ACTIONS[el.getAttribute(attribute)];
 
-    if (handler) handler(el, ev);
+    if (!handler) return;
+
+    const result = handler(el, ev);
+
+    // Only an async handler has anything to wait for. A synchronous one (a tab switch, a form
+    // reset) returns undefined and must not be disabled, or the control would flicker for nothing.
+    if (result && typeof result.then === "function") {
+      busy(el, result);
+    }
   };
 }
 
@@ -1450,13 +1512,64 @@ async function doSearch() {
     // could coexist, but leaving a stale event above the results is what made the old shared
     // panel confusing in the first place.
     closeEvent();
-    renderMemories("search-results", data.memories || [], {
-      reinforced: body.reinforce,
-    });
-    ok("Search", (data.memories || []).length + " result(s)");
+
+    const results = data.memories || [];
+
+    renderMemories("search-results", results, { reinforced: body.reinforce });
+
+    // "Show more" re-runs the SAME query with a larger limit; it is deliberately not a next page.
+    // Two reasons, and the second is the load-bearing one:
+    //
+    //   SearchMemories over-fetches and then truncates (rankingOverFetch), blending relevance with
+    //   the store's own significance and recall count. A second, independently ranked query can
+    //   return a different candidate set, so a "page 2" could repeat items or drop them.
+    //
+    //   And a REINFORCING search recalls exactly the page it returns. Paging would therefore
+    //   reinforce a second set of memories - resetting their decay clocks - as a side effect of
+    //   navigating a list. In a store whose whole premise is that recall is what keeps something
+    //   alive, that is not a UX wrinkle; it is the console quietly changing what survives.
+    //
+    // Re-running with a larger limit keeps it one query, one ranking, one reinforcement set.
+    searchShownLimit = results.length;
+    renderSearchMore(results.length, Number(body.limit || 0));
+
+    ok("Search", results.length + " result(s)");
   } catch (e) {
     fail("Search failed", e);
   }
+}
+
+// searchShownLimit is how many results the last search actually returned, so "Show more" knows
+// whether there was a ceiling worth raising.
+let searchShownLimit = 0;
+
+const SEARCH_MORE_STEP = 25;
+
+function renderSearchMore(returned, limit) {
+  const container = $("search-more");
+
+  // Fewer results than the limit means the query is exhausted - there is no more to show, and
+  // offering the button would return the same list again.
+  if (!limit || returned < limit) {
+    container.innerHTML = "";
+
+    return;
+  }
+
+  container.innerHTML = `<button class="btn ghost small" data-act="search-more"
+     title="Re-runs the same query with a larger limit. Search results are ranked as one set, and a
+reinforcing search recalls exactly what it returns, so paging would both re-rank and reinforce a
+second set of memories.">Show more</button>`;
+}
+
+// searchMore raises the limit and re-runs. It writes the new limit into the form rather than
+// keeping it beside it, so what the page shows and what the next search asks for cannot disagree.
+function searchMore() {
+  const current = intOrUndef("s-limit") || searchShownLimit || SEARCH_MORE_STEP;
+
+  $("s-limit").value = current + SEARCH_MORE_STEP;
+
+  return doSearch();
 }
 
 function memoryRow(m) {
@@ -1667,8 +1780,11 @@ function clearMemoryFilter() {
 // undefined when empty, so an omitted field means "leave unchanged" on a PATCH rather than
 // sending an empty map (which the server could not tell apart from an absent one anyway -
 // clearing is what clear_metadata is for).
-function metadataFromForm() {
-  const pairs = parseMetadataPairs($("mem-metadata").value, "\n");
+// metadataFromForm reads a metadata textarea into the object the wire wants. Parameterised by
+// element id rather than hard-coded to the memory form, so the event form uses the same parser
+// rather than a second copy of the first-"=" rule that would drift from it.
+function metadataFromForm(id) {
+  const pairs = parseMetadataPairs($(id).value, "\n");
 
   if (!pairs.length) return undefined;
 
@@ -1685,7 +1801,7 @@ function metadataFromForm() {
 
 async function saveMemory() {
   const id = $("mem-id").value;
-  const metadata = metadataFromForm();
+  const metadata = metadataFromForm("mem-metadata");
   const body = {
     body: $("mem-body").value,
     significance: intOrUndef("mem-sig"),
@@ -1768,33 +1884,49 @@ async function recallMemory(id) {
 // direction, and the summed significance the decay maths damps - the page computes none of it, for
 // the same reason the Decay tab does not compute its own curve.
 
-// linksSubject is the memory whose links the card is currently showing, so an add or a removal
-// knows what it is editing without re-reading the DOM.
-let linksSubject = "";
+// linksSubject is what the card is currently showing: {kind, id}, where kind is "memory" or
+// "event". One card serves both because they are one mechanism - item 65 folded event relationships
+// onto memory links, unifying the vocabulary on Link, and the two RPC surfaces are identical in
+// shape (GET/POST /v1/{memories,events}/{id}/links, both returning GetLinksResponse). Cloning the
+// card would have been two things to explain forever, and two places for the next fix to miss.
+let linksSubject = { kind: "memory", id: "" };
 
-async function openLinks(id) {
-  linksSubject = id;
+// linksPath builds the collection path for whichever kind is open. The suffix is "" for the
+// listing, "/delete" to unlink.
+function linksPath(subject, suffix) {
+  const collection = subject.kind === "event" ? "/v1/events/" : "/v1/memories/";
+
+  return (
+    collection + encodeURIComponent(subject.id) + "/links" + (suffix || "")
+  );
+}
+
+async function openLinks(kind, id) {
+  linksSubject = { kind, id };
 
   // innerHTML rather than textContent because the id is rendered through idCell (which escapes
   // it) so the heading carries the same truncation and copy button as the tables.
   $("links-subject").innerHTML = idCell(id);
+  $("links-kind").textContent = kind === "event" ? "Event" : "Memory";
   $("links-card").classList.remove("hidden");
   $("links-list").innerHTML = '<div class="empty">Loading…</div>';
+  $("link-target").placeholder =
+    kind === "event" ? "event id to link to" : "memory id to link to";
 
-  document.querySelector('nav button[data-tab="memories"]').click();
+  // Show the card on the tab the subject belongs to, so the row it was opened from is still on
+  // screen behind it.
+  document
+    .querySelector(
+      `nav button[data-tab="${kind === "event" ? "events" : "memories"}"]`,
+    )
+    .click();
 
-  // The card sits below the memories list, where it belongs - links are opened from a row in
-  // that list. Below a full page of rows it is also off the bottom of the screen, and reached
-  // from an event on the Search tab there is nothing to say it opened at all.
+  // The card sits below the list it is opened from. Below a full page of rows it is also off the
+  // bottom of the screen, and reached from another tab there is nothing to say it opened at all.
   revealCard("links-card");
 
   try {
-    const data = await api(
-      "GET",
-      "/v1/memories/" + encodeURIComponent(id) + "/links",
-    );
-
-    renderLinks(data);
+    renderLinks(await api("GET", linksPath(linksSubject)));
   } catch (e) {
     $("links-list").innerHTML =
       '<div class="empty">Could not load links.</div>';
@@ -1804,16 +1936,19 @@ async function openLinks(id) {
 }
 
 function closeLinks() {
-  linksSubject = "";
+  linksSubject = { kind: "memory", id: "" };
   $("links-card").classList.add("hidden");
 }
 
 function renderLinks(data) {
   const links = data.links || [];
 
+  const isEvent = linksSubject.kind === "event";
+
   if (!links.length) {
     $("links-list").innerHTML =
-      '<div class="empty">No links. This memory decays on its own significance and recall history alone.</div>';
+      `<div class="empty">No links. This ${isEvent ? "event" : "memory"}
+      decays on its own significance and recall history alone.</div>`;
 
     return;
   }
@@ -1825,15 +1960,16 @@ function renderLinks(data) {
       (l) => `<tr>
         <td class="id">${idCell(
           l.id,
-          `<a class="evlink idv" data-act="follow-link" data-id="${esc(l.id)}" title="${esc(l.id)}">${esc(shortId(l.id))}</a>`,
+          `<a class="evlink idv" data-act="follow-link" data-id="${esc(l.id)}"
+             title="${esc(l.id)}">${esc(shortId(l.id))}</a>`,
         )}</td>
         <td>${esc(String(l.significance ?? 0))}</td>
         <td>${esc(l.direction === "LINK_DIRECTION_OUTBOUND" ? "→ outbound" : "← inbound")}</td>
         <td>${ageCell(l.created)}</td>
         <td class="actions-col">
           <div class="actions">
-            <button class="btn small danger writer-only" data-act="unlink-memory"
-              data-id="${esc(linksSubject)}" data-target="${esc(l.id)}">Unlink</button>
+            <button class="btn small danger writer-only" data-act="unlink"
+              data-id="${esc(linksSubject.id)}" data-target="${esc(l.id)}">Unlink</button>
           </div>
         </td>
       </tr>`,
@@ -1843,17 +1979,17 @@ function renderLinks(data) {
   $("links-list").innerHTML =
     `<div class="muted gap-bottom">Total link significance
     ${esc(String(data.linkSignificance ?? 0))} — damped before it counts toward the decay maths.</div>
-    <div class="tablewrap"><table><thead><tr><th>Memory</th><th>Significance</th><th>Direction</th><th>Created</th><th class="actions-col"></th></tr></thead>
+    <div class="tablewrap"><table><thead><tr><th>${isEvent ? "Event" : "Memory"}</th><th>Significance</th><th>Direction</th><th>Created</th><th class="actions-col"></th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 
 async function addLink() {
-  if (!linksSubject) return;
+  if (!linksSubject.id) return;
 
   const target = $("link-target").value.trim();
 
   if (!target) {
-    fail("Link failed", "a target memory id is required");
+    fail("Link failed", `a target ${linksSubject.kind} id is required`);
 
     return;
   }
@@ -1861,37 +1997,34 @@ async function addLink() {
   const significance = Number($("link-sig").value || 0);
 
   try {
-    await api(
-      "POST",
-      "/v1/memories/" + encodeURIComponent(linksSubject) + "/links",
-      {
-        links: [{ id: target, significance }],
-      },
-    );
+    await api("POST", linksPath(linksSubject), {
+      links: [{ id: target, significance }],
+    });
 
-    ok("Linked", linksSubject + " → " + target);
+    ok("Linked", linksSubject.id + " → " + target);
 
     $("link-target").value = "";
     $("link-sig").value = "";
 
-    openLinks(linksSubject);
+    openLinks(linksSubject.kind, linksSubject.id);
   } catch (e) {
     fail("Link failed", e);
   }
 }
 
-async function unlinkMemory(id, target) {
+// unlink removes one edge from whichever subject the card is showing. It takes the ids rather than
+// reading linksSubject so the button carries its own target, which is what keeps a row's action
+// correct if the card is re-rendered underneath it.
+async function unlink(id, target) {
   if (!confirm("Remove the link between " + id + " and " + target + "?"))
     return;
 
   try {
-    await api(
-      "POST",
-      "/v1/memories/" + encodeURIComponent(id) + "/links/delete",
-      { ids: [target] },
-    );
+    await api("POST", linksPath({ kind: linksSubject.kind, id }, "/delete"), {
+      ids: [target],
+    });
     ok("Unlinked", id + " ✕ " + target);
-    openLinks(id);
+    openLinks(linksSubject.kind, id);
   } catch (e) {
     fail("Unlink failed", e);
   }
@@ -2767,7 +2900,17 @@ function renderPreview(data) {
 // The dry run above says what would go; this says what did. It is the only view in the console
 // that can speak about a memory that no longer exists, which is also why it is the only one whose
 // rows cannot be clicked through to the record they name.
-async function loadForgotten() {
+// The forgotten log pages by KEYSET, not offset: GetForgottenMemories takes after_seq ("records
+// below this seq") and returns next_seq, 0 on the last page. That is the right shape for a log
+// being appended to while you read it - an offset would shift under you every time a cycle ran.
+//
+// Keyset paging has no cheap "previous", so forgottenCursors is a stack of the cursors we came
+// from: Next pushes, Prev pops. Being explicit about that is the honest way to offer a back button
+// without silently falling back to offsets.
+let forgottenCursors = [];
+let forgottenNext = 0;
+
+async function loadForgotten(cursor) {
   const params = new URLSearchParams();
   const set = (key, value) => {
     if (value !== undefined && value !== "") params.set(key, value);
@@ -2777,12 +2920,15 @@ async function loadForgotten() {
   set("group", $("f-group").value.trim());
   set("rule", $("f-rule").value);
   set("limit", intOrUndef("f-limit"));
+  set("afterSeq", cursor || undefined);
 
   try {
     const data = await api(
       "GET",
       "/v1/memories/forgotten?" + params.toString(),
     );
+
+    forgottenNext = Number(data.nextSeq || 0);
 
     renderForgotten(data);
   } catch (e) {
@@ -2791,6 +2937,32 @@ async function loadForgotten() {
 
     fail("Forgotten log", e);
   }
+}
+
+// A new filter run starts a new sequence, so the stack it would page back through no longer applies.
+function loadForgottenFirstPage() {
+  forgottenCursors = [];
+
+  return loadForgotten(0);
+}
+
+function forgottenPage(direction) {
+  if (direction > 0) {
+    if (!forgottenNext) return;
+
+    // Push the cursor that produced the page we are leaving, so Prev can return to it.
+    forgottenCursors.push(forgottenNext);
+
+    return loadForgotten(forgottenNext);
+  }
+
+  if (!forgottenCursors.length) return;
+
+  // The top of the stack is the cursor that produced the CURRENT page; discard it, and the one
+  // beneath produced the page before.
+  forgottenCursors.pop();
+
+  return loadForgotten(forgottenCursors[forgottenCursors.length - 1] || 0);
 }
 
 function renderForgotten(data) {
@@ -2826,14 +2998,23 @@ function renderForgotten(data) {
     )
     .join("");
 
+  const page = forgottenCursors.length + 1;
+
   $("forgotten-results").innerHTML =
     disabled +
     `<p class="muted gap-top">Showing ${esc(records.length.toLocaleString())} of
-     ${esc(Number(data.total || 0).toLocaleString())} record(s), most recent first.</p>
+     ${esc(Number(data.total || 0).toLocaleString())} record(s), most recent first — page
+     ${esc(page)}.</p>
    <div class="tablewrap"><table>
      <thead><tr><th>Id</th><th>Forgotten</th><th>Value</th><th>Threshold</th><th>Sig</th><th>Event</th><th>Group</th><th>Why</th></tr></thead>
      <tbody>${rows}</tbody>
-   </table></div>`;
+   </table></div>
+   <div class="actions gap-top">
+     <button class="btn ghost small" data-act="forgotten-prev"
+       ${forgottenCursors.length ? "" : "disabled"}>Prev</button>
+     <button class="btn ghost small" data-act="forgotten-next"
+       ${Number(data.nextSeq || 0) ? "" : "disabled"}>Next</button>
+   </div>`;
 }
 
 // clearForgotten empties the log. It is the one action here that destroys a record of something
@@ -2853,7 +3034,7 @@ async function clearForgotten() {
     });
 
     ok("Forgotten log cleared", `${data.deleted || 0} record(s) deleted`);
-    loadForgotten();
+    loadForgottenFirstPage();
   } catch (e) {
     fail("Clearing the forgotten log failed", e);
   }
@@ -2879,7 +3060,7 @@ function eventRow(e) {
   return `<tr${description ? ' class="has-body"' : ""}>
     <td>${nameCell}</td>
     <td>${esc(e.significance ?? "")}</td>
-    <td>${esc(e.group || "—")}</td>
+    <td>${groupCell(e)}</td>
     <td>${ageCell(e.timeStart)}</td>
     <td>${e.timeEnd && e.timeEnd !== "0" ? ageCell(e.timeEnd) : '<span class="pill">open</span>'}</td>
     <td>${memCount || "—"}</td>
@@ -2887,6 +3068,7 @@ function eventRow(e) {
     <td class="actions-col">
       <div class="actions">
         <button class="btn small ghost writer-only" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
+        <button class="btn small ghost" data-act="event-links" data-id="${esc(e.id)}">Links</button>
         <button class="btn small ghost writer-only" data-act="end-event" data-id="${esc(e.id)}">End</button>
         <button class="btn small danger writer-only" data-act="delete-event" data-id="${esc(e.id)}">Delete</button>
       </div>
@@ -3038,6 +3220,12 @@ async function fetchEvents() {
   const group = strOrUndef("ef-group");
   if (group) params.set("group", group);
 
+  // One parameter per pair (append, not set), exactly as the memories filter does: the filter is a
+  // conjunction and the gateway parses a repeated field as repeated parameters.
+  parseMetadataPairs($("ef-metadata").value, ",").forEach((pair) =>
+    params.append("metadata", pair),
+  );
+
   if ($("ef-memories").checked) params.set("memories", "true");
 
   // Always asked for: how much an event holds is what a listing is for, and the count is one
@@ -3077,7 +3265,9 @@ function updateEventsPager(count, total) {
 }
 
 function clearEventFilter() {
-  ["ef-sigmin", "ef-sigmax", "ef-group"].forEach((id) => ($(id).value = ""));
+  ["ef-sigmin", "ef-sigmax", "ef-group", "ef-metadata"].forEach(
+    (id) => ($(id).value = ""),
+  );
   $("ef-extremum").value = "";
   $("ef-memories").checked = false;
   $("ef-sort").value = "significance";
@@ -3125,6 +3315,7 @@ async function saveEvent() {
     description: $("ev-desc").value,
     significance: intOrUndef("ev-sig"),
     group: strOrUndef("ev-group"),
+    metadata: metadataFromForm("ev-metadata"),
     time_start: localToNano($("ev-start").value),
     time_end: localToNano($("ev-end").value),
   };
@@ -3158,6 +3349,7 @@ function editEvent(e) {
   $("ev-desc").value = e.description || "";
   $("ev-sig").value = e.significance ?? "";
   $("ev-group").value = e.group || "";
+  $("ev-metadata").value = metadataToForm(e.metadata);
   $("ev-start").value = nanoToLocal(e.timeStart);
   $("ev-end").value = nanoToLocal(e.timeEnd);
   $("ev-form-title").textContent = "Edit event";
@@ -3176,6 +3368,7 @@ function resetEventForm() {
     "ev-desc",
     "ev-sig",
     "ev-group",
+    "ev-metadata",
     "ev-start",
     "ev-end",
   ].forEach((id) => ($(id).value = ""));

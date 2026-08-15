@@ -15,6 +15,10 @@
      the class once it knows either that this deployment does not authenticate or that the session
      it holds is good. Starting ungated would mean every such load flashed a console first. -->
   <body class="gated">
+    <!-- The in-flight indicator. Outside <main> and fixed to the viewport, so it is visible however
+     far the reader has scrolled; body.busy is toggled by api()'s request counter. -->
+    <div id="progress" aria-hidden="true"></div>
+
     <header>
       <h1><span>&#129504;</span> Hippocampus Console</h1>
       <div class="token-box">
@@ -282,6 +286,10 @@
           <div id="search-results">
             <div class="empty">No search run yet.</div>
           </div>
+          <!-- "Show more" rather than a pager: results are ranked as one set, and a reinforcing
+           search recalls exactly what it returns, so paging would re-rank AND reinforce a second
+           set of memories as a side effect of navigating. See doSearch. -->
+          <div id="search-more" class="actions gap-top"></div>
         </div>
       </section>
 
@@ -464,27 +472,26 @@
 
         <div class="card hidden" id="links-card" data-enter="memory-link">
           <div class="events-head">
-            <h2>Links</h2>
+            <h2><span id="links-kind">Memory</span> links</h2>
             <button class="btn ghost small" data-act="close-links">
               Close
             </button>
           </div>
+          <!-- One card serves memories and events: item 65 folded event relationships onto memory
+           links, so they are one mechanism with one vocabulary, and the two RPC surfaces are
+           identical in shape. openLinks(kind, id) sets which is open. -->
           <p class="muted pull-up">
             What <span id="links-subject" class="id"></span> is associated with.
             A link raises the effective significance of <em>both</em> ends, with
-            diminishing returns, so a well-connected memory decays more slowly.
-            Follow a link to see that memory's own associations.
+            diminishing returns, so a well-connected record decays more slowly.
           </p>
           <div id="links-list">
             <div class="empty">No links loaded yet.</div>
           </div>
           <div class="row writer-only gap-top">
             <div class="field wide">
-              <label for="link-target">Link to memory id</label>
-              <input
-                id="link-target"
-                placeholder="the memory to associate this one with"
-              />
+              <label for="link-target">Link to id</label>
+              <input id="link-target" placeholder="memory id to link to" />
             </div>
             <div class="field">
               <label for="link-sig">Significance</label>
@@ -535,6 +542,18 @@
               <input id="ev-end" type="datetime-local" />
             </div>
           </div>
+          <!-- Metadata is full width for the same reason the memory form's is: it is the one field
+           whose useful length is unbounded. -->
+          <div class="row">
+            <div class="field wide">
+              <label for="ev-metadata">Metadata (optional)</label>
+              <textarea
+                id="ev-metadata"
+                rows="3"
+                placeholder="one key=value per line, e.g.&#10;region=apac&#10;severity=high"
+              ></textarea>
+            </div>
+          </div>
           <div class="actions">
             <button id="ev-save" class="btn" data-act="save-event">
               Create
@@ -571,6 +590,17 @@
             <div class="field">
               <label for="ef-group">Group</label>
               <input id="ef-group" placeholder="exact group label" />
+            </div>
+          </div>
+          <!-- GetEventsRequest.metadata has always existed server-side; the console simply never
+           offered it. Full width, like the memories filter's, for the same reason. -->
+          <div class="row">
+            <div class="field wide">
+              <label for="ef-metadata">Metadata</label>
+              <input
+                id="ef-metadata"
+                placeholder="key=value, comma separated (all must match)"
+              />
             </div>
           </div>
           <div class="row">

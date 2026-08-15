@@ -244,6 +244,10 @@ jobs:
           curl -sf http://localhost:8080/ui | grep -q '<body class="gated">'
           curl -sf http://localhost:8080/ui/app.js | grep -q "refreshCaps"
           curl -sf http://localhost:8080/ui/styles.css > /dev/null
+          # The console is served under a CSP with no unsafe-inline, which is what the split into
+          # separate files bought. A violation is silent in a browser, so assert the header is
+          # actually sent rather than trusting the unit test that builds it.
+          curl -sfI http://localhost:8080/ui | grep -i 'content-security-policy' | grep -qv 'unsafe-inline'
           docker compose down
 
       - name: Postgres stack smoke test
