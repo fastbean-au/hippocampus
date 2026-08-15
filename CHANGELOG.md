@@ -33,6 +33,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-08-16
+
 ### Fixed
 
 - **Opening an event no longer throws you onto the Search tab.** The event drill-down — an event's
@@ -1014,7 +1016,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.33.1...HEAD
+[0.33.1]: https://github.com/fastbean-au/hippocampus/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/fastbean-au/hippocampus/compare/v0.23.0...v0.33.0
 [0.23.0]: https://github.com/fastbean-au/hippocampus/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/fastbean-au/hippocampus/compare/v0.21.0...v0.22.0
