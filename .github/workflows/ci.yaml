@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege for the whole workflow, set here rather than per job because every job in it only
+# ever reads the repository: nothing pushes a commit, publishes an image, or comments on a PR. The
+# default GITHUB_TOKEN is otherwise write-capable on a push to the default branch, so a compromised
+# third-party action or dependency in any of these nine jobs would inherit that. Coveralls and the
+# Homebrew tap authenticate with their own secrets, not this token, so neither needs more.
+permissions:
+  contents: read
+
 jobs:
   # Build, vet, format check, and the full test suite. The postgres and mysql service containers
   # make the db/postgres_test.go and db/mysql_test.go integration tests run rather than skip -

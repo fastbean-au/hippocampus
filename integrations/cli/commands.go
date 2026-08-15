@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1456,8 +1457,15 @@ func parseLinks(raw []string) ([]*contract.Link, error) {
 			return nil, fmt.Errorf("invalid --link %q (want 'id:significance')", entry)
 		}
 
-		sig, err := strconv.Atoi(sigText)
+		// Parsed at the contract's own width rather than as an int and narrowed: on a 64-bit
+		// platform int32(strconv.Atoi(...)) truncates silently, and 4294967296 would arrive at the
+		// server as a perfectly valid link significance of 0.
+		sig, err := strconv.ParseInt(sigText, 10, 32)
 		if err != nil {
+			if errors.Is(err, strconv.ErrRange) {
+				return nil, fmt.Errorf("invalid --link %q: significance %q is out of range (must fit in a 32-bit integer)", entry, sigText)
+			}
+
 			return nil, fmt.Errorf("invalid --link %q: significance %q is not an integer", entry, sigText)
 		}
 

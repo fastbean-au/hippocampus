@@ -244,6 +244,9 @@ jobs:
     needs: binaries
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read # download this release's checksums.txt; the tap is written with its own PAT
+
     steps:
       - name: Check for tap token
         id: gate

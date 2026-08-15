@@ -207,6 +207,18 @@ func TestEventCreateBadLink(t *testing.T) {
 	}
 }
 
+// TestEventCreateLinkSignificanceOutOfRange pins that a significance too large for the contract's
+// int32 is refused rather than silently truncated - 4294967296 wraps to 0, which the server would
+// accept as a valid weight, so the caller would get a link doing nothing to the decay maths.
+func TestEventCreateLinkSignificanceOutOfRange(t *testing.T) {
+	for _, sig := range []string{"4294967296", "2147483648", "-2147483649"} {
+		_, _, err := runCommand(t, "event create", []string{"--name", "x", "--link", "e2:" + sig}, &fakeClient{})
+		if err == nil || !strings.Contains(err.Error(), "invalid --link") {
+			t.Fatalf("significance %s: err = %v", sig, err)
+		}
+	}
+}
+
 func TestEventCreateBadTime(t *testing.T) {
 	_, _, err := runCommand(t, "event create", []string{"--name", "x", "--time-start", "yesterday"}, &fakeClient{})
 	if err == nil || !strings.Contains(err.Error(), "want RFC3339") {
