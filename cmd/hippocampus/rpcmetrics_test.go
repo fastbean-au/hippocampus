@@ -253,6 +253,8 @@ func TestIsRPCPath(t *testing.T) {
 		"/healthz":          false,
 		"/readyz":           false,
 		"/ui":               false,
+		"/ui/app.js":        false,
+		"/ui/styles.css":    false,
 		"/ui/config":        false,
 		"/auth/login":       false,
 		"/":                 false,

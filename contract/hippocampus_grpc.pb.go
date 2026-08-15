@@ -23,6 +23,7 @@ const (
 	Hippocampus_Sleep_FullMethodName                      = "/hippocampus.v1.Hippocampus/Sleep"
 	Hippocampus_PreviewConsolidation_FullMethodName       = "/hippocampus.v1.Hippocampus/PreviewConsolidation"
 	Hippocampus_ExplainConsolidation_FullMethodName       = "/hippocampus.v1.Hippocampus/ExplainConsolidation"
+	Hippocampus_GetConsolidationStatus_FullMethodName     = "/hippocampus.v1.Hippocampus/GetConsolidationStatus"
 	Hippocampus_GetForgottenMemories_FullMethodName       = "/hippocampus.v1.Hippocampus/GetForgottenMemories"
 	Hippocampus_DeleteForgottenMemories_FullMethodName    = "/hippocampus.v1.Hippocampus/DeleteForgottenMemories"
 	Hippocampus_WhoAmI_FullMethodName                     = "/hippocampus.v1.Hippocampus/WhoAmI"
@@ -92,6 +93,23 @@ type HippocampusClient interface {
 	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
 	// whose configuration is not the one its store is consolidated under.
 	ExplainConsolidation(ctx context.Context, in *ExplainConsolidationRequest, opts ...grpc.CallOption) (*ExplainConsolidationResponse, error)
+	// GetConsolidationStatus reports what this instance's sleep cycle is doing: when the next timed
+	// cycle is due, whether one is running, and what the last one actually did.
+	//
+	// It completes the forgetting story the other three RPCs tell. PreviewConsolidation says what
+	// would go, ExplainConsolidation where a given memory stands, GetForgottenMemories what went -
+	// and none of the three says WHEN. Without that, a store that forgets on a schedule is
+	// indistinguishable from a store that is doing nothing, which is exactly how the console read
+	// before this existed.
+	//
+	// Reader tier: it names no stored record and enumerates nothing. The aggregates it reports are
+	// the same store-global figures ExplainConsolidation already serves a reader, and for the same
+	// reason - they are what decides that caller's own memories' fate.
+	//
+	// Unlike Sleep, PreviewConsolidation and ExplainConsolidation, it does NOT fail on a read/write
+	// replica: it answers with consolidation_enabled false and everything else zero. Refusing would
+	// be self-defeating, since telling a client it is talking to a replica is the RPC's whole job.
+	GetConsolidationStatus(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetConsolidationStatusResponse, error)
 	// GetForgottenMemories reads the forgotten log: one record per memory the sleep cycle actually
 	// deleted, with the decision that took it. Where PreviewConsolidation answers "what would go"
 	// and ExplainConsolidation "where does this memory stand", this answers "what went, and why" -
@@ -263,6 +281,16 @@ func (c *hippocampusClient) ExplainConsolidation(ctx context.Context, in *Explai
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExplainConsolidationResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_ExplainConsolidation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) GetConsolidationStatus(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetConsolidationStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetConsolidationStatusResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetConsolidationStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -606,6 +634,23 @@ type HippocampusServer interface {
 	// Rejected with FailedPrecondition on a read/write replica (consolidation.enabled: false),
 	// whose configuration is not the one its store is consolidated under.
 	ExplainConsolidation(context.Context, *ExplainConsolidationRequest) (*ExplainConsolidationResponse, error)
+	// GetConsolidationStatus reports what this instance's sleep cycle is doing: when the next timed
+	// cycle is due, whether one is running, and what the last one actually did.
+	//
+	// It completes the forgetting story the other three RPCs tell. PreviewConsolidation says what
+	// would go, ExplainConsolidation where a given memory stands, GetForgottenMemories what went -
+	// and none of the three says WHEN. Without that, a store that forgets on a schedule is
+	// indistinguishable from a store that is doing nothing, which is exactly how the console read
+	// before this existed.
+	//
+	// Reader tier: it names no stored record and enumerates nothing. The aggregates it reports are
+	// the same store-global figures ExplainConsolidation already serves a reader, and for the same
+	// reason - they are what decides that caller's own memories' fate.
+	//
+	// Unlike Sleep, PreviewConsolidation and ExplainConsolidation, it does NOT fail on a read/write
+	// replica: it answers with consolidation_enabled false and everything else zero. Refusing would
+	// be self-defeating, since telling a client it is talking to a replica is the RPC's whole job.
+	GetConsolidationStatus(context.Context, *EmptyRequest) (*GetConsolidationStatusResponse, error)
 	// GetForgottenMemories reads the forgotten log: one record per memory the sleep cycle actually
 	// deleted, with the decision that took it. Where PreviewConsolidation answers "what would go"
 	// and ExplainConsolidation "where does this memory stand", this answers "what went, and why" -
@@ -754,6 +799,9 @@ func (UnimplementedHippocampusServer) PreviewConsolidation(context.Context, *Pre
 }
 func (UnimplementedHippocampusServer) ExplainConsolidation(context.Context, *ExplainConsolidationRequest) (*ExplainConsolidationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExplainConsolidation not implemented")
+}
+func (UnimplementedHippocampusServer) GetConsolidationStatus(context.Context, *EmptyRequest) (*GetConsolidationStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetConsolidationStatus not implemented")
 }
 func (UnimplementedHippocampusServer) GetForgottenMemories(context.Context, *GetForgottenMemoriesRequest) (*GetForgottenMemoriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetForgottenMemories not implemented")
@@ -934,6 +982,24 @@ func _Hippocampus_ExplainConsolidation_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HippocampusServer).ExplainConsolidation(ctx, req.(*ExplainConsolidationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_GetConsolidationStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EmptyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).GetConsolidationStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_GetConsolidationStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).GetConsolidationStatus(ctx, req.(*EmptyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1500,6 +1566,10 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExplainConsolidation",
 			Handler:    _Hippocampus_ExplainConsolidation_Handler,
+		},
+		{
+			MethodName: "GetConsolidationStatus",
+			Handler:    _Hippocampus_GetConsolidationStatus_Handler,
 		},
 		{
 			MethodName: "GetForgottenMemories",

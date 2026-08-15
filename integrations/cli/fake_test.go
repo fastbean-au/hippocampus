@@ -68,6 +68,12 @@ func (f *fakeClient) WhoAmI(_ context.Context, in *contract.EmptyRequest, _ ...g
 	return &contract.WhoAmIResponse{}, f.err
 }
 
+func (f *fakeClient) GetConsolidationStatus(_ context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetConsolidationStatusResponse, error) {
+	f.capture(in)
+
+	return &contract.GetConsolidationStatusResponse{ConsolidationEnabled: true, PeriodSeconds: 120}, f.err
+}
+
 func (f *fakeClient) StoreEvent(_ context.Context, in *contract.Event, _ ...grpc.CallOption) (*contract.StoreEventResponse, error) {
 	f.capture(in)
 

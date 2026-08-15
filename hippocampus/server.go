@@ -32,6 +32,16 @@ import (
 // cycle joins the same in-flight call rather than starting a concurrent one.
 const sleepSingleflightKey = "sleep"
 
+// The three things that can start a sleep cycle, as reported by CycleReport.trigger. They are
+// distinguishable because they mean different things operationally: a run of "wal" triggers says
+// the write rate is outpacing the schedule, and a store consolidating only on "manual" is one
+// whose timed cycle is disabled or wedged.
+const (
+	triggerTimer  = "timer"
+	triggerManual = "manual"
+	triggerWAL    = "wal"
+)
+
 // hippocampusServicePrefix scopes the purge gate to the Hippocampus service, mirroring the same
 // check in the auth interceptor and the RPC metrics: the health service must stay answerable while
 // a purge runs. It is the proto package plus the service name, so it changes whenever the proto's
@@ -185,6 +195,35 @@ type Server struct {
 	// purgeInProgress is written by Purge and read by InterceptorBlockWhenPurgeInProgress from
 	// every RPC's own goroutine, so it must be an atomic rather than a plain bool.
 	purgeInProgress atomic.Bool
+
+	// nextSleep is when the timed cycle is next due (UnixNano), or 0 when none is scheduled - a
+	// non-positive sleep.periodSeconds, or after Stop. Written only by the autoSleep goroutine and
+	// read by GetConsolidationStatus from each caller's own goroutine, so it is an atomic for the
+	// same reason purgeInProgress is.
+	//
+	// It is NOT a prediction of the next time anything happens: checkWALTrigger deliberately does
+	// not reset the timer, so an out-of-cycle WAL-triggered sleep can run before this without
+	// changing it. GetConsolidationStatus reports wal_trigger_enabled alongside so a client can say
+	// "or sooner" rather than implying the schedule is the only thing that can fire.
+	nextSleep atomic.Int64
+
+	// sleepInProgress is set for the duration of a cycle, inside sleepOnce's singleflight closure,
+	// so a caller that JOINED a running cycle sees the same true a caller that started one does.
+	sleepInProgress atomic.Bool
+
+	// sleepPeriod is sleep.periodSeconds as a duration, kept for GetConsolidationStatus to report.
+	// Non-positive means no timed cycle at all - a supported mode for an instance driven only by the
+	// Sleep RPC or the WAL trigger.
+	sleepPeriod time.Duration
+
+	// lastCycle is what the most recent completed cycle did, or nil until one has run in this
+	// process. An atomic.Pointer rather than a mutex because it is written once per cycle, read on
+	// every status poll, and immutable after publication - so readers never block the sleep
+	// goroutine and never see a half-filled report.
+	//
+	// Deliberately in memory only. A figure surviving the process that produced it would describe a
+	// cycle run under configuration that may since have changed.
+	lastCycle atomic.Pointer[cycleReport]
 
 	sleepReset                chan bool
 	minimumEventSignificance  int32
@@ -428,6 +467,11 @@ func New(deps Dependencies) *Server {
 
 	period := time.Duration(viper.GetInt("sleep.periodSeconds")) * time.Second
 
+	// Kept on the server so GetConsolidationStatus can report the schedule this instance is on.
+	// Recorded before the replica branch below zeroes it, since what a replica reports is
+	// consolidation_enabled false rather than a period of zero.
+	s.sleepPeriod = period
+
 	if !s.consolidationEnabled {
 		// Read/write replica: no sleep route runs on this instance. Zeroing the period
 		// drops the timed case out of autoSleep's select, and zeroing walTriggerBytes stops it from
@@ -499,8 +543,20 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 		log.Info("sleep.periodSeconds <= 0: automatic timed sleep cycles are disabled (manual Sleep RPC and any WAL trigger still run)")
 	}
 
+	// Recorded here rather than beside the timer below, because the timer is created inside the
+	// goroutine: a status poll arriving in the window before that goroutine is scheduled would
+	// otherwise see 0 and report "no timed cycle" on an instance that has one. The few microseconds
+	// this is early by are immaterial to a countdown displayed in seconds.
+	if period > 0 {
+		s.nextSleep.Store(time.Now().Add(period).UnixNano())
+	}
+
 	go func() {
 		defer close(s.sleepStopped)
+
+		// Nothing is due once this goroutine has gone, so a status poll racing shutdown must not
+		// report a fire that will never come.
+		defer s.nextSleep.Store(0)
 
 		// A nil channel blocks forever, so leaving walCheck nil when the feature is disabled
 		// cleanly drops that case out of the select below.
@@ -528,6 +584,11 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 			sleepCh = timer.C
 		}
 
+		// resetTimer is the single chokepoint for every restart of the countdown - after a cycle
+		// fires, and on the sleepReset nudge a manual Sleep sends - which is why nextSleep is
+		// recorded here rather than at those call sites. A non-positive period leaves timer nil and
+		// returns early, so nextSleep stays 0 and a client renders "no timed cycle" rather than a
+		// countdown to nothing.
 		resetTimer := func() {
 			if timer == nil {
 				return
@@ -542,6 +603,7 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 			}
 
 			timer.Reset(period)
+			s.nextSleep.Store(time.Now().Add(period).UnixNano())
 		}
 
 		for {
@@ -568,7 +630,7 @@ func (s *Server) autoSleep(reset chan bool, period time.Duration) {
 				continue
 
 			case <-sleepCh:
-				_ = s.sleepOnce()
+				_ = s.sleepOnce(triggerTimer)
 				resetTimer()
 
 			case <-walCheck:
@@ -599,15 +661,24 @@ func (s *Server) checkWALTrigger() {
 		s.consolidation.walTriggerBytes,
 	)
 
-	_ = s.sleepOnce()
+	_ = s.sleepOnce(triggerWAL)
 }
 
 // sleepOnce runs a sleep cycle via sleepGroup, so a call arriving while one is already in flight
 // (from the autoSleep timer or a concurrent Sleep RPC) joins it and shares its result rather than
 // starting a second, overlapping cycle.
-func (s *Server) sleepOnce() error {
+//
+// trigger names what this call would start the cycle FOR. It reaches the recorded report only when
+// this call is the one that runs it: a caller that joins an in-flight cycle shares that cycle's
+// result, and the report describes the cycle that ran rather than the call that observed it.
+func (s *Server) sleepOnce(trigger string) error {
 	_, err, _ := s.sleepGroup.Do(sleepSingleflightKey, func() (any, error) {
-		return nil, s.sleep()
+		// Set inside the closure, so it covers exactly the cycle and is true for a caller that
+		// joined one as much as for the caller that started it.
+		s.sleepInProgress.Store(true)
+		defer s.sleepInProgress.Store(false)
+
+		return nil, s.sleep(trigger)
 	})
 
 	return err
@@ -635,7 +706,7 @@ func (s *Server) Sleep(ctx context.Context, in *contract.EmptyRequest) (*contrac
 		return &res, err
 	}
 
-	err := s.sleepOnce()
+	err := s.sleepOnce(triggerManual)
 	if err == nil {
 
 		// Nudge the autoSleep timer to restart its interval. Non-blocking: the buffer holds one

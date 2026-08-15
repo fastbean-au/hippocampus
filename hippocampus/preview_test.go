@@ -151,7 +151,7 @@ func TestPreviewConsolidationPredictsTheCycle(t *testing.T) {
 		t.Fatalf("GetMemories: %s", err)
 	}
 
-	if err := s.sleep(); err != nil {
+	if err := s.sleep(triggerManual); err != nil {
 		t.Fatalf("sleep: %s", err)
 	}
 
@@ -418,7 +418,7 @@ func TestPreviewConsolidationCountsEmptyEvents(t *testing.T) {
 	}
 
 	// And the cycle then does exactly that.
-	if err := s.sleep(); err != nil {
+	if err := s.sleep(triggerManual); err != nil {
 		t.Fatalf("sleep: %s", err)
 	}
 
@@ -593,7 +593,7 @@ func TestPreviewNeverJoinsASleepCycle(t *testing.T) {
 		t.Fatalf("PreviewConsolidation: %s", err)
 	}
 
-	if err := s.sleepOnce(); err != nil {
+	if err := s.sleepOnce(triggerManual); err != nil {
 		t.Fatalf("sleepOnce: %s", err)
 	}
 
@@ -683,7 +683,7 @@ func TestRecordRetentionSurvivesAFailedScan(t *testing.T) {
 	// succeed.
 	s.recordRetention(context.Background())
 
-	if err := s.sleep(); err != nil {
+	if err := s.sleep(triggerManual); err != nil {
 		t.Errorf("a failed retention measurement failed the sleep cycle: %s", err)
 	}
 }

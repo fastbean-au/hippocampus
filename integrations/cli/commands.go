@@ -215,6 +215,11 @@ func commands() map[string]command {
 			flags:   func(*pflag.FlagSet) {},
 			run:     runWhoAmI,
 		},
+		"status": {
+			summary: "report the consolidation cycle's schedule and its last result",
+			flags:   func(*pflag.FlagSet) {},
+			run:     runConsolidationStatus,
+		},
 		"sleep": {
 			summary: "trigger a consolidation cycle now",
 			hint:    "[--dry-run]",
@@ -1009,6 +1014,18 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 
 func runWhoAmI(ctx context.Context, client contract.HippocampusClient, _ *pflag.FlagSet, r *renderer) error {
 	resp, err := client.WhoAmI(ctx, &contract.EmptyRequest{})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runConsolidationStatus reports when the next cycle is due and what the last one did. Reader-tier
+// and cheap (it reads in-memory state, no scan), so it is the safe thing to run against a busy
+// instance when the question is "is this thing forgetting anything at all".
+func runConsolidationStatus(ctx context.Context, client contract.HippocampusClient, _ *pflag.FlagSet, r *renderer) error {
+	resp, err := client.GetConsolidationStatus(ctx, &contract.EmptyRequest{})
 	if err != nil {
 		return err
 	}

@@ -135,6 +135,18 @@ var scopes = map[string]scopeMode{
 
 	// WhoAmI describes the caller to itself and reads no stored record.
 	"WhoAmI": scopeNone,
+
+	// GetConsolidationStatus reports the sleep cycle's schedule and the aggregate counts of the last
+	// one. It names no record - no ids, no groups, no bodies - so there is nothing to scope, which
+	// is also why it is not scopeUnbound despite describing a store-wide operation: unlike the
+	// preview it enumerates nothing, it only says that a cycle ran and how much it took.
+	//
+	// Those figures are store-global rather than per-partition, and are shown to a scoped caller for
+	// the same reason ExplainConsolidation's capacity pressure and threshold are: the decay dynamics
+	// are store-global by design (see the soft-partition note in CLAUDE.md), so they are what
+	// actually decides this caller's own memories' fate. A per-partition figure would be the
+	// misleading one.
+	"GetConsolidationStatus": scopeNone,
 }
 
 // scopedGroups returns the caller's group scope and whether they are bound to one at all. Handlers

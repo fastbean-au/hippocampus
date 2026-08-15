@@ -120,6 +120,14 @@ var policies = map[string]rpcPolicy{
 	// asking.
 	"ExplainConsolidation": {TierReader, http.MethodPost, "/v1/consolidation/explain"},
 
+	// The cycle's schedule and the aggregate counts of the last one. Reader for the same reason
+	// ExplainConsolidation is, and with less to justify: it names no memory at all, and the figures
+	// it adds are strictly less revealing about the store's contents than the used_bytes and
+	// memory_count that RPC already serves at this tier. Counts are not enumeration - which is
+	// exactly what separates it from PreviewConsolidation below, which is admin because it lists
+	// ids, groups and significances.
+	"GetConsolidationStatus": {TierReader, http.MethodGet, "/v1/consolidation/status"},
+
 	// writes
 	"StoreEvent":                 {TierWriter, http.MethodPost, "/v1/events"},
 	"EndEvent":                   {TierWriter, http.MethodPost, "/v1/events/*/end"},

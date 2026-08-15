@@ -238,6 +238,12 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"body":"ci sqlite","significance":5}' | jq -r .id)
           curl -sf http://localhost:8080/v1/memories | jq -e --arg id "$id" '.memories[] | select(.id == $id)'
+          # The console is three embedded files served from three routes, so a broken embed or a
+          # route left off the auth allow-list is a runtime 404/401 rather than a build failure.
+          # Same argument as the config-wizard check below, and the same three curls.
+          curl -sf http://localhost:8080/ui | grep -q '<body class="gated">'
+          curl -sf http://localhost:8080/ui/app.js | grep -q "refreshCaps"
+          curl -sf http://localhost:8080/ui/styles.css > /dev/null
           docker compose down
 
       - name: Postgres stack smoke test
@@ -511,3 +517,25 @@ jobs:
         run: |
           npm run build
           npm test
+
+  # The embedded console is ~2,800 lines of JavaScript that no Go job can exercise. Its pure logic
+  # lives in cmd/hippocampus/webui/lib.js — the capability matrix that decides which controls a
+  # caller sees, the decay-curve geometry, the escaping, the age and metadata parsing — and this
+  # runs it under node's built-in test runner, plus a drift guard pairing every data-act control in
+  # the markup with a handler in app.js.
+  #
+  # Unlike obsidian-plugin there is deliberately NOTHING to install: no dependencies, no lockfile,
+  # no node_modules inside a Go source tree, and so no npm ci and no npm audit step.
+  webui:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Test the embedded console
+        working-directory: cmd/hippocampus/webuitest
+        run: node --test

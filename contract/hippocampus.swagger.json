@@ -86,6 +86,30 @@
         ]
       }
     },
+    "/v1/consolidation/status": {
+      "get": {
+        "summary": "GetConsolidationStatus reports what this instance's sleep cycle is doing: when the next timed\ncycle is due, whether one is running, and what the last one actually did.",
+        "description": "It completes the forgetting story the other three RPCs tell. PreviewConsolidation says what\nwould go, ExplainConsolidation where a given memory stands, GetForgottenMemories what went -\nand none of the three says WHEN. Without that, a store that forgets on a schedule is\nindistinguishable from a store that is doing nothing, which is exactly how the console read\nbefore this existed.\n\nReader tier: it names no stored record and enumerates nothing. The aggregates it reports are\nthe same store-global figures ExplainConsolidation already serves a reader, and for the same\nreason - they are what decides that caller's own memories' fate.\n\nUnlike Sleep, PreviewConsolidation and ExplainConsolidation, it does NOT fail on a read/write\nreplica: it answers with consolidation_enabled false and everything else zero. Refusing would\nbe self-defeating, since telling a client it is talking to a replica is the RPC's whole job.",
+        "operationId": "Hippocampus_GetConsolidationStatus",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetConsolidationStatusResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "summary": "GetEvents lists events filtered by time range, significance range, group, and metadata,\npaginated by limit/offset (see GetEventsRequest). significance_extremum swaps the\nsignificance_min/max range for \"only events tied at the highest (or lowest) significance\nvalue\" instead. order_by/order_dir choose the sort field and direction.",
@@ -1821,6 +1845,59 @@
         }
       }
     },
+    "v1CycleReport": {
+      "type": "object",
+      "properties": {
+        "startedAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano the cycle began"
+        },
+        "durationMs": {
+          "type": "string",
+          "format": "int64"
+        },
+        "memoriesConsolidated": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The two decay paths, reported separately because they answer different questions: memories\nconsolidated fell below the value threshold, memories evicted were above it but had to go\nanyway to bring the store back under its capacity target. A store evicting steadily while\nconsolidating nothing is configured wrongly, and only the split shows that."
+        },
+        "eventsConsolidated": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoriesEvicted": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventsEvicted": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "bytesFreed": {
+          "type": "string",
+          "format": "int64",
+          "title": "estimated, from the eviction pass"
+        },
+        "summarisationCandidates": {
+          "type": "integer",
+          "format": "int32",
+          "title": "events the scan cached for GetSummarisationCandidates"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "failure": {
+          "type": "string",
+          "title": "the reason when success is false; empty otherwise"
+        },
+        "trigger": {
+          "type": "string",
+          "description": "trigger names what STARTED this cycle: \"timer\" (the scheduled cycle), \"manual\" (the Sleep\nRPC) or \"wal\" (the write-ahead log grew past consolidation.walTriggerBytes). A caller that\njoined a cycle already in flight does not change it - this describes the cycle that ran, not\nthe call that observed it."
+        }
+      },
+      "description": "CycleReport is what one sleep cycle did: the counts the two decay paths deleted, what it cost,\nand whether it succeeded. Counts only - no ids, no groups, no bodies - which is what keeps this\naggregate rather than an enumeration, and so readable by the reader tier.\n\nThe counts come from the passes themselves rather than from the metrics instruments they also\nfeed, so a deployment exporting no telemetry still gets them."
+    },
     "v1DecayCurve": {
       "type": "object",
       "properties": {
@@ -2262,6 +2339,41 @@
           "type": "boolean"
         }
       }
+    },
+    "v1GetConsolidationStatusResponse": {
+      "type": "object",
+      "properties": {
+        "consolidationEnabled": {
+          "type": "boolean"
+        },
+        "periodSeconds": {
+          "type": "string",
+          "format": "int64",
+          "description": "period_seconds is sleep.periodSeconds. Zero or negative means no timed cycle at all - a\nsupported mode, for an instance driven only by the Sleep RPC or the WAL trigger - and\nnext_sleep_at is then 0 rather than a countdown to something that will never fire."
+        },
+        "nextSleepAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; 0 when no timed cycle is scheduled"
+        },
+        "walTriggerEnabled": {
+          "type": "boolean",
+          "description": "wal_trigger_enabled reports consolidation.walTriggerBytes \u003e 0, i.e. that a cycle may run\nout of schedule when the write-ahead log grows. next_sleep_at deliberately does NOT predict\nthat: the WAL trigger does not reset the timer, so the timed cycle is still due when it says,\nand a client showing a countdown should say \"or sooner\" rather than imply the schedule is\nthe only thing that can fire."
+        },
+        "sleepInProgress": {
+          "type": "boolean"
+        },
+        "snapshotTtlSeconds": {
+          "type": "string",
+          "format": "int64",
+          "description": "snapshot_ttl_seconds is how long ExplainConsolidation caches the inputs it reports\n(capacity pressure, used bytes, memory count). A polling client should pace its calls to that\nRPC by this rather than by a guess: the snapshot costs a full scan on the server drivers and\nis cached precisely so a console page does not repeat it, so polling faster buys nothing and\ndefeats the cache under concurrent viewers."
+        },
+        "lastCycle": {
+          "$ref": "#/definitions/v1CycleReport",
+          "description": "last_cycle is absent until a cycle has run in THIS process - it is in-memory, not persisted,\nso a restart clears it. That is deliberate: it reports what this instance did, and a figure\nsurviving the process that produced it would describe a cycle run under configuration that\nmay since have changed."
+        }
+      },
+      "description": "GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.\n\nEverything below consolidation_enabled is zero on a read/write replica, which runs no cycle of\nits own: its store is consolidated by whichever instance holds the single-consolidator lock,\nunder that instance's configuration."
     },
     "v1GetEventResponse": {
       "type": "object",

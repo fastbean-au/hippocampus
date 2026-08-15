@@ -175,7 +175,7 @@ func TestEvict_RetainedMemoriesSurviveCapacityPressure(t *testing.T) {
 	// still shield the fresh memory even though the store stays over target as a result.
 	s.consolidation.capacityBytes = 1
 
-	if err := s.evict(context.Background()); err != nil {
+	if err := s.evict(context.Background(), &cycleReport{}); err != nil {
 		t.Fatalf("evict: %s", err)
 	}
 
@@ -231,7 +231,7 @@ func TestEvict_RetainedMemoryKeepsItsEventAlive(t *testing.T) {
 
 	s.consolidation.capacityBytes = 1
 
-	if err := s.evict(ctx); err != nil {
+	if err := s.evict(ctx, &cycleReport{}); err != nil {
 		t.Fatalf("evict: %s", err)
 	}
 
@@ -279,7 +279,7 @@ func TestEvict_RetentionDisabledEvictsEverything(t *testing.T) {
 
 	s.consolidation.capacityBytes = 1
 
-	if err := s.evict(context.Background()); err != nil {
+	if err := s.evict(context.Background(), &cycleReport{}); err != nil {
 		t.Fatalf("evict: %s", err)
 	}
 

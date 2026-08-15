@@ -58,6 +58,28 @@ service Hippocampus {
 		};
 	}
 
+	// GetConsolidationStatus reports what this instance's sleep cycle is doing: when the next timed
+	// cycle is due, whether one is running, and what the last one actually did.
+	//
+	// It completes the forgetting story the other three RPCs tell. PreviewConsolidation says what
+	// would go, ExplainConsolidation where a given memory stands, GetForgottenMemories what went -
+	// and none of the three says WHEN. Without that, a store that forgets on a schedule is
+	// indistinguishable from a store that is doing nothing, which is exactly how the console read
+	// before this existed.
+	//
+	// Reader tier: it names no stored record and enumerates nothing. The aggregates it reports are
+	// the same store-global figures ExplainConsolidation already serves a reader, and for the same
+	// reason - they are what decides that caller's own memories' fate.
+	//
+	// Unlike Sleep, PreviewConsolidation and ExplainConsolidation, it does NOT fail on a read/write
+	// replica: it answers with consolidation_enabled false and everything else zero. Refusing would
+	// be self-defeating, since telling a client it is talking to a replica is the RPC's whole job.
+	rpc GetConsolidationStatus(EmptyRequest) returns (GetConsolidationStatusResponse) {
+		option (google.api.http) = {
+			get: "/v1/consolidation/status"
+		};
+	}
+
 	// GetForgottenMemories reads the forgotten log: one record per memory the sleep cycle actually
 	// deleted, with the decision that took it. Where PreviewConsolidation answers "what would go"
 	// and ExplainConsolidation "where does this memory stand", this answers "what went, and why" -
@@ -1036,6 +1058,75 @@ message ExplainConsolidationResponse {
 
 	repeated MemoryValuation               valuations                = 12;
 	DecayCurve                             curve                     = 13; // absent when none was requested
+}
+
+// CycleReport is what one sleep cycle did: the counts the two decay paths deleted, what it cost,
+// and whether it succeeded. Counts only - no ids, no groups, no bodies - which is what keeps this
+// aggregate rather than an enumeration, and so readable by the reader tier.
+//
+// The counts come from the passes themselves rather than from the metrics instruments they also
+// feed, so a deployment exporting no telemetry still gets them.
+message CycleReport {
+	int64                                  started_at                = 1;  // UnixNano the cycle began
+	int64                                  duration_ms               = 2;
+
+	// The two decay paths, reported separately because they answer different questions: memories
+	// consolidated fell below the value threshold, memories evicted were above it but had to go
+	// anyway to bring the store back under its capacity target. A store evicting steadily while
+	// consolidating nothing is configured wrongly, and only the split shows that.
+	int32                                  memories_consolidated     = 3;
+	int32                                  events_consolidated       = 4;
+	int32                                  memories_evicted          = 5;
+	int32                                  events_evicted            = 6;
+	int64                                  bytes_freed               = 7;  // estimated, from the eviction pass
+
+	int32                                  summarisation_candidates  = 8;  // events the scan cached for GetSummarisationCandidates
+
+	bool                                   success                   = 9;
+	string                                 failure                   = 10; // the reason when success is false; empty otherwise
+
+	// trigger names what STARTED this cycle: "timer" (the scheduled cycle), "manual" (the Sleep
+	// RPC) or "wal" (the write-ahead log grew past consolidation.walTriggerBytes). A caller that
+	// joined a cycle already in flight does not change it - this describes the cycle that ran, not
+	// the call that observed it.
+	string                                 trigger                   = 11;
+}
+
+// GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.
+//
+// Everything below consolidation_enabled is zero on a read/write replica, which runs no cycle of
+// its own: its store is consolidated by whichever instance holds the single-consolidator lock,
+// under that instance's configuration.
+message GetConsolidationStatusResponse {
+	bool                                   consolidation_enabled     = 1;
+
+	// period_seconds is sleep.periodSeconds. Zero or negative means no timed cycle at all - a
+	// supported mode, for an instance driven only by the Sleep RPC or the WAL trigger - and
+	// next_sleep_at is then 0 rather than a countdown to something that will never fire.
+	int64                                  period_seconds            = 2;
+	int64                                  next_sleep_at             = 3;  // UnixNano; 0 when no timed cycle is scheduled
+
+	// wal_trigger_enabled reports consolidation.walTriggerBytes > 0, i.e. that a cycle may run
+	// out of schedule when the write-ahead log grows. next_sleep_at deliberately does NOT predict
+	// that: the WAL trigger does not reset the timer, so the timed cycle is still due when it says,
+	// and a client showing a countdown should say "or sooner" rather than imply the schedule is
+	// the only thing that can fire.
+	bool                                   wal_trigger_enabled       = 4;
+
+	bool                                   sleep_in_progress         = 5;
+
+	// snapshot_ttl_seconds is how long ExplainConsolidation caches the inputs it reports
+	// (capacity pressure, used bytes, memory count). A polling client should pace its calls to that
+	// RPC by this rather than by a guess: the snapshot costs a full scan on the server drivers and
+	// is cached precisely so a console page does not repeat it, so polling faster buys nothing and
+	// defeats the cache under concurrent viewers.
+	int64                                  snapshot_ttl_seconds      = 6;
+
+	// last_cycle is absent until a cycle has run in THIS process - it is in-memory, not persisted,
+	// so a restart clears it. That is deliberate: it reports what this instance did, and a figure
+	// surviving the process that produced it would describe a cycle run under configuration that
+	// may since have changed.
+	CycleReport                            last_cycle                = 7;
 }
 
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the

@@ -47,7 +47,7 @@ func TestConsolidate_PropagatesScanError(t *testing.T) {
 		},
 	}
 
-	err = s.consolidate(context.Background())
+	err = s.consolidate(context.Background(), &cycleReport{})
 	if err == nil {
 		t.Fatal("consolidate returned nil despite a failing scan; the error was swallowed")
 	}
@@ -94,7 +94,7 @@ func TestSleep_UsedBytesScannedOncePerCycle(t *testing.T) {
 		},
 	}
 
-	if err := s.sleep(); err != nil {
+	if err := s.sleep(triggerManual); err != nil {
 		t.Fatalf("sleep: %s", err)
 	}
 
@@ -125,7 +125,7 @@ func TestSleep_WrapsUnderlyingError(t *testing.T) {
 		},
 	}
 
-	err = s.sleep()
+	err = s.sleep(triggerManual)
 	if err == nil {
 		t.Fatal("sleep returned nil despite a failing consolidation pass")
 	}
@@ -675,14 +675,14 @@ func TestEvict_DisabledAndUnderCapacityAreNoOps(t *testing.T) {
 	// capacityBytes <= 0 disables byte eviction entirely.
 	s.consolidation.capacityBytes = 0
 
-	if err := s.evict(context.Background()); err != nil {
+	if err := s.evict(context.Background(), &cycleReport{}); err != nil {
 		t.Fatalf("evict (disabled): %s", err)
 	}
 
 	// A target far above the store's footprint evicts nothing.
 	s.consolidation.capacityBytes = 1 << 30
 
-	if err := s.evict(context.Background()); err != nil {
+	if err := s.evict(context.Background(), &cycleReport{}); err != nil {
 		t.Fatalf("evict (under capacity): %s", err)
 	}
 
@@ -711,7 +711,7 @@ func TestEvict_ReclaimsWhenOverCapacity(t *testing.T) {
 	// A 1-byte target forces eviction down to the floor, reclaiming almost everything.
 	s.consolidation.capacityBytes = 1
 
-	if err := s.evict(context.Background()); err != nil {
+	if err := s.evict(context.Background(), &cycleReport{}); err != nil {
 		t.Fatalf("evict: %s", err)
 	}
 
@@ -877,7 +877,7 @@ func TestConsolidate_PercentileWithNoEvents(t *testing.T) {
 		},
 	}
 
-	if err := s.consolidate(context.Background()); err != nil {
+	if err := s.consolidate(context.Background(), &cycleReport{}); err != nil {
 		t.Errorf("consolidate() must not fail when the percentile has no events to work with: %s", err)
 	}
 
@@ -919,7 +919,7 @@ func TestScanSummarisationCandidates_PopulatesList(t *testing.T) {
 		}
 	}
 
-	s.scanSummarisationCandidates(context.Background())
+	s.scanSummarisationCandidates(context.Background(), &cycleReport{})
 
 	if len(s.summarisationCandidates) != 1 {
 		t.Fatalf("expected 1 candidate, got %d: %+v", len(s.summarisationCandidates), s.summarisationCandidates)
@@ -957,7 +957,7 @@ func TestScanSummarisationCandidates_DisabledByDefault(t *testing.T) {
 		}
 	}
 
-	s.scanSummarisationCandidates(context.Background())
+	s.scanSummarisationCandidates(context.Background(), &cycleReport{})
 
 	if s.summarisationCandidates != nil {
 		t.Errorf("expected the candidate list to remain untouched when disabled, got %+v", s.summarisationCandidates)
@@ -990,7 +990,7 @@ func TestScanSummarisationCandidates_PropagatesScanError(t *testing.T) {
 		summarisationCandidates: []db.SummarisationCandidate{{EventId: "stale"}},
 	}
 
-	s.scanSummarisationCandidates(context.Background())
+	s.scanSummarisationCandidates(context.Background(), &cycleReport{})
 
 	if len(s.summarisationCandidates) != 1 || s.summarisationCandidates[0].EventId != "stale" {
 		t.Errorf("expected the stale candidate list left untouched on scan failure, got %+v", s.summarisationCandidates)
@@ -1027,7 +1027,7 @@ func TestSleep_CompactSignificanceLevelsFailureIsBestEffort(t *testing.T) {
 		},
 	}
 
-	if err := s.sleep(); err != nil {
+	if err := s.sleep(triggerManual); err != nil {
 		t.Errorf("expected a failing CompactSignificanceLevels to be best-effort, got %s", err)
 	}
 }
@@ -1064,7 +1064,7 @@ func TestConsolidate_PercentileCalculatedFromEvents(t *testing.T) {
 		},
 	}
 
-	if err := s.consolidate(context.Background()); err != nil {
+	if err := s.consolidate(context.Background(), &cycleReport{}); err != nil {
 		t.Fatalf("consolidate: %s", err)
 	}
 
@@ -1100,7 +1100,7 @@ func TestEvict_UsedBytesErrorPropagates(t *testing.T) {
 		consolidation: Consolidation{capacityBytes: 1000},
 	}
 
-	if err := s.evict(context.Background()); !errors.Is(err, wantErr) {
+	if err := s.evict(context.Background(), &cycleReport{}); !errors.Is(err, wantErr) {
 		t.Errorf("expected the UsedBytes failure to propagate, got %v", err)
 	}
 }
@@ -1137,7 +1137,7 @@ func TestEvict_EvictMemoriesErrorPropagates(t *testing.T) {
 		consolidation: Consolidation{capacityBytes: 1000},
 	}
 
-	if err := s.evict(context.Background()); !errors.Is(err, wantErr) {
+	if err := s.evict(context.Background(), &cycleReport{}); !errors.Is(err, wantErr) {
 		t.Errorf("expected the EvictMemories failure to propagate, got %v", err)
 	}
 
@@ -1169,7 +1169,7 @@ func TestSleep_WrapsEvictAndPreserveErrors(t *testing.T) {
 		},
 	}
 
-	if err := s.sleep(); !errors.Is(err, evictErr) {
+	if err := s.sleep(triggerManual); !errors.Is(err, evictErr) {
 		t.Errorf("expected sleep to wrap the evict failure (e2), got %v", err)
 	}
 
@@ -1187,7 +1187,7 @@ func TestSleep_WrapsEvictAndPreserveErrors(t *testing.T) {
 
 	// preserve() re-wraps its underlying cause into a generic message rather than carrying it via
 	// %w (unlike consolidate/evict), so this checks the surfaced message rather than errors.Is.
-	if err := s2.sleep(); err == nil || !strings.Contains(err.Error(), "failed to preserve") {
+	if err := s2.sleep(triggerManual); err == nil || !strings.Contains(err.Error(), "failed to preserve") {
 		t.Errorf("expected sleep to wrap the preserve failure (e3), got %v", err)
 	}
 }

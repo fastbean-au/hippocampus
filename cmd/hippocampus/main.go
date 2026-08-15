@@ -914,6 +914,9 @@ func run(ctx context.Context, version versionInfo) error {
 			_, _ = w.Write(contract.SwaggerJSON)
 		})
 		httpMux.Handle("/ui", webUIHandler())
+		httpMux.Handle("/ui/app.js", webUIAssetHandler("app.js", "text/javascript; charset=utf-8"))
+		httpMux.Handle("/ui/lib.js", webUIAssetHandler("lib.js", "text/javascript; charset=utf-8"))
+		httpMux.Handle("/ui/styles.css", webUIAssetHandler("styles.css", "text/css; charset=utf-8"))
 
 		// The front-channel OIDC config the console reads to start a login. The browser fetches it
 		// before it has a token, so it must stay unauthenticated and reachable during a purge, like
@@ -952,22 +955,17 @@ func run(ctx context.Context, version versionInfo) error {
 			LoginMode:  loginMode,
 		}))
 
-		// When the server-side login is enabled, register its handlers and mark them open (they run
-		// before, or in place of, holding a token). /auth/refresh authenticates itself via the refresh
-		// cookie, so it too must be reachable without an access token.
+		// When the server-side login is enabled, register its handlers; middlewareOpenPaths marks them
+		// open alongside the probes and the console (they run before, or in place of, holding a
+		// token - /auth/refresh authenticates itself via the refresh cookie).
 		sessionCookie := ""
-		authOpenPaths := []string{"/healthz", "/readyz", "/ui", "/ui/config"}
-		purgeOpenPaths := []string{"/healthz", "/readyz", "/v1/openapi.json", "/ui", "/ui/config"}
+		authOpenPaths, purgeOpenPaths := middlewareOpenPaths(oauth2Login != nil)
 
 		if oauth2Login != nil {
 			httpMux.Handle("/auth/login", http.HandlerFunc(oauth2Login.Login))
 			httpMux.Handle("/auth/callback", http.HandlerFunc(oauth2Login.Callback))
 			httpMux.Handle("/auth/refresh", http.HandlerFunc(oauth2Login.Refresh))
 			httpMux.Handle("/auth/logout", http.HandlerFunc(oauth2Login.Logout))
-
-			authPaths := []string{"/auth/login", "/auth/callback", "/auth/refresh", "/auth/logout"}
-			authOpenPaths = append(authOpenPaths, authPaths...)
-			purgeOpenPaths = append(purgeOpenPaths, authPaths...)
 
 			sessionCookie = auth.SessionCookieName
 		}

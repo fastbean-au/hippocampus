@@ -390,7 +390,7 @@ func TestPruneTombstonesNeverFailsTheCycle(t *testing.T) {
 		// The call must return, and the cycle it sits in must still report success.
 		s.pruneTombstones(context.Background())
 
-		if err := s.sleep(); err != nil {
+		if err := s.sleep(triggerManual); err != nil {
 			t.Fatalf("a sleep cycle failed because the forgotten log could not be trimmed: %s", err)
 		}
 	}
@@ -433,7 +433,7 @@ func TestForgottenLogSurvivesADisabledCycle(t *testing.T) {
 	s.consolidation.tombstones = false
 
 	// A full cycle, with the feature off.
-	if err := s.sleep(); err != nil {
+	if err := s.sleep(triggerManual); err != nil {
 		t.Fatalf("sleep: %s", err)
 	}
 

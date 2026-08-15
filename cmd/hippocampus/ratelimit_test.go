@@ -263,7 +263,18 @@ func TestRateLimitArrivalMiddlewareIgnoresSupportPaths(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	for _, path := range []string{"/healthz", "/readyz", "/ui", "/ui/config", "/auth/login", "/v1/openapi.json"} {
+	paths := []string{
+		"/healthz",
+		"/readyz",
+		"/ui",
+		"/ui/app.js",
+		"/ui/styles.css",
+		"/ui/config",
+		"/auth/login",
+		"/v1/openapi.json",
+	}
+
+	for _, path := range paths {
 		for i := range 3 {
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))

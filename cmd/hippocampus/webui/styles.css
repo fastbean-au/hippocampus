@@ -1,0 +1,718 @@
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --panel-2: #1f2430;
+  --border: #2a303c;
+  --text: #e6e9ef;
+  --muted: #8a93a6;
+  --accent: #6ea8fe;
+  --accent-2: #4a7fd6;
+  --good: #4caf82;
+  --bad: #e0685f;
+  --warn: #d8a44a;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+header h1 {
+  font-size: 16px;
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+header h1 span {
+  color: var(--accent);
+}
+.token-box {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Login gate: when this deployment authenticates and no session has resolved, the sign-in card
+     stands in place of the console rather than a console loading empty behind a header token box.
+     The page ships gated (the body class is in the markup, not applied by script) so an
+     unauthenticated load never flashes a console whose every call would be refused; boot() lifts it
+     as soon as the session resolves. The header stays visible throughout — only its controls, the
+     tabs, and the console body are hidden — so the page never looks like it failed to load. */
+#gate {
+  display: none;
+}
+body.gated #gate {
+  display: block;
+  max-width: 420px;
+  margin: 48px auto;
+  padding: 0 20px;
+}
+body.gated nav,
+body.gated main,
+body.gated .token-box {
+  display: none;
+}
+#gate .card {
+  margin: 0;
+}
+#gate p {
+  margin: 0 0 12px;
+}
+#gate-error {
+  color: var(--bad);
+}
+#gate-hint {
+  font-size: 12px;
+  margin: 12px 0 0;
+}
+/* Read-only gating: when the caller's role is below writer, hide every write-oriented control.
+     This is a UX convenience only - the server enforces authorization regardless of what is shown. */
+body.readonly .writer-only {
+  display: none !important;
+}
+/* The role pill starts hidden - a deployment without authentication has no role to report - but
+   that initial state is the "hidden" class in the markup, NOT a display:none rule here. It used to
+   be a rule, which meant applyCaps had to defeat it with an inline display to reveal the pill; once
+   revealing became a class toggle, a stylesheet rule would have won and the pill would never have
+   appeared again. Anything hidden by default that script later reveals belongs in that class. */
+#role-pill.ro {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+nav {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+nav button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+nav button:hover {
+  color: var(--text);
+}
+nav button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+main {
+  padding: 20px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.tab {
+  display: none;
+}
+.tab.active {
+  display: block;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+/* Cleared by the sticky header, so revealCard's scrollIntoView does not tuck a card's heading
+     underneath it. */
+.card {
+  scroll-margin-top: 60px;
+}
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  flex: 1 1 180px;
+}
+/* The author `display: flex` above beats the UA stylesheet's `[hidden] { display: none }`, so a
+     hidden field would otherwise still render - as an empty control with a label. */
+.field[hidden] {
+  display: none;
+}
+.field.wide {
+  flex-basis: 100%;
+}
+label {
+  color: var(--muted);
+  font-size: 12px;
+}
+input,
+textarea,
+select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  width: 100%;
+}
+textarea {
+  min-height: 70px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+button.btn {
+  background: var(--accent-2);
+  border: 1px solid var(--accent-2);
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+}
+button.btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+button.btn.ghost {
+  background: transparent;
+  color: var(--accent);
+}
+button.btn.ghost:hover {
+  background: rgba(110, 168, 254, 0.12);
+}
+button.btn.danger {
+  background: transparent;
+  color: var(--bad);
+  border-color: var(--bad);
+}
+button.btn.danger:hover {
+  background: rgba(224, 104, 95, 0.14);
+}
+button.btn.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.muted {
+  color: var(--muted);
+}
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.checkbox input {
+  width: auto;
+}
+/* Every table renders inside one of these. `width: 100%` only ever shrinks a table to its
+         container; it cannot take it below its own min-content width, and these tables have a floor
+         no styling removes - two nowrap monospace id columns and a row of action buttons. Below
+         about 1000px of viewport that floor exceeds the card, and without a scroll container here
+         the table simply drew outside the card's border and off the page. Scrolling the table alone
+         keeps the overflow where it belongs: the card's edge holds, and the page never scrolls
+         sideways. */
+.tablewrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+th,
+td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+/* A header the listing can sort on. white-space: nowrap keeps the direction arrow on the
+         label's line rather than wrapping alone onto a second one and stretching every row. */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+th.sortable:hover {
+  color: var(--text);
+}
+th.sorted {
+  color: var(--accent);
+}
+/* A memory body (and an event description) is free text of any length, so it gets a row of its
+         own spanning the table rather than a column competing with the metadata for width: as a
+         column, a single long unbreakable neighbour (an at:// id) squeezed it to a few characters
+         and it wrapped one word per line. The main row drops its bottom border while a body row
+         follows it, so the pair reads as one record. */
+tr.has-body > td {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+td.bodycell {
+  padding-top: 0;
+}
+.bodytext {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-left: 2px solid var(--border);
+  padding: 2px 0 2px 10px;
+  /* Bounded rather than unbounded: one multi-kilobyte memory would otherwise push every other
+           row off the screen. Scrolls in place; the full text is always reachable. */
+  max-height: 14em;
+  overflow-y: auto;
+}
+td.id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* An age carries the absolute timestamp in its title. The underline and the help cursor are
+         what say so — without them the exact value is present but undiscoverable. */
+.age {
+  white-space: nowrap;
+  border-bottom: 1px dotted var(--border);
+  cursor: help;
+}
+/* Row buttons stay on one line. They wrapped to one per line only because the free-text column
+         was taking the table's width; now that it does not, a stack of four buttons is what would
+         make a record tall. */
+td .actions {
+  flex-wrap: nowrap;
+}
+/* The row's buttons are pinned to the right edge of the .tablewrap above, so they are inside
+         the card at every width and the rest of the row scrolls underneath them.
+         `width: 100%` cannot shrink these tables below their own min-content width - two nowrap
+         monospace id columns, a metadata cell and four buttons - so on anything narrower the wrap
+         scrolls, and what it took out of view was always the actions, being last. Scrolling to reach
+         a button is not the same as the button being reachable: the column that has to be visible is
+         the one you act with.
+         Two things are load-bearing rather than decorative. The background, because a sticky cell is
+         transparent and the row would otherwise be drawn straight through it. And the borders as
+         INSET SHADOWS rather than as borders: under `border-collapse: collapse` the table owns the
+         grid's borders and paints them below a sticky cell, so a real border here scrolls away with
+         its row and leaves the column detached. */
+th.actions-col,
+td.actions-col {
+  position: sticky;
+  right: 0;
+  background: var(--panel);
+  box-shadow:
+    inset 1px 0 0 var(--border),
+    inset 0 -1px 0 var(--border);
+}
+/* A row followed by its body row drops its bottom border, so the pair reads as one record; the
+         pinned cell has to drop the shadow standing in for it, or the record is ruled off in one
+         column only. */
+tr.has-body > td.actions-col {
+  box-shadow: inset 1px 0 0 var(--border);
+}
+/* Ids are middle-truncated for display (see shortId): the full value is on the title and behind
+         the copy button, so nothing is lost, while the column stops setting the table's width. */
+.idc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.idc .idv {
+  cursor: default;
+}
+button.copy {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 1px 3px;
+  line-height: 0;
+}
+button.copy:hover {
+  color: var(--accent);
+  border-color: var(--border);
+}
+button.copy.copied {
+  color: var(--good);
+}
+button.copy svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.pill.summary {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.pill.binary {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* Metadata labels share the Group cell rather than taking a column of their own: they are the
+         same classification the group is one dimension of, and the table is already wide. */
+.pill.meta {
+  margin: 1px 2px 1px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+a.evlink {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+a.evlink:hover {
+  text-decoration: underline;
+}
+.event-head {
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.event-head h3 {
+  margin: 0 0 4px;
+}
+.event-head .kv {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.events-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.events-head h2 {
+  margin: 0;
+}
+/* The summarise controls sit under the event's memories, separated by a rule: they act on the
+     whole list above them rather than on any row in it, and they delete all of it. */
+.summarise {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pager span {
+  font-size: 12px;
+  min-width: 90px;
+  text-align: center;
+}
+#toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+}
+.toast {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 10px 14px;
+  max-width: 380px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  animation: slidein 0.15s ease;
+}
+.toast.ok {
+  border-left-color: var(--good);
+}
+.toast.err {
+  border-left-color: var(--bad);
+}
+.toast .t-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.toast .t-body {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+@keyframes slidein {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.empty {
+  color: var(--muted);
+  padding: 16px 0;
+  text-align: center;
+}
+code.inline {
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+/* Admin gating, alongside the writer gating above, and in TWO flavours because the service refuses
+     admin-tier RPCs on two different grounds.
+
+     .admin-only        — needs admin tier. The RPC is scoped like any other listing, so a
+                          group-scoped admin may use it and sees their own partition. The forgotten
+                          log is the case: a tombstone carries its memory's group, which is why
+                          hippocampus/scope.go declares GetForgottenMemories scopeFilter.
+     .unbound-only      — needs admin tier AND no group scope, because the RPC acts on the whole
+                          store and is refused outright to a scoped caller (scope.go's scopeUnbound
+                          set: Purge, Sleep, PreviewConsolidation).
+
+     They were one class, gated on a capability that folded the scope check into "isAdmin". That hid
+     the forgotten log from every scoped admin — a panel the service would have served. */
+body:not(.admin) .admin-only {
+  display: none !important;
+}
+body:not(.unbound-admin) .unbound-only {
+  display: none !important;
+}
+/* Same convention again for the embedded LLM: SummariseMemories is a FAILED_PRECONDITION on a
+     deployment that has not configured one, and there is nothing the user could do about it, so the
+     button is hidden rather than offered. The manual summary is NOT gated on this - it needs no
+     summariser, the caller writes it. */
+body:not(.summariser) .summariser-only {
+  display: none !important;
+}
+/* And again for the two consolidation properties whoami reports. .consolidation-only takes the
+     whole Decay tab (its nav button included), the tables' Value column, and the summarisation
+     candidates card: every one of them is served by an RPC a replica refuses outright, so on a
+     replica they would render as a page of dashes and FAILED_PRECONDITIONs the operator could do
+     nothing about. .tombstones-only is the narrower case — the forgotten log answers rather than
+     refuses when it is off, with an empty page, which reads as "nothing has been forgotten" when
+     it means "nothing was written down". Neither class is a security boundary, exactly like
+     .writer-only: the server decides, this only stops the console offering what it would refuse. */
+body:not(.consolidating) .consolidation-only {
+  display: none !important;
+}
+body:not(.tombstones) .tombstones-only {
+  display: none !important;
+}
+/* Decay: the value column and the pills that say what is overriding it. Same convention as the
+     role pill - a colour plus a word, never colour alone. */
+td.decay {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+td.decay .val {
+  cursor: pointer;
+  border-bottom: 1px dotted var(--border);
+}
+.pill.due {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.pill.soon {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.pill.safe {
+  color: var(--good);
+  border-color: var(--good);
+}
+.pill.held {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.stat {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.stat .k {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.stat .v {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.stat .n {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.chart {
+  width: 100%;
+  overflow-x: auto;
+}
+.chart svg {
+  display: block;
+  min-width: 520px;
+}
+.chart .axis {
+  stroke: var(--border);
+}
+.chart .grid {
+  stroke: var(--border);
+  stroke-dasharray: 2 4;
+}
+.chart .curve {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.chart .threshold {
+  stroke: var(--bad);
+  stroke-dasharray: 5 4;
+}
+.chart .crossing {
+  stroke: var(--warn);
+  stroke-dasharray: 3 3;
+}
+.chart text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------------------ utilities
+   The classes the console's inline style= attributes became. They exist so the page carries no
+   inline style at all, which is what lets it be served under a CSP without unsafe-inline; keeping
+   them this small and this generic is deliberate, since a utility that says what it does is easier
+   to see through than one that says where it is used.
+
+   .hidden is the load-bearing one: every panel the script shows and hides now toggles this class
+   rather than assigning to el.style.display. It is !important for the same reason the role-gating
+   rules above are - it must win against whatever display an element's own rule gives it, and the
+   elements it is applied to include a flex container (#gate-oidc, a .actions) and an inline-block
+   pill. That is also why hiding must never be done by setting a display: the previous code forced
+   #gate-oidc to display: block when revealing it, quietly overriding the flex layout .actions
+   exists to give it. Toggling a class restores it. */
+.hidden {
+  display: none !important;
+}
+.flush {
+  margin: 0;
+}
+.gap-top {
+  margin-top: 12px;
+}
+.gap-bottom {
+  margin-bottom: 8px;
+}
+.pull-up {
+  margin-top: -6px;
+}
+.fs-11 {
+  font-size: 11px;
+}
+.fs-12 {
+  font-size: 12px;
+}
+.warn {
+  color: var(--warn);
+}
+
+/* ------------------------------------------------------------------- meters
+   The Now tab's two bars: how full the store is against its binding capacity axis, and how far
+   through the current sleep interval we are. The fill's width is genuinely dynamic so it cannot be
+   a class - it is set through the CSSOM in applyMeterWidths, never as a style attribute, because a
+   style attribute is blocked by the console's CSP and fails silently when it is. */
+.meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+/* Near the capacity target, eviction is about to start deciding what survives rather than the decay
+   model alone. That is worth seeing before it happens. */
+.meter-hot .meter-fill {
+  background: var(--warn);
+}
+/* The Now tab's headline figures read as a summary rather than a table, so they get more room than
+   the Decay tab's stat tiles and wrap to fewer per row. */
+#now-headline .stats,
+#now-cycle .stats {
+  margin-top: 12px;
+}
+#now-headline .stat .v {
+  font-size: 20px;
+}

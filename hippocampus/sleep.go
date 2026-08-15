@@ -18,7 +18,7 @@ import (
 
 const DAY_IN_NANOSECONDS = 86400 * 1000000000
 
-func (s *Server) sleep() error {
+func (s *Server) sleep(trigger string) error {
 	log.Debug("sleep()")
 
 	// The sleep cycle runs in the background, so it starts its own trace rather than continuing
@@ -28,13 +28,19 @@ func (s *Server) sleep() error {
 
 	ts := time.Now()
 
-	e1 := s.consolidate(ctx)
+	// The report this cycle publishes for GetConsolidationStatus. It is filled in beside the
+	// existing telemetry as each pass returns, so the counts come from the passes themselves rather
+	// than from the instruments they also feed - a deployment exporting no telemetry still gets
+	// them, and there is no second source of truth to drift.
+	report := &cycleReport{startedAt: ts, trigger: trigger}
 
-	s.scanSummarisationCandidates(ctx)
+	e1 := s.consolidate(ctx, report)
+
+	s.scanSummarisationCandidates(ctx, report)
 
 	s.autoSummariseCandidates(ctx)
 
-	e2 := s.evict(ctx)
+	e2 := s.evict(ctx, report)
 
 	// Before preserve(), so pages the trimmed log frees are returned by the same compaction that
 	// returns the ones consolidation freed.
@@ -72,10 +78,46 @@ func (s *Server) sleep() error {
 		span.SetStatus(codes.Error, err.Error())
 	}
 
+	// Publish last, so a reader either sees the previous cycle's report or this one complete, never
+	// a half-filled one. The counts above stay accurate for whatever did complete even on a failure,
+	// which is why a failed cycle still publishes rather than leaving the last success standing:
+	// "the last cycle deleted 40 and then failed" is the reading an operator needs.
+	report.duration = time.Since(ts)
+	report.success = success
+
+	if err != nil {
+		report.failure = err.Error()
+	}
+
+	s.lastCycle.Store(report)
+
 	return err
 }
 
-func (s *Server) consolidate(ctx context.Context) error {
+// cycleReport is what one sleep cycle did. The RPC layer projects it into contract.CycleReport;
+// this stays an internal struct so the passes can fill it in with Go types (a time.Duration, a
+// time.Time) rather than the wire's integers.
+//
+// Counts only. Recording which ids went is the forgotten log's job (db/tombstone.go), and keeping
+// that separation is what lets this be reader-tier while the log is admin.
+type cycleReport struct {
+	startedAt time.Time
+	duration  time.Duration
+	trigger   string
+
+	memoriesConsolidated int
+	eventsConsolidated   int
+	memoriesEvicted      int
+	eventsEvicted        int
+	bytesFreed           int64
+
+	summarisationCandidates int
+
+	success bool
+	failure string
+}
+
+func (s *Server) consolidate(ctx context.Context, report *cycleReport) error {
 	log.Debug("consolidate()")
 
 	ctx, span := tel.tracer.Start(ctx, "consolidate")
@@ -140,6 +182,8 @@ func (s *Server) consolidate(ctx context.Context) error {
 	md, e1 := s.db.ConsolidateMemories(ctx, s)
 	log.Infof("consolidated %d memories not associated with an event", md)
 
+	report.memoriesConsolidated += md
+
 	tel.memoriesConsolidated.Add(ctx, int64(md), metric.WithAttributes(attribute.Bool("has_event", false)))
 	span.AddEvent("memories_without_events_consolidated", trace.WithAttributes(
 		attribute.Int("memories_deleted", md),
@@ -148,6 +192,9 @@ func (s *Server) consolidate(ctx context.Context) error {
 	// Second pass - memories with events
 	emd, e, ed, e2 := s.db.ConsolidateEventMemories(ctx, s)
 	log.Infof("consolidated %d memories associated with an event from %d events, deleting %d events", emd, e, ed)
+
+	report.memoriesConsolidated += emd
+	report.eventsConsolidated += ed
 
 	tel.memoriesConsolidated.Add(ctx, int64(emd), metric.WithAttributes(attribute.Bool("has_event", true)))
 	tel.eventsConsolidated.Add(ctx, int64(ed), metric.WithAttributes(attribute.Bool("has_memories", true)))
@@ -160,6 +207,8 @@ func (s *Server) consolidate(ctx context.Context) error {
 	// Third pass - events without memories
 	ec, e3 := s.db.ConsolidateEvents(ctx, s)
 	log.Infof("consolidated %d events without memories", ec)
+
+	report.eventsConsolidated += ec
 
 	tel.eventsConsolidated.Add(ctx, int64(ec), metric.WithAttributes(attribute.Bool("has_memories", false)))
 	span.AddEvent("events_without_memories_consolidated", trace.WithAttributes(
@@ -182,7 +231,7 @@ func (s *Server) consolidate(ctx context.Context) error {
 // the caller. A non-positive summarisationMinMemories disables the scan. Failure is logged and
 // otherwise ignored, matching the best-effort treatment of the percentile calculation above — a
 // stale or empty candidate list must not fail the sleep cycle.
-func (s *Server) scanSummarisationCandidates(ctx context.Context) {
+func (s *Server) scanSummarisationCandidates(ctx context.Context, report *cycleReport) {
 	log.Debug("scanSummarisationCandidates()")
 
 	if s.consolidation.summarisationMinMemories <= 0 {
@@ -214,6 +263,8 @@ func (s *Server) scanSummarisationCandidates(ctx context.Context) {
 
 	log.Infof("identified %d summarisation candidates", len(candidates))
 
+	report.summarisationCandidates = len(candidates)
+
 	tel.summarisationCandidates.Record(ctx, int64(len(candidates)))
 	span.AddEvent("summarisation_candidates_identified", trace.WithAttributes(
 		attribute.Int("candidates", len(candidates)),
@@ -240,7 +291,7 @@ func (s *Server) evictionFloor() int64 {
 // are deleted until the excess is reclaimed. Unlike consolidation this applies no minimum-age
 // protection — the bound must be achievable even when everything in the store is fresh — but the
 // value ranking still deletes the least significant, least recently recalled memories first.
-func (s *Server) evict(ctx context.Context) error {
+func (s *Server) evict(ctx context.Context, report *cycleReport) error {
 	log.Debug("evict()")
 
 	if s.consolidation.capacityBytes <= 0 {
@@ -283,6 +334,10 @@ func (s *Server) evict(ctx context.Context) error {
 
 	memories, events, freed, err := s.db.EvictMemories(ctx, s, excess)
 	log.Infof("evicted %d memories and %d events, freeing an estimated %d bytes", memories, events, freed)
+
+	report.memoriesEvicted += memories
+	report.eventsEvicted += events
+	report.bytesFreed += freed
 
 	tel.memoriesEvicted.Add(ctx, int64(memories))
 	tel.eventsEvicted.Add(ctx, int64(events))

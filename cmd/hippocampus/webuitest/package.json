@@ -1,0 +1,9 @@
+{
+  "name": "hippocampus-webui-test",
+  "private": true,
+  "type": "module",
+  "description": "Tests for the embedded console's pure logic (cmd/hippocampus/webui/lib.js). Deliberately has no dependencies: node's built-in test runner is enough, so there is nothing to install, nothing to audit, and no node_modules inside a Go source tree.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

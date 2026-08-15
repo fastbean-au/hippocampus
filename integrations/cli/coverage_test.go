@@ -46,6 +46,11 @@ func TestHTTPClientAllMethods(t *testing.T) {
 		{"Purge", func() error { _, err := c.Purge(ctx, &contract.EmptyRequest{}); return err }},
 		{"Sleep", func() error { _, err := c.Sleep(ctx, &contract.EmptyRequest{}); return err }},
 		{"WhoAmI", func() error { _, err := c.WhoAmI(ctx, &contract.EmptyRequest{}); return err }},
+		{"GetConsolidationStatus", func() error {
+			_, err := c.GetConsolidationStatus(ctx, &contract.EmptyRequest{})
+
+			return err
+		}},
 		{"StoreEvent", func() error { _, err := c.StoreEvent(ctx, &contract.Event{Name: "n"}); return err }},
 		{"EndEvent", func() error { _, err := c.EndEvent(ctx, &contract.EndEventRequest{Id: "e"}); return err }},
 		{"UpdateEventSignificance", func() error {

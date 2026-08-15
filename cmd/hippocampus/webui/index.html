@@ -9,640 +9,7 @@
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23181b22'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%236ea8fe' font-family='sans-serif' font-weight='700'>H</text></svg>"
     />
-    <style>
-      :root {
-        --bg: #0f1115;
-        --panel: #181b22;
-        --panel-2: #1f2430;
-        --border: #2a303c;
-        --text: #e6e9ef;
-        --muted: #8a93a6;
-        --accent: #6ea8fe;
-        --accent-2: #4a7fd6;
-        --good: #4caf82;
-        --bad: #e0685f;
-        --warn: #d8a44a;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font:
-          14px/1.5 -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          Roboto,
-          Helvetica,
-          Arial,
-          sans-serif;
-      }
-      header {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 12px 20px;
-        background: var(--panel);
-        border-bottom: 1px solid var(--border);
-        position: sticky;
-        top: 0;
-        z-index: 10;
-      }
-      header h1 {
-        font-size: 16px;
-        margin: 0;
-        font-weight: 600;
-        letter-spacing: 0.3px;
-      }
-      header h1 span {
-        color: var(--accent);
-      }
-      .token-box {
-        margin-left: auto;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      /* Login gate: when this deployment authenticates and no session has resolved, the sign-in card
-     stands in place of the console rather than a console loading empty behind a header token box.
-     The page ships gated (the body class is in the markup, not applied by script) so an
-     unauthenticated load never flashes a console whose every call would be refused; boot() lifts it
-     as soon as the session resolves. The header stays visible throughout — only its controls, the
-     tabs, and the console body are hidden — so the page never looks like it failed to load. */
-      #gate {
-        display: none;
-      }
-      body.gated #gate {
-        display: block;
-        max-width: 420px;
-        margin: 48px auto;
-        padding: 0 20px;
-      }
-      body.gated nav,
-      body.gated main,
-      body.gated .token-box {
-        display: none;
-      }
-      #gate .card {
-        margin: 0;
-      }
-      #gate p {
-        margin: 0 0 12px;
-      }
-      #gate-error {
-        color: var(--bad);
-      }
-      #gate-hint {
-        font-size: 12px;
-        margin: 12px 0 0;
-      }
-      /* Read-only gating: when the caller's role is below writer, hide every write-oriented control.
-     This is a UX convenience only - the server enforces authorization regardless of what is shown. */
-      body.readonly .writer-only {
-        display: none !important;
-      }
-      #role-pill {
-        display: none;
-      }
-      #role-pill.ro {
-        border-color: var(--accent);
-        color: var(--accent);
-      }
-      nav {
-        display: flex;
-        gap: 4px;
-        padding: 0 20px;
-        background: var(--panel);
-        border-bottom: 1px solid var(--border);
-      }
-      nav button {
-        background: none;
-        border: none;
-        border-bottom: 2px solid transparent;
-        color: var(--muted);
-        padding: 10px 16px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-      }
-      nav button:hover {
-        color: var(--text);
-      }
-      nav button.active {
-        color: var(--accent);
-        border-bottom-color: var(--accent);
-      }
-      main {
-        padding: 20px;
-        max-width: 1100px;
-        margin: 0 auto;
-      }
-      .tab {
-        display: none;
-      }
-      .tab.active {
-        display: block;
-      }
-      .card {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 16px;
-        margin-bottom: 16px;
-      }
-      /* Cleared by the sticky header, so revealCard's scrollIntoView does not tuck a card's heading
-     underneath it. */
-      .card {
-        scroll-margin-top: 60px;
-      }
-      .card h2 {
-        margin: 0 0 12px;
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--text);
-      }
-      .row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-      }
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        margin-bottom: 12px;
-        flex: 1 1 180px;
-      }
-      /* The author `display: flex` above beats the UA stylesheet's `[hidden] { display: none }`, so a
-     hidden field would otherwise still render - as an empty control with a label. */
-      .field[hidden] {
-        display: none;
-      }
-      .field.wide {
-        flex-basis: 100%;
-      }
-      label {
-        color: var(--muted);
-        font-size: 12px;
-      }
-      input,
-      textarea,
-      select {
-        background: var(--panel-2);
-        border: 1px solid var(--border);
-        color: var(--text);
-        border-radius: 6px;
-        padding: 8px 10px;
-        font: inherit;
-        width: 100%;
-      }
-      textarea {
-        min-height: 70px;
-        resize: vertical;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      }
-      input:focus,
-      textarea:focus,
-      select:focus {
-        outline: none;
-        border-color: var(--accent);
-      }
-      button.btn {
-        background: var(--accent-2);
-        border: 1px solid var(--accent-2);
-        color: #fff;
-        border-radius: 6px;
-        padding: 8px 14px;
-        cursor: pointer;
-        font: inherit;
-        font-weight: 500;
-      }
-      button.btn:hover {
-        background: var(--accent);
-        border-color: var(--accent);
-      }
-      button.btn.ghost {
-        background: transparent;
-        color: var(--accent);
-      }
-      button.btn.ghost:hover {
-        background: rgba(110, 168, 254, 0.12);
-      }
-      button.btn.danger {
-        background: transparent;
-        color: var(--bad);
-        border-color: var(--bad);
-      }
-      button.btn.danger:hover {
-        background: rgba(224, 104, 95, 0.14);
-      }
-      button.btn.small {
-        padding: 4px 10px;
-        font-size: 12px;
-      }
-      .actions {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      .muted {
-        color: var(--muted);
-      }
-      .checkbox {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .checkbox input {
-        width: auto;
-      }
-      /* Every table renders inside one of these. `width: 100%` only ever shrinks a table to its
-         container; it cannot take it below its own min-content width, and these tables have a floor
-         no styling removes - two nowrap monospace id columns and a row of action buttons. Below
-         about 1000px of viewport that floor exceeds the card, and without a scroll container here
-         the table simply drew outside the card's border and off the page. Scrolling the table alone
-         keeps the overflow where it belongs: the card's edge holds, and the page never scrolls
-         sideways. */
-      .tablewrap {
-        overflow-x: auto;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 8px;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 8px;
-        border-bottom: 1px solid var(--border);
-        vertical-align: top;
-      }
-      th {
-        color: var(--muted);
-        font-weight: 500;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-      }
-      /* A header the listing can sort on. white-space: nowrap keeps the direction arrow on the
-         label's line rather than wrapping alone onto a second one and stretching every row. */
-      th.sortable {
-        cursor: pointer;
-        user-select: none;
-        white-space: nowrap;
-      }
-      th.sortable:hover {
-        color: var(--text);
-      }
-      th.sorted {
-        color: var(--accent);
-      }
-      /* A memory body (and an event description) is free text of any length, so it gets a row of its
-         own spanning the table rather than a column competing with the metadata for width: as a
-         column, a single long unbreakable neighbour (an at:// id) squeezed it to a few characters
-         and it wrapped one word per line. The main row drops its bottom border while a body row
-         follows it, so the pair reads as one record. */
-      tr.has-body > td {
-        border-bottom: none;
-        padding-bottom: 4px;
-      }
-      td.bodycell {
-        padding-top: 0;
-      }
-      .bodytext {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 13px;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        border-left: 2px solid var(--border);
-        padding: 2px 0 2px 10px;
-        /* Bounded rather than unbounded: one multi-kilobyte memory would otherwise push every other
-           row off the screen. Scrolls in place; the full text is always reachable. */
-        max-height: 14em;
-        overflow-y: auto;
-      }
-      td.id {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 12px;
-        color: var(--muted);
-        white-space: nowrap;
-      }
-      /* An age carries the absolute timestamp in its title. The underline and the help cursor are
-         what say so — without them the exact value is present but undiscoverable. */
-      .age {
-        white-space: nowrap;
-        border-bottom: 1px dotted var(--border);
-        cursor: help;
-      }
-      /* Row buttons stay on one line. They wrapped to one per line only because the free-text column
-         was taking the table's width; now that it does not, a stack of four buttons is what would
-         make a record tall. */
-      td .actions {
-        flex-wrap: nowrap;
-      }
-      /* The row's buttons are pinned to the right edge of the .tablewrap above, so they are inside
-         the card at every width and the rest of the row scrolls underneath them.
-         `width: 100%` cannot shrink these tables below their own min-content width - two nowrap
-         monospace id columns, a metadata cell and four buttons - so on anything narrower the wrap
-         scrolls, and what it took out of view was always the actions, being last. Scrolling to reach
-         a button is not the same as the button being reachable: the column that has to be visible is
-         the one you act with.
-         Two things are load-bearing rather than decorative. The background, because a sticky cell is
-         transparent and the row would otherwise be drawn straight through it. And the borders as
-         INSET SHADOWS rather than as borders: under `border-collapse: collapse` the table owns the
-         grid's borders and paints them below a sticky cell, so a real border here scrolls away with
-         its row and leaves the column detached. */
-      th.actions-col,
-      td.actions-col {
-        position: sticky;
-        right: 0;
-        background: var(--panel);
-        box-shadow:
-          inset 1px 0 0 var(--border),
-          inset 0 -1px 0 var(--border);
-      }
-      /* A row followed by its body row drops its bottom border, so the pair reads as one record; the
-         pinned cell has to drop the shadow standing in for it, or the record is ruled off in one
-         column only. */
-      tr.has-body > td.actions-col {
-        box-shadow: inset 1px 0 0 var(--border);
-      }
-      /* Ids are middle-truncated for display (see shortId): the full value is on the title and behind
-         the copy button, so nothing is lost, while the column stops setting the table's width. */
-      .idc {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-      }
-      .idc .idv {
-        cursor: default;
-      }
-      button.copy {
-        background: transparent;
-        border: 1px solid transparent;
-        border-radius: 4px;
-        color: var(--muted);
-        cursor: pointer;
-        padding: 1px 3px;
-        line-height: 0;
-      }
-      button.copy:hover {
-        color: var(--accent);
-        border-color: var(--border);
-      }
-      button.copy.copied {
-        color: var(--good);
-      }
-      button.copy svg {
-        width: 13px;
-        height: 13px;
-        display: block;
-      }
-      .pill {
-        display: inline-block;
-        padding: 1px 7px;
-        border-radius: 10px;
-        font-size: 11px;
-        background: var(--panel-2);
-        border: 1px solid var(--border);
-        color: var(--muted);
-      }
-      .pill.summary {
-        color: var(--warn);
-        border-color: var(--warn);
-      }
-      .pill.binary {
-        color: var(--accent);
-        border-color: var(--accent);
-      }
-      /* Metadata labels share the Group cell rather than taking a column of their own: they are the
-         same classification the group is one dimension of, and the table is already wide. */
-      .pill.meta {
-        margin: 1px 2px 1px 0;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      }
-      a.evlink {
-        color: var(--accent);
-        text-decoration: none;
-        cursor: pointer;
-      }
-      a.evlink:hover {
-        text-decoration: underline;
-      }
-      .event-head {
-        padding: 4px 0 12px;
-        border-bottom: 1px solid var(--border);
-        margin-bottom: 12px;
-      }
-      .event-head h3 {
-        margin: 0 0 4px;
-      }
-      .event-head .kv {
-        font-size: 12px;
-        color: var(--muted);
-        margin-top: 6px;
-      }
-      .events-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .events-head h2 {
-        margin: 0;
-      }
-      /* The summarise controls sit under the event's memories, separated by a rule: they act on the
-     whole list above them rather than on any row in it, and they delete all of it. */
-      .summarise {
-        border-top: 1px solid var(--border);
-        margin-top: 12px;
-        padding-top: 12px;
-      }
-      .pager {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .pager span {
-        font-size: 12px;
-        min-width: 90px;
-        text-align: center;
-      }
-      #toast {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        z-index: 100;
-      }
-      .toast {
-        background: var(--panel-2);
-        border: 1px solid var(--border);
-        border-left-width: 4px;
-        border-radius: 6px;
-        padding: 10px 14px;
-        max-width: 380px;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-        animation: slidein 0.15s ease;
-      }
-      .toast.ok {
-        border-left-color: var(--good);
-      }
-      .toast.err {
-        border-left-color: var(--bad);
-      }
-      .toast .t-title {
-        font-weight: 600;
-        margin-bottom: 2px;
-      }
-      .toast .t-body {
-        color: var(--muted);
-        font-size: 13px;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      @keyframes slidein {
-        from {
-          transform: translateX(20px);
-          opacity: 0;
-        }
-        to {
-          transform: none;
-          opacity: 1;
-        }
-      }
-      .empty {
-        color: var(--muted);
-        padding: 16px 0;
-        text-align: center;
-      }
-      code.inline {
-        background: var(--panel-2);
-        padding: 1px 5px;
-        border-radius: 4px;
-        font-size: 12px;
-      }
-      /* Admin-only gating, alongside the writer gating above: a dry run enumerates the store, so the
-     server allows it only to an admin and the console hides the control rather than offering one
-     that is certain to be refused. */
-      body:not(.admin) .admin-only {
-        display: none !important;
-      }
-      /* Same convention again for the embedded LLM: SummariseMemories is a FAILED_PRECONDITION on a
-     deployment that has not configured one, and there is nothing the user could do about it, so the
-     button is hidden rather than offered. The manual summary is NOT gated on this - it needs no
-     summariser, the caller writes it. */
-      body:not(.summariser) .summariser-only {
-        display: none !important;
-      }
-      /* And again for the two consolidation properties whoami reports. .consolidation-only takes the
-     whole Decay tab (its nav button included), the tables' Value column, and the summarisation
-     candidates card: every one of them is served by an RPC a replica refuses outright, so on a
-     replica they would render as a page of dashes and FAILED_PRECONDITIONs the operator could do
-     nothing about. .tombstones-only is the narrower case — the forgotten log answers rather than
-     refuses when it is off, with an empty page, which reads as "nothing has been forgotten" when
-     it means "nothing was written down". Neither class is a security boundary, exactly like
-     .writer-only: the server decides, this only stops the console offering what it would refuse. */
-      body:not(.consolidating) .consolidation-only {
-        display: none !important;
-      }
-      body:not(.tombstones) .tombstones-only {
-        display: none !important;
-      }
-      /* Decay: the value column and the pills that say what is overriding it. Same convention as the
-     role pill - a colour plus a word, never colour alone. */
-      td.decay {
-        white-space: nowrap;
-        font-variant-numeric: tabular-nums;
-      }
-      td.decay .val {
-        cursor: pointer;
-        border-bottom: 1px dotted var(--border);
-      }
-      .pill.due {
-        color: var(--bad);
-        border-color: var(--bad);
-      }
-      .pill.soon {
-        color: var(--warn);
-        border-color: var(--warn);
-      }
-      .pill.safe {
-        color: var(--good);
-        border-color: var(--good);
-      }
-      .pill.held {
-        color: var(--accent);
-        border-color: var(--accent);
-      }
-      .stats {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-        gap: 12px;
-      }
-      .stat {
-        background: var(--panel-2);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 10px 12px;
-      }
-      .stat .k {
-        color: var(--muted);
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-      }
-      .stat .v {
-        font-size: 18px;
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-        margin-top: 2px;
-      }
-      .stat .n {
-        color: var(--muted);
-        font-size: 12px;
-        margin-top: 2px;
-      }
-      .chart {
-        width: 100%;
-        overflow-x: auto;
-      }
-      .chart svg {
-        display: block;
-        min-width: 520px;
-      }
-      .chart .axis {
-        stroke: var(--border);
-      }
-      .chart .grid {
-        stroke: var(--border);
-        stroke-dasharray: 2 4;
-      }
-      .chart .curve {
-        fill: none;
-        stroke: var(--accent);
-        stroke-width: 2;
-      }
-      .chart .threshold {
-        stroke: var(--bad);
-        stroke-dasharray: 5 4;
-      }
-      .chart .crossing {
-        stroke: var(--warn);
-        stroke-dasharray: 3 3;
-      }
-      .chart text {
-        fill: var(--muted);
-        font-size: 11px;
-      }
-    </style>
+    <link rel="stylesheet" href="/ui/styles.css" />
   </head>
   <!-- The page ships gated: the login card is what an unauthenticated load renders, and boot() lifts
      the class once it knows either that this deployment does not authenticate or that the session
@@ -653,7 +20,7 @@
       <div class="token-box">
         <span
           id="role-pill"
-          class="pill"
+          class="pill hidden"
           title="your effective authorization role"
         ></span>
         <!-- The group scope sits beside the role because the two answer different questions about the
@@ -661,20 +28,23 @@
          it a scoped console looks like a store that has lost most of its data. -->
         <span
           id="scope-pill"
-          class="pill meta"
-          style="display: none"
+          class="pill meta hidden"
           title="this token is restricted to these groups"
         ></span>
         <!-- Sign out is the only auth control in the header; signing *in* happens on the gate below,
          which is what stands here when there is no session. -->
-        <button id="logout-btn" class="btn ghost small" style="display: none">
-          Sign out
-        </button>
+        <button id="logout-btn" class="btn ghost small hidden">Sign out</button>
       </div>
     </header>
 
+    <!-- Now stands first and is the landing view. This service's premise is that the store forgets,
+     and the console used to open on an empty Search tab that said nothing about it: a store quietly
+     consolidating every two minutes looked exactly like a store doing nothing. Unlike Decay it is
+     NOT .consolidation-only - it degrades in place on a replica rather than vanishing, because
+     "this instance does not consolidate" is itself the thing a visitor needs told. -->
     <nav>
-      <button data-tab="search" class="active">Search</button>
+      <button data-tab="now" class="active">Now</button>
+      <button data-tab="search">Search</button>
       <button data-tab="memories">Memories</button>
       <button data-tab="events">Events</button>
       <button data-tab="decay" class="consolidation-only">Decay</button>
@@ -692,7 +62,7 @@
 
         <!-- Manual bearer-token entry: the sign-in affordance under auth.method hmac, and the fallback
          when /ui/config could not be read but a call came back refused. A form, so Enter submits. -->
-        <form id="gate-form" style="display: none">
+        <form class="hidden" id="gate-form">
           <div class="field wide">
             <label for="gate-token">Bearer token</label>
             <input
@@ -709,12 +79,12 @@
 
         <!-- Provider sign-in: shown under idp in either login mode — the in-browser PKCE flow, or the
          service-hosted flow at /auth/login. boot() wires the click to whichever is configured. -->
-        <div class="actions" id="gate-oidc" style="display: none">
+        <div class="actions hidden" id="gate-oidc">
           <button class="btn" id="gate-login">Sign in</button>
         </div>
 
-        <p id="gate-error" style="display: none"></p>
-        <p class="muted" id="gate-hint" style="display: none">
+        <p class="hidden" id="gate-error"></p>
+        <p class="muted hidden" id="gate-hint">
           Mint one with
           <code class="inline"
             >hippocampus --mint-token --client-id &lt;id&gt; --ttl 24h</code
@@ -724,8 +94,62 @@
     </section>
 
     <main>
+      <!-- ===================== NOW ===================== -->
+      <!-- The landing view: what this store is holding, when it next forgets, and what it forgot
+       last. Everything here is served - no decay maths happens in this page - and the three
+       sources are GetConsolidationStatus (the schedule, cheap, in-memory), ExplainConsolidation
+       (the capacity figures, behind a server-side cache whose TTL the status RPC reports so this
+       page paces itself from the server rather than a guess) and GetForgottenMemories (the feed).
+       -->
+      <section id="tab-now" class="tab active">
+        <div class="card" id="now-hero">
+          <h2>This store is finite. It forgets.</h2>
+          <p class="muted pull-up">
+            Memories decay as they age and are reinforced when recalled. Once a
+            memory's value falls below the threshold, the next consolidation
+            cycle deletes it — and as the store fills, that threshold rises.
+          </p>
+
+          <div id="now-headline"></div>
+          <div id="now-capacity"></div>
+        </div>
+
+        <div class="card consolidation-only" id="now-cycle-card">
+          <div class="events-head">
+            <h2>The last cycle</h2>
+            <div class="actions flush">
+              <!-- Sleep is scopeUnbound as well as admin, so a group-scoped admin is refused it
+               outright: .unbound-only, not .admin-only. -->
+              <button
+                class="btn small unbound-only"
+                data-act="run-sleep"
+                id="now-sleep"
+              >
+                Run a cycle now
+              </button>
+              <button class="btn ghost small" data-act="load-now">
+                Refresh
+              </button>
+            </div>
+          </div>
+          <div id="now-cycle"></div>
+        </div>
+
+        <!-- The forgetting feed. admin-only rather than unbound-only: GetForgottenMemories is
+         scopeFilter, so a group-scoped admin reads their own partition's losses. -->
+        <div class="card admin-only consolidation-only" id="now-forgotten-card">
+          <div class="events-head">
+            <h2>Just forgotten</h2>
+            <a class="evlink" data-act="goto-decay" id="now-more-forgotten"
+              >Full log →</a
+            >
+          </div>
+          <div id="now-forgotten"></div>
+        </div>
+      </section>
+
       <!-- ===================== SEARCH ===================== -->
-      <section id="tab-search" class="tab active">
+      <section id="tab-search" class="tab">
         <!-- The opened event gets a card of its own rather than borrowing the results panel below.
          openEvent is reachable from all three tables, so writing it into the results meant opening
          an event from the Events or Memories tab silently destroyed a search the user had run and
@@ -737,10 +161,10 @@
          tab, so what arrives has nothing to do with the query above it, and landing halfway down a
          page under a form you did not fill in reads as the search having done something. First,
          plus the scroll in openEvent, means the thing you asked for is the thing at the top. -->
-        <div class="card" id="event-card" style="display: none">
+        <div class="card hidden" id="event-card">
           <div class="events-head">
             <h2>Event</h2>
-            <button class="btn ghost small" onclick="closeEvent()">
+            <button class="btn ghost small" data-act="close-event">
               Close
             </button>
           </div>
@@ -754,12 +178,12 @@
            since a deployment without ollama would only refuse it. -->
           <div class="summarise writer-only" id="event-summarise">
             <div class="actions">
-              <button class="btn ghost small" onclick="openSummaryForm()">
+              <button class="btn ghost small" data-act="open-summary-form">
                 Summarise…
               </button>
               <button
                 class="btn ghost small summariser-only"
-                onclick="summariseWithLLM()"
+                data-act="summarise-llm"
               >
                 Summarise with the LLM
               </button>
@@ -770,7 +194,7 @@
 
             <!-- The manual form: revealed by "Summarise…" rather than always shown, so the card is
              not dominated by a textarea nobody is using. -->
-            <div id="summary-form" style="display: none">
+            <div class="hidden" id="summary-form">
               <div class="field wide">
                 <label for="summary-body">Summary</label>
                 <textarea
@@ -797,10 +221,10 @@
                 </div>
               </div>
               <div class="actions">
-                <button class="btn" onclick="replaceWithSummary()">
+                <button class="btn" data-act="replace-with-summary">
                   Replace memories
                 </button>
-                <button class="btn ghost" onclick="closeSummaryForm()">
+                <button class="btn ghost" data-act="close-summary-form">
                   Cancel
                 </button>
               </div>
@@ -809,7 +233,7 @@
         </div>
         <div class="card" data-enter="search">
           <h2>Content search</h2>
-          <p class="muted" style="margin-top: -6px">
+          <p class="muted pull-up">
             Queries the secondary content-search index. Leave the query blank
             and give just an event id to list that event's memories instead.
             Event ids in the results are clickable and open the whole event.
@@ -846,11 +270,11 @@
           <div class="actions">
             <div class="checkbox">
               <input id="s-reinforce" type="checkbox" />
-              <label for="s-reinforce" style="margin: 0"
+              <label class="flush" for="s-reinforce"
                 >Reinforce (route matches through recall)</label
               >
             </div>
-            <button class="btn" onclick="doSearch()">Search</button>
+            <button class="btn" data-act="do-search">Search</button>
           </div>
         </div>
         <div class="card">
@@ -895,11 +319,13 @@
             </div>
           </div>
           <div class="actions">
-            <button id="mem-save" class="btn" onclick="saveMemory()">
+            <button id="mem-save" class="btn" data-act="save-memory">
               Create
             </button>
-            <button class="btn ghost" onclick="resetMemoryForm()">Clear</button>
-            <span id="mem-edit-hint" class="muted" style="display: none"
+            <button class="btn ghost" data-act="reset-memory-form">
+              Clear
+            </button>
+            <span id="mem-edit-hint" class="muted hidden"
               >Editing existing memory (partial update)</span
             >
           </div>
@@ -909,7 +335,7 @@
           <div class="row">
             <div class="field wide">
               <label for="mf-extremum">Significance</label>
-              <select id="mf-extremum" onchange="syncMemoryExtremum()">
+              <select id="mf-extremum" data-change="sync-memory-extremum">
                 <option value="">Range (use min/max below)</option>
                 <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
                   Highest only — the most durable memories
@@ -971,7 +397,7 @@
           <div class="row">
             <div class="field">
               <label for="mf-sort">Sort by</label>
-              <select id="mf-sort" onchange="loadMemories()">
+              <select id="mf-sort" data-change="load-memories">
                 <option value="significance">Significance</option>
                 <option value="timestamp">Stored</option>
                 <option value="time_recalled">Last recalled</option>
@@ -983,7 +409,7 @@
             </div>
             <div class="field">
               <label for="mf-sortdir">Direction</label>
-              <select id="mf-sortdir" onchange="loadMemories()">
+              <select id="mf-sortdir" data-change="load-memories">
                 <option value="">Default</option>
                 <option value="SORT_DIRECTION_DESC">Descending</option>
                 <option value="SORT_DIRECTION_ASC">Ascending</option>
@@ -1000,8 +426,8 @@
             </div>
           </div>
           <div class="actions">
-            <button class="btn" onclick="loadMemories()">List memories</button>
-            <button class="btn ghost" onclick="clearMemoryFilter()">
+            <button class="btn" data-act="load-memories">List memories</button>
+            <button class="btn ghost" data-act="clear-memory-filter">
               Reset filter
             </button>
           </div>
@@ -1013,7 +439,8 @@
               <button
                 class="btn ghost small"
                 id="mem-prev"
-                onclick="memoriesPage(-1)"
+                data-act="memories-page"
+                data-dir="-1"
                 disabled
               >
                 ‹ Prev
@@ -1022,7 +449,8 @@
               <button
                 class="btn ghost small"
                 id="mem-next"
-                onclick="memoriesPage(1)"
+                data-act="memories-page"
+                data-dir="1"
                 disabled
               >
                 Next ›
@@ -1034,19 +462,14 @@
           </div>
         </div>
 
-        <div
-          class="card"
-          id="links-card"
-          data-enter="memory-link"
-          style="display: none"
-        >
+        <div class="card hidden" id="links-card" data-enter="memory-link">
           <div class="events-head">
             <h2>Links</h2>
-            <button class="btn ghost small" onclick="closeLinks()">
+            <button class="btn ghost small" data-act="close-links">
               Close
             </button>
           </div>
-          <p class="muted" style="margin-top: -6px">
+          <p class="muted pull-up">
             What <span id="links-subject" class="id"></span> is associated with.
             A link raises the effective significance of <em>both</em> ends, with
             diminishing returns, so a well-connected memory decays more slowly.
@@ -1055,7 +478,7 @@
           <div id="links-list">
             <div class="empty">No links loaded yet.</div>
           </div>
-          <div class="row writer-only" style="margin-top: 12px">
+          <div class="row writer-only gap-top">
             <div class="field wide">
               <label for="link-target">Link to memory id</label>
               <input
@@ -1074,7 +497,7 @@
             </div>
           </div>
           <div class="actions writer-only">
-            <button class="btn" onclick="addLink()">Add link</button>
+            <button class="btn" data-act="add-link">Add link</button>
           </div>
         </div>
       </section>
@@ -1113,11 +536,11 @@
             </div>
           </div>
           <div class="actions">
-            <button id="ev-save" class="btn" onclick="saveEvent()">
+            <button id="ev-save" class="btn" data-act="save-event">
               Create
             </button>
-            <button class="btn ghost" onclick="resetEventForm()">Clear</button>
-            <span id="ev-edit-hint" class="muted" style="display: none"></span>
+            <button class="btn ghost" data-act="reset-event-form">Clear</button>
+            <span id="ev-edit-hint" class="muted hidden"></span>
           </div>
         </div>
         <div class="card" data-enter="event-filter">
@@ -1125,7 +548,7 @@
           <div class="row">
             <div class="field wide">
               <label for="ef-extremum">Significance</label>
-              <select id="ef-extremum" onchange="syncEventExtremum()">
+              <select id="ef-extremum" data-change="sync-event-extremum">
                 <option value="">Range (use min/max below)</option>
                 <option value="SIGNIFICANCE_EXTREMUM_HIGHEST">
                   Highest only — the most durable events
@@ -1153,7 +576,7 @@
           <div class="row">
             <div class="field">
               <label for="ef-sort">Sort by</label>
-              <select id="ef-sort" onchange="loadEvents()">
+              <select id="ef-sort" data-change="load-events">
                 <option value="significance">Significance</option>
                 <option value="timestamp">Start</option>
                 <option value="time_end">End</option>
@@ -1165,7 +588,7 @@
             </div>
             <div class="field">
               <label for="ef-sortdir">Direction</label>
-              <select id="ef-sortdir" onchange="loadEvents()">
+              <select id="ef-sortdir" data-change="load-events">
                 <option value="">Default</option>
                 <option value="SORT_DIRECTION_DESC">Descending</option>
                 <option value="SORT_DIRECTION_ASC">Ascending</option>
@@ -1184,12 +607,10 @@
           <div class="actions">
             <div class="checkbox">
               <input id="ef-memories" type="checkbox" />
-              <label for="ef-memories" style="margin: 0"
-                >Include memories</label
-              >
+              <label class="flush" for="ef-memories">Include memories</label>
             </div>
-            <button class="btn" onclick="loadEvents()">List events</button>
-            <button class="btn ghost" onclick="clearEventFilter()">
+            <button class="btn" data-act="load-events">List events</button>
+            <button class="btn ghost" data-act="clear-event-filter">
               Reset filter
             </button>
           </div>
@@ -1201,7 +622,8 @@
               <button
                 class="btn ghost small"
                 id="ev-prev"
-                onclick="eventsPage(-1)"
+                data-act="events-page"
+                data-dir="-1"
                 disabled
               >
                 ‹ Prev
@@ -1210,7 +632,8 @@
               <button
                 class="btn ghost small"
                 id="ev-next"
-                onclick="eventsPage(1)"
+                data-act="events-page"
+                data-dir="1"
                 disabled
               >
                 Next ›
@@ -1230,11 +653,11 @@
         <div class="card consolidation-only">
           <div class="events-head">
             <h2>Summarisation candidates</h2>
-            <button class="btn ghost small" onclick="loadCandidates()">
+            <button class="btn ghost small" data-act="load-candidates">
               Refresh
             </button>
           </div>
-          <p class="muted" style="margin-top: -6px">
+          <p class="muted pull-up">
             Events whose memories have accumulated and gone quiet long enough to
             be worth condensing, as identified by the most recent sleep cycle.
             Open one to summarise it.
@@ -1249,25 +672,24 @@
       <section id="tab-decay" class="tab consolidation-only">
         <div class="card">
           <h2>Forgetting</h2>
-          <p class="muted" style="margin-top: -6px">
+          <p class="muted pull-up">
             Every number here comes from the service, computed by the same code
             that decides what to forget — so what is drawn is what will happen,
-            not an approximation of it. A memory
-            is forgotten once its <em>value</em> falls below the
-            <em>threshold</em>; the threshold rises with capacity pressure as
-            the store fills.
+            not an approximation of it. A memory is forgotten once its
+            <em>value</em> falls below the <em>threshold</em>; the threshold
+            rises with capacity pressure as the store fills.
           </p>
           <div id="decay-status">
             <div class="empty">Nothing loaded yet.</div>
           </div>
-          <div class="actions" style="margin-top: 12px">
-            <button class="btn ghost" onclick="loadDecay()">Refresh</button>
+          <div class="actions gap-top">
+            <button class="btn ghost" data-act="load-decay">Refresh</button>
           </div>
         </div>
 
         <div class="card">
           <h2>Decay curve</h2>
-          <p class="muted" style="margin-top: -6px">
+          <p class="muted pull-up">
             How a memory of a given <em>effective</em> significance loses value
             with age. Click the value of any memory in the tables to plot that
             memory's own curve.
@@ -1291,17 +713,19 @@
             </div>
           </div>
           <div class="actions">
-            <button class="btn" onclick="loadDecay()">Plot</button>
+            <button class="btn" data-act="load-decay">Plot</button>
           </div>
-          <div id="d-breakdown" class="muted" style="font-size: 12px"></div>
+          <div id="d-breakdown" class="muted fs-12"></div>
           <div id="decay-curve">
             <div class="empty">No curve plotted yet.</div>
           </div>
         </div>
 
-        <div class="card admin-only">
+        <!-- unbound-only, not admin-only: PreviewConsolidation is scopeUnbound, so a group-scoped
+         admin is refused it outright however high their tier. -->
+        <div class="card unbound-only">
           <h2>What would be forgotten now</h2>
-          <p class="muted" style="margin-top: -6px">
+          <p class="muted pull-up">
             A dry run of the consolidation cycle: it reports what a cycle
             running now would delete, and deletes nothing. Administrator only.
           </p>
@@ -1318,7 +742,7 @@
             </div>
           </div>
           <div class="actions">
-            <button class="btn" onclick="runPreview()">Run dry run</button>
+            <button class="btn" data-act="run-preview">Run dry run</button>
           </div>
           <div id="preview-results">
             <div class="empty">No dry run yet.</div>
@@ -1327,12 +751,10 @@
 
         <div class="card admin-only tombstones-only">
           <h2>What was forgotten</h2>
-          <p class="muted" style="margin-top: -6px">
+          <p class="muted pull-up">
             The forgotten log: one record per memory a cycle actually deleted,
             with the value and threshold that decided it. Optional and off by
-            default (<code
-              class="inline"
-              >consolidation.tombstones.enabled</code
+            default (<code class="inline">consolidation.tombstones.enabled</code
             >). Records carry no body — this says a memory was lost, not what it
             said. Administrator only.
           </p>
@@ -1365,8 +787,8 @@
             </div>
           </div>
           <div class="actions">
-            <button class="btn" onclick="loadForgotten()">Load</button>
-            <button class="btn ghost" onclick="clearForgotten()">
+            <button class="btn" data-act="load-forgotten">Load</button>
+            <button class="btn ghost" data-act="clear-forgotten">
               Clear the log
             </button>
           </div>
@@ -1379,3023 +801,6 @@
 
     <div id="toast"></div>
 
-    <script>
-      "use strict";
-
-      // ------------------------------------------------------------------ helpers
-      const $ = (id) => document.getElementById(id);
-      const TOKEN_KEY = "hippocampus_token";
-
-      // oidc holds the browser login state used only when /ui/config reports auth.method "idp" with a UI
-      // client. In every other mode it stays disabled and the login gate's token box drives auth instead.
-      // The access token lives in sessionStorage (cleared when the tab closes) rather than localStorage,
-      // and no client secret is ever involved - this is an Authorization Code + PKCE public client.
-      const OIDC_ACCESS_KEY = "hippocampus_oidc_access";
-      const OIDC_REFRESH_KEY = "hippocampus_oidc_refresh";
-      const OIDC_EXPIRY_KEY = "hippocampus_oidc_expiry";
-      const PKCE_KEY = "hippocampus_pkce"; // {verifier, state}, kept across the provider redirect
-
-      const oidc = {
-        enabled: false,
-        cfg: null, // {issuer, clientId, scopes, audience} from /ui/config
-        endpoints: null, // {authorization_endpoint, token_endpoint, end_session_endpoint} from discovery
-        accessToken: sessionStorage.getItem(OIDC_ACCESS_KEY) || "",
-        refreshTimer: null,
-      };
-
-      // authCfg records what /ui/config said about this deployment: whether it authenticates at all, and
-      // therefore whether the login gate is ever raised. It is deliberately the *configured* answer rather
-      // than "did the last call fail", so a refusal that has nothing to do with credentials — a purge, a
-      // network blip — never presents a sign-in card to an operator whose token is perfectly good. The one
-      // exception is in refreshCaps: a 401/403 promotes it, so a deployment whose /ui/config is unreachable
-      // still gets a way to enter a token.
-      const authCfg = { enabled: false, method: "none" };
-
-      // manualToken is the pasted bearer token in the non-OIDC modes. It lives in localStorage (so it
-      // survives a reload, as it always has) and is read from there rather than from a DOM input, because
-      // the input it is typed into only exists while the gate is up.
-      let manualToken = localStorage.getItem(TOKEN_KEY) || "";
-
-      // server holds the state for the server-side login mode (/ui/config loginMode "server"): the service
-      // hosts the OIDC flow at /auth/login and sets an HttpOnly session cookie, so this page never sees or
-      // stores a token. The gate's Sign in and the header's Sign out simply navigate to /auth/login and
-      // /auth/logout, and every /v1 call is authenticated by the cookie the browser sends automatically.
-      const server = { enabled: false };
-
-      // getToken returns the bearer sent on every /v1 call: nothing in server-login mode (the HttpOnly
-      // cookie carries auth and is not script-readable), the OIDC access token when the in-browser flow is
-      // active, otherwise the token entered on the login gate.
-      function getToken() {
-        if (server.enabled) {
-          return "";
-        }
-
-        if (oidc.enabled) {
-          return oidc.accessToken || "";
-        }
-
-        return manualToken;
-      }
-
-      // haveCredential reports whether this page holds something to authenticate with. Under the
-      // server-hosted login the session is an HttpOnly cookie no script can read, so it answers true and
-      // leaves the verdict to what whoami returned.
-      function haveCredential() {
-        if (server.enabled) {
-          return true;
-        }
-
-        if (oidc.enabled) {
-          return !!oidc.accessToken;
-        }
-
-        return !!manualToken;
-      }
-
-      // serverRefresh asks the service to swap the refresh cookie for a fresh access token (204 on
-      // success). Used to transparently recover an expired session before surfacing a 401.
-      async function serverRefresh() {
-        try {
-          const res = await fetch("/auth/refresh", { method: "POST" });
-
-          return res.ok;
-        } catch (e) {
-          return false;
-        }
-      }
-
-      // ------------------------------------------------------------------ login gate
-      // The gate is the console's signed-out state: it stands in place of the tabs whenever this
-      // deployment authenticates and no session has resolved. It is raised and lifted from applyCaps, so
-      // every route into a signed-out state — first load, sign-out, a refused token, a lapsed session
-      // surfaced by any failing call — goes through the same decision.
-
-      // gateNeeded reports whether the login card should stand in front of the console: this deployment
-      // authenticates, no role resolved, and the reason is credential-shaped — nothing held at all, or a
-      // call the server refused as unauthenticated (401) or unauthorised (403). A whoami that failed for
-      // any other reason (a purge returns 503) deliberately leaves the console up: inviting an operator to
-      // replace a good token would not fix anything.
-      function gateNeeded() {
-        if (!authCfg.enabled || caps.role) {
-          return false;
-        }
-
-        return !haveCredential() || caps.status === 401 || caps.status === 403;
-      }
-
-      // gateMessage explains a refusal, and only a refusal: an operator who has just signed out, or who
-      // has never signed in, is shown the plain card with no error on it. A 403 is called out separately
-      // from a 401 because the remedy differs — the token is fine, the role it carries is not.
-      function gateMessage() {
-        if (caps.status === 403) {
-          return "That sign-in is valid, but its role grants no access to this console.";
-        }
-
-        // In server-login mode the cookie is unreadable, so "held a credential" cannot be told apart from
-        // "just signed out" — the card simply offers Sign in rather than claiming an expiry.
-        if (caps.status === 401 && !server.enabled && haveCredential()) {
-          return oidc.enabled
-            ? "Your session has ended. Sign in again to continue."
-            : "That token was not accepted. Check it, or mint a new one.";
-        }
-
-        return "";
-      }
-
-      // setGateError shows or clears the line under the sign-in control.
-      function setGateError(msg) {
-        const el = $("gate-error");
-
-        el.textContent = msg || "";
-        el.style.display = msg ? "block" : "none";
-      }
-
-      // applyGate raises or lifts the gate and fills it in for the active sign-in mode. Called from
-      // applyCaps on every capability refresh; when the gate is not needed it only drops the body class,
-      // leaving the card's contents alone since nothing renders them.
-      function applyGate() {
-        const gated = gateNeeded();
-
-        document.body.classList.toggle("gated", gated);
-
-        if (!gated) {
-          return;
-        }
-
-        const manual = !oidc.enabled && !server.enabled;
-
-        $("gate-title").textContent = "Sign in";
-        $("gate-lede").textContent = manual
-          ? "This service requires a bearer token. It is kept in this browser and sent with every request the console makes."
-          : "This service authenticates through your identity provider.";
-
-        $("gate-form").style.display = manual ? "block" : "none";
-        $("gate-oidc").style.display = manual ? "none" : "block";
-        $("gate-hint").style.display = manual ? "block" : "none";
-
-        setGateError(gateMessage());
-
-        if (manual) {
-          $("gate-token").focus();
-        }
-      }
-
-      // signInManual takes the pasted token, keeps it for subsequent calls, and re-resolves capabilities.
-      // A token the server refuses leaves the gate up with the reason on it, rather than dropping the
-      // operator into a console where every action would fail.
-      async function signInManual(ev) {
-        ev.preventDefault();
-
-        const value = $("gate-token").value.trim();
-
-        if (!value) {
-          setGateError("Paste the bearer token issued for this service.");
-
-          return;
-        }
-
-        manualToken = value;
-        localStorage.setItem(TOKEN_KEY, manualToken);
-
-        $("gate-submit").disabled = true;
-
-        try {
-          await refreshCaps();
-        } finally {
-          $("gate-submit").disabled = false;
-        }
-      }
-
-      // signOut ends the current session by whichever route this deployment's login mode calls for, and
-      // so puts the gate back. Under the two OIDC modes it goes through the provider so the provider's
-      // own session ends too; in manual mode it forgets the token this browser stored.
-      function signOut() {
-        if (server.enabled) {
-          window.location.assign("/auth/logout");
-
-          return;
-        }
-
-        if (oidc.enabled) {
-          logout();
-
-          return;
-        }
-
-        manualToken = "";
-        localStorage.removeItem(TOKEN_KEY);
-        $("gate-token").value = "";
-
-        refreshCaps();
-      }
-
-      // caps holds what the current token is allowed to do, as reported by GET /v1/whoami. It gates the
-      // write-oriented controls in the UI (a convenience only - the server enforces authorization on
-      // every RPC regardless of what the console shows). canWrite defaults to true so the UI is usable
-      // before the first whoami resolves and when authentication is disabled.
-      let caps = {
-        canWrite: true,
-        isAdmin: true,
-        role: null,
-        authEnabled: false,
-        searchModes: [],
-        summariser: false,
-        // These two start false rather than optimistic, unlike canWrite: they must agree with the
-        // body classes the page ships without (.consolidating / .tombstones), or memoryRow's colspan
-        // would be counting a Value column the stylesheet is hiding. Nothing renders before the
-        // first whoami anyway — the page ships gated, so nav and main are both hidden until
-        // applyCaps has run.
-        consolidation: false,
-        tombstones: false,
-        groups: [],
-        groupScoped: false,
-        status: 0,
-      };
-
-      // refreshCaps asks the server who the current token is and applies the result. A 401 (no/invalid
-      // token while auth is on) or 403 (valid token, but a role that grants nothing) both mean "cannot
-      // write", handled without a toast since this runs on load and on every sign-in. The status of a
-      // failure is kept because the gate decides from it: only a credential-shaped refusal raises a
-      // sign-in card.
-      async function refreshCaps() {
-        try {
-          const who = await api("GET", "/v1/whoami");
-          const role = who.role || null;
-          const authEnabled = !!who.authEnabled;
-
-          caps = {
-            role,
-            authEnabled,
-            canWrite: !authEnabled || role === "writer" || role === "admin",
-            // isAdmin gates the store-wide controls, so it is NOT purely the tier: a group-scoped
-            // token is refused Purge/Sleep/PreviewConsolidation whatever its role, since all three
-            // act on the whole store. Offering the dry-run panel to a scoped admin would break the
-            // rule the .admin-only CSS exists to keep - never show a control certain to be refused.
-            // The scope pill's tooltip says why it is absent.
-            isAdmin: (!authEnabled || role === "admin") && !who.groupScoped,
-            // Which search modes this deployment can serve - a property of the server, not the token.
-            searchModes: who.searchModes || [],
-            // Whether the embedded LLM is configured, likewise a property of the server. Gates the
-            // LLM summarise button only; the manual one needs no summariser.
-            summariser: !!who.summariserEnabled,
-            // Whether this instance runs a sleep cycle, and whether it records what it forgets.
-            // Both are properties of the server. Reading an absent field as false is safe here in a
-            // way it would not be in a standalone client: this page is embedded in the binary that
-            // answers it, so the two can never be different versions.
-            consolidation: !!who.consolidationEnabled,
-            tombstones: !!who.tombstonesEnabled,
-            // The group scope, if this token carries one. groupScoped is authoritative; groups alone
-            // cannot distinguish unscoped from scoped-to-nothing.
-            groups: who.groups || [],
-            groupScoped: !!who.groupScoped,
-            status: 200,
-          };
-        } catch (e) {
-          caps = {
-            role: null,
-            authEnabled: true,
-            canWrite: false,
-            isAdmin: false,
-            searchModes: [],
-            summariser: false,
-            consolidation: false,
-            tombstones: false,
-            groups: [],
-            groupScoped: false,
-            status: e.status || 0,
-          };
-
-          // A refused call is also how the console learns that auth is on when /ui/config could not be
-          // read (an old reverse proxy, a stripped route). Without this the gate would never be raised and
-          // the token box it carries — now the only one on the page — would be unreachable.
-          if (!authCfg.enabled && (e.status === 401 || e.status === 403)) {
-            authCfg.enabled = true;
-          }
-        }
-
-        applyCaps();
-      }
-
-      // SEARCH_MODE_LABELS names the modes for the picker, and its key order is the order they appear in.
-      // Hybrid is marked recommended because it usually is: semantic alone misses exact terms (error
-      // codes, identifiers, names) and keyword alone misses paraphrase.
-      const SEARCH_MODE_LABELS = {
-        SEARCH_MODE_KEYWORD: "Keyword \u2014 match the words in the body",
-        SEARCH_MODE_SEMANTIC: "Semantic \u2014 match by meaning",
-        SEARCH_MODE_HYBRID: "Hybrid \u2014 both, fused (recommended)",
-      };
-
-      // applySearchModes fills the mode picker from what the server said it can serve, and hides it
-      // entirely when there is nothing to choose between. Offering a mode this deployment cannot serve
-      // would only produce a FAILED_PRECONDITION the user could do nothing about, which is why whoami
-      // reports the modes at all.
-      function applySearchModes() {
-        const field = $("s-mode-field");
-        const select = $("s-mode");
-
-        if (!field || !select) return;
-
-        const modes = (caps.searchModes || []).filter(
-          (m) => SEARCH_MODE_LABELS[m],
-        );
-
-        // One mode (or none reported, e.g. an older server) means no choice worth presenting.
-        if (modes.length < 2) {
-          field.hidden = true;
-          select.innerHTML = "";
-
-          return;
-        }
-
-        const previous = select.value;
-
-        select.innerHTML = "";
-
-        for (const mode of Object.keys(SEARCH_MODE_LABELS)) {
-          if (!modes.includes(mode)) continue;
-
-          const option = document.createElement("option");
-
-          option.value = mode;
-          option.textContent = SEARCH_MODE_LABELS[mode];
-
-          select.appendChild(option);
-        }
-
-        // Default to hybrid where available - it is the best of the three - but keep whatever the user
-        // had already chosen across a token change.
-        if (previous && modes.includes(previous)) {
-          select.value = previous;
-        } else if (modes.includes("SEARCH_MODE_HYBRID")) {
-          select.value = "SEARCH_MODE_HYBRID";
-        }
-
-        field.hidden = false;
-      }
-
-      // applyCaps toggles the read-only body class (which hides .writer-only controls), updates the role
-      // pill and the Sign out button in the header, and raises or lifts the login gate.
-      function applyCaps() {
-        document.body.classList.toggle("readonly", !caps.canWrite);
-        document.body.classList.toggle("admin", !!caps.isAdmin);
-        document.body.classList.toggle("summariser", !!caps.summariser);
-        document.body.classList.toggle("consolidating", !!caps.consolidation);
-        document.body.classList.toggle("tombstones", !!caps.tombstones);
-
-        // Set before any table renders, so a replica never issues the explain call it would only be
-        // refused. Only ever narrowed here: a refusal already seen is not un-learned by a re-check.
-        if (!caps.consolidation) decayAvailable = false;
-
-        applyConsolidation();
-        applySearchModes();
-        applyScope();
-        applyGate();
-
-        // Sign out is offered only where there is a session to end: a deployment with authentication on
-        // and a role resolved for this caller.
-        $("logout-btn").style.display =
-          caps.authEnabled && caps.role ? "inline-block" : "none";
-
-        const pill = $("role-pill");
-
-        if (!caps.authEnabled) {
-          pill.style.display = "none";
-
-          return;
-        }
-
-        pill.style.display = "inline-block";
-        pill.classList.toggle("ro", !caps.canWrite);
-        pill.textContent = caps.role ? "role: " + caps.role : "not signed in";
-      }
-
-      // applyConsolidation deals with the one part of the consolidation gating that CSS cannot do.
-      //
-      // The hiding itself is the .consolidation-only / .tombstones-only classes, on the same terms as
-      // .writer-only and .summariser-only above: a replica runs no sleep cycle, so it refuses
-      // ExplainConsolidation, PreviewConsolidation and Sleep alike, and a console offering them there
-      // would be a Decay tab of four "unavailable" cards and a Value column of dashes on every table
-      // — describing a forgetting schedule this instance does not carry out.
-      //
-      // What needs script is the tab itself: hiding the Decay button leaves it *selected* if the user
-      // was on it when the token changed, which shows a blank page with no way back. A hidden active
-      // tab therefore falls back to Search.
-      function applyConsolidation() {
-        if (caps.consolidation) return;
-
-        const decayTab = document.querySelector('nav button[data-tab="decay"]');
-
-        if (decayTab && decayTab.classList.contains("active")) {
-          document.querySelector('nav button[data-tab="search"]').click();
-        }
-      }
-
-      // applyScope shows which groups this token is restricted to, when it is restricted at all.
-      //
-      // It reads caps.groupScoped rather than the length of caps.groups, because an empty list is
-      // ambiguous in exactly the way that matters: unscoped means the whole store, and "scoped to
-      // nothing" would mean the opposite. The server reports the two separately for this reason.
-      //
-      // Written into textContent, never innerHTML: group labels are client-supplied strings and this
-      // is the console that item 24.1 fixed a stored-XSS in.
-      function applyScope() {
-        const pill = $("scope-pill");
-
-        if (!caps.groupScoped) {
-          pill.style.display = "none";
-
-          return;
-        }
-
-        pill.style.display = "inline-block";
-        pill.textContent = "groups: " + caps.groups.join(", ");
-        pill.title =
-          "This token is restricted to " +
-          caps.groups.join(", ") +
-          ". Records in other groups are not shown, writes are filed under this scope, and " +
-          "Purge/Sleep/Preview are unavailable.";
-      }
-
-      // api issues a JSON request to the gateway (same origin). Returns parsed body,
-      // throws Error(message) on a non-2xx response so callers can surface it. The internal _retried flag
-      // guards the single silent-refresh replay used in server-login mode.
-      async function api(method, path, body, _retried) {
-        const headers = { "Content-Type": "application/json" };
-        const tok = getToken();
-
-        if (tok) {
-          headers["Authorization"] = "Bearer " + tok;
-        }
-
-        const opts = { method, headers };
-
-        if (body !== undefined) {
-          opts.body = JSON.stringify(body);
-        }
-
-        const res = await fetch(path, opts);
-
-        // In server-login mode the access token lives in a cookie that may have just expired; try one
-        // silent refresh through /auth/refresh and replay the request before surfacing the 401.
-        if (
-          res.status === 401 &&
-          server.enabled &&
-          !_retried &&
-          path !== "/auth/refresh"
-        ) {
-          if (await serverRefresh()) {
-            return api(method, path, body, true);
-          }
-        }
-
-        const text = await res.text();
-        let data = {};
-
-        if (text) {
-          try {
-            data = JSON.parse(text);
-          } catch (e) {
-            data = { raw: text };
-          }
-        }
-
-        if (!res.ok) {
-          let msg =
-            data.message ||
-            data.error ||
-            data.raw ||
-            res.status + " " + res.statusText;
-
-          // Give the authorization failures a plain-language message rather than the terse server body:
-          // 401 means the token is missing/invalid, 403 means it is valid but its role is insufficient.
-          if (res.status === 401)
-            msg =
-              oidc.enabled || server.enabled
-                ? "Session expired — please sign in again."
-                : "Unauthorized — the bearer token was not accepted.";
-          if (res.status === 403)
-            msg = "Forbidden — your token's role does not permit this action.";
-
-          // A 429 is the deployment's own rate limit, not a fault: say so, and say how long to wait,
-          // since the terse body ("rate limit exceeded") reads like a service failure otherwise. The
-          // scope names which level bit — a global ceiling is nothing this operator did.
-          if (res.status === 429) {
-            const after = res.headers.get("Retry-After");
-            const scope = data.scope ? " (" + data.scope + " limit)" : "";
-
-            msg =
-              "Rate limited" +
-              scope +
-              " — try again" +
-              (after ? " in " + after + "s." : " shortly.");
-          }
-
-          const err = new Error(msg);
-          err.status = res.status;
-
-          throw err;
-        }
-
-        return data;
-      }
-
-      function toast(title, body, kind) {
-        const el = document.createElement("div");
-        el.className = "toast " + (kind || "ok");
-        el.innerHTML = `<div class="t-title"></div><div class="t-body"></div>`;
-        el.querySelector(".t-title").textContent = title;
-        el.querySelector(".t-body").textContent = body || "";
-        $("toast").appendChild(el);
-
-        setTimeout(() => el.remove(), kind === "err" ? 7000 : 4000);
-      }
-
-      function ok(title, body) {
-        toast(title, body, "ok");
-      }
-      function fail(title, err) {
-        toast(title, err && err.message ? err.message : String(err), "err");
-      }
-
-      function esc(s) {
-        return String(s == null ? "" : s).replace(
-          /[&<>"']/g,
-          (c) =>
-            ({
-              "&": "&amp;",
-              "<": "&lt;",
-              ">": "&gt;",
-              '"': "&quot;",
-              "'": "&#39;",
-            })[c],
-        );
-      }
-
-      // shortId middle-truncates an id for display. Ids here are caller-chosen and routinely long and
-      // front-loaded with a shared prefix (an at:// URI is ~70 characters of which the last dozen are
-      // what distinguishes it), so both ends are kept and the middle elided. Display only: every call
-      // site pairs it with the full value on a title and a copy button.
-      const idHead = 16;
-      const idTail = 12;
-
-      function shortId(id) {
-        const s = String(id == null ? "" : id);
-
-        if (s.length <= idHead + idTail + 1) return s;
-
-        return s.slice(0, idHead) + "…" + s.slice(-idTail);
-      }
-
-      // copyButton renders the clipboard button that carries the full id. The icon is inline SVG: the
-      // page is served with a strict CSP and ships as one file, so there is nothing to fetch.
-      function copyButton(text) {
-        return `<button class="copy" data-act="copy" data-copy="${esc(text)}" title="Copy to clipboard" aria-label="Copy to clipboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5"/><path d="M10.5 3.5v-1h-8v9h1"/></svg></button>`;
-      }
-
-      // idCell is the standard rendering of an id in a table: truncated, titled with the full value,
-      // and copyable. inner overrides the displayed element (the links table makes it a link).
-      function idCell(id, inner) {
-        const full = String(id == null ? "" : id);
-
-        if (!full) return "—";
-
-        const shown =
-          inner ||
-          `<span class="idv" title="${esc(full)}">${esc(shortId(full))}</span>`;
-
-        return `<span class="idc">${shown}${copyButton(full)}</span>`;
-      }
-
-      // copyText writes to the clipboard and flashes the button that asked. The execCommand fallback is
-      // not vestigial: navigator.clipboard is undefined on a plain-HTTP origin (the demo stack, and any
-      // deployment behind a TLS-terminating proxy reached directly), which is exactly where a console
-      // is most likely to be opened.
-      async function copyText(text, el) {
-        try {
-          if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(text);
-          } else {
-            const ta = document.createElement("textarea");
-
-            ta.value = text;
-            ta.style.position = "fixed";
-            ta.style.opacity = "0";
-            document.body.appendChild(ta);
-            ta.select();
-
-            const done = document.execCommand("copy");
-
-            document.body.removeChild(ta);
-
-            if (!done) throw new Error("the browser refused the copy");
-          }
-        } catch (e) {
-          fail("Copy failed", e);
-
-          return;
-        }
-
-        if (!el) return;
-
-        el.classList.add("copied");
-        setTimeout(() => el.classList.remove("copied"), 900);
-      }
-
-      // Row actions are wired through data-* attributes and a single delegated listener, never inline
-      // onclick handlers with an interpolated id/name/body. An inline handler is a JS-string-inside-an-
-      // HTML-attribute context, and esc() does NOT make it safe there: the browser HTML-decodes the
-      // attribute value before parsing it as JS, so an esc()'d quote (&#39;) decodes back to a real one
-      // and breaks out of the string — turning any memory body, id, or event name (all attacker-supplied,
-      // possibly ingested from untrusted content) into executable script, i.e. stored XSS that could
-      // exfiltrate the bearer token held in localStorage. A data-* attribute is a plain attribute-value
-      // context where esc() is correct, and the listener looks the full object up by id in these
-      // registries rather than embedding it in the page.
-      const memRegistry = new Map();
-      const evRegistry = new Map();
-
-      // ---------------------------------------------------------- sortable column headers
-      //
-      // The two listings sort server-side (order_by/order_dir on GetMemories/GetEvents), so a header
-      // click is a re-query rather than a client-side re-sort — which it has to be, since a page is
-      // 25 rows out of a store that can hold hundreds of thousands and sorting those 25 would be a
-      // lie. The sort selects in each filter form are the state; a header click just writes to them
-      // and reloads, so there is one place the current sort lives and the two controls cannot
-      // disagree.
-      //
-      // sortScopes names, per table, the two form controls and the loader to call. Both loaders
-      // restart from offset 0, which is what a changed sort must do: page 3 of the old ordering has
-      // no meaning in the new one.
-      const sortScopes = {
-        memories: {
-          by: "mf-sort",
-          dir: "mf-sortdir",
-          load: () => loadMemories(),
-        },
-        events: { by: "ef-sort", dir: "ef-sortdir", load: () => loadEvents() },
-      };
-
-      // sortHeader renders one <th>, clickable when the column maps to a field the service can sort
-      // on. Columns that do not (a memory's computed Value, an event's memory count) stay plain
-      // headers: they are derived rather than stored, so there is no column to ORDER BY.
-      function sortHeader(scope, field, label, title) {
-        const titleAttr = title ? ` title="${esc(title)}"` : "";
-
-        if (!scope || !field) return `<th${titleAttr}>${esc(label)}</th>`;
-
-        const controls = sortScopes[scope];
-        const active = $(controls.by).value === field;
-        // The arrow reports what the page is actually showing. On "Default" the direction is the
-        // service's choice, so it is shown as neither arrow rather than guessed at.
-        const dir = $(controls.dir).value;
-        const arrow = !active
-          ? ""
-          : dir === "SORT_DIRECTION_ASC"
-            ? " ▲"
-            : dir === "SORT_DIRECTION_DESC"
-              ? " ▼"
-              : " •";
-
-        return `<th class="sortable${active ? " sorted" : ""}"${titleAttr}
-          data-act="sort" data-sort-scope="${esc(scope)}" data-sort-field="${esc(field)}"
-        >${esc(label)}${arrow}</th>`;
-      }
-
-      // applySort is the header click: a new column adopts the service's natural direction for it
-      // (Default), and clicking the column already sorted on cycles through the two explicit
-      // directions. Starting at Default rather than at "descending" is what keeps the page from
-      // having an opinion about, say, whether a Group column should read A–Z or Z–A.
-      function applySort(scope, field) {
-        const controls = sortScopes[scope];
-
-        if (!controls) return;
-
-        if ($(controls.by).value !== field) {
-          $(controls.by).value = field;
-          $(controls.dir).value = "";
-        } else {
-          $(controls.dir).value =
-            $(controls.dir).value === "SORT_DIRECTION_ASC"
-              ? "SORT_DIRECTION_DESC"
-              : "SORT_DIRECTION_ASC";
-        }
-
-        controls.load();
-      }
-
-      document.addEventListener("click", (ev) => {
-        const el = ev.target.closest("[data-act]");
-
-        if (!el) return;
-
-        switch (el.dataset.act) {
-          case "copy":
-            copyText(el.dataset.copy, el);
-            break;
-
-          case "open-event":
-            ev.preventDefault();
-            openEvent(el.dataset.event);
-            break;
-
-          case "sort":
-            applySort(el.dataset.sortScope, el.dataset.sortField);
-            break;
-
-          case "edit-memory": {
-            const m = memRegistry.get(el.dataset.id);
-
-            if (m) editMemory(m);
-            break;
-          }
-
-          case "recall-memory":
-            recallMemory(el.dataset.id);
-            break;
-
-          case "delete-memory":
-            deleteMemory(el.dataset.id);
-            break;
-
-          case "plot-memory":
-            plotMemory(el.dataset.id);
-            break;
-
-          case "memory-links":
-            openLinks(el.dataset.id);
-            break;
-
-          case "follow-link":
-            openLinks(el.dataset.id);
-            break;
-
-          case "unlink-memory":
-            unlinkMemory(el.dataset.id, el.dataset.target);
-            break;
-
-          case "edit-event": {
-            const e = evRegistry.get(el.dataset.id);
-
-            if (e) editEvent(e);
-            break;
-          }
-
-          case "end-event":
-            endEvent(el.dataset.id);
-            break;
-
-          case "delete-event":
-            deleteEvent(el.dataset.id);
-            break;
-        }
-      });
-
-      // ------------------------------------------------------- Enter submits the card it is typed in
-      //
-      // None of these cards is a <form>, so Enter did nothing at all in them: every one of the fields
-      // on the Search, Memories and Events tabs had to be left by hand to reach the button. Rather
-      // than wrap five cards in forms - which brings native submission, its navigation, and a
-      // preventDefault on each - one delegated keydown maps the card a field sits in to that card's
-      // primary action, mirroring the delegated click handler above.
-      //
-      // enterActions is an ALLOW-LIST rather than a lookup of window[name]: the name arrives from a
-      // DOM attribute, and resolving one of those to a callable is how a data attribute becomes a
-      // way to call anything on the page. These attributes are all in static markup and so are safe
-      // either way, but the map is also the readable statement of which card has a primary action.
-      //
-      // The two destructive forms are deliberately NOT in it - the summary that replaces every
-      // memory of an event, and the forgotten log's Clear - because a keystroke should not be able
-      // to delete anything, and a confirm() is no answer when the Enter that opened it can dismiss
-      // it too. Adding a link IS here: it writes, but it destroys nothing.
-      const enterActions = {
-        search: () => doSearch(),
-        "memory-save": () => saveMemory(),
-        "memory-filter": () => loadMemories(),
-        "memory-link": () => addLink(),
-        "event-save": () => saveEvent(),
-        "event-filter": () => loadEvents(),
-      };
-
-      document.addEventListener("keydown", (ev) => {
-        if (ev.key !== "Enter") return;
-
-        // isComposing is the load-bearing one: Enter is how an IME accepts a candidate, so without
-        // this a Japanese or Chinese user would fire the action every time they committed a word.
-        // A modifier held means the user is asking for something else, and repeat is a held key -
-        // neither should submit, and repeat least of all when the action is a write.
-        if (
-          ev.isComposing ||
-          ev.repeat ||
-          ev.shiftKey ||
-          ev.ctrlKey ||
-          ev.altKey ||
-          ev.metaKey
-        ) {
-          return;
-        }
-
-        const field = ev.target;
-
-        // A textarea takes Enter as a newline - a memory body and an event description are both
-        // multi-line, and swallowing that would be a worse bug than the one this fixes. Buttons and
-        // links already activate on Enter natively; intercepting would fire twice.
-        if (
-          !field.matches ||
-          !field.matches("input, select") ||
-          field.closest("a, button")
-        ) {
-          return;
-        }
-
-        const card = field.closest("[data-enter]");
-        const action = card && enterActions[card.dataset.enter];
-
-        if (!action) return;
-
-        ev.preventDefault();
-        action();
-      });
-
-      // The gateway (de)serialises proto int64 fields as JSON strings. UnixNano <-> local datetime.
-      function nanoToLocal(nanoStr) {
-        if (!nanoStr || nanoStr === "0") return "";
-        const ms = Number(BigInt(nanoStr) / 1000000n);
-        const d = new Date(ms);
-        const pad = (n) => String(n).padStart(2, "0");
-
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      }
-
-      function nanoToText(nanoStr) {
-        if (!nanoStr || nanoStr === "0") return "—";
-        const ms = Number(BigInt(nanoStr) / 1000000n);
-
-        return new Date(ms).toLocaleString();
-      }
-
-      // ageCell renders a timestamp as a compact age ("3h", "12d") with the absolute value in the
-      // title, and is what every table column showing a time uses. Two reasons for the compact form
-      // over the absolute one. It is what the decay maths runs on — age since the last recall is the
-      // input to every consolidation method — so it is the number that says whether a row is close
-      // to being forgotten, which a datetime makes the reader work out. And a datetime is the widest
-      // cell in these tables while being the one nobody reads digit by digit; the exact value is one
-      // hover away, and still in the DOM for anyone who needs it.
-      //
-      // Returns HTML, so it must be interpolated unescaped — everything it interpolates is derived
-      // from a number and escaped anyway.
-      function ageCell(nanoStr) {
-        if (!nanoStr || nanoStr === "0") return "—";
-
-        const ms = Number(BigInt(nanoStr) / 1000000n);
-        const seconds = Math.round((Date.now() - ms) / 1000);
-
-        // A timestamp ahead of now is not a bug to hide: StoreMemory accepts a small skew window,
-        // and an event's time_end is routinely in the future. Say so rather than showing "0s".
-        const label =
-          (seconds < 0 ? "in " : "") + compactAge(Math.abs(seconds));
-
-        return `<span class="age" title="${esc(nanoToText(nanoStr))}">${esc(label)}</span>`;
-      }
-
-      // compactAge turns a count of seconds into the largest unit leaving a whole number. Coarse on
-      // purpose: this is a column to be scanned down, and the exact value is in the tooltip.
-      function compactAge(seconds) {
-        const units = [
-          [31536000, "y"],
-          [2592000, "mo"],
-          [604800, "w"],
-          [86400, "d"],
-          [3600, "h"],
-          [60, "m"],
-        ];
-
-        for (const [size, suffix] of units) {
-          if (seconds >= size) return Math.floor(seconds / size) + suffix;
-        }
-
-        return seconds + "s";
-      }
-
-      function localToNano(val) {
-        if (!val) return undefined;
-        const ms = new Date(val).getTime();
-
-        if (isNaN(ms)) return undefined;
-
-        return String(BigInt(ms) * 1000000n);
-      }
-
-      function intOrUndef(id) {
-        const v = $(id).value.trim();
-
-        if (v === "") return undefined;
-
-        return Number(v);
-      }
-
-      function strOrUndef(id) {
-        const v = $(id).value.trim();
-
-        return v === "" ? undefined : v;
-      }
-
-      // ------------------------------------------------------------------ tabs
-      document.querySelectorAll("nav button").forEach((b) => {
-        b.addEventListener("click", () => {
-          document
-            .querySelectorAll("nav button")
-            .forEach((x) => x.classList.remove("active"));
-          document
-            .querySelectorAll(".tab")
-            .forEach((x) => x.classList.remove("active"));
-          b.classList.add("active");
-          $("tab-" + b.dataset.tab).classList.add("active");
-
-          // The Decay tab is a live view of the store's current standing, so it loads the first time it
-          // is opened rather than on page load - nothing else on the page needs it, and it costs the
-          // server a snapshot.
-          if (b.dataset.tab === "decay" && !decayInputs) loadDecay();
-        });
-      });
-
-      // ------------------------------------------------------------------ oidc login (idp mode only)
-      // These implement an OpenID Connect Authorization Code + PKCE flow entirely in the browser, with no
-      // external library and no client secret. They run only when boot() finds auth.method "idp" in
-      // /ui/config; the access token they obtain is sent as the Authorization: Bearer on /v1 calls and
-      // verified by the service exactly like any other idp token.
-
-      // b64url base64url-encodes bytes without padding, as PKCE and JWT expect.
-      function b64url(bytes) {
-        return btoa(String.fromCharCode(...new Uint8Array(bytes)))
-          .replace(/\+/g, "-")
-          .replace(/\//g, "_")
-          .replace(/=+$/, "");
-      }
-
-      // randomString returns a base64url token of n random bytes, for the PKCE verifier and the state.
-      function randomString(n) {
-        const a = new Uint8Array(n);
-        crypto.getRandomValues(a);
-
-        return b64url(a);
-      }
-
-      // redirectUri is the console's own URL with any query/hash stripped (.../ui). It must be registered
-      // as an allowed callback on the identity provider's client.
-      function redirectUri() {
-        return window.location.origin + window.location.pathname;
-      }
-
-      // discover fetches the provider's OIDC metadata to learn its authorization and token endpoints.
-      async function discover(issuer) {
-        const res = await fetch(
-          issuer.replace(/\/$/, "") + "/.well-known/openid-configuration",
-        );
-
-        if (!res.ok) {
-          throw new Error("OIDC discovery failed (" + res.status + ")");
-        }
-
-        return res.json();
-      }
-
-      // login starts the flow: it mints a PKCE verifier/challenge and a state, stashes them for the
-      // return leg, and redirects the browser to the provider's authorization endpoint.
-      async function login() {
-        try {
-          const verifier = randomString(64);
-          const state = randomString(16);
-          const challenge = b64url(
-            await crypto.subtle.digest(
-              "SHA-256",
-              new TextEncoder().encode(verifier),
-            ),
-          );
-
-          sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state }));
-
-          const p = new URLSearchParams({
-            response_type: "code",
-            client_id: oidc.cfg.clientId,
-            redirect_uri: redirectUri(),
-            scope: oidc.cfg.scopes || "openid profile",
-            state,
-            code_challenge: challenge,
-            code_challenge_method: "S256",
-          });
-
-          // Providers whose access token is opaque without an API audience (Auth0) need this to mint a
-          // verifiable JWT; providers that ignore it (Keycloak) are unaffected.
-          if (oidc.cfg.audience) {
-            p.set("audience", oidc.cfg.audience);
-          }
-
-          window.location.assign(
-            oidc.endpoints.authorization_endpoint + "?" + p.toString(),
-          );
-        } catch (e) {
-          fail("Sign in failed", e);
-        }
-      }
-
-      // cleanUrl strips the ?code/&state (or ?error) query the provider appended, so a reload does not
-      // replay the callback and the address bar stays tidy.
-      function cleanUrl() {
-        window.history.replaceState({}, document.title, redirectUri());
-      }
-
-      // handleRedirect completes the flow when the page has loaded as the provider's callback: it
-      // validates the returned state against the stashed one and exchanges the code for tokens.
-      async function handleRedirect() {
-        const params = new URLSearchParams(window.location.search);
-        const code = params.get("code");
-        const err = params.get("error");
-
-        if (err) {
-          cleanUrl();
-          fail(
-            "Sign in failed",
-            new Error(params.get("error_description") || err),
-          );
-
-          return;
-        }
-
-        if (!code) {
-          return;
-        }
-
-        const saved = JSON.parse(sessionStorage.getItem(PKCE_KEY) || "null");
-        sessionStorage.removeItem(PKCE_KEY);
-        cleanUrl();
-
-        if (!saved || saved.state !== params.get("state")) {
-          fail(
-            "Sign in failed",
-            new Error("state mismatch — please try again"),
-          );
-
-          return;
-        }
-
-        await exchange(
-          new URLSearchParams({
-            grant_type: "authorization_code",
-            code,
-            redirect_uri: redirectUri(),
-            client_id: oidc.cfg.clientId,
-            code_verifier: saved.verifier,
-          }),
-        );
-      }
-
-      // exchange posts a grant (authorization_code or refresh_token) to the token endpoint and stores the
-      // resulting session, clearing it and throwing on failure.
-      async function exchange(body) {
-        const res = await fetch(oidc.endpoints.token_endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: body.toString(),
-        });
-
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          clearSession();
-
-          throw new Error(
-            data.error_description ||
-              data.error ||
-              "token endpoint " + res.status,
-          );
-        }
-
-        setSession(data);
-      }
-
-      // setSession records the tokens and schedules a silent refresh before the access token expires.
-      function setSession(data) {
-        oidc.accessToken = data.access_token || "";
-        sessionStorage.setItem(OIDC_ACCESS_KEY, oidc.accessToken);
-
-        if (data.refresh_token) {
-          sessionStorage.setItem(OIDC_REFRESH_KEY, data.refresh_token);
-        }
-
-        const expiry = Number(data.expires_in)
-          ? Date.now() + Number(data.expires_in) * 1000
-          : 0;
-        sessionStorage.setItem(OIDC_EXPIRY_KEY, String(expiry));
-
-        scheduleRefresh(expiry);
-      }
-
-      // scheduleRefresh arms a timer to refresh ~60s before expiry, but only when a refresh token is
-      // available; otherwise the session simply lapses and the caller must sign in again.
-      function scheduleRefresh(expiry) {
-        if (oidc.refreshTimer) {
-          clearTimeout(oidc.refreshTimer);
-          oidc.refreshTimer = null;
-        }
-
-        if (!expiry || !sessionStorage.getItem(OIDC_REFRESH_KEY)) {
-          return;
-        }
-
-        oidc.refreshTimer = setTimeout(
-          refresh,
-          Math.max(expiry - Date.now() - 60000, 5000),
-        );
-      }
-
-      // refresh silently swaps the refresh token for a new access token; on failure it drops the session
-      // so the UI falls back to a Sign in prompt.
-      async function refresh() {
-        const refreshToken = sessionStorage.getItem(OIDC_REFRESH_KEY);
-
-        if (!refreshToken) {
-          return;
-        }
-
-        try {
-          await exchange(
-            new URLSearchParams({
-              grant_type: "refresh_token",
-              refresh_token: refreshToken,
-              client_id: oidc.cfg.clientId,
-            }),
-          );
-
-          refreshCaps();
-        } catch (e) {
-          clearSession();
-
-          // Re-resolving with no token is what raises the gate: it is the same signed-out state as a
-          // sign-out, and going through refreshCaps keeps that decision in one place.
-          refreshCaps();
-        }
-      }
-
-      // clearSession forgets the tokens and cancels any pending refresh.
-      function clearSession() {
-        oidc.accessToken = "";
-        sessionStorage.removeItem(OIDC_ACCESS_KEY);
-        sessionStorage.removeItem(OIDC_REFRESH_KEY);
-        sessionStorage.removeItem(OIDC_EXPIRY_KEY);
-
-        if (oidc.refreshTimer) {
-          clearTimeout(oidc.refreshTimer);
-          oidc.refreshTimer = null;
-        }
-      }
-
-      // logout clears the local session and, when the provider advertises an end-session endpoint, does
-      // an RP-initiated logout so the provider's own session is dropped too.
-      function logout() {
-        const end = oidc.endpoints && oidc.endpoints.end_session_endpoint;
-
-        clearSession();
-
-        if (end) {
-          const p = new URLSearchParams({
-            client_id: oidc.cfg.clientId,
-            post_logout_redirect_uri: redirectUri(),
-          });
-          window.location.assign(end + "?" + p.toString());
-
-          return;
-        }
-
-        refreshCaps();
-      }
-
-      // boot reads /ui/config, wires the login gate for whichever sign-in mode this deployment uses
-      // (under idp processing a provider callback if the page was loaded as one), then resolves
-      // capabilities — which is what lifts the gate, or leaves it standing with the right card on it.
-      async function boot() {
-        let cfg = { authMethod: "none" };
-
-        try {
-          cfg = await (await fetch("/ui/config")).json();
-        } catch (e) {
-          // A missing/unreachable config endpoint leaves the console in manual-token mode; a refused /v1
-          // call then still raises the gate, since refreshCaps promotes authCfg on a 401/403.
-        }
-
-        authCfg.method = cfg.authMethod || "none";
-        authCfg.enabled = authCfg.method !== "none";
-
-        if (cfg.authMethod === "idp" && cfg.loginMode === "server") {
-          // Server-hosted login: the service owns the OIDC flow and the session cookie, so the page only
-          // navigates to its endpoints. refreshCaps() (at the end of boot) resolves whether a session
-          // exists, and applyGate (via applyCaps) presents the card if it does not.
-          server.enabled = true;
-
-          $("gate-login").addEventListener("click", () =>
-            window.location.assign("/auth/login"),
-          );
-        } else if (cfg.authMethod === "idp" && cfg.clientId) {
-          oidc.enabled = true;
-          oidc.cfg = cfg;
-
-          $("gate-login").addEventListener("click", login);
-
-          try {
-            oidc.endpoints = await discover(cfg.issuer);
-
-            await handleRedirect();
-          } catch (e) {
-            fail("Sign in unavailable", e);
-          }
-
-          if (oidc.accessToken) {
-            scheduleRefresh(
-              Number(sessionStorage.getItem(OIDC_EXPIRY_KEY)) || 0,
-            );
-          }
-        }
-
-        // The manual form and Sign out are wired in every mode: the form is only reachable when the gate
-        // presents it (including the idp deployment that configured no UI client, where pasting a token
-        // obtained elsewhere is the only way in), and signOut dispatches on the mode itself.
-        $("gate-form").addEventListener("submit", signInManual);
-        $("logout-btn").addEventListener("click", signOut);
-
-        refreshCaps();
-      }
-
-      // Resolve config and the current session on load: until it answers the page stays gated, so an
-      // unauthenticated load presents a sign-in card rather than a console whose every call is refused.
-      boot();
-
-      // ------------------------------------------------------------------ search
-      // openEvent loads one event and every memory attached to it, then shows them in the event card
-      // on the search tab. Reached by clicking an event id in any of the three result tables, or by
-      // searching with only an event id filled in.
-      //
-      // It renders into its own card rather than into #search-results, which is what it used to do:
-      // an event opened from the Events or Memories tab then overwrote whatever search was showing,
-      // so returning to Search found the single event in place of the results. The card is the whole
-      // fix - the two views no longer share a container, so neither can destroy the other.
-      // scrollBehaviour picks the scroll animation, and exists because "smooth" is not a safe default.
-      // Under prefers-reduced-motion: reduce, Chrome does not shorten a smooth scroll - it DROPS it,
-      // leaving the page exactly where it was. So a hard-coded "smooth" silently fails to scroll at
-      // all for anyone who has reduced motion set, which is precisely the reader who most needs the
-      // page to have moved to what they asked for.
-      function scrollBehaviour() {
-        return window.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "instant"
-          : "smooth";
-      }
-
-      // revealCard scrolls a panel that has just been opened into view. Both panels it serves - the
-      // event card and the links card - are opened from a row on a DIFFERENT tab, and switching tabs
-      // does not move the scroll position, so without this the panel is reliably somewhere other than
-      // where the user is looking: off the top on the Search tab, off the bottom on the Memories one.
-      // Guarded on the element being displayed so it can be called unconditionally.
-      function revealCard(id) {
-        const el = $(id);
-
-        if (el && el.style.display !== "none") {
-          el.scrollIntoView({ behavior: scrollBehaviour(), block: "start" });
-        }
-      }
-
-      // eventSubject is the event the card is currently showing, so the summarise controls know what
-      // they are acting on without re-reading the DOM - the same shape as linksSubject.
-      // eventSubjectMemories is how many memories that render showed, which is what the summarise
-      // confirmation quotes, and eventSubjectGroup is the event's own group, which the manual
-      // summary form defaults to.
-      let eventSubject = "";
-      let eventSubjectMemories = 0;
-      let eventSubjectGroup = "";
-
-      async function openEvent(id) {
-        try {
-          const data = await api(
-            "GET",
-            "/v1/events/" + encodeURIComponent(id) + "?memories=true",
-          );
-          const ev = data.event || {};
-          const memories = ev.memories || [];
-          const end =
-            ev.timeEnd && ev.timeEnd !== "0" ? ageCell(ev.timeEnd) : "open";
-
-          // The links live in all three tables; surface the result on the search tab wherever it was
-          // clicked from, so an event always opens in one known place.
-          document.querySelector('nav button[data-tab="search"]').click();
-
-          eventSubject = ev.id || id;
-          eventSubjectMemories = memories.length;
-          eventSubjectGroup = ev.group || "";
-
-          $("event-card").style.display = "";
-          $("event-view").innerHTML = `<div class="event-head">
-      <h3>${esc(ev.name || ev.id)}</h3>
-      <div class="muted">${esc(ev.description || "")}</div>
-      <div class="kv">id ${esc(ev.id)} · significance ${esc(ev.significance ?? "")} · group ${esc(ev.group || "—")} · ${ageCell(ev.timeStart)} → ${end} · ${memories.length} memor${memories.length === 1 ? "y" : "ies"}</div>
-    </div>
-    <div id="event-memories"></div>`;
-          renderMemories("event-memories", memories, {});
-          closeSummaryForm();
-
-          // Nothing to condense means nothing to offer: both RPCs would refuse an event holding no
-          // memories, and the LLM one has no text to prompt with.
-          $("event-summarise").style.display = memories.length ? "" : "none";
-
-          // The card is first on the tab, but the tab switch above does not reset the scroll
-          // position, so arriving from a row halfway down the Events tab would land on the middle of
-          // this one. Scroll to what was asked for rather than to wherever the last page was left.
-          revealCard("event-card");
-
-          ok(
-            "Event",
-            (ev.name || ev.id) + " — " + memories.length + " memories",
-          );
-        } catch (e) {
-          fail("Open event failed", e);
-        }
-      }
-
-      function closeEvent() {
-        eventSubject = "";
-        eventSubjectMemories = 0;
-        eventSubjectGroup = "";
-        $("event-card").style.display = "none";
-        $("event-view").innerHTML = "";
-        closeSummaryForm();
-      }
-
-      // ---------------------------------------------------------------- summarisation
-      //
-      // Two buttons for two RPCs that differ only in who authors the summary: the service has no
-      // visibility into memory content, so ReplaceMemoriesWithSummary takes one from the caller,
-      // while SummariseMemories has the optional embedded LLM write it. Both then go through the
-      // same insertSummary path server-side - one transaction, every memory of the event replaced by
-      // one flagged is_summary - which is why both are confirmed here first. There is no undo.
-
-      // The group defaults to the event's own. A summary is stored as a plain memory and inherits
-      // nothing, so leaving it blank would quietly drop the replacement out of the group every
-      // memory it replaced was in - and out of a scoped caller's own partition.
-      function openSummaryForm() {
-        $("summary-form").style.display = "";
-        $("summary-group").value = eventSubjectGroup;
-        $("summary-body").focus();
-      }
-
-      function closeSummaryForm() {
-        $("summary-form").style.display = "none";
-        ["summary-body", "summary-sig", "summary-group"].forEach(
-          (id) => ($(id).value = ""),
-        );
-      }
-
-      // confirmSummarise asks once, naming the cost in the terms that matter: how many memories go.
-      // The count is the one openEvent rendered from, so it cannot disagree with what is on screen.
-      function confirmSummarise(how) {
-        if (!eventSubject) return false;
-
-        return confirm(
-          "Summarise event " +
-            eventSubject +
-            " " +
-            how +
-            "?\n\nAll " +
-            eventSubjectMemories +
-            " of its memories are deleted and replaced by the single summary. " +
-            "This cannot be undone.",
-        );
-      }
-
-      async function replaceWithSummary() {
-        const body = $("summary-body").value.trim();
-
-        if (!body) {
-          fail("Summarise", new Error("the summary body cannot be empty"));
-
-          return;
-        }
-
-        if (!confirmSummarise("with the text you have written")) return;
-
-        // The gateway binds this RPC's body to the summary itself (body: "summary"), so the payload
-        // is a Memory, not a wrapper carrying one.
-        const summary = { body };
-        const significance = intOrUndef("summary-sig");
-
-        if (significance !== undefined) summary.significance = significance;
-
-        const group = strOrUndef("summary-group");
-        if (group) summary.group = group;
-
-        try {
-          const res = await api(
-            "POST",
-            "/v1/events/" + encodeURIComponent(eventSubject) + "/summary",
-            summary,
-          );
-
-          ok(
-            "Summarised",
-            (res.memoriesReplaced || 0) + " memories replaced by " + res.id,
-          );
-
-          await afterSummarise();
-        } catch (e) {
-          fail("Summarise failed", e);
-        }
-      }
-
-      async function summariseWithLLM() {
-        if (!confirmSummarise("with the embedded LLM")) return;
-
-        try {
-          // No significance sent: unset means the summary inherits the highest significance among
-          // the memories it replaces, which is the right default and the one the RPC documents.
-          const res = await api(
-            "POST",
-            "/v1/events/" + encodeURIComponent(eventSubject) + "/summarise",
-            {},
-          );
-
-          ok(
-            "Summarised",
-            (res.memoriesReplaced || 0) + " memories replaced by " + res.id,
-          );
-
-          await afterSummarise();
-        } catch (e) {
-          fail("Summarise failed", e);
-        }
-      }
-
-      // afterSummarise re-opens the event so the card shows the summary that now stands in for its
-      // memories - the point of the operation is what replaced them, so leaving the pre-replacement
-      // list on screen would be showing rows that no longer exist.
-      async function afterSummarise() {
-        closeSummaryForm();
-
-        await openEvent(eventSubject);
-
-        // The event we just condensed is no longer a candidate (the service drops it on the way
-        // through), so a loaded list is now wrong. Only refreshed if one is on screen — this is the
-        // Events tab, and the user may never have opened it.
-        if ($("candidates-list").querySelector("table")) await loadCandidates();
-      }
-
-      async function doSearch() {
-        const query = $("s-query").value.trim();
-        const evId = strOrUndef("s-event");
-
-        if (!query) {
-          // No text query: an event id on its own lists that event's memories.
-          if (evId) {
-            openEvent(evId);
-
-            return;
-          }
-
-          fail(
-            "Search",
-            new Error("enter a query, or an event id to list its memories"),
-          );
-
-          return;
-        }
-
-        const body = { query };
-        const limit = intOrUndef("s-limit");
-
-        if (limit !== undefined) body.limit = limit;
-
-        if (evId) body.event_id = evId;
-
-        const group = strOrUndef("s-group");
-        if (group) body.group = group;
-
-        if ($("s-reinforce").checked) body.reinforce = true;
-
-        // Only sent when the deployment offers a choice; otherwise the server's own default (keyword)
-        // applies and the request looks exactly as it did before modes existed.
-        const mode = $("s-mode").value;
-        if (mode) body.mode = mode;
-
-        try {
-          const data = await api("POST", "/v1/memories/search", body);
-
-          // A fresh search supersedes whatever event was open — it is a new question. The two cards
-          // could coexist, but leaving a stale event above the results is what made the old shared
-          // panel confusing in the first place.
-          closeEvent();
-          renderMemories("search-results", data.memories || [], {
-            reinforced: body.reinforce,
-          });
-          ok("Search", (data.memories || []).length + " result(s)");
-        } catch (e) {
-          fail("Search failed", e);
-        }
-      }
-
-      // ------------------------------------------------------------------ memories
-      // metadataPills renders a memory's or event's labels as sorted key=value pills. Sorted because
-      // object key order is insertion order over the wire, so two memories carrying the same labels
-      // would otherwise display them differently depending on how each was written.
-      function metadataPills(metadata) {
-        if (!metadata) return "";
-
-        return Object.keys(metadata)
-          .sort()
-          .map(
-            (k) =>
-              `<span class="pill meta">${esc(k)}=${esc(metadata[k])}</span>`,
-          )
-          .join("");
-      }
-
-      // groupCell combines the group label and the metadata pills, which are one classification
-      // between them. A dash only when there is neither.
-      function groupCell(m) {
-        const pills = metadataPills(m.metadata);
-
-        if (!m.group && !pills) return "—";
-
-        return (
-          (m.group ? esc(m.group) : "") +
-          (pills ? (m.group ? "<br>" : "") + pills : "")
-        );
-      }
-
-      function memoryRow(m) {
-        const flags = [];
-
-        if (m.isSummary)
-          flags.push('<span class="pill summary">summary</span>');
-        if (m.isBinary === "TRUE")
-          flags.push('<span class="pill binary">binary</span>');
-
-        // The event id is a link: clicking it opens the event and all of its memories (openEvent).
-        const eventCell = m.eventId
-          ? `<a class="evlink" data-act="open-event" data-event="${esc(m.eventId)}" title="${esc(m.eventId)}">${esc(shortId(m.eventId))}</a>`
-          : "—";
-
-        // The body is the second row of the pair, spanning the table; a memory with no body renders
-        // as a single row (and keeps its bottom border, hence the conditional class). The span
-        // tracks whether the Value column is there: a colspan larger than the column count does not
-        // clamp, it EXTENDS the table by a phantom column, so leaving it at 8 on a replica would
-        // give every body row one more cell than its header.
-        const body = m.body ? String(m.body) : "";
-
-        return `<tr${body ? ' class="has-body"' : ""}>
-    <td>${esc(m.significance ?? "")}</td>
-    <!-- Filled in by decorateValues() once the server has valued the page; a dash until then, and
-         permanently if this deployment will not answer (a replica, or a token that is refused). -->
-    <td class="decay consolidation-only" data-value-for="${esc(m.id)}"><span class="muted">…</span></td>
-    <td class="id">${eventCell}</td>
-    <td>${groupCell(m)}</td>
-    <td>${esc(m.recallCount || 0)}</td>
-    <td>${ageCell(m.timeStamp)} ${flags.join(" ")}</td>
-    <td class="id">${idCell(m.id)}</td>
-    <td class="actions-col">
-      <div class="actions">
-        <button class="btn small ghost writer-only" data-act="edit-memory" data-id="${esc(m.id)}">Edit</button>
-        <button class="btn small ghost" data-act="recall-memory" data-id="${esc(m.id)}">Recall</button>
-        <button class="btn small ghost" data-act="memory-links" data-id="${esc(m.id)}">Links</button>
-        <button class="btn small danger writer-only" data-act="delete-memory" data-id="${esc(m.id)}">Delete</button>
-      </div>
-    </td>
-  </tr>${
-    body
-      ? `<tr><td class="bodycell" colspan="${caps.consolidation ? 8 : 7}"><div class="bodytext">${esc(body)}</div></td></tr>`
-      : ""
-  }`;
-      }
-
-      function renderMemories(target, memories, opts) {
-        opts = opts || {};
-
-        if (!memories.length) {
-          $(target).innerHTML = '<div class="empty">No memories.</div>';
-
-          return;
-        }
-
-        // Register the displayed rows so the delegated edit handler can resolve the full object by id
-        // instead of it being embedded in the markup.
-        memories.forEach((m) => memRegistry.set(m.id, m));
-
-        // Only the Memories tab's own table sorts by header: the search results are ordered by
-        // relevance blended with the store's own ranking (see search.significanceWeight), and an
-        // event's memories are one event's whole set. Re-sorting either through GetMemories would
-        // replace the result set rather than reorder it.
-        const scope = target === "memories-list" ? "memories" : "";
-        const rows = memories.map(memoryRow).join("");
-        $(target).innerHTML = `<div class="tablewrap"><table>
-    <thead><tr>
-      ${sortHeader(scope, "significance", "Sig")}
-      <th class="consolidation-only" title="computed value against the deletion threshold">Value</th>
-      <th>Event</th>
-      ${sortHeader(scope, "group", "Group")}
-      ${sortHeader(scope, "recall_count", "Recalls")}
-      ${sortHeader(scope, "timestamp", "Age", "how long ago the memory was stored — hover a value for the exact timestamp")}
-      ${sortHeader(scope, "id", "Id")}
-      <th class="actions-col"></th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table></div>`;
-
-        // Deliberately not awaited: the table is useful the moment it renders, and the valuation is an
-        // extra round trip that must not hold it back (or fail it).
-        decorateValues(memories);
-      }
-
-      // Offset of the currently displayed memories page. loadMemories() restarts from the top;
-      // memoriesPage() steps by one page. Both funnel through fetchMemories(), which reads sort + page
-      // size from the form. Paging is essential here: the store can hold hundreds of thousands of rows.
-      let memoriesOffset = 0;
-
-      function memoriesPageSize() {
-        return intOrUndef("mf-pagesize") || 25;
-      }
-
-      async function loadMemories() {
-        memoriesOffset = 0;
-
-        await fetchMemories();
-      }
-
-      async function memoriesPage(dir) {
-        const next = memoriesOffset + dir * memoriesPageSize();
-
-        memoriesOffset = next < 0 ? 0 : next;
-
-        await fetchMemories();
-      }
-
-      // syncMemoryExtremum greys out the significance min/max inputs while an extremum (highest/lowest) is
-      // selected: the server rejects significance_extremum combined with significance_min/max, so the two
-      // are mutually exclusive in the form too.
-      function syncMemoryExtremum() {
-        const on = $("mf-extremum").value !== "";
-
-        ["mf-sigmin", "mf-sigmax"].forEach((id) => {
-          $(id).disabled = on;
-
-          if (on) $(id).value = "";
-        });
-      }
-
-      async function fetchMemories() {
-        const params = new URLSearchParams();
-        const extremum = $("mf-extremum").value;
-
-        // significance_extremum ("only the memories tied at the highest/lowest significance") replaces the
-        // min/max range rather than combining with it — sending both is an InvalidArgument.
-        if (extremum) {
-          params.set("significance_extremum", extremum);
-        } else {
-          const sigMin = intOrUndef("mf-sigmin");
-          const sigMax = intOrUndef("mf-sigmax");
-
-          if (sigMin !== undefined) params.set("significance_min", sigMin);
-          if (sigMax !== undefined) params.set("significance_max", sigMax);
-        }
-
-        const group = strOrUndef("mf-group");
-        if (group) params.set("group", group);
-
-        // One parameter per pair (append, not set): the filter is a conjunction, and the gateway
-        // parses a repeated field as repeated parameters rather than one comma-joined value.
-        parseMetadataPairs($("mf-metadata").value, ",").forEach((pair) =>
-          params.append("metadata", pair),
-        );
-
-        const recalled = $("mf-recalled").value;
-        if (recalled) params.set("recalled", recalled);
-
-        const from = localToNano($("mf-from").value);
-        if (from) params.set("timestamp_min", from);
-
-        const to = localToNano($("mf-to").value);
-        if (to) params.set("timestamp_max", to);
-
-        params.set("order_by", $("mf-sort").value);
-
-        // Omitted rather than sent empty when the direction is "Default": the service reads an
-        // absent order_dir as the sort field's own natural direction, which is knowledge this page
-        // deliberately does not duplicate — the same reason the Decay tab computes no decay maths.
-        const sortDir = $("mf-sortdir").value;
-        if (sortDir) params.set("order_dir", sortDir);
-
-        params.set("limit", memoriesPageSize());
-        params.set("offset", memoriesOffset);
-
-        try {
-          const data = await api("GET", "/v1/memories?" + params.toString());
-          const memories = data.memories || [];
-          const total = Number(data.totalCount || 0);
-
-          renderMemories("memories-list", memories);
-          updateMemoriesPager(memories.length, total);
-          ok("Memories", memories.length + " of " + total + " shown");
-        } catch (e) {
-          fail("Load memories failed", e);
-        }
-      }
-
-      function updateMemoriesPager(count, total) {
-        const from = total === 0 ? 0 : memoriesOffset + 1;
-        const to = memoriesOffset + count;
-
-        $("mem-range").textContent =
-          total === 0 ? "no memories" : from + "–" + to + " of " + total;
-        $("mem-prev").disabled = memoriesOffset <= 0;
-        $("mem-next").disabled = to >= total;
-      }
-
-      function clearMemoryFilter() {
-        [
-          "mf-sigmin",
-          "mf-sigmax",
-          "mf-group",
-          "mf-metadata",
-          "mf-from",
-          "mf-to",
-        ].forEach((id) => ($(id).value = ""));
-        $("mf-extremum").value = "";
-        $("mf-recalled").value = "";
-        // The sort is part of the filter form, so Clear resets it too — back to the service's own
-        // default ordering rather than to whatever column was last clicked.
-        $("mf-sort").value = "significance";
-        $("mf-sortdir").value = "";
-        syncMemoryExtremum();
-      }
-
-      // parseMetadataPairs splits a "key=value" list into trimmed, non-empty pairs. separator is
-      // "\n" for the write form (one per line) and "," for the single-line filter input. Splitting
-      // the VALUE is deliberately left to the server, which cuts on the first "=" so a value may
-      // contain one.
-      function parseMetadataPairs(text, separator) {
-        return (text || "")
-          .split(separator)
-          .map((line) => line.trim())
-          .filter((line) => line.includes("=") && !line.startsWith("="));
-      }
-
-      // metadataFromForm turns the write form's textarea into the object the API takes. Returns
-      // undefined when empty, so an omitted field means "leave unchanged" on a PATCH rather than
-      // sending an empty map (which the server could not tell apart from an absent one anyway -
-      // clearing is what clear_metadata is for).
-      function metadataFromForm() {
-        const pairs = parseMetadataPairs($("mem-metadata").value, "\n");
-
-        if (!pairs.length) return undefined;
-
-        const out = {};
-
-        pairs.forEach((pair) => {
-          const at = pair.indexOf("=");
-
-          out[pair.slice(0, at).trim()] = pair.slice(at + 1).trim();
-        });
-
-        return out;
-      }
-
-      // metadataToForm renders stored labels back into the textarea, sorted so editing a memory
-      // twice shows them in the same order both times.
-      function metadataToForm(metadata) {
-        if (!metadata) return "";
-
-        return Object.keys(metadata)
-          .sort()
-          .map((k) => k + "=" + metadata[k])
-          .join("\n");
-      }
-
-      async function saveMemory() {
-        const id = $("mem-id").value;
-        const metadata = metadataFromForm();
-        const body = {
-          body: $("mem-body").value,
-          significance: intOrUndef("mem-sig"),
-          event_id: strOrUndef("mem-event"),
-          group: strOrUndef("mem-group"),
-          metadata: metadata,
-        };
-
-        try {
-          if (id) {
-            // Emptying the textarea on an edit means "remove the labels", which the empty map cannot
-            // say - an absent map and an empty one are the same on the wire, and every other field
-            // reads unset as "leave unchanged". clear_metadata is what carries the intent.
-            if (metadata === undefined) body.clear_metadata = true;
-
-            await api("PATCH", "/v1/memories/" + encodeURIComponent(id), body);
-            ok("Memory updated", id);
-          } else {
-            const res = await api("POST", "/v1/memories", body);
-
-            if (res.rejected) {
-              toast(
-                "Memory rejected",
-                "significance below the configured minimum — not stored",
-                "err",
-              );
-            } else {
-              ok("Memory created", res.id);
-            }
-          }
-
-          resetMemoryForm();
-          loadMemories();
-        } catch (e) {
-          fail("Save memory failed", e);
-        }
-      }
-
-      function editMemory(m) {
-        $("mem-id").value = m.id;
-        $("mem-body").value = m.body || "";
-        $("mem-sig").value = m.significance ?? "";
-        $("mem-event").value = m.eventId || "";
-        $("mem-group").value = m.group || "";
-        $("mem-metadata").value = metadataToForm(m.metadata);
-        $("mem-form-title").textContent = "Edit memory";
-        $("mem-save").textContent = "Update";
-        $("mem-edit-hint").style.display = "";
-        document.querySelector('nav button[data-tab="memories"]').click();
-        window.scrollTo({ top: 0, behavior: scrollBehaviour() });
-      }
-
-      function resetMemoryForm() {
-        [
-          "mem-id",
-          "mem-body",
-          "mem-sig",
-          "mem-event",
-          "mem-group",
-          "mem-metadata",
-        ].forEach((id) => ($(id).value = ""));
-        $("mem-form-title").textContent = "Create memory";
-        $("mem-save").textContent = "Create";
-        $("mem-edit-hint").style.display = "none";
-      }
-
-      async function recallMemory(id) {
-        try {
-          await api("POST", "/v1/memories/recall", { ids: [id] });
-          ok("Recalled", id);
-          loadMemories();
-        } catch (e) {
-          fail("Recall failed", e);
-        }
-      }
-
-      // ---------------------------------------------------------------------- links
-      //
-      // The console's view of the associative graph. Everything here is served: the links, their
-      // direction, and the summed significance the decay maths damps - the page computes none of it, for
-      // the same reason the Decay tab does not compute its own curve.
-
-      // linksSubject is the memory whose links the card is currently showing, so an add or a removal
-      // knows what it is editing without re-reading the DOM.
-      let linksSubject = "";
-
-      async function openLinks(id) {
-        linksSubject = id;
-
-        // innerHTML rather than textContent because the id is rendered through idCell (which escapes
-        // it) so the heading carries the same truncation and copy button as the tables.
-        $("links-subject").innerHTML = idCell(id);
-        $("links-card").style.display = "";
-        $("links-list").innerHTML = '<div class="empty">Loading…</div>';
-
-        document.querySelector('nav button[data-tab="memories"]').click();
-
-        // The card sits below the memories list, where it belongs - links are opened from a row in
-        // that list. Below a full page of rows it is also off the bottom of the screen, and reached
-        // from an event on the Search tab there is nothing to say it opened at all.
-        revealCard("links-card");
-
-        try {
-          const data = await api(
-            "GET",
-            "/v1/memories/" + encodeURIComponent(id) + "/links",
-          );
-
-          renderLinks(data);
-        } catch (e) {
-          $("links-list").innerHTML =
-            '<div class="empty">Could not load links.</div>';
-
-          fail("Links failed", e);
-        }
-      }
-
-      function closeLinks() {
-        linksSubject = "";
-        $("links-card").style.display = "none";
-      }
-
-      function renderLinks(data) {
-        const links = data.links || [];
-
-        if (!links.length) {
-          $("links-list").innerHTML =
-            '<div class="empty">No links. This memory decays on its own significance and recall history alone.</div>';
-
-          return;
-        }
-
-        // A link's direction is shown but does not change what it is worth: storage is directed so the
-        // graph can be read either way, while value is symmetric.
-        const rows = links
-          .map(
-            (l) => `<tr>
-        <td class="id">${idCell(
-          l.id,
-          `<a class="evlink idv" data-act="follow-link" data-id="${esc(l.id)}" title="${esc(l.id)}">${esc(shortId(l.id))}</a>`,
-        )}</td>
-        <td>${esc(String(l.significance ?? 0))}</td>
-        <td>${esc(l.direction === "LINK_DIRECTION_OUTBOUND" ? "→ outbound" : "← inbound")}</td>
-        <td>${ageCell(l.created)}</td>
-        <td class="actions-col">
-          <div class="actions">
-            <button class="btn small danger writer-only" data-act="unlink-memory"
-              data-id="${esc(linksSubject)}" data-target="${esc(l.id)}">Unlink</button>
-          </div>
-        </td>
-      </tr>`,
-          )
-          .join("");
-
-        $("links-list").innerHTML =
-          `<div class="muted" style="margin-bottom:8px">Total link significance
-    ${esc(String(data.linkSignificance ?? 0))} — damped before it counts toward the decay maths.</div>
-    <div class="tablewrap"><table><thead><tr><th>Memory</th><th>Significance</th><th>Direction</th><th>Created</th><th class="actions-col"></th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
-      }
-
-      async function addLink() {
-        if (!linksSubject) return;
-
-        const target = $("link-target").value.trim();
-
-        if (!target) {
-          fail("Link failed", "a target memory id is required");
-
-          return;
-        }
-
-        const significance = Number($("link-sig").value || 0);
-
-        try {
-          await api(
-            "POST",
-            "/v1/memories/" + encodeURIComponent(linksSubject) + "/links",
-            {
-              links: [{ id: target, significance }],
-            },
-          );
-
-          ok("Linked", linksSubject + " → " + target);
-
-          $("link-target").value = "";
-          $("link-sig").value = "";
-
-          openLinks(linksSubject);
-        } catch (e) {
-          fail("Link failed", e);
-        }
-      }
-
-      async function unlinkMemory(id, target) {
-        if (!confirm("Remove the link between " + id + " and " + target + "?"))
-          return;
-
-        try {
-          await api(
-            "POST",
-            "/v1/memories/" + encodeURIComponent(id) + "/links/delete",
-            { ids: [target] },
-          );
-          ok("Unlinked", id + " ✕ " + target);
-          openLinks(id);
-        } catch (e) {
-          fail("Unlink failed", e);
-        }
-      }
-
-      async function deleteMemory(id) {
-        if (!confirm("Delete memory " + id + "?")) return;
-
-        try {
-          await api("POST", "/v1/memories/delete", { ids: [id] });
-          ok("Memory deleted", id);
-          loadMemories();
-        } catch (e) {
-          fail("Delete failed", e);
-        }
-      }
-
-      // ------------------------------------------------------------------ decay
-      // The console never computes a decayed value of its own. The maths lives in exactly one place - the
-      // service's consolidation code - and both the per-row values and the plotted curve are served from
-      // it (POST /v1/consolidation/explain), so what is shown here cannot drift from what the service
-      // will actually do. That is also why the curve is sampled server-side rather than drawn from the
-      // configuration: a second implementation is a second answer.
-
-      // EXPLAIN_MAX_IDS mirrors the server's per-call bound (explainMaxMemoryIds), so a page larger than
-      // it asks about what it can rather than having the whole call rejected.
-      const EXPLAIN_MAX_IDS = 200;
-
-      // decayValues holds the last valuation per memory id, so clicking a value can plot that memory's own
-      // curve without asking again.
-      const decayValues = new Map();
-
-      // decayAvailable goes false the first time the RPC is refused. That is a property of the deployment
-      // (a replica has no forgetting of its own to describe) or of the token, never of one row, so the
-      // column stops asking rather than failing once per render.
-      //
-      // whoami now says so up front (caps.consolidation), so applyCaps sets this before anything is
-      // rendered and a replica never makes the refused call at all. The first-refusal path stays as
-      // the backstop for the other reason it can be refused - the token, which whoami cannot answer
-      // for, since ExplainConsolidation is reader-tier but a scope check still applies per id.
-      let decayAvailable = true;
-
-      // decayInputs is the last set of decision inputs seen, from whichever call produced them - the
-      // per-page valuation or the Decay tab's own refresh. They are the same snapshot either way.
-      let decayInputs = null;
-
-      // decorateValues fills the value column of a rendered table. It is best-effort by design: the rows
-      // are already useful, and a deployment that will not answer must cost a dash rather than an error.
-      async function decorateValues(memories) {
-        if (!decayAvailable) {
-          markValuesUnavailable();
-
-          return;
-        }
-
-        const ids = memories
-          .map((m) => m.id)
-          .filter(Boolean)
-          .slice(0, EXPLAIN_MAX_IDS);
-
-        if (!ids.length) return;
-
-        try {
-          const data = await api("POST", "/v1/consolidation/explain", {
-            memory_ids: ids,
-          });
-
-          decayInputs = data;
-
-          for (const valuation of data.valuations || []) {
-            decayValues.set(valuation.id, valuation);
-          }
-
-          document.querySelectorAll("[data-value-for]").forEach((cell) => {
-            const valuation = decayValues.get(cell.dataset.valueFor);
-
-            if (valuation) cell.innerHTML = valueCell(valuation);
-          });
-        } catch (e) {
-          decayAvailable = false;
-
-          markValuesUnavailable();
-        }
-      }
-
-      // markValuesUnavailable blanks the column when the server will not value memories for this caller.
-      function markValuesUnavailable() {
-        document.querySelectorAll("[data-value-for]").forEach((cell) => {
-          cell.innerHTML =
-            '<span class="muted" title="this instance does not report consolidation values">—</span>';
-        });
-      }
-
-      // valueCell renders one memory's standing: the computed value, then the single fact that decides
-      // its fate - already due, held by the retention floor, or how long it has left. The value is
-      // clickable because the obvious next question ("why, and what does that curve look like?") is one
-      // the Decay tab answers.
-      function valueCell(valuation) {
-        const value = Number(valuation.value);
-        const threshold = Number(valuation.threshold);
-
-        let pill = '<span class="pill safe">safe</span>';
-
-        if (valuation.retained) {
-          pill = '<span class="pill held">held</span>';
-        } else if (valuation.wouldConsolidate) {
-          pill = '<span class="pill due">due now</span>';
-        } else if (threshold > 0 && value < threshold * 1.5) {
-          pill = '<span class="pill soon">near</span>';
-        }
-
-        const left =
-          valuation.belowMinimumAge && !valuation.retained
-            ? "min age"
-            : humanDays(Number(valuation.daysUntilForgotten));
-
-        return `<span class="val" data-act="plot-memory" data-id="${esc(valuation.id)}"
-    title="value ${esc(num(value))} against a threshold of ${esc(num(threshold))}; forgotten in ${esc(left)}">${esc(num(value))}</span>
-    ${pill}<div class="muted" style="font-size:11px">${esc(left)}</div>`;
-      }
-
-      // num formats a computed value compactly. A memory younger than one age unit values as the largest
-      // float there is - the service's way of saying "not yet decaying at all" - which is a symbol, not a
-      // number to print.
-      function num(value) {
-        if (value === undefined || value === null || !isFinite(value))
-          return "∞";
-
-        if (Math.abs(value) >= 1e15) return "∞";
-
-        if (value === 0) return "0";
-
-        return Number(value.toPrecision(4)).toString();
-      }
-
-      // humanDays renders the projection, including its two sentinels: 0 is due now, and -1 is "no
-      // crossing within any span worth reporting" rather than an unknown.
-      function humanDays(days) {
-        if (days === undefined || days === null || !isFinite(days)) return "—";
-
-        if (days < 0) return "not foreseeably";
-
-        if (days === 0) return "due now";
-
-        if (days < 1 / 24) return "< 1 hour";
-
-        if (days < 1) return (days * 24).toPrecision(2) + " hours";
-
-        if (days < 365) return Number(days.toPrecision(3)) + " days";
-
-        return Number((days / 365).toPrecision(2)) + " years";
-      }
-
-      function formatBytes(value) {
-        const n = Number(value || 0);
-
-        if (!isFinite(n)) return "—";
-
-        const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-        let scaled = n;
-        let unit = 0;
-
-        while (scaled >= 1024 && unit < units.length - 1) {
-          scaled /= 1024;
-          unit++;
-        }
-
-        return (
-          (unit === 0 ? scaled : Number(scaled.toPrecision(3))) +
-          " " +
-          units[unit]
-        );
-      }
-
-      // METHOD_NAMES labels consolidation.method, so the tab says what shape is being applied rather than
-      // only its number. See docs/consolidation.md.
-      const METHOD_NAMES = {
-        1: "power law",
-        2: "linear (exponential factor)",
-        3: "linear (logarithmic factor)",
-        4: "exponential half-life",
-        5: "logarithmic long tail",
-        6: "sigmoid consolidation window",
-      };
-
-      // loadDecay refreshes the Decay tab: the decision inputs, and the curve for the significance in the
-      // form. Both come from one call, since the curve is meaningless without the threshold it is drawn
-      // against.
-      async function loadDecay() {
-        const body = {};
-        const significance = Number($("d-sig").value);
-
-        if (significance > 0) {
-          body.curve = { significance };
-
-          const days = Number($("d-days").value);
-
-          if (days > 0) body.curve.max_age_days = days;
-        }
-
-        try {
-          const data = await api("POST", "/v1/consolidation/explain", body);
-
-          decayAvailable = true;
-          decayInputs = data;
-
-          renderDecayStatus(data);
-          renderCurve(data);
-        } catch (e) {
-          decayAvailable = false;
-
-          $("decay-status").innerHTML =
-            '<div class="empty">This instance does not report consolidation values (a replica has no cycle of its own), or this token may not ask.</div>';
-          $("decay-curve").innerHTML =
-            '<div class="empty">No curve available.</div>';
-
-          fail("Decay unavailable", e);
-        }
-      }
-
-      // renderDecayStatus shows the numbers behind every decision the service is about to make. Capacity
-      // pressure leads because it is the one figure that explains a store suddenly forgetting faster
-      // without anything having been reconfigured.
-      function renderDecayStatus(data) {
-        const pressure = Number(data.capacityPressure || 0);
-        const threshold = Number(data.deletionThreshold || 0);
-        const configured = pressure > 0 ? threshold / pressure : threshold;
-        const usedBytes = Number(data.usedBytes || 0);
-        const capacityBytes = Number(data.capacityBytes || 0);
-        const memoryCount = Number(data.memoryCount || 0);
-        const capacityMemories = Number(data.capacityMemories || 0);
-
-        const bytesNote =
-          capacityBytes > 0
-            ? `${Math.round((usedBytes / capacityBytes) * 100)}% of ${formatBytes(capacityBytes)}`
-            : "no byte capacity configured";
-
-        const countNote =
-          capacityMemories > 0
-            ? `${Math.round((memoryCount / capacityMemories) * 100)}% of ${capacityMemories.toLocaleString()}`
-            : "no row capacity configured";
-
-        const floors = [];
-
-        if (Number(data.minimumAgeInDays || 0) > 0)
-          floors.push(data.minimumAgeInDays + " day minimum age");
-        if (Number(data.minimumRetentionInDays || 0) > 0)
-          floors.push(data.minimumRetentionInDays + " day retention");
-
-        $("decay-status").innerHTML = `<div class="stats">
-    <div class="stat">
-      <div class="k">Capacity pressure</div>
-      <div class="v">×${esc(num(pressure))}</div>
-      <div class="n">multiplies the threshold as the store fills</div>
-    </div>
-    <div class="stat">
-      <div class="k">Deletion threshold</div>
-      <div class="v">${esc(num(threshold))}</div>
-      <div class="n">${esc(num(configured))} configured, scaled by the pressure</div>
-    </div>
-    <div class="stat">
-      <div class="k">Stored</div>
-      <div class="v">${esc(formatBytes(usedBytes))}</div>
-      <div class="n">${esc(bytesNote)}</div>
-    </div>
-    <div class="stat">
-      <div class="k">Memories</div>
-      <div class="v">${esc(memoryCount.toLocaleString())}</div>
-      <div class="n">${esc(countNote)}</div>
-    </div>
-    <div class="stat">
-      <div class="k">Algorithm</div>
-      <div class="v">${esc(METHOD_NAMES[data.method] || "method " + data.method)}</div>
-      <div class="n">aggressiveness ${esc(num(Number(data.aggressiveness)))} · ${esc(num(Number(data.unitsOfAgeInDays)))} day(s) per age unit</div>
-    </div>
-    <div class="stat">
-      <div class="k">Floors</div>
-      <div class="v">${esc(floors.length ? floors.length : "none")}</div>
-      <div class="n">${esc(floors.length ? floors.join(" · ") : "nothing is protected by age alone")}</div>
-    </div>
-  </div>`;
-      }
-
-      function renderCurve(data) {
-        const curve = data.curve;
-
-        if (!curve || !(curve.points || []).length) {
-          $("decay-curve").innerHTML =
-            '<div class="empty">Enter a significance and plot to see how it decays.</div>';
-
-          return;
-        }
-
-        const crossing = Number(curve.crossingAgeDays);
-
-        const note =
-          crossing >= 0
-            ? `Significance ${esc(num(Number(curve.significance)))} crosses the threshold at <strong>${esc(humanDays(crossing))}</strong> of age.`
-            : `Significance ${esc(num(Number(curve.significance)))} does not cross the threshold within the projected span.`;
-
-        $("decay-curve").innerHTML =
-          `<div class="chart">${curveSvg(curve, Number(data.deletionThreshold))}</div>
-    <p class="muted">${note} Age is measured from the memory's creation, or from its most recent
-    recall — recalling a memory puts it back at the start of this curve.</p>`;
-      }
-
-      // curveSvg draws the sampled curve, the threshold it is measured against, and where the two meet.
-      // Every value in the markup is a number formatted here, never server text, so the SVG cannot carry
-      // anything but geometry.
-      function curveSvg(curve, threshold) {
-        const points = (curve.points || [])
-          .map((p) => ({ x: Number(p.ageDays), y: Number(p.value) }))
-          .filter((p) => isFinite(p.x) && isFinite(p.y) && p.y > 0);
-
-        if (points.length < 2)
-          return '<div class="empty">Not enough of the curve to plot.</div>';
-
-        const W = 660,
-          H = 240,
-          L = 62,
-          R = 14,
-          T = 14,
-          B = 30;
-        const xMax = Number(curve.maxAgeDays) || points[points.length - 1].x;
-
-        let yMin = Math.min(...points.map((p) => p.y));
-        let yMax = Math.max(...points.map((p) => p.y));
-
-        if (threshold > 0) {
-          yMin = Math.min(yMin, threshold);
-          yMax = Math.max(yMax, threshold);
-        }
-
-        // A decay curve spans orders of magnitude far more often than not (the first sample of a power
-        // law is many times the threshold), and a linear axis spends all its height on that first spike.
-        // Only switch to log where the range actually demands it, so the common gentle curve still reads
-        // as the shape it is.
-        const log = yMax / yMin > 50;
-        const ly = (v) => (log ? Math.log10(v) : v);
-        const yLo = ly(yMin),
-          yHi = ly(yMax);
-        const span = yHi - yLo || 1;
-
-        const px = (x) => L + (xMax > 0 ? x / xMax : 0) * (W - L - R);
-        const py = (y) => T + (1 - (ly(y) - yLo) / span) * (H - T - B);
-
-        const path = points
-          .map(
-            (p, i) =>
-              (i ? "L" : "M") + px(p.x).toFixed(1) + " " + py(p.y).toFixed(1),
-          )
-          .join(" ");
-
-        let marks = "";
-
-        if (threshold > 0 && threshold >= yMin && threshold <= yMax) {
-          const y = py(threshold).toFixed(1);
-
-          marks += `<line class="threshold" x1="${L}" y1="${y}" x2="${W - R}" y2="${y}"></line>
-      <text x="${W - R}" y="${Number(y) - 5}" text-anchor="end">threshold ${esc(num(threshold))}</text>`;
-        }
-
-        const crossing = Number(curve.crossingAgeDays);
-
-        if (crossing >= 0 && crossing <= xMax) {
-          const x = px(crossing).toFixed(1);
-
-          marks += `<line class="crossing" x1="${x}" y1="${T}" x2="${x}" y2="${H - B}"></line>
-      <text x="${x}" y="${T + 10}" text-anchor="middle">forgotten here</text>`;
-        }
-
-        // Four x labels and the two y extremes: enough to read the scale without turning the plot into a
-        // table.
-        let axes = `<line class="axis" x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}"></line>
-    <line class="axis" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}"></line>
-    <text x="${L - 6}" y="${T + 10}" text-anchor="end">${esc(num(yMax))}</text>
-    <text x="${L - 6}" y="${H - B}" text-anchor="end">${esc(num(yMin))}</text>`;
-
-        for (let i = 0; i <= 4; i++) {
-          const x = px((xMax / 4) * i);
-
-          axes += `<line class="grid" x1="${x.toFixed(1)}" y1="${T}" x2="${x.toFixed(1)}" y2="${H - B}"></line>
-      <text x="${x.toFixed(1)}" y="${H - B + 16}" text-anchor="middle">${esc(num((xMax / 4) * i))}d</text>`;
-        }
-
-        return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="decay curve">
-    ${axes}${marks}
-    <path class="curve" d="${path}"></path>
-    <text x="${L}" y="${H - 2}">age in days${log ? " · value on a log scale" : ""}</text>
-  </svg>`;
-      }
-
-      // plotMemory answers the question a value in the table invites: it takes that memory's own effective
-      // significance - the number the decay actually acts on, not the stored significance - and plots the
-      // curve it is riding down.
-      function plotMemory(id) {
-        const valuation = decayValues.get(id);
-
-        if (!valuation) return;
-
-        $("d-sig").value = Number(
-          Number(valuation.effectiveSignificance).toPrecision(6),
-        );
-        $("d-days").value = "";
-
-        showBreakdown(valuation);
-
-        document.querySelector('nav button[data-tab="decay"]').click();
-
-        loadDecay();
-      }
-
-      // showBreakdown accounts for the effective significance the curve is plotted against. It exists
-      // because links made that number stop being self-evident: a memory's links and its event's links are
-      // damped before they are weighted, so a link significance of 5000 contributes a little over eight,
-      // and an operator tuning consolidation.linkSignificanceWeight has no way to reconcile the total
-      // without seeing the parts. Everything shown is served - the console computes no decay maths of its
-      // own - so this cannot drift from what the sleep cycle will actually do.
-      function showBreakdown(valuation) {
-        const el = $("d-breakdown");
-
-        if (!el) return;
-
-        const parts = [
-          `stored significance ${esc(num(Number(valuation.significance)))}`,
-        ];
-
-        const linkSig = Number(valuation.linkSignificance || 0);
-        const eventLinkSig = Number(valuation.eventLinkSignificance || 0);
-
-        if (linkSig > 0) {
-          parts.push(
-            `links ${esc(num(linkSig))} &rarr; ${esc(num(Number(valuation.linkContribution || 0)))}`,
-          );
-        }
-
-        if (eventLinkSig > 0) {
-          parts.push(
-            `event links ${esc(num(eventLinkSig))} &rarr; ${esc(num(Number(valuation.eventLinkContribution || 0)))}`,
-          );
-        }
-
-        if (Number(valuation.recallCount) > 0) {
-          parts.push(`${esc(String(valuation.recallCount))} recalls`);
-        }
-
-        el.innerHTML = `Effective significance ${esc(num(Number(valuation.effectiveSignificance)))}
-    &mdash; ${parts.join(", ")}. Link totals are damped before weighting, so a large total adds
-    little.`;
-      }
-
-      // runPreview asks what a cycle running now would forget. Admin only (the server refuses it below
-      // that tier), which is why the card carrying it is hidden for everyone else.
-      async function runPreview() {
-        const params = new URLSearchParams();
-        const limit = intOrUndef("p-limit");
-
-        if (limit !== undefined) params.set("limit", limit);
-
-        try {
-          const data = await api(
-            "GET",
-            "/v1/sleep/preview?" + params.toString(),
-          );
-
-          renderPreview(data);
-          ok("Dry run", "nothing was deleted");
-        } catch (e) {
-          $("preview-results").innerHTML =
-            '<div class="empty">The dry run was refused.</div>';
-
-          fail("Dry run failed", e);
-        }
-      }
-
-      function renderPreview(data) {
-        const consolidated = Number(data.memoriesConsolidated || 0);
-        const evicted = Number(data.memoriesEvicted || 0);
-        const retained = Number(data.memoriesRetained || 0);
-        const retainedBytes = Number(data.retainedBytes || 0);
-        const capacityBytes = Number(data.capacityBytes || 0);
-
-        // Retention overrides the capacity target, so a retained set approaching the capacity is why a
-        // store can sit above its target indefinitely - the one failure mode a dry run exposes that
-        // nothing else does.
-        const retentionWarning =
-          retained > 0 &&
-          capacityBytes > 0 &&
-          retainedBytes > capacityBytes * 0.8
-            ? `<p class="muted" style="color:var(--warn)">Retained memories hold ${esc(formatBytes(retainedBytes))}
-       against a capacity of ${esc(formatBytes(capacityBytes))}: retention overrides the capacity
-       target, so eviction cannot bring the store back under it.</p>`
-            : "";
-
-        const rows = (data.candidates || [])
-          .map(
-            (c) => `<tr>
-    <td class="id">${idCell(c.id)}</td>
-    <td>${esc(num(Number(c.value)))}</td>
-    <td>${esc(c.significance ?? "")}</td>
-    <td class="id">${c.eventId ? idCell(c.eventId) : "—"}</td>
-    <td>${esc(c.group || "—")}</td>
-    <td>${c.rule === "FORGET_RULE_EVICTION" ? "over capacity" : "decayed"}</td>
-  </tr>`,
-          )
-          .join("");
-
-        const table = rows
-          ? `<div class="tablewrap"><table>
-        <thead><tr><th>Id</th><th>Value</th><th>Sig</th><th>Event</th><th>Group</th><th>Why</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-      ${data.truncated ? '<p class="muted">Sample truncated — raise the limit to see more.</p>' : ""}`
-          : '<div class="empty">Nothing would be forgotten right now.</div>';
-
-        $("preview-results").innerHTML =
-          `<div class="stats" style="margin-top:12px">
-    <div class="stat">
-      <div class="k">Would be forgotten</div>
-      <div class="v">${esc((consolidated + evicted).toLocaleString())}</div>
-      <div class="n">${esc(consolidated.toLocaleString())} decayed · ${esc(evicted.toLocaleString())} over capacity</div>
-    </div>
-    <div class="stat">
-      <div class="k">Events removed</div>
-      <div class="v">${esc(Number(data.eventsDeleted || 0).toLocaleString())}</div>
-      <div class="n">those left holding no memories</div>
-    </div>
-    <div class="stat">
-      <div class="k">Reclaimed</div>
-      <div class="v">${esc(formatBytes(data.bytesFreed))}</div>
-      <div class="n">estimated, on the same basis as used bytes</div>
-    </div>
-    <div class="stat">
-      <div class="k">Held by retention</div>
-      <div class="v">${esc(retained.toLocaleString())}</div>
-      <div class="n">${esc(formatBytes(retainedBytes))} that cannot be forgotten yet</div>
-    </div>
-  </div>
-  ${retentionWarning}
-  ${table}`;
-      }
-
-      // ------------------------------------------------------------------ forgotten log
-      // The dry run above says what would go; this says what did. It is the only view in the console
-      // that can speak about a memory that no longer exists, which is also why it is the only one whose
-      // rows cannot be clicked through to the record they name.
-      async function loadForgotten() {
-        const params = new URLSearchParams();
-        const set = (key, value) => {
-          if (value !== undefined && value !== "") params.set(key, value);
-        };
-
-        set("memoryId", $("f-memory-id").value.trim());
-        set("group", $("f-group").value.trim());
-        set("rule", $("f-rule").value);
-        set("limit", intOrUndef("f-limit"));
-
-        try {
-          const data = await api(
-            "GET",
-            "/v1/memories/forgotten?" + params.toString(),
-          );
-
-          renderForgotten(data);
-        } catch (e) {
-          $("forgotten-results").innerHTML =
-            '<div class="empty">The forgotten log could not be read.</div>';
-
-          fail("Forgotten log", e);
-        }
-      }
-
-      function renderForgotten(data) {
-        const records = data.memories || [];
-
-        // An empty log is ambiguous - nothing forgotten, or nothing written down - and the enabled
-        // flag is the only thing that tells them apart. Say which.
-        const disabled = data.enabled
-          ? ""
-          : `<p class="muted" style="color:var(--warn)">The forgotten log is not enabled, so nothing new is being
-       recorded. Set <code class="inline">consolidation.tombstones.enabled</code> to start keeping
-       one; what is already here stays until it is cleared.</p>`;
-
-        if (!records.length) {
-          $("forgotten-results").innerHTML =
-            disabled + '<div class="empty">Nothing has been forgotten.</div>';
-
-          return;
-        }
-
-        const rows = records
-          .map(
-            (m) => `<tr>
-    <td class="id">${esc(m.id)}</td>
-    <td>${ageCell(m.forgottenAt)}</td>
-    <td>${esc(num(Number(m.value)))}</td>
-    <td>${esc(num(Number(m.threshold)))}</td>
-    <td>${esc(m.significance ?? "")}</td>
-    <td>${esc(m.eventId || "—")}</td>
-    <td>${esc(m.group || "—")}</td>
-    <td>${m.rule === "FORGET_RULE_EVICTION" ? "over capacity" : "decayed"}</td>
-  </tr>`,
-          )
-          .join("");
-
-        $("forgotten-results").innerHTML =
-          disabled +
-          `<p class="muted" style="margin-top:12px">Showing ${esc(records.length.toLocaleString())} of
-     ${esc(Number(data.total || 0).toLocaleString())} record(s), most recent first.</p>
-   <div class="tablewrap"><table>
-     <thead><tr><th>Id</th><th>Forgotten</th><th>Value</th><th>Threshold</th><th>Sig</th><th>Event</th><th>Group</th><th>Why</th></tr></thead>
-     <tbody>${rows}</tbody>
-   </table></div>`;
-      }
-
-      // clearForgotten empties the log. It is the one action here that destroys a record of something
-      // already destroyed, so it confirms - the caps configured on the service never do this.
-      async function clearForgotten() {
-        if (
-          !confirm(
-            "Delete every record in the forgotten log? The memories are already gone; this removes the record that they existed.",
-          )
-        ) {
-          return;
-        }
-
-        try {
-          const data = await api("POST", "/v1/memories/forgotten/delete", {
-            all: true,
-          });
-
-          ok("Forgotten log cleared", `${data.deleted || 0} record(s) deleted`);
-          loadForgotten();
-        } catch (e) {
-          fail("Clearing the forgotten log failed", e);
-        }
-      }
-
-      // ------------------------------------------------------------------ events
-      function eventRow(e) {
-        // Served, never derived: fetchEvents asks for memory_counts, so the count is the store's
-        // own and is right whether or not the memories themselves were transferred. Falling back to
-        // the attached memories keeps the column honest if a future caller asks for those alone.
-        const memCount =
-          Number(e.memoryCount || 0) || (e.memories && e.memories.length) || 0;
-
-        // The name is a link: clicking it opens the event and lists all of its memories (openEvent).
-        const nameCell = e.id
-          ? `<a class="evlink" data-act="open-event" data-event="${esc(e.id)}">${esc(e.name || "(unnamed)")}</a>`
-          : esc(e.name || "—");
-
-        // The description is the event's free text, so it takes a row of its own beneath the metadata
-        // for the same reason a memory's body does.
-        const description = e.description ? String(e.description) : "";
-
-        return `<tr${description ? ' class="has-body"' : ""}>
-    <td>${nameCell}</td>
-    <td>${esc(e.significance ?? "")}</td>
-    <td>${esc(e.group || "—")}</td>
-    <td>${ageCell(e.timeStart)}</td>
-    <td>${e.timeEnd && e.timeEnd !== "0" ? ageCell(e.timeEnd) : '<span class="pill">open</span>'}</td>
-    <td>${memCount || "—"}</td>
-    <td class="id">${idCell(e.id)}</td>
-    <td class="actions-col">
-      <div class="actions">
-        <button class="btn small ghost writer-only" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
-        <button class="btn small ghost writer-only" data-act="end-event" data-id="${esc(e.id)}">End</button>
-        <button class="btn small danger writer-only" data-act="delete-event" data-id="${esc(e.id)}">Delete</button>
-      </div>
-    </td>
-  </tr>${
-    description
-      ? `<tr><td class="bodycell" colspan="8"><div class="bodytext">${esc(description)}</div></td></tr>`
-      : ""
-  }`;
-      }
-
-      function renderEvents(events) {
-        if (!events.length) {
-          $("events-list").innerHTML = '<div class="empty">No events.</div>';
-
-          return;
-        }
-
-        // Register the displayed rows so the delegated edit handler can resolve the full object by id
-        // instead of it being embedded in the markup.
-        events.forEach((e) => evRegistry.set(e.id, e));
-
-        const rows = events.map(eventRow).join("");
-        $("events-list").innerHTML = `<div class="tablewrap"><table>
-    <thead><tr>
-      ${sortHeader("events", "name", "Name")}
-      ${sortHeader("events", "significance", "Sig")}
-      ${sortHeader("events", "group", "Group")}
-      ${sortHeader("events", "timestamp", "Start")}
-      ${sortHeader("events", "time_end", "End", "an event that has not ended sorts as the oldest-ended, not as the most recent")}
-      <th title="memories this event currently holds">Mem</th>
-      ${sortHeader("events", "id", "Id")}
-      <th class="actions-col"></th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table></div>`;
-      }
-
-      // Offset of the currently displayed events page. loadEvents() restarts from the top; eventsPage()
-      // steps by one page. Both funnel through fetchEvents(), which reads sort + page size from the form.
-      let eventsOffset = 0;
-
-      function eventsPageSize() {
-        return intOrUndef("ef-pagesize") || 25;
-      }
-
-      // ---------------------------------------------------------- summarisation candidates
-      //
-      // The list the sleep cycle's scan produced: events holding enough quiet, unsummarised memories
-      // to be worth condensing. It is a point-in-time snapshot refreshed by the cycle, not a live
-      // query, which is why this loads on demand and offers a Refresh rather than following the
-      // events list.
-      async function loadCandidates() {
-        $("candidates-list").innerHTML = '<div class="empty">Loading…</div>';
-
-        try {
-          const data = await api("GET", "/v1/summarisation/candidates");
-
-          renderCandidates(data);
-          ok("Candidates", (data.candidates || []).length + " event(s)");
-        } catch (e) {
-          $("candidates-list").innerHTML =
-            '<div class="empty">Could not load candidates.</div>';
-
-          fail("Candidates failed", e);
-        }
-      }
-
-      function renderCandidates(data) {
-        const candidates = data.candidates || [];
-
-        if (!candidates.length) {
-          // An empty list means one of two opposite things, and only the server can say which:
-          // nothing is due yet, or this instance does not scan at all (the threshold is unset, or it
-          // is a replica and runs no sleep cycle). Reading it off the list would guess.
-          $("candidates-list").innerHTML = data.scanEnabled
-            ? '<div class="empty">No candidates right now — nothing has accumulated enough quiet memories yet.</div>'
-            : '<div class="empty">This instance does not scan for candidates. It needs ' +
-              '<code class="inline">consolidation.summarisationMinMemories</code> above zero and ' +
-              '<code class="inline">consolidation.enabled</code> — a replica runs no sleep cycle, ' +
-              "so it never produces this list.</div>";
-
-          return;
-        }
-
-        // The event name opens the event, which is where the summarise buttons are — the list says
-        // what is worth condensing, the event view is where it is done.
-        const rows = candidates
-          .map(
-            (c) => `<tr>
-        <td><a class="evlink" data-act="open-event" data-event="${esc(c.eventId)}">${esc(c.eventName || "(unnamed)")}</a></td>
-        <td>${esc(String(c.memoryCount ?? 0))}</td>
-        <td class="id">${idCell(c.eventId)}</td>
-      </tr>`,
-          )
-          .join("");
-
-        $("candidates-list").innerHTML = `<div class="tablewrap"><table>
-    <thead><tr><th>Event</th>
-      <th title="unsummarised memories the scan counted">Mem</th><th>Id</th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
-      }
-
-      // loadEvents lists from the first page — used by the "List events" button and refreshed after a
-      // mutation so the user lands back at the top of the (possibly re-sorted) list.
-      async function loadEvents() {
-        eventsOffset = 0;
-
-        await fetchEvents();
-      }
-
-      async function eventsPage(dir) {
-        const next = eventsOffset + dir * eventsPageSize();
-
-        eventsOffset = next < 0 ? 0 : next;
-
-        await fetchEvents();
-      }
-
-      // syncEventExtremum greys out the significance min/max inputs while an extremum (highest/lowest) is
-      // selected: the server rejects significance_extremum combined with significance_min/max, so the two
-      // are mutually exclusive in the form too.
-      function syncEventExtremum() {
-        const on = $("ef-extremum").value !== "";
-
-        ["ef-sigmin", "ef-sigmax"].forEach((id) => {
-          $(id).disabled = on;
-
-          if (on) $(id).value = "";
-        });
-      }
-
-      async function fetchEvents() {
-        const params = new URLSearchParams();
-        const extremum = $("ef-extremum").value;
-
-        // significance_extremum ("only the events tied at the highest/lowest significance") replaces the
-        // min/max range rather than combining with it — sending both is an InvalidArgument.
-        if (extremum) {
-          params.set("significance_extremum", extremum);
-        } else {
-          const sigMin = intOrUndef("ef-sigmin");
-          const sigMax = intOrUndef("ef-sigmax");
-
-          if (sigMin !== undefined) params.set("significance_min", sigMin);
-          if (sigMax !== undefined) params.set("significance_max", sigMax);
-        }
-
-        const group = strOrUndef("ef-group");
-        if (group) params.set("group", group);
-
-        if ($("ef-memories").checked) params.set("memories", "true");
-
-        // Always asked for: how much an event holds is what a listing is for, and the count is one
-        // aggregate query that reads no bodies — unlike `memories`, which transfers all of them.
-        params.set("memory_counts", "true");
-
-        params.set("order_by", $("ef-sort").value);
-
-        // Omitted when "Default" — see fetchMemories for why.
-        const sortDir = $("ef-sortdir").value;
-        if (sortDir) params.set("order_dir", sortDir);
-
-        params.set("limit", eventsPageSize());
-        params.set("offset", eventsOffset);
-
-        try {
-          const data = await api("GET", "/v1/events?" + params.toString());
-          const events = data.events || [];
-          const total = Number(data.totalCount || 0);
-
-          renderEvents(events);
-          updateEventsPager(events.length, total);
-          ok("Events", events.length + " of " + total + " shown");
-        } catch (e) {
-          fail("Load events failed", e);
-        }
-      }
-
-      function updateEventsPager(count, total) {
-        const from = total === 0 ? 0 : eventsOffset + 1;
-        const to = eventsOffset + count;
-
-        $("ev-range").textContent =
-          total === 0 ? "no events" : from + "–" + to + " of " + total;
-        $("ev-prev").disabled = eventsOffset <= 0;
-        $("ev-next").disabled = to >= total;
-      }
-
-      function clearEventFilter() {
-        ["ef-sigmin", "ef-sigmax", "ef-group"].forEach(
-          (id) => ($(id).value = ""),
-        );
-        $("ef-extremum").value = "";
-        $("ef-memories").checked = false;
-        $("ef-sort").value = "significance";
-        $("ef-sortdir").value = "";
-        syncEventExtremum();
-      }
-
-      async function saveEvent() {
-        const id = $("ev-id").value;
-
-        if (id) {
-          // The gateway only exposes significance and end-time updates for an existing event.
-          const sig = intOrUndef("ev-sig");
-
-          try {
-            if (sig !== undefined) {
-              await api(
-                "PATCH",
-                "/v1/events/" + encodeURIComponent(id) + "/significance",
-                { id, significance: sig },
-              );
-            }
-
-            const end = localToNano($("ev-end").value);
-
-            if (end) {
-              await api(
-                "POST",
-                "/v1/events/" + encodeURIComponent(id) + "/end",
-                { id, time_end: end },
-              );
-            }
-
-            ok("Event updated", id);
-            resetEventForm();
-            loadEvents();
-          } catch (e) {
-            fail("Update event failed", e);
-          }
-
-          return;
-        }
-
-        const body = {
-          name: $("ev-name").value,
-          description: $("ev-desc").value,
-          significance: intOrUndef("ev-sig"),
-          group: strOrUndef("ev-group"),
-          time_start: localToNano($("ev-start").value),
-          time_end: localToNano($("ev-end").value),
-        };
-
-        try {
-          const res = await api("POST", "/v1/events", body);
-
-          if (res.rejected) {
-            toast(
-              "Event rejected",
-              "significance below the configured minimum — not stored",
-              "err",
-            );
-          } else {
-            ok(
-              "Event created",
-              res.id + " (" + (res.memoryCount || 0) + " memories)",
-            );
-          }
-
-          resetEventForm();
-          loadEvents();
-        } catch (e) {
-          fail("Save event failed", e);
-        }
-      }
-
-      function editEvent(e) {
-        $("ev-id").value = e.id;
-        $("ev-name").value = e.name || "";
-        $("ev-desc").value = e.description || "";
-        $("ev-sig").value = e.significance ?? "";
-        $("ev-group").value = e.group || "";
-        $("ev-start").value = nanoToLocal(e.timeStart);
-        $("ev-end").value = nanoToLocal(e.timeEnd);
-        $("ev-form-title").textContent = "Edit event";
-        $("ev-save").textContent = "Update";
-        const hint = $("ev-edit-hint");
-        hint.style.display = "";
-        hint.textContent =
-          "Only significance and end-time are updatable via the API";
-        document.querySelector('nav button[data-tab="events"]').click();
-        window.scrollTo({ top: 0, behavior: scrollBehaviour() });
-      }
-
-      function resetEventForm() {
-        [
-          "ev-id",
-          "ev-name",
-          "ev-desc",
-          "ev-sig",
-          "ev-group",
-          "ev-start",
-          "ev-end",
-        ].forEach((id) => ($(id).value = ""));
-        $("ev-form-title").textContent = "Create event";
-        $("ev-save").textContent = "Create";
-        $("ev-edit-hint").style.display = "none";
-      }
-
-      async function endEvent(id) {
-        if (!confirm("End event " + id + " now?")) return;
-
-        try {
-          await api("POST", "/v1/events/" + encodeURIComponent(id) + "/end", {
-            id,
-            time_end: String(BigInt(Date.now()) * 1000000n),
-          });
-          ok("Event ended", id);
-          loadEvents();
-        } catch (e) {
-          fail("End event failed", e);
-        }
-      }
-
-      async function deleteEvent(id) {
-        // confirm() is binary, so ask in two steps: first whether to also delete the memories, then
-        // (if not) whether to go ahead detaching them, which also gives a way to abort entirely.
-        const withMemories = confirm(
-          "Delete event " +
-            id +
-            "?\n\nOK  = delete the event AND its memories.\nCancel = keep the memories (you'll confirm next).",
-        );
-
-        if (!withMemories) {
-          if (
-            !confirm(
-              "Delete event " +
-                id +
-                ", detaching its memories (they are kept)?",
-            )
-          )
-            return;
-        }
-
-        try {
-          await api(
-            "DELETE",
-            "/v1/events/" +
-              encodeURIComponent(id) +
-              "?memories=" +
-              (withMemories ? "true" : "false"),
-          );
-          ok("Event deleted", id);
-          loadEvents();
-        } catch (e) {
-          fail("Delete event failed", e);
-        }
-      }
-    </script>
+    <script type="module" src="/ui/app.js"></script>
   </body>
 </html>

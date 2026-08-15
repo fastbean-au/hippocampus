@@ -296,6 +296,19 @@ func TestGroupScopeIsolation_Reads(t *testing.T) {
 
 		assertNoLeak(t, "WhoAmI", res.String())
 	})
+
+	// The status RPC is scopeNone: it reports the cycle's schedule and aggregate counts, naming no
+	// record. It is answered rather than refused to a scoped caller, unlike Purge/Sleep/Preview -
+	// so what needs asserting is not that it is rejected but that what comes back carries nothing
+	// from the group this caller cannot see.
+	t.Run("GetConsolidationStatus reads no stored record", func(t *testing.T) {
+		res, err := s.GetConsolidationStatus(ctx, &contract.EmptyRequest{})
+		if err != nil {
+			t.Fatalf("GetConsolidationStatus: %s", err)
+		}
+
+		assertNoLeak(t, "GetConsolidationStatus", res.String())
+	})
 }
 
 // TestGroupScopeIsolation_Writes drives every mutating RPC as a caller scoped to group "a".
@@ -745,6 +758,7 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"ExplainConsolidation":       true,
 		"GetSummarisationCandidates": true,
 		"WhoAmI":                     true,
+		"GetConsolidationStatus":     true,
 
 		// TestGroupScopeIsolation_Writes
 		"StoreMemory":                true,
