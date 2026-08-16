@@ -4,8 +4,9 @@
 
 This guide covers running Hippocampus in production: the deployment model, choosing and sizing a
 storage backend, capacity tuning, backup and migration, shutdown, observability, and security. For
-the exhaustive list of configuration keys see [Configurability](configuration.md#configurability) in the
-README; for a first run see [Getting started](getting-started.md).
+the exhaustive list of configuration keys see
+[Configurability](configuration.md#configurability); for a first run see
+[Getting started](getting-started.md).
 
 ## Deployment model: one consolidating instance per store
 
@@ -110,13 +111,17 @@ The binary is a foreground process: it runs until it receives `SIGINT`/`SIGTERM`
 gracefully (see [Graceful shutdown](#graceful-shutdown)). For anything past a manual run, put it
 under a process supervisor that restarts it on failure and starts it at boot — the same supervision
 the sections above assume. Point the supervisor's liveness check at `GET /healthz`. The examples
-below run the compiled binary directly; the containerised path is instead any of the
-[Docker compose stacks](../README.md) with a `restart:` policy.
+below run the compiled binary directly; the containerised path is instead a
+[Compose stack or Kubernetes overlay](#containers-and-kubernetes).
 
 On macOS or Linux the quickest supervised setup is Homebrew — `brew install
 fastbean-au/tap/hippocampus` then `brew services start hippocampus`, which generates and manages the
 launchd/systemd definition for you (the manual equivalents below are for a non-Homebrew install, or
-when you want the full systemd hardening).
+when you want the full systemd hardening). The tap also carries the two client binaries, which need
+no supervision: `fastbean-au/tap/hippocampus-cli` (the [`hippo` CLI](cli.md)) and
+`fastbean-au/tap/hippocampus-mcp` (the [MCP bridge](mcp.md)). The service formula installs a default
+embedded-SQLite config that is preserved across upgrades; see the
+[tap repo](https://github.com/fastbean-au/homebrew-tap).
 
 ### macOS (launchd)
 
@@ -210,6 +215,73 @@ owns a _separate_ store. Give **each its own `storage.directory` (SQLite) or DSN
 its own `gateway.port`**: the defaults (`50051`/`8080`) collide, and the second instance to start
 fails to bind the port. An external content-search cluster likewise needs a distinct
 `opensearch.index` (or a separate cluster) per instance so their documents do not intermingle.
+
+## Containers and Kubernetes
+
+### Docker Compose
+
+The repository ships a Compose stack per storage driver, plus two that add the OpenSearch
+content-search index. All of them build the image from the repo's multi-stage
+[`Dockerfile`](../Dockerfile) (statically linked, CGO disabled, non-root) and expose `50051` (gRPC)
+and `8080` (HTTP gateway). The per-stack configs sit beside each file in
+[`deploy/compose/`](../deploy/compose/); the image's baked-in default is
+`deploy/compose/config.sqlite.json`.
+
+| Stack                                                               | Command                                                                              |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Embedded SQLite, database in a named volume (the default)           | `docker compose up --build`                                                          |
+| PostgreSQL                                                          | `docker compose -f deploy/compose/docker-compose.postgres.yaml up --build`           |
+| MySQL                                                               | `docker compose -f deploy/compose/docker-compose.mysql.yaml up --build`              |
+| SQLite + OpenSearch content search (security disabled — demo only)  | `docker compose -f deploy/compose/docker-compose.opensearch.yaml up --build`         |
+| The same with the OpenSearch security plugin (HTTPS + basic auth)   | `docker compose -f deploy/compose/docker-compose.opensearch-secured.yaml up --build` |
+| PostgreSQL + OpenSearch + an OTEL collector (the "corporate" stack) | `docker compose -f deploy/compose/docker-compose.corporate.yaml up --build`          |
+
+Three opt-in Compose profiles layer onto them, all off by default:
+
+- **`observability`** — an all-in-one `grafana/otel-lgtm` service (Grafana on `:3000`, OTLP on
+  `:4317`) with the [Hippocampus dashboard and alert rules](#alert-rules) provisioned in. The
+  service's metrics/traces are wired to it by `HIPPOCAMPUS_OBSERVABILITY_*` env overrides gated on
+  the same variable, so nothing is exported (and no export failure is logged) unless the collector
+  is up: `OBSERVABILITY=true docker compose --profile observability up --build`.
+- **`ollama`** — the embedded [LLM summariser](consolidation.md#embedded-llm-ollama) beside the
+  service: `OLLAMA=true docker compose --profile ollama up --build`, then
+  `docker compose exec ollama ollama pull llama3.2` once to fetch a model.
+- **`mcp`** (SQLite stack only) — an [MCP-over-HTTP endpoint](mcp.md) on `:8090` that dials the
+  service over the Compose network: `docker compose --profile mcp up --build`. It is
+  unauthenticated, like the rest of that demo stack; the common local pattern is instead the stdio
+  transport spawned by the MCP host.
+
+These stacks are demonstration-shaped — no auth, no TLS, and a bundled database — so treat them as a
+starting point rather than a deployment. For anything long-running, give the service a `restart:`
+policy so a [fail-stop](#deployment-model-one-consolidating-instance-per-store) is followed by a
+clean restart, and point the healthcheck at `/healthz`.
+
+### Kubernetes
+
+[`deploy/k8s/`](../deploy/k8s/) carries plain [Kustomize](https://kubectl.docs.kubernetes.io/references/kustomize/)
+manifests — no Helm, nothing beyond `kubectl` — with one overlay per deployment model:
+
+```sh
+# Embedded SQLite: one StatefulSet (1 replica) + a PersistentVolumeClaim
+kubectl apply -k deploy/k8s/overlays/sqlite
+
+# Centralised: one consolidator Deployment + N replica Deployments over a shared PostgreSQL
+kubectl apply -k deploy/k8s/overlays/postgres
+```
+
+Both build on a shared `base/` (namespace, a token-less `ServiceAccount`, and the client-facing
+`Service`), take their `config.json` through a content-hashed `configMapGenerator` so an edit rolls
+the pods, and receive secrets (the DSN, the signing key) and the consolidator/replica split as
+`HIPPOCAMPUS_*` env overrides rather than baked into the ConfigMap. Pods run non-root with a
+read-only root filesystem — the counterpart to the shipped systemd unit's sandbox — and probe
+`/healthz` (liveness) and `/readyz` (readiness, database-aware).
+
+The workload kinds differ for the reason the [deployment
+model](#deployment-model-one-consolidating-instance-per-store) gives: the SQLite overlay is a
+`StatefulSet` pinned at one replica because a second pod sharing the volume would fail on the
+storage lock, while the Postgres overlay scales its replica Deployment freely and leaves
+consolidation to the single consolidator. Neither overlay ships an `Ingress` — expose the ports
+through whatever the cluster already uses. See [`deploy/k8s/README.md`](../deploy/k8s/README.md).
 
 ## Choosing a storage driver
 
@@ -859,6 +931,11 @@ multi-group store, with the centralised side stamping each ingestor's group from
   is. Because the token lives in the browser, serve `/ui` only
   over TLS and treat it as a trusted-operator tool, not a public endpoint; put it behind your ingress'
   access controls if the gateway is internet-facing.
+- **Storage errors never reach a client verbatim.** The RPC layer's `mapError` seam translates the
+  storage errors a client can act on — a write conflict to `codes.Aborted`, a duplicate key to
+  `codes.AlreadyExists` — and masks everything else as `codes.Internal`, logging the detail
+  server-side, so raw driver text (and the schema it would describe) stays out of responses. See
+  [MySQL InnoDB deadlocks](performance.md#mysql-innodb-deadlocks-fixed), where the seam is described.
 - **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left
   unset there is no cap. The native gRPC transport bounds a whole request at its 4 MiB default, but
   the HTTP gateway does not by default — set `gateway.maxRequestBytes` to a transport-level ceiling

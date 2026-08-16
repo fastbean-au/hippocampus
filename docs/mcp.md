@@ -16,7 +16,13 @@ replica behind a load balancer.
 
 ## Install
 
-Grab a pre-built binary for your platform from the
+On macOS or Linux, install it from the tap:
+
+```sh
+brew install fastbean-au/tap/hippocampus-mcp
+```
+
+Otherwise grab a pre-built binary for your platform from the
 [releases page](https://github.com/fastbean-au/hippocampus/releases) — each release attaches
 `hippocampus-mcp` archives for Linux, macOS, and Windows on amd64/arm64, with a `checksums.txt` to
 verify them. This is the easiest path for the local stdio use case: no Go toolchain required.
@@ -65,9 +71,9 @@ so it need not (and cannot) choose where its memories are filed. Note this is a 
 | `link_memories`                | `LinkMemories`               | Associate one memory with others, each link carrying a significance. Both ends must already exist; re-linking a pair re-weights it.                                                                                                          |
 | `unlink_memories`              | `UnlinkMemories`             | Remove links between one memory and the memories named, in either direction. Unknown targets are ignored.                                                                                                                                    |
 | `get_memory_links`             | `GetMemoryLinks`             | List what a memory is linked to and its total link significance; `direction` narrows to outbound or inbound. Read-only.                                                                                                                      |
-| `list_memories`                | `GetMemories`                | Read-only browse by group, significance, and `metadata` labels; `recalled: false` finds memories never recalled. `order_by`/`order_dir` sort the page. Does **not** reinforce.                                                                                                     |
+| `list_memories`                | `GetMemories`                | Read-only browse by group, significance, and `metadata` labels; `recalled: false` finds memories never recalled. `order_by`/`order_dir` sort the page. Does **not** reinforce.                                                               |
 | `create_event`                 | `StoreEvent`                 | A named time span memories can be grouped under; takes `metadata` labels like a memory.                                                                                                                                                      |
-| `list_events`                  | `GetEvents`                  | Read-only browse of events, filterable by `metadata` labels and sortable via `order_by`/`order_dir`.                                                                                                                                                                                 |
+| `list_events`                  | `GetEvents`                  | Read-only browse of events, filterable by `metadata` labels and sortable via `order_by`/`order_dir`.                                                                                                                                         |
 | `get_summarisation_candidates` | `GetSummarisationCandidates` | Events the last consolidation cycle flagged as worth condensing.                                                                                                                                                                             |
 
 Memories and events are returned as plain JSON objects (the read-only fields — `id`, `time_stamp`,

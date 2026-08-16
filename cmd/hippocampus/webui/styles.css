@@ -287,6 +287,16 @@ button.btn.small {
          sideways. */
 .tablewrap {
   overflow-x: auto;
+  /* The vertical half is what makes the sticky header below do anything. `overflow-x: auto` alone
+     already makes this a scroll container on BOTH axes (a visible axis computes to auto when its
+     partner is not visible), so a sticky `th` here is positioned against this element and not
+     against the page - and with no height bound this element never scrolls vertically, so the
+     header would sit still while the page carried the rows away underneath it. Bounding the height
+     moves the row scrolling in here, where the header can hold. A page-scroll sticky header is not
+     available as an alternative: it would need this to not be a scroll container, and the
+     horizontal overflow (see above) is not optional. */
+  max-height: 70vh;
+  overflow-y: auto;
   /* A query container so a body row can be sized against the VISIBLE width (100cqw) rather than
      against the table's, which is what it inherits from the cell it sits in and which is wider
      whenever this scrolls. See .bodytext. */
@@ -310,6 +320,21 @@ th {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
+}
+/* The header holds while its rows scroll under it, which is what keeps a long listing readable
+   without counting columns back to the top. Two things here are load-bearing rather than
+   decorative, both for the reason td.actions-col already gives. The background, because a sticky
+   cell is transparent and the rows would be drawn straight through it; and the rule underneath as
+   an INSET SHADOW rather than a border, because under `border-collapse: collapse` the table owns
+   the grid's borders and paints them below a sticky cell, so a real border scrolls away with the
+   first row and leaves the header floating unruled. */
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 /* A header the listing can sort on. white-space: nowrap keeps the direction arrow on the
          label's line rather than wrapping alone onto a second one and stretching every row. */

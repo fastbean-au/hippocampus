@@ -4,10 +4,45 @@ Worked demonstrations that load real-shaped data into Hippocampus and show conso
 job. They cross two **data shapes** — narratives and logs — with the two **deployment modes**
 (embedded SQLite, and centralised Postgres + OpenSearch), using the companion data generator.
 
-For a purely synthetic, self-contained soak (no external data, bursty writers, live decay under a
-byte cap) see the built-in [`demo/`](../demo/README.md) harness (`./demo/run.sh`) instead — that
-answers "does it stay healthy under sustained load"; the demonstrations here answer "what does
-forgetting look like on data you recognise".
+Two others sit beside them, both self-contained in this repository. For **live data nobody staged**,
+[`./demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demobluesky-sh) points the
+[Bluesky bridge](eventsource.md#bluesky-the-firehose-bridge) at the public firehose, where real
+engagement decides what survives — that is the hosted demo below, and the most convincing of the
+three. For a purely synthetic soak (no external data, bursty writers, live decay under a byte cap),
+[`./demo/run.sh`](../demo/README.md) answers "does it stay healthy under sustained load"; the
+demonstrations here answer "what does forgetting look like on data you recognise".
+
+## The hosted demo — [hippocampus-demo.com](https://hippocampus-demo.com)
+
+Both demonstrations below run continuously at <https://hippocampus-demo.com>, alongside the Bluesky
+one, if you would rather watch than load one yourself. Decay, recall reinforcement, and
+consolidation are slow by design — they play out over days — so the hosted instances run the same
+build with the decay clock compressed (as
+[`demo/config.json`](../demo/config.json) does, via `consolidation.unitsOfAgeInDays`), and the whole
+cycle happens in minutes. Every console takes a read-only sign-in: **`demo` / `demo`**.
+
+| Site                                                          | What it shows                                                                                                                                                              |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Bluesky console](https://bluesky.hippocampus-demo.com/ui)    | Verified news headlines arriving live, all equally significant; likes and reposts reinforce them, replies thread onto them, related coverage links them — the rest decays. |
+| [Book console](https://book.hippocampus-demo.com/ui)          | _Great Expectations_ re-read daily: episodic detail distilled into semantic summaries as it ages, recalled passages holding on.                                            |
+| [Logs console](https://logs.hippocampus-demo.com/ui)          | A continuous log stream against a byte capacity target — consolidation and eviction under real storage pressure.                                                           |
+| [Grafana dashboard](https://grafana.hippocampus-demo.com)     | Live telemetry from the stacks (the same dashboard the `observability` Compose profile provisions).                                                                        |
+| [Config builder](https://config-builder.hippocampus-demo.com) | The [configuration wizard](config-wizard.md), hosted — build a `config.json` and its deployment artefacts.                                                                 |
+
+**The Bluesky one is the demonstration to open first**, because it is the only one running on data
+nobody here controls: real posts, real attention, arriving in real time, with nothing staged. Every
+post is stored at the same significance, so engagement is the _only_ differentiator — which makes it
+the cleanest statement of what the store is for. It is the [`bluesky`
+bridge](eventsource.md#bluesky-the-firehose-bridge) in **feed mode**, which
+[`./demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demobluesky-sh) runs locally with
+`FEED` set to a news feed generator (bare, it consumes the open firehose instead). Neither needs an
+account or a credential — Jetstream is public — but read that README's decay-clock note first: a
+curated feed arrives at ~70 posts an hour rather than ~70 a second, and the shipped clock is tuned
+for the latter.
+
+The consoles are the same embedded web console (`/ui`) every instance serves; the **Now** and
+**Decay** tabs are where a cycle is visible as it happens. The demo credential resolves to the
+`reader` [tier](configuration.md#authorisation), which is why the write controls are absent.
 
 ## The data generator
 
@@ -16,11 +51,11 @@ The generators live in the companion repository
 (`../hippocampus-gen`). It is a separate Go module with a `replace` directive pointing at this
 project, so it always builds against your local contract. Three commands:
 
-| Command | Data shape | What it produces |
-|---|---|---|
-| `cmd/book` | Narrative | Charles Dickens' *Great Expectations*: one **event per chapter** (I–LIX), one **memory per paragraph** (~3,850). |
-| `cmd/logs` | Logs | Synthetic service logs: one **memory per log line**, significance derived from the line's **level**, tagged with its service via the **group** label, bucketed into one **event per service per day**. |
-| `cmd/random` | Synthetic | A wordlist-driven load generator (meaningless text) for throughput/load testing. |
+| Command      | Data shape | What it produces                                                                                                                                                                                       |
+| ------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cmd/book`   | Narrative  | Charles Dickens' _Great Expectations_: one **event per chapter** (I–LIX), one **memory per paragraph** (~3,850).                                                                                       |
+| `cmd/logs`   | Logs       | Synthetic service logs: one **memory per log line**, significance derived from the line's **level**, tagged with its service via the **group** label, bucketed into one **event per service per day**. |
+| `cmd/random` | Synthetic  | A wordlist-driven load generator (meaningless text) for throughput/load testing.                                                                                                                       |
 
 Each takes `-s <host:port>` for the target gRPC address (default `localhost:50051`). They speak
 plain gRPC with no auth, so point them at a demonstration instance, not a secured deployment.
@@ -48,7 +83,7 @@ piled-up, gone-quiet detail the sleep cycle surfaces as a summarisation candidat
 
 **The recall-reinforcement wrinkle.** Recalling a memory reinforces it (resets its decay clock,
 raises its effective significance), which is right for episodic/operational memory where "what you
-keep returning to matters most". A narrative is the case where that intuition can *invert*: the
+keep returning to matters most". A narrative is the case where that intuition can _invert_: the
 paragraphs a reader has already revisited are the ones they no longer need surfaced, while the
 un-recalled passages are the ones still worth keeping available. If you are modelling
 consumption rather than importance, consider leaving `RecallMemories`' reinforcement out of that
@@ -69,15 +104,15 @@ lines and running one sleep cycle with decay tuned to bite within the 20-day win
 (`minimumAgeInDays: 1`, `deletionThreshold: 2000`, `method: 1`), survival ranks cleanly by severity:
 
 | Level | Before | After | Survived |
-|---|---|---|---|
-| DEBUG | 1209 | 167 | 14% |
-| INFO | 1177 | 321 | 27% |
-| WARN | 384 | 253 | 66% |
-| ERROR | 209 | 204 | 98% |
-| FATAL | 21 | 21 | 100% |
+| ----- | ------ | ----- | -------- |
+| DEBUG | 1209   | 167   | 14%      |
+| INFO  | 1177   | 321   | 27%      |
+| WARN  | 384    | 253   | 66%      |
+| ERROR | 209    | 204   | 98%      |
+| FATAL | 21     | 21    | 100%     |
 
 (3,000 → 966 memories in one cycle.) The exact figures depend on the decay settings and the age
-spread; the *shape* — monotonic survival by significance — is the point. Trigger the cycle with the
+spread; the _shape_ — monotonic survival by significance — is the point. Trigger the cycle with the
 `Sleep` RPC (`POST /v1/sleep`) or let the timed cycle run. Filter by service with the `group` field
 on `GetMemories`/`GetEvents` (see [Grouping](configuration.md)).
 
@@ -85,14 +120,14 @@ To watch that shape at the edges, both list endpoints accept a `significance_ext
 (`SIGNIFICANCE_EXTREMUM_HIGHEST` / `SIGNIFICANCE_EXTREMUM_LOWEST`) that returns only the items tied
 at the highest or lowest significance among those matching the other filters — the lowest set being
 precisely what the next cycle forgets first, the highest set the most durable. The web console
-(`/ui`) exposes it on both the **Memories** and **Events** tabs as a *Significance → Highest/Lowest
-only* selector, so the about-to-be-forgotten tier is one click away during a soak.
+(`/ui`) exposes it on both the **Memories** and **Events** tabs as a _Significance → Highest/Lowest
+only_ selector, so the about-to-be-forgotten tier is one click away during a soak.
 
 ### Logs via the OpenTelemetry Collector
 
 The `cmd/logs` generator above synthesises log lines directly. To ingest **real** logs — from files,
 or from any OTel-instrumented application — Hippocampus ships an OpenTelemetry Collector **logs
-exporter** (`otel/hippocampusexporter/`). Dropped into a collector pipeline
+exporter** (`integrations/otel/hippocampusexporter/`). Dropped into a collector pipeline
 (`filelog`/`otlp` receiver → `batch` → `hippocampus`), it turns each log record into a memory:
 severity (`SeverityNumber`, falling back to `SeverityText`) drives significance, `service.name`
 becomes the `group`, and — with `create_events: true` — records are bucketed into events keyed by
@@ -102,9 +137,9 @@ live pipeline rather than the generator.
 
 ```sh
 go install go.opentelemetry.io/collector/cmd/builder@v0.157.0
-cd otel/collector
+cd integrations/otel/collector
 builder --config builder-config.yaml
-./_build/hippocampus-otelcol --config config.yaml   # tails otel/collector/sample.log
+./_build/hippocampus-otelcol --config config.yaml   # tails integrations/otel/collector/sample.log
 ```
 
 Ingesting the bundled 12-line `sample.log` produces 12 memories (monotonic significance from `DEBUG`

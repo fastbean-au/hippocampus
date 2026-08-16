@@ -16,7 +16,17 @@ tiers](configuration.md#authorisation), not by this tool.
 It lives in its own Go module under `integrations/cli/` (its client dependency tree stays out of the
 root build), and ships as a cross-compiled binary on each GitHub release.
 
-## Build and run
+## Install, build, and run
+
+On macOS or Linux, install it from the tap:
+
+```sh
+brew install fastbean-au/tap/hippocampus-cli
+```
+
+Otherwise take a pre-built binary from the
+[releases page](https://github.com/fastbean-au/hippocampus/releases) — each release attaches `hippo`
+archives for Linux, macOS, and Windows on amd64/arm64 — or build from source:
 
 ```sh
 cd integrations/cli

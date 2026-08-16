@@ -33,6 +33,34 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Changed
+
+- **A much shorter README.** It had grown into a second copy of the documentation — every
+  integration, every deployment target, and the security surface each explained in full — so the
+  things a reader arrives for were buried. It is now a landing page: what the service is, the live
+  demo, one quick start, a table of the components around the service, and the documentation index.
+  Everything it used to explain in place is in `docs/`, and what was only ever in the README moved
+  there rather than being dropped — the **Docker Compose stacks and the Kubernetes overlays** (a new
+  _Containers and Kubernetes_ section in [Operations](docs/operations.md), which had no Kubernetes
+  coverage at all), the **hosted demo instances** and what each shows
+  ([Demonstrations](docs/demonstrations.md)), the **Homebrew formulae** for the two client binaries
+  ([CLI](docs/cli.md), [MCP](docs/mcp.md)), and the note that storage errors are masked behind gRPC
+  status codes ([Operations · Security](docs/operations.md#security)).
+- **The hosted Bluesky demo is listed, and led with.** Neither the README nor
+  [Demonstrations](docs/demonstrations.md) mentioned it, though it is the first console on the demo
+  site and the only one running on live data nobody staged — headlines arriving from a curated news
+  feed, all at one significance, with real engagement the sole differentiator between what survives
+  and what decays.
+
+### Fixed
+
+- **A results table's column headings now stay put while its rows scroll.** Listing a page of
+  memories, or a wide set of search hits, scrolled the headings off the top after the first few
+  rows, and from there a column of bare numbers said nothing about which column it was. Each table
+  now scrolls within its own bounded height with its heading row pinned above it — including the
+  pinned actions column's corner, which holds both edges at once — so the headings are in view for
+  every row.
+
 ## [0.33.1] - 2026-08-16
 
 ### Fixed
