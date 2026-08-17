@@ -17,6 +17,7 @@ type fakeClient struct {
 
 	memoriesResp *contract.GetMemoriesResponse
 	whoAmIResp   *contract.WhoAmIResponse
+	topologyResp *contract.GetTopologyResponse
 	linksResp    *contract.GetLinksResponse
 }
 
@@ -66,6 +67,16 @@ func (f *fakeClient) WhoAmI(_ context.Context, in *contract.EmptyRequest, _ ...g
 	}
 
 	return &contract.WhoAmIResponse{}, f.err
+}
+
+func (f *fakeClient) GetTopology(_ context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetTopologyResponse, error) {
+	f.capture(in)
+
+	if f.topologyResp != nil {
+		return f.topologyResp, f.err
+	}
+
+	return &contract.GetTopologyResponse{}, f.err
 }
 
 func (f *fakeClient) GetConsolidationStatus(_ context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetConsolidationStatusResponse, error) {

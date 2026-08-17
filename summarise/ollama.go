@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -244,6 +245,74 @@ func (o *Ollama) buildPrompt(req Request) string {
 // Enabled reports that a real summariser is configured.
 func (o *Ollama) Enabled() bool {
 	return true
+}
+
+// ErrDegraded marks a dependency that answered but reported a problem of its own, as distinct from
+// one that could not be reached at all. The two want different operator responses - a server
+// missing its model is a pull away from working, an unreachable one is a network or a process - so
+// the topology view reports them as different statuses, and errors.Is against this sentinel is how
+// a probe says which it found.
+var ErrDegraded = errors.New("dependency is degraded")
+
+// Ping reports whether the Ollama server is reachable and carries the configured model, for the
+// deployment topology view. It is deliberately not part of the Summariser interface: the no-op
+// implementation has nothing to reach, and callers assert for it optionally.
+//
+// It asks /api/tags rather than merely opening a connection, because the failure this exists to
+// catch is not usually a dead server: it is a running one that has never pulled the model, which
+// answers everything except a generate call and is otherwise invisible until the first
+// summarisation fails. That case is reported as degraded rather than unreachable, wrapping
+// ErrDegraded - the server is there, and `ollama pull` fixes it.
+func (o *Ollama) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.address+"/api/tags", nil)
+	if err != nil {
+		return fmt.Errorf("failed to build the request: %w", err)
+	}
+
+	res, err := o.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama is unreachable at %s: %w", o.address, err)
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return fmt.Errorf("ollama at %s returned %s", o.address, res.Status)
+	}
+
+	var tags tagsResponse
+
+	if err := json.NewDecoder(res.Body).Decode(&tags); err != nil {
+		return fmt.Errorf("failed to read the model list from %s: %w", o.address, err)
+	}
+
+	if !tags.has(o.model) {
+		return fmt.Errorf("%w: model %q is not installed on the ollama server at %s", ErrDegraded, o.model, o.address)
+	}
+
+	return nil
+}
+
+// tagsResponse is the response from Ollama's GET /api/tags: the models the server has pulled.
+type tagsResponse struct {
+	Models []struct {
+		Name string `json:"name"`
+	} `json:"models"`
+}
+
+// has reports whether the server carries a model, comparing tags the way Ollama itself resolves
+// them: an untagged name means ":latest", so a configuration of "llama3" is satisfied by an
+// installed "llama3:latest" and vice versa.
+func (t tagsResponse) has(model string) bool {
+	want := strings.TrimSuffix(model, ":latest")
+
+	for _, installed := range t.Models {
+		if strings.TrimSuffix(installed.Name, ":latest") == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Compile-time check that *Ollama satisfies Summariser.

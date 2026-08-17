@@ -220,6 +220,14 @@ func commands() map[string]command {
 			flags:   func(*pflag.FlagSet) {},
 			run:     runConsolidationStatus,
 		},
+		"topology": {
+			summary: "report the deployment this instance is part of, and each component's health",
+			hint:    "[--all]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.Bool("all", false, "include components that are not configured")
+			},
+			run: runTopology,
+		},
 		"sleep": {
 			summary: "trigger a consolidation cycle now",
 			hint:    "[--dry-run]",
@@ -1028,6 +1036,50 @@ func runConsolidationStatus(ctx context.Context, client contract.HippocampusClie
 	resp, err := client.GetConsolidationStatus(ctx, &contract.EmptyRequest{})
 	if err != nil {
 		return err
+	}
+
+	return r.render(resp)
+}
+
+// runTopology reports the deployment as the instance understands it. The filtering is done here
+// rather than server-side because the response is small and one operator wanting the disabled
+// components listed should not change what another one is served.
+//
+// It is the terminal counterpart of the console's Deployment tab, and the more useful of the two
+// when the question is "which of these two addresses is the consolidator" - which is a question
+// asked from a terminal, over ssh, about a deployment whose console may be exactly what is
+// unreachable.
+func runTopology(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	resp, err := client.GetTopology(ctx, &contract.EmptyRequest{})
+	if err != nil {
+		return err
+	}
+
+	if !b(fs, "all") {
+		kept := make([]*contract.TopologyNode, 0, len(resp.GetNodes()))
+		ids := make(map[string]bool, len(resp.GetNodes()))
+
+		for _, node := range resp.GetNodes() {
+			if node.GetStatus() == contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED {
+				continue
+			}
+
+			kept = append(kept, node)
+			ids[node.GetId()] = true
+		}
+
+		// An edge to a component that is no longer listed describes a relationship the reader
+		// cannot see either end of, so it goes with it.
+		edges := make([]*contract.TopologyEdge, 0, len(resp.GetEdges()))
+
+		for _, edge := range resp.GetEdges() {
+			if ids[edge.GetFromId()] && ids[edge.GetToId()] {
+				edges = append(edges, edge)
+			}
+		}
+
+		resp.Nodes = kept
+		resp.Edges = edges
 	}
 
 	return r.render(resp)

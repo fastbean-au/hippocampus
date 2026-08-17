@@ -306,12 +306,33 @@ export function capsFromWhoAmI(who) {
     summariser: !!who.summariserEnabled,
     consolidation: !!who.consolidationEnabled,
     tombstones: !!who.tombstonesEnabled,
+    // The topology view needs two things resolved together, which is why it is not a single flag
+    // from the server: the tier the DEPLOYMENT requires (reported, like its neighbours above), and
+    // whether this caller clears it. An empty topologyTier means the view is switched off here,
+    // which is not the same as being refused it - one hides the tab, the other would be a control
+    // that always fails.
+    topologyTier: who.topologyTier || "",
+    topology: topologyVisible(who),
     // groupScoped is authoritative; groups alone cannot distinguish unscoped (the whole store)
     // from scoped-to-nothing, and the two are opposites.
     groups: who.groups || [],
     groupScoped: !!who.groupScoped,
     status: 200,
   };
+}
+
+// topologyVisible decides whether to offer the Deployment tab at all. Two gates, and the second is
+// the one that is easy to forget: GetTopology is scopeUnbound, so a group-scoped caller is refused
+// it whatever tier they hold - there is no per-group topology to answer with. Showing the tab to
+// one would be a tab that only ever reports PermissionDenied.
+function topologyVisible(who) {
+  if (!who.topologyTier) return false;
+  if (who.groupScoped) return false;
+
+  // With authentication off there is no role to compare and every caller is unrestricted.
+  if (!who.authEnabled) return true;
+
+  return tierAtLeast(who.role, who.topologyTier);
 }
 
 // capsWhenRefused is the capability set for a caller whose WhoAmI did not succeed. Everything is
@@ -328,6 +349,8 @@ export function capsWhenRefused(status) {
     summariser: false,
     consolidation: false,
     tombstones: false,
+    topologyTier: "",
+    topology: false,
     groups: [],
     groupScoped: false,
     status: status || 0,
@@ -345,6 +368,7 @@ export const GATING_CLASSES = [
   "summariser",
   "consolidating",
   "tombstones",
+  "topology",
 ];
 
 // bodyClassesFor is the whole of the console's role gating: the set of classes on <body> from which
@@ -361,6 +385,7 @@ export function bodyClassesFor(caps) {
   if (caps.summariser) classes.add("summariser");
   if (caps.consolidation) classes.add("consolidating");
   if (caps.tombstones) classes.add("tombstones");
+  if (caps.topology) classes.add("topology");
 
   return classes;
 }
@@ -545,3 +570,269 @@ export const TRIGGER_LABELS = {
   manual: "run by hand",
   wal: "triggered by the write-ahead log",
 };
+
+// ------------------------------------------------------------------ topology
+
+// TIER_RANK orders the authorisation tiers so a client can compare the tier a deployment requires
+// against the one it was told it holds. It is the console's copy of auth/authz.go's hierarchy, and
+// the only place it is needed: every other gate the console applies is a named boolean the server
+// already resolved. Here the server deliberately reports the REQUIREMENT rather than the verdict,
+// because topology.minimumTier is a property of the deployment and its neighbours in WhoAmI all
+// are too.
+export const TIER_RANK = { reader: 1, writer: 2, admin: 3 };
+
+// tierAtLeast reports whether a held role satisfies a required tier. An unknown role on either side
+// fails closed, which is the same default-closed posture the server takes: a client that cannot
+// place a role must not decide it is sufficient.
+export function tierAtLeast(role, required) {
+  const held = TIER_RANK[String(role || "").toLowerCase()] || 0;
+  const want = TIER_RANK[String(required || "").toLowerCase()] || 0;
+
+  if (!held || !want) return false;
+
+  return held >= want;
+}
+
+// TOPOLOGY_STATUS describes each wire status: the word to show, and the class that colours it.
+// UNSPECIFIED is not an error - it is "nothing is checking this", which several nodes report by
+// design (the collector, the identity provider), so it reads as a plain statement rather than as a
+// warning.
+export const TOPOLOGY_STATUS = {
+  TOPOLOGY_STATUS_OK: { label: "reachable", cls: "ok" },
+  TOPOLOGY_STATUS_DEGRADED: { label: "degraded", cls: "degraded" },
+  TOPOLOGY_STATUS_UNREACHABLE: { label: "unreachable", cls: "bad" },
+  TOPOLOGY_STATUS_DISABLED: { label: "not configured", cls: "off" },
+  TOPOLOGY_STATUS_UNSPECIFIED: { label: "not checked", cls: "off" },
+};
+
+export function topologyStatus(status) {
+  return TOPOLOGY_STATUS[status] || TOPOLOGY_STATUS.TOPOLOGY_STATUS_UNSPECIFIED;
+}
+
+// TOPOLOGY_SOURCE explains where a node came from. This is the legend the whole view turns on: an
+// instance knows only itself and what it dials, so a diagram without these words would imply it had
+// surveyed the deployment, which it cannot do.
+export const TOPOLOGY_SOURCE = {
+  TOPOLOGY_NODE_SOURCE_SELF: "this instance",
+  TOPOLOGY_NODE_SOURCE_CONFIGURED: "configured here",
+  TOPOLOGY_NODE_SOURCE_DISCOVERED: "found in the shared store",
+  TOPOLOGY_NODE_SOURCE_DECLARED: "declared by an operator",
+  TOPOLOGY_NODE_SOURCE_OBSERVED: "seen calling this instance",
+};
+
+export function topologySource(source) {
+  return TOPOLOGY_SOURCE[source] || "unknown";
+}
+
+// TOPOLOGY_COLUMNS places each node kind in one of three columns: what calls this instance, the
+// instance, and what the instance calls. The order within a column is this list's order, so the
+// diagram does not reshuffle between polls - a picture that rearranges itself every few seconds
+// cannot be read, however correct each frame is.
+//
+// A fixed assignment by kind is used rather than a graph layout because the deployment HAS a
+// direction - everything on the left dials in, everything on the right is dialled - and that is the
+// single most useful thing the picture can say.
+export const TOPOLOGY_COLUMNS = [
+  [
+    "TOPOLOGY_NODE_KIND_BRIDGE",
+    "TOPOLOGY_NODE_KIND_INGESTOR",
+    "TOPOLOGY_NODE_KIND_MCP_BRIDGE",
+    "TOPOLOGY_NODE_KIND_CLIENT",
+  ],
+  ["TOPOLOGY_NODE_KIND_INSTANCE"],
+  [
+    "TOPOLOGY_NODE_KIND_STORE",
+    "TOPOLOGY_NODE_KIND_SEARCH_INDEX",
+    "TOPOLOGY_NODE_KIND_SUMMARISER",
+    "TOPOLOGY_NODE_KIND_EMBEDDER",
+    "TOPOLOGY_NODE_KIND_OBJECT_STORE",
+    "TOPOLOGY_NODE_KIND_TRANSFER_TARGET",
+    "TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER",
+    "TOPOLOGY_NODE_KIND_COLLECTOR",
+  ],
+];
+
+// Layout geometry. The viewBox is fixed and the SVG scales to its container, so these are ratios
+// rather than pixels.
+const NODE_W = 208;
+const NODE_H = 52;
+const NODE_GAP = 12;
+const COL_GAP = 56;
+const PAD = 12;
+
+// topologyLayout turns a response into positioned boxes and edge paths. It is separated from the
+// SVG it feeds so the geometry can be tested as numbers - whether every node was placed, whether
+// two boxes overlap, whether an edge terminates on something - none of which is checkable by
+// looking at a string of markup.
+//
+// An empty column takes no width, which is what keeps the default embedded deployment (where
+// nothing dials in, because nothing has been declared) from being drawn with a wide empty margin
+// where its callers would be.
+export function topologyLayout(res, opts) {
+  const nodes = (res && res.nodes) || [];
+  const edges = (res && res.edges) || [];
+  const showDisabled = !opts || opts.showDisabled !== false;
+
+  const visible = nodes.filter(
+    (n) => showDisabled || n.status !== "TOPOLOGY_STATUS_DISABLED",
+  );
+
+  // Bucket by column, preserving each column's declared kind order and, within a kind, the order
+  // the server sent - which is stable for the same reason.
+  const columns = TOPOLOGY_COLUMNS.map((kinds) => {
+    const out = [];
+
+    for (const kind of kinds) {
+      for (const node of visible) {
+        if (node.kind === kind) out.push(node);
+      }
+    }
+
+    return out;
+  });
+
+  const used = columns.filter((c) => c.length > 0);
+  const tallest = used.reduce((max, c) => Math.max(max, c.length), 0);
+  const height =
+    PAD * 2 + tallest * NODE_H + Math.max(0, tallest - 1) * NODE_GAP;
+  const width =
+    PAD * 2 + used.length * NODE_W + Math.max(0, used.length - 1) * COL_GAP;
+
+  const boxes = [];
+  let x = PAD;
+
+  for (const column of columns) {
+    if (!column.length) continue;
+
+    // Each column is centred against the tallest, so a single instance sits opposite the middle of
+    // its dependencies rather than at the top of them.
+    const columnHeight =
+      column.length * NODE_H + (column.length - 1) * NODE_GAP;
+    let y = (height - columnHeight) / 2;
+
+    for (const node of column) {
+      boxes.push({ id: node.id, x, y, w: NODE_W, h: NODE_H, node });
+      y += NODE_H + NODE_GAP;
+    }
+
+    x += NODE_W + COL_GAP;
+  }
+
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const links = [];
+
+  for (const edge of edges) {
+    const from = byId.get(edge.fromId);
+    const to = byId.get(edge.toId);
+
+    // An edge whose ends are not both placed is dropped rather than drawn to a guessed point: it
+    // happens legitimately whenever disabled nodes are hidden, and a line to nowhere is worse than
+    // no line.
+    if (!from || !to) continue;
+
+    links.push({
+      fromId: edge.fromId,
+      toId: edge.toId,
+      label: edge.label || "",
+      optional: !!edge.optional,
+      path: edgePath(from, to),
+    });
+  }
+
+  return { width, height, boxes, links };
+}
+
+// edgePath draws a cubic between the facing edges of two boxes. Horizontal control points keep the
+// curve leaving and arriving level, so a line reads as going from one column to the next rather
+// than wandering.
+function edgePath(from, to) {
+  const leftToRight = to.x >= from.x;
+
+  const x1 = leftToRight ? from.x + from.w : from.x;
+  const x2 = leftToRight ? to.x : to.x + to.w;
+  const y1 = from.y + from.h / 2;
+  const y2 = to.y + to.h / 2;
+  const bend = (x2 - x1) / 2;
+
+  return `M ${r(x1)} ${r(y1)} C ${r(x1 + bend)} ${r(y1)}, ${r(x2 - bend)} ${r(y2)}, ${r(x2)} ${r(y2)}`;
+}
+
+function r(v) {
+  return Math.round(v * 10) / 10;
+}
+
+// topologySvg renders a layout. Inline SVG built here rather than by a diagramming library for the
+// same reason the decay curve is: the console is served under a Content-Security-Policy with no
+// unsafe-inline and fetches nothing from anywhere but the binary it is embedded in, so there is no
+// library to load and no build step to load it with.
+export function topologySvg(layout) {
+  if (!layout.boxes.length) {
+    return '<div class="empty">Nothing to draw.</div>';
+  }
+
+  let edges = "";
+
+  for (const link of layout.links) {
+    edges += `<path class="tlink${link.optional ? " optional" : ""}" d="${link.path}"><title>${esc(link.label)}</title></path>`;
+  }
+
+  let boxes = "";
+
+  for (const box of layout.boxes) {
+    const status = topologyStatus(box.node.status);
+    const detail = box.node.detail || "";
+
+    boxes +=
+      `<g class="tnode ${status.cls}" data-act="topology-select" data-node="${esc(box.id)}" tabindex="0" role="button">` +
+      `<title>${esc(box.node.name)} — ${esc(status.label)}${detail ? " — " + esc(detail) : ""}</title>` +
+      `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="8"></rect>` +
+      `<circle class="tdot" cx="${box.x + 14}" cy="${box.y + 18}" r="4"></circle>` +
+      `<text class="tname" x="${box.x + 26}" y="${box.y + 22}">${esc(box.node.name)}</text>` +
+      `<text class="tdetail" x="${box.x + 26}" y="${box.y + 38}">${esc(truncateMiddle(detail, 30))}</text>` +
+      `</g>`;
+  }
+
+  // The width and height attributes give the SVG its natural size, which the stylesheet then only
+  // ever shrinks. Without them a small deployment - two columns and three boxes - would be scaled up
+  // to the full width of the card, and its labels with it, so the emptier the deployment the bigger
+  // the diagram drew.
+  return `<svg class="topology" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="deployment topology">${edges}${boxes}</svg>`;
+}
+
+// truncateMiddle keeps both ends of an address visible, because the host is at one end and the port
+// or database name at the other, and cutting either off loses the half somebody is looking for.
+export function truncateMiddle(text, max) {
+  const s = String(text == null ? "" : text);
+
+  if (s.length <= max) return s;
+
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+
+  return s.slice(0, head) + "…" + s.slice(s.length - tail);
+}
+
+// topologyCheckedLabel says how fresh a status is. It matters more here than anywhere else in the
+// console: every status is a snapshot from a background prober, so "unreachable" always means "was
+// unreachable when last asked", and a reader who cannot see when that was may act on a minute-old
+// picture believing it is live.
+export function topologyCheckedLabel(nowMs, node) {
+  if (node.status === "TOPOLOGY_STATUS_DISABLED") return "";
+
+  // The instance answering the request is not something it probes, and "not checked" beside the
+  // node you are demonstrably talking to reads as a fault rather than as a statement about probing.
+  if (node.source === "TOPOLOGY_NODE_SOURCE_SELF") return "";
+
+  const checked = Number(node.checkedAt || 0);
+
+  // A status with no check time behind it was asserted rather than probed - the store-backed search
+  // index is the case, since it shares the store's connection and the store node already reports
+  // whether that is up. Saying "reachable, not checked" of it reads as a contradiction, so nothing
+  // is said. An UNSPECIFIED status with no check time is the genuinely unprobed case, and that one
+  // is worth saying out loud.
+  if (!checked) {
+    return node.status === "TOPOLOGY_STATUS_OK" ? "" : "not checked";
+  }
+
+  return "checked " + ageLabel(nowMs, node.checkedAt);
+}

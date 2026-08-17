@@ -412,6 +412,40 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     itself the explicit request to leave nothing behind. Both RPCs are `admin` but **scoped by
     predicate**, not refused like the preview — a tombstone carries its memory's group. Bodies are
     never recorded; not on the MCP surface. See TODO 57.2.
+  - **The deployment topology view** (`hippocampus/topology.go` + `topology_probe.go`, `topology.*`,
+    on by default) is `GetTopology`: what this instance is attached to, how the pieces relate, and
+    the last known health of each, backing the console's Deployment tab and `hippo topology`. Six
+    things carry it. (1) **It is bounded by what an instance can honestly know** - itself and
+    whatever it dials - because everything else in a deployment (replicas on the shared store, the
+    bridges, the ingestor, MCP servers, the CLI) dials IN and the service holds no address for any of
+    them. Rather than imply otherwise, every node carries a `source` (SELF/CONFIGURED/DISCOVERED/
+    DECLARED/OBSERVED) and the console renders it, so a sparse diagram reads as "nothing declared"
+    rather than "nothing running". A registry would make a memory store a control plane; the response
+    is read-only and there is no counterpart that acts on a component. (2) **Nothing secret is built
+    into a node**: `redactEndpoint` strips credentials from all four address shapes (URL, libpq
+    keyword/value, MySQL DSN, bare) at CONSTRUCTION, so the Server never holds a DSN password for
+    this purpose, and the `self` node carries an explicit allow-list of settings rather than
+    `viper.AllSettings()` - which would carry the signing secret, the DSN password, the OpenSearch
+    password and the OAuth2 client secret. That redaction is what makes `topology.minimumTier`
+    defaulting to **reader** defensible. (3) **The specs are plain structs converted to proto per
+    call**, since a proto message is not safe to marshal concurrently - the same trap
+    PreviewConsolidation documents. (4) **Statuses come from a background prober**, never from the
+    RPC: probing N dependencies in the handler would open a connection to every dependency per page
+    view, let one hung dependency hang the request, and multiply both by the number of viewers. The
+    RPC serves a snapshot and reports `checked_at` plus `probe_interval_seconds` (which a client
+    paces itself by, like `GetConsolidationStatus.snapshot_ttl_seconds`). (5) **Probes are optional
+    interfaces on the concrete types** (`search.OpenSearch`, `summarise.Ollama`, `embed.Ollama`,
+    `archive.S3Store` all gained a `Ping`), not new interface methods - the precedent `RecreateIndex`
+    and `IndexMemorySync` already set - and three of them carry an `ErrDegraded` sentinel so
+    "answered but unhappy" (a red index, a missing model) is a different status from "unreachable".
+    Two nodes are never probed and say so: the OTLP collector (export is fire-and-forget) and the
+    IdP (a console poll must not become load on someone's identity provider); the transfer target is
+    opt-in because its probe dials a remote instance on a timer. (6) **`GetTopology` is the one RPC
+    whose tier is configurable**, via a narrow `configurableTiers` allow-list in `auth/authz.go`
+    (a general override would let a config file lower `Purge` to reader) - but its `scopeUnbound`
+    refusal is NOT configurable, because that is not a sensitivity judgement: there is no per-group
+    topology, so a scoped caller could only be shown infrastructure that is not theirs. Phase 1 of
+    TODO 75; declared components and shared-store peer discovery are phases 2 and 3.
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.

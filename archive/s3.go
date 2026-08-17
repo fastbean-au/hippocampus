@@ -99,5 +99,22 @@ func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
+// Ping reports whether the configured bucket is reachable and readable with the credentials this
+// process holds, for the deployment topology view. It is deliberately not part of ObjectStore:
+// the in-memory fake used in tests has nothing to reach, and a caller asserts for this optionally.
+//
+// HeadBucket is the right call for it - it transfers no object, and it fails distinctly for the two
+// mistakes that actually happen here, a bucket that does not exist and credentials that cannot see
+// it. Both surface only on an Export today, which is the first time anyone finds out.
+func (s *S3Store) Ping(ctx context.Context) error {
+	log.Trace("func() archive.S3Store.Ping")
+
+	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)}); err != nil {
+		return fmt.Errorf("failed to reach bucket '%s': %w", s.bucket, err)
+	}
+
+	return nil
+}
+
 // Compile-time check that *S3Store satisfies ObjectStore.
 var _ ObjectStore = (*S3Store)(nil)

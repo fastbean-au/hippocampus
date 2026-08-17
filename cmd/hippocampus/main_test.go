@@ -560,3 +560,105 @@ func TestHmacConfigFromViper_BadSigningKeys(t *testing.T) {
 		hmacConfigFromViper()
 	})
 }
+
+// TestValidateTopologyConfig covers the deployment-view settings.
+//
+// The tier is validated here as well as in auth.NewAuthoriser because the authoriser is only built
+// when authentication is enabled: without this check a typo on an unauthenticated instance would be
+// accepted in silence, mean nothing at all, and then start refusing callers the day somebody turned
+// authentication on - a failure separated from its cause by however long that took.
+func TestValidateTopologyConfig(t *testing.T) {
+	cases := []struct {
+		name    string
+		set     map[string]interface{}
+		wantErr bool
+	}{
+		{name: "defaults", set: nil, wantErr: false},
+		{name: "reader", set: map[string]interface{}{"topology.minimumTier": "reader"}, wantErr: false},
+		{name: "admin", set: map[string]interface{}{"topology.minimumTier": "admin"}, wantErr: false},
+		{name: "mixed case", set: map[string]interface{}{"topology.minimumTier": "Writer"}, wantErr: false},
+		{name: "unknown tier", set: map[string]interface{}{"topology.minimumTier": "superuser"}, wantErr: true},
+		{name: "empty tier falls back to the policy", set: map[string]interface{}{"topology.minimumTier": ""}, wantErr: false},
+
+		{name: "negative interval", set: map[string]interface{}{"topology.probeIntervalSeconds": -1}, wantErr: true},
+		{name: "negative timeout", set: map[string]interface{}{"topology.probeTimeoutSeconds": -1}, wantErr: true},
+
+		// A round runs its probes in sequence, so a timeout longer than the interval leaves the
+		// prober permanently behind its own schedule - and the interval it reports, which a console
+		// paces its polling by, becomes a number nothing observes.
+		{
+			name:    "timeout longer than the interval",
+			set:     map[string]interface{}{"topology.probeIntervalSeconds": 5, "topology.probeTimeoutSeconds": 30},
+			wantErr: true,
+		},
+		{
+			name:    "timeout equal to the interval",
+			set:     map[string]interface{}{"topology.probeIntervalSeconds": 5, "topology.probeTimeoutSeconds": 5},
+			wantErr: false,
+		},
+
+		// Nothing is validated when the view is off, since none of it is read.
+		{
+			name:    "disabled ignores a bad tier",
+			set:     map[string]interface{}{"topology.enabled": false, "topology.minimumTier": "superuser"},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validConsolidationConfig()
+			viper.Set("topology.enabled", true)
+
+			for key, value := range tc.set {
+				viper.Set(key, value)
+			}
+
+			err := validateConfig()
+
+			if tc.wantErr && err == nil {
+				t.Fatalf("validateConfig(%v) = nil, want error", tc.set)
+			}
+
+			if !tc.wantErr && err != nil {
+				t.Fatalf("validateConfig(%v) = %v, want nil", tc.set, err)
+			}
+		})
+	}
+}
+
+// TestTopologyTierOverride covers what main.go hands the authoriser. Returning nil rather than an
+// override is what leaves the policy table's declared default in force, so the two cases that must
+// produce nil are the ones worth pinning: the view switched off, and a tier nobody configured.
+func TestTopologyTierOverride(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	viper.Set("topology.enabled", false)
+	viper.Set("topology.minimumTier", "admin")
+
+	if override := topologyTierOverride(); override != nil {
+		t.Errorf("a disabled view produced an override: %v", override)
+	}
+
+	viper.Set("topology.enabled", true)
+	viper.Set("topology.minimumTier", "  ")
+
+	if override := topologyTierOverride(); override != nil {
+		t.Errorf("an unset tier produced an override: %v", override)
+	}
+
+	viper.Set("topology.minimumTier", "admin")
+
+	override := topologyTierOverride()
+
+	if override["GetTopology"] != "admin" {
+		t.Errorf("topologyTierOverride = %v, want GetTopology at admin", override)
+	}
+
+	// The override has to be one the authoriser will actually accept - the allow-list lives there,
+	// and a value main.go builds that construction then rejects is a startup failure.
+	if _, err := auth.NewAuthoriser(nil, override); err != nil {
+		t.Errorf("the authoriser rejected main.go's own override: %s", err)
+	}
+}

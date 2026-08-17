@@ -78,6 +78,9 @@ func (r *renderer) renderText(msg proto.Message) error {
 		r.line("summariser:    %t", m.GetSummariserEnabled())
 		r.line("search modes:  %s", orNone(strings.Join(searchModeNames(m.GetSearchModes()), ", ")))
 
+	case *contract.GetTopologyResponse:
+		r.renderTopology(m)
+
 	case *contract.StoreMemoryResponse:
 		if m.GetRejected() {
 			r.line("rejected (significance below the minimum)")
@@ -580,4 +583,81 @@ func linkDirectionLabel(d contract.LinkDirection) string {
 		return "both"
 
 	}
+}
+
+// renderTopology lays the deployment out as an indented list rather than as ASCII art: the useful
+// answer here is a status and an address per component, and a drawing would carry neither at the
+// width a terminal has.
+//
+// The source column is the point of the whole view and so is never dropped. An instance knows only
+// itself and what it dials; everything else in a deployment connects TO it and is invisible unless
+// declared, so a short list means "nothing has been declared", not "nothing is running".
+func (r *renderer) renderTopology(m *contract.GetTopologyResponse) {
+	r.line("%d component(s), checked every %ds", len(m.GetNodes()), m.GetProbeIntervalSeconds())
+
+	for _, node := range m.GetNodes() {
+		r.line("")
+		r.line("%s  [%s]", node.GetName(), topologyStatusName(node.GetStatus()))
+		r.line("  id:      %s", node.GetId())
+		r.line("  source:  %s", topologySourceName(node.GetSource()))
+
+		if node.GetDetail() != "" {
+			r.line("  address: %s", node.GetDetail())
+		}
+
+		if node.GetVersion() != "" {
+			r.line("  version: %s", node.GetVersion())
+		}
+
+		// Said rather than implied: every status here comes from a background prober, so a stale
+		// one is a real possibility and "unreachable" always means "when last asked".
+		if node.GetCheckedAt() > 0 {
+			r.line("  checked: %s", time.Unix(0, node.GetCheckedAt()).Format(time.RFC3339))
+		}
+
+		if node.GetStatusDetail() != "" {
+			r.line("  problem: %s", node.GetStatusDetail())
+		}
+
+		// Padded to this node's own longest key rather than to a fixed width: a fixed one has to be
+		// wide enough for "minimum_retention_days" and then wastes that width on every other
+		// component, or it is narrower and the long keys push their values out of the column.
+		width := 0
+
+		for _, attribute := range node.GetAttributes() {
+			width = max(width, len(attribute.GetKey())+1)
+		}
+
+		for _, attribute := range node.GetAttributes() {
+			r.line("  %-*s %s", width, attribute.GetKey()+":", attribute.GetValue())
+		}
+	}
+
+	if len(m.GetEdges()) == 0 {
+		return
+	}
+
+	r.line("")
+	r.line("connections (this instance dials each of these):")
+
+	for _, edge := range m.GetEdges() {
+		optional := ""
+		if edge.GetOptional() {
+			optional = " (optional)"
+		}
+
+		r.line("  %s -> %s: %s%s", edge.GetFromId(), edge.GetToId(), edge.GetLabel(), optional)
+	}
+}
+
+// topologyStatusName and topologySourceName turn the wire enums into the words an operator reads.
+// They strip the generated prefix rather than mapping each value, so a status added to the contract
+// prints as itself instead of as "unknown" - which for a report whose whole job is to say what is
+// wrong is the better failure.
+func topologyStatusName(status contract.TopologyStatus) string {
+	return strings.ToLower(strings.TrimPrefix(status.String(), "TOPOLOGY_STATUS_"))
+}
+
+func topologySourceName(source contract.TopologyNodeSource) string {
+	return strings.ToLower(strings.TrimPrefix(source.String(), "TOPOLOGY_NODE_SOURCE_"))
 }

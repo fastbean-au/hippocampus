@@ -632,6 +632,13 @@ body:not(.consolidating) .consolidation-only {
 body:not(.tombstones) .tombstones-only {
   display: none !important;
 }
+/* And once more for the deployment view. Two gates fold into this one class (see topologyVisible in
+     lib.js): the tier this deployment requires of GetTopology, which is configurable, and the fact
+     that the RPC is scopeUnbound - so a group-scoped caller is refused it whatever tier they hold,
+     because there is no per-group topology to answer with. */
+body:not(.topology) .topology-only {
+  display: none !important;
+}
 /* Decay: the value column and the pills that say what is overriding it. Same convention as the
      role pill - a colour plus a word, never colour alone. */
 td.decay {
@@ -844,4 +851,123 @@ body.busy #progress::after {
     width: 100%;
     opacity: 0.5;
   }
+}
+
+/* ------------------------------------------------------------------ topology
+   The deployment diagram. Everything is drawn from tokens rather than fixed colours so it follows
+   the rest of the console, and every status is a colour PLUS a word in the panel beside it - the
+   same rule the role pill follows, since colour alone is not a status anyone can read. */
+svg.topology {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+svg.topology .tlink {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+svg.topology .tlink.optional {
+  stroke-dasharray: 4 4;
+}
+svg.topology .tnode rect {
+  fill: var(--panel-2);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+svg.topology .tnode:hover rect,
+svg.topology .tnode:focus rect {
+  stroke: var(--accent);
+}
+svg.topology .tnode.selected rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+svg.topology .tnode {
+  cursor: pointer;
+}
+svg.topology .tname {
+  fill: var(--text);
+  font-size: 12px;
+}
+svg.topology .tdetail {
+  fill: var(--muted);
+  font-size: 10.5px;
+}
+svg.topology .tdot {
+  fill: var(--muted);
+}
+svg.topology .ok .tdot {
+  fill: var(--good);
+}
+svg.topology .degraded .tdot {
+  fill: var(--warn);
+}
+svg.topology .bad .tdot {
+  fill: var(--bad);
+}
+svg.topology .off .tdot {
+  fill: var(--border);
+  stroke: var(--muted);
+}
+/* A component that is switched off is dimmed rather than hidden, because "not configured" is an
+   answer to a question people actually arrive with - why is semantic search returning nothing - and
+   the node names the config key that turns it on. */
+svg.topology .off rect {
+  stroke-dasharray: 4 3;
+  opacity: 0.7;
+}
+svg.topology .off .tname,
+svg.topology .off .tdetail {
+  opacity: 0.65;
+}
+.tstatus {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tstatus.ok {
+  color: var(--good);
+}
+.tstatus.degraded {
+  color: var(--warn);
+}
+.tstatus.bad {
+  color: var(--bad);
+}
+.tstatus.off {
+  color: var(--muted);
+}
+.tcomp {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+}
+.tcomp.selected {
+  border-color: var(--accent);
+}
+.tcomp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tcomp-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.tattrs {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  gap: 2px 14px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.tattrs dt {
+  color: var(--muted);
+}
+.tattrs dd {
+  margin: 0;
+  word-break: break-word;
 }

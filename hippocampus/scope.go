@@ -130,9 +130,17 @@ var scopes = map[string]scopeMode{
 	//
 	// None of the three is a partition-holder's operation; all three belong to whoever runs the
 	// store, and an unscoped token is what that operator holds.
+	// GetTopology joins them for a different reason, and one worth stating because its required
+	// TIER is configurable (topology.minimumTier) and this is not. The tier answers "how sensitive
+	// is our infrastructure's shape", which varies by deployment and is the operator's to set. This
+	// answers "can the question be asked within a partition", and it cannot: there is no per-group
+	// topology, so a scoped caller could only ever be shown a store, an index and a set of peers
+	// that are not theirs. Lowering the tier to reader therefore widens who may ask among the
+	// operator's own people; it never reaches a tenant.
 	"Purge":                scopeUnbound,
 	"Sleep":                scopeUnbound,
 	"PreviewConsolidation": scopeUnbound,
+	"GetTopology":          scopeUnbound,
 
 	// WhoAmI describes the caller to itself and reads no stored record.
 	"WhoAmI": scopeNone,

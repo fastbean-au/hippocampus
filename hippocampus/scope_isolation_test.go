@@ -537,6 +537,14 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 		}
 	})
 
+	t.Run("GetTopology is refused", func(t *testing.T) {
+		_, err := s.GetTopology(ctx, &contract.EmptyRequest{})
+
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("GetTopology = %v, want PermissionDenied", err)
+		}
+	})
+
 	t.Run("the store walk is narrowed to the caller's partition", func(t *testing.T) {
 		manifest, events, memories, err := s.walkStore(ctx, noopEvents, noopMemories)
 		if err != nil {
@@ -780,6 +788,7 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"Purge":                   true,
 		"Sleep":                   true,
 		"PreviewConsolidation":    true,
+		"GetTopology":             true,
 		"ImportBatch":             true,
 		"GetForgottenMemories":    true,
 		"DeleteForgottenMemories": true,

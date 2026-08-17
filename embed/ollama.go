@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -271,6 +272,72 @@ func (o *Ollama) Dimensions() int {
 // Enabled reports that a real embedder is configured.
 func (o *Ollama) Enabled() bool {
 	return true
+}
+
+// ErrDegraded marks a dependency that answered but reported a problem of its own, as distinct from
+// one that could not be reached at all. See summarise.ErrDegraded, which this deliberately mirrors:
+// each optional integration stays self-contained rather than sharing a package for one sentinel,
+// and hippocampus/topology_probe.go maps all of them onto the one status.
+var ErrDegraded = errors.New("dependency is degraded")
+
+// Ping reports whether the Ollama server is reachable and carries the configured embedding model,
+// for the deployment topology view. It is not part of the Embedder interface; callers assert for it
+// optionally.
+//
+// A missing model is degraded rather than unreachable, for the reason the summariser's Ping gives -
+// and it matters more here, because an embedder that cannot embed does not fail loudly: writes keep
+// succeeding (indexing is best-effort and asynchronous) and only semantic search quietly returns
+// nothing.
+func (o *Ollama) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.address+"/api/tags", nil)
+	if err != nil {
+		return fmt.Errorf("failed to build the request: %w", err)
+	}
+
+	res, err := o.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama is unreachable at %s: %w", o.address, err)
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return fmt.Errorf("ollama at %s returned %s", o.address, res.Status)
+	}
+
+	var tags tagsResponse
+
+	if err := json.NewDecoder(res.Body).Decode(&tags); err != nil {
+		return fmt.Errorf("failed to read the model list from %s: %w", o.address, err)
+	}
+
+	if !tags.has(o.model) {
+		return fmt.Errorf("%w: model %q is not installed on the ollama server at %s", ErrDegraded, o.model, o.address)
+	}
+
+	return nil
+}
+
+// tagsResponse is the response from Ollama's GET /api/tags: the models the server has pulled.
+type tagsResponse struct {
+	Models []struct {
+		Name string `json:"name"`
+	} `json:"models"`
+}
+
+// has reports whether the server carries a model, comparing tags the way Ollama itself resolves
+// them: an untagged name means ":latest", so a configuration of "nomic-embed-text" is satisfied by
+// an installed "nomic-embed-text:latest" and vice versa.
+func (t tagsResponse) has(model string) bool {
+	want := strings.TrimSuffix(model, ":latest")
+
+	for _, installed := range t.Models {
+		if strings.TrimSuffix(installed.Name, ":latest") == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Compile-time check that *Ollama satisfies Embedder.

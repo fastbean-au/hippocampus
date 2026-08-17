@@ -546,6 +546,41 @@ The console's **Decay** tab shows the log beside the dry run — the log to any 
 and the log's Clear button to an administrator — and the **Now** tab carries a short feed of the
 most recent losses.
 
+## Seeing the deployment
+
+`hippo topology`, and the console's **Deployment** tab, report the deployment as one instance
+understands it: itself, the components it dials, how they relate, and the last known health of each.
+The configuration is under
+[Deployment topology](configuration.md#deployment-topology); what matters operationally is what the
+answer does and does not cover.
+
+**It is one instance's view, not a survey.** An instance knows itself and whatever it dials
+outward. Everything else in a deployment connects _to_ it — replicas sharing its database, the
+event-source bridges, the ingestor, MCP servers, `hippo` itself — and it holds no address for any
+of
+them. Every component reported therefore carries a **source**, and a short list means nothing has
+been declared rather than nothing is running. This is deliberate: the alternative is a registry, and
+a registry makes a memory store into a control plane. Nothing in this view can act on another
+component, and nothing is planned to.
+
+What it does answer, and answers well:
+
+- **Which of these two addresses is the consolidator.** The `self` component reports its role, and
+  on the server drivers the store reports which side of the single-consolidator lock this instance
+  is
+  on.
+- **Is a dependency quietly broken.** A failed OpenSearch write is best-effort and logged; a missing
+  Ollama model fails nothing until the first summarisation; an unreachable S3 bucket surfaces on the
+  first `Export`. All three show here as a status with the reason beside it, before anyone runs the
+  operation that would otherwise discover them.
+- **Why is an optional feature doing nothing.** Components that are switched off are listed with the
+  config key that would enable them (`hippo topology --all`, or the console's toggle).
+
+Two cautions. Statuses come from a **background prober**, so every one is a snapshot and each
+component reports when it was last checked — `unreachable` means "when last asked", not "now". And
+two components are never probed at all, for reasons given in the configuration guide: the OTLP
+collector, and the identity provider. They report as unchecked rather than as healthy.
+
 ## Backup, restore, and migration
 
 Two complementary approaches:

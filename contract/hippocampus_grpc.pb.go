@@ -27,6 +27,7 @@ const (
 	Hippocampus_GetForgottenMemories_FullMethodName       = "/hippocampus.v1.Hippocampus/GetForgottenMemories"
 	Hippocampus_DeleteForgottenMemories_FullMethodName    = "/hippocampus.v1.Hippocampus/DeleteForgottenMemories"
 	Hippocampus_WhoAmI_FullMethodName                     = "/hippocampus.v1.Hippocampus/WhoAmI"
+	Hippocampus_GetTopology_FullMethodName                = "/hippocampus.v1.Hippocampus/GetTopology"
 	Hippocampus_StoreEvent_FullMethodName                 = "/hippocampus.v1.Hippocampus/StoreEvent"
 	Hippocampus_EndEvent_FullMethodName                   = "/hippocampus.v1.Hippocampus/EndEvent"
 	Hippocampus_UpdateEventSignificance_FullMethodName    = "/hippocampus.v1.Hippocampus/UpdateEventSignificance"
@@ -132,6 +133,25 @@ type HippocampusClient interface {
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
 	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
 	WhoAmI(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*WhoAmIResponse, error)
+	// GetTopology reports the deployment as this instance understands it: itself, the components it
+	// dials, how they relate, and the last known health of each. Where WhoAmI answers "who am I
+	// talking as", this answers "what am I talking to".
+	//
+	// It reports only what an instance can honestly know - itself and its outbound dependencies.
+	// Everything else in a deployment dials IN and is invisible unless declared, which is what
+	// TopologyNodeSource exists to say on every node. This is deliberately NOT a control plane: the
+	// response is read-only and there is no counterpart that acts on another component.
+	//
+	// The minimum tier is configurable (topology.minimumTier, default reader) because how sensitive
+	// a deployment's internal shape is depends on the deployment. What is NOT configurable is the
+	// refusal to a group-scoped caller: that is not a sensitivity judgement but the same one behind
+	// Purge and PreviewConsolidation - the answer cannot be partitioned, since there is no per-group
+	// topology, so a scoped caller could only be shown infrastructure that is not theirs.
+	//
+	// No secret ever reaches the response. Addresses are redacted to scheme, host, port and
+	// database/bucket name; DSN credentials, signing keys, and passwords are never included, in any
+	// tier, for any caller.
+	GetTopology(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetTopologyResponse, error)
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
@@ -321,6 +341,16 @@ func (c *hippocampusClient) WhoAmI(ctx context.Context, in *EmptyRequest, opts .
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WhoAmIResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_WhoAmI_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) GetTopology(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetTopologyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTopologyResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetTopology_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -673,6 +703,25 @@ type HippocampusServer interface {
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
 	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
 	WhoAmI(context.Context, *EmptyRequest) (*WhoAmIResponse, error)
+	// GetTopology reports the deployment as this instance understands it: itself, the components it
+	// dials, how they relate, and the last known health of each. Where WhoAmI answers "who am I
+	// talking as", this answers "what am I talking to".
+	//
+	// It reports only what an instance can honestly know - itself and its outbound dependencies.
+	// Everything else in a deployment dials IN and is invisible unless declared, which is what
+	// TopologyNodeSource exists to say on every node. This is deliberately NOT a control plane: the
+	// response is read-only and there is no counterpart that acts on another component.
+	//
+	// The minimum tier is configurable (topology.minimumTier, default reader) because how sensitive
+	// a deployment's internal shape is depends on the deployment. What is NOT configurable is the
+	// refusal to a group-scoped caller: that is not a sensitivity judgement but the same one behind
+	// Purge and PreviewConsolidation - the answer cannot be partitioned, since there is no per-group
+	// topology, so a scoped caller could only be shown infrastructure that is not theirs.
+	//
+	// No secret ever reaches the response. Addresses are redacted to scheme, host, port and
+	// database/bucket name; DSN credentials, signing keys, and passwords are never included, in any
+	// tier, for any caller.
+	GetTopology(context.Context, *EmptyRequest) (*GetTopologyResponse, error)
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
@@ -811,6 +860,9 @@ func (UnimplementedHippocampusServer) DeleteForgottenMemories(context.Context, *
 }
 func (UnimplementedHippocampusServer) WhoAmI(context.Context, *EmptyRequest) (*WhoAmIResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WhoAmI not implemented")
+}
+func (UnimplementedHippocampusServer) GetTopology(context.Context, *EmptyRequest) (*GetTopologyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTopology not implemented")
 }
 func (UnimplementedHippocampusServer) StoreEvent(context.Context, *Event) (*StoreEventResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StoreEvent not implemented")
@@ -1054,6 +1106,24 @@ func _Hippocampus_WhoAmI_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HippocampusServer).WhoAmI(ctx, req.(*EmptyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_GetTopology_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EmptyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).GetTopology(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_GetTopology_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).GetTopology(ctx, req.(*EmptyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1582,6 +1652,10 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WhoAmI",
 			Handler:    _Hippocampus_WhoAmI_Handler,
+		},
+		{
+			MethodName: "GetTopology",
+			Handler:    _Hippocampus_GetTopology_Handler,
 		},
 		{
 			MethodName: "StoreEvent",

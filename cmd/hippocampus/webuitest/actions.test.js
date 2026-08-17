@@ -20,6 +20,12 @@ const webui = join(dirname(fileURLToPath(import.meta.url)), "..", "webui");
 const html = readFileSync(join(webui, "index.html"), "utf8");
 const app = readFileSync(join(webui, "app.js"), "utf8");
 
+// lib.js renders markup too - the deployment diagram's boxes carry data-act - so it is scanned for
+// controls alongside app.js. It was not, when app.js was the only file that produced any: an action
+// emitted from here would then have read as an unreachable handler, which is the guard failing in
+// the one direction that teaches you to delete the handler rather than fix the scan.
+const lib = readFileSync(join(webui, "lib.js"), "utf8");
+
 // Comments are stripped before the inline-attribute checks below: this repo documents its decisions
 // in prose beside the code, and a comment explaining WHY there are no inline styles would otherwise
 // fail the test asserting there are none.
@@ -42,6 +48,8 @@ const referenced = new Set([
   ...matchAll(html, /data-change="([a-z-]+)"/g),
   ...matchAll(app, /data-act="([a-z-]+)"/g),
   ...matchAll(app, /data-change="([a-z-]+)"/g),
+  ...matchAll(lib, /data-act="([a-z-]+)"/g),
+  ...matchAll(lib, /data-change="([a-z-]+)"/g),
 ]);
 
 // Keys of the ACTIONS object literal in app.js.

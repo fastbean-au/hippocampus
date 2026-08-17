@@ -337,3 +337,37 @@ func TestHTTPClientGetEventsRepeatedQueryParams(t *testing.T) {
 		t.Fatalf("metadata = %#v, want [team=platform]", got)
 	}
 }
+
+// TestHTTPClientGetTopology covers the gateway binding for the deployment view: a GET on the path
+// the google.api.http annotation declares, with no body and no query. Both transports satisfy the
+// same generated interface, so this is what keeps `hippo --transport http topology` reporting the
+// same deployment as the gRPC form rather than a 404.
+func TestHTTPClientGetTopology(t *testing.T) {
+	client, captured := newTestHTTPClient(t, http.StatusOK, &contract.GetTopologyResponse{
+		ProbeIntervalSeconds: 30,
+		Nodes: []*contract.TopologyNode{
+			{Id: "self", Name: "hippo-1", Status: contract.TopologyStatus_TOPOLOGY_STATUS_OK},
+		},
+	})
+
+	resp, err := client.GetTopology(context.Background(), &contract.EmptyRequest{})
+	if err != nil {
+		t.Fatalf("GetTopology: %v", err)
+	}
+
+	if captured.method != http.MethodGet || captured.path != "/v1/topology" {
+		t.Fatalf("issued %s %s, want GET /v1/topology", captured.method, captured.path)
+	}
+
+	if len(captured.body) != 0 {
+		t.Fatalf("a GET carried a body: %q", captured.body)
+	}
+
+	if len(resp.GetNodes()) != 1 || resp.GetNodes()[0].GetId() != "self" {
+		t.Fatalf("response not decoded: %+v", resp)
+	}
+
+	if resp.GetProbeIntervalSeconds() != 30 {
+		t.Fatalf("probe interval = %d, want 30", resp.GetProbeIntervalSeconds())
+	}
+}

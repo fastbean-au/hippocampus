@@ -50,6 +50,12 @@ func (c *httpClient) WhoAmI(ctx context.Context, in *contract.EmptyRequest, _ ..
 	return out, c.do(ctx, http.MethodGet, "/v1/whoami", nil, nil, out)
 }
 
+func (c *httpClient) GetTopology(ctx context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetTopologyResponse, error) {
+	out := &contract.GetTopologyResponse{}
+
+	return out, c.do(ctx, http.MethodGet, "/v1/topology", nil, nil, out)
+}
+
 func (c *httpClient) GetConsolidationStatus(ctx context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetConsolidationStatusResponse, error) {
 	out := &contract.GetConsolidationStatusResponse{}
 

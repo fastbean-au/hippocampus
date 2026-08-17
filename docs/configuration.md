@@ -206,6 +206,7 @@ a JSON body:
 | `DeleteForgottenMemories`    | POST   | `/v1/memories/forgotten/delete`   |
 | `Purge`                      | POST   | `/v1/purge`                       |
 | `WhoAmI`                     | GET    | `/v1/whoami`                      |
+| `GetTopology`                | GET    | `/v1/topology`                    |
 
 **An id in a `{braces}` segment must be percent-encoded**, including its slashes (`/` → `%2F`) —
 ids are caller-chosen and routinely contain them (an `at://` URI is what the event-source bridges
@@ -483,6 +484,71 @@ is logged at startup, reported in the `/healthz` body, and set as the OTEL `serv
 resource attribute when observability is enabled. The Docker image also carries an
 `org.opencontainers.image.version` label (`--build-arg VERSION=<tag>`).
 
+### Deployment topology
+
+`GetTopology` reports the deployment as one instance understands it: itself, the components it
+dials, how they relate, and the last known health of each. It backs the console's **Deployment**
+tab and `hippo topology`. On by default.
+
+```json
+"topology": {
+  "enabled": true,
+  "minimumTier": "reader",
+  "probeIntervalSeconds": 30,
+  "probeTimeoutSeconds": 2,
+  "probeTransferTarget": false
+}
+```
+
+**What it can and cannot know.** An instance knows two things: itself, and whatever it dials
+outward — the store, the search index, the summariser and embedder, the object store, the transfer
+target, the identity provider, the OTLP endpoint. Every other part of a real deployment **dials
+in**: replicas sharing its database, the [event-source bridges](eventsource.md), the
+[ingestor](ingestor.md), [MCP servers](mcp.md), `hippo`. They hold an address for the service; the
+service holds nothing for them, and there is no registry — this is a memory store, not a control
+plane. So every component in the response carries a **source** saying how the instance came to know
+about it, and a client is expected to show it. A sparse diagram means nothing has been declared, not
+that nothing is running.
+
+**Health comes from a background prober, not from the request.** Statuses are refreshed every
+`probeIntervalSeconds` and each probe is bounded by `probeTimeoutSeconds`; the response reports the
+interval, and a polling client should pace itself by that rather than by a guess. Each component
+also reports **when it was last checked**, so `unreachable` always reads as "when last asked".
+Probing inside the RPC was rejected: it would make one console page open a connection to every
+dependency, let a single hung one hang the request, and multiply both by the number of people
+looking.
+
+Two components are deliberately **never probed**. The OTLP collector, because export is
+fire-and-forget and a probe would mean opening a second connection to learn something no exporter
+acts on; and the identity provider, because the verifier already refreshes its key set on its own
+schedule and a console poll must not become load on the organisation's IdP. Both report
+`not checked` with the reason, rather than a green tick nobody established. The transfer target is
+the third exception and is opt-in (`probeTransferTarget`, default `false`): its probe dials a remote
+instance on a timer, using the same credentials and TLS trust options a real transfer would.
+
+**Components that are switched off are included**, with a status of "not configured" and an
+attribute naming the key that enables them. That is what answers "why is semantic search returning
+nothing" — a greyed-out embedder reading `enable_with: ollama.embedding.enabled` — and nothing
+else
+the service says answers it. The console hides them behind a toggle; `hippo topology --all` shows
+them.
+
+**No secret ever reaches the response.** Addresses are redacted to scheme, host, port and
+database/bucket name: DSN credentials (URL, libpq keyword/value, and MySQL forms alike), signing
+keys, and cluster passwords are stripped, in every tier, for every caller. The `self` component
+reports an explicit allow-list of settings — the driver, the consolidation parameters, the
+capacity
+and retention figures, the auth method, whether TLS and rate limiting are on — never the whole
+configuration.
+
+`minimumTier` sets the tier required to call it (`reader` by default, see
+[Authorisation](#authorisation)); it is the only per-RPC tier a deployment may change. Reader is
+defensible precisely because of the redaction above — what the view exposes is the deployment's
+shape rather than its contents — but a deployment where internal hostnames are themselves
+sensitive
+should raise it. A **group-scoped** caller is refused regardless of tier: there is no per-group
+topology, so a scoped caller could only be shown infrastructure that is not theirs.
+
 ### Authentication
 
 Every RPC — on both the native gRPC service and the HTTP gateway — can require a signed bearer
@@ -653,7 +719,7 @@ everything a lower one can:
 
 | Tier     | May call                                                                                                                                                                                                                                     |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `WhoAmI`                                             |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `WhoAmI`, `GetTopology`¹                              |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `Export`, `Transfer`, `Clear`                                                                                                             |
 
@@ -669,6 +735,11 @@ handing `reader` tokens to untrusted clients while keeping a long `maxAgeInDays`
 what it describes, so it leaves a trace of groups, sizes and timing that the live store would by
 then have discarded. Emptying it (`DeleteForgottenMemories`) is `admin` either way — it is
 destructive, and destructive on an audit record rather than on data the caller put there.
+¹ `GetTopology` is the one RPC whose tier a deployment may change, via `topology.minimumTier`; the
+table gives its default. See [Deployment topology](#deployment-topology). What is **not**
+configurable is its refusal to a group-scoped caller, which is the same rule that governs the
+preview: the answer cannot be partitioned, because there is no per-group topology.
+
 `Export`/`Transfer` are
 `admin` because they read the whole store out; `Import`/`ImportBatch` are
 `writer` because they deliberately bypass the write-path validation `StoreMemory`/`StoreEvent`

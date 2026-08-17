@@ -28,6 +28,11 @@ import {
   parseMetadataPairs,
   randomString,
   shortId,
+  topologyCheckedLabel,
+  topologyLayout,
+  topologySource,
+  topologyStatus,
+  topologySvg,
 } from "./lib.js";
 
 // ------------------------------------------------------------------ helpers
@@ -754,6 +759,11 @@ const ACTIONS = {
   "forgotten-prev": () => forgottenPage(-1),
   "forgotten-next": () => forgottenPage(1),
   "clear-forgotten": () => clearForgotten(),
+
+  // --- Deployment tab
+  "load-topology": () => loadTopology(),
+  "topology-filter": () => renderTopology(),
+  "topology-select": (el) => selectTopologyNode(el.dataset.node),
 };
 
 // Two delegated listeners, both dispatching through the one ACTIONS table. The event type is
@@ -942,6 +952,7 @@ const TAB_LOADERS = {
     // on page load, since it costs the server a snapshot.
     if (!decayInputs) loadDecay();
   },
+  deployment: () => startTopologyPolling(),
 };
 
 function showTab(name) {
@@ -952,9 +963,10 @@ function showTab(name) {
     .querySelectorAll(".tab")
     .forEach((x) => x.classList.toggle("active", x.id === "tab-" + name));
 
-  // Only the Now tab polls, and only while it is the tab you are looking at. Leaving it is as good
-  // a reason to stop as hiding the window.
+  // Only the Now and Deployment tabs poll, and only while one of them is the tab you are looking
+  // at. Leaving it is as good a reason to stop as hiding the window.
   if (name !== "now") stopNowPolling();
+  if (name !== "deployment") stopTopologyPolling();
 
   const load = TAB_LOADERS[name];
 
@@ -2267,11 +2279,18 @@ function nowVisible() {
 document.addEventListener("visibilitychange", () => {
   if (nowVisible()) {
     startNowPolling();
-
-    return;
+  } else {
+    stopNowPolling();
   }
 
-  stopNowPolling();
+  // The Deployment tab polls on the same terms and for a stronger reason: each of its rounds is an
+  // outbound request to every dependency this instance has, so a console left open in a background
+  // window must not keep asking.
+  if (topologyVisibleNow()) {
+    startTopologyPolling();
+  } else {
+    stopTopologyPolling();
+  }
 });
 
 // schedule re-arms one source. Each source re-arms itself after its own fetch rather than all three
@@ -3495,4 +3514,170 @@ async function deleteEvent(id) {
   } catch (e) {
     fail("Delete event failed", e);
   }
+}
+
+// ------------------------------------------------------------------ deployment
+
+// The deployment view's state. topologyData is the last response, held so the "show what is not
+// configured" toggle and a node selection can re-render without asking the server again - neither
+// changes anything the server would say.
+let topologyData = null;
+let topologySelected = null;
+let topologyTimer = null;
+
+// startTopologyPolling paces itself by the interval the SERVER reports, exactly as the Now tab
+// paces itself by the consolidation snapshot's TTL. Every status in this view comes from a
+// background prober on that interval, so polling faster returns the same snapshot and only costs
+// the assembly - and the console must not become the reason a deployment's dependencies are being
+// hit more often.
+function startTopologyPolling() {
+  stopTopologyPolling();
+
+  loadTopology();
+}
+
+function stopTopologyPolling() {
+  if (topologyTimer) {
+    clearTimeout(topologyTimer);
+    topologyTimer = null;
+  }
+}
+
+// scheduleTopology re-arms the poll from the response's own probe_interval_seconds, and declines to
+// re-arm while the tab is hidden or another tab is open - the same rule the Now tab follows.
+function scheduleTopology(res) {
+  stopTopologyPolling();
+
+  if (!topologyVisibleNow()) return;
+
+  const seconds = Number(res && res.probeIntervalSeconds) || 30;
+
+  topologyTimer = setTimeout(loadTopology, Math.max(5, seconds) * 1000);
+}
+
+function topologyVisibleNow() {
+  return (
+    document.visibilityState === "visible" &&
+    $("tab-deployment").classList.contains("active")
+  );
+}
+
+async function loadTopology() {
+  try {
+    const data = await api("GET", "/v1/topology");
+
+    topologyData = data;
+
+    renderTopology();
+    scheduleTopology(data);
+  } catch (e) {
+    topologyData = null;
+
+    $("topology-diagram").innerHTML =
+      '<div class="empty">This instance does not report its deployment (the view may be switched off, or this token may not ask).</div>';
+    $("topology-components").innerHTML =
+      '<div class="empty">Nothing to show.</div>';
+    $("topology-freshness").textContent = "";
+
+    fail("Deployment view unavailable", e);
+  }
+}
+
+// renderTopology draws both panels from the held response. The diagram carries no numbers of its
+// own: the layout is computed in lib.js and every status, address and attribute is served.
+function renderTopology() {
+  if (!topologyData) return;
+
+  const showDisabled = $("t-show-disabled").checked;
+  const layout = topologyLayout(topologyData, { showDisabled });
+
+  $("topology-diagram").innerHTML = topologySvg(layout);
+
+  const drawn = new Set(layout.boxes.map((b) => b.id));
+
+  renderTopologyComponents(
+    (topologyData.nodes || []).filter((n) => drawn.has(n.id)),
+  );
+
+  markTopologySelection();
+
+  const generated = Number(topologyData.generatedAt || 0);
+  const interval = Number(topologyData.probeIntervalSeconds || 0);
+
+  // Said plainly rather than implied: every status here is a snapshot, and a reader who does not
+  // know that may act on a minute-old picture believing it is live.
+  $("topology-freshness").textContent = generated
+    ? `Assembled ${ageLabel(Date.now(), topologyData.generatedAt)} ago. Statuses come from a background check every ${interval || 30}s, not from loading this page.`
+    : "";
+}
+
+// renderTopologyComponents lists each component's configuration. It is the half of this tab that
+// answers "what is this instance set to do", where the diagram answers "what is it attached to".
+function renderTopologyComponents(nodes) {
+  if (!nodes.length) {
+    $("topology-components").innerHTML =
+      '<div class="empty">Nothing to show.</div>';
+
+    return;
+  }
+
+  let html = "";
+
+  for (const node of nodes) {
+    const status = topologyStatus(node.status);
+    const checked = topologyCheckedLabel(Date.now(), node);
+
+    let attrs = "";
+
+    for (const attribute of node.attributes || []) {
+      attrs += `<dt>${esc(attribute.key)}</dt><dd>${esc(attribute.value || "—")}</dd>`;
+    }
+
+    html +=
+      `<div class="tcomp" data-node="${esc(node.id)}">` +
+      `<div class="tcomp-head">` +
+      `<h3>${esc(node.name)}</h3>` +
+      `<span class="tstatus ${status.cls}">${esc(status.label)}</span>` +
+      `<span class="muted fs-12">${esc(topologySource(node.source))}</span>` +
+      (checked ? `<span class="muted fs-12">${esc(checked)}</span>` : "") +
+      (node.version
+        ? `<span class="pill meta">${esc(node.version)}</span>`
+        : "") +
+      `</div>` +
+      (node.detail
+        ? `<div class="muted fs-12">${esc(node.detail)}</div>`
+        : "") +
+      (node.statusDetail
+        ? `<div class="tstatus ${status.cls}">${esc(node.statusDetail)}</div>`
+        : "") +
+      (attrs ? `<dl class="tattrs">${attrs}</dl>` : "") +
+      `</div>`;
+  }
+
+  $("topology-components").innerHTML = html;
+}
+
+// selectTopologyNode ties the two panels together: clicking a box in the diagram highlights and
+// scrolls to that component's configuration. It is the whole reason the diagram's boxes carry ids.
+function selectTopologyNode(id) {
+  topologySelected = topologySelected === id ? null : id;
+
+  markTopologySelection();
+
+  if (!topologySelected) return;
+
+  const card = document.querySelector(
+    `#topology-components .tcomp[data-node="${CSS.escape(topologySelected)}"]`,
+  );
+
+  if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function markTopologySelection() {
+  document.querySelectorAll("#topology-diagram .tnode").forEach((el) => {
+    el.classList.toggle("selected", el.dataset.node === topologySelected);
+  });
+  document.querySelectorAll("#topology-components .tcomp").forEach((el) => {
+    el.classList.toggle("selected", el.dataset.node === topologySelected);
+  });
 }

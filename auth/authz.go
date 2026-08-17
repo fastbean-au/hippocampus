@@ -189,6 +189,29 @@ var policies = map[string]rpcPolicy{
 	"Export":   {TierAdmin, http.MethodPost, "/v1/export"},
 	"Transfer": {TierAdmin, http.MethodPost, "/v1/transfer"},
 	"Clear":    {TierAdmin, http.MethodPost, "/v1/clear"},
+
+	// GetTopology's tier here is only the DEFAULT: it is the one RPC an operator may reassign, via
+	// topology.minimumTier (see configurableTiers). Reader is the default because the response
+	// carries no stored record and no secret - every address in it is redacted before it is built -
+	// so what it exposes is the deployment's shape rather than its contents. A deployment where
+	// internal hostnames are themselves sensitive raises it to writer or admin in one config key.
+	"GetTopology": {TierReader, http.MethodGet, "/v1/topology"},
+}
+
+// configurableTiers names the RPCs whose required tier a deployment may override, and is the reason
+// tierOverrides is an allow-list rather than a free hand over the table above.
+//
+// The table is meant to be the single, reviewed statement of who may do what, and most of its
+// entries are not opinions - they are the difference between a caller who can read a store and one
+// who can empty it. A general override mechanism would let a config file quietly lower Purge to
+// reader, which is a footgun no deployment needs and no reviewer would see. So an override is
+// accepted only where the answer genuinely varies by deployment, which today is exactly one RPC:
+// how sensitive your own infrastructure's shape is, is yours to say.
+//
+// Adding a name here is a deliberate decision to make that RPC's tier an operator's choice, and
+// TestConfigurableTiersHavePolicies holds the set to RPCs that actually exist.
+var configurableTiers = map[string]struct{}{
+	"GetTopology": {},
 }
 
 // routeRPCs inverts the policy table: "<VERB> <normalised path>" -> bare gRPC method name. It is
@@ -258,7 +281,14 @@ type Authoriser struct {
 // tags tokens with its own group names (e.g. "hippo-ops": "admin") maps them onto tiers here. A
 // mapping whose target is not a known tier fails construction rather than silently denying every
 // bearer of that group.
-func NewAuthoriser(roleMapping map[string]string) (*Authoriser, error) {
+//
+// tierOverrides raises or lowers the required tier of an RPC named in configurableTiers, keyed by
+// bare method name and valued by tier name; nil or empty leaves every policy at its declared tier.
+// An override naming an RPC that is not configurable, or a tier that does not exist, fails
+// construction - loudly at startup, rather than by silently serving a policy the operator did not
+// ask for. Both maps are applied to the derived method/route maps only; the policy table itself is
+// never mutated, so it stays readable as the declared default.
+func NewAuthoriser(roleMapping map[string]string, tierOverrides map[string]string) (*Authoriser, error) {
 	log.Trace("func() auth.NewAuthoriser")
 
 	roleTiers := map[string]Tier{
@@ -276,12 +306,22 @@ func NewAuthoriser(roleMapping map[string]string) (*Authoriser, error) {
 		roleTiers[strings.ToLower(strings.TrimSpace(role))] = tier
 	}
 
+	overrides, err := resolveTierOverrides(tierOverrides)
+	if err != nil {
+		return nil, err
+	}
+
 	methodTiers := make(map[string]Tier, len(policies))
 	gatewayTiers := make(map[string]Tier, len(policies))
 
 	for method, p := range policies {
-		methodTiers[hippocampusServicePrefix+method] = p.tier
-		gatewayTiers[p.httpMethod+" "+p.httpPath] = p.tier
+		tier := p.tier
+		if override, ok := overrides[method]; ok {
+			tier = override
+		}
+
+		methodTiers[hippocampusServicePrefix+method] = tier
+		gatewayTiers[p.httpMethod+" "+p.httpPath] = tier
 	}
 
 	return &Authoriser{
@@ -289,6 +329,33 @@ func NewAuthoriser(roleMapping map[string]string) (*Authoriser, error) {
 		gatewayTiers: gatewayTiers,
 		roleTiers:    roleTiers,
 	}, nil
+}
+
+// resolveTierOverrides validates a deployment's per-RPC tier overrides and turns them into tiers.
+// An unknown RPC name, an RPC that is not in configurableTiers, and an unparseable tier name are
+// all construction failures: each is a configuration mistake whose only other outcome is an
+// authorisation policy quietly differing from the one the operator wrote down.
+func resolveTierOverrides(tierOverrides map[string]string) (map[string]Tier, error) {
+	out := make(map[string]Tier, len(tierOverrides))
+
+	for rpc, tierName := range tierOverrides {
+		if _, ok := policies[rpc]; !ok {
+			return nil, fmt.Errorf("auth: tier override names unknown RPC %q", rpc)
+		}
+
+		if _, ok := configurableTiers[rpc]; !ok {
+			return nil, fmt.Errorf("auth: the required tier for %q is not configurable", rpc)
+		}
+
+		tier, ok := parseTier(tierName)
+		if !ok {
+			return nil, fmt.Errorf("auth: tier override for %q names unknown tier %q (expected reader, writer, or admin)", rpc, tierName)
+		}
+
+		out[rpc] = tier
+	}
+
+	return out, nil
 }
 
 // effectiveTier resolves a token's roles to the highest tier they grant. The bool is false when no

@@ -118,6 +118,30 @@ service Hippocampus {
 		};
 	}
 
+	// GetTopology reports the deployment as this instance understands it: itself, the components it
+	// dials, how they relate, and the last known health of each. Where WhoAmI answers "who am I
+	// talking as", this answers "what am I talking to".
+	//
+	// It reports only what an instance can honestly know - itself and its outbound dependencies.
+	// Everything else in a deployment dials IN and is invisible unless declared, which is what
+	// TopologyNodeSource exists to say on every node. This is deliberately NOT a control plane: the
+	// response is read-only and there is no counterpart that acts on another component.
+	//
+	// The minimum tier is configurable (topology.minimumTier, default reader) because how sensitive
+	// a deployment's internal shape is depends on the deployment. What is NOT configurable is the
+	// refusal to a group-scoped caller: that is not a sensitivity judgement but the same one behind
+	// Purge and PreviewConsolidation - the answer cannot be partitioned, since there is no per-group
+	// topology, so a scoped caller could only be shown infrastructure that is not theirs.
+	//
+	// No secret ever reaches the response. Addresses are redacted to scheme, host, port and
+	// database/bucket name; DSN credentials, signing keys, and passwords are never included, in any
+	// tier, for any caller.
+	rpc GetTopology(EmptyRequest) returns (GetTopologyResponse) {
+		option (google.api.http) = {
+			get: "/v1/topology"
+		};
+	}
+
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
@@ -1185,6 +1209,135 @@ message WhoAmIResponse {
 	// down" and "nothing has been forgotten" render identically until a client is told which it is
 	// looking at, and only the first is worth hiding the control for.
 	bool                                   tombstones_enabled        = 9;
+
+	// topology_tier is the minimum authorization tier GetTopology requires on this deployment
+	// (topology.minimumTier), as a tier name. It is reported rather than resolved to a bool because
+	// it belongs with its neighbours above, which are all properties of the DEPLOYMENT and never of
+	// the caller; a client compares it against the role it was told in this same response, which is
+	// where it already decides what to offer.
+	//
+	// Empty means the RPC is unavailable here (topology.enabled false), which is not the same as
+	// being refused it - so a client can leave the view out entirely rather than offer a control
+	// certain to fail.
+	string                                 topology_tier             = 10;
+}
+
+// TopologyNodeKind names what a component in the deployment graph IS. It is deliberately coarse:
+// the console draws one shape per kind and an operator reads one word, so a kind exists only where
+// it changes how a node is drawn or what its attributes mean.
+//
+// The set describes the deployment's component types, not what a given build happens to emit. An
+// instance can only report what it knows (see TopologyNodeSource), so the kinds that dial IN -
+// bridges, the ingestor, MCP servers, clients - appear only where an operator has declared them or
+// where they have been observed calling.
+enum TopologyNodeKind {
+	TOPOLOGY_NODE_KIND_UNSPECIFIED                                   = 0; // not set
+	TOPOLOGY_NODE_KIND_INSTANCE                                      = 1; // a Hippocampus instance: this one, or a peer sharing its store
+	TOPOLOGY_NODE_KIND_STORE                                         = 2; // the primary store (SQLite file, PostgreSQL, MySQL)
+	TOPOLOGY_NODE_KIND_SEARCH_INDEX                                  = 3; // the secondary content-search index
+	TOPOLOGY_NODE_KIND_SUMMARISER                                    = 4; // the embedded LLM behind SummariseMemories
+	TOPOLOGY_NODE_KIND_EMBEDDER                                      = 5; // the embedding model behind semantic search
+	TOPOLOGY_NODE_KIND_OBJECT_STORE                                  = 6; // the S3 bucket behind Export/Import
+	TOPOLOGY_NODE_KIND_TRANSFER_TARGET                               = 7; // the instance Transfer sends to
+	TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER                             = 8; // the IdP whose JWKS verifies tokens
+	TOPOLOGY_NODE_KIND_COLLECTOR                                     = 9; // the OTLP endpoint metrics and traces are exported to
+	TOPOLOGY_NODE_KIND_BRIDGE                                        = 10; // an event-sourcing broker bridge
+	TOPOLOGY_NODE_KIND_INGESTOR                                      = 11; // the edge-to-central ingestor
+	TOPOLOGY_NODE_KIND_MCP_BRIDGE                                    = 12; // an MCP server bridging an LLM host to this service
+	TOPOLOGY_NODE_KIND_CLIENT                                        = 13; // any other client of this service
+}
+
+// TopologyNodeSource says HOW this instance came to know about a node, and is the most important
+// field in the message. An instance is not a control plane: it knows itself and whatever it dials
+// outward, and everything else in a deployment - replicas sharing its database, bridges, the
+// ingestor, MCP servers, the CLI - dials IN, holding an address for the service rather than the
+// service holding one for them.
+//
+// Rather than present a picture that pretends otherwise, every node says where it came from, so a
+// client can render "what this instance knows" instead of implying ground truth. A deployment whose
+// diagram looks sparse is usually one that has declared nothing, not one that is running nothing.
+enum TopologyNodeSource {
+	TOPOLOGY_NODE_SOURCE_UNSPECIFIED                                 = 0; // not set
+	TOPOLOGY_NODE_SOURCE_SELF                                        = 1; // this process
+	TOPOLOGY_NODE_SOURCE_CONFIGURED                                  = 2; // something this instance dials, read from its own configuration
+	TOPOLOGY_NODE_SOURCE_DISCOVERED                                  = 3; // a peer instance found in the shared store
+	TOPOLOGY_NODE_SOURCE_DECLARED                                    = 4; // an operator listed it under topology.components
+	TOPOLOGY_NODE_SOURCE_OBSERVED                                    = 5; // it has called this instance with a verified token
+}
+
+// TopologyStatus is a node's last known health.
+//
+// UNSPECIFIED is both the wire default and a meaning: not probed. Several nodes are deliberately
+// never probed - the OTLP collector, because export is fire-and-forget and probing it would mean a
+// second dial for no operational gain, and the identity provider, because a console poll must not
+// become load on somebody's IdP. Those report UNSPECIFIED with a checked_at of 0, which is honest,
+// where a green tick would not be.
+enum TopologyStatus {
+	TOPOLOGY_STATUS_UNSPECIFIED                                      = 0; // not probed; checked_at is 0
+	TOPOLOGY_STATUS_OK                                               = 1; // reachable and serving
+	TOPOLOGY_STATUS_DEGRADED                                         = 2; // reachable, but reporting a problem of its own; see status_detail
+	TOPOLOGY_STATUS_UNREACHABLE                                      = 3; // the probe failed; see status_detail
+	TOPOLOGY_STATUS_DISABLED                                         = 4; // configured off, so nothing to probe
+}
+
+// TopologyAttribute is one piece of a node's configuration, as a key/value pair.
+//
+// A bag rather than a typed message per kind, because the alternative grows a proto field for every
+// component type and a rendering branch to match; the keys a kind carries are documented with the
+// builder that produces them. Values are already redacted: no credential, secret, or DSN password
+// ever reaches this message - see GetTopology.
+message TopologyAttribute {
+	string                                 key                       = 1;
+	string                                 value                     = 2;
+}
+
+// TopologyNode is one component of the deployment.
+message TopologyNode {
+	string                                 id                        = 1;  // stable within a response: "self", "store", "declared:<name>", ...
+	TopologyNodeKind                       kind                      = 2;
+	string                                 name                      = 3;  // what to label it; for a declared component, the name the operator gave
+	string                                 detail                    = 4;  // the redacted endpoint, host, or file path; empty where there is none
+	TopologyNodeSource                     source                    = 5;
+	TopologyStatus                         status                    = 6;
+
+	// status_detail explains a status that is not OK, in a form meant to be shown to an operator
+	// ("connection refused", "index red", "readiness reports store unreachable"). Empty when OK.
+	string                                 status_detail             = 7;
+
+	// checked_at is when the probe behind status last ran (UnixNano), or 0 when the node is never
+	// probed. It is reported rather than implied because probing is a background ticker, not
+	// something the RPC does: a caller is always reading a snapshot, and how old it is matters when
+	// something has just broken.
+	int64                                  checked_at                = 8;
+
+	string                                 version                   = 9;  // where the component reports one; empty otherwise
+	repeated TopologyAttribute             attributes                = 10;
+}
+
+// TopologyEdge is a relationship between two nodes, directed from the component that initiates the
+// connection to the one it reaches - which is the direction that matters operationally, since it is
+// what a firewall rule, a credential, and an outage all follow.
+message TopologyEdge {
+	string                                 from_id                   = 1;
+	string                                 to_id                     = 2;
+	string                                 label                     = 3;  // what crosses it: "reads/writes", "indexes", "verifies", ...
+	bool                                   optional                  = 4;  // the edge exists only because an optional feature is enabled
+}
+
+// GetTopologyResponse is the deployment as this instance understands it: a flat node list plus the
+// edges between them, rather than a tree. The graph is not a tree - two instances share one store -
+// and a flat shape means a new component type is a new TopologyNodeKind rather than a new field.
+message GetTopologyResponse {
+	repeated TopologyNode                  nodes                     = 1;
+	repeated TopologyEdge                  edges                     = 2;
+
+	// probe_interval_seconds is how often the background prober refreshes the statuses above. A
+	// polling client should pace itself by this rather than by a guess, for the same reason
+	// GetConsolidationStatus reports snapshot_ttl_seconds: polling faster returns the same snapshot
+	// and only costs the server the assembly.
+	int64                                  probe_interval_seconds    = 3;
+
+	int64                                  generated_at              = 4;  // UnixNano; when this response was assembled, not when it was probed
 }
 
 message EmptyRequest {}

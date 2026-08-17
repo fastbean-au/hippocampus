@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -311,6 +312,21 @@ func setStartupDefaults() {
 	viper.SetDefault("ollama.embedding.batchSize", 32)
 	viper.SetDefault("ollama.embedding.dimensions", 768)
 	viper.SetDefault("ollama.timeoutSeconds", 120)
+
+	// The deployment topology view. On by default, unlike every other optional feature here,
+	// because it neither stores anything nor reaches anything a running instance is not already
+	// attached to - and because the failure it exists to make visible (a dependency that is quietly
+	// unreachable) is one nobody thinks to switch a diagnostic on for beforehand.
+	//
+	// The tier defaults to reader rather than admin. That is safe only because no address in the
+	// response is unredacted (see hippocampus/topology_probe.go's redactEndpoint), and it is
+	// deliberate: what the view exposes is the deployment's shape rather than its contents, and the
+	// people who need it most are rarely the ones holding an admin token. Deployments where the
+	// shape is itself sensitive raise it here.
+	viper.SetDefault("topology.enabled", true)
+	viper.SetDefault("topology.minimumTier", "reader")
+	viper.SetDefault("topology.probeIntervalSeconds", 30)
+	viper.SetDefault("topology.probeTimeoutSeconds", 2)
 }
 
 // run builds the server (observability, database, the optional search/S3/auth/TLS surface, the gRPC
@@ -717,7 +733,7 @@ func run(ctx context.Context, version versionInfo) error {
 			return fmt.Errorf("failed to read auth.roleMapping: %w", err)
 		}
 
-		a, err := auth.NewAuthoriser(roleMapping)
+		a, err := auth.NewAuthoriser(roleMapping, topologyTierOverride())
 		if err != nil {
 			return fmt.Errorf("failed to initialise authorisation: %w", err)
 		}
@@ -752,6 +768,7 @@ func run(ctx context.Context, version versionInfo) error {
 		Objects:    objects,
 		Summariser: summariser,
 		Embedder:   embedder,
+		Version:    version.Version,
 	})
 
 	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
@@ -1284,6 +1301,24 @@ func rateLimitRuleFromViper(key string) ratelimit.Rule {
 	}
 }
 
+// topologyTierOverride turns topology.minimumTier into the per-RPC tier override NewAuthoriser
+// takes. It returns nil - meaning "leave the declared policy alone" - when the key is unset or the
+// RPC is disabled entirely, so a deployment that never touches the key gets exactly the policy
+// table's default. An unparseable tier is NOT rejected here: it is passed through so the authoriser
+// refuses it by name, keeping one error message for a bad tier wherever it was written.
+func topologyTierOverride() map[string]string {
+	if !viper.GetBool("topology.enabled") {
+		return nil
+	}
+
+	tier := strings.TrimSpace(viper.GetString("topology.minimumTier"))
+	if tier == "" {
+		return nil
+	}
+
+	return map[string]string{"GetTopology": tier}
+}
+
 func hmacConfigFromViper() auth.HMACConfig {
 	var keys []auth.SigningKey
 
@@ -1549,6 +1584,48 @@ func validateConfig() error {
 
 	if maxAge := viper.GetInt("consolidation.tombstones.maxAgeInDays"); maxAge < 0 {
 		return fmt.Errorf("consolidation.tombstones.maxAgeInDays must not be negative, got %d", maxAge)
+	}
+
+	if err := validateTopologyConfig(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateTopologyConfig checks the topology view's settings.
+//
+// The tier is validated here as well as in NewAuthoriser because the authoriser is only built when
+// authentication is enabled: without this, a typo in topology.minimumTier on an unauthenticated
+// instance would be accepted in silence and simply mean nothing, and would then start refusing
+// callers the day authentication was turned on.
+func validateTopologyConfig() error {
+	if !viper.GetBool("topology.enabled") {
+		return nil
+	}
+
+	if tier := strings.TrimSpace(viper.GetString("topology.minimumTier")); tier != "" {
+		if !slices.Contains(auth.TierNames(), strings.ToLower(tier)) {
+			return fmt.Errorf("topology.minimumTier must be one of %s, got %q", strings.Join(auth.TierNames(), ", "), tier)
+		}
+	}
+
+	// A probe round runs its checks in sequence, so an interval shorter than one round would leave
+	// the prober permanently behind its own schedule - ticks would be dropped, and the interval the
+	// RPC reports (which a console paces its polling by) would be a number nothing observes.
+	interval := viper.GetInt("topology.probeIntervalSeconds")
+	timeout := viper.GetInt("topology.probeTimeoutSeconds")
+
+	if interval < 0 {
+		return fmt.Errorf("topology.probeIntervalSeconds must not be negative, got %d", interval)
+	}
+
+	if timeout < 0 {
+		return fmt.Errorf("topology.probeTimeoutSeconds must not be negative, got %d", timeout)
+	}
+
+	if interval > 0 && timeout > interval {
+		return fmt.Errorf("topology.probeTimeoutSeconds (%d) must not exceed topology.probeIntervalSeconds (%d)", timeout, interval)
 	}
 
 	return nil

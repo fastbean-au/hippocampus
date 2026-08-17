@@ -52,6 +52,7 @@
       <button data-tab="memories">Memories</button>
       <button data-tab="events">Events</button>
       <button data-tab="decay" class="consolidation-only">Decay</button>
+      <button data-tab="deployment" class="topology-only">Deployment</button>
     </nav>
 
     <!-- ===================== LOGIN GATE ===================== -->
@@ -878,6 +879,55 @@
           </div>
           <div id="forgotten-results">
             <div class="empty">The forgotten log has not been loaded.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== DEPLOYMENT ===================== -->
+      <!-- The deployment as this instance understands it. Everything here is served by
+       GetTopology, including the statuses - which come from a background prober rather than from
+       the request, so each node reports when it was last checked. The diagram is drawn from the
+       node and edge lists by lib.js and carries no layout decisions of its own. -->
+      <section id="tab-deployment" class="tab topology-only">
+        <div class="card">
+          <h2>What this instance is attached to</h2>
+          <p class="muted pull-up">
+            An instance knows two things: itself, and whatever it dials. Every
+            other part of a deployment — replicas sharing its database, the
+            broker bridges, the ingestor, MCP servers, the CLI — connects
+            <em>to</em> it and is invisible here unless someone says otherwise.
+            So each component below says where it came from, and this is what
+            this instance knows rather than a survey of what is running.
+          </p>
+
+          <div id="topology-diagram">
+            <div class="empty">Nothing loaded yet.</div>
+          </div>
+
+          <div class="actions gap-top">
+            <button class="btn ghost" data-act="load-topology">Refresh</button>
+            <label class="checkbox">
+              <input
+                id="t-show-disabled"
+                type="checkbox"
+                data-change="topology-filter"
+              />
+              Show what is not configured
+            </label>
+          </div>
+
+          <div id="topology-freshness" class="muted fs-12"></div>
+        </div>
+
+        <div class="card">
+          <h2>Components</h2>
+          <p class="muted pull-up">
+            The configuration of each one, as this instance holds it. Addresses
+            are redacted — no password, key, or connection-string credential
+            reaches this page.
+          </p>
+          <div id="topology-components">
+            <div class="empty">Nothing loaded yet.</div>
           </div>
         </div>
       </section>

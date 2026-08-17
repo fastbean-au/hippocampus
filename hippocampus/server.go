@@ -300,6 +300,19 @@ type Server struct {
 	// configured) makes both fail with FAILED_PRECONDITION.
 	objects archive.ObjectStore
 
+	// topology is the deployment view's configuration plus the pre-redacted, immutable description
+	// of what this instance is attached to; topologyProbes is the background prober's latest round
+	// of statuses, and stopTopology / topologyStopped coordinate its shutdown exactly as
+	// stopSleep / sleepStopped do for autoSleep. Both channels are nil when nothing is being probed.
+	//
+	// An atomic.Pointer rather than a mutex for the same reason lastCycle is one: it is written once
+	// per round, read on every view, and the map is replaced wholesale and never mutated after
+	// publication - so a reader never blocks the prober and never sees a half-written round.
+	topology        Topology
+	topologyProbes  atomic.Pointer[map[string]topologyProbeResult]
+	stopTopology    chan struct{}
+	topologyStopped chan struct{}
+
 	// transfer carries the Transfer RPC's target settings and the page/batch size shared by all
 	// export paths.
 	transfer Transfer
@@ -390,6 +403,12 @@ type Dependencies struct {
 
 	// Embedder is the optional text embedder backing semantic search (nil -> disabled).
 	Embedder embed.Embedder
+
+	// Version is the build identification main.go already derived (runtime/debug.ReadBuildInfo),
+	// passed in rather than re-read here because the -ldflags override that makes a release report
+	// its tag lives in package main and nowhere else. Reported by GetTopology on the self node;
+	// empty is harmless.
+	Version string
 }
 
 func New(deps Dependencies) *Server {
@@ -487,6 +506,14 @@ func New(deps Dependencies) *Server {
 
 	s.startReconcile(deps.Search)
 
+	// Built last, so the specs describe the server as it finally is - the search backend in
+	// particular is only decided by the dependency that was handed in, and the reconcile interval is
+	// resolved a few lines above this.
+	s.topology = topologyFromViper(deps.Version)
+	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+
+	s.startTopologyProber()
+
 	return s
 }
 
@@ -513,8 +540,8 @@ func (s *Server) startReconcile(searchIndex search.Index) {
 	go s.reconcileLoop()
 }
 
-// Stop shuts the autoSleep goroutine (and the search-index reconciliation sweep, when running)
-// down and waits for them to exit. Because the sleep loop only re-enters its select between cycles,
+// Stop shuts the autoSleep goroutine down (and the search-index reconciliation sweep and the
+// deployment-topology prober, when running) and waits for them to exit. Because the sleep loop only re-enters its select between cycles,
 // that wait also drains any sleep cycle already in flight (started by the timer or the WAL trigger
 // just before shutdown), so nothing is mid-consolidation when the caller closes the database next.
 // Safe to call more than once, and a no-op when the server was built without New (autoSleep never
@@ -522,6 +549,8 @@ func (s *Server) startReconcile(searchIndex search.Index) {
 // before closing the database.
 func (s *Server) Stop() {
 	s.stopOnce.Do(func() {
+		s.stopTopologyProber()
+
 		if s.stopReconcile != nil {
 			close(s.stopReconcile)
 			<-s.reconcileStopped

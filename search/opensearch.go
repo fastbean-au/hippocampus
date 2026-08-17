@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -949,6 +950,43 @@ func (o *OpenSearch) SupportsVectors() bool {
 
 func (o *OpenSearch) Enabled() bool {
 	return true
+}
+
+// ErrDegraded marks a dependency that answered but reported a problem of its own, as distinct from
+// one that could not be reached at all. The two want different operator responses - a red index is
+// a cluster to look at, an unreachable one is a network or a process - so the topology view reports
+// them as different statuses, and errors.Is against this sentinel is how a probe says which it
+// found.
+var ErrDegraded = errors.New("dependency is degraded")
+
+// Ping reports whether the index is reachable and healthy, for the deployment topology view. It
+// asks for the cluster health of this index alone rather than of the whole cluster: an index that
+// is green is serving regardless of what some unrelated index is doing, and the reverse - a red
+// index in an otherwise green cluster - is exactly the case a whole-cluster check would miss.
+//
+// A red index is reported as degraded rather than unreachable, wrapping ErrDegraded: the cluster
+// answered, and search may still be serving from the shards that are assigned. Yellow is not
+// degraded - a single-node deployment (every compose stack here, and plenty of real ones) is
+// permanently yellow because its replicas have nowhere to go, so treating that as a fault would
+// leave the view permanently amber and teach an operator to ignore it.
+//
+// This is deliberately NOT part of the Index interface: only this backend has a cluster to ask
+// about, and widening the interface would put a meaningless method on the no-op and the SQL
+// backend. Callers reach it through an optional-interface assertion, exactly as RecreateIndex and
+// IndexMemorySync are reached.
+func (o *OpenSearch) Ping(ctx context.Context) error {
+	log.Trace("func() search.Ping")
+
+	health, err := o.client.Cluster.Health(ctx, &opensearchapi.ClusterHealthReq{Indices: []string{o.index}})
+	if err != nil {
+		return fmt.Errorf("failed to read the health of index '%s': %w", o.index, err)
+	}
+
+	if health.Status == "red" {
+		return fmt.Errorf("%w: index '%s' is red (%d unassigned shards)", ErrDegraded, o.index, health.UnassignedShards)
+	}
+
+	return nil
 }
 
 // Close stops accepting operations and waits for the worker to drain the queue, up to a timeout.

@@ -678,3 +678,108 @@ func TestListBadSortDirection(t *testing.T) {
 		}
 	}
 }
+
+// topologyFake is a deployment with one component of each interesting shape: the instance itself, a
+// probed store, and a component that is not configured.
+func topologyFake() *fakeClient {
+	return &fakeClient{
+		topologyResp: &contract.GetTopologyResponse{
+			ProbeIntervalSeconds: 30,
+			Nodes: []*contract.TopologyNode{
+				{
+					Id:      "self",
+					Kind:    contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_INSTANCE,
+					Name:    "hippo-1",
+					Source:  contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_SELF,
+					Status:  contract.TopologyStatus_TOPOLOGY_STATUS_OK,
+					Version: "v1.2.3",
+					Attributes: []*contract.TopologyAttribute{
+						{Key: "role", Value: "consolidator"},
+					},
+				},
+				{
+					Id:           "store",
+					Kind:         contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_STORE,
+					Name:         "PostgreSQL",
+					Detail:       "postgres://db.internal:5432/hippocampus",
+					Source:       contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
+					Status:       contract.TopologyStatus_TOPOLOGY_STATUS_UNREACHABLE,
+					StatusDetail: "connection refused",
+					CheckedAt:    1700000000000000000,
+				},
+				{
+					Id:     "summariser",
+					Kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_SUMMARISER,
+					Name:   "Ollama",
+					Source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
+					Status: contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED,
+				},
+			},
+			Edges: []*contract.TopologyEdge{
+				{FromId: "self", ToId: "store", Label: "reads/writes"},
+				{FromId: "self", ToId: "summariser", Label: "summarises with", Optional: true},
+			},
+		},
+	}
+}
+
+// TestTopologyHidesWhatIsNotConfigured covers the default listing. The edge check is the part worth
+// having: dropping a node without its edges leaves a connection whose far end is not in the output,
+// which reads as a component the operator has somehow missed rather than as one they filtered out.
+func TestTopologyHidesWhatIsNotConfigured(t *testing.T) {
+	_, out, err := runCommand(t, "topology", nil, topologyFake())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if strings.Contains(out, "Ollama") {
+		t.Fatalf("an unconfigured component was listed without --all: %q", out)
+	}
+
+	if strings.Contains(out, "summarises with") {
+		t.Fatalf("an edge to a hidden component survived: %q", out)
+	}
+
+	if !strings.Contains(out, "PostgreSQL") || !strings.Contains(out, "reads/writes") {
+		t.Fatalf("a configured component or its edge is missing: %q", out)
+	}
+}
+
+// TestTopologyAllListsEverything covers --all, which is what answers "why is semantic search
+// returning nothing" - the disabled component and the key that would enable it.
+func TestTopologyAllListsEverything(t *testing.T) {
+	_, out, err := runCommand(t, "topology", []string{"--all"}, topologyFake())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	for _, want := range []string{"Ollama", "[disabled]", "summarises with"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("--all output is missing %q: %s", want, out)
+		}
+	}
+}
+
+// TestTopologyReportsHealthAndProvenance pins the three things this command exists to say: what is
+// wrong, when that was established (every status comes from a background prober, so it is always a
+// snapshot), and where the knowledge came from.
+func TestTopologyReportsHealthAndProvenance(t *testing.T) {
+	_, out, err := runCommand(t, "topology", nil, topologyFake())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	for _, want := range []string{
+		"[unreachable]",
+		"connection refused",
+		"checked:",
+		"source:  configured",
+		"source:  self",
+		"v1.2.3",
+		"postgres://db.internal:5432/hippocampus",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output is missing %q: %s", want, out)
+		}
+	}
+}

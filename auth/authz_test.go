@@ -66,6 +66,51 @@ func TestDeliberateTiers(t *testing.T) {
 	}
 }
 
+// TestConfigurableTiersHavePolicies keeps the override allow-list honest: a name in it that is not
+// an RPC would accept an override that then silently did nothing, since the tier is applied while
+// walking the policy table.
+func TestConfigurableTiersHavePolicies(t *testing.T) {
+	for rpc := range configurableTiers {
+		if _, ok := policies[rpc]; !ok {
+			t.Errorf("configurableTiers names %q, which has no policy entry", rpc)
+		}
+	}
+}
+
+// TestTierOverrides covers the whole point of the allow-list: a permitted override takes effect on
+// both transports, and the three ways of getting one wrong all fail construction rather than
+// leaving a policy quietly different from the one that was configured. The Purge case is the one
+// that matters - a general override mechanism would let a config file lower it to reader.
+func TestTierOverrides(t *testing.T) {
+	a, err := NewAuthoriser(nil, map[string]string{"GetTopology": "admin"})
+	if err != nil {
+		t.Fatalf("failed to build the authoriser: %s", err.Error())
+	}
+
+	if tier := a.methodTiers[hippocampusServicePrefix+"GetTopology"]; tier != TierAdmin {
+		t.Errorf("gRPC method tier is %s, want admin", tier)
+	}
+
+	if tier := a.gatewayTiers[http.MethodGet+" /v1/topology"]; tier != TierAdmin {
+		t.Errorf("gateway route tier is %s, want admin", tier)
+	}
+
+	// An RPC left alone keeps its declared tier, so an override is not a whole-table replacement.
+	if tier := a.methodTiers[hippocampusServicePrefix+"Purge"]; tier != TierAdmin {
+		t.Errorf("Purge tier is %s, want admin", tier)
+	}
+
+	for name, overrides := range map[string]map[string]string{
+		"an RPC that is not configurable": {"Purge": "reader"},
+		"an RPC that does not exist":      {"Frobnicate": "reader"},
+		"a tier that does not exist":      {"GetTopology": "superuser"},
+	} {
+		if _, err := NewAuthoriser(nil, overrides); err == nil {
+			t.Errorf("an override naming %s was accepted", name)
+		}
+	}
+}
+
 // TestRouteRPC verifies the route -> RPC inversion the request metrics label gateway calls with:
 // every policy's own route must resolve back to its RPC (so the two transports report one vocabulary
 // and no route is silently unnamed), capture segments must be tolerated in the gateway's rendering
@@ -123,7 +168,7 @@ func TestParseTier(t *testing.T) {
 }
 
 func TestEffectiveTier(t *testing.T) {
-	a, err := NewAuthoriser(map[string]string{"hippo-ops": "admin"})
+	a, err := NewAuthoriser(map[string]string{"hippo-ops": "admin"}, nil)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -157,7 +202,7 @@ func TestEffectiveTier(t *testing.T) {
 }
 
 func TestNewAuthoriserRejectsUnknownMappingTier(t *testing.T) {
-	if _, err := NewAuthoriser(map[string]string{"group": "superuser"}); err == nil {
+	if _, err := NewAuthoriser(map[string]string{"group": "superuser"}, nil); err == nil {
 		t.Fatalf("expected an error for an unknown mapped tier")
 	}
 }
@@ -165,7 +210,7 @@ func TestNewAuthoriserRejectsUnknownMappingTier(t *testing.T) {
 // TestInterceptorTierMatrix drives the gRPC authorisation interceptor with a representative RPC of
 // each tier under each role, asserting the reader<writer<admin nesting is enforced.
 func TestInterceptorTierMatrix(t *testing.T) {
-	a, err := NewAuthoriser(nil)
+	a, err := NewAuthoriser(nil, nil)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -219,7 +264,7 @@ func TestInterceptorTierMatrix(t *testing.T) {
 // TestInterceptorStashesTier confirms a successful authorisation puts the resolved tier on the
 // context, which the reinforcement gate downstream relies on.
 func TestInterceptorStashesTier(t *testing.T) {
-	a, err := NewAuthoriser(nil)
+	a, err := NewAuthoriser(nil, nil)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -248,7 +293,7 @@ func TestInterceptorStashesTier(t *testing.T) {
 // TestInterceptorIgnoresNonHippocampus confirms the interceptor leaves the health service (and
 // anything outside the Hippocampus prefix) untouched, so probes need no role.
 func TestInterceptorIgnoresNonHippocampus(t *testing.T) {
-	a, err := NewAuthoriser(nil)
+	a, err := NewAuthoriser(nil, nil)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -284,7 +329,7 @@ type stubHippocampusServer struct {
 // runtime.HTTPPattern is populated at middleware time and that normalisePattern matches the real
 // route templates.
 func TestGatewayMiddlewareEndToEnd(t *testing.T) {
-	a, err := NewAuthoriser(nil)
+	a, err := NewAuthoriser(nil, nil)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}
@@ -366,7 +411,7 @@ func TestTierString(t *testing.T) {
 // TestGatewayMiddlewareMissingPattern covers the fail-closed branch: a matched-looking request that
 // somehow carries no route pattern on its context is forbidden rather than allowed by default.
 func TestGatewayMiddlewareMissingPattern(t *testing.T) {
-	a, err := NewAuthoriser(nil)
+	a, err := NewAuthoriser(nil, nil)
 	if err != nil {
 		t.Fatalf("NewAuthoriser: %s", err)
 	}

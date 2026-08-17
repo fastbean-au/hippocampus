@@ -33,6 +33,35 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **A deployment topology view: `GetTopology`, the console's Deployment tab, and `hippo topology`.**
+  An instance now reports what it is attached to — itself, its store, the search index, the
+  summariser and embedder, the object store, the transfer target, the identity provider and the OTLP
+  endpoint — with the last known health of each and the configuration behind it. A dependency that
+  is quietly broken (an OpenSearch cluster refusing writes, an Ollama server that never pulled its
+  model, an S3 bucket the credentials cannot see) previously surfaced only when the operation that
+  needed it failed; all three now show as a status with the reason beside it.
+
+  What it reports is deliberately bounded by what an instance can honestly know: itself, and
+  whatever it dials. Everything else in a deployment connects _to_ it and it holds no address for
+  any of them, so every component carries a **source** and a sparse view reads as "nothing has been
+  declared" rather than "nothing is running". It is read-only, and there is no counterpart that acts
+  on another component — a registry would make a memory store into a control plane.
+
+  Health comes from a background prober on `topology.probeIntervalSeconds` rather than from the
+  request, and each component reports when it was last checked, so one console page never opens a
+  connection to every dependency at once and a hung dependency cannot hang the RPC. Two components
+  are never probed and say so: the OTLP collector (export is fire-and-forget) and the identity
+  provider (a console poll must not become load on somebody's IdP). The transfer target is opt-in.
+
+  Every address is redacted server-side — DSN credentials in all three forms, cluster passwords,
+  signing material — which is what makes the default `reader` tier defensible.
+  `topology.minimumTier`
+  is the one per-RPC tier a deployment may configure; a group-scoped caller is refused regardless,
+  since there is no per-group topology to answer with. New `topology.*` config block, all of it
+  defaulted. See [Deployment topology](docs/configuration.md#deployment-topology).
+
 ## [0.33.2] - 2026-08-16
 
 ### Changed

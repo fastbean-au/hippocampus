@@ -1547,6 +1547,30 @@
         ]
       }
     },
+    "/v1/topology": {
+      "get": {
+        "summary": "GetTopology reports the deployment as this instance understands it: itself, the components it\ndials, how they relate, and the last known health of each. Where WhoAmI answers \"who am I\ntalking as\", this answers \"what am I talking to\".",
+        "description": "It reports only what an instance can honestly know - itself and its outbound dependencies.\nEverything else in a deployment dials IN and is invisible unless declared, which is what\nTopologyNodeSource exists to say on every node. This is deliberately NOT a control plane: the\nresponse is read-only and there is no counterpart that acts on another component.\n\nThe minimum tier is configurable (topology.minimumTier, default reader) because how sensitive\na deployment's internal shape is depends on the deployment. What is NOT configurable is the\nrefusal to a group-scoped caller: that is not a sensitivity judgement but the same one behind\nPurge and PreviewConsolidation - the answer cannot be partitioned, since there is no per-group\ntopology, so a scoped caller could only be shown infrastructure that is not theirs.\n\nNo secret ever reaches the response. Addresses are redacted to scheme, host, port and\ndatabase/bucket name; DSN credentials, signing keys, and passwords are never included, in any\ntier, for any caller.",
+        "operationId": "Hippocampus_GetTopology",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetTopologyResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/transfer": {
       "post": {
         "summary": "Transfer streams the whole store directly into a centralised instance's ImportBatch RPC,\nrecording a manifest like Export; with clear set the captured records are deleted once the\ntarget has accepted every batch.",
@@ -2475,6 +2499,36 @@
         }
       }
     },
+    "v1GetTopologyResponse": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1TopologyNode"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1TopologyEdge"
+          }
+        },
+        "probeIntervalSeconds": {
+          "type": "string",
+          "format": "int64",
+          "description": "probe_interval_seconds is how often the background prober refreshes the statuses above. A\npolling client should pace itself by this rather than by a guess, for the same reason\nGetConsolidationStatus reports snapshot_ttl_seconds: polling faster returns the same snapshot\nand only costs the server the assembly."
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; when this response was assembled, not when it was probed"
+        }
+      },
+      "description": "GetTopologyResponse is the deployment as this instance understands it: a flat node list plus the\nedges between them, rather than a tree. The graph is not a tree - two instances share one store -\nand a flat shape means a new component type is a new TopologyNodeKind rather than a new field."
+    },
     "v1ImportBatchRequest": {
       "type": "object",
       "properties": {
@@ -3018,6 +3072,131 @@
         }
       }
     },
+    "v1TopologyAttribute": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "description": "TopologyAttribute is one piece of a node's configuration, as a key/value pair.\n\nA bag rather than a typed message per kind, because the alternative grows a proto field for every\ncomponent type and a rendering branch to match; the keys a kind carries are documented with the\nbuilder that produces them. Values are already redacted: no credential, secret, or DSN password\never reaches this message - see GetTopology."
+    },
+    "v1TopologyEdge": {
+      "type": "object",
+      "properties": {
+        "fromId": {
+          "type": "string"
+        },
+        "toId": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string",
+          "description": "what crosses it: \"reads/writes\", \"indexes\", \"verifies\", ..."
+        },
+        "optional": {
+          "type": "boolean",
+          "title": "the edge exists only because an optional feature is enabled"
+        }
+      },
+      "description": "TopologyEdge is a relationship between two nodes, directed from the component that initiates the\nconnection to the one it reaches - which is the direction that matters operationally, since it is\nwhat a firewall rule, a credential, and an outage all follow."
+    },
+    "v1TopologyNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "stable within a response: \"self\", \"store\", \"declared:\u003cname\u003e\", ..."
+        },
+        "kind": {
+          "$ref": "#/definitions/v1TopologyNodeKind"
+        },
+        "name": {
+          "type": "string",
+          "title": "what to label it; for a declared component, the name the operator gave"
+        },
+        "detail": {
+          "type": "string",
+          "title": "the redacted endpoint, host, or file path; empty where there is none"
+        },
+        "source": {
+          "$ref": "#/definitions/v1TopologyNodeSource"
+        },
+        "status": {
+          "$ref": "#/definitions/v1TopologyStatus"
+        },
+        "statusDetail": {
+          "type": "string",
+          "description": "status_detail explains a status that is not OK, in a form meant to be shown to an operator\n(\"connection refused\", \"index red\", \"readiness reports store unreachable\"). Empty when OK."
+        },
+        "checkedAt": {
+          "type": "string",
+          "format": "int64",
+          "description": "checked_at is when the probe behind status last ran (UnixNano), or 0 when the node is never\nprobed. It is reported rather than implied because probing is a background ticker, not\nsomething the RPC does: a caller is always reading a snapshot, and how old it is matters when\nsomething has just broken."
+        },
+        "version": {
+          "type": "string",
+          "title": "where the component reports one; empty otherwise"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1TopologyAttribute"
+          }
+        }
+      },
+      "description": "TopologyNode is one component of the deployment."
+    },
+    "v1TopologyNodeKind": {
+      "type": "string",
+      "enum": [
+        "TOPOLOGY_NODE_KIND_UNSPECIFIED",
+        "TOPOLOGY_NODE_KIND_INSTANCE",
+        "TOPOLOGY_NODE_KIND_STORE",
+        "TOPOLOGY_NODE_KIND_SEARCH_INDEX",
+        "TOPOLOGY_NODE_KIND_SUMMARISER",
+        "TOPOLOGY_NODE_KIND_EMBEDDER",
+        "TOPOLOGY_NODE_KIND_OBJECT_STORE",
+        "TOPOLOGY_NODE_KIND_TRANSFER_TARGET",
+        "TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER",
+        "TOPOLOGY_NODE_KIND_COLLECTOR",
+        "TOPOLOGY_NODE_KIND_BRIDGE",
+        "TOPOLOGY_NODE_KIND_INGESTOR",
+        "TOPOLOGY_NODE_KIND_MCP_BRIDGE",
+        "TOPOLOGY_NODE_KIND_CLIENT"
+      ],
+      "default": "TOPOLOGY_NODE_KIND_UNSPECIFIED",
+      "description": "TopologyNodeKind names what a component in the deployment graph IS. It is deliberately coarse:\nthe console draws one shape per kind and an operator reads one word, so a kind exists only where\nit changes how a node is drawn or what its attributes mean.\n\nThe set describes the deployment's component types, not what a given build happens to emit. An\ninstance can only report what it knows (see TopologyNodeSource), so the kinds that dial IN -\nbridges, the ingestor, MCP servers, clients - appear only where an operator has declared them or\nwhere they have been observed calling.\n\n - TOPOLOGY_NODE_KIND_UNSPECIFIED: not set\n - TOPOLOGY_NODE_KIND_INSTANCE: a Hippocampus instance: this one, or a peer sharing its store\n - TOPOLOGY_NODE_KIND_STORE: the primary store (SQLite file, PostgreSQL, MySQL)\n - TOPOLOGY_NODE_KIND_SEARCH_INDEX: the secondary content-search index\n - TOPOLOGY_NODE_KIND_SUMMARISER: the embedded LLM behind SummariseMemories\n - TOPOLOGY_NODE_KIND_EMBEDDER: the embedding model behind semantic search\n - TOPOLOGY_NODE_KIND_OBJECT_STORE: the S3 bucket behind Export/Import\n - TOPOLOGY_NODE_KIND_TRANSFER_TARGET: the instance Transfer sends to\n - TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER: the IdP whose JWKS verifies tokens\n - TOPOLOGY_NODE_KIND_COLLECTOR: the OTLP endpoint metrics and traces are exported to\n - TOPOLOGY_NODE_KIND_BRIDGE: an event-sourcing broker bridge\n - TOPOLOGY_NODE_KIND_INGESTOR: the edge-to-central ingestor\n - TOPOLOGY_NODE_KIND_MCP_BRIDGE: an MCP server bridging an LLM host to this service\n - TOPOLOGY_NODE_KIND_CLIENT: any other client of this service"
+    },
+    "v1TopologyNodeSource": {
+      "type": "string",
+      "enum": [
+        "TOPOLOGY_NODE_SOURCE_UNSPECIFIED",
+        "TOPOLOGY_NODE_SOURCE_SELF",
+        "TOPOLOGY_NODE_SOURCE_CONFIGURED",
+        "TOPOLOGY_NODE_SOURCE_DISCOVERED",
+        "TOPOLOGY_NODE_SOURCE_DECLARED",
+        "TOPOLOGY_NODE_SOURCE_OBSERVED"
+      ],
+      "default": "TOPOLOGY_NODE_SOURCE_UNSPECIFIED",
+      "description": "TopologyNodeSource says HOW this instance came to know about a node, and is the most important\nfield in the message. An instance is not a control plane: it knows itself and whatever it dials\noutward, and everything else in a deployment - replicas sharing its database, bridges, the\ningestor, MCP servers, the CLI - dials IN, holding an address for the service rather than the\nservice holding one for them.\n\nRather than present a picture that pretends otherwise, every node says where it came from, so a\nclient can render \"what this instance knows\" instead of implying ground truth. A deployment whose\ndiagram looks sparse is usually one that has declared nothing, not one that is running nothing.\n\n - TOPOLOGY_NODE_SOURCE_UNSPECIFIED: not set\n - TOPOLOGY_NODE_SOURCE_SELF: this process\n - TOPOLOGY_NODE_SOURCE_CONFIGURED: something this instance dials, read from its own configuration\n - TOPOLOGY_NODE_SOURCE_DISCOVERED: a peer instance found in the shared store\n - TOPOLOGY_NODE_SOURCE_DECLARED: an operator listed it under topology.components\n - TOPOLOGY_NODE_SOURCE_OBSERVED: it has called this instance with a verified token"
+    },
+    "v1TopologyStatus": {
+      "type": "string",
+      "enum": [
+        "TOPOLOGY_STATUS_UNSPECIFIED",
+        "TOPOLOGY_STATUS_OK",
+        "TOPOLOGY_STATUS_DEGRADED",
+        "TOPOLOGY_STATUS_UNREACHABLE",
+        "TOPOLOGY_STATUS_DISABLED"
+      ],
+      "default": "TOPOLOGY_STATUS_UNSPECIFIED",
+      "description": "TopologyStatus is a node's last known health.\n\nUNSPECIFIED is both the wire default and a meaning: not probed. Several nodes are deliberately\nnever probed - the OTLP collector, because export is fire-and-forget and probing it would mean a\nsecond dial for no operational gain, and the identity provider, because a console poll must not\nbecome load on somebody's IdP. Those report UNSPECIFIED with a checked_at of 0, which is honest,\nwhere a green tick would not be.\n\n - TOPOLOGY_STATUS_UNSPECIFIED: not probed; checked_at is 0\n - TOPOLOGY_STATUS_OK: reachable and serving\n - TOPOLOGY_STATUS_DEGRADED: reachable, but reporting a problem of its own; see status_detail\n - TOPOLOGY_STATUS_UNREACHABLE: the probe failed; see status_detail\n - TOPOLOGY_STATUS_DISABLED: configured off, so nothing to probe"
+    },
     "v1TransferRequest": {
       "type": "object",
       "properties": {
@@ -3092,6 +3271,10 @@
         "tombstonesEnabled": {
           "type": "boolean",
           "description": "tombstones_enabled reports whether the forgotten log is being recorded\n(consolidation.tombstones.enabled). Unlike the flags above this one gates a reader rather than\na writer: GetForgottenMemories does not refuse when the log is off, it returns an empty page\nwith enabled false. That distinction is exactly why it belongs here - \"nothing was written\ndown\" and \"nothing has been forgotten\" render identically until a client is told which it is\nlooking at, and only the first is worth hiding the control for."
+        },
+        "topologyTier": {
+          "type": "string",
+          "description": "topology_tier is the minimum authorization tier GetTopology requires on this deployment\n(topology.minimumTier), as a tier name. It is reported rather than resolved to a bool because\nit belongs with its neighbours above, which are all properties of the DEPLOYMENT and never of\nthe caller; a client compares it against the role it was told in this same response, which is\nwhere it already decides what to offer.\n\nEmpty means the RPC is unavailable here (topology.enabled false), which is not the same as\nbeing refused it - so a client can leave the view out entirely rather than offer a control\ncertain to fail."
         }
       },
       "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."

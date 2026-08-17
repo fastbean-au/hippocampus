@@ -32,6 +32,13 @@ import {
   parseMetadataPairs,
   shortId,
   GATING_CLASSES,
+  tierAtLeast,
+  topologyCheckedLabel,
+  topologyLayout,
+  topologySource,
+  topologyStatus,
+  topologySvg,
+  truncateMiddle,
 } from "../webui/lib.js";
 
 // --------------------------------------------------------------------- capabilities
@@ -710,4 +717,365 @@ test("TRIGGER_LABELS covers every trigger the service reports", () => {
   for (const trigger of ["timer", "manual", "wal"]) {
     assert.ok(TRIGGER_LABELS[trigger], `no label for trigger ${trigger}`);
   }
+});
+
+// --------------------------------------------------------------------- topology
+
+// A response shaped like the one GetTopology serves: this instance, its store, a healthy index, a
+// degraded summariser, and two components that are not configured.
+function topologyResponse() {
+  return {
+    probeIntervalSeconds: 30,
+    generatedAt: "1700000000000000000",
+    nodes: [
+      {
+        id: "self",
+        kind: "TOPOLOGY_NODE_KIND_INSTANCE",
+        name: "hippo-1",
+        source: "TOPOLOGY_NODE_SOURCE_SELF",
+        status: "TOPOLOGY_STATUS_OK",
+      },
+      {
+        id: "store",
+        kind: "TOPOLOGY_NODE_KIND_STORE",
+        name: "PostgreSQL",
+        detail: "postgres://db.internal:5432/hippocampus",
+        source: "TOPOLOGY_NODE_SOURCE_CONFIGURED",
+        status: "TOPOLOGY_STATUS_OK",
+        checkedAt: "1699999990000000000",
+      },
+      {
+        id: "search",
+        kind: "TOPOLOGY_NODE_KIND_SEARCH_INDEX",
+        name: "OpenSearch",
+        source: "TOPOLOGY_NODE_SOURCE_CONFIGURED",
+        status: "TOPOLOGY_STATUS_DEGRADED",
+        checkedAt: "1699999990000000000",
+      },
+      {
+        id: "summariser",
+        kind: "TOPOLOGY_NODE_KIND_SUMMARISER",
+        name: "Ollama",
+        source: "TOPOLOGY_NODE_SOURCE_CONFIGURED",
+        status: "TOPOLOGY_STATUS_DISABLED",
+      },
+      {
+        id: "collector",
+        kind: "TOPOLOGY_NODE_KIND_COLLECTOR",
+        name: "OTLP collector",
+        source: "TOPOLOGY_NODE_SOURCE_CONFIGURED",
+        status: "TOPOLOGY_STATUS_DISABLED",
+      },
+    ],
+    edges: [
+      { fromId: "self", toId: "store", label: "reads/writes" },
+      { fromId: "self", toId: "search", label: "indexes", optional: true },
+      {
+        fromId: "self",
+        toId: "summariser",
+        label: "summarises with",
+        optional: true,
+      },
+      {
+        fromId: "self",
+        toId: "collector",
+        label: "exports to",
+        optional: true,
+      },
+    ],
+  };
+}
+
+test("tierAtLeast implements the tier hierarchy and fails closed", () => {
+  assert.equal(tierAtLeast("admin", "reader"), true);
+  assert.equal(tierAtLeast("writer", "reader"), true);
+  assert.equal(tierAtLeast("reader", "reader"), true);
+  assert.equal(tierAtLeast("reader", "writer"), false);
+  assert.equal(tierAtLeast("writer", "admin"), false);
+
+  // Case is not the caller's problem: the wire carries lower-case, but a configured tier is
+  // whatever somebody typed.
+  assert.equal(tierAtLeast("Admin", "Writer"), true);
+
+  // Anything unplaceable is refused rather than assumed sufficient - the same default-closed
+  // posture the server takes with an unknown role.
+  assert.equal(tierAtLeast("superuser", "reader"), false);
+  assert.equal(tierAtLeast("admin", "superuser"), false);
+  assert.equal(tierAtLeast(null, "reader"), false);
+  assert.equal(tierAtLeast("admin", ""), false);
+});
+
+// The capability matrix for the Deployment tab. Two gates fold into one class, and the second is
+// the one that is easy to forget: GetTopology is scopeUnbound, so a group-scoped caller is refused
+// it whatever tier they hold.
+test("topology visibility combines the required tier with the scope", () => {
+  const cases = [
+    {
+      name: "auth off: unrestricted",
+      who: { authEnabled: false, topologyTier: "reader" },
+      want: true,
+    },
+    {
+      name: "auth off but the view is switched off here",
+      who: { authEnabled: false, topologyTier: "" },
+      want: false,
+    },
+    {
+      name: "reader clears a reader requirement",
+      who: { authEnabled: true, role: "reader", topologyTier: "reader" },
+      want: true,
+    },
+    {
+      name: "reader does not clear an admin requirement",
+      who: { authEnabled: true, role: "reader", topologyTier: "admin" },
+      want: false,
+    },
+    {
+      name: "admin clears a reader requirement",
+      who: { authEnabled: true, role: "admin", topologyTier: "reader" },
+      want: true,
+    },
+    {
+      name: "a scoped admin is still refused",
+      who: {
+        authEnabled: true,
+        role: "admin",
+        topologyTier: "reader",
+        groupScoped: true,
+      },
+      want: false,
+    },
+  ];
+
+  for (const c of cases) {
+    assert.equal(capsFromWhoAmI(c.who).topology, c.want, c.name);
+  }
+
+  assert.equal(capsWhenRefused(401).topology, false);
+});
+
+test("bodyClassesFor gates the deployment tab on the topology capability", () => {
+  const visible = capsFromWhoAmI({
+    authEnabled: false,
+    topologyTier: "reader",
+  });
+  const hidden = capsFromWhoAmI({ authEnabled: false, topologyTier: "" });
+
+  assert.ok(bodyClassesFor(visible).has("topology"));
+  assert.ok(!bodyClassesFor(hidden).has("topology"));
+});
+
+test("topologyLayout places every node exactly once, in column order", () => {
+  const layout = topologyLayout(topologyResponse());
+
+  assert.equal(layout.boxes.length, 5);
+
+  const ids = layout.boxes.map((b) => b.id);
+
+  assert.deepEqual([...new Set(ids)].sort(), ids.slice().sort());
+
+  const byId = new Map(layout.boxes.map((b) => [b.id, b]));
+
+  // The instance sits to the left of everything it dials, which is the one thing the picture is
+  // really saying: these are outbound connections.
+  for (const id of ["store", "search", "summariser", "collector"]) {
+    assert.ok(
+      byId.get(id).x > byId.get("self").x,
+      `${id} should be drawn to the right of the instance`,
+    );
+  }
+
+  // Within the dependency column the declared kind order holds, so the diagram does not reshuffle
+  // between polls - a picture that rearranges itself every few seconds cannot be read.
+  assert.ok(byId.get("store").y < byId.get("search").y);
+  assert.ok(byId.get("search").y < byId.get("summariser").y);
+});
+
+test("topologyLayout never overlaps two boxes", () => {
+  const layout = topologyLayout(topologyResponse());
+
+  for (const a of layout.boxes) {
+    for (const b of layout.boxes) {
+      if (a === b) continue;
+
+      const apart =
+        a.x + a.w <= b.x ||
+        b.x + b.w <= a.x ||
+        a.y + a.h <= b.y ||
+        b.y + b.h <= a.y;
+
+      assert.ok(apart, `${a.id} and ${b.id} overlap`);
+    }
+  }
+});
+
+test("topologyLayout keeps every box inside the viewBox", () => {
+  const layout = topologyLayout(topologyResponse());
+
+  for (const box of layout.boxes) {
+    assert.ok(
+      box.x >= 0 && box.x + box.w <= layout.width,
+      `${box.id} overflows horizontally`,
+    );
+    assert.ok(
+      box.y >= 0 && box.y + box.h <= layout.height,
+      `${box.id} overflows vertically`,
+    );
+  }
+});
+
+// Hiding what is not configured is a filter on the picture, not on the truth: the nodes go, and so
+// must the edges that pointed at them - an edge drawn to a box that is not there is a line to
+// nowhere, which reads as a rendering fault rather than as a hidden node.
+test("topologyLayout drops the edges of hidden nodes", () => {
+  const layout = topologyLayout(topologyResponse(), { showDisabled: false });
+
+  assert.deepEqual(layout.boxes.map((b) => b.id).sort(), [
+    "search",
+    "self",
+    "store",
+  ]);
+
+  const placed = new Set(layout.boxes.map((b) => b.id));
+
+  for (const link of layout.links) {
+    assert.ok(placed.has(link.fromId), `${link.fromId} is not placed`);
+    assert.ok(placed.has(link.toId), `${link.toId} is not placed`);
+  }
+
+  assert.equal(layout.links.length, 2);
+});
+
+test("topologyLayout gives an empty response nothing to draw", () => {
+  const layout = topologyLayout({ nodes: [], edges: [] });
+
+  assert.equal(layout.boxes.length, 0);
+  assert.equal(layout.links.length, 0);
+  assert.match(topologySvg(layout), /Nothing to draw/);
+});
+
+test("topologySvg escapes every value it renders", () => {
+  const svg = topologySvg(
+    topologyLayout({
+      nodes: [
+        {
+          id: 'x"><script>',
+          kind: "TOPOLOGY_NODE_KIND_INSTANCE",
+          name: "<img src=x onerror=alert(1)>",
+          detail: "a & b",
+          status: "TOPOLOGY_STATUS_OK",
+        },
+      ],
+      edges: [],
+    }),
+  );
+
+  assert.ok(!svg.includes("<script>"));
+  assert.ok(!svg.includes("<img"));
+  assert.ok(svg.includes("&amp;"));
+});
+
+test("topologySvg marks an optional edge and colours by status", () => {
+  const svg = topologySvg(topologyLayout(topologyResponse()));
+
+  assert.ok(svg.includes("tlink optional"), "optional edges are drawn dashed");
+  assert.ok(
+    svg.includes("tnode degraded"),
+    "a degraded node carries its status class",
+  );
+  assert.ok(
+    svg.includes("tnode off"),
+    "a disabled node carries its status class",
+  );
+});
+
+test("topologyStatus and topologySource name every wire value", () => {
+  for (const status of [
+    "TOPOLOGY_STATUS_OK",
+    "TOPOLOGY_STATUS_DEGRADED",
+    "TOPOLOGY_STATUS_UNREACHABLE",
+    "TOPOLOGY_STATUS_DISABLED",
+    "TOPOLOGY_STATUS_UNSPECIFIED",
+  ]) {
+    assert.ok(topologyStatus(status).label.length > 0, status);
+    assert.ok(topologyStatus(status).cls.length > 0, status);
+  }
+
+  // An unknown status must read as "not checked" rather than as healthy: a client one release
+  // behind the service must not paint a new state green.
+  assert.equal(
+    topologyStatus("TOPOLOGY_STATUS_SOMETHING_NEW").label,
+    topologyStatus("TOPOLOGY_STATUS_UNSPECIFIED").label,
+  );
+
+  for (const source of [
+    "TOPOLOGY_NODE_SOURCE_SELF",
+    "TOPOLOGY_NODE_SOURCE_CONFIGURED",
+    "TOPOLOGY_NODE_SOURCE_DISCOVERED",
+    "TOPOLOGY_NODE_SOURCE_DECLARED",
+    "TOPOLOGY_NODE_SOURCE_OBSERVED",
+  ]) {
+    assert.notEqual(topologySource(source), "unknown", source);
+  }
+
+  assert.equal(topologySource("TOPOLOGY_NODE_SOURCE_FUTURE"), "unknown");
+});
+
+// Every status in this view is a snapshot from a background prober, so "unreachable" always means
+// "was unreachable when last asked". A reader who cannot see when that was may act on a minute-old
+// picture believing it is live.
+test("topologyCheckedLabel says how fresh a status is", () => {
+  const now = 1700000000000;
+
+  assert.match(
+    topologyCheckedLabel(now, {
+      status: "TOPOLOGY_STATUS_OK",
+      checkedAt: String((now - 60000) * 1e6),
+    }),
+    /^checked /,
+  );
+
+  // Never probed is not the same as probed and healthy.
+  assert.equal(
+    topologyCheckedLabel(now, {
+      status: "TOPOLOGY_STATUS_UNSPECIFIED",
+      checkedAt: 0,
+    }),
+    "not checked",
+  );
+
+  // A healthy status with no check time behind it was asserted rather than probed, so saying
+  // "reachable, not checked" of it would read as a contradiction.
+  assert.equal(
+    topologyCheckedLabel(now, { status: "TOPOLOGY_STATUS_OK", checkedAt: 0 }),
+    "",
+  );
+
+  // The instance answering the request is not something it probes.
+  assert.equal(
+    topologyCheckedLabel(now, {
+      status: "TOPOLOGY_STATUS_OK",
+      source: "TOPOLOGY_NODE_SOURCE_SELF",
+    }),
+    "",
+  );
+
+  // A component that is switched off has nothing to check, so saying so would be noise.
+  assert.equal(
+    topologyCheckedLabel(now, { status: "TOPOLOGY_STATUS_DISABLED" }),
+    "",
+  );
+});
+
+test("truncateMiddle keeps both ends of an address", () => {
+  assert.equal(truncateMiddle("short", 20), "short");
+
+  const long = truncateMiddle(
+    "postgres://a-very-long-hostname.internal:5432/hippocampus",
+    20,
+  );
+
+  assert.equal(long.length, 20);
+  assert.ok(long.startsWith("postgres:"), long);
+  assert.ok(long.endsWith("campus"), long);
 });

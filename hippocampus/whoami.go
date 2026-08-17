@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 
@@ -28,6 +29,13 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 	consolidating := s.consolidationEnabled
 	tombstones := s.consolidation.tombstones
 
+	// The topology tier is reported the same way and for the same reason - it is what this
+	// deployment requires of anyone asking, not what this caller happens to hold - so a client
+	// compares it against the role below rather than being handed the comparison already made. An
+	// empty string means the view is switched off here, which is a different thing from being
+	// refused it and a different thing for a client to render.
+	topologyTier := s.topologyTier()
+
 	// The group scope is reported on both paths. On the unauthenticated one it is always absent,
 	// which is the truth rather than a placeholder: with no token there is no scope, and a client
 	// that renders "unscoped" from it is showing the right thing.
@@ -45,6 +53,7 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 			SummariserEnabled:    summariser,
 			ConsolidationEnabled: consolidating,
 			TombstonesEnabled:    tombstones,
+			TopologyTier:         topologyTier,
 		}, nil
 	}
 
@@ -58,5 +67,21 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 		SummariserEnabled:    summariser,
 		ConsolidationEnabled: consolidating,
 		TombstonesEnabled:    tombstones,
+		TopologyTier:         topologyTier,
 	}, nil
+}
+
+// topologyTier is the tier GetTopology requires here, or an empty string when the view is disabled.
+// It resolves the unset case to the policy default rather than reporting nothing, so a client is
+// never left to guess which tier a deployment that did not configure one is using.
+func (s *Server) topologyTier() string {
+	if !s.topology.enabled {
+		return ""
+	}
+
+	if tier := strings.TrimSpace(s.topology.minimumTier); tier != "" {
+		return strings.ToLower(tier)
+	}
+
+	return auth.TierReader.String()
 }

@@ -179,6 +179,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | Command           | Purpose                                                                                        |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
 | `whoami`          | report the caller's identity, effective tier and group scope, plus what the instance can serve |
+| `topology`        | report the deployment this instance is part of, and each component's health (`--all`)          |
 | `sleep`           | trigger a consolidation cycle now, or preview one (`--dry-run`)                                |
 | `forgotten list`  | list memories a cycle forgot, and why (`--memory-id`, `--group`, `--rule`, `--since`)          |
 | `forgotten clear` | delete records from the forgotten log (`--before` or `--all`)                                  |
@@ -189,6 +190,15 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 separate read-only RPC (`PreviewConsolidation`), so it cannot trigger a cycle by accident;
 `--limit` bounds how many individual memories are detailed (default 100, max 1000) without
 affecting the counts, which are always complete.
+
+`topology` is the terminal form of the console's Deployment tab, and the more useful of the two
+when the console is exactly what is unreachable. It reports this instance, the components it dials,
+and the last known health of each — with **when** each was last checked, since the statuses come
+from a background prober rather than from the request. By default it lists only what is configured;
+`--all` adds the components that are switched off, each naming the config key that would enable
+them. Addresses are redacted server-side, so no DSN password or cluster credential is ever printed.
+See [Deployment topology](configuration.md#deployment-topology) for what an instance can and cannot
+know about its own deployment.
 
 `forgotten list` reads the optional [forgotten log](operations.md#what-was-forgotten--the-forgotten-log)
 — what the cycle actually deleted, as against the dry run's account of what it would delete next.
