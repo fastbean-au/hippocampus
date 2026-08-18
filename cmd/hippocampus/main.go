@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"slices"
@@ -1626,6 +1627,82 @@ func validateTopologyConfig() error {
 
 	if interval > 0 && timeout > interval {
 		return fmt.Errorf("topology.probeTimeoutSeconds (%d) must not exceed topology.probeIntervalSeconds (%d)", timeout, interval)
+	}
+
+	return validateTopologyComponents()
+}
+
+// validateTopologyComponents checks the declared half of the deployment view.
+//
+// It is strict, and deliberately: a declared component that cannot be probed contributes nothing to
+// the view but its own name, while looking on the diagram exactly like a live one. Every rejection
+// here is a case that would otherwise render as a permanently red - or, worse, permanently
+// plausible - box that nobody could explain.
+func validateTopologyComponents() error {
+	var components []hippocampus.TopologyComponent
+
+	if err := viper.UnmarshalKey("topology.components", &components); err != nil {
+		return fmt.Errorf("failed to read topology.components: %w", err)
+	}
+
+	if len(components) > hippocampus.MaxTopologyComponents {
+		return fmt.Errorf("topology.components has %d entries, more than the %d allowed (each one is an outbound request every probe interval)",
+			len(components), hippocampus.MaxTopologyComponents)
+	}
+
+	seen := make(map[string]bool, len(components))
+	kinds := hippocampus.TopologyComponentKinds()
+
+	for i, component := range components {
+		name := strings.TrimSpace(component.Name)
+
+		if name == "" {
+			return fmt.Errorf("topology.components[%d] has no name", i)
+		}
+
+		// The name is the node id a client keys its per-node state by, so two components sharing one
+		// would collapse into a single box that flickered between their two statuses.
+		if seen[name] {
+			return fmt.Errorf("topology.components[%d] repeats the name %q", i, name)
+		}
+
+		seen[name] = true
+
+		if !slices.Contains(kinds, strings.ToLower(strings.TrimSpace(component.Kind))) {
+			return fmt.Errorf("topology.components[%d] (%q) has kind %q, expected one of %s",
+				i, name, component.Kind, strings.Join(kinds, ", "))
+		}
+
+		if err := validateHealthURL(component.HealthURL); err != nil {
+			return fmt.Errorf("topology.components[%d] (%q): %w", i, name, err)
+		}
+	}
+
+	return nil
+}
+
+// validateHealthURL rejects a health URL this process could not actually request. An address with no
+// scheme is the one worth naming explicitly: "nats-bridge:8090" is what an operator naturally writes
+// and what url.Parse accepts as a path, so without this it would be accepted at startup and then
+// fail every probe for a reason the error message would never mention.
+func validateHealthURL(raw string) error {
+	address := strings.TrimSpace(raw)
+
+	if address == "" {
+		return fmt.Errorf("healthUrl must be set (a component that cannot be probed reports nothing the config file does not already say)")
+	}
+
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return fmt.Errorf("healthUrl %q is not a valid URL: %w", address, err)
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("healthUrl %q must start with http:// or https://", address)
+	}
+
+	if parsed.Host == "" {
+		return fmt.Errorf("healthUrl %q names no host", address)
 	}
 
 	return nil

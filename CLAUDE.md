@@ -444,8 +444,18 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     whose tier is configurable**, via a narrow `configurableTiers` allow-list in `auth/authz.go`
     (a general override would let a config file lower `Purge` to reader) - but its `scopeUnbound`
     refusal is NOT configurable, because that is not a sensitivity judgement: there is no per-group
-    topology, so a scoped caller could only be shown infrastructure that is not theirs. Phase 1 of
-    TODO 75; declared components and shared-store peer discovery are phases 2 and 3.
+    topology, so a scoped caller could only be shown infrastructure that is not theirs. (7) The
+    inbound half is **declared, not discovered** (`topology.components`, phase 2): a name, a kind
+    and a `healthUrl`, probed over the shared `/readyz` that `observability/health.go` already
+    serves - so a bridge or the ingestor becomes a first-class node with its own per-dependency
+    breakdown and **no change to those binaries at all**, and its edge points INWARD, the only edges
+    in the graph that do. A 503 is degraded (it answered and named the reason), a refused connection
+    unreachable, a 404 a wrong URL - three states an operator acts on differently. The list is
+    capped (`MaxTopologyComponents`) because each entry is an outbound request per round and its
+    name is a metric attribute, and that cap is also why the round went from sequential to
+    `topologyProbeConcurrency`-at-a-time: with the count operator-controlled, a sequential round no
+    longer fits inside its own interval. Phases 1-2 of TODO 75; shared-store peer discovery is phase
+    3.
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.

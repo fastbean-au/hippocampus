@@ -62,6 +62,19 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   since there is no per-group topology to answer with. New `topology.*` config block, all of it
   defaulted. See [Deployment topology](docs/configuration.md#deployment-topology).
 
+- **Declared components in the topology view (`topology.components`).** The half of a deployment an
+  instance cannot discover — the broker bridges, the ingestor, MCP servers, any other client —
+  can now be listed, and each is probed and drawn as part of the deployment, with its edge
+  pointing **inward**, because that is the direction the connection is opened in.
+
+  It needs no change to the components themselves: the bridges and the ingestor already serve
+  `/readyz`, and that endpoint already reports a per-dependency breakdown, so a declared bridge that
+  cannot reach its broker now says so where before it would have been an unexplained red box. A
+  `503` is reported as degraded (it answered, and it named the reason), a refused connection as
+  unreachable, and a `404` — a `healthUrl` that is simply wrong — with its status code, so all
+  three are told apart. The list is capped at 32 and every entry is validated at startup; the
+  probe round now runs a few probes at a time so a full list still completes inside one interval.
+
 ## [0.33.2] - 2026-08-16
 
 ### Changed

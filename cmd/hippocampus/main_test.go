@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/fastbean-au/hippocampus/auth"
+	"github.com/fastbean-au/hippocampus/hippocampus"
 	"github.com/fastbean-au/hippocampus/search"
 )
 
@@ -660,5 +662,127 @@ func TestTopologyTierOverride(t *testing.T) {
 	// and a value main.go builds that construction then rejects is a startup failure.
 	if _, err := auth.NewAuthoriser(nil, override); err != nil {
 		t.Errorf("the authoriser rejected main.go's own override: %s", err)
+	}
+}
+
+// TestValidateTopologyComponents covers the declared half of the deployment view.
+//
+// Validation here is strict on purpose: a declared component that cannot be probed contributes
+// nothing but its own name, while looking on the diagram exactly like a live one. Every case below
+// would otherwise render as a permanently red — or, worse, permanently plausible — box that nobody
+// could explain from the config file.
+func TestValidateTopologyComponents(t *testing.T) {
+	cases := []struct {
+		name       string
+		components []map[string]string
+		wantErr    bool
+	}{
+		{name: "none declared", components: nil},
+		{
+			name: "a bridge and an ingestor",
+			components: []map[string]string{
+				{"name": "nats-bridge", "kind": "bridge", "healthUrl": "http://nats-bridge:8090"},
+				{"name": "ingestor", "kind": "ingestor", "healthUrl": "https://ingestor.internal/readyz"},
+			},
+		},
+		{
+			name:       "no name",
+			components: []map[string]string{{"kind": "bridge", "healthUrl": "http://b:8090"}},
+			wantErr:    true,
+		},
+		// The name is the node id a client keys per-node state by, so two components sharing one
+		// would collapse into a single box flickering between two statuses.
+		{
+			name: "a repeated name",
+			components: []map[string]string{
+				{"name": "bridge", "kind": "bridge", "healthUrl": "http://a:8090"},
+				{"name": "bridge", "kind": "bridge", "healthUrl": "http://b:8090"},
+			},
+			wantErr: true,
+		},
+		{
+			name:       "an unknown kind",
+			components: []map[string]string{{"name": "b", "kind": "broker", "healthUrl": "http://b:8090"}},
+			wantErr:    true,
+		},
+		{
+			name:       "a kind in mixed case is fine",
+			components: []map[string]string{{"name": "b", "kind": "Bridge", "healthUrl": "http://b:8090"}},
+		},
+		{
+			name:       "no health url",
+			components: []map[string]string{{"name": "b", "kind": "bridge"}},
+			wantErr:    true,
+		},
+		// The case an operator actually hits: "nats-bridge:8090" is what you naturally write, and
+		// url.Parse accepts it as a path — so without the scheme check it would start cleanly and
+		// then fail every probe for a reason no message would mention.
+		{
+			name:       "a health url with no scheme",
+			components: []map[string]string{{"name": "b", "kind": "bridge", "healthUrl": "nats-bridge:8090"}},
+			wantErr:    true,
+		},
+		{
+			name:       "a health url with no host",
+			components: []map[string]string{{"name": "b", "kind": "bridge", "healthUrl": "http:///readyz"}},
+			wantErr:    true,
+		},
+		{
+			name:       "a non-http scheme",
+			components: []map[string]string{{"name": "b", "kind": "bridge", "healthUrl": "grpc://b:8090"}},
+			wantErr:    true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validConsolidationConfig()
+			viper.Set("topology.enabled", true)
+			viper.Set("topology.components", tc.components)
+
+			err := validateConfig()
+
+			if tc.wantErr && err == nil {
+				t.Fatalf("validateConfig(%v) = nil, want error", tc.components)
+			}
+
+			if !tc.wantErr && err != nil {
+				t.Fatalf("validateConfig(%v) = %v, want nil", tc.components, err)
+			}
+		})
+	}
+}
+
+// TestValidateTopologyComponentsCapped covers the bound. It is a real limit rather than a
+// formality: every entry is an outbound request on every probe round, and the component name is a
+// metric attribute, so an unbounded list is both unbounded work and unbounded cardinality.
+func TestValidateTopologyComponentsCapped(t *testing.T) {
+	validConsolidationConfig()
+	viper.Set("topology.enabled", true)
+
+	components := make([]map[string]string, 0, hippocampus.MaxTopologyComponents+1)
+
+	for i := range hippocampus.MaxTopologyComponents + 1 {
+		components = append(components, map[string]string{
+			"name":      "bridge-" + strconv.Itoa(i),
+			"kind":      "bridge",
+			"healthUrl": "http://bridge:8090",
+		})
+	}
+
+	if err := validateConfig(); err != nil {
+		t.Fatalf("the baseline config is invalid: %v", err)
+	}
+
+	viper.Set("topology.components", components)
+
+	if err := validateConfig(); err == nil {
+		t.Fatalf("validateConfig accepted %d components, more than the %d cap", len(components), hippocampus.MaxTopologyComponents)
+	}
+
+	viper.Set("topology.components", components[:hippocampus.MaxTopologyComponents])
+
+	if err := validateConfig(); err != nil {
+		t.Fatalf("validateConfig rejected exactly the cap: %v", err)
 	}
 }

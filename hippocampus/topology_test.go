@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -756,4 +761,355 @@ func attributeValue(node *contract.TopologyNode, key string) string {
 	}
 
 	return ""
+}
+
+// --------------------------------------------------------------- declared components
+
+// declaredServer builds a server whose deployment includes components an operator has declared.
+func declaredServer(t *testing.T, components ...TopologyComponent) *Server {
+	t.Helper()
+
+	s := newTopologyServer(t)
+	s.topology.components = components
+	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+
+	return s
+}
+
+// TestDeclaredComponentsAppearAsDeclared covers the half of the deployment an instance cannot
+// discover. What matters is the source: a declared component is not something this instance found,
+// and a client that rendered it as though it were would be presenting a survey it never made.
+func TestDeclaredComponentsAppearAsDeclared(t *testing.T) {
+	s := declaredServer(t,
+		TopologyComponent{Name: "nats-bridge", Kind: "bridge", HealthURL: "http://nats-bridge:8090"},
+		TopologyComponent{Name: "ingestor", Kind: "ingestor", HealthURL: "http://ingestor:8090"},
+	)
+
+	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
+	if err != nil {
+		t.Fatalf("GetTopology: %s", err)
+	}
+
+	nodes := nodesById(res)
+
+	bridge, ok := nodes["declared:nats-bridge"]
+	if !ok {
+		t.Fatalf("the declared bridge has no node; got %v", slices.Sorted(maps.Keys(nodes)))
+	}
+
+	if bridge.GetSource() != contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_DECLARED {
+		t.Errorf("a declared component is sourced %s, want DECLARED", bridge.GetSource())
+	}
+
+	if bridge.GetKind() != contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_BRIDGE {
+		t.Errorf("kind = %s, want BRIDGE", bridge.GetKind())
+	}
+
+	if ingestor := nodes["declared:ingestor"]; ingestor.GetKind() != contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_INGESTOR {
+		t.Errorf("the ingestor's kind = %s, want INGESTOR", ingestor.GetKind())
+	}
+
+	// The id is namespaced so an operator naming a component "store" cannot quietly replace the
+	// primary store's node on the diagram.
+	if _, ok := nodes["nats-bridge"]; ok {
+		t.Error("a declared component claimed an unnamespaced id")
+	}
+}
+
+// TestDeclaredComponentEdgesPointInward is the one thing the declared half really adds, and the one
+// thing easy to get backwards. A bridge holds an address for this service; this service holds only a
+// health endpoint for it, which is not the connection being drawn. Every other edge in the graph
+// runs outward, so an inward one is what makes the picture a deployment rather than a dependency
+// list.
+func TestDeclaredComponentEdgesPointInward(t *testing.T) {
+	s := declaredServer(t, TopologyComponent{Name: "mqtt-bridge", Kind: "bridge", HealthURL: "http://mqtt:8090"})
+
+	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
+	if err != nil {
+		t.Fatalf("GetTopology: %s", err)
+	}
+
+	found := false
+
+	for _, edge := range res.GetEdges() {
+		if edge.GetFromId() != "declared:mqtt-bridge" {
+			continue
+		}
+
+		found = true
+
+		if edge.GetToId() != topologyNodeSelf {
+			t.Errorf("the declared edge runs to %q, want this instance", edge.GetToId())
+		}
+	}
+
+	if !found {
+		t.Error("the declared component has no edge; it would be drawn attached to nothing")
+	}
+
+	// And the reverse must not exist: this instance does not dial a bridge.
+	for _, edge := range res.GetEdges() {
+		if edge.GetFromId() == topologyNodeSelf && edge.GetToId() == "declared:mqtt-bridge" {
+			t.Error("an outbound edge to a declared component was drawn; the connection runs the other way")
+		}
+	}
+}
+
+// TestDeclaredComponentsAreAlwaysProbed pins that a declared component gets a probe. One without is
+// a comment in a config file rendered as a live component, which is why healthUrl is required.
+func TestDeclaredComponentsAreAlwaysProbed(t *testing.T) {
+	s := declaredServer(t, TopologyComponent{Name: "cli-host", Kind: "client", HealthURL: "http://host:9000"})
+
+	if _, ok := s.topologyProbers()["declared:cli-host"]; !ok {
+		t.Error("a declared component has no probe")
+	}
+}
+
+// TestHealthProbeURL covers the path rule: the common case is an operator writing the address the
+// bridge serves its health on and nothing else, so a bare URL gets /readyz appended; a URL carrying
+// a path belongs to something behind a proxy and is used as written.
+func TestHealthProbeURL(t *testing.T) {
+	for raw, want := range map[string]string{
+		"http://bridge:8090":          "http://bridge:8090/readyz",
+		"http://bridge:8090/":         "http://bridge:8090/readyz",
+		"https://bridge.internal":     "https://bridge.internal/readyz",
+		"http://proxy/bridge/healthz": "http://proxy/bridge/healthz",
+		"":                            "",
+	} {
+		if got := healthProbeURL(raw); got != want {
+			t.Errorf("healthProbeURL(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TestProbeHealthEndpoint covers the three outcomes, and the 503 is the point of the whole
+// exercise: the bridges and the ingestor already serve a per-dependency breakdown at /readyz, so a
+// component that is running and cannot reach its own broker says so, instead of rendering
+// identically to one that cannot reach us.
+func TestProbeHealthEndpoint(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status       int
+		body         string
+		wantErr      bool
+		wantDegraded bool
+		wantDetail   string
+	}{
+		"ready": {
+			status: http.StatusOK,
+			body:   `{"status":"ready","component":"nats-bridge","dependencies":{"hippocampus":"ok"}}`,
+		},
+		"not ready, and says which end": {
+			status:       http.StatusServiceUnavailable,
+			body:         `{"status":"not ready","component":"nats-bridge","dependencies":{"hippocampus":"unreachable","broker":"ok"}}`,
+			wantErr:      true,
+			wantDegraded: true,
+			wantDetail:   "hippocampus",
+		},
+		"not ready with no breakdown": {
+			status:       http.StatusServiceUnavailable,
+			body:         `{}`,
+			wantErr:      true,
+			wantDegraded: true,
+			wantDetail:   "not ready",
+		},
+		"not ready and not even JSON": {
+			status:       http.StatusServiceUnavailable,
+			body:         "Service Unavailable",
+			wantErr:      true,
+			wantDegraded: true,
+			wantDetail:   "not ready",
+		},
+		// A wrong URL is a configuration mistake rather than a component that is down, and the code
+		// is what makes the two distinguishable.
+		"wrong path": {
+			status:     http.StatusNotFound,
+			body:       "not found",
+			wantErr:    true,
+			wantDetail: "404",
+		},
+		// Anything that answers 200 is healthy, whether or not it is one of ours.
+		"something else entirely": {
+			status: http.StatusOK,
+			body:   "<html>fine</html>",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+
+			t.Cleanup(server.Close)
+
+			err := probeHealthEndpoint(context.Background(), server.URL+"/readyz")
+
+			if tc.wantErr && err == nil {
+				t.Fatal("the probe reported success")
+			}
+
+			if !tc.wantErr && err != nil {
+				t.Fatalf("the probe failed: %s", err)
+			}
+
+			if degraded := errors.Is(err, errDeclaredDegraded); degraded != tc.wantDegraded {
+				t.Errorf("degraded = %v, want %v (err: %v)", degraded, tc.wantDegraded, err)
+			}
+
+			if tc.wantDetail != "" && !strings.Contains(err.Error(), tc.wantDetail) {
+				t.Errorf("the error does not mention %q: %s", tc.wantDetail, err)
+			}
+		})
+	}
+}
+
+// TestProbeHealthEndpointUnreachable covers a component that is not answering at all - which must be
+// distinguishable from one answering 503, since they are different problems with different owners.
+func TestProbeHealthEndpointUnreachable(t *testing.T) {
+	err := probeHealthEndpoint(context.Background(), "http://127.0.0.1:1/readyz")
+
+	if err == nil {
+		t.Fatal("the probe reported success against a port with nothing listening")
+	}
+
+	if errors.Is(err, errDeclaredDegraded) {
+		t.Error("an unreachable component was reported as degraded")
+	}
+
+	if err := probeHealthEndpoint(context.Background(), ""); err == nil {
+		t.Error("an empty health URL reported success")
+	}
+}
+
+// TestDeclaredComponentStatusReachesTheResponse is the end-to-end form: a component reporting itself
+// not ready must arrive at the caller as DEGRADED with its own explanation, not as a bare colour.
+func TestDeclaredComponentStatusReachesTheResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not ready","dependencies":{"hippocampus":"unreachable"}}`))
+	}))
+
+	t.Cleanup(server.Close)
+
+	s := declaredServer(t, TopologyComponent{Name: "bridge", Kind: "bridge", HealthURL: server.URL})
+
+	s.probeTopologyOnce(s.topologyProbers())
+
+	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
+	if err != nil {
+		t.Fatalf("GetTopology: %s", err)
+	}
+
+	node := nodesById(res)["declared:bridge"]
+
+	if node.GetStatus() != contract.TopologyStatus_TOPOLOGY_STATUS_DEGRADED {
+		t.Fatalf("the component is %s, want DEGRADED", node.GetStatus())
+	}
+
+	if !strings.Contains(node.GetStatusDetail(), "hippocampus") {
+		t.Errorf("the status does not name the failing dependency: %q", node.GetStatusDetail())
+	}
+
+	if node.GetCheckedAt() == 0 {
+		t.Error("the component reports no checked_at after a probe")
+	}
+}
+
+// TestProbeRoundRunsConcurrently pins the reason the round stopped being sequential. With the
+// declared list operator-controlled, a sequential round no longer fits inside its own interval - so
+// this asserts a round of slow probes takes closer to one timeout than to N of them.
+func TestProbeRoundRunsConcurrently(t *testing.T) {
+	s := newTopologyServer(t)
+	s.topology.probeTimeout = 200 * time.Millisecond
+
+	probers := make(map[string]topologyProbe, topologyProbeConcurrency)
+
+	for i := range topologyProbeConcurrency {
+		probers[strconv.Itoa(i)] = func(ctx context.Context) error {
+			<-ctx.Done()
+
+			return ctx.Err()
+		}
+	}
+
+	started := time.Now()
+
+	s.probeTopologyOnce(probers)
+
+	// Sequentially this would be topologyProbeConcurrency x 200ms; concurrently it is one 200ms
+	// window plus scheduling. Half the sequential cost is a wide enough margin to be stable on a
+	// loaded machine while still failing if the concurrency is ever removed.
+	if elapsed := time.Since(started); elapsed > time.Duration(topologyProbeConcurrency)*100*time.Millisecond {
+		t.Errorf("a round of %d slow probes took %s; they ran sequentially", len(probers), elapsed)
+	}
+
+	if got := len(s.topologyProbeResults()); got != len(probers) {
+		t.Errorf("published %d results for %d probes", got, len(probers))
+	}
+}
+
+// TestTopologyComponentKinds pins the accepted kind names. They are a contract with every deployed
+// config file - main.go's validation refuses anything else at startup - so the set is derived from
+// the table here rather than restated there, and this is what stops the two drifting.
+func TestTopologyComponentKinds(t *testing.T) {
+	kinds := TopologyComponentKinds()
+
+	if !slices.IsSorted(kinds) {
+		t.Errorf("the kind list is unsorted, so a validation message would reorder itself: %v", kinds)
+	}
+
+	for _, want := range []string{"bridge", "client", "ingestor", "mcp"} {
+		if !slices.Contains(kinds, want) {
+			t.Errorf("the kind %q is no longer accepted; every config file naming it now fails to start", want)
+		}
+	}
+
+	if len(kinds) != len(topologyComponentKinds) {
+		t.Errorf("TopologyComponentKinds returned %d of %d kinds", len(kinds), len(topologyComponentKinds))
+	}
+}
+
+// TestDeclaredNodeFallsBackOnAnUnknownKind covers the branch validateConfig makes unreachable in a
+// running service. Drawing a generic client beats drawing nothing if a kind ever does get through -
+// a component missing from the diagram is far harder to notice than one with the wrong shape.
+func TestDeclaredNodeFallsBackOnAnUnknownKind(t *testing.T) {
+	spec := declaredNodeSpec(TopologyComponent{Name: "odd", Kind: "broker", HealthURL: "http://x:1"})
+
+	if spec.kind != contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_CLIENT {
+		t.Errorf("kind = %s, want the CLIENT fallback", spec.kind)
+	}
+
+	if !spec.probe {
+		t.Error("a declared component was not marked for probing")
+	}
+}
+
+// TestDeclaredProbeUnknownName covers the lookup: the probe map is built from the node specs, so a
+// name with no component behind it means the two have disagreed, and returning nil leaves the node
+// reporting "not checked" rather than panicking on a nil URL.
+func TestDeclaredProbeUnknownName(t *testing.T) {
+	s := declaredServer(t, TopologyComponent{Name: "known", Kind: "bridge", HealthURL: "http://x:1"})
+
+	if probe := s.declaredProbe("missing"); probe != nil {
+		t.Error("a probe was returned for a component that is not declared")
+	}
+
+	if probe := s.declaredProbe("known"); probe == nil {
+		t.Error("no probe was returned for a declared component")
+	}
+}
+
+// TestTopologyFromViperSurvivesAMalformedComponentList covers the reload path. validateConfig
+// rejects a malformed list at startup, so reaching here means the configuration changed under a
+// running process - and losing the declared half of a diagnostic view is not a reason to refuse to
+// build the server that serves the store.
+func TestTopologyFromViperSurvivesAMalformedComponentList(t *testing.T) {
+	t.Cleanup(func() { viper.Set("topology.components", nil) })
+
+	viper.Set("topology.components", "not a list at all")
+
+	topology := topologyFromViper("v1.2.3")
+
+	if len(topology.components) != 0 {
+		t.Errorf("a malformed list produced %d components", len(topology.components))
+	}
 }

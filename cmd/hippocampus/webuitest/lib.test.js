@@ -1079,3 +1079,46 @@ test("truncateMiddle keeps both ends of an address", () => {
   assert.ok(long.startsWith("postgres:"), long);
   assert.ok(long.endsWith("campus"), long);
 });
+
+// A declared component is the only kind of node that dials IN, which is the whole reason the layout
+// has a left-hand column. Everything else on the diagram is something this instance reaches out to.
+test("topologyLayout places declared components on the inbound side", () => {
+  const res = topologyResponse();
+
+  res.nodes.push({
+    id: "declared:nats-bridge",
+    kind: "TOPOLOGY_NODE_KIND_BRIDGE",
+    name: "nats-bridge",
+    detail: "http://nats-bridge:8090/readyz",
+    source: "TOPOLOGY_NODE_SOURCE_DECLARED",
+    status: "TOPOLOGY_STATUS_DEGRADED",
+    checkedAt: "1699999990000000000",
+  });
+  res.edges.push({
+    fromId: "declared:nats-bridge",
+    toId: "self",
+    label: "writes to",
+  });
+
+  const layout = topologyLayout(res);
+  const byId = new Map(layout.boxes.map((b) => [b.id, b]));
+
+  assert.ok(
+    byId.get("declared:nats-bridge").x < byId.get("self").x,
+    "a declared component belongs to the left of the instance it writes to",
+  );
+
+  // And the edge has to run the same way the connection does, or the picture says the service dials
+  // its own clients.
+  const inbound = layout.links.find((l) => l.fromId === "declared:nats-bridge");
+
+  assert.ok(inbound, "the inbound edge was dropped");
+  assert.equal(inbound.toId, "self");
+});
+
+test("topologySource names a declared component as declared", () => {
+  assert.equal(
+    topologySource("TOPOLOGY_NODE_SOURCE_DECLARED"),
+    "declared by an operator",
+  );
+});

@@ -638,7 +638,11 @@ func (r *renderer) renderTopology(m *contract.GetTopologyResponse) {
 	}
 
 	r.line("")
-	r.line("connections (this instance dials each of these):")
+	// The arrow is the direction the connection is OPENED in, which is not always outward: a
+	// declared component holds an address for this service, not the other way round. That is the
+	// direction a firewall rule and an outage both follow, so it is worth saying rather than
+	// leaving the reader to assume everything here is a dependency.
+	r.line("connections (the arrow points the way the connection is opened):")
 
 	for _, edge := range m.GetEdges() {
 		optional := ""

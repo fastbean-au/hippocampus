@@ -496,7 +496,11 @@ tab and `hippo topology`. On by default.
   "minimumTier": "reader",
   "probeIntervalSeconds": 30,
   "probeTimeoutSeconds": 2,
-  "probeTransferTarget": false
+  "probeTransferTarget": false,
+  "components": [
+    { "name": "nats-bridge", "kind": "bridge", "healthUrl": "http://nats-bridge:8090" },
+    { "name": "ingestor", "kind": "ingestor", "healthUrl": "http://ingestor:8090" }
+  ]
 }
 ```
 
@@ -510,10 +514,33 @@ plane. So every component in the response carries a **source** saying how the in
 about it, and a client is expected to show it. A sparse diagram means nothing has been declared, not
 that nothing is running.
 
+**Declaring the components that dial in.** `topology.components` is how the other half of a
+deployment becomes visible. Each entry is a `name` (also its node id, so it must be unique), a
+`kind` (`bridge`, `ingestor`, `mcp`, or `client` — it selects the shape drawn and nothing else),
+and a `healthUrl`. A URL with no path gets `/readyz` appended, which is what the
+[event-source bridges](eventsource.md) and the [ingestor](ingestor.md) already serve on their
+`--health-port`; a URL carrying a path is used verbatim, for something behind a proxy.
+
+Declaring a component needs **no change to the component itself**. Those binaries already serve the
+shared health surface, and `/readyz` already returns a per-dependency breakdown naming which of
+_their_ two ends is unreachable — so a bridge that cannot reach its broker reports exactly that,
+rather than showing as an unexplained red box. A `503` is therefore reported as **degraded** (it
+answered, and it is telling you why) where a refused connection is **unreachable**, and a `404` —
+a declared URL that is simply wrong — is reported with its status code so the two are
+distinguishable.
+
+`healthUrl` is required: a component that cannot be probed adds nothing the config file does not
+already say, while looking on the diagram exactly like a live one. At most
+32 components may be declared, since each is an outbound request on every probe round. Nothing else
+about a declared component reaches this instance — it is a label and an address to check, not a
+registration, and removing the entry removes it entirely.
+
 **Health comes from a background prober, not from the request.** Statuses are refreshed every
 `probeIntervalSeconds` and each probe is bounded by `probeTimeoutSeconds`; the response reports the
 interval, and a polling client should pace itself by that rather than by a guess. Each component
-also reports **when it was last checked**, so `unreachable` always reads as "when last asked".
+also reports **when it was last checked**, so `unreachable` always reads as "when last asked". A
+round runs a few probes at a time, so a full list of declared components still completes well inside
+one interval.
 Probing inside the RPC was rejected: it would make one console page open a connection to every
 dependency, let a single hung one hang the request, and multiply both by the number of people
 looking.

@@ -563,6 +563,18 @@ been declared rather than nothing is running. This is deliberate: the alternativ
 a registry makes a memory store into a control plane. Nothing in this view can act on another
 component, and nothing is planned to.
 
+**Declare the components that dial in.** The inbound half becomes visible by listing it under
+`topology.components` (see [Deployment topology](configuration.md#deployment-topology)) — and it
+costs nothing on the other side, because the bridges and the ingestor already serve the health
+surface it probes. Their `/readyz` reports a per-dependency breakdown, so a declared bridge that
+cannot reach its broker says so on the diagram, and one that cannot reach _this service_ says that
+instead. Those two look identical from outside and have entirely different owners, which is most of
+the value of declaring them at all.
+
+An edge to a declared component points **inward**, because that is the direction the connection is
+opened in: the bridge holds an address for the service, not the reverse. Every other edge in the
+view runs outward.
+
 What it does answer, and answers well:
 
 - **Which of these two addresses is the consolidator.** The `self` component reports its role, and
@@ -575,6 +587,9 @@ What it does answer, and answers well:
   operation that would otherwise discover them.
 - **Why is an optional feature doing nothing.** Components that are switched off are listed with the
   config key that would enable them (`hippo topology --all`, or the console's toggle).
+- **Is a declared bridge writing, and if not, whose problem is it.** A degraded component names the
+  end it cannot reach; an unreachable one is not answering at all; a `404` is a `healthUrl` that is
+  wrong rather than a component that is down.
 
 Two cautions. Statuses come from a **background prober**, so every one is a snapshot and each
 component reports when it was last checked — `unreachable` means "when last asked", not "now". And

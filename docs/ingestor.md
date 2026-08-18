@@ -247,6 +247,13 @@ The checks call the standard gRPC health service, which needs no token and which
 from its own database readiness — so "ready" means the far end can actually serve, not merely that a
 socket opened.
 
+That same endpoint is what a Hippocampus instance probes when the ingestor is listed under its
+`topology.components` (see
+[Deployment topology](configuration.md#deployment-topology)): the breakdown above becomes the
+ingestor's status on the central instance's Deployment tab, so "the ingestor cannot reach the edge"
+and "the ingestor cannot reach us" are told apart from the console rather than from two sets of
+logs. Declaring it needs no change here — the endpoint already exists for the orchestrator.
+
 ### Metrics
 
 `--metrics` exports over OTLP/gRPC to `--otlp-endpoint`, exactly as the service does.

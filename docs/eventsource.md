@@ -580,6 +580,13 @@ Hippocampus instance the bridge writes to can actually serve:
 }
 ```
 
+That endpoint doubles as the bridge's entry in a Hippocampus instance's deployment view: list the
+bridge under the service's `topology.components` (see
+[Deployment topology](configuration.md#deployment-topology)) and the breakdown above becomes its
+status on the console's Deployment tab. Nothing changes here to allow it — the endpoint already
+exists for the orchestrator — and it is the only way a service learns that a bridge exists at all,
+since a bridge is an outbound client that the service holds no address for.
+
 **The broker is deliberately not part of readiness.** Both of its failure modes are already handled:
 a broker unreachable at startup exits the process before the consume loop begins — the supervisor's
 problem, and visible as a restart — while a mid-run disconnect is the adapter's own to retry. What

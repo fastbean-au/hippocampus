@@ -4,7 +4,9 @@ import (
 	"context"
 	"net"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -47,9 +49,10 @@ type Topology struct {
 	enabled     bool
 	minimumTier string
 
-	// probeInterval is how often every probe runs, and probeTimeout bounds one of them. Probes run
-	// sequentially (see probeOnce), so a round takes at most len(probers) x probeTimeout; keeping
-	// the interval comfortably above that is what stops a round still running when the next is due.
+	// probeInterval is how often every probe runs, and probeTimeout bounds one of them. A round runs
+	// its probes a few at a time (see probeTopologyOnce), so it takes roughly
+	// len(probers)/topologyProbeConcurrency x probeTimeout; keeping the interval above that is what
+	// stops a round still running when the next is due.
 	probeInterval time.Duration
 	probeTimeout  time.Duration
 
@@ -58,11 +61,66 @@ type Topology struct {
 	// enough reason to hold a connection open to somebody else's service every interval.
 	probeTransferTarget bool
 
+	// components are the parts of the deployment an operator has declared, because this instance
+	// cannot discover them: they dial IN. Empty by default, which is why a fresh deployment's view
+	// shows only what it dials.
+	components []TopologyComponent
+
 	version string
 
 	nodes []topologyNodeSpec
 	edges []topologyEdgeSpec
 }
+
+// TopologyComponent is one declared component, as read from topology.components.
+//
+// The whole of it is three fields, and that is the point: this is a label and an address to probe,
+// not a registration. The instance learns nothing from a component beyond what its health endpoint
+// answers, cannot reach it for anything else, and forgets it entirely if the entry is removed.
+type TopologyComponent struct {
+	// Name labels the component in the view and forms its node id. It must be unique among the
+	// declared components, since a client keeps per-node state keyed by that id.
+	Name string `mapstructure:"name"`
+
+	// Kind selects the shape drawn for it and nothing else - the service never treats a bridge
+	// differently from an ingestor. See topologyComponentKinds for the accepted values.
+	Kind string `mapstructure:"kind"`
+
+	// HealthURL is where to probe it. A URL with no path gets "/readyz" appended, which is what the
+	// bridges and the ingestor serve on their --health-port; a URL carrying a path is used verbatim,
+	// for anything sitting behind a proxy or serving its health on a route of its own.
+	HealthURL string `mapstructure:"healthUrl"`
+}
+
+// topologyComponentKinds maps the kind an operator writes onto the node kind drawn for it. It is
+// the accepted set: main.go's validation rejects anything else at startup rather than quietly
+// drawing an unlabelled box, since a misspelled kind is otherwise indistinguishable from a
+// component that simply looks odd on the diagram.
+var topologyComponentKinds = map[string]contract.TopologyNodeKind{
+	"bridge":   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_BRIDGE,
+	"ingestor": contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_INGESTOR,
+	"mcp":      contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_MCP_BRIDGE,
+	"client":   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_CLIENT,
+}
+
+// TopologyComponentKinds returns the accepted kind names, sorted, for validation messages and
+// documentation. Derived from the table rather than restated, so the two cannot disagree.
+func TopologyComponentKinds() []string {
+	out := make([]string, 0, len(topologyComponentKinds))
+
+	for kind := range topologyComponentKinds {
+		out = append(out, kind)
+	}
+
+	sort.Strings(out)
+
+	return out
+}
+
+// MaxTopologyComponents caps the declared list. It is a real bound rather than a formality: every
+// entry is an outbound HTTP request on every probe round, and the component name is a metric
+// attribute, so an unbounded list would be both unbounded work and unbounded cardinality.
+const MaxTopologyComponents = 32
 
 // topologyNodeSpec is a node's fixed half: everything derived from configuration, which cannot
 // change while the process runs. The moving half - status, and when it was last checked - is merged
@@ -111,6 +169,10 @@ const (
 	topologyNodeTransfer   = "transfer"
 	topologyNodeIdP        = "idp"
 	topologyNodeCollector  = "collector"
+
+	// topologyDeclaredPrefix namespaces a declared component's id, so an operator naming a component
+	// "store" cannot collide with the primary store's node and quietly replace it on the diagram.
+	topologyDeclaredPrefix = "declared:"
 )
 
 // GetTopology reports the deployment as this instance understands it.
@@ -213,6 +275,15 @@ func topologyFromViper(version string) Topology {
 		t.probeTimeout = defaultTopologyProbeTimeout
 	}
 
+	if err := viper.UnmarshalKey("topology.components", &t.components); err != nil {
+		// Not fatal, and deliberately so: a malformed list is already rejected at startup by
+		// validateConfig, so reaching here means something changed under a running process. Losing
+		// the declared half of a diagnostic view is not a reason to take the store down with it.
+		log.Errorf("failed to read topology.components: %s", err.Error())
+
+		t.components = nil
+	}
+
 	return t
 }
 
@@ -242,9 +313,15 @@ func (s *Server) buildTopologySpecs() ([]topologyNodeSpec, []topologyEdgeSpec) {
 		collectorNodeSpec(),
 	}
 
-	// Every edge runs outward from this instance, because every one of these connections is one it
-	// opens - including the identity provider, which it fetches keys FROM rather than being called
-	// by. Direction here is "who dials", which is what a firewall rule and an outage both follow.
+	for _, component := range s.topology.components {
+		nodes = append(nodes, declaredNodeSpec(component))
+	}
+
+	// Every edge below runs outward from this instance, because every one of those connections is
+	// one it opens - including the identity provider, which it fetches keys FROM rather than being
+	// called by. Direction here is "who dials", which is what a firewall rule and an outage both
+	// follow, and it is also what makes the declared components point the OTHER way (see below):
+	// they are the half of the deployment that dials in.
 	edges := []topologyEdgeSpec{
 		{from: topologyNodeSelf, to: topologyNodeStore, label: "reads/writes"},
 		{from: topologyNodeSelf, to: topologyNodeSearch, label: "indexes", optional: true},
@@ -256,7 +333,48 @@ func (s *Server) buildTopologySpecs() ([]topologyNodeSpec, []topologyEdgeSpec) {
 		{from: topologyNodeSelf, to: topologyNodeCollector, label: "exports to", optional: true},
 	}
 
+	// Inbound, and the only edges in the graph that are. A declared component holds an address for
+	// this service; this service holds only a health endpoint for it, which is not the connection
+	// being drawn. Getting the arrow the right way round is most of what the declared half adds -
+	// it is what makes a diagram show a deployment rather than a dependency list.
+	for _, component := range s.topology.components {
+		edges = append(edges, topologyEdgeSpec{
+			from:  topologyDeclaredPrefix + component.Name,
+			to:    topologyNodeSelf,
+			label: "writes to",
+		})
+	}
+
 	return nodes, edges
+}
+
+// declaredNodeSpec describes a component an operator has told this instance about.
+//
+// It is always probed, because a declared component with no health endpoint has told the view
+// nothing it did not already know: the name in the config file. That is also why HealthURL is
+// required rather than optional - a component that cannot be checked is a comment, and a comment
+// belongs in the config file rather than on a diagram where it looks like a live component.
+func declaredNodeSpec(component TopologyComponent) topologyNodeSpec {
+	kind, ok := topologyComponentKinds[strings.ToLower(strings.TrimSpace(component.Kind))]
+	if !ok {
+		// validateConfig refuses an unknown kind at startup, so this is unreachable in a running
+		// service; drawing it as a generic client beats drawing nothing if it ever is reached.
+		kind = contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_CLIENT
+	}
+
+	return topologyNodeSpec{
+		id:     topologyDeclaredPrefix + component.Name,
+		kind:   kind,
+		name:   component.Name,
+		detail: redactEndpoint(component.HealthURL),
+		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_DECLARED,
+		probe:  true,
+		attributes: []topologyAttribute{
+			{key: "kind", value: strings.ToLower(strings.TrimSpace(component.Kind))},
+			{key: "health_url", value: redactEndpoint(healthProbeURL(component.HealthURL))},
+			{key: "declared_in", value: "topology.components"},
+		},
+	}
 }
 
 // selfNodeSpec describes this instance. Its attributes are the settings an operator asks about
