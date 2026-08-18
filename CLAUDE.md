@@ -472,7 +472,29 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     the absent node - so there is nothing to colour red) and **two or more**, logged on change rather
     than every round. And the write and the read **share one goroutine and one cadence**, because an
     instance that appeared in others' views while showing none of its own would be an asymmetry with
-    no explanation on either side. Phases 1-3 of TODO 75; observed callers are phase 4.
+    no explanation on either side. (9) **Callers are OBSERVED, and that source is deliberately the
+    weakest** (`hippocampus/observed.go`, phase 4): a client presenting a verified token is drawn
+    from its `client_id`, with its roles, its scope (never its GROUPS - the view is reader-visible by
+    default and a group name is frequently a customer's), its call count and its last call. Five
+    things carry it. It carries **no health** and says `not checked` forever, because a call proves
+    the client was alive at that instant, which is neither "healthy" (a client polling while its real
+    work is broken) nor "unhealthy" (an idle one) - the collector/IdP reasoning again. It reports
+    **nothing without auth**, since a caller is identified by its token and never by a source address
+    (a proxy, or a replaced pod) or a user agent; the `self` node says so, so an empty inbound column
+    is explained rather than read as "nothing is calling". It is **bounded at 32 with LRU eviction**,
+    and that cap is a security property rather than tidiness - the map is keyed on a value that
+    arrives in a token, so an unbounded one would be memory a caller controls; the same fact is why a
+    `client_id` is never a metric attribute. Entries are **never expired on a timer**, only evicted:
+    a bridge whose last call was six hours ago is worth more on the diagram than an absence, which is
+    indistinguishable from a component nobody configured. And it **merges with the declared half** -
+    where a declared component's name matches an observed `client_id` there is ONE node carrying both
+    health and last call, which is the only thing in the view that separates a bridge that is up and
+    writing from one that is up and silent. Recording sits **between authentication and
+    authorisation** on both transports (hence roles rather than the resolved tier): a client whose
+    token is valid and whose role is refused every call is exactly who an operator is looking for
+    here, and behind the authoriser it would never appear. It is the one part of the view written on
+    the request path, so the registry is an RWMutex taken only to insert plus atomics per entry,
+    rather than a snapshot pointer like the prober's and the heartbeat's. TODO 75, phases 1-4.
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.

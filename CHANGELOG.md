@@ -102,6 +102,29 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   and evict live memories to make room for itself. `GetTopologyResponse` gains a `warnings` field
   (additive).
 
+- **Observed callers in the topology view.** Where authentication is on, a client that presents a
+  verified token is now drawn from the `client_id` it authenticated with, reporting the roles that
+  token carried, whether it is group-scoped, how many calls it has made and when it last made one.
+  There is nothing to configure: it is on wherever the view and authentication both are. It closes
+  the last gap in the inbound half of a deployment — until now a component that dialled in was
+  invisible unless an operator remembered to declare it.
+
+  Declaring and observing combine rather than compete. Where a declared component's `name` matches
+  an observed `client_id`, the two are reported as **one** component carrying both its health and
+  its last call — the pair that separates a bridge which is up and writing from a bridge which is up
+  and has written nothing, which nothing in the view could distinguish before.
+
+  Four limits are deliberate. An observed component carries **no health** and reports `not checked`
+  permanently, because a call proves the client was alive at that instant and not that it is
+  working. It reports **nothing when authentication is off**, since a caller is identified by its
+  token and never by a source address or a user agent — and the `self` component says so, so the
+  empty inbound half is explained rather than merely empty. The set is **bounded at 32**, least
+  recently seen evicted first, because the key arrives in a token and an unbounded one would be
+  memory a caller controls; for the same reason a `client_id` is never used as a metric attribute.
+  And entries are **never expired on a timer** — a component whose last call was hours ago stays on
+  the diagram saying so, which is the report of the fault, where one that had quietly vanished would
+  be indistinguishable from one nobody ever ran. No contract change.
+
 ## [0.33.2] - 2026-08-16
 
 ### Changed

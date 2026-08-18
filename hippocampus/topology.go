@@ -238,15 +238,21 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 	// heartbeat goroutine, exactly as the probe results are by the prober.
 	peers := s.peerSnapshotOrEmpty()
 
+	// The observed callers are read here rather than published by a goroutine, because nothing about
+	// them is periodic: an entry is written by whichever request created it, and assembling the view
+	// is the only thing that ever reads the set.
+	now := time.Now()
+	observed := s.buildObservedSnapshot(now)
+
 	out := &contract.GetTopologyResponse{
-		Nodes:                make([]*contract.TopologyNode, 0, len(s.topology.nodes)+len(peers.nodes)),
-		Edges:                make([]*contract.TopologyEdge, 0, len(s.topology.edges)+len(peers.edges)),
+		Nodes:                make([]*contract.TopologyNode, 0, len(s.topology.nodes)+len(peers.nodes)+len(observed.nodes)),
+		Edges:                make([]*contract.TopologyEdge, 0, len(s.topology.edges)+len(peers.edges)+len(observed.edges)),
 		ProbeIntervalSeconds: int64(s.topology.probeInterval / time.Second),
-		GeneratedAt:          time.Now().UnixNano(),
+		GeneratedAt:          now.UnixNano(),
 		Warnings:             peers.warnings,
 	}
 
-	for _, spec := range append(append([]topologyNodeSpec{}, s.topology.nodes...), peers.nodes...) {
+	for _, spec := range concatSpecs(s.topology.nodes, peers.nodes, observed.nodes) {
 		node := &contract.TopologyNode{
 			Id:           spec.id,
 			Kind:         spec.kind,
@@ -280,6 +286,13 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 			attributes = append(append([]topologyAttribute{}, attributes...), peers.storeAttributes...)
 		}
 
+		// Likewise for what the observed callers say about a node that was built elsewhere: how many
+		// clients this instance has seen (on self), and whether a declared component has actually
+		// called (on that component). Both are properties of a node that only the request path knows.
+		if extra, ok := observed.attributes[spec.id]; ok {
+			attributes = append(append([]topologyAttribute{}, attributes...), extra...)
+		}
+
 		for _, attribute := range attributes {
 			node.Attributes = append(node.Attributes, &contract.TopologyAttribute{
 				Key:   attribute.key,
@@ -290,7 +303,7 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 		out.Nodes = append(out.Nodes, node)
 	}
 
-	for _, spec := range append(append([]topologyEdgeSpec{}, s.topology.edges...), peers.edges...) {
+	for _, spec := range concatEdges(s.topology.edges, peers.edges, observed.edges) {
 		out.Edges = append(out.Edges, &contract.TopologyEdge{
 			FromId:   spec.from,
 			ToId:     spec.to,
@@ -842,4 +855,40 @@ func bindAddressOrAll(key string) string {
 	}
 
 	return address
+}
+
+// concatSpecs and concatEdges join the fixed half of the graph to the halves discovered while
+// running, without appending to either. The fixed slices are built once at startup and read by
+// every caller concurrently, so appending to one - which reuses its backing array whenever it has
+// spare capacity - would have two responses writing over each other's peers.
+func concatSpecs(parts ...[]topologyNodeSpec) []topologyNodeSpec {
+	total := 0
+
+	for _, part := range parts {
+		total += len(part)
+	}
+
+	out := make([]topologyNodeSpec, 0, total)
+
+	for _, part := range parts {
+		out = append(out, part...)
+	}
+
+	return out
+}
+
+func concatEdges(parts ...[]topologyEdgeSpec) []topologyEdgeSpec {
+	total := 0
+
+	for _, part := range parts {
+		total += len(part)
+	}
+
+	out := make([]topologyEdgeSpec, 0, total)
+
+	for _, part := range parts {
+		out = append(out, part...)
+	}
+
+	return out
 }

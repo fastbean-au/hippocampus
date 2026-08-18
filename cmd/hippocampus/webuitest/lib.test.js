@@ -1154,6 +1154,49 @@ test("topologyLayout places a discovered peer beside this instance", () => {
   assert.ok(edge.path.length > 0);
 });
 
+// An observed caller is drawn from a verified client_id and carries no health at all, so it is the
+// one node kind whose status is UNSPECIFIED in normal operation. Two things are worth pinning: it
+// belongs in the inbound column beside the declared components, since it is the same half of the
+// deployment arriving by a different route, and its edge runs INWARD - every other edge except the
+// declared ones runs the other way, and a caller reversed would claim the service dials its clients.
+test("topologyLayout places an observed caller in the inbound column", () => {
+  const res = topologyResponse();
+
+  res.nodes.push({
+    id: "observed:nats-bridge",
+    kind: "TOPOLOGY_NODE_KIND_CLIENT",
+    name: "nats-bridge",
+    source: "TOPOLOGY_NODE_SOURCE_OBSERVED",
+    status: "TOPOLOGY_STATUS_UNSPECIFIED",
+    checkedAt: "0",
+  });
+  res.edges.push({
+    fromId: "observed:nats-bridge",
+    toId: "self",
+    label: "calls",
+  });
+
+  const layout = topologyLayout(res);
+  const byId = new Map(layout.boxes.map((b) => [b.id, b]));
+  const caller = byId.get("observed:nats-bridge");
+
+  assert.ok(caller, "the observed caller was not placed");
+  assert.ok(
+    caller.x < byId.get("self").x,
+    "a caller dials in, so it belongs to the left of this instance",
+  );
+
+  const edge = layout.links.find((l) => l.fromId === "observed:nats-bridge");
+
+  assert.ok(edge, "the caller's edge was dropped");
+  assert.equal(edge.toId, "self");
+  assert.ok(edge.path.length > 0);
+
+  // Never probed, and the label has to say so rather than leaving the row blank - a blank reads as
+  // "checked, and fine".
+  assert.equal(topologyCheckedLabel(Date.now(), caller), "not checked");
+});
+
 // The warnings are the only part of the response with no node to render them on, so losing them
 // silently is exactly the failure worth a test.
 test("topologyWarningsHtml renders each warning and escapes it", () => {

@@ -796,8 +796,15 @@ func run(ctx context.Context, version versionInfo) error {
 	if authEnabled {
 		// Authentication first (rejects an invalid/absent token), then authorisation (rejects a
 		// valid token whose role does not grant the RPC), both ahead of the purge gate and logger.
+		//
+		// The deployment view's caller registry sits BETWEEN the two, deliberately: a client whose
+		// token is valid but whose role is refused every call is exactly the one an operator goes
+		// looking for on that diagram, and behind the authoriser it would never be recorded. It is
+		// appended only when auth is on, since a caller with no verified client_id is not recorded
+		// at all.
 		interceptors = append(interceptors,
 			auth.UnaryServerInterceptor(verifier),
+			hipo.InterceptorObserveCaller,
 			authoriser.UnaryServerInterceptor(),
 		)
 	}
@@ -1025,6 +1032,11 @@ func run(ctx context.Context, version versionInfo) error {
 		// unauthenticated request is rejected before any other check, mirroring the gRPC chain
 		// order.
 		if authEnabled {
+			// Inside auth, so it sees the verified claims that middleware stashes, and outside
+			// everything else for the same reason its gRPC counterpart runs before the authoriser.
+			// The open paths never reach the verifier, so they carry no claims and record nothing.
+			handler = hipo.HTTPMiddlewareObserveCaller(handler)
+
 			handler = auth.HTTPMiddleware(verifier, handler, authOpenPaths, sessionCookie)
 		}
 

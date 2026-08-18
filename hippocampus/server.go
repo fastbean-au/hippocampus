@@ -328,6 +328,15 @@ type Server struct {
 	// goroutine, so it needs no lock.
 	lastWarnings []string
 
+	// observed is the bounded registry of clients that have called this instance with a verified
+	// token (see observed.go): the inbound half of the deployment that nothing else here can see,
+	// since a caller holds an address for the service and the service holds none for it.
+	//
+	// Unlike topologyProbes and peers it is not a snapshot pointer, because it is written on the
+	// request path rather than by a goroutine of its own - so it carries its own lock, used for
+	// insertion only, and every field that moves per call is an atomic inside the entry.
+	observed observedCallers
+
 	// transfer carries the Transfer RPC's target settings and the page/batch size shared by all
 	// export paths.
 	transfer Transfer

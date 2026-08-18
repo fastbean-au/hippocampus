@@ -566,6 +566,34 @@ already say, while looking on the diagram exactly like a live one. At most
 about a declared component reaches this instance — it is a label and an address to check, not a
 registration, and removing the entry removes it entirely.
 
+**Clients that call are observed, and need no configuration at all.** Where authentication is on,
+each component presenting a verified token is added to the response under the `client_id` it
+authenticated with, sourced `observed`. There is nothing to set: it is on wherever the view and
+authentication both are. It reports the roles the token carried, whether it is group-scoped (never
+*which* groups — the view is reader-visible by default, and a group name is frequently a customer's),
+how many calls it has made and when it last made one.
+
+Four limits are deliberate, and each is the reason this source is listed last:
+
+- **No health.** A call proves the client was alive at that moment, which is not what a probe
+  proves — an idle client is not broken, and one that polls while its real work has stopped is not
+  healthy. Observed components report `not checked`, permanently.
+- **Nothing without authentication.** A caller is identified by its token and by nothing else,
+  never by a source address (which names a proxy or a replaced pod) or a user agent (which is
+  whatever the caller typed). With `auth.method: none` the `self` component says as much, so the
+  empty inbound half is explained rather than merely empty.
+- **Bounded at 32**, least-recently-seen first, because the key arrives in a token and an unbounded
+  set would be memory a caller controls. The `self` component reports when the view is capped.
+  For the same reason a `client_id` is never used as a metric attribute.
+- **Held in memory, and never expired on a timer.** A restart clears the set; nothing else does. A
+  component whose last call was hours ago stays on the diagram saying so, which is the report of the
+  fault — one that had quietly vanished would be indistinguishable from one nobody ever ran.
+
+Declaring and observing combine rather than compete: where a declared component's `name` matches an
+observed `client_id`, the two are reported as **one** component carrying both its health and its
+last call. That is the pair that separates a bridge which is up and writing from one which is up and
+has written nothing.
+
 **Health comes from a background prober, not from the request.** Statuses are refreshed every
 `probeIntervalSeconds` and each probe is bounded by `probeTimeoutSeconds`; the response reports the
 interval, and a polling client should pace itself by that rather than by a guess. Each component

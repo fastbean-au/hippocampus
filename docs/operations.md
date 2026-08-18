@@ -586,6 +586,29 @@ An edge to a declared component points **inward**, because that is the direction
 opened in: the bridge holds an address for the service, not the reverse. Every other edge in the
 view runs outward.
 
+**Clients that call are shown as they call.** Where authentication is on, a component that presents
+a verified token is drawn from the `client_id` it authenticated with, sourced `observed`. This needs
+no configuration and names real clients — but it is the weakest of the five sources, and
+deliberately so:
+
+- It carries **no health**, permanently. A call proves the client was alive at that instant, which
+  is not what a probe proves: an idle client is not broken, and a client that polls while its real
+  work has stopped is not healthy. Observed components therefore report as unchecked, with the
+  moment of their last call beside them.
+- It reports **nothing when authentication is off**, since a caller is identified by its token and
+  by nothing else — never by a source address, which names a proxy or a pod that has since been
+  replaced. The `self` component says so, so an empty inbound column is not left to be read as
+  "nothing is calling".
+- The set is **capped** (32) and the least recently seen entry is dropped when it fills; it is held
+  in memory, so a restart clears it. Entries are never expired on a timer: a bridge whose last call
+  was six hours ago is more useful on the diagram than an absence would be, because the absence is
+  indistinguishable from a component nobody ever configured.
+
+Declaring a component and observing it are complementary, and they combine: where a declared
+component's name matches an observed `client_id`, the two are shown as **one** component carrying
+both its health and its last call. That pair separates the case nothing else here can — a bridge
+that is up and writing from a bridge that is up and has written nothing.
+
 What it does answer, and answers well:
 
 - **Which of these two addresses is the consolidator.** The `self` component reports its role, and
@@ -609,6 +632,10 @@ What it does answer, and answers well:
 - **Is a declared bridge writing, and if not, whose problem is it.** A degraded component names the
   end it cannot reach; an unreachable one is not answering at all; a `404` is a `healthUrl` that is
   wrong rather than a component that is down.
+- **Who is actually calling this instance, and who is being refused.** An observed component lists
+  the roles its token carried and whether it is group-scoped. A client calling constantly and being
+  refused constantly looks exactly like a healthy one everywhere else; here its roles row says
+  `none`, which is what a token resolving to no known tier gets.
 
 Three cautions. Statuses come from a **background prober**, so every one is a snapshot and each
 component reports when it was last checked — `unreachable` means "when last asked", not "now". Two
