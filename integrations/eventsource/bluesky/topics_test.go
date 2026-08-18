@@ -543,3 +543,66 @@ func TestTopicIndexEvictionRemovesTheTermEntirely(t *testing.T) {
 		t.Error("the evicted memory's sole term should have been removed from the index")
 	}
 }
+
+// TestFeedRepollNeverRelatesAPostToItself is the regression for the self-link storm the live news
+// bridge logged: a feed hands back the same page every read, so the poll path reaches a post that
+// is ALREADY in the topic index, and Related then hands the post back to itself. The service
+// refuses that with InvalidArgument, once per already-seen post per poll.
+func TestFeedRepollNeverRelatesAPostToItself(t *testing.T) {
+	av := newFakeAppView(t, [][]feedItem{{
+		postWithLink("a", "first report", "https://one.example/us/samuel-alito-ethics-fossil-court/"),
+		postWithLink("b", "second report", "https://two.example/news/samuel-alito-ethics-fossil-supreme/"),
+	}})
+
+	client := &fakeClient{}
+
+	b := testBridge(t, Config{
+		Events:      EventsNone,
+		Feed:        "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView: av.server.URL,
+		TopicLinks:  true,
+	}, client)
+
+	for i := range 3 {
+		if err := b.pollFeed(context.Background()); err != nil {
+			t.Fatalf("pollFeed %d: %s", i, err)
+		}
+	}
+
+	for _, call := range client.linkedMemories() {
+		for _, link := range call.links {
+			if link.GetId() == call.id {
+				t.Errorf("linked %q to itself; the service rejects that with InvalidArgument", call.id)
+			}
+		}
+	}
+}
+
+// TestFeedRepollDoesNotRelinkWhatItAlreadyRelated: a post already in the index has already been
+// related, and re-issuing its links every poll is a call per post per poll for no new edge - a
+// related post arriving later builds the edge from its own end, links being symmetric in value.
+func TestFeedRepollDoesNotRelinkWhatItAlreadyRelated(t *testing.T) {
+	av := newFakeAppView(t, [][]feedItem{{
+		postWithLink("a", "first report", "https://one.example/us/samuel-alito-ethics-fossil-court/"),
+		postWithLink("b", "second report", "https://two.example/news/samuel-alito-ethics-fossil-supreme/"),
+	}})
+
+	client := &fakeClient{}
+
+	b := testBridge(t, Config{
+		Events:      EventsNone,
+		Feed:        "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView: av.server.URL,
+		TopicLinks:  true,
+	}, client)
+
+	for i := range 3 {
+		if err := b.pollFeed(context.Background()); err != nil {
+			t.Fatalf("pollFeed %d: %s", i, err)
+		}
+	}
+
+	if got := len(client.linkedMemories()); got != 1 {
+		t.Errorf("issued %d link calls over three polls of the same page, want 1", got)
+	}
+}

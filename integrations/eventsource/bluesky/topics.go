@@ -184,18 +184,49 @@ func newTopicIndex(size int) *topicIndex {
 	}
 }
 
-// Related returns up to limit memory ids sharing at least minShared terms with the given ones,
-// most-overlapping first.
+// RelateAndIndex returns up to limit memory ids sharing at least minShared terms with the given
+// ones, most-overlapping first, and records the memory for the posts that follow.
 //
-// A term held by more than maxDocumentFrequency of the indexed memories is skipped: that is the
-// cheap stand-in for IDF, and it is what stops a section name relating every post to every other.
-func (x *topicIndex) Related(terms []string, minShared int, limit int, maxDocumentFrequency int) []string {
-	if len(terms) == 0 || limit <= 0 {
+// The lookup and the insert are ONE locked operation rather than a Related followed by an Add,
+// because the two orderings are both wrong apart. Indexing first would relate a post to itself;
+// indexing after leaves a window in which a concurrent caller (the poll loop and the firehose
+// consumer both reach here) indexes this id between the two calls, which relates it to itself
+// anyway - the failure the live news bridge logged, once per already-seen post per poll.
+//
+// An id already indexed reports nothing: it has been related once, and relating it again re-issues
+// the same links for no new edge. Nothing is lost - a link's significance counts for BOTH ends, so
+// a related post arriving later builds the edge from its own end.
+func (x *topicIndex) RelateAndIndex(id string, terms []string, minShared int, limit int, maxDocumentFrequency int) []string {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+
+	if _, ok := x.byID[id]; ok {
 		return nil
 	}
 
+	out := x.related(terms, minShared, limit, maxDocumentFrequency)
+
+	x.add(id, terms)
+
+	return out
+}
+
+// Related is the lookup alone, for callers that are not also indexing.
+func (x *topicIndex) Related(terms []string, minShared int, limit int, maxDocumentFrequency int) []string {
 	x.mu.Lock()
 	defer x.mu.Unlock()
+
+	return x.related(terms, minShared, limit, maxDocumentFrequency)
+}
+
+// related is the unlocked lookup. The caller holds x.mu.
+//
+// A term held by more than maxDocumentFrequency of the indexed memories is skipped: that is the
+// cheap stand-in for IDF, and it is what stops a section name relating every post to every other.
+func (x *topicIndex) related(terms []string, minShared int, limit int, maxDocumentFrequency int) []string {
+	if len(terms) == 0 || limit <= 0 {
+		return nil
+	}
 
 	shared := make(map[string]int, len(terms)*2)
 
@@ -233,12 +264,17 @@ func (x *topicIndex) Related(terms []string, minShared int, limit int, maxDocume
 
 // Add records a memory's terms, evicting the oldest memory when full.
 func (x *topicIndex) Add(id string, terms []string) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+
+	x.add(id, terms)
+}
+
+// add is the unlocked insert. The caller holds x.mu.
+func (x *topicIndex) add(id string, terms []string) {
 	if id == "" || len(terms) == 0 {
 		return
 	}
-
-	x.mu.Lock()
-	defer x.mu.Unlock()
 
 	if _, ok := x.byID[id]; ok {
 		return
@@ -313,10 +349,11 @@ func (b *Bridge) linksFor(msg bridge.Message, id string) []*contract.Link {
 		return nil
 	}
 
-	related := b.topics.Related(terms, b.cfg.TopicMinShared, b.cfg.TopicMaxLinks, b.topicFrequencyCap())
-
-	// Indexed AFTER the lookup, so a post never relates to itself.
-	b.topics.Add(id, terms)
+	// One locked lookup-and-index, not a lookup followed by an insert: see RelateAndIndex for why
+	// the two orderings are both wrong apart. It also reports nothing for a post already indexed,
+	// which is what makes this safe to reach repeatedly - a feed hands back the same page every
+	// read, so the poll path calls this for every post it has already related, every poll.
+	related := b.topics.RelateAndIndex(id, terms, b.cfg.TopicMinShared, b.cfg.TopicMaxLinks, b.topicFrequencyCap())
 
 	if len(related) == 0 {
 		return nil
@@ -325,7 +362,18 @@ func (b *Bridge) linksFor(msg bridge.Message, id string) []*contract.Link {
 	out := make([]*contract.Link, 0, len(related))
 
 	for _, target := range related {
+		// Belt and braces. RelateAndIndex cannot hand back the id it was given, and a link to
+		// itself is one the service refuses outright - so if the invariant ever breaks, the cost is
+		// one lost link rather than an InvalidArgument for every post the bridge writes.
+		if target == id {
+			continue
+		}
+
 		out = append(out, &contract.Link{Id: target, Significance: b.cfg.TopicLinkSignificance})
+	}
+
+	if len(out) == 0 {
+		return nil
 	}
 
 	return out

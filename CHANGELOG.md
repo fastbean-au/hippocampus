@@ -146,7 +146,32 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   feed, all at one significance, with real engagement the sole differentiator between what survives
   and what decays.
 
+- **Opening an event in the console is now a drill-down rather than a card stacked on top of the
+  list.** An event and its memories used to appear above the events list, the filter and the create
+  form — so the thing you had asked for arrived with a page of controls beneath it that no longer
+  applied to what was on screen, and on a long list it was easy to miss that anything had opened at
+  all. The Events tab now shows one thing at a time: the list, or one event. A **Back** button is the
+  way out, and it names where it goes, because an event id is a link in four tables across three
+  tabs and returning to the events list is wrong for the three-quarters of them that were not opened
+  from it — following an event from a memory row lands you back on Memories, with the results you
+  had. Clicking a tab in the nav leaves the drill-down as well, so arriving at Events by hand always
+  finds the list. Each row also carries an explicit **Open ›** button beside its other actions: every
+  other thing a row can do to an event was already a button, and the one that navigates was the one
+  that did not look like a control.
+
 ### Fixed
+
+- **The Bluesky bridge no longer asks the service to link a post to itself.** A feed generator hands
+  back the same page on every poll, and the topic-linking path was reached again for every post it
+  had already related — by which point that post was in the term index and so came back as its own
+  strongest match. Each poll therefore produced one rejected `LinkMemories` call per already-seen
+  post, filling the bridge's log with `InvalidArgument … link N links memory to itself` while the
+  posts themselves stored fine. The lookup and the index insert are now one locked operation that
+  reports nothing for a post already indexed, which closes the ordering race behind it as well: the
+  poll loop and the firehose consumer both reach that code, and either could index a post between
+  the other's lookup and insert. A post already related is simply not related again — nothing is
+  lost, since a link's significance counts for both of its ends, so a related post arriving later
+  builds the edge from its own end.
 
 - **A results table's column headings now stay put while its rows scroll.** Listing a page of
   memories, or a wide set of search hits, scrolled the headings off the top after the first few

@@ -975,7 +975,14 @@ function showTab(name) {
 }
 
 document.querySelectorAll("nav button").forEach((b) => {
-  b.addEventListener("click", () => showTab(b.dataset.tab));
+  b.addEventListener("click", () => {
+    // A hand-driven navigation ends the drill-down. Without this, clicking Events while an event
+    // opened from the Memories tab was still on screen would arrive at the Events tab showing one
+    // event's memories where its list belongs, under a Back button offering to send you to
+    // Memories - which is not where you asked to go.
+    closeEvent();
+    showTab(b.dataset.tab);
+  });
 });
 
 // ------------------------------------------------------------------ oidc login (idp mode only)
@@ -1316,6 +1323,62 @@ let eventSubject = "";
 let eventSubjectMemories = 0;
 let eventSubjectGroup = "";
 
+// eventOrigin is the tab the drill-down was entered from, so Back returns the user to where they
+// were rather than always to the events list. An event id is a link in four tables on three tabs,
+// and landing on the Events tab's list after following one from a memory row is the same
+// disorientation the card's own comment describes, one step later.
+let eventOrigin = "events";
+
+// eventDetail is the drill-down itself: an open event REPLACES the Events tab's list, filter and
+// create form rather than sitting above them. Stacked, the memories of the event you asked for sat
+// on top of a list you were no longer using, and the tab grew a second scroll's worth of controls
+// that did not apply to what was on screen.
+//
+// The two results cards are deliberately hidden here but never un-hidden here: which of them is
+// visible belongs to eventMode, and #candidates-card also carries .consolidation-only, which must
+// keep deciding. So leaving the detail view hands them back to eventMode rather than reaching for
+// .hidden directly.
+function eventDetail(on) {
+  $("event-card").classList.toggle("hidden", !on);
+
+  ["event-form-card", "event-filter-card"].forEach((id) =>
+    $(id).classList.toggle("hidden", on),
+  );
+
+  if (!on) {
+    eventMode(eventModeName);
+
+    return;
+  }
+
+  $("events-card").classList.add("hidden");
+  $("candidates-card").classList.add("hidden");
+}
+
+// currentTab reads the tab in view off the nav rather than from a variable, so it cannot disagree
+// with what showTab last did.
+function currentTab() {
+  return document.querySelector("nav button.active")?.dataset.tab || "events";
+}
+
+// backLabel names the destination, derived from the nav button's own text so a tab added later
+// needs nothing here. The one exception is the Events tab, where the destination is whichever of
+// the two lists is selected - "Back to events" would be wrong for an event opened from the
+// candidates list.
+function backLabel(origin) {
+  if (origin === "events") {
+    return eventModeName === "summarise"
+      ? "\u2039 Back to candidates"
+      : "\u2039 Back to events";
+  }
+
+  const nav = document.querySelector(`nav button[data-tab="${origin}"]`);
+
+  return nav
+    ? "\u2039 Back to " + nav.textContent.trim().toLowerCase()
+    : "\u2039 Back";
+}
+
 async function openEvent(id) {
   try {
     const data = await api(
@@ -1326,17 +1389,29 @@ async function openEvent(id) {
     const memories = ev.memories || [];
     const end = ev.timeEnd && ev.timeEnd !== "0" ? ageCell(ev.timeEnd) : "open";
 
+    // The origin is captured BEFORE the tab switch, and only when no event is already open:
+    // afterSummarise re-opens the event that is on screen, and following an event link from the
+    // links card opens another one, and neither is the user arriving from somewhere new.
+    const alreadyOpen = !$("event-card").classList.contains("hidden");
+
+    if (!alreadyOpen) eventOrigin = currentTab();
+
     // The links live in all three tables; surface the result on the EVENTS tab wherever it was
     // clicked from, so an event always opens in one known place - and that place is the tab the
     // event belongs to. It used to be the Search tab, which put an event's memories where search
     // results go, above a query form the user had not filled in.
-    document.querySelector('nav button[data-tab="events"]').click();
+    //
+    // showTab directly rather than clicking the nav button: that button's listener now leaves the
+    // drill-down, which is right for a hand-driven navigation and exactly wrong for this one.
+    showTab("events");
+
+    $("event-back").textContent = backLabel(eventOrigin);
 
     eventSubject = ev.id || id;
     eventSubjectMemories = memories.length;
     eventSubjectGroup = ev.group || "";
 
-    $("event-card").classList.remove("hidden");
+    eventDetail(true);
     $("event-view").innerHTML = `<div class="event-head">
       <h3>${esc(ev.name || ev.id)}</h3>
       <div class="muted">${esc(ev.description || "")}</div>
@@ -1361,13 +1436,25 @@ async function openEvent(id) {
   }
 }
 
+// closeEvent leaves the drill-down: the Events tab gets its list back, and the page goes back to
+// the tab the event was opened from.
+//
+// It is safe to call when nothing is open, which is what lets the nav listener call it on every tab
+// click without asking. The wasOpen check is what keeps that free: without it, clicking a nav
+// button would fire a second showTab to whichever tab an event was last opened from.
 function closeEvent() {
+  const wasOpen = !$("event-card").classList.contains("hidden");
+
   eventSubject = "";
   eventSubjectMemories = 0;
   eventSubjectGroup = "";
-  $("event-card").classList.add("hidden");
+  eventDetail(false);
   $("event-view").innerHTML = "";
   closeSummaryForm();
+
+  if (wasOpen && eventOrigin !== currentTab()) showTab(eventOrigin);
+
+  eventOrigin = "events";
 }
 
 // ---------------------------------------------------------------- summarisation
@@ -3112,6 +3199,9 @@ function eventRow(e) {
     Number(e.memoryCount || 0) || (e.memories && e.memories.length) || 0;
 
   // The name is a link: clicking it opens the event and lists all of its memories (openEvent).
+  // The row carries an "Open" button for the same action, because opening an event now replaces the
+  // whole list and a bare text link is a weak affordance for that - every other thing this row can
+  // do to an event is a button, and the one that navigates was the one that did not look clickable.
   const nameCell = e.id
     ? `<a class="evlink" data-act="open-event" data-event="${esc(e.id)}">${esc(e.name || "(unnamed)")}</a>`
     : esc(e.name || "—");
@@ -3130,6 +3220,7 @@ function eventRow(e) {
     <td class="id">${idCell(e.id)}</td>
     <td class="actions-col">
       <div class="actions">
+        <button class="btn small ghost" data-act="open-event" data-event="${esc(e.id)}">Open&nbsp;&rsaquo;</button>
         <button class="btn small ghost writer-only" data-act="edit-event" data-id="${esc(e.id)}">Edit</button>
         <button class="btn small ghost" data-act="event-links" data-id="${esc(e.id)}">Links</button>
         <button class="btn small ghost writer-only" data-act="end-event" data-id="${esc(e.id)}">End</button>
@@ -3190,8 +3281,15 @@ const EVENT_MODES = {
   summarise: { pane: "ev-pane-summarise", card: "candidates-card" },
 };
 
+// Which pane is selected, held rather than read back off the DOM because the drill-down hides both
+// results cards while an event is open - so at the moment eventDetail needs the answer, the .hidden
+// classes no longer carry it.
+let eventModeName = "list";
+
 function eventMode(mode) {
   if (!EVENT_MODES[mode]) return;
+
+  eventModeName = mode;
 
   Object.entries(EVENT_MODES).forEach(([name, ids]) => {
     const on = name === mode;
@@ -3593,7 +3691,9 @@ function renderTopology() {
   const showDisabled = $("t-show-disabled").checked;
   const layout = topologyLayout(topologyData, { showDisabled });
 
-  $("topology-warnings").innerHTML = topologyWarningsHtml(topologyData.warnings);
+  $("topology-warnings").innerHTML = topologyWarningsHtml(
+    topologyData.warnings,
+  );
   $("topology-diagram").innerHTML = topologySvg(layout);
 
   const drawn = new Set(layout.boxes.map((b) => b.id));

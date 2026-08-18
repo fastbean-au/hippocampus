@@ -449,10 +449,19 @@
          in reads as that form having done something. First, plus the scroll in openEvent, means the
          thing you asked for is the thing at the top. -->
         <div class="card hidden" id="event-card">
+          <!-- "Back", not "Close", because opening an event now REPLACES the tab's list rather than
+           stacking a card above it: the list, the filter and the create form are hidden for as long
+           as one event is open, so this is the only way out and it is a navigation. Its label names
+           where you land - which is the tab the event was opened from, not always the events list -
+           and openEvent writes it, so it cannot claim a destination the button does not go to. -->
           <div class="events-head">
             <h2>Event</h2>
-            <button class="btn ghost small" data-act="close-event">
-              Close
+            <button
+              class="btn ghost small"
+              data-act="close-event"
+              id="event-back"
+            >
+              &lsaquo; Back
             </button>
           </div>
           <div id="event-view"></div>
@@ -518,7 +527,11 @@
             </div>
           </div>
         </div>
-        <div class="card writer-only" data-enter="event-save">
+        <div
+          class="card writer-only"
+          id="event-form-card"
+          data-enter="event-save"
+        >
           <h2 id="ev-form-title">Create event</h2>
           <input id="ev-id" type="hidden" />
           <div class="row">
@@ -577,7 +590,7 @@
 
          The panes swap the RESULTS card below as well as the controls here, so the tab shows one
          list at a time and the thing you asked for is the thing on screen. -->
-        <div class="card" data-enter="event-filter">
+        <div class="card" id="event-filter-card" data-enter="event-filter">
           <div class="subtabs" role="tablist">
             <button
               class="subtab active"

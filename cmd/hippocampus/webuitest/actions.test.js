@@ -239,3 +239,52 @@ test("app.js imports every lib.js function it uses", () => {
     `app.js uses these without importing them, so they are ReferenceErrors at runtime: ${missing.join(", ")}`,
   );
 });
+
+// Opening an event replaces the Events tab's list with the event and its memories, which eventDetail
+// does by id: it hides the create form, the filter and both results cards, and the back button's
+// label is written into one more. A renamed or removed card leaves every one of those a null, and
+// $(null).classList throws — but only at the moment somebody opens an event, which no other test
+// here reaches. Same silent shape as the sub-tab wiring above, and the same cheap answer.
+test("the event drill-down names cards and controls that exist", () => {
+  const fn = app.match(/function eventDetail\(on\) \{(.*?)\n\}/s);
+
+  assert.ok(fn, "eventDetail not found in app.js");
+
+  // Once the class names are taken out, every quoted string left in the body is an element id: the
+  // ones passed straight to $() and the ones in the list it hides by iteration. Plus the back
+  // button, whose label openEvent writes.
+  const body = fn[1].replace(/classList\.\w+\(\s*"[\w-]+"/g, "classList");
+  const named = [...body.matchAll(/"([\w-]+)"/g)].map((m) => m[1]);
+  const ids = [...new Set([...named, "event-back"])];
+
+  assert.ok(ids.length >= 6, `only parsed ${ids.length} ids from eventDetail`);
+
+  for (const id of ids) {
+    assert.ok(
+      html.includes(`id="${id}"`),
+      `the drill-down names #${id}, which is not in the markup`,
+    );
+  }
+});
+
+// The back button is the only way out of the drill-down, so it must be the control that leaves it
+// and it must not be the only thing that does: a hand-driven tab click has to leave it too, or the
+// Events tab keeps showing one event where its list belongs.
+test("leaving the drill-down is wired to the back button and to the nav", () => {
+  assert.match(
+    html,
+    /data-act="close-event"\s+id="event-back"/,
+    "the back button must carry close-event",
+  );
+
+  const nav = app.match(
+    /document\.querySelectorAll\("nav button"\)\.forEach\(\(b\) => \{(.*?)\n\}\);/s,
+  );
+
+  assert.ok(nav, "the nav listener was not found in app.js");
+  assert.match(
+    nav[1],
+    /closeEvent\(\)/,
+    "a nav click must leave the drill-down before switching tabs",
+  );
+});
