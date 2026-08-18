@@ -24,9 +24,10 @@ func (c *countingStore) CountMemoriesFiltered(ctx context.Context, filter db.Mem
 	return c.Store.CountMemoriesFiltered(ctx, filter)
 }
 
-// TestGetMemoriesTotalCountShortcut pins both halves of the rule that lets GetMemories skip its
-// second unbounded pass: a first page that came back short is its own total, and anything else is
-// not.
+// TestGetMemoriesTotalCountShortcut pins the rule that lets GetMemories skip its second unbounded
+// pass: a page that came back short has run off the end of the result set, so at offset 0 its length
+// is the total and at a positive offset the total is the offset plus its length. A full page bounds
+// nothing at any offset, and an empty page at an offset bounds the total only from above.
 //
 // The total has to stay EXACT in every case - it is the number a client pages by - so each case
 // asserts the reported figure as well as whether the store was asked for it.
@@ -70,11 +71,20 @@ func TestGetMemoriesTotalCountShortcut(t *testing.T) {
 			wantTotal: 5, wantRows: 2, wantCounts: 1,
 		},
 		{
-			name:      "a short page at an offset still counts",
+			// OFFSET skipped exactly 3 matching rows to reach a window that then ran out, so the
+			// total is 3 + 2 without asking the store - the last page of any traversal.
+			name:      "a short page at an offset is the offset plus what came back",
 			request:   &contract.GetMemoriesRequest{Limit: 10, Offset: 3},
+			wantTotal: 5, wantRows: 2, wantCounts: 0,
+		},
+		{
+			name:      "a full page at an offset cannot bound the total",
+			request:   &contract.GetMemoriesRequest{Limit: 2, Offset: 1},
 			wantTotal: 5, wantRows: 2, wantCounts: 1,
 		},
 		{
+			// An empty page says only that the total is AT MOST the offset. A bound is not an
+			// answer, so this is the one short page that must still count.
 			name:      "an empty page at an offset past the end still counts",
 			request:   &contract.GetMemoriesRequest{Limit: 10, Offset: 50},
 			wantTotal: 5, wantRows: 0, wantCounts: 1,

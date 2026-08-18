@@ -237,3 +237,52 @@ func TestListingTotalIsCachedAndStale(t *testing.T) {
 		t.Logf("note: an identical filter re-used the entry, as intended (counts=%d)", store.counts)
 	}
 }
+
+// TestPurgeInvalidatesTheListingTotal pins the one exception to the cache's bounded-staleness trade:
+// after Purge (and after a Clear, which reaches the same reset through clearManifest) a cached total
+// is not stale, it is wrong, and the caller has just been told the operation succeeded.
+//
+// It asks at an OFFSET deliberately. At offset 0 an emptied store returns an empty short page, which
+// answers its own total and never consults the cache at all - so that shape would pass whether or not
+// the reset existed. An empty page at a positive offset is the one short page that must still ask for
+// a total, which makes it the only place a surviving entry could surface.
+func TestPurgeInvalidatesTheListingTotal(t *testing.T) {
+	s := newTestServer(t)
+	s.listingCounts = newCountCache(time.Minute)
+
+	store := &countingStore{Store: s.db}
+	s.db = store
+
+	for i := range 4 {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{
+			Id: fmt.Sprintf("m%d", i), TimeStamp: int64(100 + i), Significance: 5, Body: "x",
+		}); err != nil {
+			t.Fatalf("CreateMemory: %s", err)
+		}
+	}
+
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{Limit: 2}); err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if store.counts != 1 {
+		t.Fatalf("expected the first listing to populate the cache, store was asked %d times", store.counts)
+	}
+
+	if _, err := s.Purge(context.Background(), &contract.EmptyRequest{}); err != nil {
+		t.Fatalf("Purge: %s", err)
+	}
+
+	res, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{Limit: 2, Offset: 2})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if res.GetTotalCount() != 0 {
+		t.Errorf("total after purge: got %d, want 0", res.GetTotalCount())
+	}
+
+	if store.counts != 2 {
+		t.Errorf("expected the listing after the purge to recount, store was asked %d times", store.counts)
+	}
+}

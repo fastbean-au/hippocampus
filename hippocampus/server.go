@@ -824,6 +824,10 @@ func (s *Server) Purge(ctx context.Context, in *contract.EmptyRequest) (*contrac
 
 	s.searchIdx().Purge()
 
+	// The store is now empty, so every cached total is wrong rather than merely stale - see
+	// countCache.reset for why that is the one shape worth invalidating for.
+	s.listingCounts.reset()
+
 	res.Ok = true
 
 	return &res, nil

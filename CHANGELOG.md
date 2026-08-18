@@ -81,7 +81,9 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   ordering guaranteed to scan and sort the whole result set. It is also the better default on its own
   terms: "the most recent" is what a listing usually means, where significance-ordered returns the
   same head of the list until something more significant is written. The embedded console's sort
-  selectors now open on it to match.
+  selectors now open on it to match, and so do the MCP bridge's `list_memories`/`list_events` tool
+  schemas — a `jsonschema` description is what a model reads to decide whether to send `order_by` at
+  all, so one still naming `significance` as the default is not a stale comment but a wrong page.
 
 ### Changed
 
@@ -115,6 +117,18 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
   Indexing the predicate instead was measured and rejected: an index making a group-scoped count 57×
   faster makes the scoped page 181× slower, by pulling the planner off the listing index.
+
+  The skip now also covers a short page at a **positive** offset, which is the last page of every
+  traversal: `OFFSET` skipped exactly that many matching rows to reach a window that then ran out, so
+  the total is the offset plus what came back — exact, on the same terms as the offset-0 form. An
+  *empty* page at an offset is the one short page that must still count, since it bounds the total
+  from above and a bound is not an answer.
+
+  `Purge` and `Clear` now drop the cache rather than letting it lapse. Ordinary writes deliberately
+  do not: invalidating per write would empty the cache continuously in exactly the deployments large
+  enough for the count to cost anything. These two are different in kind — they move the total by
+  orders of magnitude in one call, and a caller mid-traversal when the store went away would
+  otherwise be shown the pre-purge figure by a page it had already loaded past.
 
 ### Security
 

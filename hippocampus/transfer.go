@@ -280,6 +280,11 @@ func (s *Server) clearManifest(ctx context.Context, manifest *transferManifest) 
 	tel.recordsCleared.Add(ctx, int64(memoriesCleared), metric.WithAttributes(attribute.String("kind", "memory")))
 	tel.recordsCleared.Add(ctx, int64(eventsCleared), metric.WithAttributes(attribute.String("kind", "event")))
 
+	// A clear removes whatever one run captured, which on a whole-store export is the whole store.
+	// Invalidated here rather than in Clear so the one-shot `clear` flag on Export and Transfer is
+	// covered by the same line - all three reach the store through this function.
+	s.listingCounts.reset()
+
 	return memoriesCleared, eventsCleared, nil
 }
 

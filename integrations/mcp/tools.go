@@ -109,11 +109,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_memories",
-		Description: "List memories filtered by group, significance range, and metadata labels, ordered " +
-			"by significance or timestamp, with paging. Set recalled=false to find the memories that " +
-			"have never been recalled - the closest thing to asking what is about to be forgotten. A " +
-			"read-only browse that does not reinforce anything - use recall_memories when you actually " +
-			"retrieve a memory.",
+		Description: "List memories filtered by group, significance range, and metadata labels, with " +
+			"paging. Ordered by timestamp (most recent first) unless order_by says otherwise. Set " +
+			"recalled=false to find the memories that have never been recalled - the closest thing " +
+			"to asking what is about to be forgotten. A read-only browse that does not reinforce " +
+			"anything - use recall_memories when you actually retrieve a memory.",
 	}, b.listMemories)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -146,8 +146,9 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 	}, b.createEvent)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "list_events",
-		Description: "List events filtered by group and significance range, ordered by significance or timestamp, with paging.",
+		Name: "list_events",
+		Description: "List events filtered by group and significance range, with paging. Ordered by " +
+			"timestamp (most recently started first) unless order_by says otherwise.",
 	}, b.listEvents)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -499,11 +500,22 @@ func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 
 // --- list_memories ---
 
+// The order_by descriptions below name the accepted values AND the service's default, both
+// hand-copied from db/order.go rather than imported - this module depends on the root one for the
+// contract alone, and importing db would pull all three storage drivers into a client binary, which
+// is the same trade integrations/cli made for the same lists.
+//
+// The two halves of that copy are not equally forgiving. A stale VALUE costs a wrong suggestion, and
+// the service rejects it. A stale DEFAULT costs a wrong page: a jsonschema description is what the
+// model reads to decide whether to send order_by at all, so a model told the default is significance
+// has no reason to send anything and is silently served timestamp order. When defaultMemoryOrderBy
+// or defaultEventOrderBy moves in db/order.go, these strings must move with it.
+
 type listMemoriesInput struct {
 	Group           string `json:"group,omitempty" jsonschema:"optional: restrict to memories carrying this group label"`
 	SignificanceMin int32  `json:"significance_min,omitempty" jsonschema:"inclusive lower bound on significance; 0 means no bound"`
 	SignificanceMax int32  `json:"significance_max,omitempty" jsonschema:"inclusive upper bound on significance; 0 means no bound"`
-	OrderBy         string `json:"order_by,omitempty" jsonschema:"sort field: 'significance' (the default), 'timestamp', 'time_recalled', 'recall_count', 'link_significance', 'group', or 'id'"`
+	OrderBy         string `json:"order_by,omitempty" jsonschema:"sort field: 'timestamp' (the default), 'significance', 'time_recalled', 'recall_count', 'link_significance', 'group', or 'id'"`
 	OrderDir        string `json:"order_dir,omitempty" jsonschema:"'asc' or 'desc'; omit to use the sort field's natural direction (descending for the magnitude and time fields, ascending for group and id)"`
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
@@ -586,11 +598,12 @@ func (b *bridge) createEvent(ctx context.Context, _ *mcp.CallToolRequest, in cre
 
 // --- list_events ---
 
+// order_by's values and default are hand-copied from db/order.go - see listMemoriesInput.
 type listEventsInput struct {
 	Group           string `json:"group,omitempty" jsonschema:"optional: restrict to events carrying this group label"`
 	SignificanceMin int32  `json:"significance_min,omitempty" jsonschema:"inclusive lower bound on significance; 0 means no bound"`
 	SignificanceMax int32  `json:"significance_max,omitempty" jsonschema:"inclusive upper bound on significance; 0 means no bound"`
-	OrderBy         string `json:"order_by,omitempty" jsonschema:"sort field: 'significance' (the default), 'timestamp' (the event's start), 'time_end', 'name', 'link_significance', 'group', or 'id'"`
+	OrderBy         string `json:"order_by,omitempty" jsonschema:"sort field: 'timestamp' (the default, the event's start), 'significance', 'time_end', 'name', 'link_significance', 'group', or 'id'"`
 	OrderDir        string `json:"order_dir,omitempty" jsonschema:"'asc' or 'desc'; omit to use the sort field's natural direction (descending for the magnitude and time fields, ascending for name, group and id)"`
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`

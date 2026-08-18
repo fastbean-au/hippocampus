@@ -84,6 +84,31 @@ func (c *countCache) get(key string) (int, bool) {
 	return entry.count, true
 }
 
+// reset drops every entry.
+//
+// Called only from the two paths that delete in bulk - Purge and clearManifest - and deliberately not
+// from the ordinary writes. A general invalidation would clear the cache on every StoreMemory, which
+// defeats it exactly where it earns its keep: the deployments large enough for the count to cost
+// anything (a broker bridge, the collector exporter, the demo generator) are the ones writing
+// continuously. Bounded staleness is the trade the cache exists to make.
+//
+// These two are different in kind rather than in degree. They move the total by orders of magnitude
+// in one call, and a caller who has just been told a purge succeeded and is then shown a five-figure
+// total is not reading a slightly stale figure, it is reading a wrong one. The short-page shortcut
+// hides that at offset 0, where an emptied store answers its own total - which is precisely why this
+// is worth doing rather than leaving to the shortcut: the shape it does NOT cover is a client that
+// was mid-traversal, on a page, when the store went away underneath it.
+func (c *countCache) reset() {
+	if !c.enabled() {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.entries = make(map[string]countCacheEntry)
+}
+
 // put stores a count, evicting the entry closest to expiry when the cache is full.
 func (c *countCache) put(key string, count int) {
 	if !c.enabled() {

@@ -466,15 +466,22 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		return &res, mapError(err)
 	}
 
-	// The page first, so a short first page can answer the total without a second pass - see
-	// GetMemories, which this mirrors, for why that is exact rather than an estimate.
+	// The page first, so a short page can answer the total without a second pass - see GetMemories,
+	// which this mirrors, for why both forms are exact rather than estimates and why the positive-offset
+	// one needs a non-empty page.
 	total := len(*events)
 
-	if filter.Offset > 0 || len(*events) >= filter.Limit {
+	switch {
+
+	case len(*events) >= filter.Limit, filter.Offset > 0 && len(*events) == 0:
 		total, err = s.countEvents(ctx, filter)
 		if err != nil {
 			return &res, mapError(err)
 		}
+
+	case filter.Offset > 0:
+		total = filter.Offset + len(*events)
+
 	}
 
 	es := make([]*contract.Event, len(*events))

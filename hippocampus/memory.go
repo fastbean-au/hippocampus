@@ -699,20 +699,32 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 	// makes the page 181x slower by pulling the planner off the listing index, and the pair comes out
 	// worse than it started.
 	//
-	// This is the case where the count is not needed at all: a first page that came back SHORT has
-	// already seen everything the filter matches, so its length IS the total. Exact, not an estimate,
-	// and it covers the shapes where a total is most often asked for - a narrow filter, an id or link
-	// traversal, a small store - without touching the general case.
+	// This is the case where the count is not needed at all: a page that came back SHORT has run off
+	// the end of what the filter matches, so nothing follows it. Exact, not an estimate, and it covers
+	// the shapes where a total is most often asked for - a narrow filter, an id or link traversal, a
+	// small store - without touching the general case.
 	//
-	// It requires offset 0. At any other offset a short page bounds nothing: the rows before the
-	// window are still uncounted.
+	// At offset 0 the page IS the whole result set and its length is the total. At a positive offset
+	// the same argument runs one step along: OFFSET skipped exactly that many MATCHING rows to reach a
+	// window that then ran out, so the total is the offset plus what came back - which answers the last
+	// page of any traversal for free. That second form needs the page to be NON-EMPTY: an empty page
+	// says only that the total is at most the offset, and a bound is not an answer.
+	//
+	// Both are exact as of this query in the same sense the page is, and no more: a concurrent write
+	// can move the result set underneath offset pagination whether the total is counted or derived.
 	total := len(*memories)
 
-	if filter.Offset > 0 || len(*memories) >= filter.Limit {
+	switch {
+
+	case len(*memories) >= filter.Limit, filter.Offset > 0 && len(*memories) == 0:
 		total, err = s.countMemories(ctx, filter)
 		if err != nil {
 			return &res, mapError(err)
 		}
+
+	case filter.Offset > 0:
+		total = filter.Offset + len(*memories)
+
 	}
 
 	if in.GetLinks() {
