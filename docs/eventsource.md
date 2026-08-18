@@ -540,7 +540,7 @@ exactly where that substitution happens.
 This bridge stores other people's public speech, keyed by their DID. Deletions are honoured by
 default, `--dids` and `--langs` narrow what is taken, and whoever runs it is subject to whatever
 data-protection regime they sit under. A demo of it is in
-[`demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demobluesky-sh), which keeps its
+[`demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demoblueskysh), which keeps its
 store local and gitignored.
 
 ## Delivery semantics and scaling

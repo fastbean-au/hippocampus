@@ -33,6 +33,51 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **A security policy — [`SECURITY.md`](SECURITY.md).** There was no way to report a vulnerability
+  privately and no statement of what was in scope. It names GitHub's private vulnerability reporting
+  as the channel, states that the latest release is the supported one (pre-1.0, no backport
+  branches), puts the public demo out of scope while asking that the underlying issue be reported
+  here, and lists the documented behaviours that are **not** vulnerabilities — the off-by-default
+  posture, the deliberately insecure demo Compose stacks, `Import` bypassing write-path validation,
+  soft group scoping, and the console hiding controls it does not enforce. Each of those is still
+  worth a report if the documented boundary can be shown being crossed.
+- **A security guide of its own — [`docs/security.md`](docs/security.md).** Security was a bullet
+  list at the end of the operations guide, which put the one topic a reader most needs before
+  exposing a port behind everything about sizing and backups. It is now a page: what is off by
+  default and what to turn on, authentication with key rotation and revocation, the role tiers,
+  group scoping and the trust boundary, transport and gateway hardening, and the console's actual
+  boundary (its hidden controls are a convenience — the server enforces every tier).
+
+  Three sections are new rather than moved. **Where memory content can leave the process** names the
+  four features that let bodies out — the embedded LLM, the OpenSearch index (which holds a copy of
+  every indexed body, where the built-in FTS5 index is contentless and holds none), export/transfer,
+  and what the forgotten log deliberately does not record. **What the service does not do** states
+  plainly that there is no encryption at rest, no per-record ACLs, no mutual TLS on the listeners,
+  and no separate audit log, each being a thing an operator might otherwise assume. And a
+  **hardening pass** lists the ten steps in the order they matter.
+
+### Changed
+
+- **The README is a landing page again.** Following the shortening in 0.33.2, four sections moved
+  out rather than being trimmed further: _Worth knowing before you start_ to
+  [Use cases](docs/use-cases.md) (where "where it fits and where it does not" already lives), the
+  quick start to [Getting started](docs/getting-started.md) (which gains the demo stack as its
+  fastest look, and Homebrew beside the build), _Around the service_ folded into a single
+  **Documentation** section with the guide index, and the security section down to what a landing
+  page should carry — that it is all off by default — pointing at the new guide. 171 lines → 132.
+- **[Operations](docs/operations.md) keeps both moved sections as pointers**, so every existing link
+  to `#security` and `#group-scoping-and-the-trust-boundary` still resolves, including the ones in
+  this changelog's own history.
+
+### Fixed
+
+- **Five broken documentation anchors**, found by a link check over every relative link and heading
+  in the repository's markdown: three copies of a `demo/README.md` heading anchor that assumed a `.`
+  becomes a hyphen (it is dropped), and two in [Ingestor](docs/ingestor.md) naming headings that no
+  longer exist.
+
 ## [0.34.0] - 2026-08-18
 
 ### Added

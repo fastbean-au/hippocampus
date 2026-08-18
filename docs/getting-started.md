@@ -12,7 +12,40 @@ backup, security) see the [Operations guide](operations.md); for the full config
 - **Go 1.25+** to build from source, **or** Docker to run the prebuilt image.
 - Nothing else for the default SQLite driver — it is embedded and has no external dependencies.
 
-## Build
+## The fastest look: the demo stack
+
+Decay, recall reinforcement and consolidation play out over days, which makes a fresh install a poor
+place to watch them. The demo stack builds the service and a load generator and runs them against
+the embedded SQLite driver **with the decay clock compressed**, so forgetting is visible in minutes.
+If a container runtime is present it also starts OpenSearch and a Grafana/OTEL collector; without
+one it simply runs without them.
+
+```sh
+git clone https://github.com/fastbean-au/hippocampus.git
+cd hippocampus
+./demo/run.sh
+```
+
+Then open the embedded web console at [`localhost:8080/ui`](http://localhost:8080/ui) — its **Now**
+and **Decay** tabs show what the last cycle forgot and where each memory stands — and Grafana at
+[`localhost:3000`](http://localhost:3000). The demo serves its HTTP/JSON gateway on `8080` and gRPC
+on `8300`. `SEARCH=0` and `OBSERVABILITY=0` skip the OpenSearch and collector containers; see
+[`demo/README.md`](../demo/README.md) and [Demonstrations](demonstrations.md).
+
+It is a demonstration, not a template: the compressed clock, the generator, and the wide-open
+listeners all belong to it. The rest of this page is the instance you keep.
+
+## Install or build
+
+Homebrew is the quickest supervised install on macOS and Linux — it manages the launchd/systemd
+definition and installs a default embedded-SQLite config that survives upgrades:
+
+```sh
+brew install fastbean-au/tap/hippocampus
+brew services start hippocampus
+```
+
+From a clone, build it:
 
 ```sh
 go build -o hippocampus ./cmd/hippocampus
@@ -25,7 +58,8 @@ docker compose up --build         # SQLite, database persisted in a named volume
 ```
 
 The compose file exposes `50051` (gRPC) and `8080` (HTTP gateway). If you build from source, use the
-configuration below.
+configuration below. Packages (`.deb`/`.rpm`), the Kubernetes overlays, and the service-supervision
+options are in the [Operations guide](operations.md#running-as-a-service).
 
 ## Run it with no configuration at all
 
@@ -179,7 +213,7 @@ go run ./cmd/hippocampus --mint-token --client-id my-client --ttl 24h -c config.
 ```
 
 See [Authentication](configuration.md#authentication) and [TLS](configuration.md#tls), and the
-[Operations guide](operations.md#security) for CLI-only issuance, signing-key
+[security guide](security.md) for CLI-only issuance, signing-key
 [rotation](configuration.md#key-rotation-hmac) and token/client
 [revocation](configuration.md#revocation), and the `idp` (RS256/JWKS) alternative.
 

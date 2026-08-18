@@ -59,7 +59,7 @@ bridge a token scoped to one group is the natural way to attach a model to one p
 in a shared store: every tool above narrows to it, out-of-scope memories report `NotFound` rather
 than confirming they exist, and the model's own writes are stamped with that group automatically —
 so it need not (and cannot) choose where its memories are filed. Note this is a soft partition; see
-[the trust boundary](operations.md#group-scoping-and-the-trust-boundary).
+[the trust boundary](security.md#group-scoping-and-the-trust-boundary).
 
 | Tool                           | Maps to                      | Notes                                                                                                                                                                                                                                        |
 | :----------------------------- | :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

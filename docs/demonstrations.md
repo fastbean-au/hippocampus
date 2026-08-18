@@ -5,7 +5,7 @@ job. They cross two **data shapes** — narratives and logs — with the two **d
 (embedded SQLite, and centralised Postgres + OpenSearch), using the companion data generator.
 
 Two others sit beside them, both self-contained in this repository. For **live data nobody staged**,
-[`./demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demobluesky-sh) points the
+[`./demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demoblueskysh) points the
 [Bluesky bridge](eventsource.md#bluesky-the-firehose-bridge) at the public firehose, where real
 engagement decides what survives — that is the hosted demo below, and the most convincing of the
 three. For a purely synthetic soak (no external data, bursty writers, live decay under a byte cap),
@@ -34,7 +34,7 @@ nobody here controls: real posts, real attention, arriving in real time, with no
 post is stored at the same significance, so engagement is the _only_ differentiator — which makes it
 the cleanest statement of what the store is for. It is the [`bluesky`
 bridge](eventsource.md#bluesky-the-firehose-bridge) in **feed mode**, which
-[`./demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demobluesky-sh) runs locally with
+[`./demo/bluesky.sh`](../demo/README.md#the-bluesky-firehose-demo-demoblueskysh) runs locally with
 `FEED` set to a news feed generator (bare, it consumes the open firehose instead). Neither needs an
 account or a credential — Jetstream is public — but read that README's decay-clock note first: a
 curated feed arrives at ~70 posts an hour rather than ~70 a second, and the shipped clock is tuned

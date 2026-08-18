@@ -922,129 +922,29 @@ from the proxy's address, which collapses every caller into one bucket; `rateLim
 is the fix, and is **off by default** because believing a caller-supplied header on a directly
 reachable listener lets any caller mint itself an unlimited number of buckets. Set it only when a
 proxy you control overwrites `X-Forwarded-For` rather than appending to it.
-
 ## Group scoping and the trust boundary
 
-**A shared store is a shared trust domain by default.** Every token that can read can read
-everything, and `group` is a label — despite reading like ownership ("system, subsystem, owner"),
-it carries no access-control meaning of its own. Do not stand up one store for two parties on the
-assumption that `group` separates them.
+**A shared store is a shared trust domain by default.** `group` is a label, not an access control:
+every token that can read can read everything until tokens are bound to groups. Binding them
+([group scoping](configuration.md#group-scoping)) is a **soft** partition — records are scoped, but
+the decay dynamics stay store-global, so one group's write volume still influences what another
+forgets. Hard isolation is one instance per tenant.
 
-There are two ways to actually separate them, and they are not interchangeable.
-
-**Soft partitioning — [group scoping](configuration.md#group-scoping).** Bind tokens to group
-labels with a `groups` claim. Each team or system then sees, writes, exports and links only its own
-records, and the console, CLI and `WhoAmI` report the scope. This is the right answer for teams or
-systems **inside one trust boundary**, where the goal is that people not trip over each other's
-data rather than that they be unable to reach it.
-
-What it does **not** give you, because the partition is soft:
-
-- **The decay dynamics are shared.** Capacity pressure, the eviction ranking, the significance
-  registry and the sleep cadence are store-global. A group writing heavily raises the pressure that
-  decides what _every_ group forgets, and eviction ranks across the whole store by value. There is
-  no per-group capacity target and no per-group quota.
-- **`link_significance` crosses the boundary.** It is a denormalised aggregate in the covering index,
-  so a link to a record in another group raises this one's effective significance even though the
-  other end can never be read. Spreading activation on recall crosses such a link too. Only an
-  unscoped token can create one.
-- **It is not a defence against a hostile caller with a valid token.** It is one predicate and one
-  id check per path, guarded by a test rather than by a structural impossibility.
-- **Operators still need unscoped tokens** for `Purge`, `Sleep`, `PreviewConsolidation`, the
-  `MergeEvents` dangling-reference heal, and the `--backfill-search` CLI mode.
-
-**Hard isolation — one instance per tenant.** Where bleed-through is unacceptable, or a tenant needs
-its own capacity and decay tuning, run a separate instance and a separate store. That is the model
-[item 9 chose](../TODO.md) and it remains the recommendation: it isolates the memory dynamics
-perfectly, gives each tenant its own auth secrets, backup and restore, and makes erasure a matter of
-dropping a volume. With the embedded SQLite driver that is one container and one volume per tenant;
-on `postgres`/`mysql` it is one database per tenant.
-
-The two compose: a fleet of single-tenant embedded instances can transfer into one centralised
-multi-group store, with the centralised side stamping each ingestor's group from its
-[`transfer.token`](configuration.md#transfer-and-archive) rather than from anything in the archive.
+Which of the two you need, and the four specific things soft partitioning does not give you, are in
+**[Security · Group scoping and the trust boundary](security.md#group-scoping-and-the-trust-boundary)**.
 
 ## Security
 
-- **Rate limiting** (`rateLimit.enabled`) bounds how much any caller — or the instance as a whole —
-  can ask for. Off by default; see [Rate limiting](#rate-limiting) above, and set at least a global
-  ceiling on anything reachable beyond trusted callers.
-- **Authentication** (`auth.method`: `none` / `hmac` / `idp`) and **TLS** (`tls.enabled`) are both
-  optional and off by default — see [Authentication](configuration.md#authentication) and
-  [TLS](configuration.md#tls). Enable both for any deployment exposed beyond localhost.
-- With `hmac`, tokens are minted by the `--mint-token` CLI. Signing secrets rotate without a flag
-  day via `auth.signingKeys` (several `kid`-tagged secrets trusted at once, `auth.activeKid`
-  selecting the one that signs), and individual tokens or clients are revoked ahead of their TTL by
-  a polled `auth.revocationFile` (by `jti`, by `client_id`, or per-client before a cutoff timestamp)
-  — see [Key rotation](configuration.md#key-rotation-hmac) and
-  [Revocation](configuration.md#revocation). The revocation file also applies under `idp`, as a
-  local override when the provider's own revocation lags; otherwise `idp` rotation and revocation
-  are handled by the provider.
-- If auth is enabled without TLS the service only warns — it assumes TLS is terminated upstream (a
-  proxy or service mesh). Never send bearer tokens in plaintext. When `tls.enabled`, both listeners
-  share one certificate and enforce a TLS 1.2 minimum. Behind such a sidecar/mesh, bind the
-  listeners to loopback only with `bindAddress`/`gateway.bindAddress` (`127.0.0.1`) so nothing
-  reaches them except the local proxy. The same applies to the **Transfer client**: setting
-  `transfer.token` without `transfer.tls` sends the token in plaintext to the target, and the
-  service warns at startup — enable `transfer.tls` unless TLS to the target is terminated by a mesh.
-- **Scope each token to a role tier.** Every RPC requires a minimum tier — `reader`, `writer`, or
-  `admin` (nesting, `reader ⊂ writer ⊂ admin`) — carried in the token's `roles` claim and enforced
-  on both transports; see [Authorisation](configuration.md#authorisation). Issue `reader` tokens to
-  read-only consumers and reserve `admin` (which alone may `Purge`/`Sleep`/`Clear`/`Transfer`/
-  `Export`) for operators. `Import`/`ImportBatch` are `writer`-tier and still bypass write-path
-  validation to restore archives faithfully, so grant `writer` only to trusted loaders. Authorisation
-  is default-closed: a token whose roles resolve to no tier is denied everything, so **on upgrade,
-  re-mint pre-existing tokens with a `--role`**. The verified `client_id` is logged on every failing
-  request (and, on the HTTP gateway, every request), so a leaked or misbehaving token can be traced
-  to the client it was issued to.
-- **Scope tokens to groups where several parties share a store.** A tier bounds what a caller may
-  do, not which records they may do it to; [group scoping](configuration.md#group-scoping) bounds
-  the latter, via a `groups` claim and `--group` at mint time. Read
-  [the trust boundary](#group-scoping-and-the-trust-boundary) first — it is a soft partition, and
-  hard isolation is still one instance per tenant.
-- **gRPC transport hardening.** If the gRPC port is exposed beyond trusted callers, cap the
-  concurrent HTTP/2 streams one connection may open with `maxConcurrentStreams`, and enforce a
-  keepalive policy (`keepalive.minTimeSeconds`, `keepalive.permitWithoutStream`) so an abusive
-  client cannot ping the server into a resource spiral — see
-  [HTTP gateway](configuration.md#http-gateway). Both default to grpc-go's own defaults.
-- Under `hmac`, use a long random `auth.signingSecret` — at least 32 bytes; a shorter secret is
-  brute-forceable and the service warns at startup.
-- **Web console (`/ui`).** The HTTP gateway serves an embedded single-page console at `/ui`. The
-  static page loads without a token (it carries none), but when this deployment authenticates it
-  opens on a **sign-in card in place of the console** — a bearer-token box under `hmac`, a **Sign in**
-  button under `idp` — and reveals the tabs only once a session resolves. The pasted token is kept in
-  the browser's `localStorage` and sent with each `/v1` call; **Sign out** in the header discards it
-  (or ends the provider session). None of that is the security boundary: every action still goes
-  through auth, [authorisation](configuration.md#authorisation), and the purge gate like any other
-  request. On the credential it holds the console calls `GET /v1/whoami` and adapts what it offers to
-  the effective role — hiding the write controls for a `reader` and showing the role in the header —
-  but that too is a convenience; the server enforces the tier on every RPC, so a hidden control (or a
-  raised gate) is not a security boundary. The same call also tells it what the _deployment_ can
-  serve, which it uses for a different purpose: not withholding what you may not do, but not offering
-  what nothing could do. **On a replica (`consolidation.enabled: false`) the whole Decay tab is
-  absent**, along with the per-row value column and the Events tab's Summarise mode, because
-  `ExplainConsolidation`, `PreviewConsolidation` and the candidate scan all belong to a sleep cycle
-  that instance does not run — so an operator seeing no Decay tab is looking at a replica, and should
-  ask the consolidator. The forgotten-log panel likewise appears only where
-  `consolidation.tombstones.enabled` is set, and the LLM summarise button only where `ollama.enabled`
-  is. Because the token lives in the browser, serve `/ui` only
-  over TLS and treat it as a trusted-operator tool, not a public endpoint; put it behind your ingress'
-  access controls if the gateway is internet-facing.
-- **Storage errors never reach a client verbatim.** The RPC layer's `mapError` seam translates the
-  storage errors a client can act on — a write conflict to `codes.Aborted`, a duplicate key to
-  `codes.AlreadyExists` — and masks everything else as `codes.Internal`, logging the detail
-  server-side, so raw driver text (and the schema it would describe) stays out of responses. See
-  [MySQL InnoDB deadlocks](performance.md#mysql-innodb-deadlocks-fixed), where the seam is described.
-- **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left
-  unset there is no cap. The native gRPC transport bounds a whole request at its 4 MiB default, but
-  the HTTP gateway does not by default — set `gateway.maxRequestBytes` to a transport-level ceiling
-  (and/or `memory.limit.sizeBytes`) when the gateway is reachable by untrusted callers. Keep the
-  ceiling above your largest legitimate `ImportBatch`/`Transfer` body.
-- **Embedded LLM summariser (`ollama.enabled`).** Off by default; when on, the summariser is the one
-  component that reads memory content, and it sends the text bodies of an event's memories to the
-  configured Ollama server (`SummariseMemories`, and — with `ollama.autoSummarise` — the sleep
-  cycle). Treat that as memory content leaving the process: run Ollama on a private network or the
-  same host (`http://localhost:11434`), not a shared or third-party endpoint, and reach it over TLS
-  if it is remote. `ollama.autoSummarise` rewrites stored memories automatically during sleep, so
-  leave it off unless that behaviour is intended. See
-  [Summarisation → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
+Authentication, TLS and rate limiting are **off by default**, and nothing here turns itself on — so
+any deployment reachable beyond localhost needs a deliberate pass over
+**[the security guide](security.md)**. It covers authentication and key rotation, the role tiers,
+group scoping, transport and gateway hardening, the console's boundary, where memory content can
+leave the process, what the service does not do (no encryption at rest, no mutual TLS on the
+listeners, no separate audit log), and a hardening checklist to work down.
+
+Two operational notes belong here rather than there:
+
+- [Rate limiting](#rate-limiting) is documented above, with its bucket hierarchy and tuning — the
+  security guide only says to turn it on.
+- [Seeing the deployment](#seeing-the-deployment) is where the topology view's redaction is
+  described in context; the security guide records only that every address it reports is redacted.

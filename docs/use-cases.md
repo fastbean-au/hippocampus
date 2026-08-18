@@ -37,6 +37,32 @@ It is **not** a general-purpose database, a cache, or a system of record for dat
 lose: forgetting is the point, and the service has no visibility into memory _content_ (bodies are
 opaque blobs — the caller supplies any summary text).
 
+## Worth knowing before you start
+
+Five properties that shape what you can build on it. None of them is a limitation to work around;
+each is a consequence of what the store is for, and each has a place to read further.
+
+- **Forgetting is the point.** This is not a system of record for data you must never lose. Where a
+  guarantee is needed, a [retention floor](consolidation.md#minimum-retention) overrides even
+  capacity pressure — so "keep everything for at least N days" is expressible, and is honoured
+  ahead of the capacity target rather than beneath it.
+- **One consolidator per store.** Only one instance may run decay against a given store, enforced at
+  startup on every driver — a file lock on SQLite, an advisory lock on the server drivers. Replicas
+  scale reads and writes around it. See the
+  [deployment model](operations.md#deployment-model-one-consolidating-instance-per-store).
+- **Payloads are opaque.** The service does not read memory bodies, which is why the consolidation
+  scans never touch them and why summaries come from the client — unless you enable the optional
+  embedded LLM ([Ollama](consolidation.md#embedded-llm-ollama)), the one component that does read
+  content.
+- **Content search is a secondary index.** Primary reads are strictly consistent. The optional
+  OpenSearch index is asynchronous and best-effort, though hits are always re-read from the primary
+  store so stale entries drop out; the built-in SQLite index is maintained inside the write itself
+  and is not subject to that. See [Content search](configuration.md#content-search).
+- **A shared store is a shared trust domain.** Group scoping is a _soft_ partition: records are
+  scoped, but the decay dynamics stay store-global, so a busy group influences what a quiet one
+  forgets. Hard isolation is one instance per tenant — read
+  [the trust boundary](security.md#group-scoping-and-the-trust-boundary) before relying on either.
+
 ## Deployment modes
 
 ### Embedded / edge / IoT (SQLite)

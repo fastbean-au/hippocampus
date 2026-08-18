@@ -221,7 +221,7 @@ Then **watch the retention gauges**. `hippocampus.memories.retained` and
 characteristic failure: promotion stalls, retention holds everything, and eviction can never bring
 the store back under its target. They are published when `minimumRetentionInDays` and
 `capacityBytes` are both set — which on an edge they should be. See
-[Operations](operations.md#metrics).
+[Operations](operations.md#domain-metrics).
 
 ## Observability
 
@@ -397,7 +397,7 @@ central store. **The memories not promoted are still drained** — a reduction s
 centrally, not what survives on the edge.
 
 `summarise` is different in kind. It calls `SummariseMemories` on the **edge**, which generates the
-summary and replaces the originals there, so it needs [`ollama.enabled`](configuration.md#ollama) on
+summary and replaces the originals there, so it needs [`ollama.enabled`](configuration.md#summarisation-embedded-llm--ollama) on
 that instance. An edge without it reports `FailedPrecondition` and the event **fails loudly** rather
 than being promoted whole — quietly promoting everything a rule asked to have condensed would be the
 opposite of what was written. It cannot be combined with the other two: there is nothing left for a

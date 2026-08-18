@@ -985,7 +985,7 @@ UPDATE events   SET group_name = 'default' WHERE group_name = '';
 ```
 
 **This is a partition, not isolation** — see
-[Group scoping and the trust boundary](operations.md#group-scoping-and-the-trust-boundary) for what
+[Group scoping and the trust boundary](security.md#group-scoping-and-the-trust-boundary) for what
 it does and does not guarantee before relying on it.
 
 ### TLS
@@ -1470,7 +1470,7 @@ generates a summary via the model, and replaces them with it; and `ollama.autoSu
 sleep cycle do the same for each scan candidate. Off by default; when disabled `SummariseMemories`
 returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. The summariser is the one component
 that reads memory content, and it sends memory bodies to the Ollama server — see the
-[operations security note](operations.md#security).
+[security guide](security.md#where-memory-content-can-leave-the-process).
 
 ```json
 "ollama": {
