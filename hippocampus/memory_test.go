@@ -970,12 +970,23 @@ func TestGetMemories_LimitAndOffsetClamped(t *testing.T) {
 
 // TestGetMemories_CountAndListErrorsMapped verifies CountMemoriesFiltered's and GetMemories' own
 // generic failures are both mapped via mapError.
+//
+// The count case has to fill its page: GetMemories only counts when the page came back FULL (a short
+// first page is its own total), so a request that returns fewer rows than it asked for never reaches
+// CountMemoriesFiltered and its fault would go unnoticed here.
 func TestGetMemories_CountAndListErrorsMapped(t *testing.T) {
 	countErr := errors.New("count boom")
 	s := newTestServer(t)
+
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{
+		Id: "counted", TimeStamp: 100, Significance: 5, Body: "x",
+	}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
 	s.db = memoryFaultStore{Store: s.db, countMemoriesFilteredErr: countErr}
 
-	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{}); status.Code(err) != codes.Internal {
+	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{Limit: 1}); status.Code(err) != codes.Internal {
 		t.Fatalf("CountMemoriesFiltered failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
 	}
 

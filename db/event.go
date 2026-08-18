@@ -450,17 +450,34 @@ func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 
 // CountEventsFiltered returns the number of events matching the filter, ignoring Limit/Offset so
 // the caller can size pagination.
+// eventFilterNeedsSignificance is CountMemoriesFiltered's filterNeedsSignificance for events: the
+// significance column is all eventsFrom's join provides, and only these three predicates read it.
+func eventFilterNeedsSignificance(filter EventFilter) bool {
+	return filter.SignificanceExtremum != SignificanceExtremumNone ||
+		filter.SignificanceMin > 0 ||
+		filter.SignificanceMax > 0
+}
+
+// CountEventsFiltered returns the number of events matching the filter, counting against the events
+// table directly whenever the filter asks nothing of significance - see CountMemoriesFiltered, which
+// this mirrors and which explains why the join is worth avoiding on the count but not on the page.
 func (d *DB) CountEventsFiltered(ctx context.Context, filter EventFilter) (int, error) {
 	log.Trace("func() db.CountEventsFiltered")
 
 	where, args := d.eventFilterConditions(filter)
+
+	from := `events`
+
+	if eventFilterNeedsSignificance(filter) {
+		from = eventsFrom
+	}
 
 	var count int
 
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+eventsFrom+where, args...).Scan(&count); err != nil {
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+from+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 

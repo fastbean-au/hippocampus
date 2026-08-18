@@ -582,6 +582,11 @@ func TestValidateTopologyConfig(t *testing.T) {
 		{name: "unknown tier", set: map[string]interface{}{"topology.minimumTier": "superuser"}, wantErr: true},
 		{name: "empty tier falls back to the policy", set: map[string]interface{}{"topology.minimumTier": ""}, wantErr: false},
 
+		// A negative count-cache TTL would disable the cache instead of failing, which is a poor way
+		// to learn about a typo.
+		{name: "negative count cache", set: map[string]interface{}{"listing.countCacheSeconds": -1}, wantErr: true},
+		{name: "zero count cache disables it", set: map[string]interface{}{"listing.countCacheSeconds": 0}, wantErr: false},
+
 		{name: "negative interval", set: map[string]interface{}{"topology.probeIntervalSeconds": -1}, wantErr: true},
 		{name: "negative timeout", set: map[string]interface{}{"topology.probeTimeoutSeconds": -1}, wantErr: true},
 

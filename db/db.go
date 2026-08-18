@@ -923,6 +923,10 @@ func (d *DB) initSchema() error {
 		return err
 	}
 
+	if err := d.ensureListingIndex(); err != nil {
+		return err
+	}
+
 	// The forgotten log (see tombstone.go). Created whether or not the policy enables it, so
 	// turning it on needs no migration and turning it off leaves what was recorded readable.
 	if err := d.initTombstones(); err != nil {

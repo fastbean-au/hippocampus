@@ -530,6 +530,28 @@ func (s *Server) GetSummarisationCandidates(ctx context.Context, in *contract.Em
 	return &res, nil
 }
 
+// countMemories answers a listing's TotalCount, through the count cache when one is configured.
+//
+// The cache is consulted here rather than in the db layer because it is a policy about how fresh a
+// total needs to be, not a fact about storage - and because the db layer is the seam a future
+// non-SQL backend implements, which should not have to reimplement a cache to be correct.
+func (s *Server) countMemories(ctx context.Context, filter db.MemoryFilter) (int, error) {
+	key := filterCacheKey("memories", filter)
+
+	if total, ok := s.listingCounts.get(key); ok {
+		return total, nil
+	}
+
+	total, err := s.db.CountMemoriesFiltered(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+
+	s.listingCounts.put(key, total)
+
+	return total, nil
+}
+
 func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesRequest) (*contract.GetMemoriesResponse, error) {
 	var res contract.GetMemoriesResponse
 
@@ -663,14 +685,34 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		filter.Ids = linked
 	}
 
-	total, err := s.db.CountMemoriesFiltered(ctx, filter)
+	memories, err := s.db.GetMemories(ctx, filter)
 	if err != nil {
 		return &res, mapError(err)
 	}
 
-	memories, err := s.db.GetMemories(ctx, filter)
-	if err != nil {
-		return &res, mapError(err)
+	// The page is fetched BEFORE the total, because it can make the total free.
+	//
+	// TotalCount is a second unbounded pass over the same predicate - it ignores Limit and Offset by
+	// definition - and on a large store it costs far more than the page it accompanies: 32 ms against
+	// the page's 0.26 ms at 100,000 memories, so it is effectively the whole request (TODO 74.3).
+	// Indexing the predicate is not the way out; measured, an index that makes the count 57x faster
+	// makes the page 181x slower by pulling the planner off the listing index, and the pair comes out
+	// worse than it started.
+	//
+	// This is the case where the count is not needed at all: a first page that came back SHORT has
+	// already seen everything the filter matches, so its length IS the total. Exact, not an estimate,
+	// and it covers the shapes where a total is most often asked for - a narrow filter, an id or link
+	// traversal, a small store - without touching the general case.
+	//
+	// It requires offset 0. At any other offset a short page bounds nothing: the rows before the
+	// window are still uncounted.
+	total := len(*memories)
+
+	if filter.Offset > 0 || len(*memories) >= filter.Limit {
+		total, err = s.countMemories(ctx, filter)
+		if err != nil {
+			return &res, mapError(err)
+		}
 	}
 
 	if in.GetLinks() {

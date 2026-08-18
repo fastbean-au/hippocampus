@@ -1381,9 +1381,19 @@ func (c *capturingEventStore) GetEvents(ctx context.Context, filter db.EventFilt
 func TestGetEvents_CountAndListErrorsMapped(t *testing.T) {
 	countErr := errors.New("count boom")
 	s := newEventTestServer(t)
+
+	// The page has to come back FULL for the count to run at all: a short first page is its own
+	// total (see GetEvents), so a request returning fewer rows than it asked for never reaches
+	// CountEventsFiltered and its fault would go unnoticed here.
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{
+		Id: "counted", TimeStart: 100, Significance: 5, Name: "counted",
+	}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
 	s.db = eventFaultStore{Store: s.db, countEventsFilteredErr: countErr}
 
-	if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{}); status.Code(err) != codes.Internal {
+	if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{Limit: 1}); status.Code(err) != codes.Internal {
 		t.Fatalf("CountEventsFiltered failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
 	}
 

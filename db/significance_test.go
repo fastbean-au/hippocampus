@@ -223,8 +223,9 @@ func TestPlacement_AboveOpensGapUpward(t *testing.T) {
 		t.Fatalf("five significance = %d, want 5 (unchanged)", got)
 	}
 
-	// Ordering by significance surfaces them highest-first.
-	ms, err := d.GetMemories(context.Background(), MemoryFilter{})
+	// Ordering by significance surfaces them highest-first. Asked for explicitly: this is a test
+	// about where a placement put a memory in the RANKING, and the default ordering is timestamp.
+	ms, err := d.GetMemories(context.Background(), MemoryFilter{OrderBy: "significance"})
 	if err != nil {
 		t.Fatal(err)
 	}

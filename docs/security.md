@@ -37,8 +37,15 @@ enabled, and a token whose roles resolve to no tier is denied every RPC.
   Use a long random `auth.signingSecret` — at least 32 bytes; a shorter one is brute-forceable and
   the service warns at startup.
 - **`idp`** — RS256 against an identity provider's JWKS, discovered from `auth.jwksUrl` or by OIDC
-  discovery from `auth.issuer`, with `iss`/`aud` enforced when configured. Keys are cached by `kid`
-  and re-fetched on rotation. `--mint-token` refuses under `idp`, because the provider issues tokens.
+  discovery from `auth.issuer`. Keys are cached by `kid` and re-fetched on rotation. `--mint-token`
+  refuses under `idp`, because the provider issues tokens.
+
+  **Set `auth.audience`.** `iss` and `aud` are enforced only when configured, so a deployment naming
+  just a JWKS URL accepts *every* token that provider signed — including one minted for a different
+  application in the same tenant. Behind one corporate IdP that is any employee's token for any
+  service, with this service's tier then resolved from whatever `roles` claim it happens to carry.
+  Setting `auth.audience` to this service's own identifier is what makes a token mean "for
+  Hippocampus"; the service warns at startup while either is unset.
 
 Both verifiers pin a single algorithm, so a token can never select its own, and both **require an
 `exp`** — an expiry-less token would otherwise verify forever.

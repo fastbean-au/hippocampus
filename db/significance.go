@@ -40,6 +40,35 @@ const (
 	significanceLevelsTable = "significance_levels"
 	coveringIndexName       = "idx_memories_consolidation_v2"
 	coveringIndexColumns    = "(event_id, timestamp, significance_level_id, time_recalled, recall_count, link_significance)"
+
+	// listingIndexName and listingIndexColumns serve the LISTING path, which the covering index
+	// above cannot: that one leads on event_id, so a query ordering the whole table by timestamp can
+	// only scan it, never seek. GetMemories' page then costs a full scan plus a temp B-tree sort of
+	// everything the filter matched, growing with the store - 84 ms for fifty rows out of 100,000 on
+	// SQLite, 106 ms on Postgres.
+	//
+	// The DIRECTIONS ARE PART OF THE INDEX, not decoration. memoryOrderClauses spells the timestamp
+	// ordering as `timestamp DESC, id ASC`, and an index has to match a mixed-direction ordering
+	// column for column to be walked instead of sorted. A plain (timestamp) index does not, and is
+	// not merely useless: the planner picks it, walks it, and looks each row up by rowid, turning a
+	// sequential scan into a random-access one - 719 ms for the same page on SQLite, 232 ms on
+	// Postgres, so it is 8.5x SLOWER than having no index at all. Both figures are in TODO 74.3.
+	//
+	// With the directions matched the same page is 0.16 ms and, more to the point, FLAT: 0.163 ms at
+	// 10,000 rows and 0.164 ms at 100,000, because it walks fifty index entries rather than sorting
+	// the store. It costs nothing measurable on write (65.4 us against 65.9 us per CreateMemory),
+	// since each write already commits its own transaction.
+	//
+	// MySQL 8.0 is the first version to honour a descending index rather than silently ignoring the
+	// keyword, which the driver already requires (8.0.20+, for the AS-new upsert alias).
+	listingIndexName    = "idx_memories_listing_v1"
+	listingIndexColumns = "(timestamp DESC, id ASC)"
+
+	// The events table's counterpart, for the same reason and against the same ordering clause -
+	// eventOrderClauses spells its timestamp ordering as `time_start DESC, id ASC`, that column being
+	// what an event's timestamp is.
+	eventListingIndexName    = "idx_events_listing_v1"
+	eventListingIndexColumns = "(time_start DESC, id ASC)"
 )
 
 // supersededCoveringIndexNames are the earlier incarnations of the covering index, dropped on
@@ -134,6 +163,46 @@ func (d *DB) ensureCoveringIndex() error {
 		log.Errorf("failed to create covering index: %s", err.Error())
 
 		return err
+	}
+
+	return nil
+}
+
+// ensureListingIndex creates the listing index, idempotently, across dialects.
+//
+// It is deliberately separate from the covering index rather than an extension of it: the two serve
+// opposite access patterns (the consolidation scans read every row and never order; a listing orders
+// everything and reads fifty), and one index cannot lead on both event_id and timestamp.
+func (d *DB) ensureListingIndex() error {
+	log.Trace("func() db.ensureListingIndex")
+
+	indexes := []struct {
+		table   string
+		name    string
+		columns string
+	}{
+		{table: "memories", name: listingIndexName, columns: listingIndexColumns},
+		{table: "events", name: eventListingIndexName, columns: eventListingIndexColumns},
+	}
+
+	for _, index := range indexes {
+		if d.driver == driverMySQL {
+			if err := d.createMySQLIndexIfMissing(
+				index.table,
+				index.name,
+				`CREATE INDEX `+index.name+` ON `+index.table+` `+index.columns,
+			); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if _, err := d.sql.Exec(`CREATE INDEX IF NOT EXISTS ` + index.name + ` ON ` + index.table + ` ` + index.columns); err != nil {
+			log.Errorf("failed to create listing index '%s': %s", index.name, err.Error())
+
+			return err
+		}
 	}
 
 	return nil

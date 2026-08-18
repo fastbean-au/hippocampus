@@ -254,6 +254,11 @@ type Server struct {
 	// its result instead of starting a second, overlapping cycle.
 	sleepGroup singleflight.Group
 
+	// listingCounts memoises GetMemories'/GetEvents' TotalCount for listing.countCacheSeconds, the
+	// second unbounded pass each of them makes. See countCache for what the staleness buys and why
+	// the key carries the caller's scope.
+	listingCounts *countCache
+
 	// previewGroup collapses concurrent PreviewConsolidation calls asking for the same sample size
 	// onto one scan. It is deliberately a SEPARATE group from sleepGroup: a preview must never join
 	// a real cycle (it would be describing a run that is at that moment deleting), so the two
@@ -461,6 +466,7 @@ func New(deps Dependencies) *Server {
 			tlsInsecureSkipVerify: viper.GetBool("transfer.tls.insecureSkipVerify"),
 		},
 		sleepReset:                reset,
+		listingCounts:             newCountCache(time.Duration(viper.GetInt("listing.countCacheSeconds")) * time.Second),
 		minimumEventSignificance:  viper.GetInt32("event.minimumSignificance"),
 		minimumMemorySignificance: viper.GetInt32("memory.minimumSignificance"),
 		maxMemoryBodyLength:       viper.GetInt("memory.limit.sizeBytes"),

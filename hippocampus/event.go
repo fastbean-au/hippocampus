@@ -353,6 +353,24 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 	return &res, nil
 }
 
+// countEvents answers a listing's TotalCount through the count cache, exactly as countMemories does.
+func (s *Server) countEvents(ctx context.Context, filter db.EventFilter) (int, error) {
+	key := filterCacheKey("events", filter)
+
+	if total, ok := s.listingCounts.get(key); ok {
+		return total, nil
+	}
+
+	total, err := s.db.CountEventsFiltered(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+
+	s.listingCounts.put(key, total)
+
+	return total, nil
+}
+
 func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (*contract.GetEventsResponse, error) {
 	var res contract.GetEventsResponse
 
@@ -443,14 +461,20 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 	// The caller's group scope, as a predicate so it narrows before the LIMIT and the total count.
 	filter.Groups, _ = s.scopedGroups(ctx)
 
-	total, err := s.db.CountEventsFiltered(ctx, filter)
+	events, err := s.db.GetEvents(ctx, filter)
 	if err != nil {
 		return &res, mapError(err)
 	}
 
-	events, err := s.db.GetEvents(ctx, filter)
-	if err != nil {
-		return &res, mapError(err)
+	// The page first, so a short first page can answer the total without a second pass - see
+	// GetMemories, which this mirrors, for why that is exact rather than an estimate.
+	total := len(*events)
+
+	if filter.Offset > 0 || len(*events) >= filter.Limit {
+		total, err = s.countEvents(ctx, filter)
+		if err != nil {
+			return &res, mapError(err)
+		}
 	}
 
 	es := make([]*contract.Event, len(*events))

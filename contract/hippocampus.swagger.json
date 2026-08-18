@@ -192,7 +192,7 @@
           },
           {
             "name": "orderBy",
-            "description": "the field to sort on; defaults to \"significance\". One of: \"significance\" (naturally desc, then time_start, then id), \"timestamp\" (time_start, naturally desc), \"time_end\" (naturally desc; an event that has not ended stores 0, so those sort as the OLDEST rather than the most recent - use time_end_min to exclude them), \"name\" (naturally asc), \"group\" (naturally asc, then time_start), \"link_significance\" (naturally desc, then significance), \"id\" (naturally asc). order_dir overrides the natural direction. Every ordering carries an id tiebreaker, so offset pagination is stable",
+            "description": "the field to sort on; defaults to \"timestamp\" (most recently started first). One of: \"significance\" (naturally desc, then time_start, then id), \"timestamp\" (time_start, naturally desc), \"time_end\" (naturally desc; an event that has not ended stores 0, so those sort as the OLDEST rather than the most recent - use time_end_min to exclude them), \"name\" (naturally asc), \"group\" (naturally asc, then time_start), \"link_significance\" (naturally desc, then significance), \"id\" (naturally asc). order_dir overrides the natural direction. Every ordering carries an id tiebreaker, so offset pagination is stable",
             "in": "query",
             "required": false,
             "type": "string"
@@ -853,7 +853,7 @@
           },
           {
             "name": "orderBy",
-            "description": "the field to sort on; defaults to \"significance\". One of: \"significance\" (naturally desc, then time_stamp, then id), \"timestamp\" (time_stamp, naturally desc), \"time_recalled\" (naturally desc; a never-recalled memory stores 0, so those sort as the LEAST recently recalled rather than being excluded - use recalled to ask about them), \"recall_count\" (naturally desc, then time_stamp), \"group\" (naturally asc, then time_stamp), \"link_significance\" (naturally desc, then significance), \"id\" (naturally asc). order_dir overrides the natural direction. Every ordering carries an id tiebreaker, so offset pagination is stable",
+            "description": "the field to sort on; defaults to \"timestamp\" (most recently stored first). One of: \"significance\" (naturally desc, then time_stamp, then id), \"timestamp\" (time_stamp, naturally desc), \"time_recalled\" (naturally desc; a never-recalled memory stores 0, so those sort as the LEAST recently recalled rather than being excluded - use recalled to ask about them), \"recall_count\" (naturally desc, then time_stamp), \"group\" (naturally asc, then time_stamp), \"link_significance\" (naturally desc, then significance), \"id\" (naturally asc). order_dir overrides the natural direction. Every ordering carries an id tiebreaker, so offset pagination is stable",
             "in": "query",
             "required": false,
             "type": "string"

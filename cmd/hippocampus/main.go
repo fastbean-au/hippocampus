@@ -324,6 +324,14 @@ func setStartupDefaults() {
 	// deliberate: what the view exposes is the deployment's shape rather than its contents, and the
 	// people who need it most are rarely the ones holding an admin token. Deployments where the
 	// shape is itself sensitive raise it here.
+	// A listing's TotalCount is a second unbounded pass over the same predicate as its page, and
+	// since the listing index made the page a walk of `limit` rows it is the larger half of a list
+	// request by an order of magnitude. It cannot be answered with an index (one that speeds the
+	// count slows the page far more - TODO 74.3), so it is cached for a few seconds instead. The
+	// consequence is a total that can lag the page beside it, which is the same eventual consistency
+	// the content-search index already has; 0 disables the cache and counts every time.
+	viper.SetDefault("listing.countCacheSeconds", 5)
+
 	viper.SetDefault("topology.enabled", true)
 	viper.SetDefault("topology.minimumTier", "reader")
 	viper.SetDefault("topology.probeIntervalSeconds", 30)
@@ -670,6 +678,8 @@ func run(ctx context.Context, version versionInfo) error {
 		}
 
 		verifier = v
+
+		warnOnUnconstrainedIdP()
 
 		if viper.GetBool("auth.oauth2.enabled") {
 			login, err := buildOAuth2Login(refreshInterval)
@@ -1321,6 +1331,36 @@ func rateLimitRuleFromViper(key string) ratelimit.Rule {
 	}
 }
 
+// warnOnUnconstrainedIdP warns when an idp deployment verifies nothing but the signature.
+//
+// A token is only proof of what a provider signed, not of who it was signed FOR. With auth.audience
+// unset, jwt.WithAudience is never applied, so EVERY RS256 token the provider's keys signed
+// verifies here - including one minted for a different application in the same tenant. In an
+// organisation with a single Okta/Entra/Keycloak behind several services, that is any employee's
+// token for any of them, with this service's tier then resolved from whatever roles claim it
+// happens to carry. Setting auth.audience to this service's own identifier is what makes a token
+// mean "for Hippocampus".
+//
+// The same applies to auth.issuer, one step weaker: configuring jwksUrl alone (rather than letting
+// discovery derive it from the issuer) leaves iss unchecked too, so the trust is in the key set
+// alone.
+//
+// A warning rather than a refusal, matching the short-signing-secret and auth-without-TLS
+// precedents: a single-purpose IdP whose tokens are only ever this service's is a legitimate
+// deployment, and there is no way to tell one from the other here.
+func warnOnUnconstrainedIdP() {
+	if viper.GetString("auth.audience") == "" {
+		log.Warn("auth.method is 'idp' but auth.audience is not set - every token the provider " +
+			"signs will verify, including tokens minted for other applications in the same tenant: " +
+			"set auth.audience to this service's identifier")
+	}
+
+	if viper.GetString("auth.issuer") == "" {
+		log.Warn("auth.method is 'idp' but auth.issuer is not set - the 'iss' claim is not checked, " +
+			"so trust rests entirely on the configured JWKS key set")
+	}
+}
+
 // topologyTierOverride turns topology.minimumTier into the per-RPC tier override NewAuthoriser
 // takes. It returns nil - meaning "leave the declared policy alone" - when the key is unset or the
 // RPC is disabled entirely, so a deployment that never touches the key gets exactly the policy
@@ -1633,6 +1673,12 @@ func validateTopologyConfig() error {
 	// A probe round runs its checks in sequence, so an interval shorter than one round would leave
 	// the prober permanently behind its own schedule - ticks would be dropped, and the interval the
 	// RPC reports (which a console paces its polling by) would be a number nothing observes.
+	// A negative TTL would disable the cache rather than fail, which is a surprising way to read a
+	// typo - the same reasoning as the probe intervals below.
+	if seconds := viper.GetInt("listing.countCacheSeconds"); seconds < 0 {
+		return fmt.Errorf("listing.countCacheSeconds must not be negative, got %d", seconds)
+	}
+
 	interval := viper.GetInt("topology.probeIntervalSeconds")
 	timeout := viper.GetInt("topology.probeTimeoutSeconds")
 

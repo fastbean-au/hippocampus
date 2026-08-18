@@ -549,6 +549,9 @@ func TestInitPostgresSchemaFresh(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// ensureListingIndex, which follows the covering index: memories then events.
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectTombstones(mock, driverPostgres)
 	expectInstances(mock, driverPostgres)
 
@@ -583,6 +586,9 @@ func TestInitPostgresSchemaMigrates(t *testing.T) {
 	mock.ExpectExec(`ALTER TABLE memories DROP COLUMN significance`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`ALTER TABLE events DROP COLUMN significance`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectSupersededIndexDrop(mock, driverPostgres)
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// ensureListingIndex, which follows the covering index: memories then events.
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectTombstones(mock, driverPostgres)
 	expectInstances(mock, driverPostgres)
@@ -643,6 +649,11 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 	expectSupersededIndexDrop(mock, driverMySQL)
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	// ensureListingIndex's own probes, which follow the covering index's: memories then events.
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	expectTombstones(mock, driverMySQL)
 	expectInstances(mock, driverMySQL)
 
@@ -665,6 +676,9 @@ func expectPostgresSchemaInitFresh(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery(`column_name FROM information_schema`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 	expectSupersededIndexDrop(mock, driverPostgres)
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// ensureListingIndex, which follows the covering index: memories then events.
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectTombstones(mock, driverPostgres)
 	expectInstances(mock, driverPostgres)
@@ -703,6 +717,11 @@ func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 
 	expectSupersededIndexDrop(mock, driverMySQL)
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	// ensureListingIndex's own probes, which follow the covering index's: memories then events.
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	expectTombstones(mock, driverMySQL)
@@ -1360,6 +1379,8 @@ func TestInitPostgresSchema_EnsureCoveringIndexError(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+	// No listing-index expectation: the covering index's failure aborts initPostgresSchema, and
+	// ensureListingIndex is never reached.
 
 	if err := d.initPostgresSchema(); err == nil {
 		t.Fatal("expected an error")
@@ -1507,6 +1528,8 @@ func TestInitMySQLSchema_EnsureCoveringIndexError(t *testing.T) {
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec(`CREATE INDEX`).WillReturnError(errors.New("boom"))
+	// No listing-index probe: the covering index's failure aborts initMySQLSchema, and
+	// ensureListingIndex is never reached.
 
 	if err := d.initMySQLSchema(); err == nil {
 		t.Fatal("expected an error")

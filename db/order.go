@@ -103,9 +103,26 @@ var eventOrderClauses = map[string]orderClause{
 	},
 }
 
+// The default ordering for a listing that names none.
+//
+// Timestamp rather than significance, which is what both were until the listing index landed. The
+// significance ordering cannot be served by any index on memories or events: significance is
+// COALESCE(l.level_rank, 0) from the LEFT JOIN onto the registry, a column that exists only inside
+// memoriesFrom/eventsFrom. So the default read - the one a client makes when it expresses no
+// preference at all, which is most of them - forced a full scan and a temp B-tree sort of everything
+// the filter matched, growing with the store.
+//
+// Timestamp is served by idx_memories_listing_v1 / idx_events_listing_v1, whose columns AND
+// directions match these clauses exactly, so the default page is now a walk of `limit` index entries
+// (0.16 ms out of 100,000 rows, flat in store size, against 84 ms sorted - TODO 74.3).
+//
+// It is also the better default on its own terms: "the most recent" is what a listing usually means,
+// and significance-ordered was a poor fit for the store's own premise, since it returns the same
+// head of the list until something more significant is written. Significance ordering remains one
+// order_by value away.
 const (
-	defaultMemoryOrderBy = "significance"
-	defaultEventOrderBy  = "significance"
+	defaultMemoryOrderBy = "timestamp"
+	defaultEventOrderBy  = "timestamp"
 )
 
 // MemoryOrderByValues returns the accepted GetMemories order_by values in sorted order, and

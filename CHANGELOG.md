@@ -71,6 +71,68 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   to `#security` and `#group-scoping-and-the-trust-boundary` still resolves, including the ones in
   this changelog's own history.
 
+### Breaking
+
+- **`GetMemories` and `GetEvents` now default to `order_by: "timestamp"`, not `"significance"`.** A
+  client that named no ordering gets the most recent first rather than the most significant first;
+  one that named `significance` explicitly is unaffected. The old default could not be served by any
+  index — `significance` is the registry's rank, reached through a join, so it is not a column of
+  either table — which made the ordering a client gets when it expresses no preference the one
+  ordering guaranteed to scan and sort the whole result set. It is also the better default on its own
+  terms: "the most recent" is what a listing usually means, where significance-ordered returns the
+  same head of the list until something more significant is written. The embedded console's sort
+  selectors now open on it to match.
+
+### Changed
+
+- **A listing index, and a listing that stops counting when it does not have to.** A page of fifty
+  memories cost a full scan and a temp B-tree sort of everything the filter matched — 84 ms out of
+  100,000 rows on SQLite, 106 ms on PostgreSQL — because the only index on `memories` leads on
+  `event_id` and can therefore only be scanned, never sought. `idx_memories_listing_v1`
+  (`timestamp DESC, id ASC`) matches the ordering clause column for column, which takes the same
+  page to **0.16 ms and, more usefully, makes it flat**: 0.163 ms at 10,000 rows and 0.164 ms at
+  100,000, because it walks fifty index entries instead of sorting the store. It is created on
+  startup like the covering index, so an existing database gains it on next start, and it costs
+  nothing measurable on write (65.4 µs against 65.9 µs per stored memory).
+
+  The directions are load-bearing, not decoration: a plain `(timestamp)` index does **not** match a
+  mixed-direction ordering, and is not merely useless — the planner takes it, walks it, and looks
+  each row up by rowid, which is **8.5× slower than having no index at all** (2.2× on PostgreSQL).
+
+  `TotalCount` was then the whole cost of a listing, being a second pass with no limit. It is now
+  skipped entirely where the answer is already known — a first page that came back short has seen
+  everything the filter matches, so its length _is_ the total, exactly rather than approximately —
+  and where it is still needed it no longer joins the significance registry for a figure that
+  discards it.
+
+  What remains is cached per filter for `listing.countCacheSeconds` (default `5`; `0` counts every
+  time), so a repeated listing stops recomputing it. The total can therefore lag the page beside it
+  by up to that long — the same eventual consistency the content-search index already has — and it
+  cuts the other way too: a client paging through results sees a **stable** total, where an exact one
+  recomputed per page can move underneath a traversal. The key covers every field of the filter
+  including the caller's group scope, so two callers scoped differently can never be served each
+  other's total, and the cache is bounded because a filter is caller-supplied.
+
+  Indexing the predicate instead was measured and rejected: an index making a group-scoped count 57×
+  faster makes the scoped page 181× slower, by pulling the planner off the listing index.
+
+### Security
+
+- **An `idp` deployment is warned when it verifies nothing but a token's signature.** `iss` and `aud`
+  are enforced only when `auth.issuer`/`auth.audience` are configured, so a deployment naming just a
+  JWKS URL accepted **every** token that provider signed — including one minted for a different
+  application in the same tenant, whose tier was then resolved from whatever `roles` claim it
+  carried. Nothing said so: the reference described the mechanism ("when set") and left the
+  consequence to the reader, where the two analogous risks — a short signing secret, auth without
+  TLS — both warn at startup.
+
+  It now warns too, once per unset claim, and the consequence is stated in
+  [Security](docs/security.md#authentication) and [Configurability](docs/configuration.md). A
+  warning rather than a refusal, matching those precedents: a single-purpose IdP whose tokens are
+  only ever this service's is a legitimate deployment, and nothing here can tell the two apart. No
+  configuration change is required, and none of this alters how a token that names the right
+  audience is verified.
+
 ### Fixed
 
 - **Five broken documentation anchors**, found by a link check over every relative link and heading

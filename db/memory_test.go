@@ -1185,13 +1185,15 @@ func TestGetMemoriesSortingAndPagination(t *testing.T) {
 		t.Errorf("timestamp order = %v, want %v", memIds(byTime), want)
 	}
 
-	// an empty/unknown order_by falls back to significance.
+	// An empty/unknown order_by falls back to timestamp, so the default listing is the same one
+	// byTime just asked for explicitly - which is the property the listing index depends on, since
+	// only that ordering can be walked rather than sorted.
 	byDefault, err := db.GetMemories(context.Background(), MemoryFilter{})
 	if err != nil {
 		t.Fatalf("GetMemories(default): %s", err)
 	}
 
-	if want := []string{"c", "b", "a", "d"}; !equalStrings(memIds(byDefault), want) {
+	if want := []string{"d", "c", "b", "a"}; !equalStrings(memIds(byDefault), want) {
 		t.Errorf("default order = %v, want %v", memIds(byDefault), want)
 	}
 

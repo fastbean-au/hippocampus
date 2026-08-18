@@ -1560,19 +1560,47 @@ func (d *DB) memoryFilterConditions(filter MemoryFilter) (string, []any) {
 	return query, args
 }
 
+// filterNeedsSignificance reports whether a filter's predicates read the significance column, which
+// is the only thing memoriesFrom's LEFT JOIN onto significance_levels provides. Every other column a
+// filter can touch - timestamp, group_name, id, event_id, the recall pair, the two booleans,
+// metadata - lives on the memories table itself.
+//
+// Ordering deliberately does not count: a COUNT has no ORDER BY, which is what lets the count skip a
+// join the page cannot.
+func filterNeedsSignificance(filter MemoryFilter) bool {
+	return filter.SignificanceExtremum != SignificanceExtremumNone ||
+		filter.SignificanceMin > 0 ||
+		filter.SignificanceMax > 0
+}
+
 // CountMemoriesFiltered returns the number of memories matching the filter, ignoring Limit/Offset
 // so the caller can size pagination.
+//
+// It counts against the memories table directly whenever the filter asks nothing of significance,
+// rather than against memoriesFrom. This is the second query every GetMemories issues (TotalCount),
+// it is unbounded by Limit, and joining significance_levels for it means resolving a level for every
+// matching row only to discard it. On a store where the predicate is indexed the join IS the cost:
+// a group-filtered count measured 8.9 ms through the join against 0.6 ms without it (TODO 74.3).
+//
+// The two paths share memoryFilterConditions, so they cannot drift on WHAT they count - the column
+// names are identical either way, since memoriesFrom renames nothing but significance.
 func (d *DB) CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (int, error) {
 	log.Trace("func() db.CountMemoriesFiltered")
 
 	where, args := d.memoryFilterConditions(filter)
+
+	from := `memories`
+
+	if filterNeedsSignificance(filter) {
+		from = memoriesFrom
+	}
 
 	var count int
 
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+memoriesFrom+where, args...).Scan(&count); err != nil {
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+from+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 

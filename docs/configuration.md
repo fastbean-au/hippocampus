@@ -296,12 +296,12 @@ never recalled would be a trap rather than a filter.
 
 `GetMemories` and `GetEvents` both take an `order_by` field naming the column to sort on, and an
 `order_dir` (`SORT_DIRECTION_ASC`/`SORT_DIRECTION_DESC`) reversing it. Both default to
-`significance`, descending — what these listings did before there was anything to set.
+`timestamp`, descending — most recent first, and the one ordering an index can serve (see below).
 
 | `order_by`          | `GetMemories`                | `GetEvents`             | Natural direction |
 | ------------------- | ---------------------------- | ----------------------- | ----------------- |
-| `significance`      | yes (the default)            | yes (the default)       | descending        |
-| `timestamp`         | the memory's `time_stamp`    | the event's `time_start` | descending        |
+| `significance`      | yes                          | yes                     | descending        |
+| `timestamp`         | the memory's `time_stamp` (the default) | the event's `time_start` (the default) | descending        |
 | `time_recalled`     | yes                          | —                       | descending        |
 | `recall_count`      | yes                          | —                       | descending        |
 | `time_end`          | —                            | yes                     | descending        |
@@ -324,8 +324,14 @@ sorts as the oldest-ended (use `time_end_min` to exclude those). An ordering tha
 would be the more surprising of the two behaviours.
 
 An `order_by` naming anything else is rejected with `InvalidArgument` listing the accepted values.
-Only `significance` and `timestamp` are backed by an index, so sorting a large store on another
-column costs a sort — worth knowing before wiring one into a hot path.
+
+**Only `timestamp` is backed by an index** (`idx_memories_listing_v1` / `idx_events_listing_v1`,
+whose columns _and directions_ match that ordering clause exactly), so it reads a page by walking as
+many index entries as the page holds, whatever the store's size. Every other ordering — including
+`significance` — costs a scan and a sort of everything the filter matched, growing with the store,
+so it is worth knowing before wiring one into a hot path. `significance` cannot be indexed at all:
+it is the significance registry's rank, reached through a join, and so is not a column of the
+memories or events table.
 
 Two things are **not** sortable, because neither is a stored column: a memory's computed decay value
 (it is derived per request from the configuration and the store's current capacity pressure — ask
@@ -373,6 +379,41 @@ enum (see [Observability](#observability)).
 
 Metadata round-trips through `Export`/`Import`/`Transfer`. It is stored as a nullable JSON column on
 all three drivers, added in place on first startup after an upgrade, so no migration step is needed.
+
+### Listing totals
+
+`GetMemories` and `GetEvents` report a `total_count` beside the page. It is a second pass over the
+same predicate with no limit, and since only `timestamp` ordering is index-backed it is now the
+larger half of a list request — 32 ms against a page's 0.26 ms on a 100,000-memory store.
+
+Two things reduce it, neither of them a setting:
+
+- **A short first page needs no count at all.** If a page came back with fewer rows than it asked
+  for, and no offset was given, it has already seen everything the filter matches — so its length
+  _is_ the total, exactly.
+- **The count no longer joins the significance registry** unless the filter asks something of
+  significance, since it counts rows rather than reading their rank.
+
+Beyond that the total is **cached**, per filter, for `listing.countCacheSeconds` (default `5`; `0`
+counts every time):
+
+```json
+"listing": {
+    "countCacheSeconds": 5
+}
+```
+
+The trade is that a total can lag the page beside it by up to that long — the same eventual
+consistency the [content-search index](#content-search) already has, and it cuts the other way too:
+a client paging through results sees a **stable** total, where an exact one recomputed per page can
+move underneath a traversal. The cache key covers every field of the filter **including the caller's
+group scope**, so two callers scoped to different groups can never be served each other's total, and
+it is bounded (256 entries, nearest-expiry evicted first) because a filter is caller-supplied and an
+unbounded key space would be memory a caller controls.
+
+Indexing the predicate instead was measured and rejected: an index that makes a group-scoped count
+57× faster makes the scoped _page_ 181× slower by pulling the query planner off the listing index,
+which is a net loss.
 
 ### Rate limiting
 
@@ -653,7 +694,9 @@ token. `auth.method` selects the scheme:
   provider's published JWKS. `auth.jwksUrl` names the key-set endpoint directly, or `auth.issuer`
   alone resolves it via OIDC discovery (`<issuer>/.well-known/openid-configuration`). When
   `auth.issuer` is set it is also enforced against every token's `iss` claim, and
-  `auth.audience`, when set, against `aud`. Keys are cached by `kid` and re-fetched every
+  `auth.audience`, when set, against `aud` — **set both**, or every token the provider signs
+  verifies here, including tokens minted for other applications in the same tenant (the service
+  warns at startup while either is unset; see [Security](security.md#authentication)). Keys are cached by `kid` and re-fetched every
   `auth.jwksRefreshIntervalSeconds` (300 by default); a token presenting an unknown `kid` forces
   one rate-limited early re-fetch, so a provider-side key rotation is picked up on first sight
   without restarting the service. The provider must be reachable at startup (the initial key

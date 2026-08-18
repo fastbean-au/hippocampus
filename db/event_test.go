@@ -603,13 +603,15 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 		t.Errorf("timestamp order = %v, want %v", ids(byTime), want)
 	}
 
-	// an empty/unknown order_by falls back to significance.
+	// An empty/unknown order_by falls back to timestamp, so the default listing is the same one
+	// byTime just asked for explicitly - which is the property the listing index depends on, since
+	// only that ordering can be walked rather than sorted.
 	byDefault, err := db.GetEvents(context.Background(), EventFilter{})
 	if err != nil {
 		t.Fatalf("GetEvents(default): %s", err)
 	}
 
-	if want := []string{"c", "b", "a", "d"}; !equalStrings(ids(byDefault), want) {
+	if want := []string{"d", "c", "b", "a"}; !equalStrings(ids(byDefault), want) {
 		t.Errorf("default order = %v, want %v", ids(byDefault), want)
 	}
 
