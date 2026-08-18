@@ -328,6 +328,13 @@ func setStartupDefaults() {
 	viper.SetDefault("topology.minimumTier", "reader")
 	viper.SetDefault("topology.probeIntervalSeconds", 30)
 	viper.SetDefault("topology.probeTimeoutSeconds", 2)
+
+	// The instance registry (see hippocampus/peers.go). On by default on the server drivers, where
+	// it is the only way an instance can name its peers - and the only way "every instance came up
+	// as a replica, so nothing is forgetting" is reported at all, that being a fault with no
+	// component to attach itself to. Ignored on SQLite, which is single-instance by construction.
+	// One small upsert and one indexed delete per instance per interval.
+	viper.SetDefault("topology.heartbeatSeconds", 30)
 }
 
 // run builds the server (observability, database, the optional search/S3/auth/TLS surface, the gRPC
@@ -1627,6 +1634,12 @@ func validateTopologyConfig() error {
 
 	if interval > 0 && timeout > interval {
 		return fmt.Errorf("topology.probeTimeoutSeconds (%d) must not exceed topology.probeIntervalSeconds (%d)", timeout, interval)
+	}
+
+	// Zero is meaningful here rather than a fallback to the default: it turns the instance registry
+	// off. Negative is not, and would otherwise be accepted as "off" while reading like a setting.
+	if heartbeat := viper.GetInt("topology.heartbeatSeconds"); heartbeat < 0 {
+		return fmt.Errorf("topology.heartbeatSeconds must not be negative, got %d", heartbeat)
 	}
 
 	return validateTopologyComponents()

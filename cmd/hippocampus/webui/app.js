@@ -30,6 +30,7 @@ import {
   shortId,
   topologyCheckedLabel,
   topologyLayout,
+  topologyWarningsHtml,
   topologySource,
   topologyStatus,
   topologySvg,
@@ -3577,6 +3578,7 @@ async function loadTopology() {
       '<div class="empty">This instance does not report its deployment (the view may be switched off, or this token may not ask).</div>';
     $("topology-components").innerHTML =
       '<div class="empty">Nothing to show.</div>';
+    $("topology-warnings").innerHTML = "";
     $("topology-freshness").textContent = "";
 
     fail("Deployment view unavailable", e);
@@ -3591,6 +3593,7 @@ function renderTopology() {
   const showDisabled = $("t-show-disabled").checked;
   const layout = topologyLayout(topologyData, { showDisabled });
 
+  $("topology-warnings").innerHTML = topologyWarningsHtml(topologyData.warnings);
   $("topology-diagram").innerHTML = topologySvg(layout);
 
   const drawn = new Set(layout.boxes.map((b) => b.id));

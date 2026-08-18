@@ -98,6 +98,21 @@ func expectTombstones(mock sqlmock.Sqlmock, drv driver) {
 	}
 }
 
+// expectInstances queues the expectations initInstances issues: the registry table and its single
+// last_seen index. Server drivers only - SQLite never creates the table (see db/instances.go).
+func expectInstances(mock sqlmock.Sqlmock, drv driver) {
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS instances`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if drv == driverMySQL {
+		mock.ExpectQuery(`information_schema.statistics`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+		return
+	}
+
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS idx_instances`).WillReturnResult(sqlmock.NewResult(0, 0))
+}
+
 // stopConsolidatorKeepalive shuts down the lock keepalive goroutine a consolidator setup started
 // and releases the pinned lock connection, mirroring Close's teardown without closing the mock
 // handle (Close's own server-driver path is covered separately in db_extra_test.go). It leaves the
@@ -535,6 +550,7 @@ func TestInitPostgresSchemaFresh(t *testing.T) {
 	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectTombstones(mock, driverPostgres)
+	expectInstances(mock, driverPostgres)
 
 	if err := d.initPostgresSchema(); err != nil {
 		t.Fatalf("initPostgresSchema: %v", err)
@@ -569,6 +585,7 @@ func TestInitPostgresSchemaMigrates(t *testing.T) {
 	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectTombstones(mock, driverPostgres)
+	expectInstances(mock, driverPostgres)
 
 	if err := d.initPostgresSchema(); err != nil {
 		t.Fatalf("initPostgresSchema (migrate): %v", err)
@@ -627,6 +644,7 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	expectTombstones(mock, driverMySQL)
+	expectInstances(mock, driverMySQL)
 
 	if err := d.initMySQLSchema(); err != nil {
 		t.Fatalf("initMySQLSchema: %v", err)
@@ -649,6 +667,7 @@ func expectPostgresSchemaInitFresh(mock sqlmock.Sqlmock) {
 	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectTombstones(mock, driverPostgres)
+	expectInstances(mock, driverPostgres)
 }
 
 // expectMySQLSchemaInitFresh queues the query expectations initMySQLSchema issues against a fresh
@@ -687,6 +706,7 @@ func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	expectTombstones(mock, driverMySQL)
+	expectInstances(mock, driverMySQL)
 }
 
 // --- setupPostgres / setupPostgresReadOnly (the mockable core of NewPostgres*) ---

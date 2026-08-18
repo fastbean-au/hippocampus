@@ -5777,8 +5777,19 @@ type GetTopologyResponse struct {
 	// and only costs the server the assembly.
 	ProbeIntervalSeconds int64 `protobuf:"varint,3,opt,name=probe_interval_seconds,json=probeIntervalSeconds,proto3" json:"probe_interval_seconds,omitempty"`
 	GeneratedAt          int64 `protobuf:"varint,4,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"` // UnixNano; when this response was assembled, not when it was probed
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// warnings are conditions about the deployment AS A WHOLE that no single node can express,
+	// written for an operator to read verbatim. There is exactly one source of them today: the
+	// instance registry's count of how many instances are running consolidation, where both zero
+	// (nothing is forgetting or evicting, and the store simply grows) and two or more (the
+	// single-consolidator lock has been circumvented, or two tiers are pointed at different
+	// databases) are faults with no node to attach themselves to - the zero case in particular is
+	// the absence of a node, which is precisely why it has gone unreported until now.
+	//
+	// Empty is the normal case. A client should show these prominently and unconditionally; they
+	// are not a status, and nothing else in the response repeats them.
+	Warnings      []string `protobuf:"bytes,5,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetTopologyResponse) Reset() {
@@ -5837,6 +5848,13 @@ func (x *GetTopologyResponse) GetGeneratedAt() int64 {
 		return x.GeneratedAt
 	}
 	return 0
+}
+
+func (x *GetTopologyResponse) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
 }
 
 type EmptyRequest struct {
@@ -6324,12 +6342,13 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\afrom_id\x18\x01 \x01(\tR\x06fromId\x12\x13\n" +
 	"\x05to_id\x18\x02 \x01(\tR\x04toId\x12\x14\n" +
 	"\x05label\x18\x03 \x01(\tR\x05label\x12\x1a\n" +
-	"\boptional\x18\x04 \x01(\bR\boptional\"\xd6\x01\n" +
+	"\boptional\x18\x04 \x01(\bR\boptional\"\xf2\x01\n" +
 	"\x13GetTopologyResponse\x122\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1c.hippocampus.v1.TopologyNodeR\x05nodes\x122\n" +
 	"\x05edges\x18\x02 \x03(\v2\x1c.hippocampus.v1.TopologyEdgeR\x05edges\x124\n" +
 	"\x16probe_interval_seconds\x18\x03 \x01(\x03R\x14probeIntervalSeconds\x12!\n" +
-	"\fgenerated_at\x18\x04 \x01(\x03R\vgeneratedAt\"\x0e\n" +
+	"\fgenerated_at\x18\x04 \x01(\x03R\vgeneratedAt\x12\x1a\n" +
+	"\bwarnings\x18\x05 \x03(\tR\bwarnings\"\x0e\n" +
 	"\fEmptyRequest*,\n" +
 	"\x04Bool\x12\x0f\n" +
 	"\vUNSPECIFIED\x10\x00\x12\t\n" +

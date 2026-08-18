@@ -86,6 +86,18 @@ Operational notes:
   lock. Run every instance under a supervisor so a fail-stop is followed by a restart.
 - SQLite cannot be shared, so `consolidation.enabled: false` there is not a scaling replica — it just
   yields an instance that never consolidates. Startup logs a warning to that effect.
+- Each instance registers itself in the shared database every `topology.heartbeatSeconds`, so every
+  instance can name its peers and report which of them holds the consolidator role
+  (`hippo topology`, the console's **Deployment** tab). That is also what makes the failure mode
+  this section's first paragraph invites — **every** instance started with
+  `consolidation.enabled: false`, so nothing ever forgets and the store grows without bound — visible
+  rather than silent: it is reported as a warning on the topology response and logged at `WARN`. The
+  same registry reports the opposite fault, two instances claiming the role, which is what a broken
+  lock or two tiers pointed at different databases looks like. See
+  [Deployment topology](configuration.md#deployment-topology).
+- Promoting a replica is therefore checkable: after the restart, `hippo topology` against any
+  instance should name exactly one consolidator, and the promoted instance's own store node should
+  report the lock as held by it.
 
 ### The instance-lock keepalive (server drivers)
 
@@ -554,14 +566,13 @@ The configuration is under
 [Deployment topology](configuration.md#deployment-topology); what matters operationally is what the
 answer does and does not cover.
 
-**It is one instance's view, not a survey.** An instance knows itself and whatever it dials
-outward. Everything else in a deployment connects _to_ it — replicas sharing its database, the
-event-source bridges, the ingestor, MCP servers, `hippo` itself — and it holds no address for any
-of
-them. Every component reported therefore carries a **source**, and a short list means nothing has
-been declared rather than nothing is running. This is deliberate: the alternative is a registry, and
-a registry makes a memory store into a control plane. Nothing in this view can act on another
-component, and nothing is planned to.
+**It is one instance's view, not a survey.** An instance knows itself, whatever it dials outward,
+and — on a shared `postgres`/`mysql` store — the peers it finds registered there. Everything else in
+a deployment connects _to_ it: the event-source bridges, the ingestor, MCP servers, `hippo` itself,
+none of which it holds an address for. Every component reported therefore carries a **source**, and
+a short list means nothing has been declared rather than nothing is running. This is deliberate: the
+alternative is a registry of clients, and that makes a memory store into a control plane. Nothing in
+this view can act on another component, and nothing is planned to.
 
 **Declare the components that dial in.** The inbound half becomes visible by listing it under
 `topology.components` (see [Deployment topology](configuration.md#deployment-topology)) — and it
@@ -579,8 +590,16 @@ What it does answer, and answers well:
 
 - **Which of these two addresses is the consolidator.** The `self` component reports its role, and
   on the server drivers the store reports which side of the single-consolidator lock this instance
-  is
-  on.
+  is on — and names every instance sharing it, so the answer holds whichever one you asked.
+- **Is anything consolidating at all.** A shared store whose instances all came up as replicas
+  forgets nothing and grows without bound while every instance reports itself healthy. It is
+  reported here as a **warning**, above the components, because the fault is the absent instance and
+  there is no component to colour red. So is the reverse — two instances claiming the role — which is
+  what a broken lock, or two tiers pointed at different databases, looks like from inside.
+- **Which instances are running what.** Each peer reports its version and whether it has the search
+  index, the summariser, the embedder and the gateway — so a replica that came up missing one is
+  visible as such, which it otherwise is not: it behaves exactly as its own configuration says it
+  should.
 - **Is a dependency quietly broken.** A failed OpenSearch write is best-effort and logged; a missing
   Ollama model fails nothing until the first summarisation; an unreachable S3 bucket surfaces on the
   first `Export`. All three show here as a status with the reason beside it, before anyone runs the
@@ -591,10 +610,13 @@ What it does answer, and answers well:
   end it cannot reach; an unreachable one is not answering at all; a `404` is a `healthUrl` that is
   wrong rather than a component that is down.
 
-Two cautions. Statuses come from a **background prober**, so every one is a snapshot and each
-component reports when it was last checked — `unreachable` means "when last asked", not "now". And
-two components are never probed at all, for reasons given in the configuration guide: the OTLP
-collector, and the identity provider. They report as unchecked rather than as healthy.
+Three cautions. Statuses come from a **background prober**, so every one is a snapshot and each
+component reports when it was last checked — `unreachable` means "when last asked", not "now". Two
+components are never probed at all, for reasons given in the configuration guide: the OTLP
+collector, and the identity provider. They report as unchecked rather than as healthy. And a peer is
+not probed either — this instance holds no address it could dial one on. What its row proves is that
+it was writing to the shared store recently, which is the property that actually matters about a
+peer: one that has stopped writing has stopped serving from here whether or not its port answers.
 
 ## Backup, restore, and migration
 

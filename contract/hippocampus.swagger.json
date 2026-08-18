@@ -6,8 +6,7 @@
   },
   "tags": [
     {
-      "name": "Hippocampus",
-      "description": "HTTP annotations below map every RPC onto a REST-ish JSON endpoint under /v1, served by the\ngrpc-gateway alongside the native gRPC API. Path-bound fields (e.g. {id}) are taken from the\nURL; for GET/DELETE the remaining fields are taken from the query string, and for POST/PATCH\nthey are taken from the JSON body."
+      "name": "Hippocampus"
     }
   ],
   "consumes": [
@@ -1807,7 +1806,7 @@
         "BETWEEN"
       ],
       "default": "UNSPECIFIED",
-      "description": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
+      "title": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
     },
     "protobufAny": {
       "type": "object",
@@ -2525,6 +2524,13 @@
           "type": "string",
           "format": "int64",
           "title": "UnixNano; when this response was assembled, not when it was probed"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "warnings are conditions about the deployment AS A WHOLE that no single node can express,\nwritten for an operator to read verbatim. There is exactly one source of them today: the\ninstance registry's count of how many instances are running consolidation, where both zero\n(nothing is forgetting or evicting, and the store simply grows) and two or more (the\nsingle-consolidator lock has been circumvented, or two tiers are pointed at different\ndatabases) are faults with no node to attach themselves to - the zero case in particular is\nthe absence of a node, which is precisely why it has gone unreported until now.\n\nEmpty is the normal case. A client should show these prominently and unconditionally; they\nare not a status, and nothing else in the response repeats them."
         }
       },
       "description": "GetTopologyResponse is the deployment as this instance understands it: a flat node list plus the\nedges between them, rather than a tree. The graph is not a tree - two instances share one store -\nand a flat shape means a new component type is a new TopologyNodeKind rather than a new field."

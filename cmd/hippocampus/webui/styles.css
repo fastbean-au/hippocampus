@@ -921,6 +921,22 @@ svg.topology .off .tname,
 svg.topology .off .tdetail {
   opacity: 0.65;
 }
+/* A deployment-wide warning. Bordered and coloured rather than a line of muted text because the
+   condition it reports - nothing is consolidating - has no node to show as red, and reads on every
+   other panel as a store behaving perfectly. */
+.twarn {
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+}
+.twarn strong {
+  color: var(--warn);
+}
 .tstatus {
   font-size: 12px;
   white-space: nowrap;

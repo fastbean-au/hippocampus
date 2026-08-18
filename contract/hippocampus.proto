@@ -1338,6 +1338,18 @@ message GetTopologyResponse {
 	int64                                  probe_interval_seconds    = 3;
 
 	int64                                  generated_at              = 4;  // UnixNano; when this response was assembled, not when it was probed
+
+	// warnings are conditions about the deployment AS A WHOLE that no single node can express,
+	// written for an operator to read verbatim. There is exactly one source of them today: the
+	// instance registry's count of how many instances are running consolidation, where both zero
+	// (nothing is forgetting or evicting, and the store simply grows) and two or more (the
+	// single-consolidator lock has been circumvented, or two tiers are pointed at different
+	// databases) are faults with no node to attach themselves to - the zero case in particular is
+	// the absence of a node, which is precisely why it has gone unreported until now.
+	//
+	// Empty is the normal case. A client should show these prominently and unconditionally; they
+	// are not a status, and nothing else in the response repeats them.
+	repeated string                        warnings                  = 5;
 }
 
 message EmptyRequest {}

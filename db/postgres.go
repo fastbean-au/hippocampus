@@ -291,5 +291,11 @@ func (d *DB) initPostgresSchema() error {
 		return err
 	}
 
+	// The instance registry (see instances.go). Server drivers only: SQLite is single-instance by
+	// construction, so there are no peers for it to hold.
+	if err := d.initInstances(); err != nil {
+		return err
+	}
+
 	return nil
 }

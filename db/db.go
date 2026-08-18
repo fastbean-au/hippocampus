@@ -108,6 +108,11 @@ type DB struct {
 	// initSchema entirely) never query a table they cannot be sure exists.
 	tombstoneTable bool
 
+	// instanceTable records that initInstances has run, and so that this store keeps the instance
+	// registry at all (see instances.go). False on SQLite, which never creates the table, and false
+	// on the read-only opens for the same reason tombstoneTable is.
+	instanceTable bool
+
 	// compression is the write-side memory-body compression policy (see compress.go). The zero
 	// value stores every body verbatim. It governs writes only — reads follow each row's own
 	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
@@ -632,6 +637,16 @@ type Store interface {
 	ImportEvents(ctx context.Context, events []types.Event) (int, error)
 	ClearMemories(ctx context.Context, snapshots []MemoryRecallSnapshot) (int, error)
 	DeleteEventIfEmpty(ctx context.Context, id string) (bool, error)
+
+	// The instance registry (see instances.go): one row per instance sharing this store, which is
+	// what makes a horizontally-scaled deployment able to name its own peers - and what makes "no
+	// instance is consolidating" visible instead of silent. All three are no-ops returning nothing
+	// where the store keeps no registry, which InstanceRegistryAvailable reports: SQLite is
+	// single-instance by construction, so it has no peers to hold.
+	InstanceRegistryAvailable() bool
+	Heartbeat(ctx context.Context, instance Instance) error
+	ListInstances(ctx context.Context) ([]Instance, error)
+	DeregisterInstance(ctx context.Context, id string) error
 
 	UsedBytes(ctx context.Context) (int64, error)
 	WALBytes() (int64, error)

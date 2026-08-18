@@ -193,8 +193,11 @@ affecting the counts, which are always complete.
 
 `topology` is the terminal form of the console's Deployment tab, and the more useful of the two
 when the console is exactly what is unreachable. It reports this instance, the components it dials,
-and the last known health of each — with **when** each was last checked, since the statuses come
-from a background prober rather than from the request. By default it lists only what is configured;
+the peer instances sharing its database, and the last known health of each — with **when** each was
+last checked, since the statuses come from a background prober rather than from the request. Any
+deployment-wide warning (no instance is consolidating, or more than one is) is printed first and is
+never filtered out, because it describes a fault with no component to be listed under. By default it
+lists only what is configured;
 `--all` adds the components that are switched off, each naming the config key that would enable
 them. Addresses are redacted server-side, so no DSN password or cluster credential is ever printed.
 See [Deployment topology](configuration.md#deployment-topology) for what an instance can and cannot

@@ -75,6 +75,33 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   three are told apart. The list is capped at 32 and every entry is validated at startup; the
   probe round now runs a few probes at a time so a full list still completes inside one interval.
 
+- **Peer discovery on a shared store, and the warnings it makes possible
+  (`topology.heartbeatSeconds`).** A horizontally scaled deployment — one consolidator plus N
+  replicas over a shared `postgres`/`mysql` database — could not name its own peers: the
+  single-consolidator advisory lock proves only that *somebody* holds it, not who, and nothing at
+  all about how many replicas are attached. Each instance now registers one row in an `instances`
+  table every `heartbeatSeconds` (default 30, `0` disables it), so every instance can report its
+  peers with their version, their role, their capability flags (search index, summariser, embedder,
+  gateway) and how long ago each last checked in. The id is `hostname:port` and therefore
+  deterministic, so a restart replaces its own row rather than leaving a ghost to age out; a clean
+  shutdown removes the row immediately, and an instance that stops without saying so is reported
+  unreachable for a window before it disappears.
+
+  That registry is what makes two deployment-wide faults visible, both reported as **warnings** on
+  the response — shown above the diagram in the console, printed first by `hippo topology`, and
+  logged at `WARN` when they appear and at `INFO` when they clear. **No instance is consolidating**:
+  every one came up with `consolidation.enabled: false`, so nothing forgets, nothing evicts and the
+  store simply grows, while each instance individually reports itself perfectly healthy — because it
+  is. There was no component to show as red for that, since the fault *is* the absent one. And the
+  reverse, **more than one instance consolidating**, which is what a circumvented lock or two tiers
+  pointed at different databases looks like from inside. A stale row is never counted toward either,
+  so a replacement correctly taking over is not reported as a duplicate.
+
+  SQLite keeps no registry and creates no table: that store is single-instance by construction, and
+  its page-based capacity accounting would let the record of the deployment raise capacity pressure
+  and evict live memories to make room for itself. `GetTopologyResponse` gains a `warnings` field
+  (additive).
+
 ## [0.33.2] - 2026-08-16
 
 ### Changed

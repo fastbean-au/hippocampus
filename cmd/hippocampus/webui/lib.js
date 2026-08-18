@@ -812,6 +812,25 @@ export function truncateMiddle(text, max) {
   return s.slice(0, head) + "…" + s.slice(s.length - tail);
 }
 
+// topologyWarningsHtml renders the deployment-wide warnings.
+//
+// They arrive as finished sentences rather than as codes, and are rendered verbatim: each one
+// concerns a shape the server can see and this page cannot - how many instances share the store, and
+// how many of them are consolidating - so composing the wording here would mean the console holding a
+// second opinion about a condition it has no way to observe.
+//
+// Nothing is produced when there are none, so the space above the diagram carries no permanently
+// empty container: the normal case is silence.
+export function topologyWarningsHtml(warnings) {
+  let html = "";
+
+  for (const warning of warnings || []) {
+    html += `<div class="twarn"><strong>Warning</strong> — ${esc(warning)}</div>`;
+  }
+
+  return html;
+}
+
 // topologyCheckedLabel says how fresh a status is. It matters more here than anywhere else in the
 // console: every status is a snapshot from a background prober, so "unreachable" always means "was
 // unreachable when last asked", and a reader who cannot see when that was may act on a minute-old

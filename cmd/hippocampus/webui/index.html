@@ -892,13 +892,19 @@
         <div class="card">
           <h2>What this instance is attached to</h2>
           <p class="muted pull-up">
-            An instance knows two things: itself, and whatever it dials. Every
-            other part of a deployment — replicas sharing its database, the
-            broker bridges, the ingestor, MCP servers, the CLI — connects
-            <em>to</em> it and is invisible here unless someone says otherwise.
-            So each component below says where it came from, and this is what
-            this instance knows rather than a survey of what is running.
+            An instance knows three things: itself, whatever it dials, and — on
+            a shared database — the peers it finds registered there. Everything
+            else in a deployment (the broker bridges, the ingestor, MCP servers,
+            the CLI) connects <em>to</em> it and is invisible here unless
+            someone says otherwise. So each component below says where it came
+            from, and this is what this instance knows rather than a survey of
+            what is running.
           </p>
+
+          <!-- Deployment-wide faults, which by definition have no node to sit on: chiefly that
+               nothing is consolidating, where the fault IS the absent instance. Rendered above the
+               diagram and never collapsed, since the whole point is that nothing else says it. -->
+          <div id="topology-warnings"></div>
 
           <div id="topology-diagram">
             <div class="empty">Nothing loaded yet.</div>

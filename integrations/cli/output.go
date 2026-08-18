@@ -595,6 +595,14 @@ func linkDirectionLabel(d contract.LinkDirection) string {
 func (r *renderer) renderTopology(m *contract.GetTopologyResponse) {
 	r.line("%d component(s), checked every %ds", len(m.GetNodes()), m.GetProbeIntervalSeconds())
 
+	// First, and never filtered by --all: a deployment warning describes something that has no node
+	// to be listed under - "no instance is consolidating" is the ABSENCE of one - so it would be
+	// lost anywhere below, and it is the one line here somebody has to act on.
+	for _, warning := range m.GetWarnings() {
+		r.line("")
+		r.line("WARNING: %s", warning)
+	}
+
 	for _, node := range m.GetNodes() {
 		r.line("")
 		r.line("%s  [%s]", node.GetName(), topologyStatusName(node.GetStatus()))

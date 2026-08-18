@@ -497,6 +497,7 @@ tab and `hippo topology`. On by default.
   "probeIntervalSeconds": 30,
   "probeTimeoutSeconds": 2,
   "probeTransferTarget": false,
+  "heartbeatSeconds": 30,
   "components": [
     { "name": "nats-bridge", "kind": "bridge", "healthUrl": "http://nats-bridge:8090" },
     { "name": "ingestor", "kind": "ingestor", "healthUrl": "http://ingestor:8090" }
@@ -504,15 +505,45 @@ tab and `hippo topology`. On by default.
 }
 ```
 
-**What it can and cannot know.** An instance knows two things: itself, and whatever it dials
+**What it can and cannot know.** An instance knows three things: itself, whatever it dials
 outward — the store, the search index, the summariser and embedder, the object store, the transfer
-target, the identity provider, the OTLP endpoint. Every other part of a real deployment **dials
-in**: replicas sharing its database, the [event-source bridges](eventsource.md), the
-[ingestor](ingestor.md), [MCP servers](mcp.md), `hippo`. They hold an address for the service; the
-service holds nothing for them, and there is no registry — this is a memory store, not a control
-plane. So every component in the response carries a **source** saying how the instance came to know
-about it, and a client is expected to show it. A sparse diagram means nothing has been declared, not
-that nothing is running.
+target, the identity provider, the OTLP endpoint — and, on a shared database, the peer instances it
+finds registered there. Every other part of a real deployment **dials in**: the
+[event-source bridges](eventsource.md), the [ingestor](ingestor.md), [MCP servers](mcp.md),
+`hippo`. They hold an address for the service; the service holds nothing for them, and there is no
+registry of them — this is a memory store, not a control plane. So every component in the response
+carries a **source** saying how the instance came to know about it, and a client is expected to show
+it. A sparse diagram means nothing has been declared, not that nothing is running.
+
+**Peers on a shared store are discovered, not declared** (`postgres`/`mysql` only). Every instance
+writes one row into an `instances` table every `heartbeatSeconds` (default 30, `0` disables both
+halves) saying who it is, what it is running, and whether it consolidates; the same statement prunes
+rows nobody has refreshed for four of *their own* intervals. Every instance reads that table, so a
+[horizontally scaled](operations.md#horizontal-scaling-with-replicas) deployment can finally name its own peers — with each
+peer's version, its capability flags (search index, summariser, embedder, gateway), and how long
+ago it last checked in. A peer's id is `hostname:port` and therefore deterministic, so a restart
+replaces its own row rather than leaving a ghost; an instance that shuts down cleanly removes its
+row immediately, and one that stops without saying so is reported `unreachable` for a window before
+it disappears. Nothing acts on a peer's row — it is read to be displayed, and there is no RPC that
+could do anything else with it.
+
+That table is what makes two deployment-wide faults visible, both reported as **warnings** on the
+response (shown above the diagram in the console, and above the listing in `hippo topology`):
+
+- **No instance is consolidating.** Every instance came up with `consolidation.enabled: false`, so
+  nothing is forgetting, evicting or summarising and the store simply grows — while each instance
+  individually reports itself perfectly healthy, because it is. There is no component to show as
+  red here: the fault *is* the absent one. It is held back for the first minute of an instance's
+  life, since a replica routinely starts before the consolidator during a rolling deployment.
+- **More than one instance is consolidating.** The single-consolidator lock has been circumvented,
+  or two tiers are pointed at different databases and each believes it is alone. The duplicates are
+  named, and marked degraded on the diagram.
+
+**SQLite keeps no registry**, and none of the above applies to it: that store is single-instance by
+construction (the `hippocampus.lock` file lock enforces it), so the table would hold one row
+restating what the process already knows — and SQLite's page-based capacity accounting would count
+it, letting the record of the deployment raise capacity pressure and evict live memories to make
+room for itself.
 
 **Declaring the components that dial in.** `topology.components` is how the other half of a
 deployment becomes visible. Each entry is a `name` (also its node id, so it must be unique), a

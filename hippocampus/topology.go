@@ -3,7 +3,6 @@ package hippocampus
 import (
 	"context"
 	"net"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +64,21 @@ type Topology struct {
 	// cannot discover them: they dial IN. Empty by default, which is why a fresh deployment's view
 	// shows only what it dials.
 	components []TopologyComponent
+
+	// heartbeatInterval paces the instance registry (peers.go): how often this instance writes its
+	// own row and reads its peers'. Zero disables both halves - an instance then neither appears to
+	// its peers nor sees them, which is the honest pairing, since a deployment where only some
+	// instances register would produce a different diagram depending on which one you asked.
+	heartbeatInterval time.Duration
+
+	// instanceId is this instance's registry key, hostname:port. Resolved once at startup: it is
+	// written on every heartbeat and must not change under a row that has already been written.
+	instanceId string
+	hostname   string
+
+	// startedAt is when this process began serving, reported in its registry row and used to hold
+	// the no-consolidator warning back over a rolling deployment's first moments.
+	startedAt time.Time
 
 	version string
 
@@ -136,12 +150,25 @@ type topologyNodeSpec struct {
 	// instances side by side should not have to hunt for the same row in a different place.
 	attributes []topologyAttribute
 
+	// version is what the component reports of its own build. Only two kinds of node can carry one:
+	// this instance, and a peer that wrote its own into the registry. Everything else would have to
+	// return it from a probe, which none of them asks for.
+	version string
+
 	// probe says this node has an entry in the prober's map; staticStatus is what to report when it
 	// does not. The two are exclusive: a node is either probed or it states a fixed status, and the
 	// fixed ones are meaningful - DISABLED for a feature that is configured off, UNSPECIFIED for one
 	// that is deliberately never probed.
 	probe        bool
 	staticStatus contract.TopologyStatus
+
+	// statusDetail explains a staticStatus that is not OK, for the nodes whose status is derived
+	// rather than probed - a peer that has stopped writing its heartbeat is the only one today.
+	statusDetail string
+
+	// checkedAt is when a derived status was last established, for the same nodes. Zero means the
+	// status was asserted rather than observed, which is what an unprobed node reports.
+	checkedAt time.Time
 }
 
 type topologyAttribute struct {
@@ -173,6 +200,11 @@ const (
 	// topologyDeclaredPrefix namespaces a declared component's id, so an operator naming a component
 	// "store" cannot collide with the primary store's node and quietly replace it on the diagram.
 	topologyDeclaredPrefix = "declared:"
+
+	// topologyPeerPrefix namespaces a discovered peer's id for the same reason. A peer's id is
+	// hostname:port, which nothing else here could produce, but the two namespaces make a node id
+	// say where it came from without consulting its source.
+	topologyPeerPrefix = "peer:"
 )
 
 // GetTopology reports the deployment as this instance understands it.
@@ -200,22 +232,35 @@ func (s *Server) GetTopology(ctx context.Context, _ *contract.EmptyRequest) (*co
 func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 	probes := s.topologyProbeResults()
 
+	// The peers are the one part of the graph that is not fixed at startup: instances join and leave
+	// a shared store while this one runs. They are merged here rather than rebuilt into the specs so
+	// that the fixed half stays immutable and needs no lock - the snapshot is swapped whole by the
+	// heartbeat goroutine, exactly as the probe results are by the prober.
+	peers := s.peerSnapshotOrEmpty()
+
 	out := &contract.GetTopologyResponse{
-		Nodes:                make([]*contract.TopologyNode, 0, len(s.topology.nodes)),
-		Edges:                make([]*contract.TopologyEdge, 0, len(s.topology.edges)),
+		Nodes:                make([]*contract.TopologyNode, 0, len(s.topology.nodes)+len(peers.nodes)),
+		Edges:                make([]*contract.TopologyEdge, 0, len(s.topology.edges)+len(peers.edges)),
 		ProbeIntervalSeconds: int64(s.topology.probeInterval / time.Second),
 		GeneratedAt:          time.Now().UnixNano(),
+		Warnings:             peers.warnings,
 	}
 
-	for _, spec := range s.topology.nodes {
+	for _, spec := range append(append([]topologyNodeSpec{}, s.topology.nodes...), peers.nodes...) {
 		node := &contract.TopologyNode{
-			Id:         spec.id,
-			Kind:       spec.kind,
-			Name:       spec.name,
-			Detail:     spec.detail,
-			Source:     spec.source,
-			Status:     spec.staticStatus,
-			Attributes: make([]*contract.TopologyAttribute, 0, len(spec.attributes)),
+			Id:           spec.id,
+			Kind:         spec.kind,
+			Name:         spec.name,
+			Detail:       spec.detail,
+			Source:       spec.source,
+			Status:       spec.staticStatus,
+			StatusDetail: spec.statusDetail,
+			Version:      spec.version,
+			Attributes:   make([]*contract.TopologyAttribute, 0, len(spec.attributes)),
+		}
+
+		if !spec.checkedAt.IsZero() {
+			node.CheckedAt = spec.checkedAt.UnixNano()
 		}
 
 		if spec.probe {
@@ -226,13 +271,16 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 			}
 		}
 
-		// Only this instance can report its own build; a probed dependency's version would have to
-		// come back from the probe, which none of them asks for today.
-		if spec.id == topologyNodeSelf {
-			node.Version = s.topology.version
+		attributes := spec.attributes
+
+		// What a shared store is shared WITH belongs to the store rather than to any one instance,
+		// and is only known once the registry has been read - so it is merged here for the same
+		// reason the peer nodes are.
+		if spec.id == topologyNodeStore {
+			attributes = append(append([]topologyAttribute{}, attributes...), peers.storeAttributes...)
 		}
 
-		for _, attribute := range spec.attributes {
+		for _, attribute := range attributes {
 			node.Attributes = append(node.Attributes, &contract.TopologyAttribute{
 				Key:   attribute.key,
 				Value: attribute.value,
@@ -242,7 +290,7 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 		out.Nodes = append(out.Nodes, node)
 	}
 
-	for _, spec := range s.topology.edges {
+	for _, spec := range append(append([]topologyEdgeSpec{}, s.topology.edges...), peers.edges...) {
 		out.Edges = append(out.Edges, &contract.TopologyEdge{
 			FromId:   spec.from,
 			ToId:     spec.to,
@@ -265,7 +313,18 @@ func topologyFromViper(version string) Topology {
 		probeTimeout:        time.Duration(viper.GetInt("topology.probeTimeoutSeconds")) * time.Second,
 		probeTransferTarget: viper.GetBool("topology.probeTransferTarget"),
 		version:             version,
+		hostname:            hostnameOrUnknown(),
+		startedAt:           time.Now(),
 	}
+
+	// Unlike the two probe settings above, a zero here does NOT fall back to a default: it turns the
+	// instance registry off, which is a supported choice (a deployment that does not want its
+	// instances writing to the store on a timer) and the only shape available on SQLite anyway.
+	t.heartbeatInterval = time.Duration(viper.GetInt("topology.heartbeatSeconds")) * time.Second
+
+	// hostname:port, and resolved once - see instanceId. The port is the gRPC listener's, since that
+	// is the address a peer is reached on and the one that makes the pair unique on a host.
+	t.instanceId = net.JoinHostPort(t.hostname, strconv.Itoa(viper.GetInt("port")))
 
 	if t.probeInterval <= 0 {
 		t.probeInterval = defaultTopologyProbeInterval
@@ -381,10 +440,7 @@ func declaredNodeSpec(component TopologyComponent) topologyNodeSpec {
 // first - what it is, what it decides, and what it will refuse - not the whole configuration: this
 // is a view, and viper.AllSettings() is a credential leak.
 func (s *Server) selfNodeSpec() topologyNodeSpec {
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "unknown"
-	}
+	hostname := s.topology.hostname
 
 	role := "consolidator"
 	if !s.consolidationEnabled {
@@ -421,7 +477,9 @@ func (s *Server) selfNodeSpec() topologyNodeSpec {
 		id:           topologyNodeSelf,
 		kind:         contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_INSTANCE,
 		name:         hostname,
+		detail:       s.topology.instanceId,
 		source:       contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_SELF,
+		version:      s.topology.version,
 		attributes:   attributes,
 		staticStatus: contract.TopologyStatus_TOPOLOGY_STATUS_OK,
 	}
@@ -464,9 +522,9 @@ func (s *Server) storeNodeSpec() topologyNodeSpec {
 		{key: "compression", value: enabledDescription(viper.GetBool("storage.compression.enabled"))},
 	}
 
-	// The single-consolidator lock is what makes a shared store safe, and which instance holds it
-	// is the question a horizontally-scaled deployment actually asks. Naming it here is as close as
-	// phase 1 gets; discovering the peers themselves needs the instance heartbeat.
+	// The single-consolidator lock is what makes a shared store safe. This says whether THIS
+	// instance holds it, which is all one process can know on its own; the registry then adds an
+	// instance count and names the consolidators beside it (see peers.go), where it is running.
 	if driver == "postgres" || driver == "mysql" {
 		spec.attributes = append(spec.attributes, topologyAttribute{
 			key:   "consolidator_lock",

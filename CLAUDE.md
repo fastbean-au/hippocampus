@@ -454,8 +454,25 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     capped (`MaxTopologyComponents`) because each entry is an outbound request per round and its
     name is a metric attribute, and that cap is also why the round went from sequential to
     `topologyProbeConcurrency`-at-a-time: with the count operator-controlled, a sequential round no
-    longer fits inside its own interval. Phases 1-2 of TODO 75; shared-store peer discovery is phase
-    3.
+    longer fits inside its own interval. (8) **Peers on a shared store are DISCOVERED**
+    (`hippocampus/peers.go` + `db/instances.go`, `topology.heartbeatSeconds`, phase 3): each instance
+    upserts one row into an `instances` table on a timer and reads the rest, so a horizontally-scaled
+    deployment can finally name its own peers - the advisory lock proves only that SOMEBODY holds it.
+    Six things carry it. The id is **`hostname:port`, deterministic**, so a restart upserts its own
+    row rather than leaving a ghost visible for four intervals, which in a rolling deployment is most
+    of them. **Server drivers only**: SQLite is single-instance by construction, and its page-based
+    `UsedBytes` would let the record of the deployment raise capacity pressure and evict live
+    memories - the tombstone lesson. **A row prunes itself against its OWN interval**
+    (`heartbeat_seconds`, deliberately BIGINT: Postgres types the whole pruning expression from that
+    column, and as INTEGER both the nanosecond product and the bound overflow at runtime), so a slow
+    peer is not deleted and resurrected by a faster one. **Counting is over FRESH rows only** - a
+    dead consolidator's row outlives its process on purpose, and counting it would report the
+    successful takeover as a duplicate. The payoff is `GetTopologyResponse.warnings`: **zero
+    consolidators** (nothing is forgetting, every instance reports itself healthy, and the fault IS
+    the absent node - so there is nothing to colour red) and **two or more**, logged on change rather
+    than every round. And the write and the read **share one goroutine and one cadence**, because an
+    instance that appeared in others' views while showing none of its own would be an asymmetry with
+    no explanation on either side. Phases 1-3 of TODO 75; observed callers are phase 4.
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.

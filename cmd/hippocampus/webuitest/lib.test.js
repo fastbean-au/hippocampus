@@ -38,6 +38,7 @@ import {
   topologySource,
   topologyStatus,
   topologySvg,
+  topologyWarningsHtml,
   truncateMiddle,
 } from "../webui/lib.js";
 
@@ -1114,6 +1115,67 @@ test("topologyLayout places declared components on the inbound side", () => {
 
   assert.ok(inbound, "the inbound edge was dropped");
   assert.equal(inbound.toId, "self");
+});
+
+// A discovered peer shares the instance column with self: the two are siblings attached to the same
+// store, and putting a peer anywhere else would say it dials this instance, which it does not.
+test("topologyLayout places a discovered peer beside this instance", () => {
+  const res = topologyResponse();
+
+  res.nodes.push({
+    id: "peer:hippo-2:50051",
+    kind: "TOPOLOGY_NODE_KIND_INSTANCE",
+    name: "hippo-2",
+    detail: "hippo-2:50051",
+    source: "TOPOLOGY_NODE_SOURCE_DISCOVERED",
+    status: "TOPOLOGY_STATUS_OK",
+    checkedAt: "1699999990000000000",
+  });
+  res.edges.push({
+    fromId: "peer:hippo-2:50051",
+    toId: "store",
+    label: "reads/writes",
+  });
+
+  const layout = topologyLayout(res);
+  const byId = new Map(layout.boxes.map((b) => [b.id, b]));
+  const peer = byId.get("peer:hippo-2:50051");
+
+  assert.ok(peer, "the peer was not placed");
+  assert.equal(peer.x, byId.get("self").x, "a peer belongs in the instance column");
+  assert.ok(peer.y !== byId.get("self").y, "a peer must not sit on top of this instance");
+
+  // Its edge runs to the store, not to this instance: peers are siblings, and nothing here dials
+  // anything there.
+  const edge = layout.links.find((l) => l.fromId === "peer:hippo-2:50051");
+
+  assert.ok(edge, "the peer's edge was dropped");
+  assert.equal(edge.toId, "store");
+  assert.ok(edge.path.length > 0);
+});
+
+// The warnings are the only part of the response with no node to render them on, so losing them
+// silently is exactly the failure worth a test.
+test("topologyWarningsHtml renders each warning and escapes it", () => {
+  assert.equal(topologyWarningsHtml([]), "");
+  assert.equal(topologyWarningsHtml(undefined), "");
+
+  const html = topologyWarningsHtml([
+    "no instance is running consolidation",
+    "2 instances report <the> consolidator role",
+  ]);
+
+  assert.equal((html.match(/twarn/g) || []).length, 2);
+  assert.ok(html.includes("no instance is running consolidation"));
+  assert.ok(!html.includes("<the>"), "a warning must be escaped, not injected");
+  assert.ok(html.includes("&lt;the&gt;"));
+});
+
+test("topologySource names a discovered peer as found in the store", () => {
+  assert.equal(
+    topologySource("TOPOLOGY_NODE_SOURCE_DISCOVERED"),
+    "found in the shared store",
+  );
 });
 
 test("topologySource names a declared component as declared", () => {

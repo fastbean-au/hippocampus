@@ -313,6 +313,21 @@ type Server struct {
 	stopTopology    chan struct{}
 	topologyStopped chan struct{}
 
+	// peers is the instance registry's latest round (see peers.go): the other instances sharing this
+	// store, the store attributes describing the set of them, and any deployment-wide warning. Held
+	// the same way and for the same reasons as topologyProbes; nil until the first round, and
+	// permanently where there is no registry (SQLite, or topology.heartbeatSeconds 0).
+	// stopHeartbeat / heartbeatStopped coordinate its goroutine's shutdown, and are nil when it is
+	// not running.
+	peers            atomic.Pointer[peerSnapshot]
+	stopHeartbeat    chan struct{}
+	heartbeatStopped chan struct{}
+
+	// lastWarnings is what deploymentWarnings reported on the previous round, so a warning is logged
+	// when it appears and when it clears rather than on every round. Touched only by the heartbeat
+	// goroutine, so it needs no lock.
+	lastWarnings []string
+
 	// transfer carries the Transfer RPC's target settings and the page/batch size shared by all
 	// export paths.
 	transfer Transfer
@@ -514,6 +529,10 @@ func New(deps Dependencies) *Server {
 
 	s.startTopologyProber()
 
+	// After the prober, because it is the half of the view that describes instances this process has
+	// never spoken to - and it needs the topology config the two lines above resolved.
+	s.startInstanceHeartbeat()
+
 	return s
 }
 
@@ -549,6 +568,11 @@ func (s *Server) startReconcile(searchIndex search.Index) {
 // before closing the database.
 func (s *Server) Stop() {
 	s.stopOnce.Do(func() {
+		// First, so this instance leaves the shared registry while the database is still open: a
+		// clean exit should disappear from its peers' views immediately rather than be reported
+		// unreachable for several intervals, which is what an instance that could not say so gets.
+		s.stopInstanceHeartbeat()
+
 		s.stopTopologyProber()
 
 		if s.stopReconcile != nil {
