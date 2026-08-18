@@ -33,6 +33,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-08-18
+
 ### Added
 
 - **A deployment topology view: `GetTopology`, the console's Deployment tab, and `hippo topology`.**
@@ -1163,7 +1165,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.33.2...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/fastbean-au/hippocampus/compare/v0.33.2...v0.34.0
 [0.33.2]: https://github.com/fastbean-au/hippocampus/compare/v0.33.1...v0.33.2
 [0.33.1]: https://github.com/fastbean-au/hippocampus/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/fastbean-au/hippocampus/compare/v0.23.0...v0.33.0
