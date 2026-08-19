@@ -192,7 +192,12 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   but also logs a failing RPC at Warn — Info for client-fault codes — so failures are visible at the
   default log level, adding a `client_id` field from the stashed claims when present; when `tls.enabled`,
   `credentials.NewServerTLSFromFile` is added via `grpc.Creds`. Auth without
-  `tls.enabled` only logs a warning — TLS may be terminated upstream instead. Optional gRPC
+  `tls.enabled` only logs a warning — TLS may be terminated upstream instead. gRPC **server
+  reflection** is registered beside `RegisterHippocampusServer` when `reflectionSetting` says so —
+  `reflection.enabled` when set, otherwise derived from `auth.method` (on under `none`, off under
+  `hmac`/`idp`), with the choice and its reason logged. It cannot be gated by the auth interceptor
+  instead: reflection is a **streaming** RPC and every interceptor in the chain is unary, so not
+  registering it is the only thing that keeps it off an authenticated instance. Optional gRPC
   hardening server options are appended when their keys are positive: `maxRecvMsgBytes`
   (`grpc.MaxRecvMsgSize`), `maxConcurrentStreams` (`grpc.MaxConcurrentStreams`), and a keepalive
   enforcement policy from `keepalive.minTimeSeconds`/`keepalive.permitWithoutStream`

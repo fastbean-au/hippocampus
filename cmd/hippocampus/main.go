@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/health"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/fastbean-au/hippocampus/archive"
 	"github.com/fastbean-au/hippocampus/auth"
@@ -877,6 +878,24 @@ func run(ctx context.Context, version versionInfo) error {
 
 	contract.RegisterHippocampusServer(s, hipo)
 
+	// Server reflection lets grpcurl, Postman, Insomnia and every gRPC GUI discover the schema from
+	// a running instance instead of being handed contract/hippocampus.proto. It is the gRPC
+	// counterpart of the gateway's /v1/openapi.json, and it publishes the full method and message
+	// set to anything that can open a socket - before authentication, since the auth interceptor
+	// guards only the /hippocampus.v1.Hippocampus/ prefix. That is reconnaissance rather than a data
+	// leak, but it is enough of a security dimension for the default to follow auth.method rather
+	// than being a flat true. Either way the choice is logged: "reflection is not working" is
+	// otherwise indistinguishable from "the tool is wrong".
+	reflectionEnabled, reflectionReason := reflectionSetting(authMethod)
+
+	if reflectionEnabled {
+		reflection.Register(s)
+
+		log.Infof("gRPC server reflection enabled (%s): grpcurl and gRPC GUIs can discover the schema from this instance. Set reflection.enabled to false to turn it off", reflectionReason)
+	} else {
+		log.Infof("gRPC server reflection disabled (%s): a gRPC tool must be given contract/hippocampus.proto, or a descriptor set built from it, rather than discovering the schema. Set reflection.enabled to true to turn it on", reflectionReason)
+	}
+
 	// A listener that fails to bind or serve sends its error here; run selects on it alongside
 	// ctx.Done so such a failure ends the process (via main's log.Fatal on the returned error)
 	// instead of the old in-goroutine log.Fatal, which a test could not observe.
@@ -1359,6 +1378,28 @@ func warnOnUnconstrainedIdP() {
 		log.Warn("auth.method is 'idp' but auth.issuer is not set - the 'iss' claim is not checked, " +
 			"so trust rests entirely on the configured JWKS key set")
 	}
+}
+
+// reflectionSetting decides whether to register the gRPC reflection service, and returns the reason
+// alongside it so the startup line can say which of the two it took.
+//
+// The default is derived rather than fixed: reflection is a convenience for whoever is pointing a
+// tool at the instance, and a reconnaissance surface for anybody else, so it follows the one setting
+// that already distinguishes those two cases. An unauthenticated instance is a local or demo one,
+// where the whole cost of not having it is a step at the moment somebody is deciding whether this is
+// worth their afternoon; an instance configured for anybody but its owner turns it off. viper.IsSet
+// is what makes the derived default overridable in both directions - a plain GetBool could only
+// express "off", since an unset key and an explicit false read the same.
+func reflectionSetting(authMethod string) (bool, string) {
+	if viper.IsSet("reflection.enabled") {
+		return viper.GetBool("reflection.enabled"), "set by reflection.enabled"
+	}
+
+	if authMethod == "none" {
+		return true, "the default with auth.method 'none'"
+	}
+
+	return false, "the default with auth.method '" + authMethod + "'"
 }
 
 // topologyTierOverride turns topology.minimumTier into the per-RPC tier override NewAuthoriser

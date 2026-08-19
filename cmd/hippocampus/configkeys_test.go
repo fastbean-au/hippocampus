@@ -70,6 +70,7 @@ var unmanagedConfigKeys = map[string]string{
 	"opensearch.applyRetryBaseBackoffMillis": "as above",
 	"opensearch.closeDrainTimeoutSeconds":    "as above",
 	"opensearch.reconcileBatchSize":          "page size for the self-healing sweep; defaulted, and tuned only against a measured store",
+	"reflection.enabled":                     "the service derives its default from auth.method (on when auth is off, off otherwise), which is right for both configurations the wizard produces; a wizard field's default is a static literal, so offering it would mean picking one of the two and writing the other out wrongly",
 	"topology.components":                    "a list of declared inbound components, each a name/kind/healthUrl triple: a deployment inventory rather than a setting, and one the wizard cannot know",
 	"transfer.tls.certFile":                  "mutual TLS to the transfer target; the wizard offers the trust half (caCertFile), which is what a first configuration needs",
 	"transfer.tls.keyFile":                   "as above",

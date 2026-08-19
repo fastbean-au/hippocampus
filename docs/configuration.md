@@ -294,6 +294,38 @@ never-recalled memory has `time_recalled` of `0`, so an upper bound would otherw
 memory that was never recalled at all — "recalled before Tuesday" answering with memories that were
 never recalled would be a trap rather than a filter.
 
+### Server reflection
+
+gRPC [server reflection](https://grpc.io/docs/guides/reflection/) lets `grpcurl`, Postman, Insomnia
+and every gRPC GUI discover the schema from a running instance rather than being handed
+`contract/hippocampus.proto`. It is the gRPC counterpart of the gateway's `/v1/openapi.json`.
+
+```json
+"reflection": {
+    "enabled": true
+}
+```
+
+**The default is derived rather than fixed.** Reflection publishes the full method and message set
+to anything that can open a socket, and it does so **before authentication** — the reflection
+service is a streaming RPC, so it never reaches the auth interceptor, which guards the unary
+`/hippocampus.v1.Hippocampus/` surface. That is reconnaissance rather than a data leak, but it is
+enough of a security dimension to follow the one setting that already distinguishes an instance
+serving its owner from one serving anybody else:
+
+| `auth.method`    | `reflection.enabled` unset |
+| ---------------- | -------------------------- |
+| `none` (default) | **on**                     |
+| `hmac` / `idp`   | **off**                    |
+
+Setting the key overrides the derivation in **both** directions — on for an authenticated instance
+whose gRPC port is reachable only by trusted callers, off for an unauthenticated one that is not.
+Whichever way it goes, the choice is logged at startup naming the reason, because "reflection is not
+working" is otherwise indistinguishable from "the tool is pointed at the wrong thing".
+
+With it off, a tool needs the contract instead — see
+[Clients in other languages](clients.md#the-contract) for building a descriptor set from it.
+
 ### Sorting
 
 `GetMemories` and `GetEvents` both take an `order_by` field naming the column to sort on, and an

@@ -37,11 +37,27 @@ deployment to add one.
   gateway's routes and affect no wire format, so a generator that ignores them still produces a
   correct client.
 
-The server registers **no gRPC reflection service**, so a tool cannot discover the schema from a
-running instance — hand it the `.proto`, or a descriptor set built from it:
+### Discovering it from a running instance
+
+The server registers the gRPC **reflection** service when `reflection.enabled` is set, and by
+default whenever `auth.method` is `none` — so `grpcurl` and every gRPC GUI work against a local or
+demo instance with nothing handed to them:
+
+```sh
+grpcurl -plaintext localhost:50051 list
+grpcurl -plaintext localhost:50051 describe hippocampus.v1.Hippocampus
+```
+
+Reflection publishes the whole method and message set before authentication, so it defaults **off**
+on an instance configured with `auth.method` `hmac` or `idp`; `reflection.enabled` overrides the
+derivation either way, and the choice is named in the startup log. See
+[Server reflection](configuration.md#server-reflection).
+
+Where it is off, hand the tool the `.proto`, or a descriptor set built from it:
 
 ```sh
 buf build contract --as-file-descriptor-set -o hippocampus.binpb
+grpcurl -protoset hippocampus.binpb -plaintext localhost:50051 list
 ```
 
 ## Recipe 1 — `buf`, with nothing else to install

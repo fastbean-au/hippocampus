@@ -24,6 +24,7 @@ can leave the process, and what the service deliberately does not do. The exhaus
 | Gateway body cap       | `gateway.maxRequestBytes`                                 | unset      | The HTTP gateway is reachable by untrusted callers.                 |
 | gRPC stream/keepalive  | `maxConcurrentStreams`, `keepalive.*`                     | grpc-go's  | The gRPC port is exposed beyond trusted callers.                    |
 | Listener binding       | `bindAddress`, `gateway.bindAddress`                      | all        | A sidecar or mesh fronts the service — bind loopback only.          |
+| Server reflection      | [`reflection.enabled`](configuration.md#server-reflection) | follows `auth.method` | Already handled: on without auth, off with it. Set it off explicitly if an unauthenticated port is reachable at all. |
 
 Authentication and authorisation are one decision, not two: the authoriser is built only when auth is
 enabled, and a token whose roles resolve to no tier is denied every RPC.
@@ -143,6 +144,14 @@ If the gRPC port is exposed, cap the concurrent HTTP/2 streams one connection ma
 `maxConcurrentStreams`, and enforce a keepalive policy (`keepalive.minTimeSeconds`,
 `keepalive.permitWithoutStream`) so an abusive client cannot ping the server into a resource spiral.
 Both default to grpc-go's own defaults.
+
+**Schema discovery.** gRPC [server reflection](configuration.md#server-reflection) publishes the
+full method and message set to anything that can open a socket, and does so **before**
+authentication — it is a streaming RPC, so it never reaches the unary auth interceptor. That is
+reconnaissance rather than a data leak, and the default already accounts for it by following
+`auth.method`: on when auth is off, off when it is on. `reflection.enabled` overrides that in either
+direction, and is worth setting explicitly on an unauthenticated instance whose gRPC port is
+reachable beyond localhost.
 
 **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left unset
 there is no cap. The native gRPC transport bounds a whole request at its 4 MiB default, but the HTTP

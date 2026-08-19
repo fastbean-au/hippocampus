@@ -35,6 +35,20 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **gRPC server reflection — `reflection.enabled`.** `grpcurl`, Postman, Insomnia and every gRPC GUI
+  could not discover the schema from a running instance; each had to be handed
+  `contract/hippocampus.proto` or a descriptor set built from it, which is a step at exactly the
+  moment somebody is deciding whether this is worth their afternoon. HTTP callers already had the
+  equivalent in `/v1/openapi.json`.
+
+  The default is **derived rather than fixed**, because reflection publishes the full method and
+  message set to anything that can open a socket, and does so before authentication — it is a
+  streaming RPC, so it never reaches the unary auth interceptor. It is therefore **on when
+  `auth.method` is `none`** (the local and demo case the friction is entirely about) and **off under
+  `hmac` or `idp`**. Setting `reflection.enabled` overrides that in both directions, and whichever
+  way it goes the choice is logged at startup naming the reason — "reflection is not working" being
+  otherwise indistinguishable from "the tool is pointed at the wrong thing".
+
 - **A security policy — [`SECURITY.md`](SECURITY.md).** There was no way to report a vulnerability
   privately and no statement of what was in scope. It names GitHub's private vulnerability reporting
   as the channel, states that the latest release is the supported one (pre-1.0, no backport
