@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -81,6 +82,10 @@ const (
 	seededMemoriesWithEvent  = 4
 	seededEvents             = 2
 	seededEventsWithMemories = 2
+
+	// The fixed instant scripts/schema-fixtures.sh seeds from, 2026-01-01T00:00:00Z. Fixed rather
+	// than relative so a fixture is reproducible and a test can assert exact values.
+	seededBaseTimestamp = 1767225600000000000
 )
 
 // openFixture copies a fixture into a temp directory and opens it there. The copy is the point:
@@ -113,91 +118,87 @@ func openFixture(t *testing.T, tag string) *DB {
 	return database
 }
 
-// TestSchemaUpgradeReadsEverySeededRow is the core assertion: a store written by an older release
+// assertSeededRowsReadBack is the core assertion: a store written by an older release
 // opens on HEAD with every row intact and every field the migrations moved still saying what it
 // said. It runs against each schema band, so a migration that corrupts a value rather than failing
 // outright is caught at the fixture whose schema it acts on.
-func TestSchemaUpgradeReadsEverySeededRow(t *testing.T) {
+func assertSeededRowsReadBack(t *testing.T, database *DB, label string, migrations string) {
+	t.Helper()
+
 	ctx := context.Background()
 
-	for _, fixture := range schemaFixtures {
-		t.Run(fixture.tag, func(t *testing.T) {
-			database := openFixture(t, fixture.tag)
+	memories, err := database.GetMemories(ctx, MemoryFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("GetMemories after migrating %s failed (%s): %s", label, migrations, err)
+	}
 
-			memories, err := database.GetMemories(ctx, MemoryFilter{Limit: 100})
-			if err != nil {
-				t.Fatalf("GetMemories after migrating %s failed (%s): %s", fixture.tag, fixture.migrations, err)
-			}
+	byId := map[string]seededMemory{}
+	for _, memory := range *memories {
+		byId[memory.Id] = seededMemory{
+			id:           memory.Id,
+			significance: memory.Significance,
+			eventId:      memory.EventId,
+			group:        memory.Group,
+			isBinary:     memory.IsBinary,
+			recallCount:  memory.RecallCount,
+			bodyContains: memory.Body,
+		}
+	}
 
-			byId := map[string]seededMemory{}
-			for _, memory := range *memories {
-				byId[memory.Id] = seededMemory{
-					id:           memory.Id,
-					significance: memory.Significance,
-					eventId:      memory.EventId,
-					group:        memory.Group,
-					isBinary:     memory.IsBinary,
-					recallCount:  memory.RecallCount,
-					bodyContains: memory.Body,
-				}
-			}
+	if len(byId) != len(seededMemories) {
+		t.Fatalf("migrating %s left %d memories, want %d", label, len(byId), len(seededMemories))
+	}
 
-			if len(byId) != len(seededMemories) {
-				t.Fatalf("migrating %s left %d memories, want %d", fixture.tag, len(byId), len(seededMemories))
-			}
+	for _, want := range seededMemories {
+		got, ok := byId[want.id]
+		if !ok {
+			t.Errorf("%s is missing after migrating %s", want.id, label)
 
-			for _, want := range seededMemories {
-				got, ok := byId[want.id]
-				if !ok {
-					t.Errorf("%s is missing after migrating %s", want.id, fixture.tag)
+			continue
+		}
 
-					continue
-				}
+		// Significance is the one that moved tables. Before v0.5.0 it was an integer column
+		// on the row; migrateSignificanceToLevels lifts every distinct value into the shared
+		// registry and repoints the row at a level id, so a fixture from v0.4.0 exercises
+		// that path and must still read back the number it was written with.
+		if got.significance != want.significance {
+			t.Errorf("%s significance is %d after migrating %s, want %d",
+				want.id, got.significance, label, want.significance)
+		}
 
-				// Significance is the one that moved tables. Before v0.5.0 it was an integer column
-				// on the row; migrateSignificanceToLevels lifts every distinct value into the shared
-				// registry and repoints the row at a level id, so a fixture from v0.4.0 exercises
-				// that path and must still read back the number it was written with.
-				if got.significance != want.significance {
-					t.Errorf("%s significance is %d after migrating %s, want %d",
-						want.id, got.significance, fixture.tag, want.significance)
-				}
+		if got.eventId != want.eventId {
+			t.Errorf("%s event_id is %q after migrating %s, want %q",
+				want.id, got.eventId, label, want.eventId)
+		}
 
-				if got.eventId != want.eventId {
-					t.Errorf("%s event_id is %q after migrating %s, want %q",
-						want.id, got.eventId, fixture.tag, want.eventId)
-				}
+		if got.group != want.group {
+			t.Errorf("%s group is %q after migrating %s, want %q",
+				want.id, got.group, label, want.group)
+		}
 
-				if got.group != want.group {
-					t.Errorf("%s group is %q after migrating %s, want %q",
-						want.id, got.group, fixture.tag, want.group)
-				}
+		if got.isBinary != want.isBinary {
+			t.Errorf("%s is_binary is %v after migrating %s, want %v",
+				want.id, got.isBinary, label, want.isBinary)
+		}
 
-				if got.isBinary != want.isBinary {
-					t.Errorf("%s is_binary is %v after migrating %s, want %v",
-						want.id, got.isBinary, fixture.tag, want.isBinary)
-				}
+		// The decay clock ages from the most recent recall, so losing this in a migration
+		// would silently make a reinforced memory as forgettable as an untouched one.
+		if got.recallCount != want.recallCount {
+			t.Errorf("%s recall_count is %d after migrating %s, want %d",
+				want.id, got.recallCount, label, want.recallCount)
+		}
 
-				// The decay clock ages from the most recent recall, so losing this in a migration
-				// would silently make a reinforced memory as forgettable as an untouched one.
-				if got.recallCount != want.recallCount {
-					t.Errorf("%s recall_count is %d after migrating %s, want %d",
-						want.id, got.recallCount, fixture.tag, want.recallCount)
-				}
-
-				// Bodies written before compression existed are stored uncompressed and flagged so;
-				// reads follow the per-row flag rather than the current configuration, which is what
-				// lets a mixed store read correctly. A fixture from >= v0.23.0 carries both kinds.
-				if !strings.Contains(got.bodyContains, want.bodyContains) {
-					t.Errorf("%s body after migrating %s does not contain %q: %q",
-						want.id, fixture.tag, want.bodyContains, got.bodyContains)
-				}
-			}
-		})
+		// Bodies written before compression existed are stored uncompressed and flagged so;
+		// reads follow the per-row flag rather than the current configuration, which is what
+		// lets a mixed store read correctly. A fixture from >= v0.23.0 carries both kinds.
+		if !strings.Contains(got.bodyContains, want.bodyContains) {
+			t.Errorf("%s body after migrating %s does not contain %q: %q",
+				want.id, label, want.bodyContains, got.bodyContains)
+		}
 	}
 }
 
-// TestSchemaUpgradeMetadataFilterAgainstEveryFixture is the regression that names the whole class.
+// assertMetadataFilterIsSafe is the regression that names the whole class.
 //
 // metadata is NULL-able with no DEFAULT on all three dialects, unlike group_name beside it, because
 // SQLite's json_extract raises "malformed JSON" on an empty string but returns NULL for NULL. A
@@ -208,166 +209,190 @@ func TestSchemaUpgradeReadsEverySeededRow(t *testing.T) {
 // TestMetadataFilterAgainstAPreMigrationDatabase already pins that for a hand-built old schema.
 // This pins it against the schemas that were actually released, including the three that predate
 // the metadata column entirely.
-func TestSchemaUpgradeMetadataFilterAgainstEveryFixture(t *testing.T) {
+func assertMetadataFilterIsSafe(t *testing.T, database *DB, label string, migrations string) {
+	t.Helper()
+
 	ctx := context.Background()
 
-	for _, fixture := range schemaFixtures {
-		t.Run(fixture.tag, func(t *testing.T) {
-			database := openFixture(t, fixture.tag)
+	// Every seeded row predates metadata, so the correct answer is an empty page. An ERROR
+	// is the defect; zero rows is the point.
+	memories, err := database.GetMemories(ctx, MemoryFilter{
+		Metadata: map[string]string{"source": "slack"},
+		Limit:    100,
+	})
+	if err != nil {
+		t.Fatalf("metadata-filtered read of a migrated %s store failed: %s", label, err)
+	}
 
-			// Every seeded row predates metadata, so the correct answer is an empty page. An ERROR
-			// is the defect; zero rows is the point.
-			memories, err := database.GetMemories(ctx, MemoryFilter{
-				Metadata: map[string]string{"source": "slack"},
-				Limit:    100,
-			})
-			if err != nil {
-				t.Fatalf("metadata-filtered read of a migrated %s store failed: %s", fixture.tag, err)
-			}
+	if len(*memories) != 0 {
+		t.Errorf("metadata filter matched %d rows on a %s store whose rows carry none",
+			len(*memories), label)
+	}
 
-			if len(*memories) != 0 {
-				t.Errorf("metadata filter matched %d rows on a %s store whose rows carry none",
-					len(*memories), fixture.tag)
-			}
+	// The same query with no metadata predicate must still see everything, so an empty
+	// result above is the filter working rather than the store reading as empty.
+	all, err := database.GetMemories(ctx, MemoryFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("unfiltered read of a migrated %s store failed: %s", label, err)
+	}
 
-			// The same query with no metadata predicate must still see everything, so an empty
-			// result above is the filter working rather than the store reading as empty.
-			all, err := database.GetMemories(ctx, MemoryFilter{Limit: 100})
-			if err != nil {
-				t.Fatalf("unfiltered read of a migrated %s store failed: %s", fixture.tag, err)
-			}
-
-			if len(*all) != len(seededMemories) {
-				t.Errorf("unfiltered read of a migrated %s store returned %d rows, want %d",
-					fixture.tag, len(*all), len(seededMemories))
-			}
-		})
+	if len(*all) != len(seededMemories) {
+		t.Errorf("unfiltered read of a migrated %s store returned %d rows, want %d",
+			label, len(*all), len(seededMemories))
 	}
 }
 
-// TestSchemaUpgradeContentSearchIsBackfilled covers initContentSearch's upgrade case: a store
+// assertContentSearchBackfilled covers initContentSearch's upgrade case: a store
 // written by a version without the FTS index gains it on this startup, and must be populated from
 // the existing rows rather than left empty. An empty index answers every search with nothing, which
 // is indistinguishable from a store holding no match - so this is the other failure that reports
 // itself as an ordinary empty result.
-func TestSchemaUpgradeContentSearchIsBackfilled(t *testing.T) {
+func assertContentSearchBackfilled(t *testing.T, database *DB, label string, migrations string) {
+	t.Helper()
+
 	ctx := context.Background()
 
-	for _, fixture := range schemaFixtures {
-		t.Run(fixture.tag, func(t *testing.T) {
-			database := openFixture(t, fixture.tag)
+	if !database.ContentSearchAvailable() {
+		t.Skip("content search unavailable on this store")
+	}
 
-			if !database.ContentSearchAvailable() {
-				t.Skip("content search unavailable on this store")
-			}
+	hits, err := database.SearchMemoryHits(ctx, ContentQuery{Text: "zebras", Limit: 10})
+	if err != nil {
+		t.Fatalf("content search on a migrated %s store failed: %s", label, err)
+	}
 
-			hits, err := database.SearchMemoryHits(ctx, ContentQuery{Text: "zebras", Limit: 10})
-			if err != nil {
-				t.Fatalf("content search on a migrated %s store failed: %s", fixture.tag, err)
-			}
+	if len(hits) != 1 || hits[0].Id != "mem-loose-1" {
+		ids := make([]string, 0, len(hits))
+		for _, hit := range hits {
+			ids = append(ids, hit.Id)
+		}
 
-			if len(hits) != 1 || hits[0].Id != "mem-loose-1" {
-				ids := make([]string, 0, len(hits))
-				for _, hit := range hits {
-					ids = append(ids, hit.Id)
-				}
+		sort.Strings(ids)
+		t.Errorf("searching a migrated %s store for \"zebras\" returned %v, want [mem-loose-1] "+
+			"(an empty result here means the FTS index was created but never backfilled)",
+			label, ids)
+	}
 
-				sort.Strings(ids)
-				t.Errorf("searching a migrated %s store for \"zebras\" returned %v, want [mem-loose-1] "+
-					"(an empty result here means the FTS index was created but never backfilled)",
-					fixture.tag, ids)
-			}
+	// A binary body is never indexed, whether it was written before or after the index
+	// existed - so the backfill must honour the same rule the write path does.
+	binary, err := database.SearchMemoryHits(ctx, ContentQuery{Text: "YmluYXJ5", Limit: 10})
+	if err != nil {
+		t.Fatalf("content search for a binary body on a migrated %s store failed: %s", label, err)
+	}
 
-			// A binary body is never indexed, whether it was written before or after the index
-			// existed - so the backfill must honour the same rule the write path does.
-			binary, err := database.SearchMemoryHits(ctx, ContentQuery{Text: "YmluYXJ5", Limit: 10})
-			if err != nil {
-				t.Fatalf("content search for a binary body on a migrated %s store failed: %s", fixture.tag, err)
-			}
-
-			for _, hit := range binary {
-				if hit.Id == "mem-binary" {
-					t.Errorf("the backfill indexed a binary body on a migrated %s store", fixture.tag)
-				}
-			}
-		})
+	for _, hit := range binary {
+		if hit.Id == "mem-binary" {
+			t.Errorf("the backfill indexed a binary body on a migrated %s store", label)
+		}
 	}
 }
 
-// TestSchemaUpgradeStoreIsConsolidatable is the third of the three verbs, and the one that matters
+// assertStoreIsConsolidatable is the third of the three verbs, and the one that matters
 // most to a forgetting store: migrated rows must be VISIBLE TO THE DECAY PATH. A row that reads
 // back correctly but that the consolidation scans cannot see is immortal by accident - which is
 // exactly what item 23.2 found for memories with a dangling event_id, and is invisible to any test
 // that only reads.
-func TestSchemaUpgradeStoreIsConsolidatable(t *testing.T) {
+func assertStoreIsConsolidatable(t *testing.T, database *DB, label string, migrations string) {
+	t.Helper()
+
 	ctx := context.Background()
 
+	// A server that consolidates nothing: the scans must still walk every row and reach a
+	// decision on it. What is asserted is the walk, not the verdict.
+	seen := &countingServer{}
+
+	// All three passes, in the order sleep() runs them - memories without events, memories
+	// with events, then events without memories. Running only the first would leave the
+	// four memories that belong to an event unvisited, which is precisely the state this
+	// test exists to detect.
+	looseDeleted, err := database.ConsolidateMemories(ctx, seen)
+	if err != nil {
+		t.Fatalf("first consolidation pass over a migrated %s store failed: %s", label, err)
+	}
+
+	eventMemoriesDeleted, eventsSeen, eventsDeleted, err := database.ConsolidateEventMemories(ctx, seen)
+	if err != nil {
+		t.Fatalf("second consolidation pass over a migrated %s store failed: %s", label, err)
+	}
+
+	emptyEventsDeleted, err := database.ConsolidateEvents(ctx, seen)
+	if err != nil {
+		t.Fatalf("third consolidation pass over a migrated %s store failed: %s", label, err)
+	}
+
+	if deleted := looseDeleted + eventMemoriesDeleted + eventsDeleted + emptyEventsDeleted; deleted != 0 {
+		t.Errorf("the consolidation passes over a migrated %s store deleted %d records the "+
+			"decider kept", label, deleted)
+	}
+
+	// The whole point: every migrated row must be OFFERED to the decider. A row the scans
+	// never reach is immortal by accident whatever it reads back as, which is exactly what
+	// item 23.2 found for memories with a dangling event_id - and no read-only assertion
+	// can see it.
+	if seen.memories != len(seededMemories) {
+		t.Errorf("the consolidation passes over a migrated %s store considered %d memories, want %d",
+			label, seen.memories, len(seededMemories))
+	}
+
+	// The second pass reports the events it walked; the third is offered only those with no
+	// memories left, which after a pass that deleted nothing is just the one seeded empty
+	// event.
+	if eventsSeen != seededEventsWithMemories {
+		t.Errorf("the second consolidation pass over a migrated %s store walked %d events, want %d",
+			label, eventsSeen, seededEventsWithMemories)
+	}
+
+	if seen.events != seededEvents-seededEventsWithMemories {
+		t.Errorf("the third consolidation pass over a migrated %s store considered %d empty events, want %d",
+			label, seen.events, seededEvents-seededEventsWithMemories)
+	}
+
+	// CountMemories splits on event membership, so this also pins that the event_id column
+	// survived: four of the seeded memories belong to an event and four do not.
+	withEvent, withoutEvent := database.CountMemories(ctx)
+	if withEvent != seededMemoriesWithEvent {
+		t.Errorf("a migrated %s store counts %d memories with an event, want %d",
+			label, withEvent, seededMemoriesWithEvent)
+	}
+
+	if withoutEvent != len(seededMemories)-seededMemoriesWithEvent {
+		t.Errorf("a migrated %s store counts %d memories without an event, want %d",
+			label, withoutEvent, len(seededMemories)-seededMemoriesWithEvent)
+	}
+}
+
+// TestSchemaUpgradeReadsEverySeededRow runs assertSeededRowsReadBack against every SQLite fixture.
+func TestSchemaUpgradeReadsEverySeededRow(t *testing.T) {
 	for _, fixture := range schemaFixtures {
 		t.Run(fixture.tag, func(t *testing.T) {
-			database := openFixture(t, fixture.tag)
+			assertSeededRowsReadBack(t, openFixture(t, fixture.tag), fixture.tag, fixture.migrations)
+		})
+	}
+}
 
-			// A server that consolidates nothing: the scans must still walk every row and reach a
-			// decision on it. What is asserted is the walk, not the verdict.
-			seen := &countingServer{}
+// TestSchemaUpgradeMetadataFilterAgainstEveryFixture runs assertMetadataFilterIsSafe against every SQLite fixture.
+func TestSchemaUpgradeMetadataFilterAgainstEveryFixture(t *testing.T) {
+	for _, fixture := range schemaFixtures {
+		t.Run(fixture.tag, func(t *testing.T) {
+			assertMetadataFilterIsSafe(t, openFixture(t, fixture.tag), fixture.tag, fixture.migrations)
+		})
+	}
+}
 
-			// All three passes, in the order sleep() runs them - memories without events, memories
-			// with events, then events without memories. Running only the first would leave the
-			// four memories that belong to an event unvisited, which is precisely the state this
-			// test exists to detect.
-			looseDeleted, err := database.ConsolidateMemories(ctx, seen)
-			if err != nil {
-				t.Fatalf("first consolidation pass over a migrated %s store failed: %s", fixture.tag, err)
-			}
+// TestSchemaUpgradeContentSearchIsBackfilled runs assertContentSearchBackfilled against every SQLite fixture.
+func TestSchemaUpgradeContentSearchIsBackfilled(t *testing.T) {
+	for _, fixture := range schemaFixtures {
+		t.Run(fixture.tag, func(t *testing.T) {
+			assertContentSearchBackfilled(t, openFixture(t, fixture.tag), fixture.tag, fixture.migrations)
+		})
+	}
+}
 
-			eventMemoriesDeleted, eventsSeen, eventsDeleted, err := database.ConsolidateEventMemories(ctx, seen)
-			if err != nil {
-				t.Fatalf("second consolidation pass over a migrated %s store failed: %s", fixture.tag, err)
-			}
-
-			emptyEventsDeleted, err := database.ConsolidateEvents(ctx, seen)
-			if err != nil {
-				t.Fatalf("third consolidation pass over a migrated %s store failed: %s", fixture.tag, err)
-			}
-
-			if deleted := looseDeleted + eventMemoriesDeleted + eventsDeleted + emptyEventsDeleted; deleted != 0 {
-				t.Errorf("the consolidation passes over a migrated %s store deleted %d records the "+
-					"decider kept", fixture.tag, deleted)
-			}
-
-			// The whole point: every migrated row must be OFFERED to the decider. A row the scans
-			// never reach is immortal by accident whatever it reads back as, which is exactly what
-			// item 23.2 found for memories with a dangling event_id - and no read-only assertion
-			// can see it.
-			if seen.memories != len(seededMemories) {
-				t.Errorf("the consolidation passes over a migrated %s store considered %d memories, want %d",
-					fixture.tag, seen.memories, len(seededMemories))
-			}
-
-			// The second pass reports the events it walked; the third is offered only those with no
-			// memories left, which after a pass that deleted nothing is just the one seeded empty
-			// event.
-			if eventsSeen != seededEventsWithMemories {
-				t.Errorf("the second consolidation pass over a migrated %s store walked %d events, want %d",
-					fixture.tag, eventsSeen, seededEventsWithMemories)
-			}
-
-			if seen.events != seededEvents-seededEventsWithMemories {
-				t.Errorf("the third consolidation pass over a migrated %s store considered %d empty events, want %d",
-					fixture.tag, seen.events, seededEvents-seededEventsWithMemories)
-			}
-
-			// CountMemories splits on event membership, so this also pins that the event_id column
-			// survived: four of the seeded memories belong to an event and four do not.
-			withEvent, withoutEvent := database.CountMemories(ctx)
-			if withEvent != seededMemoriesWithEvent {
-				t.Errorf("a migrated %s store counts %d memories with an event, want %d",
-					fixture.tag, withEvent, seededMemoriesWithEvent)
-			}
-
-			if withoutEvent != len(seededMemories)-seededMemoriesWithEvent {
-				t.Errorf("a migrated %s store counts %d memories without an event, want %d",
-					fixture.tag, withoutEvent, len(seededMemories)-seededMemoriesWithEvent)
-			}
+// TestSchemaUpgradeStoreIsConsolidatable runs assertStoreIsConsolidatable against every SQLite fixture.
+func TestSchemaUpgradeStoreIsConsolidatable(t *testing.T) {
+	for _, fixture := range schemaFixtures {
+		t.Run(fixture.tag, func(t *testing.T) {
+			assertStoreIsConsolidatable(t, openFixture(t, fixture.tag), fixture.tag, fixture.migrations)
 		})
 	}
 }
@@ -396,131 +421,226 @@ func (s *countingServer) MemoryRetained(candidate MemoryConsolidationCandidate) 
 
 func (s *countingServer) DeletionThreshold() float64 { return 0 }
 
+// schemaInits is the three schema-init functions, each with its own migration list. THERE BEING
+// THREE is the fact this guard exists to keep in view: initSchema is SQLite's, and a fixture set
+// built for it alone leaves initPostgresSchema and initMySQLSchema unguarded — which is how
+// initInstances (server-only) and the whole of Postgres's native ADD COLUMN IF NOT EXISTS path came
+// to have no fixture behind them at all.
+//
+// Each entry maps a migration to the newest fixture written BEFORE it existed — the fixture that
+// exercises it. notReleasedBefore marks one with no released predecessor.
+var schemaInits = []struct {
+	file     string
+	function string
+	fixture  string // the artefact under testdata/schema/<tag>/ that this dialect's fixtures use
+	declared map[string]string
+	exempt   map[string]string
+}{
+	{
+		file:     "db.go",
+		function: "initSchema",
+		fixture:  "hippocampus.db",
+		declared: map[string]string{
+			"memories.is_summary":            "v0.4.0",
+			"memories.is_compressed":         "v0.22.0",
+			"memories.group_name":            "v0.4.0",
+			"events.group_name":              "v0.4.0",
+			"memories.significance_level_id": "v0.4.0",
+			"events.significance_level_id":   "v0.4.0",
+			"memories.link_significance":     "v0.25.0",
+			"events.link_significance":       "v0.25.0",
+			"memories.metadata":              "v0.25.0",
+			"events.metadata":                "v0.25.0",
+			"initLinkTables":                 "v0.25.0",
+			"dropLegacyRelationshipColumns":  "v0.25.0",
+			"migrateSignificanceToLevels":    "v0.4.0",
+			"initTombstones":                 "v0.31.0",
+			"initContentSearch":              "v0.23.0",
+
+			// The two indexes are rebuilt from whatever columns exist rather than migrating data,
+			// so every fixture exercises them; the oldest is named because it is the one that
+			// proves the covering index survives being rebuilt onto significance_level_id.
+			"ensureCoveringIndex": "v0.4.0",
+			"ensureListingIndex":  "v0.4.0",
+		},
+		exempt: map[string]string{
+			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
+		},
+	},
+	{
+		file:     "postgres.go",
+		function: "initPostgresSchema",
+		fixture:  "postgres.sql",
+		declared: map[string]string{
+			"memories.is_summary":            "v0.4.0",
+			"memories.is_compressed":         "v0.22.0",
+			"memories.group_name":            "v0.4.0",
+			"events.group_name":              "v0.4.0",
+			"memories.significance_level_id": "v0.4.0",
+			"events.significance_level_id":   "v0.4.0",
+			"memories.link_significance":     "v0.25.0",
+			"events.link_significance":       "v0.25.0",
+			"memories.metadata":              "v0.25.0",
+			"events.metadata":                "v0.25.0",
+			"initLinkTables":                 "v0.25.0",
+			"dropLegacyRelationshipColumns":  "v0.25.0",
+			"migrateSignificanceToLevels":    "v0.4.0",
+			"initTombstones":                 "v0.31.0",
+			"ensureCoveringIndex":            "v0.4.0",
+			"ensureListingIndex":             "v0.4.0",
+
+			// The peers table (topology phase 3) shipped in v0.34.0, so v0.31.0 is the newest
+			// schema that predates it.
+			"initInstances": "v0.31.0",
+		},
+		exempt: map[string]string{
+			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
+		},
+	},
+	{
+		file:     "mysql.go",
+		function: "initMySQLSchema",
+		fixture:  "mysql.sql",
+		declared: map[string]string{
+			"memories.is_summary":            "v0.4.0",
+			"memories.is_compressed":         "v0.22.0",
+			"memories.group_name":            "v0.4.0",
+			"events.group_name":              "v0.4.0",
+			"memories.significance_level_id": "v0.4.0",
+			"events.significance_level_id":   "v0.4.0",
+			"memories.link_significance":     "v0.25.0",
+			"events.link_significance":       "v0.25.0",
+			"memories.metadata":              "v0.25.0",
+			"events.metadata":                "v0.25.0",
+			"initLinkTables":                 "v0.25.0",
+			"dropLegacyRelationshipColumns":  "v0.25.0",
+			"migrateSignificanceToLevels":    "v0.4.0",
+			"initTombstones":                 "v0.31.0",
+			"ensureCoveringIndex":            "v0.4.0",
+			"ensureListingIndex":             "v0.4.0",
+			"initInstances":                  "v0.31.0",
+
+			// The binary collation was pinned before v0.1.0, so no RELEASED schema predates it and
+			// no fixture can drive the migration itself. What the fixtures pin instead is the
+			// property it guarantees, on every released schema —
+			// TestSchemaUpgradeMySQLCollation.
+			"setMySQLColumnCollationIfNeeded": notReleasedBefore,
+		},
+		exempt: map[string]string{
+			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
+		},
+	},
+}
+
+// notReleasedBefore marks a migration with no released predecessor schema: it was added in the same
+// release as the table or column it acts on (or before the first release), so there is no older
+// store that needs it and no fixture can exercise it.
+const notReleasedBefore = "-"
+
 // TestEverySchemaMigrationHasAFixture is the drift guard, and it is the half of this file that
 // survives contact with the next migration.
 //
-// The fixtures above are only as good as their coverage: a migration added after v0.34.0 has no
-// fixture predating it, so nothing here would exercise it and every test in this file would go on
-// passing. This reads the migrations initSchema actually performs out of the source and requires
-// each to be declared below against the newest fixture that predates it — so adding one fails the
-// build until somebody decides whether a new fixture is needed.
+// The fixtures are only as good as their coverage: a migration added after v0.34.0 has no fixture
+// predating it, so nothing would exercise it and every other test here would go on passing. This
+// reads the migrations each schema-init function actually performs OUT OF THE SOURCE and requires
+// each to be declared — so adding one fails the build until somebody decides whether a new fixture
+// is needed.
 //
 // It is deliberately two-directional, the shape 74.6 and 74.7 settled on: an undeclared migration
 // fails, and so does a declaration whose migration has gone. The second direction is what stops the
-// list becoming a record of what initSchema used to do.
+// lists becoming a record of what these functions used to do.
 func TestEverySchemaMigrationHasAFixture(t *testing.T) {
-	// Each migration initSchema performs, against the newest fixture written BEFORE it existed —
-	// i.e. the fixture that exercises it. A migration whose predecessor schema was never released
-	// (one added and shipped in the same release as the table it touches) names notReleasedBefore.
-	declared := map[string]string{
-		"memories.is_summary":            "v0.4.0",
-		"memories.is_compressed":         "v0.22.0",
-		"memories.group_name":            "v0.4.0",
-		"events.group_name":              "v0.4.0",
-		"memories.significance_level_id": "v0.4.0",
-		"events.significance_level_id":   "v0.4.0",
-		"memories.link_significance":     "v0.25.0",
-		"events.link_significance":       "v0.25.0",
-		"memories.metadata":              "v0.25.0",
-		"events.metadata":                "v0.25.0",
-		"initLinkTables":                 "v0.25.0",
-		"dropLegacyRelationshipColumns":  "v0.25.0",
-		"migrateSignificanceToLevels":    "v0.4.0",
-		"initTombstones":                 "v0.31.0",
-		"initContentSearch":              "v0.23.0",
+	for _, init := range schemaInits {
+		t.Run(init.function, func(t *testing.T) {
+			performed := migrationsIn(t, init.file, init.function)
 
-		// The two indexes are rebuilt from whatever columns exist rather than migrating data, so
-		// every fixture exercises them; the oldest is named because it is the one that proves the
-		// covering index survives being rebuilt onto significance_level_id.
-		"ensureCoveringIndex": "v0.4.0",
-		"ensureListingIndex":  "v0.4.0",
-	}
+			for _, migration := range performed {
+				if _, ok := init.exempt[migration]; ok {
+					continue
+				}
 
-	// Calls inside initSchema that are not migrations, each with the reason it is exempt. Kept
-	// beside the declarations rather than filtered silently, so a new helper lands in a list
-	// somebody reads instead of disappearing.
-	exempt := map[string]string{
-		"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
-	}
+				tag, ok := init.declared[migration]
+				if !ok {
+					t.Errorf("%s performs %q but no fixture is declared for it.\n"+
+						"Decide which released schema predates it and add it to schemaInits; if none "+
+						"does, name notReleasedBefore. If a new fixture is needed, generate it with "+
+						"scripts/schema-fixtures.sh --driver all and add the tag to schemaFixtures.",
+						init.function, migration)
 
-	performed := migrationsInInitSchema(t)
+					continue
+				}
 
-	for _, migration := range performed {
-		if _, ok := exempt[migration]; ok {
-			continue
-		}
+				if tag == notReleasedBefore {
+					continue
+				}
 
-		tag, ok := declared[migration]
-		if !ok {
-			t.Errorf("initSchema performs %q but no fixture is declared for it.\n"+
-				"Decide which released schema predates it and add it to `declared` above; if that "+
-				"schema was never released, name notReleasedBefore. If a new fixture is needed, "+
-				"generate it with scripts/schema-fixtures.sh and add it to schemaFixtures.", migration)
-
-			continue
-		}
-
-		if tag == notReleasedBefore {
-			continue
-		}
-
-		if _, err := os.Stat(filepath.Join("testdata", "schema", tag, "hippocampus.db")); err != nil {
-			t.Errorf("%q is declared against fixture %s, which is not on disk: %s", migration, tag, err)
-		}
-	}
-
-	// The reverse direction: a declaration whose migration initSchema no longer performs.
-	for migration := range declared {
-		found := false
-
-		for _, name := range performed {
-			if name == migration {
-				found = true
-
-				break
+				if _, err := os.Stat(filepath.Join("testdata", "schema", tag, init.fixture)); err != nil {
+					t.Errorf("%q is declared against fixture %s/%s, which is not on disk: %s",
+						migration, tag, init.fixture, err)
+				}
 			}
-		}
 
-		if !found {
-			t.Errorf("a fixture is declared for %q but initSchema no longer performs it — remove the "+
-				"declaration (and consider whether its fixture is still earning its place)", migration)
-		}
-	}
-
-	for migration := range exempt {
-		found := false
-
-		for _, name := range performed {
-			if name == migration {
-				found = true
-
-				break
+			// The reverse direction: a declaration whose migration is no longer performed.
+			for migration := range init.declared {
+				if !performs(performed, migration) {
+					t.Errorf("a fixture is declared for %q but %s no longer performs it — remove the "+
+						"declaration (and consider whether its fixture is still earning its place)",
+						migration, init.function)
+				}
 			}
-		}
 
-		if !found {
-			t.Errorf("%q is exempted but initSchema no longer calls it — remove the exemption", migration)
+			for migration := range init.exempt {
+				if !performs(performed, migration) {
+					t.Errorf("%q is exempted but %s no longer calls it — remove the exemption",
+						migration, init.function)
+				}
+			}
+		})
+	}
+}
+
+// TestEveryFixtureCoversEveryDriver pins that a fixture tag carries an artefact for all three
+// drivers. A tag added for one driver and forgotten for the others would leave that dialect's
+// declarations pointing at a file which, being absent, makes its subtest skip rather than fail.
+func TestEveryFixtureCoversEveryDriver(t *testing.T) {
+	for _, fixture := range schemaFixtures {
+		for _, artefact := range []string{"hippocampus.db", "postgres.sql", "mysql.sql"} {
+			path := filepath.Join("testdata", "schema", fixture.tag, artefact)
+
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("fixture %s has no %s — generate it with "+
+					"scripts/schema-fixtures.sh --driver all %s", fixture.tag, artefact, fixture.tag)
+			}
 		}
 	}
 }
 
-// notReleasedBefore marks a migration with no released predecessor schema: it was added in the same
-// release as the table or column it acts on, so there is no older store that needs it and no
-// fixture can exercise it.
-const notReleasedBefore = "-"
+// performs reports whether a schema-init function's extracted migration list names this one.
+func performs(migrations []string, want string) bool {
+	for _, migration := range migrations {
+		if migration == want {
+			return true
+		}
+	}
 
-// migrationsInInitSchema reads the migration steps out of initSchema's source rather than taking a
-// list on trust — the list IS what drifts, which is the entire lesson of 74.7. An
-// addColumnIfMissing call is named "<table>.<column>"; any other method called on the receiver is
-// named by the method.
-func migrationsInInitSchema(t *testing.T) []string {
+	return false
+}
+
+// migrationsIn reads the migration steps out of a schema-init function's source rather than taking
+// a list on trust — the list IS what drifts, which is the entire lesson of 74.7.
+//
+// Three shapes are recognised, because the three dialects express a column addition three ways:
+// an addColumnIfMissing call (SQLite and MySQL, which probe first) is named "<table>.<column>";
+// Postgres's native ALTER TABLE ... ADD COLUMN IF NOT EXISTS lives in a SQL string literal and is
+// named the same way; and any other method called on the receiver is named by the method.
+func migrationsIn(t *testing.T, file string, function string) []string {
 	t.Helper()
 
 	fileSet := token.NewFileSet()
 
-	file, err := parser.ParseFile(fileSet, "db.go", nil, 0)
+	parsed, err := parser.ParseFile(fileSet, file, nil, 0)
 	if err != nil {
-		t.Fatalf("failed to parse db.go: %s", err)
+		t.Fatalf("failed to parse %s: %s", file, err)
 	}
 
 	var (
@@ -528,29 +648,40 @@ func migrationsInInitSchema(t *testing.T) []string {
 		receiver string
 	)
 
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "initSchema" || function.Recv == nil {
+	for _, declaration := range parsed.Decls {
+		declared, ok := declaration.(*ast.FuncDecl)
+		if !ok || declared.Name.Name != function || declared.Recv == nil {
 			continue
 		}
 
-		if len(function.Recv.List) != 1 || len(function.Recv.List[0].Names) != 1 {
-			t.Fatalf("initSchema's receiver is not a single named value; this guard reads calls on it")
+		if len(declared.Recv.List) != 1 || len(declared.Recv.List[0].Names) != 1 {
+			t.Fatalf("%s's receiver is not a single named value; this guard reads calls on it", function)
 		}
 
-		body = function.Body
-		receiver = function.Recv.List[0].Names[0].Name
+		body = declared.Body
+		receiver = declared.Recv.List[0].Names[0].Name
 
 		break
 	}
 
 	if body == nil {
-		t.Fatal("initSchema not found in db.go — this guard is reading the wrong function")
+		t.Fatalf("%s not found in %s — this guard is reading the wrong function", function, file)
 	}
 
 	var migrations []string
 
 	ast.Inspect(body, func(node ast.Node) bool {
+		// Postgres adds its columns in raw SQL, so the migration is inside a string literal rather
+		// than in a call. Reading only calls would report that function as performing four
+		// migrations when it performs fourteen.
+		if literal, ok := node.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+			for _, match := range addColumnPattern.FindAllStringSubmatch(literal.Value, -1) {
+				migrations = append(migrations, match[1]+"."+match[2])
+			}
+
+			return true
+		}
+
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -562,8 +693,8 @@ func migrationsInInitSchema(t *testing.T) []string {
 		}
 
 		// Only calls directly on the RECEIVER. d.sql.Exec and the like are a nested selector, and
-		// keying on "a selector over any identifier" would sweep up log.Errorf beside them —
-		// which is the difference between a guard and a list of every function initSchema calls.
+		// keying on "a selector over any identifier" would sweep up log.Errorf beside them — which
+		// is the difference between a guard and a list of every function initSchema calls.
 		identifier, ok := selector.X.(*ast.Ident)
 		if !ok || identifier.Name != receiver {
 			return true
@@ -587,6 +718,9 @@ func migrationsInInitSchema(t *testing.T) []string {
 
 	return migrations
 }
+
+// addColumnPattern matches Postgres's native column addition inside a SQL string literal.
+var addColumnPattern = regexp.MustCompile(`(?i)ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)`)
 
 // stringLiteral returns the value of a string-literal argument, failing when it is not one — a
 // migration named by a variable would make this guard silently incomplete.

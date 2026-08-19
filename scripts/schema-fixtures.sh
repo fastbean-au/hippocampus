@@ -9,7 +9,21 @@
 # Re-run only when a new release changes the schema; the fixtures are committed, and the test reads
 # them rather than calling this. See db/testdata/schema/README.md.
 #
-# Usage: scripts/schema-fixtures.sh [tag ...]        (default: every schema-boundary tag)
+# The three drivers have three separate schema-init functions (initSchema, initPostgresSchema,
+# initMySQLSchema), each with its own migration list, so each needs its own fixtures. SQLite's is a
+# database file; the server drivers' are SQL dumps taken from the server itself with pg_dump /
+# mysqldump, normalised to one statement per line so the test can replay them over database/sql
+# with no client binary of its own.
+#
+# The dump tools live in the test containers rather than on the host, so this script shells into
+# them - which is why the CONTAINER RUNTIME DEPENDENCY IS HERE AND NOT IN THE TEST. The test needs
+# nothing but HIPPOCAMPUS_TEST_POSTGRES_DSN / HIPPOCAMPUS_TEST_MYSQL_DSN, so it runs unchanged
+# against CI's existing service containers.
+#
+# Usage: scripts/schema-fixtures.sh [--driver sqlite|postgres|mysql|all] [tag ...]
+#
+# Container wiring is overridable by environment; the defaults match the containers the repo's
+# integration tests already use (hippo-test-pg, hippo-test-my).
 
 set -euo pipefail
 
@@ -26,8 +40,61 @@ REPO="$(pwd)"
 #   v0.31.0 — before the forgotten log (initTombstones)
 #   v0.34.0 — current release; the control, and the only fixture that should migrate to a no-op
 DEFAULT_TAGS=(v0.4.0 v0.22.0 v0.23.0 v0.25.0 v0.31.0 v0.34.0)
-TAGS=("${@:-}")
-[ -z "${TAGS[0]:-}" ] && TAGS=("${DEFAULT_TAGS[@]}")
+
+DRIVERS=(sqlite)
+TAGS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+
+    --driver)
+      case "$2" in
+
+        all)
+          DRIVERS=(sqlite postgres mysql)
+          ;;
+
+        sqlite | postgres | mysql)
+          DRIVERS=("$2")
+          ;;
+
+        *)
+          echo "unknown driver: $2" >&2
+
+          exit 2
+          ;;
+
+      esac
+
+      shift 2
+      ;;
+
+    *)
+      TAGS+=("$1")
+
+      shift
+      ;;
+
+  esac
+done
+
+[ ${#TAGS[@]} -eq 0 ] && TAGS=("${DEFAULT_TAGS[@]}")
+
+# The container each dump tool lives in, and how to reach the same server from the host. Overridable
+# so this is not welded to one machine's container names.
+RUNTIME="${FIXTURE_RUNTIME:-podman}"
+PG_CONTAINER="${FIXTURE_PG_CONTAINER:-hippo-test-pg}"
+PG_HOST_PORT="${FIXTURE_PG_PORT:-55432}"
+PG_USER="${FIXTURE_PG_USER:-test}"
+PG_PASSWORD="${FIXTURE_PG_PASSWORD:-test}"
+MY_CONTAINER="${FIXTURE_MY_CONTAINER:-hippo-test-my}"
+MY_HOST_PORT="${FIXTURE_MY_PORT:-53306}"
+MY_USER="${FIXTURE_MY_USER:-root}"
+MY_PASSWORD="${FIXTURE_MY_PASSWORD:-test}"
+
+# The scratch database each server fixture is built in, dropped and recreated per tag. Deliberately
+# not the database the integration tests use: this one is created and destroyed.
+SCRATCH_DB="${FIXTURE_SCRATCH_DB:-hippocampus_fixture}"
 
 WORK="$(mktemp -d)"
 WORKTREE="$WORK/src"
@@ -125,32 +192,145 @@ JSON
   post /v1/memories/recall '{"ids":["mem-alpha-3"]}'
 }
 
+# storage_block emits the storage stanza for a driver, plus the sleep/consolidation settings every
+# run shares. minimumAgeInDays is absurd and the capacity limits are off so nothing the seed writes
+# can be consolidated or evicted before shutdown; the timed sleep cycle is disabled outright (a
+# non-positive period has meant "no timed sleep" since 19.3).
+storage_block() {
+  case "$1" in
+
+    sqlite)
+      echo "\"storage\": { \"driver\": \"sqlite\", \"directory\": \"$DATA\" },"
+      ;;
+
+    postgres)
+      echo "\"storage\": { \"driver\": \"postgres\", \"postgres\": { \"dsn\": \"postgres://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_HOST_PORT/$SCRATCH_DB?sslmode=disable\" } },"
+      ;;
+
+    mysql)
+      echo "\"storage\": { \"driver\": \"mysql\", \"mysql\": { \"dsn\": \"$MY_USER:$MY_PASSWORD@tcp(127.0.0.1:$MY_HOST_PORT)/$SCRATCH_DB?parseTime=true\" } },"
+      ;;
+
+  esac
+}
+
+# reset_scratch drops and recreates the scratch database, so each tag starts from nothing. An
+# existing database would let one tag's schema survive into the next fixture, which is the one
+# failure this whole exercise would not notice.
+reset_scratch() {
+  case "$1" in
+
+    postgres)
+      "$RUNTIME" exec -e PGPASSWORD="$PG_PASSWORD" "$PG_CONTAINER" \
+        psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 -q \
+        -c "DROP DATABASE IF EXISTS $SCRATCH_DB" -c "CREATE DATABASE $SCRATCH_DB" > /dev/null
+      ;;
+
+    mysql)
+      "$RUNTIME" exec "$MY_CONTAINER" \
+        mysql -u"$MY_USER" -p"$MY_PASSWORD" \
+        -e "DROP DATABASE IF EXISTS $SCRATCH_DB; CREATE DATABASE $SCRATCH_DB" 2> /dev/null
+      ;;
+
+  esac
+}
+
+# dump_scratch writes the seeded scratch database to stdout as SQL. --inserts /
+# --skip-extended-insert keep the data as ordinary INSERT statements rather than a COPY stream or
+# one enormous row list, because the test replays these over database/sql and has no client binary
+# to feed a COPY to.
+dump_scratch() {
+  case "$1" in
+
+    postgres)
+      "$RUNTIME" exec -e PGPASSWORD="$PG_PASSWORD" "$PG_CONTAINER" \
+        pg_dump -U "$PG_USER" --inserts --no-owner --no-privileges --no-comments "$SCRATCH_DB"
+      ;;
+
+    mysql)
+      "$RUNTIME" exec "$MY_CONTAINER" \
+        mysqldump -u"$MY_USER" -p"$MY_PASSWORD" --skip-extended-insert --no-tablespaces \
+        --skip-comments --compact --skip-set-charset "$SCRATCH_DB" 2> /dev/null
+      ;;
+
+  esac
+}
+
+# normalise_sql turns a dump into ONE STATEMENT PER LINE, which is the whole reason the test needs
+# no SQL parser: it reads lines and executes them. Comments, blank lines, MySQL's /*! ... */
+# executable comments and Postgres's session SET/SELECT preamble are dropped - none of them describe
+# the schema, and several are not valid to send over database/sql.
+#
+# Statement termination tracks single-quote state rather than just looking for a trailing semicolon,
+# so a body containing one cannot split a statement in half.
+normalise_sql() {
+  python3 -c '
+import re, sys
+
+# Lines that describe no schema. The backslash ones are psql META-COMMANDS (recent pg_dump wraps
+# its output in \restrict/\unrestrict): they are not SQL at all and database/sql cannot send them.
+skip = re.compile(r"^\s*(--|/\*|\\|SET\s|SELECT pg_catalog\.set_config|BEGIN;|COMMIT;)", re.I)
+
+statement = []
+quoted = False
+
+for line in sys.stdin:
+    line = line.rstrip("\n")
+
+    if not statement and (not line.strip() or skip.match(line)):
+        continue
+
+    statement.append(line.strip())
+
+    # Walk the line tracking quote state; a doubled quote inside a string is an escaped quote and
+    # leaves the state unchanged.
+    index = 0
+    while index < len(line):
+        if line[index] == "\x27":
+            if quoted and index + 1 < len(line) and line[index + 1] == "\x27":
+                index += 2
+
+                continue
+
+            quoted = not quoted
+
+        index += 1
+
+    if not quoted and line.rstrip().endswith(";"):
+        print(" ".join(part for part in statement if part))
+        statement = []
+
+if statement:
+    sys.exit("unterminated SQL statement at end of dump: " + " ".join(statement)[:200])
+'
+}
+
 mkdir -p db/testdata/schema
 
-for tag in "${TAGS[@]}"; do
-  echo "==> $tag"
+for driver in "${DRIVERS[@]}"; do
+  for tag in "${TAGS[@]}"; do
+    echo "==> $tag ($driver)"
 
-  rm -rf "$WORKTREE"
-  git -C "$REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
-  git -C "$REPO" worktree add --detach --quiet "$WORKTREE" "$tag"
+    rm -rf "$WORKTREE"
+    git -C "$REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
+    git -C "$REPO" worktree add --detach --quiet "$WORKTREE" "$tag"
 
-  echo "  building"
-  (cd "$WORKTREE" && unset GOROOT && go build -o "$WORK/hippocampus" ./cmd/hippocampus)
+    echo "  building"
+    (cd "$WORKTREE" && unset GOROOT && go build -o "$WORK/hippocampus" ./cmd/hippocampus)
 
-  DATA="$WORK/data"
-  rm -rf "$DATA"
-  mkdir -p "$DATA"
+    DATA="$WORK/data"
+    rm -rf "$DATA"
+    mkdir -p "$DATA"
 
-  # A config every version in the range accepts. minimumAgeInDays is absurd and capacity limits are
-  # off so that nothing the seed writes can be consolidated or evicted before shutdown; the timed
-  # sleep cycle is disabled outright (a non-positive period has meant "no timed sleep" since 19.3).
-  cat > "$WORK/config.json" <<JSON
+    reset_scratch "$driver"
+
+    cat > "$WORK/config.json" <<JSON
 {
   "logging": { "level": "warn", "json": false },
   "port": $GRPC_PORT,
   "gateway": { "port": $HTTP_PORT },
   "auth": { "method": "none" },
-  "storage": { "driver": "sqlite", "directory": "$DATA" },
+  $(storage_block "$driver")
   "sleep": { "periodSeconds": 0 },
   "stats": { "intervalSeconds": 0 },
   "consolidation": {
@@ -167,50 +347,81 @@ for tag in "${TAGS[@]}"; do
 }
 JSON
 
-  echo "  starting"
-  "$WORK/hippocampus" -c "$WORK/config.json" > "$WORK/service.log" 2>&1 &
-  SVC_PID=$!
+    echo "  starting"
+    "$WORK/hippocampus" -c "$WORK/config.json" > "$WORK/service.log" 2>&1 &
+    SVC_PID=$!
 
-  for _ in $(seq 1 50); do
-    curl -sf "$BASE/healthz" > /dev/null 2>&1 && break
-    sleep 0.2
-  done
+    for _ in $(seq 1 50); do
+      curl -sf "$BASE/healthz" > /dev/null 2>&1 && break
+      sleep 0.2
+    done
 
-  if ! curl -sf "$BASE/healthz" > /dev/null 2>&1; then
-    echo "  service never became healthy; log follows" >&2
-    cat "$WORK/service.log" >&2
+    if ! curl -sf "$BASE/healthz" > /dev/null 2>&1; then
+      echo "  service never became healthy; log follows" >&2
+      cat "$WORK/service.log" >&2
 
-    exit 1
-  fi
+      exit 1
+    fi
 
-  echo "  seeding"
-  seed
+    echo "  seeding"
+    seed
 
-  echo "  stopping"
-  kill -TERM "$SVC_PID"
-  wait "$SVC_PID" 2>/dev/null || true
-  SVC_PID=""
+    echo "  stopping"
+    kill -TERM "$SVC_PID"
+    wait "$SVC_PID" 2>/dev/null || true
+    SVC_PID=""
 
-  # A leftover -wal means the last connection did not check point, and the fixture would carry its
-  # rows outside the file we commit.
-  if [ -e "$DATA/hippocampus.db-wal" ]; then
-    echo "  WAL still present after shutdown — refusing to commit a partial fixture" >&2
+    OUT="db/testdata/schema/$tag"
+    mkdir -p "$OUT"
 
-    exit 1
-  fi
+    case "$driver" in
 
-  OUT="db/testdata/schema/$tag"
-  mkdir -p "$OUT"
-  cp "$DATA/hippocampus.db" "$OUT/hippocampus.db"
+      sqlite)
+        # A leftover -wal means the last connection did not checkpoint, and the fixture would carry
+        # its rows outside the file we commit.
+        if [ -e "$DATA/hippocampus.db-wal" ]; then
+          echo "  WAL still present after shutdown — refusing to commit a partial fixture" >&2
 
-  cat > "$OUT/SOURCE" <<META
+          exit 1
+        fi
+
+        cp "$DATA/hippocampus.db" "$OUT/hippocampus.db"
+        ARTEFACT="$OUT/hippocampus.db"
+        ;;
+
+      *)
+        # Provenance rides in the file rather than in SOURCE beside it, so regenerating one
+        # driver's fixtures leaves the other drivers' files untouched. The test skips comment lines.
+        {
+          echo "-- generated by scripts/schema-fixtures.sh from $tag ($(git -C "$REPO" rev-parse --short "$tag^{commit}")) on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "-- one statement per line; replayed by db/schema_upgrade_test.go. Do not hand-edit."
+          dump_scratch "$driver" | normalise_sql
+        } > "$OUT/$driver.sql"
+
+        ARTEFACT="$OUT/$driver.sql"
+
+        if [ "$(grep -cv '^--' "$ARTEFACT")" -lt 2 ]; then
+          echo "  the $driver dump carries no statements — refusing to commit it" >&2
+
+          exit 1
+        fi
+
+        reset_scratch "$driver"
+        ;;
+
+    esac
+
+    if [ "$driver" = sqlite ]; then
+      cat > "$OUT/SOURCE" <<META
 tag:       $tag
 commit:    $(git -C "$REPO" rev-parse "$tag^{commit}")
 generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 by:        scripts/schema-fixtures.sh
 META
+    fi
 
-  echo "  wrote $OUT/hippocampus.db ($(wc -c < "$OUT/hippocampus.db" | tr -d ' ') bytes)"
+    echo "  wrote $ARTEFACT ($(wc -c < "$ARTEFACT" | tr -d ' ') bytes)"
+  done
 done
 
 echo "done"
