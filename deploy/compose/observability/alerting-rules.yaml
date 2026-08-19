@@ -8,11 +8,17 @@
 # own format and cannot read a Prometheus rule file. The PromQL and the `for:` durations are
 # byte-identical between the two, and cmd/hippocampus/alerts_test.go fails if they drift.
 #
+# There are two groups, matching the two in that file: `hippocampus` is the service, and
+# `hippocampus-clients` is the components that dial it - the broker bridges and the ingestor, which
+# publish their own metrics from their own processes.
+#
 # Each rule is one instant query plus a threshold of `gt 0`, because the comparison lives in the
 # PromQL itself (exactly as Prometheus evaluates it): the query returns a value only while the
 # alert should fire, and nothing otherwise - which is why noDataState is OK on every rule. That
 # keeps the two engines' behaviour the same, including for absence, which the one rule that cares
-# about it expresses with absent_over_time rather than by leaning on a no-data policy.
+# about it expresses with absent_over_time rather than by leaning on a no-data policy. The threshold
+# is why every expression must return a POSITIVE number while firing: a rule whose firing value is
+# zero is correct in Prometheus and silent here (see HippocampusBridgeNotConsuming).
 #
 # No contact point or notification policy is provisioned: where alerts should be delivered is
 # deployment-specific, and the demo stack has nowhere to send them. Firing rules are visible in
@@ -447,6 +453,274 @@ groups:
               instant: true
               range: false
               expr: sum(increase(hippocampus_panics_recovered_total[15m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+  # The client-side group: the broker bridges and the ingestor, which are separate processes that
+  # dial a Hippocampus instance. Provisioned into the same folder as the service's own rules and
+  # kept identical to the hippocampus-clients group in deploy/observability/prometheus-alerts.yaml,
+  # where the reasoning behind each one is written down.
+  - orgId: 1
+    name: hippocampus-clients
+    folder: Hippocampus
+    interval: 1m
+    rules:
+      - uid: hippocampus-bridge-duplicate-stream
+        title: HippocampusBridgeDuplicateStream
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus bridge is re-storing what the store already has"
+          description: "Over 80% of the messages this bridge handles are records the store already held, so it is running without adding anything. The usual causes are a subscription replaying a backlog, an offset or cursor that has stopped advancing, or a bridge restarted against an old position. Check the bridge's logs for a repeating record id, and restart it if the position is stale - the Bluesky bridge resumes from the live tip when it has no cursor."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) / clamp_min(sum by (broker) (rate(hippocampus_bridge_messages_total[15m])), 0.001) > 0.8 and sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) > 0.1
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+      - uid: hippocampus-bridge-not-consuming
+        title: HippocampusBridgeNotConsuming
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus bridge is up but consuming nothing"
+          description: "This bridge has handled no messages for half an hour while continuing to report metrics, so it is running and not consuming. Check the broker end first - a disconnected consumer, a subscription or topic that matches nothing, or a source that has genuinely gone quiet. A bridge whose PROCESS has gone reports nothing at all and cannot be caught here; declare it under the service's topology.components to have its /readyz probed."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: count by (broker) (sum by (broker) (rate(hippocampus_bridge_messages_total[15m])) == 0) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+      - uid: hippocampus-bridge-write-failing
+        title: HippocampusBridgeWriteFailing
+        condition: B
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus bridge is failing to store what it consumes"
+          description: "Over 5% of this bridge's messages are failing to transform or store. The at-least-once adapters (MQTT, RabbitMQ, Kafka, Bluesky) will redeliver them and fall behind; NATS is at-most-once and they are lost. Check hippocampus.client.rpc.requests for the code the service is returning - a rejected token, an unreachable instance and a malformed record all land here."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="failed"}[10m])) / clamp_min(sum by (broker) (rate(hippocampus_bridge_messages_total[10m])), 0.001) > 0.05
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+      - uid: hippocampus-client-token-rejected
+        title: HippocampusClientTokenRejected
+        condition: B
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus client's token is being refused"
+          description: "A bridge, the ingestor, or another client is having its calls rejected as Unauthenticated or PermissionDenied, so it is running and writing nothing. An expired static --token is the usual cause and it never recovers on its own; against an IdP-backed service use the client-credentials grant (--oidc-client-id) so the component mints and refreshes its own. PermissionDenied instead means the token verifies but its role is below the RPC's tier."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (endpoint) (rate(hippocampus_client_rpc_requests_total{code=~"Unauthenticated|PermissionDenied"}[10m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+      - uid: hippocampus-ingestor-pass-stale
+        title: HippocampusIngestorPassStale
+        condition: B
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus ingestor has not completed a pass in 15 minutes"
+          description: "No pass has completed for 15 minutes, so completed events are accumulating on the edge instance unjudged - and an edge holds them only for as long as its own consolidation.minimumRetentionInDays. Check that both ends are reachable (the ingestor's /readyz names which one is not). Raise this threshold if a pass over your edge store legitimately takes longer than the default 30s interval by that much."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max(hippocampus_ingestor_seconds_since_last_pass) > 900
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+      - uid: hippocampus-ingestor-rule-errors
+        title: HippocampusIngestorRuleErrors
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus ingestor rule is erroring rather than matching"
+          description: "This rule's CEL expression is erroring when evaluated, so it never matches and the events it was meant to judge are falling through to whatever follows it. The classic cause is an unguarded map index such as event.metadata['k'] on an event that does not carry the key - guard it with 'k' in event.metadata. The ingestor logs the rule name and the error; --check-rules compiles the file without running a pass."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (rule) (rate(hippocampus_ingestor_rule_errors_total[15m])) > 0
           - refId: B
             datasourceUid: __expr__
             model:

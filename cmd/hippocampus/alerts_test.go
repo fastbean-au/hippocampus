@@ -35,6 +35,12 @@ const (
 
 // metricSourceFiles are the files that declare an OTEL instrument. Every metric an alert names must
 // come from one of them.
+//
+// The last three are outside this module - the shared client interceptor, and the two integrations
+// whose processes publish the hippocampus-clients rule group's series. They are read as FILES, not
+// imported, which is the whole reason a root-module test can hold rules about them: the root module
+// deliberately does not depend on integrations/*, and this guard needs the instrument names rather
+// than the instruments.
 var metricSourceFiles = []string{
 	"../../hippocampus/telemetry.go",
 	"../../search/telemetry.go",
@@ -42,6 +48,9 @@ var metricSourceFiles = []string{
 	"interceptors.go",
 	"ratelimit.go",
 	"rpcmetrics.go",
+	"../../observability/clientmetrics.go",
+	"../../integrations/eventsource/bridge/telemetry.go",
+	"../../integrations/ingestor/promoter/telemetry.go",
 }
 
 var (

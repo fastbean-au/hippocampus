@@ -152,7 +152,13 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   `ACTIONS` table, and every dynamic style goes through the CSSOM — and what lets ~3,000 lines of
   JavaScript be tested at all: `cmd/hippocampus/webuitest/` runs `lib.js` under `node --test` with
   **zero dependencies**, plus drift guards pairing every control with a handler and every embedded
-  asset with a route and both middleware allow-lists. Its landing tab is **Now** — the store's
+  asset with a route and both middleware allow-lists. Those guards scan the assets as text, so their
+  comment stripper is load-bearing and deliberately **line-based**: it can never remove more than the
+  line it matched, where the obvious whole-file `/*…*/` regex would delete from any `/*` in a string
+  to the next `*/` and leave the tests reporting the deleted code as clean. JS block comments are
+  therefore refused by a test of their own rather than half-handled, and every scan reads the
+  stripped text — including the `data-act` sets, or a control commented out would keep its handler
+  looking reachable. Its landing tab is **Now** — the store's
   premise made live: memories held, what the last cycle forgot, a countdown to the next
   (`GetConsolidationStatus`), a capacity meter, and a feed off the forgotten log — and its **Decay**
   tab is the client side of `ExplainConsolidation`: a per-row value column in the memory/search
@@ -252,7 +258,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same ten rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same sixteen rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -266,7 +272,20 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   over an instant query, hence `noDataState: OK` on every rule), so the two engines behave
   identically; and absence — a consolidator that has exited publishes no counter to alert on — is
   asked with `absent_over_time` inside the expression rather than through a no-data policy, for the
-  same reason. Neither file provisions a contact point.
+  same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
+  knowing before writing a rule: an expression must return a **positive** number while it should be
+  firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the sixteen are a second group,
+  `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
+  broker bridges, the ingestor) and read instruments declared in `integrations/*`, which
+  `metricSourceFiles` reaches as FILES rather than imports — the root module deliberately does not
+  depend on those modules, and the guard needs the instrument names, not the instruments. That group
+  is item 73's outage written down: a bridge whose stream is all `outcome="exists"` is running and
+  adding nothing, and one that is up and consuming nothing is the same fault's other shape. What it
+  cannot catch is a bridge that has **exited** — that publishes nothing, which is indistinguishable
+  from a deployment running no bridge, so the other half is declaring the bridge in
+  `topology.components` and letting the prober watch its `/readyz` (`demo/config.bluesky.json` does,
+  and `demo/bluesky.sh`'s `HEALTH_PORT` is coupled to it).
 - `cmd/config-wizard/` — the configuration and deployment wizard: a second `package main` in the
   root module (`main.go` plus the embedded `wizard/` assets). The Go side is a static file server
   and nothing else — embedded `index.html`/`app.js`/`styles.css` behind a strict CSP (no

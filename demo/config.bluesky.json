@@ -42,6 +42,15 @@
     "sleep": {
         "periodSeconds": 60
     },
+    "topology": {
+        "components": [
+            {
+                "name": "bluesky-bridge",
+                "kind": "bridge",
+                "healthUrl": "http://localhost:8090"
+            }
+        ]
+    },
     "shutdown": {
         "timeoutSeconds": 30
     },

@@ -35,6 +35,44 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **Alert rules for the components that dial an instance — the `hippocampus-clients` rule group.**
+  Six rules, in both
+  [`deploy/observability/prometheus-alerts.yaml`](deploy/observability/prometheus-alerts.yaml) and
+  its provisioned Grafana counterpart: a bridge whose stream is nearly all records the store already
+  had, a bridge that is up and consuming nothing, a bridge failing to store what it consumes, a
+  client whose token is being refused, a stalled ingestor pass, and an ingestor rule erroring rather
+  than matching. Until now the shipped rules covered the service only, and the bridges and the
+  ingestor — separate processes, each already exporting metrics — had none.
+
+  The first two exist because of a real outage: a Bluesky bridge on the public demo spent hours
+  re-presenting one record it could never store, at a cursor that never moved. The process was up,
+  its `/healthz` answered, the store kept filling from a second goroutine, and nothing was being
+  reinforced — the one thing that demo exists to show. It was found by hand. `outcome="exists"`
+  dominating `stored`, and no stream at all, are the two shapes that failure has in metrics.
+
+  What they cannot do bounds the design: **a bridge that has exited publishes nothing, and nothing is
+  exactly what a deployment running no bridge publishes too**, so `HippocampusBridgeNotConsuming`
+  fires only while a bridge is up and idle. Noticing a process being gone is the other half of this,
+  and it is `topology.components` — the declared-component prober, which reads the `/readyz` those
+  binaries already serve.
+
+  `HippocampusClientTokenRejected` is the silent one, and the only rule in either file matching on a
+  status code rather than an outcome: a component authenticating with a static token keeps running
+  perfectly after it expires, failing every write for as long as the process lives, and the
+  service-side error rate calls that a _client_ fault because that is what it is.
+
+  Two things came with them. The drift guard now reads the instrument declarations in
+  `integrations/eventsource` and `integrations/ingestor` as **files** rather than imports, so a
+  root-module test can hold rules about metrics the root module deliberately does not depend on. And
+  a constraint that was implicit is now written down: the Grafana copy thresholds each rule at
+  `gt 0`, so an expression must return a **positive** number while it should be firing — a rule whose
+  firing value is zero is correct in Prometheus and silent in Grafana.
+
+- **A client-side row on the bundled Grafana dashboard**, collapsed by default since its panels are
+  empty unless a bridge or the ingestor is running with `--metrics`: bridge messages by outcome,
+  bridge reinforcement (`reinforced` against `missing`, the most informative number a reinforcing
+  bridge produces), client RPC failures by endpoint and code, and ingestor pass staleness.
+
 - **gRPC server reflection — `reflection.enabled`.** `grpcurl`, Postman, Insomnia and every gRPC GUI
   could not discover the schema from a running instance; each had to be handed
   `contract/hippocampus.proto` or a descriptor set built from it, which is a step at exactly the
@@ -109,6 +147,14 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   configuration-key and alert-rule guards, and each of the four found something on its first run.
 
 ### Changed
+
+- **The Bluesky demo declares its own bridge.** `demo/config.bluesky.json` now lists the bridge under
+  `topology.components`, so `demo/bluesky.sh` puts it on the console's **Deployment** tab and probes
+  the `/readyz` it was already serving on `--health-port`. That is the half of the wedged-bridge
+  problem the metrics cannot cover: a process that has gone publishes nothing.
+- **The bridge message and memory counters describe `exists`.** Both instrument descriptions still
+  listed the outcomes as they were before that value was added, so a dashboard built from the metric
+  metadata would not have mentioned the one worth watching.
 
 - **The README is a landing page again.** Following the shortening in 0.33.2, four sections moved
   out rather than being trimmed further: _Worth knowing before you start_ to

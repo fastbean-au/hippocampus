@@ -12,7 +12,12 @@
 # The same rules are provisioned as Grafana-managed rules for the bundled otel-lgtm stack in
 # deploy/compose/observability/alerting-rules.yaml. The two files carry byte-identical PromQL and
 # `for:` durations, and cmd/hippocampus/alerts_test.go fails if they drift - or if either names a
-# metric the service does not export.
+# metric no instrument in this repo declares.
+#
+# There are two groups. `hippocampus` is the service itself. `hippocampus-clients` is the components
+# that dial it - the broker bridges and the ingestor - which are separate processes publishing their
+# own metrics: a deployment running none of them produces none of those series, and every rule in
+# that group stays silent rather than firing on the absence.
 #
 # Metric names are the Prometheus rendering of the OTLP instruments (dots become underscores, a
 # counter gains `_total`, a histogram in seconds gains `_seconds_bucket`); see
@@ -191,3 +196,124 @@ groups:
           summary: "A Hippocampus handler panicked and was recovered"
           description: "A gRPC or gateway handler panicked; the caller received Internal/500 and the process survived. The stack trace is in the service logs. Any occurrence is worth investigating - please report it with the trace."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+  # The rules below are about the components that DIAL a Hippocampus instance - the broker bridges
+  # and the ingestor - rather than about the service. They are in their own group because they are
+  # published by other processes: a deployment running none of them produces none of these series,
+  # and every rule here stays silent rather than firing on the absence.
+  #
+  # Two of them exist because of a real outage. A Bluesky bridge on the public demo spent hours
+  # re-presenting one record it could never store, at a cursor that never moved: the process was up,
+  # its /healthz answered, the store kept filling from a second goroutine, and nothing was being
+  # reinforced. What that looks like in metrics is a stream of messages the store already had, or no
+  # messages at all - so those are the two questions asked here.
+  #
+  # They aggregate `by (broker)` so one wedged bridge is not diluted by a healthy one beside it. If
+  # you run more than one bridge of the SAME broker, add the `hippocampus_group` label
+  # (the bridges' --metrics-group) to the aggregation, or they will merge.
+  - name: hippocampus-clients
+    interval: 1m
+    rules:
+      # --- Broker bridges ------------------------------------------------------------------
+
+      # `exists` means the store already held what the message carried, which is a success (there is
+      # nothing to redeliver) but not work: a bridge whose whole stream is duplicates is running,
+      # healthy, and adding nothing. It is what a replayed subscription, a cursor that has stopped
+      # advancing, or a broker redelivering a backlog all look like from here. Note that the routine
+      # duplicates of a POLLED source are not counted - only a message handled off the stream is -
+      # so a feed poller re-reading the same page every minute does not trip this.
+      - alert: HippocampusBridgeDuplicateStream
+        expr: sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) / clamp_min(sum by (broker) (rate(hippocampus_bridge_messages_total[15m])), 0.001) > 0.8 and sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus bridge is re-storing what the store already has"
+          description: "Over 80% of the messages this bridge handles are records the store already held, so it is running without adding anything. The usual causes are a subscription replaying a backlog, an offset or cursor that has stopped advancing, or a bridge restarted against an old position. Check the bridge's logs for a repeating record id, and restart it if the position is stale - the Bluesky bridge resumes from the live tip when it has no cursor."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # The opposite question, and the reason it is asked as a rate rather than with absent_over_time:
+      # a bridge that has EXITED stops publishing, and absence cannot be told apart from a deployment
+      # that runs no bridge at all. This fires only while a bridge is up and consuming nothing, which
+      # is the broker disconnected, a subscription matching nothing, or a stream that has gone quiet.
+      # A bridge that is gone is caught by its /readyz instead - declare it in topology.components.
+      #
+      # It is `count(... == 0) > 0` rather than the plain `... == 0` it wants to be because the
+      # Grafana copy of this rule thresholds the query at `gt 0`: an expression whose firing VALUE
+      # is zero evaluates identically in Prometheus and never fires in Grafana. Every rule in both
+      # files has to return a positive number while it should be firing.
+      - alert: HippocampusBridgeNotConsuming
+        expr: count by (broker) (sum by (broker) (rate(hippocampus_bridge_messages_total[15m])) == 0) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus bridge is up but consuming nothing"
+          description: "This bridge has handled no messages for half an hour while continuing to report metrics, so it is running and not consuming. Check the broker end first - a disconnected consumer, a subscription or topic that matches nothing, or a source that has genuinely gone quiet. A bridge whose PROCESS has gone reports nothing at all and cannot be caught here; declare it under the service's topology.components to have its /readyz probed."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # Deliberately a ratio rather than any failure at all: a poison message on a busy stream is a
+      # trickle an operator does not need paging for, whereas a sustained fraction means the bridge
+      # cannot write. On the at-least-once adapters the messages are redelivered and pile up; on NATS
+      # they are gone.
+      - alert: HippocampusBridgeWriteFailing
+        expr: sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="failed"}[10m])) / clamp_min(sum by (broker) (rate(hippocampus_bridge_messages_total[10m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus bridge is failing to store what it consumes"
+          description: "Over 5% of this bridge's messages are failing to transform or store. The at-least-once adapters (MQTT, RabbitMQ, Kafka, Bluesky) will redeliver them and fall behind; NATS is at-most-once and they are lost. Check hippocampus.client.rpc.requests for the code the service is returning - a rejected token, an unreachable instance and a malformed record all land here."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # --- Anything that dials the service -------------------------------------------------
+
+      # The silent one. A component authenticating with a static token keeps running perfectly after
+      # that token expires - it just fails every write, for as long as the process lives, and the
+      # service-side error rate calls it a client fault because that is what it is. This is the only
+      # rule that names a code rather than an outcome, for exactly that reason.
+      - alert: HippocampusClientTokenRejected
+        expr: sum by (endpoint) (rate(hippocampus_client_rpc_requests_total{code=~"Unauthenticated|PermissionDenied"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus client's token is being refused"
+          description: "A bridge, the ingestor, or another client is having its calls rejected as Unauthenticated or PermissionDenied, so it is running and writing nothing. An expired static --token is the usual cause and it never recovers on its own; against an IdP-backed service use the client-credentials grant (--oidc-client-id) so the component mints and refreshes its own. PermissionDenied instead means the token verifies but its role is below the RPC's tier."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # --- Ingestor ------------------------------------------------------------------------
+
+      # Every other ingestor metric is a counter, and a counter that stops advancing is
+      # indistinguishable from an ingestor with nothing to promote. This gauge rises on its own
+      # whether the loop is stalled, deadlocked or dead, which is why it is the staleness signal
+      # rather than the absence of promotions.
+      - alert: HippocampusIngestorPassStale
+        expr: max(hippocampus_ingestor_seconds_since_last_pass) > 900
+        for: 10m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus ingestor has not completed a pass in 15 minutes"
+          description: "No pass has completed for 15 minutes, so completed events are accumulating on the edge instance unjudged - and an edge holds them only for as long as its own consolidation.minimumRetentionInDays. Check that both ends are reachable (the ingestor's /readyz names which one is not). Raise this threshold if a pass over your edge store legitimately takes longer than the default 30s interval by that much."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # A rule whose expression errors does not match, is logged, and does not stop the rules after
+      # it - which is the right behaviour and also completely invisible from the outside. A rule
+      # erroring on every event silently changes what is promoted, so any sustained rate is worth a
+      # look at the rules file.
+      - alert: HippocampusIngestorRuleErrors
+        expr: sum by (rule) (rate(hippocampus_ingestor_rule_errors_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus ingestor rule is erroring rather than matching"
+          description: "This rule's CEL expression is erroring when evaluated, so it never matches and the events it was meant to judge are falling through to whatever follows it. The classic cause is an unguarded map index such as event.metadata['k'] on an event that does not carry the key - guard it with 'k' in event.metadata. The ingestor logs the rule name and the error; --check-rules compiles the file without running a pass."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"

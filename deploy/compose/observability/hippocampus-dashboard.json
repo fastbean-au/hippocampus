@@ -227,6 +227,59 @@
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (success) (rate(hippocampus_sleeps_total[$__rate_interval]))", "legendFormat": "success={{success}}" }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Client-side components (bridges & ingestor)",
+      "description": "The processes that DIAL this instance. They publish their own metrics from their own processes, so these panels are empty unless a bridge or the ingestor is running with --metrics - which is why the row is collapsed by default.",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 53 },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Bridge messages by outcome",
+          "description": "Broker messages each bridge handled, per second. \"stored\" is work; \"exists\" is a record the store already had, which is a success with nothing written - a stream that is nearly all \"exists\" is a bridge replaying a backlog or sitting on a cursor that has stopped advancing (the HippocampusBridgeDuplicateStream alert). \"rejected\" is the service declining an insignificant memory, which is the decay model working.",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "cps" }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 54 },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (broker, outcome) (rate(hippocampus_bridge_messages_total[$__rate_interval]))", "legendFormat": "{{broker}} {{outcome}}" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Bridge reinforcement",
+          "description": "Memory ids a bridge submitted for reinforcement, per second. \"missing\" is an engagement landing on something the store has already forgotten - not a failure, but the ratio of missing to reinforced is the most informative number a reinforcing bridge produces. Only the Bluesky bridge reinforces.",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "cps" }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 54 },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (broker, outcome) (rate(hippocampus_bridge_recalls_total[$__rate_interval]))", "legendFormat": "{{broker}} {{outcome}}" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Client RPC failures",
+          "description": "Calls INTO this instance that failed, as the CALLER saw them, by endpoint and status code. This is the view the service's own error rate cannot give: a token the service rejects is a client fault there and a total outage here, which is how an expired static token shows up - Unauthenticated on every write, for as long as the process runs.",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 54 },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (endpoint, code) (rate(hippocampus_client_rpc_requests_total{outcome!=\"ok\"}[$__rate_interval]))", "legendFormat": "{{endpoint}} {{code}}" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Ingestor pass staleness",
+          "description": "Seconds since the ingestor last completed a pass. Every other ingestor metric is a counter, and a counter that stops advancing looks exactly like an ingestor with nothing to promote; this one rises on its own whether the loop is stalled, deadlocked or dead. A sawtooth is healthy - the teeth are the interval.",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 54 },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(hippocampus_ingestor_seconds_since_last_pass)", "legendFormat": "seconds since last pass" }
+          ]
+        }
+      ]
     }
   ]
 }

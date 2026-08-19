@@ -283,6 +283,12 @@ Three of these carry the design:
 - **`rule_errors` is per rule.** A rule that errors on every event never matches, and so silently
   changes what is promoted; a bare error total could not tell you which rule.
 
+The last two are the shipped alerts: `HippocampusIngestorPassStale` and
+`HippocampusIngestorRuleErrors`, in the `hippocampus-clients` group of
+[`deploy/observability/prometheus-alerts.yaml`](../deploy/observability/prometheus-alerts.yaml),
+alongside `HippocampusClientTokenRejected` for the ingestor's own credentials. See
+[Client-side components](operations.md#client-side-components).
+
 ### Tenancy
 
 `--metrics-group` stamps a tenancy label on everything this process emits, as **both** a resource

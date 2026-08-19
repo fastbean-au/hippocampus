@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -13,6 +14,16 @@ func setupFlags(t *testing.T, args []string) {
 	t.Helper()
 
 	viper.Reset()
+
+	// --health-port 0 unless the case sets it. run() starts the probe server, several of these
+	// tests call run(), and the flag's production default is a real fixed port - so every one of
+	// them would bind :8090 on the machine running the tests. `go test ./...` runs each cmd package
+	// in a SEPARATE PROCESS, in parallel, and all five bridges share that default, so the bind is a
+	// race between packages rather than something the sequential order within one of them settles.
+	// That is what failed in CI here, and it fails on whichever package loses.
+	if !slices.Contains(args, "--health-port") {
+		args = append(append([]string{}, args...), "--health-port", "0")
+	}
 
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	if err := registerFlags(fs, args); err != nil {

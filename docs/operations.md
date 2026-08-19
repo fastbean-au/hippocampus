@@ -715,11 +715,16 @@ as `hippocampus.panics_recovered` instead, which is the metric to alert on for t
 
 The alert set is shipped, not just described: `deploy/observability/prometheus-alerts.yaml` is a
 Prometheus rule file covering the failures below, ready to load with `rule_files:`, lift into a
-prometheus-operator `PrometheusRule` `spec:`, or `mimirtool rules load`. Ten rules — server error
-rate, request latency, sleep-cycle failures, no consolidator at all, capacity pressure, over
-capacity, retention consuming the capacity target, rate-limit rejections, search-index drops, and
-recovered panics — each with a `description` saying what to do about it and a `runbook_url` back
-into this document.
+prometheus-operator `PrometheusRule` `spec:`, or `mimirtool rules load`. Sixteen rules in two
+groups, each with a `description` saying what to do about it and a `runbook_url` back into this
+document.
+
+`hippocampus` is the service: server error rate, request latency, sleep-cycle failures, no
+consolidator at all, capacity pressure, over capacity, retention consuming the capacity target,
+rate-limit rejections, search-index drops, and recovered panics.
+
+`hippocampus-clients` is the components that _dial_ it — see
+[Client-side components](#client-side-components) below for what those six ask and why.
 
 Three things to know before deploying them, and the file repeats each at the rule it applies to:
 
@@ -740,9 +745,14 @@ the last hour. Keep that window comfortably above `sleep.periodSeconds`. It asks
 (`absent_over_time`) rather than through an alerting engine's no-data policy, so Prometheus and
 Grafana answer it identically.
 
-The same ten rules are provisioned into the bundled Grafana below, so the demo stack alerts as well
-as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
+The same sixteen rules are provisioned into the bundled Grafana below, so the demo stack alerts as
+well as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
 provisions a contact point — where alerts should be delivered is deployment-specific.
+
+Writing a new rule has one constraint that is not obvious from the Prometheus file: the Grafana copy
+thresholds each rule's query at `gt 0`, so an expression must return a **positive number** while it
+should be firing. A rule whose firing value is zero evaluates correctly in Prometheus and is silent
+in Grafana.
 
 ### Domain metrics
 
@@ -866,7 +876,45 @@ documented in full on those pages; three things are worth knowing at the operati
   off the records: a bridge derives a memory's group from the message subject by default, so a
   per-record label would be unbounded.
 
-Nothing here is wired into the shipped alert rules, which cover the service only.
+These components have their own group in the shipped alert rules, `hippocampus-clients`, and it
+exists because of an outage. A Bluesky bridge on the public demo spent hours re-presenting one record
+it could never store, at a cursor that never moved: the process was up, its `/healthz` answered, the
+store kept filling from a second goroutine, and nothing was being reinforced. It was found by hand.
+Six rules:
+
+| Alert                              | Fires when                                                        | Severity |
+| ---------------------------------- | ----------------------------------------------------------------- | -------- |
+| `HippocampusBridgeDuplicateStream` | over 80% of a bridge's messages are records the store already had | warning  |
+| `HippocampusBridgeNotConsuming`    | a bridge is publishing metrics and handling no messages at all    | warning  |
+| `HippocampusBridgeWriteFailing`    | over 5% of a bridge's messages fail to transform or store         | critical |
+| `HippocampusClientTokenRejected`   | a client's calls are refused `Unauthenticated`/`PermissionDenied` | critical |
+| `HippocampusIngestorPassStale`     | no ingestor pass has completed in fifteen minutes                 | critical |
+| `HippocampusIngestorRuleErrors`    | an ingestor rule is erroring rather than matching                 | warning  |
+
+Two of them are about the same thing from opposite sides. `outcome="exists"` means the store already
+held what the message carried — a success, since there is nothing to redeliver, but not work, so a
+bridge whose whole stream is duplicates is running and adding nothing. That is what a replayed
+subscription, a cursor that has stopped advancing, or a broker redelivering a backlog all look like
+from here; the routine duplicates of a _polled_ source are deliberately not counted, so a feed poller
+re-reading the same page every minute does not trip it. `HippocampusBridgeNotConsuming` asks the
+opposite question, and is a rate rather than an `absent_over_time` for a reason that bounds what
+these rules can do at all:
+
+> **A bridge that has exited cannot be alerted on from its own metrics.** It publishes nothing, and
+> nothing is exactly what a deployment running no bridge publishes too. So that rule fires only while
+> a bridge is up and idle, and the half that notices a process being _gone_ is
+> [`topology.components`](#seeing-the-deployment) — declare each bridge and the ingestor there, and
+> the service probes the `/readyz` they already serve.
+
+`HippocampusClientTokenRejected` is the silent one, and the only rule in either file that matches on
+a status code rather than an outcome: a component authenticating with a static token keeps running
+perfectly after that token expires, failing every write for as long as the process lives, and the
+service-side error rate calls that a _client_ fault because that is what it is. Against an
+IdP-backed service, use the client-credentials grant (`--oidc-client-id`) so the component mints and
+refreshes its own tokens.
+
+The same series are on the bundled Grafana dashboard, in a **Client-side components** row that is
+collapsed by default — the panels are empty unless something is running with `--metrics`.
 
 For local viewing (evaluation, soak testing, dashboard work) every compose stack carries an
 optional all-in-one `grafana/otel-lgtm` collector (Grafana + Prometheus + Tempo + Loki) behind a

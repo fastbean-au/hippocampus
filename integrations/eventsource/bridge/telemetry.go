@@ -79,9 +79,10 @@ func newTelemetry() *telemetry {
 
 	return &telemetry{
 		messages: newInt64Counter(meter, "hippocampus.bridge.messages",
-			"Broker messages handled, by broker and outcome (stored/rejected/filtered/failed)."),
+			"Broker messages handled, by broker and outcome (stored/exists/rejected/filtered/failed). "+
+				"A stream that is nearly all 'exists' is a bridge repeating itself rather than keeping up."),
 		memories: newInt64Counter(meter, "hippocampus.bridge.memories",
-			"Memories written to the service, by broker and outcome (stored/rejected/orphaned). "+
+			"Memories written to the service, by broker and outcome (stored/exists/rejected/orphaned). "+
 				"One message may yield several."),
 		storeDuration: newFloat64Histogram(meter, "hippocampus.bridge.message.duration", "s",
 			"Time to transform and store one broker message, in seconds. Per-RPC latency is hippocampus.client.rpc.duration."),

@@ -640,24 +640,33 @@ problem, and visible as a restart — while a mid-run disconnect is the adapter'
 nothing else would notice is the Hippocampus end going away, because a bridge with no traffic and a
 bridge that cannot write look identical from outside. That is the gap the probe closes.
 
-| Metric                                 | Type          | Attributes                                            |
-| -------------------------------------- | ------------- | ----------------------------------------------------- |
-| `hippocampus.bridge.messages`          | counter       | `broker`, `outcome` (stored/rejected/filtered/failed) |
-| `hippocampus.bridge.memories`          | counter       | `broker`, `outcome` (stored/rejected/orphaned)        |
-| `hippocampus.bridge.message.duration`  | histogram (s) | `broker`, `outcome`                                   |
-| `hippocampus.bridge.body_bytes`        | histogram     | `broker`                                              |
-| `hippocampus.bridge.recalls`           | counter       | `broker`, `outcome` (reinforced/missing/failed)       |
-| `hippocampus.bridge.events`            | counter       | `broker`, `outcome` (created/exists/rejected/failed)  |
-| `hippocampus.bridge.recall.batch_size` | histogram     | `broker`                                              |
-| `hippocampus.client.rpc.requests`      | counter       | `endpoint`, `rpc`, `code`, `outcome`                  |
-| `hippocampus.client.rpc.duration`      | histogram (s) | as above                                              |
+| Metric                                 | Type          | Attributes                                                   |
+| -------------------------------------- | ------------- | ------------------------------------------------------------ |
+| `hippocampus.bridge.messages`          | counter       | `broker`, `outcome` (stored/exists/rejected/filtered/failed) |
+| `hippocampus.bridge.memories`          | counter       | `broker`, `outcome` (stored/exists/rejected/orphaned)        |
+| `hippocampus.bridge.message.duration`  | histogram (s) | `broker`, `outcome`                                          |
+| `hippocampus.bridge.body_bytes`        | histogram     | `broker`                                                     |
+| `hippocampus.bridge.recalls`           | counter       | `broker`, `outcome` (reinforced/missing/failed)              |
+| `hippocampus.bridge.events`            | counter       | `broker`, `outcome` (created/exists/rejected/failed)         |
+| `hippocampus.bridge.recall.batch_size` | histogram     | `broker`                                                     |
+| `hippocampus.client.rpc.requests`      | counter       | `endpoint`, `rpc`, `code`, `outcome`                         |
+| `hippocampus.client.rpc.duration`      | histogram (s) | as above                                                     |
 
-`outcome` is four-valued rather than a success bool, because the three non-failures are
-operationally different and an SLO has to separate them: a memory the **service** declined for
-insignificance (`rejected`) is the decay model working, a message a Transformer chose to yield
-nothing for (`filtered`) was dropped on purpose, and only `failed` is the bridge not doing its job. A
-message yielding several memories reports the **worst** of their outcomes, since the adapter is about
-to redeliver the whole message if any of them failed.
+`outcome` is five-valued rather than a success bool, because the four non-failures are operationally
+different and an SLO has to separate them: a memory the **service** declined for insignificance
+(`rejected`) is the decay model working, a message a Transformer chose to yield nothing for
+(`filtered`) was dropped on purpose, a record the store already held (`exists`) was durably handled
+without anything being written, and only `failed` is the bridge not doing its job. A message yielding
+several memories reports the **worst** of their outcomes, since the adapter is about to redeliver the
+whole message if any of them failed.
+
+`exists` is the one to watch, and it has its own shipped alert. It is a success — a redelivery
+re-presenting a record whose id came from upstream is a duplicate, not a second copy, and there is
+nothing left to redeliver — but it is not work, so a bridge whose stream is nearly all `exists` is
+running, healthy, and adding nothing. That is what a replayed subscription, an offset or cursor that
+has stopped advancing, and a broker redelivering a backlog all look like from here. The routine
+duplicates of a **polled** source are deliberately not counted, so a feed poller re-reading the same
+page every minute does not look like that.
 
 `orphaned` is a **memory** outcome only, never a message one: it is a memory refused because the
 event it names is not in the store, which a batch write skips rather than aborting on. It is separate
@@ -685,6 +694,17 @@ sum by (broker, outcome) (rate(hippocampus_bridge_messages_total[5m]))
 ```
 
 Running several bridges on one host means giving each its own `--health-port`.
+
+**The shipped alert rules cover bridges**, in the `hippocampus-clients` group of
+[`deploy/observability/prometheus-alerts.yaml`](../deploy/observability/prometheus-alerts.yaml):
+a stream that is nearly all duplicates, a bridge that is up and consuming nothing, a bridge failing
+to store what it consumes, and a client whose token is being refused. They aggregate `by (broker)`,
+so add `hippocampus_group` (this `--metrics-group`) to the aggregation if you run more than one
+bridge of the same broker. Note what they cannot do: a bridge that has **exited** publishes nothing,
+which is indistinguishable from a deployment that runs no bridge, so declaring the bridge under the
+service's `topology.components` is the half that notices that. See
+[Alert rules](operations.md#alert-rules) and
+[Client-side components](operations.md#client-side-components).
 
 ## Custom transformations
 

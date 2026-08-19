@@ -57,6 +57,10 @@ BIN_DIR="${DEMO_DIR}/bin"
 DATA_DIR="${DEMO_DIR}/data-bluesky"
 PORT=8300
 GATEWAY_PORT=8080
+
+# The bridge's own health surface, and the address demo/config.bluesky.json declares under
+# topology.components - which is what puts the bridge on the console's Deployment tab and, more to
+# the point, what notices when it stops answering. Change one and change the other.
 HEALTH_PORT=8090
 
 LANGS="${LANGS:-}"
@@ -265,6 +269,7 @@ cat << BANNER
 
   web console (the demo UI): http://localhost:${GATEWAY_PORT}/ui
     -> the Decay tab is the one to watch
+    -> the Deployment tab shows the bridge's own health, probed over its /readyz
 BANNER
 
 if [[ -n ${OTEL_STARTED} ]]; then
