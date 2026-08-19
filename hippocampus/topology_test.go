@@ -1113,3 +1113,42 @@ func TestTopologyFromViperSurvivesAMalformedComponentList(t *testing.T) {
 		t.Errorf("a malformed list produced %d components", len(topology.components))
 	}
 }
+
+// TestCollectorNodeReportsATracesOnlyDeployment covers the one combination the two tests above
+// cannot: tracing on with metrics off. Both of them enable metrics, so the collector node appeared
+// for that reason alone and the traces half of the condition was never read - which is how it went
+// out asking viper for `observability.traces.enabled`, a key nothing in the service sets. The
+// symptom was a node shown as DISABLED while spans were being exported to it, carrying an
+// `enable_with` hint naming a key an operator could set to no effect.
+func TestCollectorNodeReportsATracesOnlyDeployment(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Set("observability.tracing.enabled", false)
+		viper.Set("observability.otlp.endpoint", "")
+	})
+
+	viper.Set("observability.tracing.enabled", true)
+	viper.Set("observability.metrics.enabled", false)
+	viper.Set("observability.otlp.endpoint", "otel-lgtm:4317")
+
+	spec := collectorNodeSpec()
+
+	if spec.staticStatus == contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED {
+		t.Error("the collector is DISABLED with tracing enabled")
+	}
+
+	if spec.detail != "otel-lgtm:4317" {
+		t.Errorf("detail = %q, want the configured endpoint", spec.detail)
+	}
+
+	var traces string
+
+	for _, attribute := range spec.attributes {
+		if attribute.key == "traces" {
+			traces = attribute.value
+		}
+	}
+
+	if traces != "enabled" {
+		t.Errorf("the traces attribute is %q, want \"enabled\"", traces)
+	}
+}

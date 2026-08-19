@@ -762,13 +762,13 @@ func collectorNodeSpec() topologyNodeSpec {
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
 	}
 
-	traces := viper.GetBool("observability.traces.enabled")
+	traces := viper.GetBool("observability.tracing.enabled")
 	metrics := viper.GetBool("observability.metrics.enabled")
 
 	if !traces && !metrics {
 		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
 		spec.attributes = []topologyAttribute{
-			{key: "enable_with", value: "observability.metrics.enabled / observability.traces.enabled"},
+			{key: "enable_with", value: "observability.metrics.enabled / observability.tracing.enabled"},
 		}
 
 		return spec

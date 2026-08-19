@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +41,9 @@ type fakeClient struct {
 
 	storeEventReq *contract.Event
 	storeEventRes *contract.StoreEventResponse
+
+	endEventReq *contract.EndEventRequest
+	endEventRes *contract.GeneralResponse
 
 	getEventsReq *contract.GetEventsRequest
 	getEventsRes *contract.GetEventsResponse
@@ -110,6 +116,12 @@ func (f *fakeClient) StoreEvent(_ context.Context, in *contract.Event, _ ...grpc
 	f.storeEventReq = in
 
 	return f.storeEventRes, f.err
+}
+
+func (f *fakeClient) EndEvent(_ context.Context, in *contract.EndEventRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.endEventReq = in
+
+	return f.endEventRes, f.err
 }
 
 func (f *fakeClient) GetEvents(_ context.Context, in *contract.GetEventsRequest, _ ...grpc.CallOption) (*contract.GetEventsResponse, error) {
@@ -532,6 +544,11 @@ func TestServer_EndToEnd(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
+	// The comparison is EXACT in both directions. Only checking that the expected tools are present
+	// is what let three link tools and end_event be registered without the tool table in
+	// docs/mcp.md or the surface described in CLAUDE.md gaining them - and on this bridge the
+	// registered set is a security statement (no Purge, no Export, no event deletion), so a tool
+	// arriving unremarked is exactly what wants noticing.
 	want := map[string]bool{
 		"store_memory":                 false,
 		"update_memory":                false,
@@ -539,15 +556,23 @@ func TestServer_EndToEnd(t *testing.T) {
 		"recall_memories":              false,
 		"search_memories":              false,
 		"list_memories":                false,
+		"link_memories":                false,
+		"unlink_memories":              false,
+		"get_memory_links":             false,
 		"create_event":                 false,
+		"end_event":                    false,
 		"list_events":                  false,
 		"get_summarisation_candidates": false,
 	}
 
 	for _, v := range tools.Tools {
-		if _, ok := want[v.Name]; ok {
-			want[v.Name] = true
+		if _, ok := want[v.Name]; !ok {
+			t.Errorf("tool %q is registered but not expected - add it here and to the table in docs/mcp.md, or unregister it", v.Name)
+
+			continue
 		}
+
+		want[v.Name] = true
 	}
 
 	for k, seen := range want {
@@ -927,6 +952,181 @@ func TestListSortDirectionMapping(t *testing.T) {
 
 		if got := f.getEventsReq.GetOrderBy(); got != "name" {
 			t.Errorf("listEvents order_by = %q, want name", got)
+		}
+	}
+}
+
+// TestEndEvent_MapsRequestAndResponse covers the tool that closes an event. The bridge could
+// create events and never end one, so every event a model opened stored an end time of 0 - which
+// sorts as the oldest-ended rather than the most recent, and reads as open forever.
+func TestEndEvent_MapsRequestAndResponse(t *testing.T) {
+	f := &fakeClient{endEventRes: &contract.GeneralResponse{Ok: true}}
+	b := newBridge(f)
+
+	_, out, err := b.endEvent(context.Background(), nil, endEventInput{Id: "e1", TimeEnd: "2026-08-19T14:30:00Z"})
+	if err != nil {
+		t.Fatalf("endEvent returned error: %v", err)
+	}
+
+	if !out.Ok {
+		t.Fatalf("unexpected output: %+v", out)
+	}
+
+	want := time.Date(2026, 8, 19, 14, 30, 0, 0, time.UTC).UnixNano()
+
+	if f.endEventReq.GetId() != "e1" || f.endEventReq.GetTimeEnd() != want {
+		t.Fatalf("request not mapped through: %+v", f.endEventReq)
+	}
+}
+
+func TestEndEvent_RequiresAnId(t *testing.T) {
+	f := &fakeClient{}
+
+	if _, _, err := newBridge(f).endEvent(context.Background(), nil, endEventInput{}); err == nil {
+		t.Fatal("expected an error for a missing id")
+	}
+
+	if f.endEventReq != nil {
+		t.Fatal("EndEvent should not have been called without an id")
+	}
+}
+
+// TestEndEvent_OmittedTimeMeansNow pins the difference between "not given" and "the epoch": the RPC
+// reads 0 as "use the server's clock", so an omitted time must stay 0 rather than becoming a
+// parsed zero Time (which would end the event in year 1).
+func TestEndEvent_OmittedTimeMeansNow(t *testing.T) {
+	f := &fakeClient{endEventRes: &contract.GeneralResponse{Ok: true}}
+
+	if _, _, err := newBridge(f).endEvent(context.Background(), nil, endEventInput{Id: "e1"}); err != nil {
+		t.Fatalf("endEvent returned error: %v", err)
+	}
+
+	if f.endEventReq.GetTimeEnd() != 0 {
+		t.Fatalf("time_end = %d, want 0 so the service uses its own clock", f.endEventReq.GetTimeEnd())
+	}
+}
+
+// TestListingTimeFiltersAreParsed covers the RFC3339 bounds on both listings. The tools speak
+// RFC3339 while the RPCs take UnixNano deliberately - a model can write a date but not reliably
+// arrive at a nanosecond epoch, and a bound wrong by three orders of magnitude returns a
+// plausible empty page rather than an error.
+func TestListingTimeFiltersAreParsed(t *testing.T) {
+	from := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+
+	t.Run("memories", func(t *testing.T) {
+		f := &fakeClient{getMemoriesRes: &contract.GetMemoriesResponse{}}
+
+		_, _, err := newBridge(f).listMemories(context.Background(), nil, listMemoriesInput{
+			StoredAfter:  from.Format(time.RFC3339),
+			StoredBefore: to.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("listMemories returned error: %v", err)
+		}
+
+		if f.getMemoriesReq.GetTimestampMin() != from.UnixNano() || f.getMemoriesReq.GetTimestampMax() != to.UnixNano() {
+			t.Fatalf("bounds not mapped through: %+v", f.getMemoriesReq)
+		}
+	})
+
+	t.Run("events", func(t *testing.T) {
+		f := &fakeClient{getEventsRes: &contract.GetEventsResponse{}}
+
+		_, _, err := newBridge(f).listEvents(context.Background(), nil, listEventsInput{
+			StartedAfter:  from.Format(time.RFC3339),
+			StartedBefore: to.Format(time.RFC3339),
+			EndedAfter:    from.Format(time.RFC3339),
+			EndedBefore:   to.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("listEvents returned error: %v", err)
+		}
+
+		if f.getEventsReq.GetTimeStartMin() != from.UnixNano() ||
+			f.getEventsReq.GetTimeStartMax() != to.UnixNano() ||
+			f.getEventsReq.GetTimeEndMin() != from.UnixNano() ||
+			f.getEventsReq.GetTimeEndMax() != to.UnixNano() {
+			t.Fatalf("bounds not mapped through: %+v", f.getEventsReq)
+		}
+	})
+
+	t.Run("a malformed bound names the field", func(t *testing.T) {
+		f := &fakeClient{}
+
+		_, _, err := newBridge(f).listMemories(context.Background(), nil, listMemoriesInput{StoredAfter: "last tuesday"})
+		if err == nil {
+			t.Fatal("expected an error for a malformed timestamp")
+		}
+
+		if !strings.Contains(err.Error(), "stored_after") {
+			t.Errorf("the error does not name the field: %v", err)
+		}
+
+		if f.getMemoriesReq != nil {
+			t.Error("GetMemories was called with an unparsed bound")
+		}
+	})
+
+	t.Run("omitted bounds stay unset", func(t *testing.T) {
+		f := &fakeClient{getMemoriesRes: &contract.GetMemoriesResponse{}}
+
+		if _, _, err := newBridge(f).listMemories(context.Background(), nil, listMemoriesInput{}); err != nil {
+			t.Fatalf("listMemories returned error: %v", err)
+		}
+
+		if f.getMemoriesReq.GetTimestampMin() != 0 || f.getMemoriesReq.GetTimestampMax() != 0 {
+			t.Errorf("an omitted bound became a filter: %+v", f.getMemoriesReq)
+		}
+	})
+}
+
+// TestEveryToolIsDocumented holds the tool table in docs/mcp.md to the tools actually registered.
+// The table is what an operator reads to decide whether to point a model at this bridge, and the
+// registered set is a deliberately narrow slice of the RPC surface - so a tool that appears in one
+// and not the other misdescribes what a model can reach. It drifted exactly that way once already:
+// the three link tools and end_event were registered while the prose still described nine.
+func TestEveryToolIsDocumented(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "docs", "mcp.md"))
+	if err != nil {
+		t.Fatalf("failed to read docs/mcp.md: %s", err.Error())
+	}
+
+	document := string(source)
+
+	server := newServer(newBridge(&fakeClient{}), "test")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+
+	defer func() { _ = serverSession.Close() }()
+
+	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+
+	defer func() { _ = clientSession.Close() }()
+
+	tools, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	if len(tools.Tools) == 0 {
+		t.Fatal("no tools were registered")
+	}
+
+	for _, tool := range tools.Tools {
+		if !strings.Contains(document, "`"+tool.Name+"`") {
+			t.Errorf("tool %q is registered but named nowhere in docs/mcp.md", tool.Name)
 		}
 	}
 }

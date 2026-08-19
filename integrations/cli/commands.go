@@ -66,9 +66,10 @@ func commands() map[string]command {
 		},
 		"memory recall": {
 			summary: "recall memories by id (reinforces them)",
-			hint:    "--id ID [--id ID ...] | ID [ID ...]",
+			hint:    "--id ID [--id ID ...] | ID [ID ...] [--include-linked]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.StringSlice("id", nil, "memory id to recall (repeatable; ids may also be positional args)")
+				fs.Bool("include-linked", false, "also return the memories linked to those recalled, one hop, in either direction; they are an associative recall and are not themselves reinforced")
 			},
 			run: runMemoryRecall,
 		},
@@ -101,7 +102,7 @@ func commands() map[string]command {
 		},
 		"memory search": {
 			summary: "search memories via the content-search index",
-			hint:    "--query <text> [--mode keyword|semantic|hybrid] [--metadata k=v] [--limit N] [--reinforce]",
+			hint:    "--query <text> [--mode keyword|semantic|hybrid] [--metadata k=v] [--limit N] [--reinforce] [--include-linked]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("query", "", "search query (required)")
 				fs.Int32("limit", 0, "maximum results (0 selects the server default)")
@@ -110,6 +111,7 @@ func commands() map[string]command {
 				fs.StringSlice("metadata", nil, "restrict matches to memories carrying this 'key=value' label (repeatable; all must match)")
 				fs.Bool("reinforce", false, "route matches through recall, reinforcing them")
 				fs.String("mode", "keyword", "how to match: keyword, semantic, or hybrid (semantic and hybrid need the service to have an embedding model and OpenSearch)")
+				fs.Bool("include-linked", false, "also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves")
 			},
 			run: runMemorySearch,
 		},
@@ -772,7 +774,10 @@ func runMemoryRecall(ctx context.Context, client contract.HippocampusClient, fs 
 		return fmt.Errorf("at least one memory id is required (--id or positional args)")
 	}
 
-	resp, err := client.RecallMemories(ctx, &contract.RecallMemoriesRequest{Ids: ids})
+	resp, err := client.RecallMemories(ctx, &contract.RecallMemoriesRequest{
+		Ids:           ids,
+		IncludeLinked: b(fs, "include-linked"),
+	})
 	if err != nil {
 		return err
 	}
@@ -809,6 +814,8 @@ func runMemorySearch(ctx context.Context, client contract.HippocampusClient, fs 
 		Group:     str(fs, "group"),
 		Mode:      mode,
 		Metadata:  strs(fs, "metadata"),
+
+		IncludeLinked: b(fs, "include-linked"),
 	}
 
 	resp, err := client.SearchMemories(ctx, req)

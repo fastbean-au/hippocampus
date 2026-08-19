@@ -783,3 +783,42 @@ func TestTopologyReportsHealthAndProvenance(t *testing.T) {
 		}
 	}
 }
+
+// TestIncludeLinkedReachesBothRPCs covers the associative-recall flag on the two commands that can
+// ask for it. It was reachable over gRPC and from the MCP bridge but from no `hippo` command, which
+// made a headline of the link graph - a recall that also returns its neighbours, without
+// reinforcing them - the one thing the operator tool could not do.
+func TestIncludeLinkedReachesBothRPCs(t *testing.T) {
+	t.Run("recall", func(t *testing.T) {
+		req, _, err := runCommand(t, "memory recall", []string{"--id", "m1", "--include-linked"}, &fakeClient{})
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+
+		if got := req.(*contract.RecallMemoriesRequest); !got.GetIncludeLinked() {
+			t.Errorf("include_linked was not set: %+v", got)
+		}
+	})
+
+	t.Run("search", func(t *testing.T) {
+		req, _, err := runCommand(t, "memory search", []string{"--query", "q", "--include-linked"}, &fakeClient{})
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+
+		if got := req.(*contract.SearchMemoriesRequest); !got.GetIncludeLinked() {
+			t.Errorf("include_linked was not set: %+v", got)
+		}
+	})
+
+	t.Run("off by default", func(t *testing.T) {
+		req, _, err := runCommand(t, "memory recall", []string{"--id", "m1"}, &fakeClient{})
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+
+		if got := req.(*contract.RecallMemoriesRequest); got.GetIncludeLinked() {
+			t.Error("include_linked defaults to true")
+		}
+	})
+}

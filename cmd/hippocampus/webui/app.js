@@ -1606,6 +1606,11 @@ async function doSearch() {
 
   if ($("s-reinforce").checked) body.reinforce = true;
 
+  // Associative recall. The neighbours come back appended after the ranked matches and are not
+  // matches themselves, so they are not counted against `limit` and a reinforcing search does not
+  // reinforce them.
+  if ($("s-linked").checked) body.include_linked = true;
+
   // Only sent when the deployment offers a choice; otherwise the server's own default (keyword)
   // applies and the request looks exactly as it did before modes existed.
   const mode = $("s-mode").value;
@@ -1636,7 +1641,12 @@ async function doSearch() {
     //
     // Re-running with a larger limit keeps it one query, one ranking, one reinforcement set.
     searchShownLimit = results.length;
-    renderSearchMore(results.length, Number(body.limit || 0));
+
+    // With include_linked the returned count is matches PLUS their neighbours, so it is no longer
+    // comparable with the limit: a query whose matches are exhausted can still come back "full"
+    // and offer a Show more that returns the same set again. Suppress the control rather than
+    // guess, since the response does not say which rows were matches.
+    renderSearchMore(results.length, body.include_linked ? 0 : Number(body.limit || 0));
 
     ok("Search", results.length + " result(s)");
   } catch (e) {

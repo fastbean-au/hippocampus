@@ -38,8 +38,9 @@ short:
   frontmatter keys plus any fixed `key=value` lines. The frontmatter keys are named explicitly
   rather than copied wholesale, so plugin bookkeeping, dates, and tag arrays stay out of the labels
   unless you ask for them; awkward keys ("Project Name") are normalised to the service's charset.
-- **Search memories and insert results** — content search (needs the service's `opensearch.enabled`
-  index), optionally reinforcing the matches.
+- **Search memories and insert results** — content search (built in on the default `sqlite` driver;
+  `postgres`/`mysql` need the service's `opensearch.enabled` index), optionally reinforcing the
+  matches.
 - **Auto-sync a folder** — notes under a configured folder are pushed in as they are edited,
   idempotently (one memory per note path, updated in place, re-created if consolidation has since
   forgotten it). This is what lets the sleep cycle prune the noise: notes you keep touching are

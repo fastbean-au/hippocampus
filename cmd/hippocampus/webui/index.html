@@ -200,6 +200,14 @@
                 >Reinforce (route matches through recall)</label
               >
             </div>
+            <!-- Associative recall: the neighbours are appended after the ranked matches and are
+             never themselves matches, nor reinforced by a reinforcing search. -->
+            <div class="checkbox">
+              <input id="s-linked" type="checkbox" />
+              <label class="flush" for="s-linked"
+                >Include linked memories (one hop)</label
+              >
+            </div>
             <button class="btn" data-act="do-search">Search</button>
           </div>
         </div>

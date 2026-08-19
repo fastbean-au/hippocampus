@@ -27,7 +27,7 @@ The percentile should not be used initially as it requires there to be a collect
 
 ## Consolidation algorithms
 
-Where the significances are properties of the event (or a default value which is configurable) and memory, the `age` is a property of the memory (while the units are configurable). Both the values of `threshold` and `a` (aggressiveness) are configurable. The choice of which algorithm to apply (`consolidation.method`, 1–6) is also configurable.
+Where the significances are properties of the event (or a default value which is configurable) and memory, the `age` is a property of the memory (while the units are configurable). Both the values of `threshold` (`consolidation.deletionThreshold`) and `a` (`consolidation.aggressiveness`) are configurable. The choice of which algorithm to apply (`consolidation.method`, 1–6) is also configurable.
 
 The six methods cover the shapes most use cases reach for: a power law (1) that matches published human-forgetting-curve research; two constant-rate linear decays (2, 3), kept for backwards compatibility, that forget in fixed amounts per age unit; a true exponential half-life decay (4), the standard recency-weighting curve for caches, feeds, and recommendation scoring; a logarithmic long-tail decay (5) for archival or audit-log stores that want to keep nearly everything; and a sigmoid "consolidation window" decay (6) that holds a memory near full value until a configured age, then lets it go quickly — closest in spirit to the biological process the service is named for.
 

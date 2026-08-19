@@ -886,9 +886,16 @@ github.com/fastbean-au/hippocampus => ../..`, so the modelcontextprotocol/go-sdk
   forced to stderr so stdout carries only the MCP JSON-RPC stream) or streamable HTTP
   (`--transport http`). The tool surface is the per-item memory/event operations — `store_memory`,
   `update_memory`, `delete_memories` (a by-id scalpel), `recall_memories`, `search_memories`,
-  `list_memories`, `create_event`, `list_events`, `get_summarisation_candidates` — deliberately
+  `list_memories`, `link_memories`, `unlink_memories`, `get_memory_links`, `create_event`,
+  `end_event`, `list_events`, `get_summarisation_candidates` — deliberately
   excluding the admin/destructive and bulk data-movement RPCs (Purge, Sleep,
-  Export/Import/Transfer/Clear, event delete/merge) so a model can't wipe or exfiltrate a store. The
+  Export/Import/Transfer/Clear, event delete/merge) so a model can't wipe or exfiltrate a store.
+  That set is now held exact in both directions by `TestServer_EndToEnd`, and to the
+  table in `docs/mcp.md` by `TestEveryToolIsDocumented` — the registered set is a security
+  statement, so a tool arriving unremarked is what wants noticing. The listing tools take RFC3339
+  time bounds while the views return UnixNano, deliberately: a model can write a date but not a
+  nanosecond epoch, and a bound wrong by three orders of magnitude returns a plausible empty page
+  rather than an error. The
   mutating tools are all writer-tier, so what a token may actually do is enforced by the service's
   role tiers (a reader-scoped token is refused every mutation regardless of the registered tools),
   not by tool omission.

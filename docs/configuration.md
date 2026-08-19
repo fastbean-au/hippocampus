@@ -742,6 +742,19 @@ the tier still comes from `auth.roleClaim`/`auth.roleMapping`. When `auth.method
 `hmac`, `/ui/config` simply reports the method and the console falls back to its manual bearer-token
 box.
 
+```jsonc
+"auth": {
+  "method": "idp",
+  "issuer": "https://idp.example.com/realms/hippocampus",
+  "ui": {
+    "clientId": "hippocampus-console",  // a PUBLIC single-page-app client, no secret
+    "scopes": "openid profile",         // optional; this is the default
+    "issuer": "",                       // optional: defaults to auth.issuer
+    "audience": ""                      // optional: defaults to auth.audience
+  }
+}
+```
+
 Whichever it reports, the console uses it to decide what its **sign-in card** offers. Under `none` no
 card is shown at all; otherwise the page opens on the card in place of the tabs — the token box under
 `hmac`, a **Sign in** button under `idp` — and reveals the console only once `GET /v1/whoami` resolves
@@ -772,10 +785,17 @@ IdP access token, checked by the same `idp` verifier as a bearer header.
     "clientId": "hippocampus-console",         // a CONFIDENTIAL client at the provider
     "clientSecret": "…",                       // inject via HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET
     "redirectUrl": "https://hippo.example.com/auth/callback",  // must be registered at the provider
-    "scopes": "openid profile email offline_access"           // offline_access → a refresh token
-    // optional: issuer/audience (default to auth.issuer/auth.audience), cookieSecure (defaults to
-    // the redirectUrl scheme), cookieDomain, successRedirectUrl (default /ui),
-    // postLogoutRedirectUrl, sessionTTLSeconds, refreshTTLSeconds
+    "scopes": "openid profile email offline_access",          // offline_access → a refresh token
+
+    // all optional below here
+    "issuer": "",                  // defaults to auth.issuer; set it where the login issuer differs from the API's
+    "audience": "",                // defaults to auth.audience
+    "cookieSecure": true,          // defaults to the redirectUrl scheme; set it behind a TLS-terminating proxy
+    "cookieDomain": "",            // set it to serve the console across subdomains
+    "successRedirectUrl": "/ui",   // where a completed login lands
+    "postLogoutRedirectUrl": "",   // used only where the provider advertises end_session_endpoint
+    "sessionTTLSeconds": 3600,     // session-cookie lifetime
+    "refreshTTLSeconds": 604800    // refresh-cookie lifetime
   }
 }
 ```
@@ -1236,6 +1256,11 @@ driver.
   server with the [summariser](#summarisation-embedded-llm--ollama).
 - `ollama.embedding.dimensions` — must match the model (`nomic-embed-text` 768, `all-minilm` 384,
   `mxbai-embed-large` 1024). A mismatch is rejected with both numbers named.
+- `ollama.embedding.maxTextBytes` — how much of a body is embedded, defaulted rather than unbounded
+  because an embedding model has a context window and a long body would otherwise be refused by it.
+  A longer body is truncated on a rune boundary, so **only its opening is searchable by meaning**
+  while all of it stays searchable by keyword. Raise it for a store of long documents, within
+  whatever the model accepts.
 
 Choose a mode per search with `SearchMemories`' `mode` field — `keyword` (the default, so existing
 callers are unchanged), `semantic`, or `hybrid`. **`WhoAmI` reports which modes the deployment can

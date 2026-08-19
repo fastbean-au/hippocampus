@@ -57,6 +57,20 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   plainly that there is no encryption at rest, no per-record ACLs, no mutual TLS on the listeners,
   and no separate audit log, each being a thing an operator might otherwise assume. And a
   **hardening pass** lists the ten steps in the order they matter.
+- **Associative recall reached the CLI and the console.** `hippo memory recall --include-linked` and
+  `hippo memory search --include-linked`, and a checkbox on the console's search panel, return the
+  memories one hop from each result — an associative recall that is never itself reinforced. The
+  field existed on both RPCs and had been reachable only from the MCP bridge.
+- **`end_event` on the MCP bridge.** It could create events and never close one, so every event a
+  model opened stored an end time of 0 — which sorts as the oldest-ended rather than the most
+  recent, and reads as open forever.
+- **Time filters on the MCP bridge's listings** — `stored_after`/`stored_before` on `list_memories`,
+  and the four start/end bounds on `list_events`. They take RFC3339 timestamps rather than the
+  UnixNano the RPCs use: a model can write a date but cannot reliably arrive at a nanosecond epoch,
+  and a bound wrong by three orders of magnitude returns a plausible-looking empty page rather than
+  an error.
+- **The configuration wizard offers the topology settings and `listing.countCacheSeconds`**, which
+  is to say the two most recent features it had silently missed.
 
 ### Changed
 
@@ -70,6 +84,18 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 - **[Operations](docs/operations.md) keeps both moved sections as pointers**, so every existing link
   to `#security` and `#group-scoping-and-the-trust-boundary` still resolves, including the ones in
   this changelog's own history.
+
+### Fixed
+
+- **A traces-only deployment reported its OTLP collector as disabled.** `GetTopology` read
+  `observability.traces.enabled`, a key nothing sets — the service reads
+  `observability.tracing.enabled` everywhere else — so with tracing on and metrics off the
+  Deployment tab showed the collector greyed out while spans were being exported to it, and the
+  `enable_with` hint it carried named the misspelled key. Nothing caught it because both topology
+  tests enable metrics, which made the node appear for the other half of the condition.
+- **Two documents said content search needs OpenSearch.** `docs/mcp.md`'s notes (contradicting its
+  own tool table) and `docs/obsidian.md`'s feature list both predate the built-in SQL backend, and
+  told a reader on the default `sqlite` driver that search was unavailable to them.
 
 ### Breaking
 

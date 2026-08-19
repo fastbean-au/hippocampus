@@ -445,6 +445,14 @@ const STEPS = [
             help: "0 leaves it unbounded, since a legitimate ImportBatch body can be large. Set a ceiling when the gateway is reachable by untrusted callers.",
           },
           {
+            key: "listing.countCacheSeconds",
+            label: "Listing total cache (seconds)",
+            type: "int",
+            def: 5,
+            svc: 5,
+            help: "GetMemories/GetEvents report a total matching the filter, which costs a second unbounded pass. It is cached per filter for this long, so a total can be up to this stale; 0 disables the cache and counts every request. A page short enough to prove its own total never counts at all.",
+          },
+          {
             key: "keepalive.minTimeSeconds",
             label: "Keepalive minimum interval (seconds)",
             type: "int",
@@ -1172,6 +1180,14 @@ const STEPS = [
             help: "Bounds one embedding call. Much tighter than summarisation's, because this one sits on the write path.",
           },
           {
+            key: "ollama.embedding.maxTextBytes",
+            label: "Maximum text embedded (bytes)",
+            type: "int",
+            def: 0,
+            help: "0 uses the internal default. A body longer than this is truncated on a rune boundary before it is embedded, so only its opening is searchable by meaning — raise it for long documents.",
+            when: (s) => value(s, "ollama.embedding.enabled"),
+          },
+          {
             key: "ollama.embedding.batchSize",
             label: "Batch size",
             type: "int",
@@ -1433,6 +1449,68 @@ const STEPS = [
             when: (s) =>
               value(s, "observability.tracing.enabled") ||
               value(s, "observability.metrics.enabled"),
+          },
+        ],
+      },
+      {
+        title: "Deployment view",
+        blurb:
+          "GetTopology reports what this instance is attached to and the last known health of each part, backing the console's Deployment tab and `hippo topology`. It describes only what this instance knows — itself and what it dials — so anything that dials IN has to be declared below.",
+        fields: [
+          {
+            key: "topology.enabled",
+            label: "Enable the topology view",
+            type: "bool",
+            def: true,
+            svc: true,
+          },
+          {
+            key: "topology.minimumTier",
+            label: "Minimum tier",
+            type: "select",
+            options: ["reader", "writer", "admin"],
+            def: "reader",
+            svc: "reader",
+            when: (s) => value(s, "topology.enabled"),
+            help: "Addresses are redacted of credentials before they reach the response, which is what makes reader defensible. A group-scoped caller is refused whatever this says — there is no per-group topology.",
+          },
+          {
+            key: "topology.probeIntervalSeconds",
+            label: "Probe interval (seconds)",
+            type: "int",
+            def: 30,
+            svc: 30,
+            when: (s) => value(s, "topology.enabled"),
+            help: "Dependencies are probed by a background prober on this cadence, never on the request path, so a console viewer never opens a connection to every dependency.",
+          },
+          {
+            key: "topology.probeTimeoutSeconds",
+            label: "Probe timeout (seconds)",
+            type: "int",
+            def: 2,
+            svc: 2,
+            when: (s) => value(s, "topology.enabled"),
+          },
+          {
+            key: "topology.heartbeatSeconds",
+            label: "Peer heartbeat (seconds)",
+            type: "int",
+            def: 30,
+            svc: 30,
+            when: (s) =>
+              value(s, "topology.enabled") &&
+              value(s, "storage.driver") !== "sqlite",
+            help: "Each instance writes one row to a shared postgres/mysql store on this cadence and reads the others, which is how a horizontally-scaled deployment names its peers and warns when nothing is consolidating. Not available on sqlite, which is single-instance.",
+          },
+          {
+            key: "topology.probeTransferTarget",
+            label: "Probe the transfer target",
+            type: "bool",
+            def: false,
+            when: (s) =>
+              value(s, "topology.enabled") &&
+              value(s, "transfer.targetAddress") !== "",
+            help: "Opt-in because the probe dials a remote instance on a timer.",
           },
         ],
       },

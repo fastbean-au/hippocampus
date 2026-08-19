@@ -25,6 +25,7 @@ type hippoClient interface {
 	SearchMemories(ctx context.Context, in *contract.SearchMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
 	GetMemories(ctx context.Context, in *contract.GetMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
 	StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error)
+	EndEvent(ctx context.Context, in *contract.EndEventRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
 	GetEvents(ctx context.Context, in *contract.GetEventsRequest, opts ...grpc.CallOption) (*contract.GetEventsResponse, error)
 	GetSummarisationCandidates(ctx context.Context, in *contract.EmptyRequest, opts ...grpc.CallOption) (*contract.GetSummarisationCandidatesResponse, error)
 	LinkMemories(ctx context.Context, in *contract.LinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
@@ -144,6 +145,14 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 			"Associate memories with the returned event id (via store_memory's event_id) to keep " +
 			"related memories together and let them reinforce one another during consolidation.",
 	}, b.createEvent)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "end_event",
+		Description: "Close an event by setting its end time, defaulting to now. An event that is " +
+			"never ended stores an end time of 0, which sorts it as the oldest-ended rather than " +
+			"the most recent, and leaves it looking open forever. Ending one does not delete or " +
+			"change its memories.",
+	}, b.endEvent)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_events",
@@ -520,6 +529,9 @@ type listMemoriesInput struct {
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
 
+	StoredAfter  string `json:"stored_after,omitempty" jsonschema:"optional: only memories stored at or after this RFC3339 timestamp (e.g. 2026-08-12T00:00:00Z)"`
+	StoredBefore string `json:"stored_before,omitempty" jsonschema:"optional: only memories stored at or before this RFC3339 timestamp"`
+
 	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict to memories carrying ALL of these key/value labels exactly"`
 	Recalled *bool             `json:"recalled,omitempty" jsonschema:"optional: false returns only memories that have never been recalled, true only those recalled at least once; omit for no restriction"`
 	EventId  string            `json:"event_id,omitempty" jsonschema:"optional: restrict to one event's memories; this is the paged way to read them, and an empty value applies no restriction rather than matching the event-less"`
@@ -532,10 +544,22 @@ type memoriesPageOutput struct {
 }
 
 func (b *bridge) listMemories(ctx context.Context, _ *mcp.CallToolRequest, in listMemoriesInput) (*mcp.CallToolResult, memoriesPageOutput, error) {
+	storedAfter, err := parseToolTime(in.StoredAfter, "stored_after")
+	if err != nil {
+		return nil, memoriesPageOutput{}, err
+	}
+
+	storedBefore, err := parseToolTime(in.StoredBefore, "stored_before")
+	if err != nil {
+		return nil, memoriesPageOutput{}, err
+	}
+
 	callCtx, cancel := b.callContext(ctx)
 	defer cancel()
 
 	res, err := b.client.GetMemories(callCtx, &contract.GetMemoriesRequest{
+		TimestampMin:    storedAfter,
+		TimestampMax:    storedBefore,
 		Group:           in.Group,
 		SignificanceMin: in.SignificanceMin,
 		SignificanceMax: in.SignificanceMax,
@@ -596,6 +620,57 @@ func (b *bridge) createEvent(ctx context.Context, _ *mcp.CallToolRequest, in cre
 	return nil, createEventOutput{Id: res.GetId(), Rejected: res.GetRejected()}, nil
 }
 
+// --- end_event ---
+
+type endEventInput struct {
+	Id      string `json:"id" jsonschema:"id of the event to close (required)"`
+	TimeEnd string `json:"time_end,omitempty" jsonschema:"when the event ended, as an RFC3339 timestamp (e.g. 2026-08-19T14:30:00Z); omit to use the service's current time"`
+}
+
+type endEventOutput struct {
+	Ok bool `json:"ok" jsonschema:"true when the event was ended"`
+}
+
+func (b *bridge) endEvent(ctx context.Context, _ *mcp.CallToolRequest, in endEventInput) (*mcp.CallToolResult, endEventOutput, error) {
+	if in.Id == "" {
+		return nil, endEventOutput{}, fmt.Errorf("id is required")
+	}
+
+	timeEnd, err := parseToolTime(in.TimeEnd, "time_end")
+	if err != nil {
+		return nil, endEventOutput{}, err
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.EndEvent(callCtx, &contract.EndEventRequest{Id: in.Id, TimeEnd: timeEnd})
+	if err != nil {
+		return nil, endEventOutput{}, fmt.Errorf("EndEvent failed: %w", err)
+	}
+
+	return nil, endEventOutput{Ok: res.GetOk()}, nil
+}
+
+// parseToolTime turns one of the RFC3339 timestamps the tool schemas accept into the UnixNano the
+// RPCs take. The tools deliberately speak RFC3339 rather than nanoseconds: a model can write a date
+// but cannot reliably arrive at 1755561600000000000, and a filter bound silently wrong by three
+// orders of magnitude returns a plausible-looking empty page rather than an error. An empty value
+// means "no bound", which is what 0 means to every one of these fields.
+func parseToolTime(value string, field string) (int64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an RFC3339 timestamp such as 2026-08-19T14:30:00Z: %w", field, err)
+	}
+
+	return parsed.UnixNano(), nil
+}
+
 // --- list_events ---
 
 // order_by's values and default are hand-copied from db/order.go - see listMemoriesInput.
@@ -608,6 +683,11 @@ type listEventsInput struct {
 	Limit           int32  `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (25), capped at 200"`
 	Offset          int32  `json:"offset,omitempty" jsonschema:"rows to skip for paging"`
 
+	StartedAfter  string `json:"started_after,omitempty" jsonschema:"optional: only events starting at or after this RFC3339 timestamp (e.g. 2026-08-12T00:00:00Z)"`
+	StartedBefore string `json:"started_before,omitempty" jsonschema:"optional: only events starting at or before this RFC3339 timestamp"`
+	EndedAfter    string `json:"ended_after,omitempty" jsonschema:"optional: only events ending at or after this RFC3339 timestamp. An event that has not been ended stores an end time of 0, so any value here also excludes the events still open"`
+	EndedBefore   string `json:"ended_before,omitempty" jsonschema:"optional: only events ending at or before this RFC3339 timestamp"`
+
 	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict to events carrying ALL of these key/value labels exactly"`
 }
 
@@ -617,10 +697,30 @@ type eventsPageOutput struct {
 }
 
 func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in listEventsInput) (*mcp.CallToolResult, eventsPageOutput, error) {
+	bounds := map[string]int64{}
+
+	for field, value := range map[string]string{
+		"started_after":  in.StartedAfter,
+		"started_before": in.StartedBefore,
+		"ended_after":    in.EndedAfter,
+		"ended_before":   in.EndedBefore,
+	} {
+		parsed, err := parseToolTime(value, field)
+		if err != nil {
+			return nil, eventsPageOutput{}, err
+		}
+
+		bounds[field] = parsed
+	}
+
 	callCtx, cancel := b.callContext(ctx)
 	defer cancel()
 
 	res, err := b.client.GetEvents(callCtx, &contract.GetEventsRequest{
+		TimeStartMin:    bounds["started_after"],
+		TimeStartMax:    bounds["started_before"],
+		TimeEndMin:      bounds["ended_after"],
+		TimeEndMax:      bounds["ended_before"],
 		Group:           in.Group,
 		SignificanceMin: in.SignificanceMin,
 		SignificanceMax: in.SignificanceMax,

@@ -47,7 +47,7 @@ forget memories. The administrative, destructive, and bulk data-movement RPCs (`
 `Export`/`Import`/`Transfer`/`Clear`, event deletion/merge, and `SummariseMemories` — which deletes
 an event's memories, replacing them with an LLM-generated summary) are **not** exposed, so a model
 cannot wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`, `update_memory`,
-`delete_memories`, `create_event`) are all `writer`-tier; what a given token may actually do is
+`delete_memories`, `link_memories`, `unlink_memories`, `create_event`, `end_event`) are all `writer`-tier; what a given token may actually do is
 enforced by the service's [role tiers](configuration.md#authorisation), so a `reader`-scoped token is
 refused every mutation regardless of which tools are registered here. `delete_memories` is a by-id
 scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear`,
@@ -73,6 +73,7 @@ so it need not (and cannot) choose where its memories are filed. Note this is a 
 | `get_memory_links`             | `GetMemoryLinks`             | List what a memory is linked to and its total link significance; `direction` narrows to outbound or inbound. Read-only.                                                                                                                      |
 | `list_memories`                | `GetMemories`                | Read-only browse by group, significance, and `metadata` labels; `recalled: false` finds memories never recalled. `order_by`/`order_dir` sort the page. Does **not** reinforce.                                                               |
 | `create_event`                 | `StoreEvent`                 | A named time span memories can be grouped under; takes `metadata` labels like a memory.                                                                                                                                                      |
+| `end_event`                    | `EndEvent`                   | Close an event, defaulting to now. An event never ended stores an end time of 0, which sorts it as the oldest-ended rather than the most recent; its memories are untouched.                                                                  |
 | `list_events`                  | `GetEvents`                  | Read-only browse of events, filterable by `metadata` labels and sortable via `order_by`/`order_dir`.                                                                                                                                         |
 | `get_summarisation_candidates` | `GetSummarisationCandidates` | Events the last consolidation cycle flagged as worth condensing.                                                                                                                                                                             |
 
@@ -197,6 +198,13 @@ put it behind auth/TLS (or a proxy that terminates them) before exposing it beyo
   `list_memories` can therefore race — the store commits, but the list may run first and not see it.
   This is host batching behaviour, not a consistency gap in the store; a subsequent list reflects
   the write.
-- `search_memories` requires the service to have its OpenSearch content-search index enabled
-  (`opensearch.enabled`); without it the tool returns a `FAILED_PRECONDITION` error, surfaced to the
-  model as a tool error.
+- `search_memories` needs the service to have a content-search backend. On the default `sqlite`
+  driver there is one built in and nothing else is required; on `postgres`/`mysql` it needs
+  `opensearch.enabled`, and without it the tool returns a `FAILED_PRECONDITION` error, surfaced to
+  the model as a tool error. `semantic`/`hybrid` modes need OpenSearch plus an embedding model on
+  every driver.
+- The listing tools take their time bounds as RFC3339 timestamps (`stored_after`,
+  `started_before`, …) while the memories they return carry UnixNano `time_stamp` fields, which is
+  the service's own representation. The asymmetry is deliberate: a model can write a date but
+  cannot reliably arrive at a nanosecond epoch, and a bound wrong by three orders of magnitude
+  returns a plausible-looking empty page rather than an error.
