@@ -102,6 +102,12 @@ jobs:
         env:
           HIPPOCAMPUS_TEST_POSTGRES_DSN: postgres://hippocampus:hippocampus@localhost:5432/hippocampus_test?sslmode=disable
           HIPPOCAMPUS_TEST_MYSQL_DSN: hippocampus:hippocampus@tcp(localhost:3306)/hippocampus_test
+          # The schema-upgrade fixtures (db/schema_upgrade_server_test.go) build a scratch database
+          # per subtest, which the scoped MYSQL_USER above may not create. Postgres needs no
+          # counterpart: POSTGRES_USER is that container's superuser. This must stay in step with
+          # the same block in ci.yaml - without it those tests FAIL rather than skip, deliberately,
+          # and here that stops the release.
+          HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN: root:hippocampus@tcp(localhost:3306)/hippocampus_test
           HIPPOCAMPUS_TEST_OPENSEARCH_URL: http://localhost:9200
         run: go test ./...
 
