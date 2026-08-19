@@ -50,3 +50,9 @@ TODO*.md
 # Python bytecode
 __pycache__/
 *.pyc
+
+# SQLite sidecars beside the schema-upgrade fixtures. Opening a fixture directly (an operator's
+# sqlite3, say) creates these; committing them would ship a fixture's uncheckpointed tail as a
+# separate file, which the test — which copies only hippocampus.db — would never read.
+db/testdata/schema/*/hippocampus.db-shm
+db/testdata/schema/*/hippocampus.db-wal
