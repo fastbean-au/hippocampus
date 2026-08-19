@@ -146,7 +146,18 @@ func TestCycleReportPublishedOnFailure(t *testing.T) {
 
 // TestNextSleepIsRecordedAndResets verifies the countdown the console shows advances with the
 // timer, from the one chokepoint every reset goes through.
+//
+// Every deadline is checked against a timestamp captured BEFORE the load that read the previous
+// one, never against a time.Now() read after observing the new one. That is not defensiveness
+// about clocks. resetTimer stores now+period AFTER the cycle it just ran returns, so a deadline
+// read later is "in the past" in two cases that are not the bug: the observing goroutine was
+// descheduled, or the cycle outran the period - which at 50ms on a loaded runner it does, and
+// which is the schedule falling behind rather than a countdown never restarted. Anchoring the
+// other way round keeps the real regressions failing (a deadline never restarted, restarted
+// backwards, or restarted by less than a whole period) while a slow runner cannot.
 func TestNextSleepIsRecordedAndResets(t *testing.T) {
+	const period = 50 * time.Millisecond
+
 	s := statusServer(t)
 	s.stopSleep = make(chan struct{})
 	s.sleepStopped = make(chan struct{})
@@ -154,8 +165,17 @@ func TestNextSleepIsRecordedAndResets(t *testing.T) {
 	reset := make(chan bool, 1)
 	s.sleepReset = reset
 
-	s.autoSleep(reset, 50*time.Millisecond)
+	// Read before the timer exists, so every deadline it can go on to hold was stored after this.
+	created := time.Now()
+
+	s.autoSleep(reset, period)
 	t.Cleanup(s.Stop)
+
+	// stillHeld is the latest instant the countdown was OBSERVED to still hold first, and is always
+	// read BEFORE the load it belongs to - so whatever restarts the countdown provably stores its
+	// deadline after it. A correct reset therefore lands a whole period beyond stillHeld however
+	// slow the runner is, while one that stored the bare time.Now() lands about one poll beyond it.
+	stillHeld := time.Now()
 
 	// Set as soon as the timer is created, before anything has fired.
 	first := s.nextSleep.Load()
@@ -164,17 +184,45 @@ func TestNextSleepIsRecordedAndResets(t *testing.T) {
 		t.Fatal("nextSleep was not set when the timer was created")
 	}
 
-	// After a cycle fires, the countdown must have been restarted rather than left in the past.
-	time.Sleep(200 * time.Millisecond)
-
-	second := s.nextSleep.Load()
-
-	if second <= first {
-		t.Errorf("nextSleep did not advance after a cycle fired: %d then %d", first, second)
+	if first < created.Add(period).UnixNano() {
+		t.Errorf("the timer was created with nextSleep %s ahead, want at least one period (%s)",
+			time.Duration(first-created.UnixNano()), period)
 	}
 
-	if second < time.Now().UnixNano() {
-		t.Error("nextSleep is in the past, so the countdown would render as overdue forever")
+	// After a cycle fires, the countdown must have been restarted rather than left in the past.
+	// Polled rather than slept past, so the new deadline is read as soon as it moves however long
+	// the cycle took, which is what keeps stillHeld close enough behind it to mean anything.
+	var second int64
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("nextSleep never moved from %d, so no cycle restarted the countdown", first)
+		}
+
+		observed := time.Now()
+
+		value := s.nextSleep.Load()
+		if value != first {
+			second = value
+
+			break
+		}
+
+		stillHeld = observed
+
+		time.Sleep(time.Millisecond)
+	}
+
+	if second < first {
+		t.Errorf("nextSleep went backwards after a cycle fired: %d then %d", first, second)
+	}
+
+	if second < stillHeld.Add(period).UnixNano() {
+		t.Errorf("nextSleep was restarted to %s past the moment it still held the previous "+
+			"deadline, less than the period (%s), so the countdown would render as overdue forever",
+			time.Duration(second-stillHeld.UnixNano()), period)
 	}
 }
 
