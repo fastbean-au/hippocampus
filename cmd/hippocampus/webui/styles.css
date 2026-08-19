@@ -164,6 +164,21 @@ main {
 .tab.active {
   display: block;
 }
+/* The links drill-down. Opening one REPLACES the tab it was opened on rather than stacking a panel
+   under the list, which is the event card's rule (see #event-card) generalised: the Links button is
+   on four tables across three tabs, so which cards have to give way is not a list anyone could keep
+   up to date - it is every one of them but this. openLinks moves the card into the section first,
+   which is what lets one card serve every tab.
+
+   Selecting the children rather than adding a class to each keeps .hidden's !important intact, so a
+   card that was hidden for some other reason - a form gated on tier, a card gated on the
+   deployment - is not un-hidden when the drill-down closes and this rule stops applying. */
+.tab.links-open > .card {
+  display: none;
+}
+.tab.links-open > #links-card {
+  display: block;
+}
 .card {
   background: var(--panel);
   border: 1px solid var(--border);

@@ -660,6 +660,18 @@ const NODE_GAP = 12;
 const COL_GAP = 56;
 const PAD = 12;
 
+// Name wrapping. A node's name is not the console's to shorten - it is a bridge's --name, a peer's
+// host:port, an observed caller's client_id, and the whole point of the inbound column is telling
+// two of them apart - so a long one wraps and the box grows to hold it, rather than being truncated
+// like the address beneath it. NAME_MAX_CHARS is a character budget rather than a measurement
+// because SVG text cannot be measured without laying it out in a document, which is exactly what
+// keeps this file testable outside a browser; 26 is what fits 208px at the 12px .tname size with the
+// dot and the padding taken off, with the budget set to the WIDE characters so a name of nothing but
+// them still fits.
+const NAME_MAX_CHARS = 26;
+const NAME_MAX_LINES = 2;
+const NAME_LINE_H = 14;
+
 // topologyLayout turns a response into positioned boxes and edge paths. It is separated from the
 // SVG it feeds so the geometry can be tested as numbers - whether every node was placed, whether
 // two boxes overlap, whether an edge terminates on something - none of which is checkable by
@@ -691,28 +703,54 @@ export function topologyLayout(res, opts) {
     return out;
   });
 
-  const used = columns.filter((c) => c.length > 0);
-  const tallest = used.reduce((max, c) => Math.max(max, c.length), 0);
+  // A box's height is its own, not the constant, because a wrapped name needs a taller box - so the
+  // column heights are summed rather than counted, and one wrapped node in one column no longer
+  // silently pushes the boxes below it out of their own boxes.
+  const sized = columns.map((column) =>
+    column.map((node) => {
+      const lines = wrapLabel(node.name, NAME_MAX_CHARS, NAME_MAX_LINES);
+
+      return {
+        node,
+        lines,
+        h: NODE_H + (lines.length - 1) * NAME_LINE_H,
+      };
+    }),
+  );
+
+  const used = sized.filter((c) => c.length > 0);
+  const columnHeights = used.map(
+    (c) =>
+      c.reduce((sum, e) => sum + e.h, 0) + Math.max(0, c.length - 1) * NODE_GAP,
+  );
   const height =
-    PAD * 2 + tallest * NODE_H + Math.max(0, tallest - 1) * NODE_GAP;
+    PAD * 2 + columnHeights.reduce((max, h) => Math.max(max, h), 0);
   const width =
     PAD * 2 + used.length * NODE_W + Math.max(0, used.length - 1) * COL_GAP;
 
   const boxes = [];
   let x = PAD;
 
-  for (const column of columns) {
+  for (const column of sized) {
     if (!column.length) continue;
 
     // Each column is centred against the tallest, so a single instance sits opposite the middle of
     // its dependencies rather than at the top of them.
     const columnHeight =
-      column.length * NODE_H + (column.length - 1) * NODE_GAP;
+      column.reduce((sum, e) => sum + e.h, 0) + (column.length - 1) * NODE_GAP;
     let y = (height - columnHeight) / 2;
 
-    for (const node of column) {
-      boxes.push({ id: node.id, x, y, w: NODE_W, h: NODE_H, node });
-      y += NODE_H + NODE_GAP;
+    for (const entry of column) {
+      boxes.push({
+        id: entry.node.id,
+        x,
+        y,
+        w: NODE_W,
+        h: entry.h,
+        lines: entry.lines,
+        node: entry.node,
+      });
+      y += entry.h + NODE_GAP;
     }
 
     x += NODE_W + COL_GAP;
@@ -787,8 +825,8 @@ export function topologySvg(layout) {
       `<title>${esc(box.node.name)} — ${esc(status.label)}${detail ? " — " + esc(detail) : ""}</title>` +
       `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="8"></rect>` +
       `<circle class="tdot" cx="${box.x + 14}" cy="${box.y + 18}" r="4"></circle>` +
-      `<text class="tname" x="${box.x + 26}" y="${box.y + 22}">${esc(box.node.name)}</text>` +
-      `<text class="tdetail" x="${box.x + 26}" y="${box.y + 38}">${esc(truncateMiddle(detail, 30))}</text>` +
+      `<text class="tname" x="${box.x + 26}" y="${box.y + 22}">${nameTspans(box)}</text>` +
+      `<text class="tdetail" x="${box.x + 26}" y="${box.y + nameBlockH(box) + 38}">${esc(truncateMiddle(detail, 30))}</text>` +
       `</g>`;
   }
 
@@ -797,6 +835,116 @@ export function topologySvg(layout) {
   // to the full width of the card, and its labels with it, so the emptier the deployment the bigger
   // the diagram drew.
   return `<svg class="topology" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="deployment topology">${edges}${boxes}</svg>`;
+}
+
+// nameBlockH is how much taller than a single-line name this box's name is, which is what the
+// detail line below it has to move down by.
+function nameBlockH(box) {
+  return (nameLines(box).length - 1) * NAME_LINE_H;
+}
+
+function nameLines(box) {
+  return box.lines && box.lines.length ? box.lines : [String(box.node.name)];
+}
+
+// nameTspans renders the wrapped name as tspans of one <text>. One element with tspans rather than
+// one <text> per line so the name is still a single accessible string, and each tspan repeats the x
+// because an SVG tspan inherits the previous one's END position, not its start.
+function nameTspans(box) {
+  const lines = nameLines(box);
+  let out = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    out += `<tspan x="${box.x + 26}" dy="${i === 0 ? 0 : NAME_LINE_H}">${esc(lines[i])}</tspan>`;
+  }
+
+  return out;
+}
+
+const BREAK_AFTER = "-./:_ \t";
+
+// wrapLabel greedily packs text into at most maxLines lines of at most max characters.
+//
+// It breaks after a hyphen, a dot, a slash or a colon as well as at a space, because the names this
+// wraps are almost never prose: they are identifiers (hippocampus-bluesky-bridge-worldnews) and
+// host:port pairs, and a wrapper that only knew about spaces would treat every one of them as a
+// single unbreakable word and wrap nothing at all. The separator stays on the line it ends, so a
+// reader can see the name was cut at a boundary rather than mid-word.
+//
+// A run with no break opportunity in it is hard-split rather than left to overflow, and text still
+// left over on the last line is truncated with an ellipsis - both are the cases where something has
+// to give, and a box that silently draws outside itself is the one outcome worth ruling out.
+export function wrapLabel(text, max, maxLines) {
+  const s = String(text == null ? "" : text).trim();
+
+  if (!s) return [""];
+  if (s.length <= max) return [s];
+
+  // Split into chunks that each end at a break opportunity, hard-splitting any chunk that is on its
+  // own too long to fit. Scanned rather than split on a lookbehind, which is the obvious one-liner
+  // for "break after this character" and is also the newest regex feature in the file.
+  const chunks = [];
+  const push = (chunk) => {
+    if (chunk.length <= max) {
+      chunks.push(chunk);
+
+      return;
+    }
+
+    for (let i = 0; i < chunk.length; i += max) {
+      chunks.push(chunk.slice(i, i + max));
+    }
+  };
+
+  let pending = "";
+
+  for (const ch of s) {
+    pending += ch;
+
+    if (BREAK_AFTER.includes(ch)) {
+      push(pending);
+      pending = "";
+    }
+  }
+
+  if (pending) push(pending);
+
+  const lines = [];
+  let line = "";
+
+  for (let i = 0; i < chunks.length; i++) {
+    if (line && line.length + chunks[i].length > max) {
+      // Everything that will not fit in the lines that remain is folded onto the last one, for
+      // truncateEnd below to cut, so what was dropped is at least marked as dropped.
+      if (lines.length + 1 >= maxLines) {
+        line += chunks.slice(i).join("");
+
+        break;
+      }
+
+      lines.push(line);
+      line = "";
+    }
+
+    line += chunks[i];
+  }
+
+  if (line) lines.push(line);
+
+  const last = lines.length - 1;
+  lines[last] = truncateEnd(lines[last].trimEnd(), max);
+
+  return lines;
+}
+
+// truncateEnd cuts the tail off, unlike truncateMiddle: it is used on names rather than addresses,
+// and a name's distinguishing part is at the front far more often than an address's is.
+export function truncateEnd(text, max) {
+  const s = String(text == null ? "" : text);
+
+  if (s.length <= max) return s;
+
+  return s.slice(0, max - 1) + "…";
 }
 
 // truncateMiddle keeps both ends of an address visible, because the host is at one end and the port

@@ -976,10 +976,13 @@ function showTab(name) {
 
 document.querySelectorAll("nav button").forEach((b) => {
   b.addEventListener("click", () => {
-    // A hand-driven navigation ends the drill-down. Without this, clicking Events while an event
+    // A hand-driven navigation ends the drill-downs. Without this, clicking Events while an event
     // opened from the Memories tab was still on screen would arrive at the Events tab showing one
     // event's memories where its list belongs, under a Back button offering to send you to
-    // Memories - which is not where you asked to go.
+    // Memories - which is not where you asked to go. The links card is the same shape of problem:
+    // it covers whichever tab it was opened on, so leaving that tab with it still open means coming
+    // back to a list that is not there.
+    closeLinks();
     closeEvent();
     showTab(b.dataset.tab);
   });
@@ -1389,6 +1392,11 @@ async function openEvent(id) {
     const memories = ev.memories || [];
     const end = ev.timeEnd && ev.timeEnd !== "0" ? ageCell(ev.timeEnd) : "open";
 
+    // Opening an event is a navigation too, so it ends the links drill-down - reached from the
+    // links card (follow-link on an event's link) it would otherwise leave that card open on
+    // whichever tab it was covering, waiting behind this one.
+    closeLinks();
+
     // The origin is captured BEFORE the tab switch, and only when no event is already open:
     // afterSummarise re-opens the event that is on screen, and following an event link from the
     // links card opens another one, and neither is the user arriving from somewhere new.
@@ -1646,7 +1654,10 @@ async function doSearch() {
     // comparable with the limit: a query whose matches are exhausted can still come back "full"
     // and offer a Show more that returns the same set again. Suppress the control rather than
     // guess, since the response does not say which rows were matches.
-    renderSearchMore(results.length, body.include_linked ? 0 : Number(body.limit || 0));
+    renderSearchMore(
+      results.length,
+      body.include_linked ? 0 : Number(body.limit || 0),
+    );
 
     ok("Search", results.length + " result(s)");
   } catch (e) {
@@ -2052,6 +2063,62 @@ function linksPath(subject, suffix) {
   );
 }
 
+// linksDetail opens and closes the links drill-down, which is the event card's mechanism generalised
+// to a card that has to work on more than one tab.
+//
+// The card is MOVED into the section it was opened from and that section is marked .links-open,
+// which the stylesheet turns into "show this card and nothing else here" - so the panel replaces
+// the list the Links button was on, exactly as an opened event replaces the events list. Moving one
+// node beats cloning the card per tab (two things to explain forever, and two places for the next
+// fix to miss) and beats switching tabs, which is what it used to do: a question about the row in
+// front of you was answered by navigating away from it, and an event's links landed on a tab whose
+// section did not contain the card at all, so nothing appeared.
+//
+// Nothing else in the section is touched, so an event card open behind the links of one of its
+// memories is still open, with its state, when Back closes this.
+function linksDetail(on) {
+  const card = $("links-card");
+  const section = on
+    ? document.getElementById("tab-" + currentTab())
+    : card.closest(".tab");
+
+  if (!section) return;
+
+  if (!on) {
+    section.classList.remove("links-open");
+    card.classList.add("hidden");
+
+    return;
+  }
+
+  // First in the section, ahead of any create form, for the reason the event card is: the thing you
+  // asked for should be the thing at the top rather than something under a form you did not fill in.
+  if (card.parentElement !== section) {
+    section.insertBefore(card, section.firstElementChild);
+  }
+
+  section.classList.add("links-open");
+  card.classList.remove("hidden");
+}
+
+// linksBackLabel names where Back goes, from what the card is covering rather than from the
+// subject's kind: the links of a memory can be reached from four tables on three tabs, and "Back to
+// memories" is wrong for every one of them but the memories list. An open event behind the card is
+// the case worth naming, since that is where the memory whose links these are was listed.
+function linksBackLabel() {
+  const tab = currentTab();
+
+  if (tab === "events" && !$("event-card").classList.contains("hidden")) {
+    return "\u2039 Back to event";
+  }
+
+  const nav = document.querySelector(`nav button[data-tab="${tab}"]`);
+
+  return nav
+    ? "\u2039 Back to " + nav.textContent.trim().toLowerCase()
+    : "\u2039 Back";
+}
+
 async function openLinks(kind, id) {
   linksSubject = { kind, id };
 
@@ -2059,21 +2126,21 @@ async function openLinks(kind, id) {
   // it) so the heading carries the same truncation and copy button as the tables.
   $("links-subject").innerHTML = idCell(id);
   $("links-kind").textContent = kind === "event" ? "Event" : "Memory";
-  $("links-card").classList.remove("hidden");
   $("links-list").innerHTML = '<div class="empty">Loading…</div>';
   $("link-target").placeholder =
     kind === "event" ? "event id to link to" : "memory id to link to";
 
-  // Show the card on the tab the subject belongs to, so the row it was opened from is still on
-  // screen behind it.
-  document
-    .querySelector(
-      `nav button[data-tab="${kind === "event" ? "events" : "memories"}"]`,
-    )
-    .click();
+  // The label is read before the card is opened: once it is, the card covers the very thing the
+  // label is derived from, and following a link from one subject to another must not relabel Back
+  // as leading back to the card you are already looking at.
+  const back = linksBackLabel();
 
-  // The card sits below the list it is opened from. Below a full page of rows it is also off the
-  // bottom of the screen, and reached from another tab there is nothing to say it opened at all.
+  linksDetail(true);
+  $("links-back").textContent = back;
+
+  // The card replaces the list rather than sitting under it, but the page does not scroll itself
+  // back up when its content is swapped, so from halfway down a long table the card opens above the
+  // viewport.
   revealCard("links-card");
 
   try {
@@ -2088,7 +2155,7 @@ async function openLinks(kind, id) {
 
 function closeLinks() {
   linksSubject = { kind: "memory", id: "" };
-  $("links-card").classList.add("hidden");
+  linksDetail(false);
 }
 
 function renderLinks(data) {

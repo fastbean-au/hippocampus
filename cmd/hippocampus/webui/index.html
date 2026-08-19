@@ -400,11 +400,23 @@
           </div>
         </div>
 
+        <!-- The links card is a DRILL-DOWN, like the event card: opening it replaces the list it
+         was opened from rather than stacking a panel under it, and "Back" names where that was.
+         It is written here, on the Memories tab, but it does not stay here - openLinks moves it
+         into whichever tab it was opened from, because the Links button appears on the memories
+         table, the events table, the search results and an open event's memory list, and a card
+         that lives on one tab can only be shown by throwing the user onto that tab. Doing that
+         answered a question about the row in front of them by navigating away from it, and for an
+         event's links the card was in the wrong section to be seen at all. -->
         <div class="card hidden" id="links-card" data-enter="memory-link">
           <div class="events-head">
             <h2><span id="links-kind">Memory</span> links</h2>
-            <button class="btn ghost small" data-act="close-links">
-              Close
+            <button
+              class="btn ghost small"
+              data-act="close-links"
+              id="links-back"
+            >
+              &lsaquo; Back
             </button>
           </div>
           <!-- One card serves memories and events: item 65 folded event relationships onto memory

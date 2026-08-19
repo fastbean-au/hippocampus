@@ -40,6 +40,7 @@ import {
   topologySvg,
   topologyWarningsHtml,
   truncateMiddle,
+  wrapLabel,
 } from "../webui/lib.js";
 
 // --------------------------------------------------------------------- capabilities
@@ -1068,6 +1069,123 @@ test("topologyCheckedLabel says how fresh a status is", () => {
   );
 });
 
+// A node's name is a bridge's --name or an observed caller's client_id, and the inbound column
+// exists to tell two of them apart - so a long one has to wrap rather than be cut, and it has to
+// wrap where the identifier's own separators are or a hyphenated name is one unbreakable word.
+test("wrapLabel wraps a long identifier at its own separators", () => {
+  assert.deepEqual(wrapLabel("hippocampus-bluesky-bridge", 26, 2), [
+    "hippocampus-bluesky-bridge",
+  ]);
+
+  const lines = wrapLabel("hippocampus-bluesky-bridge-worldnews", 26, 2);
+
+  assert.deepEqual(lines, ["hippocampus-bluesky-", "bridge-worldnews"]);
+
+  for (const line of lines) assert.ok(line.length <= 26, line);
+});
+
+test("wrapLabel hard-splits a run with nowhere to break, and marks what it drops", () => {
+  // No separator anywhere, so the break has to be made rather than found.
+  const split = wrapLabel("x".repeat(40), 10, 2);
+
+  assert.deepEqual(split, ["xxxxxxxxxx", "xxxxxxxxx…"]);
+
+  // Beyond maxLines there is nothing left to do but cut, and a cut says so.
+  const cut = wrapLabel("alpha-beta-gamma-delta-epsilon-zeta", 12, 2);
+
+  assert.equal(cut.length, 2);
+  assert.ok(cut[1].endsWith("…"), cut[1]);
+
+  for (const line of cut) assert.ok(line.length <= 12, line);
+
+  assert.deepEqual(wrapLabel("", 10, 2), [""]);
+  assert.deepEqual(wrapLabel(null, 10, 2), [""]);
+});
+
+// The layout, not the renderer, has to know a name wrapped: the box below it is placed from this
+// box's height, so a name that grew without the box growing would draw over its neighbour.
+test("topologyLayout grows a box whose name wraps, and still never overlaps", () => {
+  const res = topologyResponse();
+
+  res.nodes.push(
+    {
+      id: "declared:short",
+      kind: "TOPOLOGY_NODE_KIND_BRIDGE",
+      name: "hippocampus-bluesky-bridge",
+      source: "TOPOLOGY_NODE_SOURCE_DECLARED",
+      status: "TOPOLOGY_STATUS_OK",
+    },
+    {
+      id: "declared:long",
+      kind: "TOPOLOGY_NODE_KIND_BRIDGE",
+      name: "hippocampus-bluesky-bridge-worldnews",
+      source: "TOPOLOGY_NODE_SOURCE_DECLARED",
+      status: "TOPOLOGY_STATUS_OK",
+    },
+  );
+
+  const layout = topologyLayout(res);
+  const byId = new Map(layout.boxes.map((b) => [b.id, b]));
+
+  assert.equal(byId.get("declared:short").lines.length, 1);
+  assert.equal(byId.get("declared:long").lines.length, 2);
+  assert.ok(byId.get("declared:long").h > byId.get("declared:short").h);
+
+  for (const a of layout.boxes) {
+    for (const b of layout.boxes) {
+      if (a === b) continue;
+
+      const apart =
+        a.x + a.w <= b.x ||
+        b.x + b.w <= a.x ||
+        a.y + a.h <= b.y ||
+        b.y + b.h <= a.y;
+
+      assert.ok(apart, `${a.id} and ${b.id} overlap`);
+    }
+  }
+
+  for (const box of layout.boxes) {
+    assert.ok(
+      box.y >= 0 && box.y + box.h <= layout.height,
+      `${box.id} overflows the viewBox vertically`,
+    );
+  }
+});
+
+test("topologySvg draws a wrapped name as tspans and moves the detail below them", () => {
+  const layout = topologyLayout({
+    nodes: [
+      {
+        id: "declared:long",
+        kind: "TOPOLOGY_NODE_KIND_BRIDGE",
+        name: "hippocampus-bluesky-bridge-worldnews",
+        detail: "http://hippocampus-bluesky-bridge-worldnews:8090",
+        source: "TOPOLOGY_NODE_SOURCE_DECLARED",
+        status: "TOPOLOGY_STATUS_OK",
+      },
+    ],
+    edges: [],
+  });
+  const svg = topologySvg(layout);
+  const box = layout.boxes[0];
+
+  assert.match(svg, /<tspan[^>]*>hippocampus-bluesky-<\/tspan>/);
+  assert.match(svg, /<tspan[^>]*>bridge-worldnews<\/tspan>/);
+
+  // The full name is still one accessible string, and the tooltip still carries all of it.
+  assert.equal(svg.match(/<text class="tname"/g).length, 1);
+  assert.match(svg, /hippocampus-bluesky-bridge-worldnews —/);
+
+  // The detail sits under the second line rather than through it, and inside the box.
+  const detailY = Number(
+    svg.match(/<text class="tdetail" x="[^"]*" y="([^"]*)"/)[1],
+  );
+
+  assert.ok(detailY > box.y + 36, `detail at ${detailY} overlaps the name`);
+  assert.ok(detailY < box.y + box.h, `detail at ${detailY} escapes the box`);
+});
+
 test("truncateMiddle keeps both ends of an address", () => {
   assert.equal(truncateMiddle("short", 20), "short");
 
@@ -1142,8 +1260,15 @@ test("topologyLayout places a discovered peer beside this instance", () => {
   const peer = byId.get("peer:hippo-2:50051");
 
   assert.ok(peer, "the peer was not placed");
-  assert.equal(peer.x, byId.get("self").x, "a peer belongs in the instance column");
-  assert.ok(peer.y !== byId.get("self").y, "a peer must not sit on top of this instance");
+  assert.equal(
+    peer.x,
+    byId.get("self").x,
+    "a peer belongs in the instance column",
+  );
+  assert.ok(
+    peer.y !== byId.get("self").y,
+    "a peer must not sit on top of this instance",
+  );
 
   // Its edge runs to the store, not to this instance: peers are siblings, and nothing here dials
   // anything there.

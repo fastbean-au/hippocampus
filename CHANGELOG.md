@@ -33,6 +33,26 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Changed
+
+- **The console's links panel is a drill-down, like an opened event.** Clicking **Links** on a row
+  used to throw you onto the Memories tab and open a card under that tab's list — answering a
+  question about the record in front of you by navigating away from it, and, from inside an opened
+  event, leaving the memories you were reading for a memories list you had not asked for. The panel
+  now replaces the list it was opened from, on the tab you were on, with a **Back** button that names
+  where it goes ("Back to event" from inside one). This also fixes an event's links being
+  unreachable: the card lives on the Memories tab, so opening it for an event switched to the Events
+  tab and showed nothing at all.
+
+### Fixed
+
+- **A long name in the deployment diagram wraps instead of running outside its box.** A node's name
+  is a bridge's `--name`, a peer's `host:port` or an observed caller's `client_id`, and telling two
+  of them apart is what the inbound column is for — so the name wraps and the box grows to hold it
+  rather than being truncated like the address beneath it. It breaks at the separators the
+  identifiers actually carry (`-`, `.`, `/`, `:`, `_`), since a wrapper that only knew about spaces
+  would treat `hippocampus-bluesky-bridge-worldnews` as one unbreakable word.
+
 ## [0.35.0] - 2026-08-19
 
 ### Added
