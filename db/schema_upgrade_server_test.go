@@ -204,8 +204,11 @@ func restoreServerFixture(t *testing.T, driver driver, tag string) *DB {
 	// the tag's dots become underscores.
 	scratch := "hippocampus_upgrade_" + strings.NewReplacer(".", "_", "-", "_").Replace(tag)
 
-	adminDSN, _ := scratchDSNs(t, driver, adminCredential, scratch)
-	_, scratchDSN := scratchDSNs(t, driver, dsn, scratch)
+	// The scratch database is then used end to end under that same credential — the replay and the
+	// driver open both. Creating a database grants nobody else anything on it, so a scoped user
+	// pointed at a root-created scratch database is denied its first CREATE TABLE; nothing here is
+	// testing privileges, so the credential that made the database is the one that works in it.
+	adminDSN, scratchDSN := scratchDSNs(t, driver, adminCredential, scratch)
 
 	admin, err := sql.Open(sqlDriverName(driver), adminDSN)
 	if err != nil {
