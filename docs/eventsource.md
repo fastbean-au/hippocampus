@@ -130,6 +130,39 @@ Two deliberate behaviours:
 The bridge's token needs the **writer** tier for `StoreMemory`; the Bluesky bridge additionally needs
 it to be unscoped and writer-tier for reinforcement to work at all (see below).
 
+Dialling a service that terminates its own TLS uses the same trust options every other client here
+carries: `--tls` to enable it, `--tls-ca-cert` to trust a private CA in place of the system pool,
+`--tls-cert`/`--tls-key` for mutual TLS, and `--tls-insecure-skip-verify` for a development
+certificate. `--call-timeout-seconds` (**30**) bounds each RPC, so a service that stops answering
+fails the message rather than parking the consume loop on it.
+
+### Authenticating to the broker
+
+Broker credentials are the adapter's own flags, and each is prefixed with its broker so it can never
+be confused with the service credentials above:
+
+| Broker   | Flags                                                                                                       |
+| -------- | ----------------------------------------------------------------------------------------------------------- |
+| NATS     | `--nats-username`/`--nats-password`, `--nats-token`, or `--nats-creds` (a decentralised-auth `.creds` file) |
+| MQTT     | `--mqtt-username`/`--mqtt-password`                                                                         |
+| RabbitMQ | credentials travel in `--amqp-url` (`amqp://user:pass@host:5672/`)                                          |
+| Kafka    | none — the bridge connects as an unauthenticated client                                                     |
+| Bluesky  | none — Jetstream and the feed endpoints are public reads                                                    |
+
+Pass a secret through the environment rather than argv. Every flag is bound to viper under that
+command's `HIPPOCAMPUS_<BROKER>` prefix, and **the prefix is added to the flag name rather than
+replacing it** — so `--nats-password` reads `HIPPOCAMPUS_NATS_NATS_PASSWORD`, `--mqtt-password`
+reads `HIPPOCAMPUS_MQTT_MQTT_PASSWORD`, and the shorter-looking `HIPPOCAMPUS_NATS_TOKEN` is not the
+NATS token at all: it is `--token`, the bearer token for the Hippocampus service (the NATS one is
+`HIPPOCAMPUS_NATS_NATS_TOKEN`). The same rule gives `HIPPOCAMPUS_KAFKA_OIDC_CLIENT_SECRET` for
+`--oidc-client-secret`.
+
+**Transport security to the broker is the URL's business, not a flag's.** There is no
+`--broker-tls` block: use `tls://` for NATS, `ssl://` or `wss://` for MQTT, and `amqps://` for
+RabbitMQ, each verified against the system trust store. A broker presenting a private CA
+certificate is therefore not currently supported — and Kafka has no SASL support at all, which is
+the one to know before pointing a bridge at a managed cluster.
+
 ```sh
 # NATS: store everything published on "events.>" as memories grouped by subject
 go run ./cmd/nats --nats-url nats://localhost:4222 --subject 'events.>' --address localhost:50051
@@ -566,8 +599,22 @@ store local and gitignored.
 
 ## Observability
 
-Every bridge serves `/healthz` and `/readyz` on `--health-port` (**8090 by default**; 0 disables) and
-exports OTEL metrics over OTLP/gRPC with `--metrics`.
+Every bridge serves `/healthz` and `/readyz` on `--health-port` (**8090 by default**; 0 disables,
+`--health-bind-address` restricts the interface) and exports OTEL telemetry over OTLP/gRPC:
+
+| Flag                         | Default                          | What it does                               |
+| ---------------------------- | -------------------------------- | ------------------------------------------ |
+| `--metrics`                  | `false`                          | export the metrics below                   |
+| `--tracing`                  | `false`                          | export spans                               |
+| `--tracing-sampling-ratio`   | `0.1`                            | fraction of locally started traces sampled |
+| `--otlp-endpoint`            | (SDK env, then `localhost:4317`) | collector address                          |
+| `--otlp-insecure`            | `true`                           | connect to the collector without TLS       |
+| `--metrics-interval-seconds` | `0`                              | export interval; 0 takes the SDK default   |
+| `--metrics-group`            | `--group`                        | tenancy label, per process — see below     |
+
+Both exports are off by default, matching the service, so a bridge with no collector logs no export
+failures. The probe listener is the exception and is **on**: a bridge that cannot be probed is a
+bridge whose stalling is invisible.
 
 `/healthz` is process liveness and never fails while the process runs; `/readyz` reports whether the
 Hippocampus instance the bridge writes to can actually serve:

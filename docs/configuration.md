@@ -186,6 +186,7 @@ a JSON body:
 | `GetMemories`                | GET    | `/v1/memories`                    |
 | `DeleteMemories`             | POST   | `/v1/memories/delete`             |
 | `RecallMemories`             | POST   | `/v1/memories/recall`             |
+| `SearchMemories`             | POST   | `/v1/memories/search`             |
 | `LinkMemories`               | POST   | `/v1/memories/{id}/links`         |
 | `UnlinkMemories`             | POST   | `/v1/memories/{id}/links/delete`  |
 | `GetMemoryLinks`             | GET    | `/v1/memories/{id}/links`         |
@@ -202,6 +203,7 @@ a JSON body:
 | `Sleep`                      | POST   | `/v1/sleep`                       |
 | `PreviewConsolidation`       | GET    | `/v1/sleep/preview`               |
 | `ExplainConsolidation`       | POST   | `/v1/consolidation/explain`       |
+| `GetConsolidationStatus`     | GET    | `/v1/consolidation/status`        |
 | `GetForgottenMemories`       | GET    | `/v1/memories/forgotten`          |
 | `DeleteForgottenMemories`    | POST   | `/v1/memories/forgotten/delete`   |
 | `Purge`                      | POST   | `/v1/purge`                       |
@@ -868,8 +870,8 @@ everything a lower one can:
 
 | Tier     | May call                                                                                                                                                                                                                                     |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `WhoAmI`, `GetTopology`¹                              |
-| `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `WhoAmI`, `GetTopology`¹ |
+| `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `Export`, `Transfer`, `Clear`                                                                                                             |
 
 The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and
@@ -888,6 +890,13 @@ destructive, and destructive on an audit record rather than on data the caller p
 table gives its default. See [Deployment topology](#deployment-topology). What is **not**
 configurable is its refusal to a group-scoped caller, which is the same rule that governs the
 preview: the answer cannot be partitioned, because there is no per-group topology.
+
+**Linking is a write.** `LinkMemories`/`LinkEvents` and their unlink counterparts sit with the
+`writer` set rather than with the reads they resemble, because a link raises the effective
+significance of both ends and so changes what the store forgets; removing one lowers what it was
+protecting. Reading an item's links (`GetMemoryLinks`/`GetEventLinks`) is `reader`, at the same tier
+as reading the item itself — it returns ids the caller could already reach, and nothing about their
+content.
 
 `Export`/`Transfer` are
 `admin` because they read the whole store out; `Import`/`ImportBatch` are

@@ -165,7 +165,8 @@ the tier on every RPC.
 
 Because the token lives in the browser, serve `/ui` **only over TLS**, treat it as a trusted-operator
 tool rather than a public endpoint, and put it behind your ingress' access controls if the gateway is
-internet-facing.
+internet-facing. What the console actually shows, tab by tab, is in the [console
+guide](console.md).
 
 ## Where memory content can leave the process
 

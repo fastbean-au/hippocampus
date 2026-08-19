@@ -143,7 +143,8 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
 ## Architecture
 
 - `cmd/hippocampus/` — the `package main` entrypoint (`main.go` plus `backfill.go`,
-  `interceptors.go`, `logging.go`, `observability.go`, and the `webui.go`/`webui/` embedded
+  `interceptors.go`, `logging.go`, `ratelimit.go`, `readiness.go`, `rpcmetrics.go`, and the
+  `webui.go`/`webui/` embedded
   console — four embedded files, no build step and no bundler: `index.html`, `styles.css`, `app.js`
   (the DOM, the network, the state) and `lib.js` (the pure logic, an ES module `app.js` imports).
   That split is what lets the page be served under a **CSP with no `unsafe-inline`**
@@ -168,9 +169,9 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   relaxing item 19.1, since viper falls back to a default only for an _unset_ key and a configured
   0 still fails validation), initialises logging
   (logrus, `logging.go`; `logging.level` selects severity — default `info` — and `logging.json`
-  toggles JSON-vs-text output to stdout) and observability (`observability.go`: optional OTEL
-  tracing/metrics over OTLP/gRPC,
-  no-op when disabled), opens the DB, wires the gRPC server with interceptors (plus the
+  toggles JSON-vs-text output to stdout) and observability (the shared `observability` package, which
+  `cmd/hippocampus/observability.go` was promoted into: optional OTEL tracing/metrics over
+  OTLP/gRPC, no-op when disabled), opens the DB, wires the gRPC server with interceptors (plus the
   `otelgrpc` stats handler when observability is enabled), starts stats, and on SIGINT/SIGTERM
   flushes observability then closes the DB. The build version (`version.go`,
   `runtime/debug.ReadBuildInfo`) is logged in the startup lines, returned in the `/healthz` body,
@@ -246,7 +247,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same nine rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same ten rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard

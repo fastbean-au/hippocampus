@@ -544,6 +544,8 @@ need not appear in argv.
 | `--interval-seconds` | 30 | how often a pass runs |
 | `--settle-seconds` | 60 | how long an event must have been ended before it is judged |
 | `--page-size` | 100 | page size for both reads |
+| `--max-batch-bytes` | 3 MiB | cap on one `ImportBatch` call to the target; a larger event is sent in several |
+| `--call-timeout-seconds` | 30 | per-RPC bound on both ends |
 | `--max-event-memories` | 10000 | an event holding more is left **unjudged** |
 | `--rule-cost-limit` | 1000000 | CEL cost budget per evaluation |
 | `--rule-timeout-seconds` | 2 | wall-clock bound per evaluation |
@@ -554,7 +556,12 @@ need not appear in argv.
 | `--health-bind-address` | all | interface for the probe listener |
 | `--metrics`, `--tracing` | off | OTLP/gRPC export |
 | `--otlp-endpoint` | SDK default | collector endpoint |
+| `--otlp-insecure` | on | connect to the collector without TLS |
+| `--tracing-sampling-ratio` | 0.1 | fraction of locally started traces sampled |
+| `--metrics-interval-seconds` | 0 | export interval; 0 takes the SDK default |
 | `--metrics-group` | — | tenancy label (see [Tenancy](#tenancy)) |
+| `--log-level` | `info` | trace, debug, info, warn, error |
+| `--version` | — | print the build version and exit |
 
 The two endpoints are configured **entirely separately** — separate addresses, tokens and TLS blocks
 — because they are different trust domains. The target's token is what stamps the group on everything

@@ -181,6 +181,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `whoami`          | report the caller's identity, effective tier and group scope, plus what the instance can serve |
 | `topology`        | report the deployment this instance is part of, and each component's health (`--all`)          |
 | `sleep`           | trigger a consolidation cycle now, or preview one (`--dry-run`)                                |
+| `status`          | when the next cycle is due, and what the last one forgot                                       |
 | `forgotten list`  | list memories a cycle forgot, and why (`--memory-id`, `--group`, `--rule`, `--since`)          |
 | `forgotten clear` | delete records from the forgotten log (`--before` or `--all`)                                  |
 | `purge`           | delete every event and memory (requires `--yes`)                                               |

@@ -132,9 +132,10 @@ curl -s localhost:8080/v1/openapi.json    # the OpenAPI description of every end
 The gateway also serves a self-contained browser console at [`/ui`](http://localhost:8080/ui) for
 browsing, searching, and editing memories and events — it drives the same `/v1` endpoints the curl
 examples below use, so it is the quickest way to explore a running instance without writing a
-client. (When `auth.method` is enabled, paste a bearer token into the field at the top right; the
-console adapts to the token's [role](configuration.md#authorisation), hiding write controls for a
-`reader`.)
+client. (When authentication is enabled, a sign-in card stands in place of the console until a
+session resolves: a bearer-token box under `auth.method: hmac`, a provider button under `idp`. The
+console then adapts to the token's [role](configuration.md#authorisation), hiding write controls for
+a `reader`.) The [console guide](console.md) covers each tab.
 
 ## First requests (HTTP gateway)
 

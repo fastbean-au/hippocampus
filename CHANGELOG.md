@@ -71,6 +71,28 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   an error.
 - **The configuration wizard offers the topology settings and `listing.countCacheSeconds`**, which
   is to say the two most recent features it had silently missed.
+- **A guide for the web console — [`docs/console.md`](docs/console.md).** The console is the first
+  thing a new instance shows and it had no page of its own: how to reach it was a paragraph in
+  getting-started, its boundary a section in the security guide, and its tabs described nowhere. The
+  page covers reaching it, what each `auth.method` offers at sign-in, what each of the six tabs
+  answers and which RPCs it answers with, and the three things worth knowing — that it computes no
+  decay maths of its own, that its filters are a deliberate subset of the RPCs', and that it is not
+  covered by the version number.
+- **The complete instrument list, in [Operations](docs/operations.md#every-instrument-the-service-exports).**
+  The observability section listed the metrics worth alerting on, which is a curated dozen; eighteen
+  instruments were named nowhere at all, so a series arriving on a dashboard had no definition to
+  look up. Every instrument the service exports is now a row with its type and attributes, alongside
+  the three things the shape of that list says: which metrics exist only under OpenSearch, which are
+  published only when the setting behind them is on, and that the gauges are recorded once per sleep
+  cycle rather than per scrape.
+- **Four drift guards over the documentation's copies of in-code tables**
+  (`cmd/hippocampus/docsurface_test.go`, `auth/authzdocs_test.go`,
+  `integrations/cli/docs_test.go`). Each documentation table that mirrors a table in the code is now
+  held to it in both directions: instrument names against the declarations (a dotted name written
+  with an underscore returns no series rather than an error), the RPC-to-route table against the
+  `google.api.http` annotations, the role-tier table against `auth`'s `policies`, and the `hippo`
+  command tables against the command registry. They are the same shape as the existing
+  configuration-key and alert-rule guards, and each of the four found something on its first run.
 
 ### Changed
 
@@ -96,6 +118,33 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 - **Two documents said content search needs OpenSearch.** `docs/mcp.md`'s notes (contradicting its
   own tool table) and `docs/obsidian.md`'s feature list both predate the built-in SQL backend, and
   told a reader on the default `sqlite` driver that search was unavailable to them.
+- **Five metric names in the operations guide were spelled with underscores where the instrument has
+  dots** — `hippocampus.sleep_duration`, `hippocampus.memories_evicted`, `hippocampus.events_evicted`,
+  `hippocampus.bytes_evicted` and `hippocampus.memory_body_bytes`. A query built from any of them
+  returns no series and no error, which is the worst way for documentation to be wrong.
+- **`SearchMemories` and `GetConsolidationStatus` were missing from the HTTP route table**, so two
+  of the endpoints a reader is most likely to want — content search, and when the next cycle runs —
+  could be reached only by reading the proto or a running instance's OpenAPI document.
+- **The role-tier table omitted all six link RPCs.** `GetMemoryLinks`/`GetEventLinks` are `reader`
+  and the four link writes are `writer`, but the table listed none of them and read as complete, so
+  the tier needed to maintain the link graph was not written down anywhere. The table now says so,
+  with the reason linking is a write: a link raises the effective significance of both ends, and so
+  changes what the store forgets.
+- **`hippo status` was undocumented.** The command shipped with `GetConsolidationStatus` and never
+  reached the CLI guide's tables, which is to say the one question an operator asks a forgetting
+  store from a terminal — when does it next forget — had no documented answer there.
+- **Getting started described a sign-in field that no longer exists.** It told a reader to paste a
+  bearer token into a box at the top right; the console has opened on a sign-in card standing in
+  place of the tabs since 0.33.0, and the header carries only **Sign out**.
+- **The event-source bridges' broker credentials were undocumented**, along with their OTLP export
+  flags. There was no way to learn from the documentation that `--nats-password` or `--mqtt-username`
+  existed, that broker transport security is the URL scheme's business (`tls://`, `ssl://`,
+  `amqps://`) rather than a flag's, or that Kafka has no SASL support at all. The environment-variable
+  form is now stated exactly, since the prefix is _added_ to the flag name: `--nats-password` reads
+  `HIPPOCAMPUS_NATS_NATS_PASSWORD`, and the shorter `HIPPOCAMPUS_NATS_TOKEN` is not the NATS token
+  but the Hippocampus one.
+- **The ingestor's flag table gained the six flags it lacked**, including `--max-batch-bytes`, which
+  bounds a single `ImportBatch` to the target.
 
 ### Breaking
 

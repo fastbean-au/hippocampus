@@ -72,6 +72,7 @@ properties that shape what you can build on this.
 | Guide                                                | Description                                                                                       |
 | :--------------------------------------------------- | :------------------------------------------------------------------------------------------------ |
 | 🎬 **[Getting Started](docs/getting-started.md)**    | Step-by-step build, initial config, and first gRPC/HTTP requests.                                 |
+| 🖥️ **[Web console](docs/console.md)**                | The console every instance serves at `/ui` — what each tab answers, and where its numbers come from. |
 | 📐 **[Use Cases & Patterns](docs/use-cases.md)**     | Embedded vs. centralised topologies and data transfer strategies.                                 |
 | 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarisation.                               |
 | ⚙️ **[Configurability](docs/configuration.md)**      | Exhaustive key reference for TLS, auth, storage drivers, and listeners.                           |

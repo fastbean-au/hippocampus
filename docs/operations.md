@@ -762,16 +762,87 @@ Metrics worth alerting on in production:
   nothing without a capacity target to be measured against, so nothing else pays for it. The
   service also logs a warning when retained bytes reach the capacity, for deployments not running a
   metrics stack.
-- `hippocampus.sleeps` (with the `success` attribute) and `hippocampus.sleep_duration` — a run of
+- `hippocampus.sleeps` (with the `success` attribute) and `hippocampus.sleep.duration` — a run of
   `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
-- `hippocampus.memories_evicted` / `hippocampus.events_evicted` — eviction volume per cycle, with
-  `hippocampus.bytes_evicted` the estimated bytes reclaimed (how much has been reaped).
-- `hippocampus.memory_body_bytes` — a histogram of stored memory-body sizes (how much data each
+- `hippocampus.memories.evicted` / `hippocampus.events.evicted` — eviction volume per cycle, with
+  `hippocampus.bytes.evicted` the estimated bytes reclaimed (how much has been reaped).
+- `hippocampus.memory.body_bytes` — a histogram of stored memory-body sizes (how much data each
   write carries); the sum tracks ingest volume and the distribution surfaces outlier blobs.
 - The `hippocampus.memories.count` / `hippocampus.events.count` gauges — store growth.
 - `hippocampus.panics_recovered` (by `transport`) — a gRPC or gateway handler panicked and was
   recovered (the request got `Internal`/`500` and the process survived); any non-zero value is a
   bug worth investigating.
+
+### Every instrument the service exports
+
+The list above is what to alert on. This is everything, for building a dashboard or reading an
+unfamiliar series name off one. Names are as OTLP carries them; a Prometheus-backed datasource
+renames each on ingest, replacing the dots with underscores and suffixing counters with `_total` and
+histograms with `_bucket`/`_sum`/`_count` (`hippocampus.sleeps` is queried as
+`hippocampus_sleeps_total`, `hippocampus.sleep.duration` as `hippocampus_sleep_duration_seconds`).
+
+Every attribute here is bounded to a handful of values — a bool, a small closed enum, or the RPC
+name. **Nothing carries an id, a group, a client id, or anything else a caller controls**, which is
+what makes the whole set safe to keep at full resolution.
+
+| Metric                                 | Type          | Attributes                            | What it counts                                                              |
+| -------------------------------------- | ------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| `hippocampus.rpc.requests`             | counter       | `transport`, `rpc`, `code`, `outcome` | RPCs served — see [Request metrics](#request-metrics-red)                   |
+| `hippocampus.rpc.duration`             | histogram (s) | as above                              | Server-side duration of the same calls                                      |
+| `hippocampus.panics_recovered`         | counter       | `transport`                           | Handler panics caught by the recovery middleware                            |
+| `hippocampus.ratelimit.rejected`       | counter       | `transport`, `scope`                  | Requests refused by the [rate limiter](#rate-limiting)                      |
+| `hippocampus.ratelimit.clients`        | gauge         |                                       | Principals currently holding a per-client bucket                            |
+| `hippocampus.memories.stored`          | counter       |                                       | Memories accepted and written                                               |
+| `hippocampus.memories.rejected`        | counter       | `reason` (`invalid`/`insignificant`)  | Writes refused — `insignificant` is the decay model working, not a fault    |
+| `hippocampus.memories.recalled`        | counter       |                                       | Memories reinforced by `RecallMemories` or a reinforcing search             |
+| `hippocampus.memories.deleted`         | counter       |                                       | Memories deleted by a client, not by decay                                  |
+| `hippocampus.memories.consolidated`    | counter       | `has_event`                           | Memories forgotten by the sleep cycle                                       |
+| `hippocampus.memories.evicted`         | counter       |                                       | Memories deleted to meet the capacity target                                |
+| `hippocampus.memories.searched`        | counter       | `reinforce`                           | Memories returned by content search, by whether the search reinforced them  |
+| `hippocampus.memories.summarised`      | counter       |                                       | Memories replaced by a summary                                              |
+| `hippocampus.memories.count`           | gauge         | `has_event`                           | Memories currently stored                                                   |
+| `hippocampus.memories.retained`        | gauge         |                                       | Memories inside the retention window, exempt from both decay paths          |
+| `hippocampus.memory.body_bytes`        | histogram     |                                       | Size of each accepted memory body                                           |
+| `hippocampus.bytes.evicted`            | counter       |                                       | Estimated bytes reclaimed by eviction                                       |
+| `hippocampus.retained_bytes`           | gauge         |                                       | Stored bytes held by the retention window                                   |
+| `hippocampus.events.stored`            | counter       |                                       | Events accepted and written                                                 |
+| `hippocampus.events.rejected`          | counter       | `reason`                              | Event writes refused, classified as memories are                            |
+| `hippocampus.events.deleted`           | counter       |                                       | Events deleted by a client                                                  |
+| `hippocampus.events.merged`            | counter       |                                       | `MergeEvents` calls that moved memories                                     |
+| `hippocampus.events.consolidated`      | counter       | `has_memories`                        | Events forgotten by the sleep cycle                                         |
+| `hippocampus.events.evicted`           | counter       |                                       | Events dropped because eviction took their last memory                      |
+| `hippocampus.events.count`             | gauge         |                                       | Events currently stored                                                     |
+| `hippocampus.sleeps`                   | counter       | `success`                             | Sleep cycles run                                                            |
+| `hippocampus.sleep.duration`           | histogram (s) |                                       | How long a full cycle took                                                  |
+| `hippocampus.capacity_pressure`        | gauge         |                                       | The threshold multiplier the last cycle computed                            |
+| `hippocampus.used_bytes`               | gauge         |                                       | Bytes the store occupies (only with a byte capacity set)                    |
+| `hippocampus.capacity_bytes`           | gauge         |                                       | The configured target, so a query need not hard-code it                     |
+| `hippocampus.purges`                   | counter       | `success`                             | `Purge` calls                                                               |
+| `hippocampus.tombstones`               | gauge         |                                       | Records held by the [forgotten log](#what-was-forgotten--the-forgotten-log) |
+| `hippocampus.tombstones.deleted`       | counter       | `manual`                              | Forgotten-log records removed, by request or by the caps                    |
+| `hippocampus.summarisation_candidates` | gauge         |                                       | Events the last scan flagged as worth condensing                            |
+| `hippocampus.summaries.created`        | counter       |                                       | Summary memories written                                                    |
+| `hippocampus.summarisations`           | counter       | `success`                             | Embedded-LLM generation calls                                               |
+| `hippocampus.exports`                  | counter       | `success`                             | `Export` runs                                                               |
+| `hippocampus.imports`                  | counter       | `success`                             | `Import`/`ImportBatch` runs                                                 |
+| `hippocampus.transfers`                | counter       | `success`                             | `Transfer` runs                                                             |
+| `hippocampus.records.exported`         | counter       | `kind` (`event`/`memory`)             | Rows written to an archive or streamed to a target                          |
+| `hippocampus.records.imported`         | counter       | `kind`                                | Rows ingested                                                               |
+| `hippocampus.records.cleared`          | counter       | `kind`                                | Rows deleted by a manifest-scoped clear                                     |
+| `hippocampus.search.indexed`           | counter       | `success`                             | Documents written to the OpenSearch index                                   |
+| `hippocampus.search.deleted`           | counter       | `success`                             | Deletes applied to it                                                       |
+| `hippocampus.search.dropped`           | counter       | `op`                                  | Index operations abandoned — queue full, or every retry failed              |
+| `hippocampus.search.queries`           | counter       | `success`                             | Content searches served by it                                               |
+
+Three things the shape of this list says. The **four `search.*` counters exist only under
+`opensearch.enabled`** — the built-in FTS5 backend runs inside the primary write and has no queue to
+drop from, so `hippocampus.search.dropped` staying absent is the healthy state on a default
+deployment rather than a gap. **`used_bytes`, `capacity_bytes`, `memories.retained`,
+`retained_bytes` and `tombstones` are published only when the setting behind each is on**, which is
+what lets an alert over them stay silent rather than broken on a store that does not use them. And
+the **gauges are recorded once per sleep cycle**, not on a scrape interval: between cycles they
+report the last cycle's answer, so a scrape faster than `sleep.periodSeconds` sees a step function
+and not a smooth line.
 
 ### Client-side components
 
@@ -789,8 +860,9 @@ documented in full on those pages; three things are worth knowing at the operati
   these components emit is a counter, and a counter that stops advancing is indistinguishable from a
   component with nothing to do; this one rises on its own whether the loop is stalled, deadlocked or
   dead. Alert on it rather than on the absence of promotions.
-- **Tenancy is `--metrics-group`**, a per-process label stamped on both the resource and each metric
-  (the duplication is what avoids a `target_info` join in every query). It is deliberately never read
+- **Tenancy is `--metrics-group`**, a per-process label — the resource attribute `hippocampus.group`,
+  which a Prometheus-backed datasource carries as the label `hippocampus_group` — stamped on both the
+  resource and each metric (the duplication is what avoids a `target_info` join in every query). It is deliberately never read
   off the records: a bridge derives a memory's group from the message subject by default, so a
   per-record label would be unbounded.
 
