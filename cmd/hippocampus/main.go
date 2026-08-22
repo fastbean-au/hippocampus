@@ -971,6 +971,14 @@ func run(ctx context.Context, version versionInfo) error {
 
 		gwMux := runtime.NewServeMux(muxOpts...)
 		if err := contract.RegisterHippocampusHandlerServer(context.Background(), gwMux, hipo); err != nil {
+			// The gRPC listener is already serving by this point, so returning straight out would
+			// leave it bound and the database open for the life of the process. main turns this into
+			// an exit, which hides that - a test calling run does not.
+			close(stopReadiness)
+			<-readinessDone
+			s.Stop()
+			_ = database.Close()
+
 			return fmt.Errorf("failed to register HTTP gateway: %w", err)
 		}
 

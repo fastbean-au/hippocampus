@@ -33,6 +33,14 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A startup failure while registering the HTTP gateway left the gRPC listener bound.** The gRPC
+  server is already serving by the point the gateway's handler registration runs, so returning
+  straight out of `run` leaked the listener and the open database for the life of the process. The
+  service binary turns the error into an exit, which hid it; anything calling `run` in-process did
+  not. It now stops the readiness updater, the gRPC server and the store before returning.
+
 ## [0.36.0] - 2026-08-22
 
 ### Added

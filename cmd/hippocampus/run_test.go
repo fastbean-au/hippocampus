@@ -5,34 +5,86 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
-// freeTCPPort asks the kernel for an unused localhost port, then releases it so the server under
-// test can bind it. A brief race exists between release and rebind, acceptable for a local test.
+// issuedPorts records every port freeTCPPort has handed out in this process, so no two tests in a
+// run can be given the same one.
+var (
+	issuedPortsMu sync.Mutex
+	issuedPorts   = map[int]struct{}{}
+)
+
+// The window freeTCPPort draws from. It sits below the ephemeral range every platform this builds
+// for allocates from (Linux defaults to 32768-60999, macOS to 49152-65535), which is the whole
+// point: see freeTCPPort.
+const (
+	testPortRangeStart = 20000
+	testPortRangeEnd   = 32000
+	testPortAttempts   = 200
+)
+
+// freeTCPPort returns a localhost port for the server under test to bind, having confirmed it is
+// bindable and remembered it so no later call in this process returns it again.
+//
+// It deliberately does NOT ask the kernel for an ephemeral port ("127.0.0.1:0") and then release
+// it. run binds the port itself, so any reservation has to be released before the server starts,
+// and go test runs this package's binary beside other packages' - several of which hold ephemeral
+// listeners of their own. The kernel is free to hand one of them the very port just released, which
+// surfaces here as run failing with "bind: address already in use" and a test timing out on a
+// /healthz that never comes up. Drawing from a range nothing is allocated from automatically leaves
+// only a deliberate collision to lose to, and the probe below catches that.
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
 
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve port: %v", err)
+	for range testPortAttempts {
+		port := testPortRangeStart + rand.IntN(testPortRangeEnd-testPortRangeStart)
+
+		if !claimPort(port) {
+			continue
+		}
+
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			// Something outside this process holds it; it stays claimed so it is not retried.
+			continue
+		}
+
+		_ = l.Close()
+
+		return port
 	}
 
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
+	t.Fatalf("no free port found in %d-%d after %d attempts", testPortRangeStart, testPortRangeEnd, testPortAttempts)
 
-	return port
+	return 0
+}
+
+// claimPort records a port as issued, reporting whether this call is the one that claimed it.
+func claimPort(port int) bool {
+	issuedPortsMu.Lock()
+	defer issuedPortsMu.Unlock()
+
+	if _, taken := issuedPorts[port]; taken {
+		return false
+	}
+
+	issuedPorts[port] = struct{}{}
+
+	return true
 }
 
 // baseRunConfig sets the minimum viper keys run needs (main sets some of these as defaults before
-// calling run, so a direct run test must supply them itself), using an ephemeral gRPC and gateway
-// port and a temporary sqlite database. It returns the gateway base URL.
+// calling run, so a direct run test must supply them itself), using a free gRPC and gateway port
+// and a temporary sqlite database. It returns the gateway base URL.
 func baseRunConfig(t *testing.T) (grpcPort int, gatewayBase string) {
 	t.Helper()
 
