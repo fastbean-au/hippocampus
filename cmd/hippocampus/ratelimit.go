@@ -236,12 +236,13 @@ func hostOnly(address string) string {
 // for the reason every gateway middleware here does: the gateway calls the service directly and
 // never runs the gRPC interceptor chain, so without it half the RPC surface would be unlimited.
 //
-// It is scoped to the RPC surface by the same isRPCPath the metrics use, so the health and
-// readiness probes, the console, the login endpoints, and the OpenAPI document are never throttled.
-// Throttling a probe would turn a busy instance into a restarted one.
+// It is scoped by isRateLimitedPath, so the health and readiness probes, the console and the login
+// endpoints are never throttled - throttling a probe would turn a busy instance into a restarted
+// one. The OpenAPI document IS throttled, unlike the metrics scoping next door: it is served
+// unauthenticated and is the largest single response the gateway produces.
 func rateLimitArrivalMiddleware(limiter *ratelimit.Limiter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isRPCPath(r.URL.Path) {
+		if !isRateLimitedPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 
 			return

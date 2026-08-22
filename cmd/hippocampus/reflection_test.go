@@ -16,9 +16,11 @@ import (
 )
 
 // TestReflectionSetting pins the derived default and its override. The default is the only thing
-// here that is a judgement rather than a mechanism: reflection publishes the whole method and
-// message set before authentication, so it follows auth.method, and the override has to work in
-// both directions - which is why the setting is read through viper.IsSet rather than GetBool.
+// here that is a judgement rather than a mechanism, and the judgement is about SURFACE rather than
+// secrecy: the schema is published with the source, so what the derivation defends is that
+// reflection - being a streaming RPC in an all-unary interceptor chain - reaches neither the auth
+// interceptor nor either rate limiter. The override has to work in both directions, which is why
+// the setting is read through viper.IsSet rather than GetBool.
 func TestReflectionSetting(t *testing.T) {
 	cases := []struct {
 		name       string

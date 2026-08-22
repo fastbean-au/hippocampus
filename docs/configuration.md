@@ -120,7 +120,11 @@ from it, or from the proto.
 ```json
 "gateway": {
     "port": 8080,
-    "maxRequestBytes": 0
+    "maxRequestBytes": 0,
+    "openapi": {
+        "enabled": true
+    },
+    "corsOrigins": []
 }
 ```
 
@@ -130,6 +134,56 @@ large; set a ceiling when the gateway is reachable by untrusted callers, so an o
 rejected by the transport (with `413`) before a handler buffers it. The native gRPC transport
 already bounds a request at its 4 MiB default. TLS pins a **TLS 1.2 floor** on both listeners (see
 [TLS](#tls)).
+
+#### The OpenAPI document
+
+`gateway.openapi.enabled` (default **true**) serves the generated description of the mapping below
+at `/v1/openapi.json`. Set it to `false` to serve nothing at that path; a client then generates from
+`contract/hippocampus.proto`, or from a descriptor set built from it.
+
+**It is served without a token, even when authentication is on.** That is deliberate, and it
+reverses earlier behaviour. The document is generated from a proto published with the source, so
+requiring a token to read it protected a file anybody can fetch from the repository — while breaking
+every standard OpenAPI tool, none of which can authenticate the *initial* spec fetch. Schema
+confidentiality was never the property being defended; if you want nothing served there, the honest
+request is the key above rather than an authentication check that stops only well-behaved clients.
+
+Two consequences worth knowing. The response carries an `ETag` over the embedded document, so a
+repeat fetch from a client that sends `If-None-Match` costs a `304` rather than ~150 KB. And unlike
+the health probes and the console, the document **is** covered by the arrival
+[rate limit](#rate-limiting): it needs no credentials and is the largest single response the gateway
+produces, so it would otherwise be the cheapest bandwidth amplifier on the surface.
+
+#### Cross-origin requests (CORS)
+
+`gateway.corsOrigins` lists the browser origins permitted to call `/v1` from a page this gateway did
+not serve. It is **empty by default**, which sends no CORS headers at all — so only pages served by
+this gateway (the console) can call the API, exactly as before the key existed.
+
+```json
+"gateway": {
+    "corsOrigins": ["http://localhost:8082"]
+}
+```
+
+Each entry is an exact origin — `scheme://host[:port]`, `http` or `https`, with no path, query, or
+trailing slash. A trailing slash never matches the `Origin` header a browser sends, so it is
+rejected at startup rather than presenting as CORS mysteriously not working. `*` is **refused**: a
+browser already declines to combine it with credentials, but this gateway fronts `Purge`, and
+reaching for a wildcard is rarely the decision it actually represents. Name the origins.
+
+`Access-Control-Allow-Credentials` is never sent. That is what keeps the console's `HttpOnly`
+session cookie unusable from another origin — a browser will not attach it to a cross-origin request
+without that header — so enabling this cannot turn a signed-in console session into ambient
+authority for a hostile page. Bearer tokens still work, because a caller sends those explicitly.
+
+Preflights are answered before authentication, rate limiting, and metrics: a preflight carries no
+`Authorization` header by construction, and counting `OPTIONS` requests as RPCs would distort the
+very rates the shipped alert rules read. The environment override splits on commas or whitespace,
+so `HIPPOCAMPUS_GATEWAY_CORSORIGINS="http://a:8082,http://b:9000"` behaves the way it looks.
+
+The main use is a browser API explorer you host separately — see
+[Clients in other languages](clients.md) for the Swagger UI recipe.
 
 The gRPC server port is `port` (default **50051**). Both ports can be set on the command line —
 `--port` and `--gateway-port` — which takes precedence over the config file:
@@ -306,12 +360,21 @@ and every gRPC GUI discover the schema from a running instance rather than being
 }
 ```
 
-**The default is derived rather than fixed.** Reflection publishes the full method and message set
-to anything that can open a socket, and it does so **before authentication** — the reflection
-service is a streaming RPC, so it never reaches the auth interceptor, which guards the unary
-`/hippocampus.v1.Hippocampus/` surface. That is reconnaissance rather than a data leak, but it is
-enough of a security dimension to follow the one setting that already distinguishes an instance
-serving its owner from one serving anybody else:
+**The default is derived rather than fixed** — but not for the reason it once claimed. Earlier
+versions of this section argued that reflection publishes the schema, and defaulted it off under
+authentication on that basis. That argument does not hold here: `contract/hippocampus.proto` and the
+generated `contract/hippocampus.swagger.json` are both published with the source, so anybody can
+build a descriptor set without asking a running instance. Confidentiality is not available to be
+defended, and `/v1/openapi.json` no longer pretends otherwise (see
+[The OpenAPI document](#the-openapi-document)).
+
+What remains is narrower and real. The reflection service is a **streaming** RPC, and every
+interceptor in this service's chain is unary — so it reaches neither the auth interceptor nor
+**either rate limiter**. It is the one surface on the gRPC port that is both unauthenticated and
+unthrottled, and it answers requests by serving descriptors rather than by writing a fixed byte
+slice. That is a small surface rather than a leak, and it is enough to keep the default following
+the one setting that already distinguishes an instance serving its owner from one serving anybody
+else:
 
 | `auth.method`    | `reflection.enabled` unset |
 | ---------------- | -------------------------- |
@@ -324,7 +387,10 @@ Whichever way it goes, the choice is logged at startup naming the reason, becaus
 working" is otherwise indistinguishable from "the tool is pointed at the wrong thing".
 
 With it off, a tool needs the contract instead — see
-[Clients in other languages](clients.md#the-contract) for building a descriptor set from it.
+[Clients in other languages](clients.md#the-contract) for building a descriptor set from it. Note
+that on any instance serving the gateway this is a smaller decision than it looks: the `/v1` surface
+is documented at `/v1/openapi.json`, so turning reflection off while serving that document narrows
+the unauthenticated surface without making the API any less discoverable.
 
 ### Sorting
 

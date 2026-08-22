@@ -271,6 +271,12 @@ func setStartupDefaults() {
 	viper.SetDefault("storage.compression.minBytes", 512)
 	viper.SetDefault("shutdown.timeoutSeconds", 10)
 
+	// The OpenAPI document is served by default, which is what every version before the key existed
+	// did. It is defaulted rather than left to read as a zero bool precisely because the zero value
+	// is the opposite of the existing behaviour, and an unset key must not silently remove an
+	// endpoint the documentation tells clients to generate from.
+	viper.SetDefault("gateway.openapi.enabled", true)
+
 	// The four keys validateConfig refuses at zero. They are defaulted so that a run with no
 	// configuration file at all - the first thing anyone does after cloning - starts on the same
 	// decay curve the documentation describes, rather than failing on four keys in turn. This is
@@ -880,12 +886,17 @@ func run(ctx context.Context, version versionInfo) error {
 
 	// Server reflection lets grpcurl, Postman, Insomnia and every gRPC GUI discover the schema from
 	// a running instance instead of being handed contract/hippocampus.proto. It is the gRPC
-	// counterpart of the gateway's /v1/openapi.json, and it publishes the full method and message
-	// set to anything that can open a socket - before authentication, since the auth interceptor
-	// guards only the /hippocampus.v1.Hippocampus/ prefix. That is reconnaissance rather than a data
-	// leak, but it is enough of a security dimension for the default to follow auth.method rather
-	// than being a flat true. Either way the choice is logged: "reflection is not working" is
-	// otherwise indistinguishable from "the tool is wrong".
+	// counterpart of the gateway's /v1/openapi.json.
+	//
+	// The default follows auth.method, and the reason is NOT that reflection publishes the schema -
+	// that argument was examined and dropped, because the proto and the generated swagger are both
+	// published with the source, so there is no confidentiality here to defend (openAPIHandler
+	// carries the same conclusion for the HTTP side). What is left is surface: reflection is a
+	// STREAMING RPC and every interceptor in this chain is unary, so it reaches neither the auth
+	// interceptor nor either rate limiter. It is the only thing on this port that is both
+	// unauthenticated and unthrottled, which is enough to keep the default derived rather than a
+	// flat true. Either way the choice is logged: "reflection is not working" is otherwise
+	// indistinguishable from "the tool is wrong".
 	reflectionEnabled, reflectionReason := reflectionSetting(authMethod)
 
 	if reflectionEnabled {
@@ -970,10 +981,14 @@ func run(ctx context.Context, version versionInfo) error {
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "version": version})
 		})
 		httpMux.HandleFunc("/readyz", readiness.handler())
-		httpMux.HandleFunc("/v1/openapi.json", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(contract.SwaggerJSON)
-		})
+		// The OpenAPI document describing /v1. Enabled by default and served without a token - see
+		// openAPIHandler for why that reversed - with gateway.openapi.enabled available to remove
+		// the route outright for a deployment that wants nothing served there.
+		if openAPIEnabled() {
+			httpMux.Handle(openAPIPath, openAPIHandler())
+		} else {
+			log.Info("OpenAPI document disabled (gateway.openapi.enabled is false): /v1/openapi.json is not served, so a client must generate from contract/hippocampus.proto or a descriptor set built from it")
+		}
 		// The front-channel OIDC config the console reads to start a login. The browser fetches it
 		// before it has a token, so it must stay unauthenticated and reachable during a purge, like
 		// the page itself. The issuer defaults to auth.issuer (the same one the verifier discovers
@@ -1056,10 +1071,9 @@ func run(ctx context.Context, version versionInfo) error {
 		// rejected first) but around the purge gate and handler, capturing status and duration.
 		handler = httpLoggingMiddleware(handler)
 
-		// /healthz and /readyz stay open for liveness/readiness probes; everything else, including
-		// /v1/openapi.json, requires a token when auth is enabled. Auth wraps the purge gate so an
-		// unauthenticated request is rejected before any other check, mirroring the gRPC chain
-		// order.
+		// /healthz, /readyz and the OpenAPI document stay open; everything else requires a token
+		// when auth is enabled. Auth wraps the purge gate so an unauthenticated request is rejected
+		// before any other check, mirroring the gRPC chain order.
 		if authEnabled {
 			// Inside auth, so it sees the verified claims that middleware stashes, and outside
 			// everything else for the same reason its gRPC counterpart runs before the authoriser.
@@ -1089,6 +1103,16 @@ func run(ctx context.Context, version versionInfo) error {
 		// in the rate and error figures, matching the gRPC chain, where the metrics interceptor also
 		// sits outside authentication.
 		handler = httpMetricsMiddleware(handler)
+
+		// Cross-origin access for browser clients that are not served by this gateway - swagger-ui,
+		// or a console hosted elsewhere. Empty by default, so a deployment that has not asked for
+		// this is byte-for-byte unchanged. corsMiddleware documents why it wraps the metrics
+		// middleware rather than sitting anywhere lower in the chain.
+		if corsOrigins := parseCORSOrigins(viper.Get("gateway.corsOrigins")); len(corsOrigins) > 0 {
+			handler = corsMiddleware(corsOrigins, handler)
+
+			log.Infof("gateway CORS enabled for %s: a browser page on those origins may call /v1. Credentials are never allowed, so a session cookie cannot be used cross-origin", strings.Join(corsOrigins, ", "))
+		}
 
 		// Panic recovery wraps everything (outermost) so a panic in any handler or middleware
 		// becomes a clean 500 rather than a dropped connection.
@@ -1378,6 +1402,22 @@ func warnOnUnconstrainedIdP() {
 		log.Warn("auth.method is 'idp' but auth.issuer is not set - the 'iss' claim is not checked, " +
 			"so trust rests entirely on the configured JWKS key set")
 	}
+}
+
+// openAPIEnabled reports whether the OpenAPI route should be registered.
+//
+// An UNSET key means enabled. That is deliberately not left to viper.SetDefault alone: the zero
+// value of a bool is the opposite of every release before this key existed, so any path that reaches
+// run() without having seeded the defaults would silently stop serving an endpoint the documentation
+// tells clients to generate from. The default is still declared in setStartupDefaults, because that
+// is the one place the configuration wizard's cross-check reads it from; this makes the behaviour
+// independent of whether it was applied.
+func openAPIEnabled() bool {
+	if viper.IsSet("gateway.openapi.enabled") {
+		return viper.GetBool("gateway.openapi.enabled")
+	}
+
+	return true
 }
 
 // reflectionSetting decides whether to register the gRPC reflection service, and returns the reason
@@ -1685,6 +1725,13 @@ func validateConfig() error {
 
 	if maxAge := viper.GetInt("consolidation.tombstones.maxAgeInDays"); maxAge < 0 {
 		return fmt.Errorf("consolidation.tombstones.maxAgeInDays must not be negative, got %d", maxAge)
+	}
+
+	// Cross-origin access. An entry that does not match what a browser actually sends in the Origin
+	// header - a trailing slash being the usual way to get it wrong - presents as CORS simply not
+	// working rather than as a configuration error, so refuse it at startup instead.
+	if err := validateCORSOrigins(parseCORSOrigins(viper.Get("gateway.corsOrigins"))); err != nil {
+		return err
 	}
 
 	if err := validateTopologyConfig(); err != nil {

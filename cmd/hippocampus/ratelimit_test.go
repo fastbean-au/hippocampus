@@ -271,7 +271,8 @@ func TestRateLimitArrivalMiddlewareIgnoresSupportPaths(t *testing.T) {
 		"/ui/styles.css",
 		"/ui/config",
 		"/auth/login",
-		"/v1/openapi.json",
+		// NOTE: /v1/openapi.json is deliberately absent - it IS rate limited now. See
+		// isRateLimitedPath and TestRateLimitArrivalMiddlewareThrottlesTheOpenAPIDocument.
 	}
 
 	for _, path := range paths {
@@ -283,6 +284,55 @@ func TestRateLimitArrivalMiddlewareIgnoresSupportPaths(t *testing.T) {
 				t.Errorf("request %d to %s returned %d, expected it to bypass the limit", i+1, path, recorder.Code)
 			}
 		}
+	}
+}
+
+// The OpenAPI document is the one support-surface path that IS throttled, and the split between
+// isRPCPath and isRateLimitedPath exists for it alone. It is served without a token and is the
+// largest single response the gateway produces, so leaving it outside the ceiling made it the
+// cheapest bandwidth amplifier on the surface - while still, correctly, staying out of the RPC
+// metrics, which describe the service's work rather than its documentation.
+func TestRateLimitArrivalMiddlewareThrottlesTheOpenAPIDocument(t *testing.T) {
+	limiter := testLimiter(t, ratelimit.Config{Global: ratelimit.Rule{RequestsPerSecond: 0.001, Burst: 1}})
+
+	handler := rateLimitArrivalMiddleware(limiter, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, openAPIPath, nil))
+
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request to %s returned %d, expected the burst to allow it", openAPIPath, first.Code)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, openAPIPath, nil))
+
+	if second.Code != http.StatusTooManyRequests {
+		t.Errorf("second request to %s returned %d, expected %d - the document must be under the arrival ceiling", openAPIPath, second.Code, http.StatusTooManyRequests)
+	}
+}
+
+// The two predicates differ on exactly one path, in opposite directions. Pinning both here is what
+// stops a later tidy-up "simplifying" them back into one.
+func TestOpenAPIDocumentIsRateLimitedButNotMetered(t *testing.T) {
+	if isRPCPath(openAPIPath) {
+		t.Errorf("isRPCPath(%q) = true, expected the document to stay out of the RPC metrics", openAPIPath)
+	}
+
+	if !isRateLimitedPath(openAPIPath) {
+		t.Errorf("isRateLimitedPath(%q) = false, expected the document to be under the arrival ceiling", openAPIPath)
+	}
+
+	for _, path := range []string{"/healthz", "/readyz", "/ui", "/ui/config"} {
+		if isRateLimitedPath(path) {
+			t.Errorf("isRateLimitedPath(%q) = true, expected support paths to stay unthrottled", path)
+		}
+	}
+
+	if !isRPCPath("/v1/memories") || !isRateLimitedPath("/v1/memories") {
+		t.Error("an ordinary RPC path must be both metered and rate limited")
 	}
 }
 

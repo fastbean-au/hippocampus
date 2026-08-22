@@ -31,11 +31,14 @@ deployment to add one.
 - File: [`contract/hippocampus.proto`](../contract/hippocampus.proto).
 - Proto package `hippocampus.v1`; service `Hippocampus`; every method is
   `/hippocampus.v1.Hippocampus/<Method>`.
-- Its **only** import is `google/api/annotations.proto`, vendored beside it at
-  `contract/google/api/`. Either point the include path at `contract/` (which resolves the vendored
-  copies) or install your language's googleapis common protos package. The annotations describe the
-  gateway's routes and affect no wire format, so a generator that ignores them still produces a
-  correct client.
+- It imports two annotation files, both vendored beside it: `google/api/annotations.proto` (under
+  `contract/google/api/`), which describes the gateway's routes, and
+  `protoc-gen-openapiv2/options/annotations.proto` (under `contract/protoc-gen-openapiv2/options/`),
+  which carries the OpenAPI document's `securityDefinitions`. Point the include path at `contract/`
+  and both resolve. **Neither affects the wire format** — they are annotations consumed by the
+  gateway and OpenAPI generators — so a generator that ignores them still produces a correct client,
+  and a toolchain that cannot resolve them at all can strip the two `import` lines and the
+  `openapiv2_swagger` option without changing a single message or method.
 
 ### Discovering it from a running instance
 
@@ -48,10 +51,12 @@ grpcurl -plaintext localhost:50051 list
 grpcurl -plaintext localhost:50051 describe hippocampus.v1.Hippocampus
 ```
 
-Reflection publishes the whole method and message set before authentication, so it defaults **off**
-on an instance configured with `auth.method` `hmac` or `idp`; `reflection.enabled` overrides the
-derivation either way, and the choice is named in the startup log. See
-[Server reflection](configuration.md#server-reflection).
+Reflection is a **streaming** RPC, so it reaches neither the auth interceptor nor either rate
+limiter — it is the one thing on the gRPC port that is both unauthenticated and unthrottled, which is
+why it defaults **off** on an instance configured with `auth.method` `hmac` or `idp`. That is a
+surface judgement and not a secrecy one: this contract is published with the source, so the schema
+was never confidential. `reflection.enabled` overrides the derivation either way, and the choice is
+named in the startup log. See [Server reflection](configuration.md#server-reflection).
 
 Where it is off, hand the tool the `.proto`, or a descriptor set built from it:
 
@@ -59,6 +64,21 @@ Where it is off, hand the tool the `.proto`, or a descriptor set built from it:
 buf build contract --as-file-descriptor-set -o hippocampus.binpb
 grpcurl -protoset hippocampus.binpb -plaintext localhost:50051 list
 ```
+
+For a browser form rather than a shell, [`grpcui`](https://github.com/fullstorydev/grpcui) builds one
+from the same reflection response, and takes the same `-proto`/`-protoset` fallbacks where reflection
+is off:
+
+```sh
+grpcui -plaintext localhost:50051
+```
+
+It is a separate tool you install yourself — nothing in this repository depends on it, and the
+service does not host it. Against an instance with authentication on, pass the token the way you
+would to `grpcurl` (`-H 'authorization: Bearer <token>'`), and note that `grpcui` serves its own web
+UI with **no authentication of its own**: whoever can reach the port it binds can invoke every RPC
+your token is authorised for, `Purge` included. Bind it to loopback and treat it as a development
+tool.
 
 ## Recipe 1 — `buf`, with nothing else to install
 
@@ -78,10 +98,12 @@ plugins:
 buf generate path/to/hippocampus/contract --path path/to/hippocampus/contract/hippocampus.proto
 ```
 
-`--path` restricts generation to the service's own file, so the vendored `google/api` protos are
-resolved but not regenerated — get those from your language's googleapis package instead
-(`pip install googleapis-common-protos`, and so on). Swap the two remote plugins for your language's
-from the [plugin directory](https://buf.build/plugins) — `buf.build/grpc/java`,
+`--path` restricts generation to the service's own file, so the vendored annotation protos are
+resolved but not regenerated — get the googleapis ones from your language's package instead
+(`pip install googleapis-common-protos`, and so on), and the openapiv2 options need no runtime
+counterpart at all, being generator input rather than anything a client calls. Swap the two remote
+plugins for your language's from the [plugin directory](https://buf.build/plugins) —
+`buf.build/grpc/java`,
 `buf.build/grpc/csharp`, `buf.build/community/neoeinstein-tonic`, and the rest.
 
 ## Recipe 2 — the language's own toolchain
@@ -267,9 +289,11 @@ mapping is lossy in the direction clients see it: `400` stands for `InvalidArgum
 ### Typed clients from the OpenAPI document
 
 The document is served at `/v1/openapi.json` and is byte-identical to
-[`contract/hippocampus.swagger.json`](../contract/hippocampus.swagger.json) in the repository. When
-authentication is enabled the served copy needs a token like any other `/v1` path — the repository
-copy is the easier source in that case.
+[`contract/hippocampus.swagger.json`](../contract/hippocampus.swagger.json) in the repository. It is
+served **without a token even when authentication is enabled**, so a tool can fetch it from a live
+instance directly; `gateway.openapi.enabled: false` removes the route for a deployment that would
+rather serve nothing there, and the repository copy still works. See
+[The OpenAPI document](configuration.md#the-openapi-document).
 
 It is **Swagger 2.0** (protoc-gen-openapiv2's output), which
 [openapi-generator](https://openapi-generator.tech/) consumes directly:
@@ -284,6 +308,46 @@ Generators that require OpenAPI 3 need one conversion step first:
 npx swagger2openapi hippocampus.swagger.json -o openapi3.json
 npx openapi-typescript openapi3.json -o hippocampus.d.ts     # TypeScript types for every route
 ```
+
+### A browser API explorer (Swagger UI)
+
+[Swagger UI](https://github.com/swagger-api/swagger-ui) turns the same document into a browser form
+that can call the API. The compose stack ships it behind a profile:
+
+```sh
+docker compose --profile swagger up --build     # then browse to http://localhost:8082
+```
+
+To run it against an instance of your own, two things have to line up.
+
+**Point it at the running gateway, not at a copy of the file.** The generated document declares no
+`host`, and Swagger UI resolves each operation against the origin that served the *document* — so a
+spec loaded from the container's own filesystem makes every "Try it out" call address the container,
+which answers `404`. Fetching it over HTTP from the gateway is what makes the interactive half work:
+
+```sh
+docker run --rm -p 8082:8080 \
+  -e SWAGGER_JSON_URL=http://localhost:8080/v1/openapi.json \
+  swaggerapi/swagger-ui
+```
+
+That URL is resolved by the **browser**, so it must be an address the browser can reach — not a
+container-network hostname.
+
+**Allow the origin.** Swagger UI is served from a different origin than the gateway, so both the spec
+fetch and every subsequent call are cross-origin. Add its origin to
+[`gateway.corsOrigins`](configuration.md#cross-origin-requests-cors):
+
+```json
+"gateway": {
+    "corsOrigins": ["http://localhost:8082"]
+}
+```
+
+Against an instance with authentication on, use the **Authorize** button and enter
+`Bearer <token>` — the document declares a bearer `securityDefinition`, so the value is sent as the
+`Authorization` header on every call. Swagger UI has no authentication of its own, so bind it to
+loopback and treat it as a development tool, exactly as with `grpcui` above.
 
 ## Behaviour worth knowing before you generate
 

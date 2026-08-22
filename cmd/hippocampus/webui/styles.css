@@ -769,6 +769,13 @@ td.decay .val {
 .pull-up {
   margin-top: -6px;
 }
+/* The pull-up tucks a card's explanatory line under its heading, which is right for a bare h2 and
+   wrong for a heading row carrying a Back button: the button is taller than the text beside it, so
+   the negative margin lands the first line hard against its bottom edge. Cancel the pull and add a
+   little of its own where the two meet. */
+.events-head + .pull-up {
+  margin-top: 6px;
+}
 .fs-11 {
   font-size: 11px;
 }

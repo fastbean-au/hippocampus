@@ -37,6 +37,34 @@ services:
       HIPPOCAMPUS_OLLAMA_ADDRESS: "http://ollama:11434"
       HIPPOCAMPUS_OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
       HIPPOCAMPUS_OLLAMA_AUTOSUMMARISE: "${OLLAMA_AUTOSUMMARISE:-false}"
+      # Lets the swagger-ui container below (a different origin) call /v1 from the browser. It is
+      # set unconditionally because it costs nothing while that profile is down: CORS headers are
+      # only ever sent in response to a request carrying this exact Origin, and with no swagger-ui
+      # running nothing does. Credentials are never allowed, whatever is listed here.
+      HIPPOCAMPUS_GATEWAY_CORSORIGINS: "http://localhost:8082"
+
+  # Optional Swagger UI, a browser form over the /v1 JSON API. Off by default; started only with
+  # `--profile swagger`, then browse to http://localhost:8082.
+  #
+  # SWAGGER_JSON_URL is resolved by the BROWSER, not by this container, so it must be the published
+  # host address rather than the compose-internal `hippocampus:8080` - which would resolve to
+  # nothing outside the network and present as an empty page. That URL is also what "Try it out"
+  # calls are addressed against: the generated document declares no `host`, and Swagger UI resolves
+  # operations against the origin that served the spec. Fetching it from the gateway is therefore
+  # what makes the interactive half work, and is why this needs the CORS origin above rather than a
+  # mounted copy of contract/hippocampus.swagger.json.
+  #
+  # Unauthenticated, like the rest of this demo stack - do not expose it as-is. Against an instance
+  # with auth on, use the Authorize box (the document declares a bearer securityDefinition).
+  swagger-ui:
+    image: swaggerapi/swagger-ui:v5.17.14
+    profiles: ["swagger"]
+    environment:
+      SWAGGER_JSON_URL: "http://localhost:8080/v1/openapi.json"
+    ports:
+      - "8082:8080" # Swagger UI
+    depends_on:
+      - hippocampus
 
   # Optional MCP bridge over the streamable-HTTP transport, so an MCP host (Claude Desktop/Code) can
   # reach this embedded instance's memory tools over the network. Off by default; started only with

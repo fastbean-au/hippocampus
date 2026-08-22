@@ -217,7 +217,20 @@ func gatewayRouteMiddleware() runtime.Middleware {
 // its front-channel config, the login endpoints, the static OpenAPI document - is a support surface
 // whose traffic would distort a request rate and an error rate meant to describe the service's work.
 func isRPCPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/") && path != "/v1/openapi.json"
+	return strings.HasPrefix(path, "/v1/") && path != openAPIPath
+}
+
+// isRateLimitedPath reports whether a gateway request is subject to the arrival rate limiter. It is
+// isRPCPath plus the OpenAPI document, and the two differ on purpose.
+//
+// The document is excluded from the METRICS because it is not the service's work, and counting it
+// would distort the request and error rates the shipped alert rules read. But it is 148 KB of
+// unauthenticated response, and until it was brought under the limiter it was the cheapest
+// bandwidth amplifier the gateway offered - cheaper than gRPC reflection, which at least requires a
+// gRPC client. Being uninteresting to measure and being safe to serve without a ceiling are
+// different questions, and this predicate is where they stopped being answered together.
+func isRateLimitedPath(path string) bool {
+	return isRPCPath(path) || path == openAPIPath
 }
 
 // httpMetricsMiddleware is the gateway counterpart to InterceptorMetrics, and exists for the same

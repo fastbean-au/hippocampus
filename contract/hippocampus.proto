@@ -3,6 +3,36 @@ package hippocampus.v1;
 option go_package = "github.com/fastbean-au/hippocampus/contract;contract";
 
 import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+// The generated OpenAPI document declares how a caller authenticates, so a browser API explorer
+// (Swagger UI and the like) can offer an Authorize box and attach the bearer token to each request.
+// It describes the scheme only; whether a token is actually required is auth.method's business, and
+// an unauthenticated instance simply ignores what is sent.
+//
+// TYPE_API_KEY with in: IN_HEADER rather than a dedicated bearer type, because this is Swagger 2.0 -
+// securityDefinitions gained a native bearer format only in OpenAPI 3. The effect is identical: the
+// tool sends the value as the Authorization header, which is why the description tells the operator
+// to include the "Bearer " prefix themselves.
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+	security_definitions: {
+		security: {
+			key: "BearerAuth";
+			value: {
+				type: TYPE_API_KEY;
+				in: IN_HEADER;
+				name: "Authorization";
+				description: "A signed JWT bearer token. Enter it as: Bearer <token>";
+			}
+		}
+	}
+	security: {
+		security_requirement: {
+			key: "BearerAuth";
+			value: {}
+		}
+	}
+};
 
 // HTTP annotations below map every RPC onto a REST-ish JSON endpoint under /v1, served by the
 // grpc-gateway alongside the native gRPC API. Path-bound fields (e.g. {id}) are taken from the

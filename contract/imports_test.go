@@ -11,13 +11,17 @@ import (
 )
 
 // vendoredImports are the proto files hippocampus.proto may import: the google/api annotations that
-// generate the HTTP gateway, and the one file they in turn import. Every one of them is vendored
-// under contract/google/api/ (google/protobuf/descriptor.proto is bundled with protoc and every
-// language's protobuf runtime, so it needs no vendoring).
+// generate the HTTP gateway, the protoc-gen-openapiv2 options that carry the OpenAPI document's
+// securityDefinitions, and the files those two in turn import. Each is vendored beside the contract
+// at the path given here; an empty path means the file is bundled with protoc and every language's
+// protobuf runtime (everything under google/protobuf/), so it needs no vendoring.
 var vendoredImports = map[string]string{
-	"google/api/annotations.proto":     "google/api/annotations.proto",
-	"google/api/http.proto":            "google/api/http.proto",
-	"google/protobuf/descriptor.proto": "",
+	"google/api/annotations.proto":                   "google/api/annotations.proto",
+	"google/api/http.proto":                          "google/api/http.proto",
+	"protoc-gen-openapiv2/options/annotations.proto": "protoc-gen-openapiv2/options/annotations.proto",
+	"protoc-gen-openapiv2/options/openapiv2.proto":   "protoc-gen-openapiv2/options/openapiv2.proto",
+	"google/protobuf/descriptor.proto":               "",
+	"google/protobuf/struct.proto":                   "",
 }
 
 // TestContractImportsStayVendored holds docs/clients.md's client-generation recipe to the contract.
@@ -28,8 +32,8 @@ var vendoredImports = map[string]string{
 // in a way nothing else in the repo notices: the Go build keeps working, since the Go module
 // resolves those imports through its own dependencies.
 //
-// Adding an import is a legitimate change; it just has to come with the file vendored under
-// contract/google/ and listed here - or, for one every protobuf runtime bundles (anything under
+// Adding an import is a legitimate change; it just has to come with the file vendored beside the
+// contract and listed here - or, for one every protobuf runtime bundles (anything under
 // google/protobuf/), listed here with no vendored path.
 func TestContractImportsStayVendored(t *testing.T) {
 	imports := contract.File_hippocampus_proto.Imports()
@@ -51,8 +55,9 @@ func assertVendored(t *testing.T, file protoreflect.FileDescriptor) {
 	vendored, known := vendoredImports[path]
 	if !known {
 		t.Errorf("hippocampus.proto (transitively) imports %q, which docs/clients.md's generation "+
-			"recipe does not account for: vendor it under contract/google/ and amend the recipe, "+
-			"or add it here if the client toolchains all bundle it", path)
+			"recipe does not account for: vendor it beside the contract (under contract/google/ or "+
+			"contract/protoc-gen-openapiv2/) and amend the recipe, or add it here if the client "+
+			"toolchains all bundle it", path)
 
 		return
 	}

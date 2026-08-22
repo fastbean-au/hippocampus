@@ -7,6 +7,7 @@
 package contract
 
 import (
+	_ "github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2/options"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -5897,7 +5898,7 @@ var File_hippocampus_proto protoreflect.FileDescriptor
 
 const file_hippocampus_proto_rawDesc = "" +
 	"\n" +
-	"\x11hippocampus.proto\x12\x0ehippocampus.v1\x1a\x1cgoogle/api/annotations.proto\"\xf9\x01\n" +
+	"\x11hippocampus.proto\x12\x0ehippocampus.v1\x1a\x1cgoogle/api/annotations.proto\x1a.protoc-gen-openapiv2/options/annotations.proto\"\xf9\x01\n" +
 	"\x15SignificancePlacement\x12>\n" +
 	"\x04mode\x18\x01 \x01(\x0e2*.hippocampus.v1.SignificancePlacement.ModeR\x04mode\x12\x16\n" +
 	"\x06anchor\x18\x02 \x01(\x05R\x06anchor\x12\x1b\n" +
@@ -6450,7 +6451,13 @@ const file_hippocampus_proto_rawDesc = "" +
 	"/v1/import\x12s\n" +
 	"\vImportBatch\x12\".hippocampus.v1.ImportBatchRequest\x1a#.hippocampus.v1.ImportBatchResponse\"\x1b\x82\xd3\xe4\x93\x02\x15:\x01*\"\x10/v1/import/batch\x12f\n" +
 	"\bTransfer\x12\x1f.hippocampus.v1.TransferRequest\x1a .hippocampus.v1.TransferResponse\"\x17\x82\xd3\xe4\x93\x02\x11:\x01*\"\f/v1/transfer\x12Z\n" +
-	"\x05Clear\x12\x1c.hippocampus.v1.ClearRequest\x1a\x1d.hippocampus.v1.ClearResponse\"\x14\x82\xd3\xe4\x93\x02\x0e:\x01*\"\t/v1/clearB6Z4github.com/fastbean-au/hippocampus/contract;contractb\x06proto3"
+	"\x05Clear\x12\x1c.hippocampus.v1.ClearRequest\x1a\x1d.hippocampus.v1.ClearResponse\"\x14\x82\xd3\xe4\x93\x02\x0e:\x01*\"\t/v1/clearB\xa8\x01\x92AoZ[\n" +
+	"Y\n" +
+	"\n" +
+	"BearerAuth\x12K\b\x02\x126A signed JWT bearer token. Enter it as: Bearer <token>\x1a\rAuthorization \x02b\x10\n" +
+	"\x0e\n" +
+	"\n" +
+	"BearerAuth\x12\x00Z4github.com/fastbean-au/hippocampus/contract;contractb\x06proto3"
 
 var (
 	file_hippocampus_proto_rawDescOnce sync.Once

@@ -199,9 +199,11 @@ grpcurl -plaintext -proto contract/hippocampus.proto \
   localhost:50051 hippocampus.v1.Hippocampus/StoreMemory
 ```
 
-The `-proto` flag is not optional: the service registers no gRPC reflection service, so a tool
-cannot discover the schema from a running instance. To generate stubs for a language other than Go —
-from either the proto or the OpenAPI document — see [Clients in other languages](clients.md).
+The `-proto` flag is optional on a default instance: with `auth.method` unset the service registers
+gRPC server reflection, so `grpcurl -plaintext localhost:50051 list` discovers the schema on its own.
+It becomes necessary once authentication is enabled, where reflection defaults off — see
+[Server reflection](configuration.md#server-reflection). To generate stubs for a language other than
+Go — from either the proto or the OpenAPI document — see [Clients in other languages](clients.md).
 
 ## Enabling authentication
 

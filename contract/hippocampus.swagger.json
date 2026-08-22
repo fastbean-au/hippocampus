@@ -3285,5 +3285,18 @@
       },
       "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."
     }
-  }
+  },
+  "securityDefinitions": {
+    "BearerAuth": {
+      "type": "apiKey",
+      "description": "A signed JWT bearer token. Enter it as: Bearer \u003ctoken\u003e",
+      "name": "Authorization",
+      "in": "header"
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ]
 }

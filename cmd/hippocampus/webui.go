@@ -130,15 +130,20 @@ func webUISecurityHeaders(cfg UIConfig, next http.Handler) http.Handler {
 // Server.HTTPMiddlewareBlockWhenPurgeInProgress serves while a purge runs. serverLogin adds the
 // server-hosted OIDC endpoints, which run before (or in place of) holding a token.
 //
+// The OpenAPI document is on BOTH lists. It was on the purge list alone until the schema-secrecy
+// argument was examined and found not to hold - it is generated from a proto checked into a public
+// repository - and requiring a token for it broke every OpenAPI tool, none of which can authenticate
+// the initial spec fetch. openAPIHandler carries the full reasoning.
+//
 // It is a function rather than two literals inside main() so a test can assert what it returns.
 // The auth list is closed by default, which is the design - a new endpoint is protected without
 // anyone remembering to do anything - but it means the console's own assets must be listed or the
 // page 401s its own stylesheet, and that presents as a broken console rather than as an auth error.
 // TestEveryEmbeddedAssetIsServedAndOpen is what makes that impossible to get wrong.
 func middlewareOpenPaths(serverLogin bool) (authPaths []string, purgePaths []string) {
-	authPaths = append([]string{"/healthz", "/readyz", "/ui/config"}, webUIAssetPaths...)
+	authPaths = append([]string{"/healthz", "/readyz", openAPIPath, "/ui/config"}, webUIAssetPaths...)
 	purgePaths = append(
-		[]string{"/healthz", "/readyz", "/v1/openapi.json", "/ui/config"},
+		[]string{"/healthz", "/readyz", openAPIPath, "/ui/config"},
 		webUIAssetPaths...,
 	)
 

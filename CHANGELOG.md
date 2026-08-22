@@ -33,6 +33,70 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-origin access for browser clients — `gateway.corsOrigins`.** A list of exact origins
+  (`scheme://host[:port]`) permitted to call `/v1` from a page this gateway did not serve. **Empty by
+  default**, which sends no CORS headers at all, so an existing deployment is unchanged. `*` is
+  refused and a trailing slash is rejected at startup — it would never match the `Origin` header a
+  browser sends, and so would present as CORS mysteriously not working rather than as a
+  misconfiguration. `Access-Control-Allow-Credentials` is **never** sent, which is what keeps the
+  console's `HttpOnly` session cookie unusable from another origin; bearer tokens still work, because
+  a caller sends those explicitly. Preflights are answered outside authentication (they carry no
+  `Authorization` header by construction), outside the rate limiter (a throttled preflight is an
+  opaque browser failure rather than a legible 429), and outside the RPC metrics (`OPTIONS` routes to
+  no RPC, so counting them would push `rpc="unknown"` into the series the shipped alert rules read).
+  The allow header is set **before** the request is served, so a 401, 429 or 503 from further in
+  still carries it and the browser can show the caller the real status.
+- **A Swagger UI compose profile.** `docker compose --profile swagger up --build` serves a browser
+  form over the JSON API on `:8082`. It is pointed at the running gateway rather than at a copy of
+  the document, which is what makes "Try it out" work: the generated document declares no `host`, and
+  Swagger UI resolves each operation against the origin that served the spec. See
+  [docs/clients.md](docs/clients.md).
+- **The contract declares how to authenticate.** `hippocampus.proto` now carries an
+  `openapiv2_swagger` option with a bearer `securityDefinitions` entry, so the generated OpenAPI
+  document gives a browser API explorer an Authorize box that attaches the token to every call. This
+  is additive annotation consumed by the OpenAPI generator: **no message, method, or wire format
+  changes**, and `buf breaking` is clean. The `protoc-gen-openapiv2` option protos are vendored under
+  `contract/protoc-gen-openapiv2/options/` alongside the existing `google/api` copies, so pointing an
+  include path at `contract/` still resolves everything.
+- **`gateway.openapi.enabled`** (default **true**) removes the `/v1/openapi.json` route entirely for
+  a deployment that wants nothing served there.
+
+### Changed
+
+- **`/v1/openapi.json` is served without a token, even when authentication is enabled.** This
+  reverses earlier behaviour, and the reasoning it rested on. The document is generated from a proto
+  published with the source, so requiring a token protected a file anybody can fetch from the
+  repository — while breaking every standard OpenAPI tool, none of which can authenticate the
+  *initial* spec fetch. Schema confidentiality was never the property being defended; a deployment
+  that wants nothing there now says so with `gateway.openapi.enabled` instead.
+- **The OpenAPI document is now covered by the arrival rate limit,** and carries an `ETag` so a
+  repeat fetch is a `304`. It is served without credentials and is the largest single response the
+  gateway produces, so leaving it outside the ceiling made it the cheapest bandwidth amplifier on the
+  surface. It stays **out** of the RPC metrics, which describe the service's work rather than its
+  documentation — the two path predicates now differ deliberately, and a test pins that they do.
+- **`reflection.enabled`'s derived default is unchanged, but its rationale is corrected** in the code
+  and in [docs/configuration.md](docs/configuration.md#server-reflection). The old argument — that
+  reflection publishes the schema — does not hold for a contract published with the source. What
+  actually justifies the default is narrower: reflection is a **streaming** RPC and every interceptor
+  in the chain is unary, so it reaches neither the auth interceptor nor either rate limiter, making
+  it the one surface on the gRPC port that is both unauthenticated and unthrottled.
+
+### Fixed
+
+- **A stale claim in [docs/getting-started.md](docs/getting-started.md)** that the service registers
+  no gRPC reflection service. It has registered one by default on an unauthenticated instance since
+  `reflection.enabled` landed, so `-proto` has not been mandatory there for some time.
+
+### Compatibility
+
+- `/v1/openapi.json` **returns `200` without a token under `auth.method` `hmac`/`idp`, where it
+  previously returned `401`.** Anything relying on that endpoint being closed should set
+  `gateway.openapi.enabled: false`, which removes it outright.
+- That endpoint is now subject to the arrival rate limit. A deployment fetching it in a tight loop
+  under a low `rateLimit.global` ceiling may now see `429`s where it previously did not.
+
 ## [0.35.1] - 2026-08-20
 
 ### Changed

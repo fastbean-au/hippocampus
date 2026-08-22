@@ -69,6 +69,15 @@ deploy/compose/docker-compose.opensearch-secured.yaml up --build` (the same with
   the repo root): `docker build -f integrations/eventsource/Dockerfile --build-arg BROKER=nats -t
 hippocampus-nats-bridge .` — the release publishes one image per broker to
   `ghcr.io/fastbean-au/hippocampus-<broker>-bridge`
+- Browser API explorer (SQLite compose only): `docker compose --profile swagger up --build` adds an
+  opt-in `swagger-ui` service on `:8082`, a browser form over the `/v1` JSON API. Two things make it
+  work and both are load-bearing: it is pointed at the **running gateway** (`SWAGGER_JSON_URL`, the
+  host-published address — the browser resolves it, and the generated document declares no `host`,
+  so Swagger UI addresses every "Try it out" call at whichever origin served the spec — a mounted
+  copy of the file would make them all 404 against the container), and the gateway lists its origin
+  in `gateway.corsOrigins`. Unauthenticated like the rest of that demo stack; against a secured
+  instance the Authorize box works, since the contract declares a bearer `securityDefinition`. See
+  `docs/clients.md`
 - MCP-over-HTTP endpoint (SQLite compose only): `docker compose --profile mcp up --build` adds an
   opt-in `mcp` service (streamable-HTTP transport, `Dockerfile` `target: mcp`) that dials the
   `hippocampus` service over the compose network and publishes the MCP endpoint on `:8090`; off by
