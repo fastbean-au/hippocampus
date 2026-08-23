@@ -161,6 +161,14 @@ Stated plainly, because they bound what the numbers above support.
   target alone, which is what makes it comparable with "keep the best N" baselines. A deployment
   using value-based consolidation as well is not what was measured.
 
+## Watching it instead
+
+The same comparison runs continuously at [agent.hippocampus-demo.com](https://agent.hippocampus-demo.com/ui)
+and [agent-flat.hippocampus-demo.com](https://agent-flat.hippocampus-demo.com/ui): one writer, two
+stores, identical memories, and only one of them told which matter. It is the qualitative version of
+the must-keep column above — search both for something old and significant, and it is in one and gone
+from the other. Both take the read-only `demo` / `demo` sign-in.
+
 ## Reproducing
 
 ```sh

@@ -29,6 +29,14 @@ circular, and its limitations are in **[Retention quality](retention.md)**. It i
 to read if you are deciding whether the model is worth anything; the ones below are the ones to
 watch if you want to see it working.
 
+That comparison also runs **live**, as a pair of hosted consoles: one writer feeds byte-for-byte
+identical memories to two stores, and only one of them is told which memories matter. Every decay
+method divides significance by a function of age, so with a constant significance the ordering
+reduces to pure recency — the flat store is an LRU store arrived at by configuration rather than by a
+different algorithm. Open [agent](https://agent.hippocampus-demo.com/ui) and
+[agent-flat](https://agent-flat.hippocampus-demo.com/ui), search both for the same thing, and look
+for something old that was written as significant.
+
 ## The hosted demo — [hippocampus-demo.com](https://hippocampus-demo.com)
 
 Both demonstrations below run continuously at <https://hippocampus-demo.com>, alongside the Bluesky
@@ -38,13 +46,14 @@ build with the decay clock compressed (as
 [`demo/config.json`](../demo/config.json) does, via `consolidation.unitsOfAgeInDays`), and the whole
 cycle happens in minutes. Every console takes a read-only sign-in: **`demo` / `demo`**.
 
-| Site                                                          | What it shows                                                                                                                                                              |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Bluesky console](https://bluesky.hippocampus-demo.com/ui)    | Verified news headlines arriving live, all equally significant; likes and reposts reinforce them, replies thread onto them, related coverage links them — the rest decays. |
-| [Book console](https://book.hippocampus-demo.com/ui)          | _Great Expectations_ re-read daily: episodic detail distilled into semantic summaries as it ages, recalled passages holding on.                                            |
-| [Logs console](https://logs.hippocampus-demo.com/ui)          | A continuous log stream against a byte capacity target — consolidation and eviction under real storage pressure.                                                           |
-| [Grafana dashboard](https://grafana.hippocampus-demo.com)     | Live telemetry from the stacks (the same dashboard the `observability` Compose profile provisions).                                                                        |
-| [Config builder](https://config-builder.hippocampus-demo.com) | The [configuration wizard](config-wizard.md), hosted — build a `config.json` and its deployment artefacts.                                                                 |
+| Site                                                                                                                | What it shows                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Agent pair](https://agent.hippocampus-demo.com/ui) and [its flat twin](https://agent-flat.hippocampus-demo.com/ui) | **One workload, two stores.** Identical memories into both; only one is told which matter. Search each for something old and important — it is in one and gone from the other. |
+| [Bluesky console](https://bluesky.hippocampus-demo.com/ui)                                                          | Verified news headlines arriving live, all equally significant; likes and reposts reinforce them, replies thread onto them, related coverage links them — the rest decays.     |
+| [Book console](https://book.hippocampus-demo.com/ui)                                                                | _Great Expectations_ re-read daily: episodic detail distilled into semantic summaries as it ages, recalled passages holding on.                                                |
+| [Logs console](https://logs.hippocampus-demo.com/ui)                                                                | A continuous log stream against a byte capacity target — consolidation and eviction under real storage pressure.                                                               |
+| [Grafana dashboard](https://grafana.hippocampus-demo.com)                                                           | Live telemetry from the stacks (the same dashboard the `observability` Compose profile provisions).                                                                            |
+| [Config builder](https://config-builder.hippocampus-demo.com)                                                       | The [configuration wizard](config-wizard.md), hosted — build a `config.json` and its deployment artefacts.                                                                     |
 
 **The Bluesky one is the demonstration to open first**, because it is the only one running on data
 nobody here controls: real posts, real attention, arriving in real time, with nothing staged. Every
