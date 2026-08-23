@@ -33,6 +33,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-08-24
+
 ### Fixed
 
 - **Deadlocks between concurrent recall and eviction on PostgreSQL.** Several statements mutate a
@@ -1595,7 +1597,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.36.1...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/fastbean-au/hippocampus/compare/v0.36.1...v0.37.0
 [0.36.1]: https://github.com/fastbean-au/hippocampus/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/fastbean-au/hippocampus/compare/v0.35.1...v0.36.0
 [0.35.1]: https://github.com/fastbean-au/hippocampus/compare/v0.35.0...v0.35.1
