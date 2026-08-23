@@ -35,6 +35,18 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **[Retention quality](docs/retention.md) — a measured answer to "what does forgetting cost you?"**
+  A trace-driven benchmark that replays an agent workload, fitted to a real corpus of 3,274
+  references across 77 sessions, into a live instance and scores the survivors against the standard
+  cache-replacement baselines (LRU, LFU, FIFO, static priority, random) at the same store size. It
+  reports two question kinds separately, because averaging them hides which one a policy is bad at:
+  _next-touch_ ("what will be looked up next", which recency answers almost by definition) and
+  _must-keep_ ("what matters regardless of access"). The result: **every access-based policy is
+  statistically indistinguishable from random on must-keep** — LRU 20.2% against random's 19.9% —
+  while Hippocampus scores 27.6% at the same store size and +11.1 points over LRU at a larger one.
+  Three checks against circularity are documented, including a noise sweep in which the advantage
+  correctly collapses to nothing. The harness lives in the companion `hippocampus-gen` repository.
+
 - **Guidance on choosing significance values ([Consolidation](docs/consolidation.md#choosing-significance-values)),
   and the wizard help to match.** Every one of the six decay methods divides significance by a
   function of age, so significance is compared as a **ratio** and never as a difference. Three

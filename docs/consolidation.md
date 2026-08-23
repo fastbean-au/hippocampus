@@ -352,6 +352,11 @@ it.
 Capacity eviction is the exception: it only ranks candidates against each other and never against the
 threshold, so it is unaffected by a uniform rescale (see [Capacity target](#capacity-target)).
 
+> **This is worth more than the choice of decay curve.** A store spreading significance evenly and
+> leaving both weights at their defaults on a wide scale gives up several points of retention against
+> the identical store configured as above — a larger difference than any method or `aggressiveness`
+> setting produced. Measured in [Retention quality](retention.md#configuration-matters-more-than-the-algorithm).
+
 ## What a sleep cycle reads
 
 Everything above describes the value model. What it _costs_ to apply is a question about the shape

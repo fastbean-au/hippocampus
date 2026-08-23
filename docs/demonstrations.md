@@ -12,6 +12,23 @@ three. For a purely synthetic soak (no external data, bursty writers, live decay
 [`./demo/run.sh`](../demo/README.md) answers "does it stay healthy under sustained load"; the
 demonstrations here answer "what does forgetting look like on data you recognise".
 
+## The measured one — what forgetting costs you
+
+Every demonstration below shows the **mechanism**: memories arrive, decay, and are forgotten in a
+sensible order. None of them shows the **benefit**, and nobody adopts a store because it deletes
+things. That question — _of everything it threw away, how much did you actually need later?_ — has
+its own answer, and it is a number rather than a screenshot:
+
+> At a store holding a fifth of what was written to it, **every access-based policy is
+> statistically indistinguishable from random** at retaining the memories that matter but are not
+> touched often. LRU scores 20.2% against random's 19.9%. Hippocampus scores 27.6%, and the margin
+> widens with store size — **+11.1 points at a 42% store**.
+
+The full method, the baselines it is measured against, the three checks that stop it being
+circular, and its limitations are in **[Retention quality](retention.md)**. It is the demonstration
+to read if you are deciding whether the model is worth anything; the ones below are the ones to
+watch if you want to see it working.
+
 ## The hosted demo — [hippocampus-demo.com](https://hippocampus-demo.com)
 
 Both demonstrations below run continuously at <https://hippocampus-demo.com>, alongside the Bluesky
