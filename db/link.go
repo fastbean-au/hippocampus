@@ -166,6 +166,9 @@ func (d *DB) recalculateLinkSignificance(tx *sql.Tx, graph linkGraph, ids []stri
 		return nil
 	}
 
+	// One global lock order; see lockorder.go.
+	ids = lockOrderedIDs(ids)
+
 	for start := 0; start < len(ids); start += deleteChunkSize {
 		end := min(start+deleteChunkSize, len(ids))
 		chunk := ids[start:end]
@@ -876,6 +879,10 @@ func (d *DB) ReinforceLinkedMemories(ctx context.Context, ids []string, fraction
 	}
 
 	advanced := greatest + ` + CAST((? - ` + greatest + `) * ? AS ` + d.bigintType() + `)`
+
+	// One global lock order; see lockorder.go. These ids come from the link graph, which is the
+	// order that disagreed with eviction's value ordering and produced the deadlocks.
+	ids = lockOrderedIDs(ids)
 
 	for start := 0; start < len(ids); start += deleteChunkSize {
 		end := min(start+deleteChunkSize, len(ids))

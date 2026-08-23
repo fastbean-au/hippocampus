@@ -33,6 +33,21 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deadlocks between concurrent recall and eviction on PostgreSQL.** Several statements mutate a
+  _set_ of memory rows in one transaction — recall's `UPDATE`, spreading activation's `UPDATE`, the
+  link-significance recompute, and the delete chokepoint's `DELETE` — and each took its ids in
+  whatever order its caller produced: recall from the request, spreading activation from the link
+  graph, eviction from a scan sorted by computed value. Two transactions holding overlapping sets in
+  different orders deadlock, and Postgres resolves that by killing one of them. Observed in the wild
+  at four deadlocks in four and a half minutes under a concurrent write/recall load: one surfaced to
+  the caller as `Internal`, and one **failed an eviction pass**, leaving the store over its capacity
+  target for that cycle. All six such statements now take their ids in one global order
+  (`db/lockorder.go`). SQLite cannot exhibit this — it has a single writer — so the guard test is
+  PostgreSQL-gated like its neighbours, but the ordering is unconditional. Triggering it needed
+  `consolidation.linkRecallPropagation` above 0.
+
 ### Added
 
 - **[Retention quality](docs/retention.md) — a measured answer to "what does forgetting cost you?"**

@@ -466,6 +466,8 @@ func (d *DB) deleteMemoriesByIds(ctx context.Context, ids []string) (int, error)
 	}
 	defer cancel()
 
+	ids = lockOrderedIDs(ids)
+
 	for start := 0; start < len(ids); start += deleteChunkSize {
 		end := start + deleteChunkSize
 		if end > len(ids) {
@@ -563,6 +565,10 @@ func (d *DB) deleteMemoriesIfUnrecalled(
 
 	recording := reason.recording()
 	deletedIds := make([]string, 0, len(items))
+
+	// One global lock order, shared with every other statement that locks a set of rows. Sorted
+	// before chunking, so the chunks are ordered against each other as well as within themselves.
+	items = lockOrderedSnapshots(items)
 
 	for start := 0; start < len(items); start += deleteChunkSize {
 		end := min(start+deleteChunkSize, len(items))
@@ -882,7 +888,8 @@ func (d *DB) recallMemoriesReturning(ctx context.Context, ids []string, now int6
 
 	args := make([]any, 0, len(ids)+1)
 	args = append(args, now)
-	for _, id := range ids {
+	// One global lock order; see lockorder.go.
+	for _, id := range lockOrderedIDs(ids) {
 		args = append(args, id)
 	}
 
@@ -963,7 +970,8 @@ func (d *DB) recallMemoriesMySQL(ctx context.Context, ids []string, now int64) (
 
 	selectArgs := make([]any, 0, len(ids))
 
-	for _, id := range ids {
+	// One global lock order; see lockorder.go.
+	for _, id := range lockOrderedIDs(ids) {
 		updateArgs = append(updateArgs, id)
 		selectArgs = append(selectArgs, id)
 	}
