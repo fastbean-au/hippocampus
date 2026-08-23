@@ -48,6 +48,19 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   PostgreSQL-gated like its neighbours, but the ordering is unconditional. Triggering it needed
   `consolidation.linkRecallPropagation` above 0.
 
+  **That ordering was necessary and not sufficient**, which a hardened reproduction then showed. A
+  second class survived it: the delete paths take `memories → memory_links → memories` (links can
+  only be pruned once the delete has revealed which ids passed the recall-race guard) while link
+  creation takes `memory_links → memories`. Opposite _table_ orders deadlock however carefully the
+  ids within each table are ordered, and the prune genuinely cannot move earlier. So the transient is
+  now retried instead: `isRetryableWriteError` learned PostgreSQL's class-40 SQLSTATEs (`40P01`,
+  `40001`) — it had been MySQL-only, on the reasoning that Postgres "does not deadlock a single
+  INSERT", true of one statement and not of these transactions — and a new `withTxRetry` replays a
+  whole transaction from `BEGIN`, since a deadlock aborts the transaction rather than the statement
+  and retrying one statement inside an aborted transaction achieves nothing. Applied to the four
+  transactions that take both tables. Deadlocks still occur under heavy contention; they no longer
+  reach the caller or abandon an eviction.
+
 ### Added
 
 - **[Retention quality](docs/retention.md) — a measured answer to "what does forgetting cost you?"**

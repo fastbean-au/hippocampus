@@ -454,6 +454,23 @@ func (d *DB) DeleteMemories(ctx context.Context, ids []string) (int, error) {
 // deleteMemoriesByIds deletes the given memories in chunked IN (...) batches inside a single
 // transaction, returning the number of rows deleted.
 func (d *DB) deleteMemoriesByIds(ctx context.Context, ids []string) (int, error) {
+	// Same cross-table order as the consolidation chokepoint, so the same retry. See withTxRetry.
+	var deleted int
+
+	err := d.withTxRetry(ctx, "delete memories by id", func() error {
+		var attemptErr error
+
+		deleted, attemptErr = d.deleteMemoriesByIdsOnce(ctx, ids)
+
+		return attemptErr
+	})
+
+	return deleted, err
+}
+
+// deleteMemoriesByIdsOnce is one attempt at the transaction above; it owns its transaction from
+// BEGIN to COMMIT so a caller can replay it, and must not be called directly.
+func (d *DB) deleteMemoriesByIdsOnce(ctx context.Context, ids []string) (int, error) {
 	cnt := 0
 
 	if len(ids) == 0 {
@@ -557,6 +574,32 @@ func (d *DB) deleteMemoriesIfUnrecalled(
 		return nil, nil
 	}
 
+	// Retried as a whole on a transient serialisation conflict. This transaction takes
+	// memories -> memory_links -> memories (links can only be pruned once the delete has revealed
+	// which ids actually went past the recall-race guard), while link creation takes
+	// memory_links -> memories - opposite table orders, which deadlock however carefully the ids
+	// within each table are ordered. A failed attempt rolls back whole, so the replay starts from
+	// the state the first attempt saw. See withTxRetry.
+	var deleted []string
+
+	err := d.withTxRetry(ctx, "delete memories", func() error {
+		var attemptErr error
+
+		deleted, attemptErr = d.deleteMemoriesIfUnrecalledOnce(ctx, items, reason)
+
+		return attemptErr
+	})
+
+	return deleted, err
+}
+
+// deleteMemoriesIfUnrecalledOnce is one attempt at the transaction above: it owns its transaction
+// from BEGIN to COMMIT so a caller can replay it, and must not be called directly.
+func (d *DB) deleteMemoriesIfUnrecalledOnce(
+	ctx context.Context,
+	items []memoryRecallSnapshot,
+	reason forgetReason,
+) ([]string, error) {
 	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		return nil, err
@@ -1262,6 +1305,25 @@ func (d *DB) MergeEventMemories(ctx context.Context, toEventId string, fromEvent
 // summary memory in their place, all within a single transaction. Returns the number of memories
 // replaced.
 func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error) {
+	// Deletes an event's memories and prunes their links in one transaction - the same table order,
+	// and so the same retry. Replaying is safe: the summary is inserted by id, so a replayed attempt
+	// writes the same row rather than a second one. See withTxRetry.
+	var replaced int
+
+	err := d.withTxRetry(ctx, "replace memories with summary", func() error {
+		var attemptErr error
+
+		replaced, attemptErr = d.replaceMemoriesWithSummaryOnce(ctx, eventId, summary)
+
+		return attemptErr
+	})
+
+	return replaced, err
+}
+
+// replaceMemoriesWithSummaryOnce is one attempt at the transaction above; it owns its transaction
+// from BEGIN to COMMIT so a caller can replay it, and must not be called directly.
+func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string, summary types.Memory) (int, error) {
 	log.Trace("func() db.ReplaceMemoriesWithSummary")
 
 	// Resolve the summary's significance level before the delete/insert transaction (level

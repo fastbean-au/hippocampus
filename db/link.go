@@ -369,6 +369,20 @@ func (d *DB) createLinks(ctx context.Context, graph linkGraph, id string, links 
 		return nil
 	}
 
+	// Retried as a whole on a transient serialisation conflict: this transaction takes
+	// links -> items while the delete chokepoint takes items -> links -> items, and opposite table
+	// orders deadlock. Replaying is safe because the link write is an upsert - re-applying an edge
+	// re-weights it rather than duplicating it - and a failed attempt rolls back whole. See
+	// withTxRetry.
+	return d.withTxRetry(ctx, "create "+graph.kind+" links", func() error {
+
+		return d.createLinksOnce(ctx, graph, id, links)
+	})
+}
+
+// createLinksOnce is one attempt at the transaction above: it owns its transaction from BEGIN to
+// COMMIT so a caller can replay it, and must not be called directly.
+func (d *DB) createLinksOnce(ctx context.Context, graph linkGraph, id string, links []types.Link) error {
 	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
 		log.Errorf("failed to create %s links - beginning transaction: %s", graph.kind, err.Error())

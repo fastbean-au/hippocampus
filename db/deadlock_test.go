@@ -52,7 +52,9 @@ func TestConcurrentRecallAndDeleteDoNotDeadlock(t *testing.T) {
 				Body:         "deadlock probe",
 				Significance: int32(1000 + i),
 				TimeStamp:    time.Now().UnixNano(),
-			}); err != nil {
+			}); err != nil && !IsDuplicateKey(err) {
+				// A memory the previous round's delete raced past is still there; re-seeding over it
+				// is the point, not a failure.
 				t.Fatalf("CreateMemory: %s", err)
 			}
 		}
@@ -85,6 +87,16 @@ func TestConcurrentRecallAndDeleteDoNotDeadlock(t *testing.T) {
 
 		mu.Lock()
 		deadlocks++
+
+		// Which kind matters: a raw deadlock means the path is not wrapped in a retry at all, while
+		// an exhausted ErrWriteConflict means it is wrapped but the contention outlasted the budget.
+		kind := "RAW (unwrapped path)"
+
+		if IsWriteConflict(err) && strings.Contains(err.Error(), "failed after") {
+			kind = "EXHAUSTED (retries ran out)"
+		}
+
+		t.Logf("deadlock in %s: %s", stage, kind)
 		mu.Unlock()
 	}
 
@@ -110,7 +122,9 @@ func TestConcurrentRecallAndDeleteDoNotDeadlock(t *testing.T) {
 			}
 		}()
 
-		// The deleting side: descending, as eviction's value ordering can be.
+		// The deleting side: descending, as eviction's value ordering can be. This is also the
+		// transaction that takes memories -> memory_links -> memories, against the linking side's
+		// memory_links -> memories.
 		go func() {
 			defer wg.Done()
 
@@ -122,6 +136,27 @@ func TestConcurrentRecallAndDeleteDoNotDeadlock(t *testing.T) {
 
 			if _, err := database.DeleteMemories(ctx, reversed); err != nil {
 				note("delete", err)
+			}
+		}()
+
+		// The linking side, which is what makes this cross-TABLE rather than merely cross-row. It
+		// was absent from the first version of this test, which is why the first fix - one lock
+		// order for the ids WITHIN each table - looked complete and was not.
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for i := len(ids) - 2; i >= 0; i -= 2 {
+				if err := database.LinkMemories(ctx, ids[i], []types.Link{{Id: ids[i+1], Significance: 200}}); err != nil {
+					// A link whose end has just been deleted by the other goroutine is the expected
+					// outcome of this race, not a failure of it.
+					if strings.Contains(err.Error(), "deadlock detected") {
+						note("link", err)
+					}
+
+					return
+				}
 			}
 		}()
 

@@ -39,6 +39,23 @@ const (
 	pgUniqueViolation = "23505"
 )
 
+// PostgreSQL SQLSTATEs for the two transient serialisation conflicts, the class-40 rollbacks. A
+// deadlock is detected and one transaction is rolled back whole; a serialisation failure is its
+// sibling under a stricter isolation level. Both leave no partial effect, so the losing work is
+// safe to re-run.
+//
+// These were absent until a concurrent write/recall load produced four PostgreSQL deadlocks in four
+// and a half minutes, one of which reached the client as Internal and one of which failed an
+// eviction pass. The comment on isRetryableWriteError used to reason that Postgres could not
+// deadlock here; that holds for a single INSERT and not for the multi-statement paths, where the
+// delete chokepoint takes memories -> memory_links -> memories while link creation takes
+// memory_links -> memories. Opposite table orders deadlock however carefully the ids within each
+// table are ordered.
+const (
+	pgDeadlockDetected     = "40P01"
+	pgSerializationFailure = "40001"
+)
+
 // writeRetry* bound the transparent retry of a transient write conflict: a handful of attempts with
 // a short, jittered exponential backoff. Kept small so a genuinely contended write fails fast rather
 // than stalling a request, while the common single-collision case clears on the first retry. The
@@ -87,22 +104,30 @@ func IsDuplicateKey(err error) bool {
 	return false
 }
 
-// isRetryableWriteError reports whether err is a transient MySQL serialisation conflict that is safe
-// to retry. Only MySQL errors match, so it is a no-op for the SQLite and Postgres drivers (SQLite is
-// single-connection and Postgres's default READ COMMITTED does not deadlock a single INSERT).
+// isRetryableWriteError reports whether err is a transient storage-level serialisation conflict that
+// is safe to retry - a detected deadlock or a lock-wait/serialisation failure on either server
+// driver. SQLite never matches: it has a single writer, so it cannot deadlock against itself.
 func isRetryableWriteError(err error) bool {
 	var myErr *mysql.MySQLError
 
-	if !errors.As(err, &myErr) {
-		return false
+	if errors.As(err, &myErr) {
+
+		return myErr.Number == mysqlErrDeadlock || myErr.Number == mysqlErrLockWaitTimeout
 	}
 
-	return myErr.Number == mysqlErrDeadlock || myErr.Number == mysqlErrLockWaitTimeout
+	var pgErr *pgconn.PgError
+
+	if errors.As(err, &pgErr) {
+
+		return pgErr.Code == pgDeadlockDetected || pgErr.Code == pgSerializationFailure
+	}
+
+	return false
 }
 
-// withWriteRetry runs fn, retrying it on a transient MySQL serialisation conflict up to
+// withWriteRetry runs fn, retrying it on a transient serialisation conflict up to
 // writeRetryMaxAttempts times with a short jittered backoff between attempts. It is a no-op wrapper
-// for any driver other than MySQL. When the attempts are exhausted the final conflict is wrapped in
+// for SQLite, which has a single writer and cannot deadlock against itself. When the attempts are exhausted the final conflict is wrapped in
 // ErrWriteConflict so the RPC layer can surface it as a retryable Aborted rather than an Unknown.
 // The backoff waits respect ctx, so a cancelled or timed-out operation stops retrying immediately.
 //
@@ -110,7 +135,8 @@ func isRetryableWriteError(err error) bool {
 // the sole caller. Multi-statement transactions are not retried here - re-running them would need
 // the whole transaction body replayed, not just one statement.
 func (d *DB) withWriteRetry(ctx context.Context, fn func() error) error {
-	if d.driver != driverMySQL {
+	if d.driver == driverSQLite {
+
 		return fn()
 	}
 
@@ -145,4 +171,62 @@ func (d *DB) withWriteRetry(ctx context.Context, fn func() error) error {
 	}
 
 	return fmt.Errorf("write failed after %d attempts: %w: %v", writeRetryMaxAttempts, ErrWriteConflict, err)
+}
+
+// withTxRetry runs a whole multi-statement transaction, retrying it on a transient serialisation
+// conflict. It is withWriteRetry's counterpart for the paths that cannot use it.
+//
+// The distinction matters and is the reason both exist. A deadlock aborts the ENTIRE transaction,
+// not the statement that tripped it, so retrying one statement inside an already-aborted transaction
+// only earns "current transaction is aborted". The body has to be replayed from BEGIN, which means
+// fn must own its transaction: begin, do the work, commit, and roll back on any failure. Nothing
+// from a failed attempt persists, so the replay starts from the same state the first attempt saw.
+//
+// fn must therefore be re-runnable. The two callers are: the delete chokepoint, which re-reads
+// nothing it mutated and whose recall-race guard makes a second pass over the same ids idempotent;
+// and link creation, which upserts, so re-applying an edge re-weights it rather than duplicating it.
+//
+// A caller that cannot satisfy that must not use this - a transaction with a side effect outside the
+// database, or one whose input is consumed as it goes, would be replayed into a different outcome.
+func (d *DB) withTxRetry(ctx context.Context, what string, fn func() error) error {
+	if d.driver == driverSQLite {
+
+		return fn()
+	}
+
+	var err error
+
+	for attempt := range writeRetryMaxAttempts {
+		err = fn()
+		if err == nil {
+
+			return nil
+		}
+
+		if !isRetryableWriteError(err) {
+
+			return err
+		}
+
+		if attempt == writeRetryMaxAttempts-1 {
+
+			break
+		}
+
+		log.Tracef("db transaction %q hit a transient conflict, retrying (attempt %d/%d): %s",
+			what, attempt+1, writeRetryMaxAttempts, err.Error())
+
+		backoff := writeRetryBaseBackoff*time.Duration(1<<attempt) + time.Duration(rand.Int63n(int64(writeRetryBaseBackoff)))
+
+		select {
+
+		case <-ctx.Done():
+
+			return ctx.Err()
+
+		case <-time.After(backoff):
+		}
+	}
+
+	return fmt.Errorf("%s failed after %d attempts: %w: %v", what, writeRetryMaxAttempts, ErrWriteConflict, err)
 }
