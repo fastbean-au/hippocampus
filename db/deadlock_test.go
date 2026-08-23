@@ -29,7 +29,13 @@ import (
 // handful of rounds; SQLite cannot exhibit it (one writer), so it is Postgres-gated like its
 // neighbours.
 func TestConcurrentRecallAndDeleteDoNotDeadlock(t *testing.T) {
-	database := newPostgresTestDB(t)
+	// Opened WITHOUT the consolidator advisory lock. The lock is what stops two consolidating
+	// instances sharing a store, and this test is not one - it only needs concurrent recalls,
+	// deletes and links. Taking it would be worse than pointless: `go test ./...` runs packages in
+	// parallel against one test database, and this test holds its store open for far longer than
+	// any other, so cmd/hippocampus's TestRun_PostgresIntegration would sit in waitForOK's
+	// ten-second budget waiting for a lock it could not get, and fail. Which is exactly what it did.
+	database := newPostgresTestDBUnlocked(t)
 	ctx := context.Background()
 
 	const (

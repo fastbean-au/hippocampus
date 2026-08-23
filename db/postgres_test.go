@@ -54,6 +54,34 @@ func TestRebind(t *testing.T) {
 // newPostgresTestDB opens the database named by HIPPOCAMPUS_TEST_POSTGRES_DSN, purging any rows
 // left by earlier runs and closing (which releases the instance advisory lock) when the test
 // ends. Skips the test when the variable is unset.
+// newPostgresTestDBUnlocked opens the test database as a read/write REPLICA - no consolidator
+// advisory lock - for tests that do not consolidate. Packages are tested in parallel against a
+// single database, so a test that holds the lock for any length of time starves whichever other
+// package is trying to start a service against it.
+func newPostgresTestDBUnlocked(t *testing.T) *DB {
+	t.Helper()
+
+	dsn := os.Getenv(postgresTestDSNEnv)
+	if dsn == "" {
+		t.Skipf("set %s to run postgres integration tests", postgresTestDSNEnv)
+	}
+
+	database, err := NewPostgres(dsn, false)
+	if err != nil {
+		t.Fatalf("NewPostgres: %s", err)
+	}
+
+	t.Cleanup(func() {
+		_ = database.Close()
+	})
+
+	if err := database.Purge(context.Background()); err != nil {
+		t.Fatalf("Purge: %s", err)
+	}
+
+	return database
+}
+
 func newPostgresTestDB(t *testing.T) *DB {
 	t.Helper()
 
