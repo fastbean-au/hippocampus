@@ -1,6 +1,6 @@
 # Hippocampus
 
-> **A finite, biologically-inspired memory storage engine for log retention, audit trails, and context management.**
+> **Hippocampus provides human-like memory for digital data. It uses events with linked memories, each of which have their own significance rating on an open scale, reinforced through recall, and a sleep cycle to shed memories that are no longer worth keeping. It is a lossy data store by design, meant for long-term storage.**
 
 [![Coverage Status](https://coveralls.io/repos/github/fastbean-au/hippocampus/badge.svg?branch=main)](https://coveralls.io/github/fastbean-au/hippocampus)
 ![Dependabot](https://img.shields.io/badge/dependabot-enabled-brightgreen)
@@ -8,30 +8,9 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/fastbean-au/hippocampus.svg)](https://pkg.go.dev/github.com/fastbean-au/hippocampus)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/fastbean-au/hippocampus)
 
-![Hippocampus Architecture](docs/go-hippocampus.png)
+<img src="docs/go-hippocampus.png" width="400" height="200" align="left" alt="Go gopher riding a seahorse" />
 
-Time-to-live and fixed FIFO queues manage bounded disk space by treating age as a proxy for value —
-so the anomaly, the audit event, and the context everyone keeps coming back to get purged for
-crossing an arbitrary threshold. Hippocampus scores each record instead, on significance, age,
-recall, and what it is linked to, and runs a periodic **sleep** cycle that forgets the low-value
-tail first. The store stays inside a finite budget; what it keeps is what turned out to matter.
-
-- **Relative significance** — rank a record `ABOVE`, `BELOW`, or `BETWEEN` existing ones and the
-  server opens a gap for it, instead of forcing everything onto a fixed importance scale.
-- **Reinforcement through recall** — reading a record strengthens it: the decay clock resets and its
-  effective significance rises, so frequently-referenced data resists decay.
-- **Sleep and consolidation** — background cycles apply the decay model, compact the store, and can
-  distil a pile of episodic detail into one semantic summary (optionally with an embedded LLM).
-- **Retrieval ranked by value** — content search out of the box on the default embedded install,
-  with significance and recall blended into the result order. Add OpenSearch and an embedding model
-  for semantic and hybrid retrieval.
-- **Durable and compliance-safe** — embedded or centralised, over SQLite (WAL), PostgreSQL, or
-  MySQL, with retention floors that guarantee a compliance window regardless of storage pressure.
-
-_Where it fits and where it does not: **[Use cases & deployment modes](docs/use-cases.md)**. How the
-forgetting actually works: **[Memory consolidation](docs/consolidation.md)**._
-
----
+<br clear="left" />
 
 ## 🔭 See it running — [hippocampus-demo.com](https://hippocampus-demo.com)
 

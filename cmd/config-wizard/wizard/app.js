@@ -924,7 +924,7 @@ const STEPS = [
             label: "Minimum memory significance accepted",
             type: "int",
             def: 0,
-            help: "A memory below this is rejected at StoreMemory rather than stored and forgotten later.",
+            help: "A memory below this is rejected at StoreMemory rather than stored and forgotten later. A significance value, so it moves with the scale you choose on the Decay step.",
           },
           {
             key: "event.minimumSignificance",
@@ -944,7 +944,7 @@ const STEPS = [
       {
         title: "Decay",
         blurb:
-          "Value falls as a memory ages; anything below the threshold is forgotten by the next sleep cycle. Age is measured from the most recent recall, not from creation.",
+          "Value falls as a memory ages; anything below the threshold is forgotten by the next sleep cycle. Age is measured from the most recent recall, not from creation. Every method divides significance by a function of age, so significance is compared as a RATIO, never a difference: spread your values geometrically (1,000 / 3,000 / 10,000 / 30,000, not 1,000 / 2,000 / 3,000 / 4,000), and remember that the span between your smallest and largest sets how far significance can outweigh age.",
         fields: [
           {
             key: "consolidation.method",
@@ -975,7 +975,7 @@ const STEPS = [
             label: "Deletion threshold",
             type: "float",
             def: 10,
-            help: "Value below which an item is consolidated away, before capacity pressure scales it.",
+            help: "Value below which an item is consolidated away, before capacity pressure scales it. In significance-over-age units, so it moves with your significance scale: multiply every significance by ten and this must be multiplied by ten too, or things start being forgotten sooner or later than before without anyone changing it. Capacity eviction is unaffected — it ranks candidates against each other, never against this.",
           },
           {
             key: "consolidation.unitsOfAgeInDays",
@@ -1004,7 +1004,7 @@ const STEPS = [
             label: "Link significance weight",
             type: "float",
             def: 1.0,
-            help: "How much an item's links raise its effective significance. The summed link significance is damped first (weight x ln(1 + total)), so a large total adds only a little: at weight 1.0 a total of 100 adds about 4.6, and 10000 adds about 9.2. Applies to both memory links and event links. 0 disables the contribution.",
+            help: "How much an item's links raise its effective significance. The summed link significance is damped first (weight x ln(1 + total)), so a large total adds only a little: at weight 1.0 a total of 100 adds about 4.6, and 10000 adds about 9.2. Those are ADDED in significance units, so what they are worth depends entirely on your significance scale — about 9% of the top on a 1-100 scale, about 0.03% of it on a 1,000-30,000 scale. Set this relative to the scale you chose; the default of 1.0 assumes nothing about it. Applies to both memory links and event links. 0 disables the contribution.",
           },
           {
             key: "consolidation.linkRecallPropagation",
@@ -1018,7 +1018,7 @@ const STEPS = [
             label: "Recall significance weight",
             type: "float",
             def: 1.0,
-            help: "Added to effective significance per recall. 0 keeps the decay-clock reset but drops the boost.",
+            help: "Added to effective significance per recall. In significance units, so its worth depends on your scale: at 1.0, twenty recalls add 20 — a fifth of the top of a 1-100 scale, and rounding error on a 1,000-30,000 one. Set it relative to the scale you chose. 0 keeps the decay-clock reset but drops the boost.",
           },
           {
             key: "consolidation.defaultEventSignificanceValue",

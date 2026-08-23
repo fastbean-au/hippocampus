@@ -201,8 +201,10 @@ Two implementation choices are what make it 2.4% rather than the ~60% a naïve v
   unlike the algorithm it carries no compatibility commitment and can be revisited freely.
 
 The sleep cycle is deliberately unaffected: the consolidation scans read the covering index and
-never load a body, so compression adds nothing to reaping. A regression showing up in the scan
-benchmarks above would mean a scan had started reading bodies.
+never load a body, so compression adds nothing to reaping — see
+[What a sleep cycle reads](consolidation.md#what-a-sleep-cycle-reads) for the row layout that makes
+that true. A regression showing up in the scan benchmarks above would mean a scan had started
+reading bodies.
 
 The read cost does multiply with page size — a recall or search returning 500 memories pays ~2 ms of
 decompression — so a workload dominated by large-page reads of small, poorly-compressing bodies is

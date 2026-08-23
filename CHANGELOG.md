@@ -33,6 +33,39 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **Guidance on choosing significance values ([Consolidation](docs/consolidation.md#choosing-significance-values)),
+  and the wizard help to match.** Every one of the six decay methods divides significance by a
+  function of age, so significance is compared as a **ratio** and never as a difference. Three
+  consequences that were nowhere written down: tier schemes should be spread geometrically
+  (1,000 / 3,000 / 10,000 / 30,000, not 1,000 / 2,000 / 3,000 / 4,000) or the top tiers are the ones
+  the store can least tell apart; the **span** between the smallest and largest significance in use
+  — not the magnitude of the numbers — is what decides how far significance can outweigh age; and
+  `linkSignificanceWeight`/`recallSignificanceWeight` are **added in significance units**, so the
+  same weight of 1.0 is worth about 9% of the top of a 1–100 scale and about 0.03% of a 1,000–30,000
+  one. `deletionThreshold` moves with the scale for the same reason, while capacity eviction does
+  not, since it ranks candidates against each other rather than against a threshold. No behaviour
+  changed; this documents behaviour that was already there and is surprising.
+
+- **A storage-layout section in [Consolidation](docs/consolidation.md#what-a-sleep-cycle-reads):
+  what a sleep cycle actually reads.** A `memories` row banded into decay inputs, flags and payload,
+  with a diagram of which pass touches which band — deliberately not an entity-relationship diagram,
+  since the relationships in this schema are the guessable part and the interesting part is what the
+  consolidation scans decline to read. It gathers the four facts that were previously only in code
+  comments: the covering index is why a cycle's cost tracks the number of memories rather than their
+  size; `significance_level_id` is an id into the shared registry, translated in Go so the scans
+  never join it; `link_significance` is denormalised into the row (and the index) so connectedness
+  can be priced without joining the link graph; and eviction, the one pass that leaves the index,
+  reads `length(body)` and never the content. It also states what `UsedBytes` excludes and why — the
+  record of what was evicted must never become the reason something else is evicted.
+- **A drift guard over that section's column table** (`db/schemadocs_test.go`). The table claims
+  both the row's shape and which six columns are in the covering index, so it is held to
+  `memoryStoredColumns` and `coveringIndexColumns` in both directions — a column added to the
+  schema, or one joining or leaving the index, now fails the build rather than leaving the page
+  describing a row the service stopped having. The same shape as the four existing documentation
+  guards.
+
 ## [0.36.1] - 2026-08-22
 
 ### Fixed
@@ -81,7 +114,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   reverses earlier behaviour, and the reasoning it rested on. The document is generated from a proto
   published with the source, so requiring a token protected a file anybody can fetch from the
   repository — while breaking every standard OpenAPI tool, none of which can authenticate the
-  *initial* spec fetch. Schema confidentiality was never the property being defended; a deployment
+  _initial_ spec fetch. Schema confidentiality was never the property being defended; a deployment
   that wants nothing there now says so with `gateway.openapi.enabled` instead.
 - **The OpenAPI document is now covered by the arrival rate limit,** and carries an `ETag` so a
   repeat fetch is a `304`. It is served without credentials and is the largest single response the
@@ -209,6 +242,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   plainly that there is no encryption at rest, no per-record ACLs, no mutual TLS on the listeners,
   and no separate audit log, each being a thing an operator might otherwise assume. And a
   **hardening pass** lists the ten steps in the order they matter.
+
 - **Associative recall reached the CLI and the console.** `hippo memory recall --include-linked` and
   `hippo memory search --include-linked`, and a checkbox on the console's search panel, return the
   memories one hop from each result — an associative recall that is never itself reinforced. The
@@ -356,7 +390,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   The skip now also covers a short page at a **positive** offset, which is the last page of every
   traversal: `OFFSET` skipped exactly that many matching rows to reach a window that then ran out, so
   the total is the offset plus what came back — exact, on the same terms as the offset-0 form. An
-  *empty* page at an offset is the one short page that must still count, since it bounds the total
+  _empty_ page at an offset is the one short page that must still count, since it bounds the total
   from above and a bound is not an answer.
 
   `Purge` and `Clear` now drop the cache rather than letting it lapse. Ordinary writes deliberately
@@ -436,7 +470,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 - **Peer discovery on a shared store, and the warnings it makes possible
   (`topology.heartbeatSeconds`).** A horizontally scaled deployment — one consolidator plus N
   replicas over a shared `postgres`/`mysql` database — could not name its own peers: the
-  single-consolidator advisory lock proves only that *somebody* holds it, not who, and nothing at
+  single-consolidator advisory lock proves only that _somebody_ holds it, not who, and nothing at
   all about how many replicas are attached. Each instance now registers one row in an `instances`
   table every `heartbeatSeconds` (default 30, `0` disables it), so every instance can report its
   peers with their version, their role, their capability flags (search index, summariser, embedder,
@@ -450,7 +484,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   logged at `WARN` when they appear and at `INFO` when they clear. **No instance is consolidating**:
   every one came up with `consolidation.enabled: false`, so nothing forgets, nothing evicts and the
   store simply grows, while each instance individually reports itself perfectly healthy — because it
-  is. There was no component to show as red for that, since the fault *is* the absent one. And the
+  is. There was no component to show as red for that, since the fault _is_ the absent one. And the
   reverse, **more than one instance consolidating**, which is what a circumvented lock or two tiers
   pointed at different databases looks like from inside. A stale row is never counted toward either,
   so a replacement correctly taking over is not reported as a duplicate.

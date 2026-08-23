@@ -275,6 +275,174 @@ still rank meaningfully against each other for capacity eviction (see
 [Capacity target](#capacity-target)) — nothing ties at exactly the same value the way a true
 step function would.
 
+## Choosing significance values
+
+Every one of the six methods has the same shape — significance divided by some function of age:
+
+$$ value = { S \over g(age) } $$
+
+That single fact decides how significance numbers should be chosen, and it is not obvious from the
+formulas. Comparing two memories compares $ S_1 / g(age_1) $ against $ S_2 / g(age_2) $, which is a
+comparison of **ratios**. Significance is therefore meaningful only in proportion: what separates two
+memories is how many times larger one significance is than the other, never how many units apart
+they are.
+
+Four consequences follow, and each one is a way to get this wrong.
+
+### Spread values by ratio, not evenly
+
+A four-tier scheme of 1,000 / 2,000 / 3,000 / 4,000 is not four evenly separated tiers. The step from
+1,000 to 2,000 doubles the significance; the step from 3,000 to 4,000 raises it by a third. In the
+store's eyes the first gap is more than twice the second, so the top tiers are the ones it can least
+tell apart — the opposite of what a tier scheme is usually for.
+
+For four tiers the store sees as evenly separated, use a geometric progression:
+
+| Intent    | Even spacing (wrong) | Geometric spacing |
+| --------- | -------------------- | ----------------- |
+| routine   | 1,000                | 1,000             |
+| notable   | 2,000                | 3,000             |
+| important | 3,000                | 10,000            |
+| critical  | 4,000                | 30,000            |
+
+The same applies to `SignificancePlacement` (`ABOVE`/`BELOW`/`BETWEEN`): the server opens a numeric
+gap between neighbours, and a gap that is generous low on the scale is negligible high on it.
+
+### The span you use sets how far significance can outweigh age
+
+What decides whether a significant-but-old memory outranks a trivial-but-fresh one is the **ratio
+between the largest and smallest significance in the store**, not the magnitude of the numbers. A
+store using 1 to 100 has a hundredfold span; one using 1,000 to 30,000 has a thirtyfold span, and so
+lets significance override _less_ age despite the larger-looking figures.
+
+Pick the span first — how much age should the most significant memory be able to outlive? — and
+then choose numbers that realise it.
+
+### The additive terms are in significance units, so they scale with your choice
+
+Effective significance is a sum before it is a numerator:
+
+$$ S = S_{event} + S_{memory} + w \times \ln(1 + L_{event}) + w \times \ln(1 + L_{memory}) + w_c \times c $$
+
+The event's significance, both damped link contributions ($w$ is
+`consolidation.linkSignificanceWeight`), and the recall boost ($w_c$ is
+`consolidation.recallSignificanceWeight`, $c$ the recall count) are all **added in the same units as
+the memory's own significance**. So the scale chosen above decides how much links and recall
+reinforcement matter at all:
+
+| At the default weights                | On a 1–100 scale          | On a 1,000–30,000 scale      |
+| ------------------------------------- | ------------------------- | ---------------------------- |
+| a link total of 10,000 adds ($w = 1$) | 9.2 — about 9% of the top | 9.2 — about 0.03% of the top |
+| 20 recalls add ($w_c = 1$)            | 20 — a fifth of the top   | 20 — about 0.07% of the top  |
+
+On the small scale, links and recall dominate; on the large one they are rounding error. Neither is
+wrong, but the weights have to be chosen **relative to the significance scale**, and the shipped
+defaults of 1.0 assume nothing about it. `ExplainConsolidation` reports `significance` and
+`effective_significance` side by side, which is the quickest way to see what each term is actually
+contributing.
+
+### The deletion threshold moves with the scale
+
+`consolidation.deletionThreshold` is compared against the value, so it is in significance-over-age
+units. Multiply every significance in the store by ten and every value scales by ten, so the same
+threshold now consolidates a tenth as readily. **Rescaling significance means rescaling the threshold
+by the same factor**, or the point at which things are forgotten moves without anyone having changed
+it.
+
+Capacity eviction is the exception: it only ranks candidates against each other and never against the
+threshold, so it is unaffected by a uniform rescale (see [Capacity target](#capacity-target)).
+
+## What a sleep cycle reads
+
+Everything above describes the value model. What it _costs_ to apply is a question about the shape
+of a `memories` row rather than about the maths: the decay inputs are kept deliberately apart from
+the payload, so a cycle that evaluates every memory in the store never touches the memories
+themselves.
+
+```mermaid
+flowchart LR
+  subgraph memories["One memories row"]
+    direction TB
+    inputs["Decay inputs — the covering index<br/>event_id · timestamp · significance_level_id<br/>time_recalled · recall_count · link_significance"]
+    flags["Flags and labels<br/>group_name · is_binary · is_summary · is_compressed"]
+    payload["Payload<br/>body (gzipped) · metadata"]
+  end
+
+  C["Consolidation passes<br/>every row, every cycle"] --> inputs
+  E["Eviction pass<br/>every row, when over capacity"] --> inputs
+  E -.->|"length() only"| payload
+  R["Client reads<br/>GetMemories · RecallMemories · SearchMemories"] --> inputs
+  R --> flags
+  R --> payload
+```
+
+| Column                  | Band        | Covering index |
+| ----------------------- | ----------- | -------------- |
+| `id`                    | key         | primary key    |
+| `event_id`              | decay input | yes            |
+| `timestamp`             | decay input | yes            |
+| `significance_level_id` | decay input | yes            |
+| `time_recalled`         | decay input | yes            |
+| `recall_count`          | decay input | yes            |
+| `link_significance`     | decay input | yes            |
+| `group_name`            | label       | no             |
+| `is_binary`             | flag        | no             |
+| `is_summary`            | flag        | no             |
+| `is_compressed`         | flag        | no             |
+| `body`                  | payload     | no             |
+| `metadata`              | payload     | no             |
+
+**The scans stay in the index.** The two consolidation passes over memories select those six
+columns plus the id, and `idx_memories_consolidation_v2` carries all six, so a pass over the whole
+store walks index entries and never visits a memory row. (The pass covering memories that _do_ have
+an event joins `events` for the event's half of the value, but takes nothing further from the
+memory itself.) That is why the cost of a cycle tracks the _number_ of memories and not their
+size: a store of 64 KB bodies scans no more slowly than one of 200-byte bodies. It is
+pinned by benchmark rather than by intention — a regression in `db/bench_test.go`'s scan benchmarks
+is how a scan that had started reading bodies would announce itself.
+
+**`significance_level_id` is an id, not a value.** Significance is stored indirectly, as a row in
+the shared `significance_levels` registry, so that a client can rank a new item _between_ two
+existing values without rewriting the (potentially millions of) item rows that already reference
+them. Reading a rank would therefore mean a join per row — so instead each pass loads the registry
+once, which is cheap because it holds one row per _distinct_ significance rather than one per
+memory, and translates ids to ranks in Go. The join never happens and the index stays covering.
+
+**`link_significance` is denormalised on purpose.** It is the summed significance of a memory's
+links, maintained in the row — and in the index — by the link graph, and it is the only reason a
+scan can price a memory's connectedness without joining `memory_links`. It is _recomputed_ for
+exactly the ids whose links changed rather than adjusted by deltas: one statement, self-correcting,
+and one place where every mutation funnels through. Adding it to the index cost about 5 % on the
+loose-memory scan, which is the trade being made — see [the link graph](performance.md#the-link-graph).
+
+**Eviction is the one pass that leaves the index**, because ranking by value is not sufficient
+there: it also needs the bytes each deletion would free, and it joins `events` for the event's half
+of the value. Even so it reads `length(body)` and the metadata's byte length, never the content —
+SQLite serves `length()` from the record header. The dry run
+([`PreviewConsolidation`](operations.md#previewing-what-would-be-forgotten)) does the same, and
+returns no bodies at all.
+
+**`group_name` is deliberately absent from the index**, and that has a visible consequence: a
+[forgotten-log](operations.md#what-was-forgotten--the-forgotten-log) entry records the memory's
+group, but the scan that decided to delete it never read that column, so the tombstone is captured
+by a separate primary-key lookup over the rows a batch is about to delete rather than by widening
+the scan. It is also why [group scoping](configuration.md#group-scoping) is applied on the RPC path
+and never by the sleep cycle: a consolidation pass that skipped a group would simply never forget
+it.
+
+**The payload band is what the capacity target counts, and it is stored compressed.** `UsedBytes`
+measures the _stored_ size of `body` and `metadata`, which is what makes
+[body compression](performance.md#body-compression) translate into retention rather than merely
+into a smaller file: the same `capacityBytes` holds proportionally more memories, short of the
+ratio itself because the estimate also charges a flat per-row allowance that does not compress.
+What that figure deliberately excludes is the forgotten log itself: on SQLite its pages are
+subtracted, and the server drivers count live memory, event and link rows explicitly. The record
+of what was evicted must never become the reason something else is evicted.
+
+The schema itself lives in `initSchema` (`db/db.go`, with the server dialects in `postgres.go` and
+`mysql.go`); the table above is a second copy of it, held to the real one — column for column, and
+index membership included — by `TestDocumentedRowMatchesTheSchema` in `db/schemadocs_test.go`.
+
 ## Capacity target
 
 Value-threshold forgetting alone cannot bound the store's size: when everything remaining is
