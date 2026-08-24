@@ -169,6 +169,13 @@ stores, identical memories, and only one of them told which matter. It is the qu
 the must-keep column above — search both for something old and significant, and it is in one and gone
 from the other. Both take the read-only `demo` / `demo` sign-in.
 
+Beside it, [observer.hippocampus-demo.com](https://observer.hippocampus-demo.com/ui) closes the loop
+the benchmark leaves open. Everything above **assumes** a deployment that can say something useful
+about a memory as it writes it; the observer is a small LLM agent actually doing that — reading a
+news feed, recalling what it already concluded, and rating each new observation on five bands that
+become its stored significance. It is the write-side judgement this benchmark models synthetically,
+being made for real, and being wrong about it sometimes.
+
 ## Reproducing
 
 ```sh
