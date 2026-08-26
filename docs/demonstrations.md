@@ -52,7 +52,6 @@ cycle happens in minutes. Every console takes a read-only sign-in: **`demo` / `d
 | [Observer console](https://observer.hippocampus-demo.com/ui)                                                        | An **LLM agent** reading the Bluesky feed, recalling what it already concluded, and rating how much each new observation matters. What it called trivia is gone in ten hours; what it called a landmark lasts a month. |
 | [Bluesky console](https://bluesky.hippocampus-demo.com/ui)                                                          | Verified news headlines arriving live, all equally significant; likes and reposts reinforce them, replies thread onto them, related coverage links them — the rest decays.                                             |
 | [Book console](https://book.hippocampus-demo.com/ui)                                                                | _Great Expectations_ re-read daily: episodic detail distilled into semantic summaries as it ages, recalled passages holding on.                                                                                        |
-| [Logs console](https://logs.hippocampus-demo.com/ui)                                                                | A continuous log stream against a byte capacity target — consolidation and eviction under real storage pressure.                                                                                                       |
 | [Grafana dashboard](https://grafana.hippocampus-demo.com)                                                           | Live telemetry from the stacks (the same dashboard the `observability` Compose profile provisions).                                                                                                                    |
 | [Config builder](https://config-builder.hippocampus-demo.com)                                                       | The [configuration wizard](config-wizard.md), hosted — build a `config.json` and its deployment artefacts.                                                                                                             |
 
@@ -118,6 +117,10 @@ path (read without recalling), or even inverting it — consolidate the most-ret
 unread. Hippocampus does not bake in a stance here; the demonstration just makes the tension visible.
 
 ### Logs — significance-driven forgetting
+
+> Run locally with the generator below. This one no longer has a hosted console: the agent pair
+> demonstrates the same property with a control to compare against, which a single logs stream
+> cannot.
 
 ```sh
 cd ../hippocampus-gen
