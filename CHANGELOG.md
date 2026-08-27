@@ -33,6 +33,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+## [0.38.2] - 2026-08-28
+
 ### Fixed
 
 - **The stale-document sweep no longer silently skips most of the index.** The enumeration sorts on
@@ -1688,7 +1690,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.38.1...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.38.2...HEAD
+[0.38.2]: https://github.com/fastbean-au/hippocampus/compare/v0.38.1...v0.38.2
 [0.38.1]: https://github.com/fastbean-au/hippocampus/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/fastbean-au/hippocampus/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/fastbean-au/hippocampus/compare/v0.36.1...v0.37.0
