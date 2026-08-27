@@ -26,7 +26,9 @@ func newMockDB(t *testing.T, drv driver) (*DB, sqlmock.Sqlmock) {
 
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	return &DB{sql: sqlDB, driver: drv}, mock
+	// With the search outbox on: every delete path writes to it, so scripting it is what the delete
+	// tests below already do, and a mock with it off would let a missing queueSearchDeletes pass.
+	return &DB{sql: sqlDB, driver: drv, searchOutbox: true}, mock
 }
 
 func expectationsMet(t *testing.T, mock sqlmock.Sqlmock) {

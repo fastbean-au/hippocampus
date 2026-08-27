@@ -309,6 +309,15 @@ func setStartupDefaults() {
 	viper.SetDefault("opensearch.queueSize", 1024)
 	viper.SetDefault("opensearch.reconcileIntervalSeconds", 3600)
 	viper.SetDefault("opensearch.reconcileBatchSize", 500)
+
+	// The reverse half of that sweep - removing index documents whose memory the store no longer
+	// holds - defaults ON. It is the backstop for every way a delete can fail to reach the index,
+	// and without it the divergence only ever grows: a live deployment was measured holding
+	// twenty-one documents per row the store actually had. The outbox caps below bound the queue
+	// when the index cannot keep up; reaching them is what hands work to this sweep.
+	viper.SetDefault("opensearch.staleSweep", true)
+	viper.SetDefault("opensearch.outbox.maxRows", 1000000)
+	viper.SetDefault("opensearch.outbox.maxAgeHours", 24)
 	viper.SetDefault("ollama.address", "http://localhost:11434")
 	viper.SetDefault("ollama.model", "llama3.2")
 

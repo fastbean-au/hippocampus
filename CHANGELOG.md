@@ -33,6 +33,51 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The OpenSearch index no longer accumulates stale documents under sustained write load.**
+  Propagation to OpenSearch is an asynchronous bounded queue that drops on overflow, and the two
+  kinds of dropped operation were not equivalent: a dropped *index* self-heals, because the memory
+  still exists for the reconciliation sweep to re-index, while a dropped *delete* was permanent —
+  nothing afterwards knew the document should have gone. Under any write rate above the queue's
+  drain rate the index therefore diverged from the store forever. Measured on a live deployment:
+  **4.38 million documents against 211,657 rows**, 20.7x, growing about 700 MB/day, with 25,056
+  operations dropped in thirty minutes. Enlarging `opensearch.queueSize` never fixed this — every
+  queue is finite, and the loss happens at the enqueue boundary, so the dropped operation never
+  entered the queue at all.
+
+  Deletions are now recorded in a **`search_outbox` table, in the same transaction as the memory
+  delete itself**, and drained by a worker on the consolidating instance: claim, apply
+  synchronously, then confirm, so a crash between the two replays the deletion rather than losing
+  it. There is no boundary at which it can be dropped. This is parity rather than a new guarantee —
+  the built-in SQLite FTS backend has always had it, its deletes being an `AFTER DELETE` trigger
+  inside the same transaction. Backpressure now shows up as table growth, bounded by
+  `opensearch.outbox.maxRows` / `opensearch.outbox.maxAgeHours` and visible as
+  `hippocampus.search.outbox_depth`, instead of as silent divergence.
+
+  The table is created on all three drivers and migrated in place on startup, so an existing store
+  needs no manual step. Nothing is queued unless OpenSearch is the active backend.
+
+### Added
+
+- **The reconciliation sweep now runs in both directions.** It has always healed *missing*
+  documents; it now also enumerates the index and removes documents whose memory the primary store
+  no longer holds — the job that previously required a manual `--backfill-search --reindex` that
+  nothing scheduled and no operator was told they needed. This is the backstop for whatever the
+  outbox above cannot see: deletions abandoned at the caps, divergence predating the outbox, and any
+  future bug that leaves a document behind. The two directions converge rather than fight, since the
+  stale pass removes only what the primary store says is gone.
+
+  New key `opensearch.staleSweep` (default `true`) turns the reverse half off. The pass shares
+  `opensearch.reconcileBatchSize` and the existing pacing, and enumerates on the mapped `timestamp`
+  field rather than `_id` — sorting on `_id` costs heap fielddata proportional to the index (~26
+  bytes per document), which is the wrong property for a sweep whose whole purpose is bounding
+  resource use.
+
+- Four instruments for the above: `hippocampus.search.outbox_depth`,
+  `hippocampus.search.outbox.applied`, `hippocampus.search.outbox.abandoned`, and
+  `hippocampus.search.stale_documents_removed`.
+
 ## [0.37.0] - 2026-08-24
 
 ### Fixed

@@ -29,11 +29,19 @@ var reconcilePageDelay = 200 * time.Millisecond
 // without coordinating with it: the worst case is briefly re-writing a document a concurrent write
 // also wrote, which converges.
 //
-// It heals only *missing* documents. A stale document (one the primary store no longer has) is
-// already harmless - SearchMemories re-verifies every hit against the primary store - and clearing
-// stale documents needs a full enumeration of the index, which stays the job of
-// --backfill-search --reindex. New gates this on consolidation.enabled, so the single consolidating
-// instance is the sole owner of the sweep and replicas never duplicate it.
+// It runs in both directions. The forward pass heals *missing* documents, which is all it ever did:
+// the memory is still there to re-index. The stale pass (staleSweep, in outbox.go) enumerates the
+// index and removes documents the primary store no longer holds - the direction that used to be the
+// job of --backfill-search --reindex, on the argument that a stale document is harmless because
+// SearchMemories re-verifies every hit against the primary store. Harmless to a caller, yes; not
+// harmless to the cluster, once we measured a live deployment holding twenty-one documents for every
+// row the store actually had. opensearch.staleSweep turns that half off.
+//
+// The two directions converge rather than fight: the stale pass removes only what the store says is
+// gone, and the forward pass re-indexes anything it should not have.
+//
+// New gates this on consolidation.enabled, so the single consolidating instance is the sole owner of
+// index maintenance and replicas never duplicate it.
 func (s *Server) reconcileLoop() {
 	defer close(s.reconcileStopped)
 
@@ -53,6 +61,14 @@ func (s *Server) reconcileLoop() {
 
 		case <-timer.C:
 			s.reconcileOnce()
+
+			// After the forward pass, not before: a memory re-indexed a moment ago is one the stale
+			// pass would otherwise have to reason about, and this ordering means it never sees a
+			// document mid-heal.
+			if s.staleSweepEnabled {
+				s.staleSweep(context.Background())
+			}
+
 			timer.Reset(s.reconcileInterval)
 		}
 	}

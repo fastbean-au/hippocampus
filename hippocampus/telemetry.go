@@ -47,6 +47,11 @@ type telemetry struct {
 	tombstones        metric.Int64Gauge
 	tombstonesDeleted metric.Int64Counter
 
+	searchOutboxDepth     metric.Int64Gauge
+	searchOutboxApplied   metric.Int64Counter
+	searchOutboxAbandoned metric.Int64Counter
+	staleDocumentsRemoved metric.Int64Counter
+
 	summarisationCandidates metric.Int64Gauge
 	memoriesSummarised      metric.Int64Counter
 	summariesCreated        metric.Int64Counter
@@ -97,6 +102,16 @@ func newTelemetry() *telemetry {
 		// question the log itself raises - is it growing without bound, and is anything trimming it.
 		tombstones:        newInt64Gauge(meter, "hippocampus.tombstones", "Records held by the forgotten log, measured each sleep cycle while it is enabled."),
 		tombstonesDeleted: newInt64Counter(meter, "hippocampus.tombstones.deleted", "Forgotten-log records removed, by whether the removal was a manual request or the configured caps."),
+
+		// The search index's delete queue. Depth is the one to alert on: it is the backpressure the
+		// outbox exists to make visible, since the failure it replaced - an index operation dropped
+		// at a full in-memory queue - had no signal at all. Abandoned is depth's escalation, meaning
+		// the caps have started discarding deletions the index never took, leaving the difference
+		// for the reconciliation sweep to find.
+		searchOutboxDepth:     newInt64Gauge(meter, "hippocampus.search.outbox_depth", "Index deletions recorded but not yet applied to the search index. Sustained growth means the index is not keeping up, or is unreachable."),
+		searchOutboxApplied:   newInt64Counter(meter, "hippocampus.search.outbox.applied", "Index deletions drained from the outbox and accepted by the search index."),
+		searchOutboxAbandoned: newInt64Counter(meter, "hippocampus.search.outbox.abandoned", "Queued index deletions discarded by the outbox caps before the index accepted them, leaving them to the reconciliation sweep."),
+		staleDocumentsRemoved: newInt64Counter(meter, "hippocampus.search.stale_documents_removed", "Search-index documents removed by the reconciliation sweep because the primary store no longer holds the memory."),
 
 		summarisationCandidates: newInt64Gauge(meter, "hippocampus.summarisation_candidates", "Number of events identified as summarisation candidates by the most recent sleep cycle."),
 		memoriesSummarised:      newInt64Counter(meter, "hippocampus.memories.summarised", "Number of memories replaced by a summary memory (ReplaceMemoriesWithSummary or SummariseMemories)."),

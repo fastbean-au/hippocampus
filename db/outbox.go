@@ -129,7 +129,7 @@ func (d *DB) initSearchOutbox() error {
 // prevent. On Postgres it could not be best-effort anyway: a failed statement aborts the whole
 // transaction.
 func (d *DB) queueSearchDeletes(tx *sql.Tx, ids []string) error {
-	if len(ids) == 0 {
+	if !d.searchOutbox || len(ids) == 0 {
 
 		return nil
 	}
@@ -177,6 +177,11 @@ type SearchOutboxEntry struct {
 // is what makes at-least-once the right delivery guarantee here.
 func (d *DB) ClaimSearchDeletes(ctx context.Context, limit int) ([]SearchOutboxEntry, error) {
 	log.Trace("func() db.ClaimSearchDeletes")
+
+	if !d.searchOutbox {
+
+		return nil, nil
+	}
 
 	if limit <= 0 {
 		limit = outboxClaimLimit
@@ -259,6 +264,11 @@ func (d *DB) ConfirmSearchDeletes(ctx context.Context, seqs []int64) error {
 func (d *DB) PruneSearchOutbox(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error) {
 	log.Trace("func() db.PruneSearchOutbox")
 
+	if !d.searchOutbox {
+
+		return 0, nil
+	}
+
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
@@ -308,7 +318,15 @@ func (d *DB) PruneSearchOutbox(ctx context.Context, maxAge time.Duration, maxRow
 }
 
 // SearchOutboxDepth is how many deletions are waiting, for the metric and for tests.
+//
+// Gated like the rest: a store not using the outbox reports nothing waiting, which is the truth, and
+// the read-only opens (which skip initSchema) never query a table they cannot be sure exists.
 func (d *DB) SearchOutboxDepth(ctx context.Context) (int64, error) {
+	if !d.searchOutbox {
+
+		return 0, nil
+	}
+
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
@@ -320,4 +338,50 @@ func (d *DB) SearchOutboxDepth(ctx context.Context) (int64, error) {
 	}
 
 	return n, nil
+}
+
+// outboxRowBytes is the flat per-row allowance searchOutboxBytes charges the queue, in the mould of
+// tombstoneRowBytes: an id, a timestamp, a surrogate key and their page overhead. A rough figure is
+// the right kind of figure here - it is subtracted from a whole-file measurement to keep the queue
+// from influencing eviction, not reported to anybody.
+const outboxRowBytes = 96
+
+// searchOutboxBytes estimates what the queue occupies, for UsedBytes to subtract on SQLite.
+//
+// A count times an allowance rather than a measurement, for the reason the forgotten log's
+// equivalent gives: this runs inside the capacity check on every sleep cycle, and a scan there would
+// put the cost of the queue on the path that exists to bound the store.
+func (d *DB) searchOutboxBytes(ctx context.Context) int64 {
+	if !d.searchOutbox {
+
+		return 0
+	}
+
+	var count int64
+
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+searchOutboxTable).Scan(&count); err != nil {
+		log.Warnf("failed to measure the search outbox, counting it as stored bytes: %s", err.Error())
+
+		return 0
+	}
+
+	return count * outboxRowBytes
+}
+
+// SetSearchOutbox enables the transactional outbox for search-index deletions.
+//
+// Called once at startup from main, before the server begins serving, and only when the active
+// search backend actually needs draining - which today means OpenSearch. It is deliberately not
+// derived inside the db package: the storage layer knows nothing about which backend is configured,
+// and the two that do not need it need it for different reasons (the SQLite FTS index deletes
+// transactionally through a trigger; the no-op backend holds nothing to delete).
+//
+// Off, nothing is queued and nothing is drained - so enabling it on an existing store starts
+// recording from that point, and disabling it stops both the recording and the trimming. Whatever
+// either transition leaves behind is the reconciliation sweep's to find, which is exactly why that
+// sweep is the backstop rather than the mechanism.
+func (d *DB) SetSearchOutbox(enabled bool) {
+	log.Tracef("func() db.SetSearchOutbox(%t)", enabled)
+
+	d.searchOutbox = enabled
 }

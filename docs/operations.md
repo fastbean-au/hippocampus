@@ -745,7 +745,7 @@ the last hour. Keep that window comfortably above `sleep.periodSeconds`. It asks
 (`absent_over_time`) rather than through an alerting engine's no-data policy, so Prometheus and
 Grafana answer it identically.
 
-The same sixteen rules are provisioned into the bundled Grafana below, so the demo stack alerts as
+The same eighteen rules are provisioned into the bundled Grafana below, so the demo stack alerts as
 well as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
 provisions a contact point — where alerts should be delivered is deployment-specific.
 
@@ -842,6 +842,10 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.search.indexed`           | counter       | `success`                             | Documents written to the OpenSearch index                                   |
 | `hippocampus.search.deleted`           | counter       | `success`                             | Deletes applied to it                                                       |
 | `hippocampus.search.dropped`           | counter       | `op`                                  | Index operations abandoned — queue full, or every retry failed              |
+| `hippocampus.search.outbox_depth`      | gauge         |                                       | Index deletions recorded but not yet applied — the backpressure signal      |
+| `hippocampus.search.outbox.applied`    | counter       |                                       | Queued deletions drained and accepted by the index                          |
+| `hippocampus.search.outbox.abandoned`  | counter       |                                       | Queued deletions discarded at the caps, left to the stale sweep             |
+| `hippocampus.search.stale_documents_removed` | counter |                                     | Documents the sweep removed because the store no longer holds the memory    |
 | `hippocampus.search.queries`           | counter       | `success`                             | Content searches served by it                                               |
 
 Three things the shape of this list says. The **four `search.*` counters exist only under

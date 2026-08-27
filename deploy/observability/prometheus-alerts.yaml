@@ -184,6 +184,34 @@ groups:
           description: "Index operations are being dropped - the apply queue is full, or every retry against the cluster failed - so the search index is going sparse and SearchMemories will miss memories that exist in the store. Check the OpenSearch cluster's health first. The periodic reconciliation sweep heals missing documents; --backfill-search --reindex rebuilds the index outright."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
 
+      # The delete outbox backing up. Deletions are durable once recorded, so this is backlog rather
+      # than loss - but the index holds documents for forgotten memories until it drains, and a
+      # backlog that never drains eventually reaches the caps below.
+      - alert: HippocampusSearchOutboxBacklog
+        expr: max(hippocampus_search_outbox_depth) > 10000
+        for: 30m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus cannot apply index deletions as fast as it records them"
+          description: "Index deletions are being recorded in the outbox faster than they can be applied to the search index, so the index is holding documents for memories the store has already forgotten. Unlike a dropped index operation this is durable - nothing is lost, and the queue drains once the cluster keeps up - but the backlog costs disk and dilutes bm25 ranking until it does. Check the OpenSearch cluster's health. If the backlog reaches opensearch.outbox.maxRows or maxAgeHours the oldest entries are discarded to the reconciliation sweep."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # The escalation of the above: the caps have started discarding deletions the index never
+      # took. This is the one condition here that leaves the index knowingly wrong until a sweep
+      # finds it.
+      - alert: HippocampusSearchOutboxAbandoning
+        expr: sum(rate(hippocampus_search_outbox_abandoned_total[15m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is discarding queued search index deletions"
+          description: "The delete outbox has hit its caps and is discarding queued index deletions before the cluster accepted them. Nothing is lost from the store, but the search index now holds documents whose memories are gone, and only the stale half of the reconciliation sweep will remove them - on its own schedule, which may be an hour. This means the index has been unable to keep up for long enough to exhaust opensearch.outbox.maxAgeHours or maxRows: treat it as an OpenSearch outage, not as tuning."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
       # Any non-zero value here is a bug: the request got Internal/500 and the process survived,
       # but a handler reached a state it was not written to reach.
       - alert: HippocampusPanicsRecovered

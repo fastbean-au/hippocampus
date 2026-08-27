@@ -12,7 +12,7 @@ import (
 // deleted leaves a durable record that its index document must go, committed with the delete
 // itself rather than handed to a queue that may drop it.
 func TestDeletesAreQueuedTransactionally(t *testing.T) {
-	database := newTestDB(t)
+	database := newOutboxTestDB(t)
 	ctx := context.Background()
 
 	ids := []string{"outbox-a", "outbox-b", "outbox-c"}
@@ -68,7 +68,7 @@ func TestDeletesAreQueuedTransactionally(t *testing.T) {
 // TestClaimDoesNotRemove pins the at-least-once contract: a claimed row survives until the index
 // has actually accepted the deletion, so a crash mid-pass replays the work instead of losing it.
 func TestClaimDoesNotRemove(t *testing.T) {
-	database := newTestDB(t)
+	database := newOutboxTestDB(t)
 	ctx := context.Background()
 
 	if _, err := database.CreateMemory(ctx, types.Memory{
@@ -106,7 +106,7 @@ func TestClaimDoesNotRemove(t *testing.T) {
 // that the queue would otherwise grow without bound. The abandoned deletions become the
 // reconciliation sweep's problem, which is what the sweep is for.
 func TestPruneBoundsTheOutbox(t *testing.T) {
-	database := newTestDB(t)
+	database := newOutboxTestDB(t)
 	ctx := context.Background()
 
 	for i := 0; i < 6; i++ {
@@ -156,7 +156,7 @@ func TestPruneBoundsTheOutbox(t *testing.T) {
 
 // TestAgePruneAbandonsStaleQueuedDeletes covers the other cap.
 func TestAgePruneAbandonsStaleQueuedDeletes(t *testing.T) {
-	database := newTestDB(t)
+	database := newOutboxTestDB(t)
 	ctx := context.Background()
 
 	if _, err := database.CreateMemory(ctx, types.Memory{
@@ -181,5 +181,47 @@ func TestAgePruneAbandonsStaleQueuedDeletes(t *testing.T) {
 
 	if n, _ := database.SearchOutboxDepth(ctx); n != 0 {
 		t.Errorf("after the age cap: got %d, want 0", n)
+	}
+}
+
+// newOutboxTestDB is newTestDB with the outbox turned on, which is what main does when the active
+// search backend is one whose deletes can be lost.
+func newOutboxTestDB(t *testing.T) *DB {
+	t.Helper()
+
+	database := newTestDB(t)
+	database.SetSearchOutbox(true)
+
+	return database
+}
+
+// TestNothingIsQueuedWithoutTheOutbox is the other half of the gate, and it is not merely an
+// optimisation being pinned: without it every SQLite deployment - where index deletes are already
+// transactional, through an AFTER DELETE trigger - would write a row per forgotten memory into a
+// table with nothing running to drain it, and a sleep cycle deleting ten thousand memories would
+// leave ten thousand rows behind forever.
+func TestNothingIsQueuedWithoutTheOutbox(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	if _, err := database.CreateMemory(ctx, types.Memory{
+		Id: "ungated", Body: "queued", Significance: 1000, TimeStamp: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if _, err := database.DeleteMemories(ctx, []string{"ungated"}); err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	// Read the table directly: SearchOutboxDepth is itself gated, so asking it would prove nothing.
+	var count int64
+
+	if err := database.queryRow(ctx, `SELECT COUNT(*) FROM `+searchOutboxTable).Scan(&count); err != nil {
+		t.Fatalf("counting the outbox: %s", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("a store with the outbox disabled queued %d deletions; it must queue none", count)
 	}
 }

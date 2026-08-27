@@ -1489,6 +1489,11 @@ one `reconcileIntervalSeconds`, but backfill is instant.
     "queueSize": 1024,
     "reconcileIntervalSeconds": 3600,
     "reconcileBatchSize": 500,
+    "staleSweep": true,
+    "outbox": {
+        "maxRows": 1000000,
+        "maxAgeHours": 24
+    },
     "applyTimeoutSeconds": 0,
     "applyMaxAttempts": 0,
     "applyRetryBaseBackoffMillis": 0,
@@ -1593,10 +1598,49 @@ it only ever _adds back_ what was missing). It is controlled by two keys:
 
 The sweep runs only on the instance with `consolidation.enabled: true` (the single owner of index
 maintenance), so replicas never duplicate it, and it starts a short while after launch so a sparse
-index is healed soon after a restart rather than a whole interval later. It heals only _missing_
-documents: a stale document (one the primary store no longer holds) is already harmless — search
-results are re-verified against the primary store — and removing stale documents needs a full
-enumeration of the index, which remains the job of `--backfill-search --reindex` below.
+index is healed soon after a restart rather than a whole interval later.
+
+It runs in **both directions**. The forward pass above heals _missing_ documents. The **stale pass**
+enumerates the index and removes documents whose memory the primary store no longer holds:
+
+- `opensearch.staleSweep` (default `true`) — set `false` to run the forward pass only.
+
+The stale pass shares `reconcileBatchSize` and the same pacing, and removes only what the primary
+store says is gone — so the two directions converge rather than fight (the forward pass re-indexes
+anything the stale pass should not have removed). Turning it off leaves stale documents to
+`--backfill-search --reindex`, as before.
+
+#### The delete outbox
+
+A stale document was once merely wasted space: search results are re-verified against the primary
+store, so a caller never sees one. That stops being true at volume. Propagation to OpenSearch is a
+bounded queue that **drops on overflow**, and while a dropped _index_ operation is self-correcting —
+the memory still exists, so the sweep above re-indexes it — a dropped _delete_ is not, because
+nothing afterwards knows the document should have gone. Under any sustained write rate above the
+queue's drain rate the index diverges permanently. A live deployment was measured holding twenty-one
+documents for every row the store actually had.
+
+Enlarging `queueSize` does not fix it: every queue is finite, and the loss happens at the enqueue
+boundary, so the dropped operation never entered the queue to be made durable.
+
+So a deletion is recorded in the **same transaction as the memory delete itself**, in a
+`search_outbox` table, and a worker on the consolidating instance drains it — claiming rows, applying
+the deletions synchronously (bypassing the lossy queue), and only then removing them. A crash between
+the two replays the deletion rather than losing it; re-deleting a document that is already gone is a
+no-op. This is not a new guarantee for the product so much as parity: the built-in SQLite FTS backend
+has always had it, because its deletes are an `AFTER DELETE` trigger inside the same transaction.
+
+The queue is enabled automatically whenever OpenSearch is the active backend, and bounded by two
+keys:
+
+- `opensearch.outbox.maxRows` (default `1000000`) — the newest N queued deletions are kept.
+- `opensearch.outbox.maxAgeHours` (default `24`) — queued deletions older than this are discarded.
+  Hours rather than days, deliberately: this queue is meant to drain in seconds, so a day of backlog
+  is already an outage.
+
+Reaching either cap logs a warning and increments `hippocampus.search.outbox.abandoned`; what is
+discarded becomes the stale pass's job to find. Watch `hippocampus.search.outbox_depth` — sustained
+growth is the index failing to keep up, which the old in-memory queue had no way to report at all.
 
 #### Backfill and reindex
 

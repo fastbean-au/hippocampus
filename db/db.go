@@ -113,6 +113,13 @@ type DB struct {
 	// on the read-only opens for the same reason tombstoneTable is.
 	instanceTable bool
 
+	// searchOutbox records that the transactional search-delete outbox is in use (see outbox.go):
+	// the table exists AND a backend needs draining. Off by default, and off is not merely a
+	// disabled feature - the SQLite FTS backend's deletes are already transactional via an
+	// AFTER DELETE trigger, so queueing for it would be pure write cost with nothing to drain the
+	// rows. Set once at startup via SetSearchOutbox, before serving, like the compression policy.
+	searchOutbox bool
+
 	// compression is the write-side memory-body compression policy (see compress.go). The zero
 	// value stores every body verbatim. It governs writes only — reads follow each row's own
 	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
@@ -648,6 +655,17 @@ type Store interface {
 	ListInstances(ctx context.Context) ([]Instance, error)
 	DeregisterInstance(ctx context.Context, id string) error
 
+	// The search outbox (see outbox.go): the deletions the search index still owes, recorded in the
+	// same transaction as the memory's own delete. Propagation to the index is asynchronous and
+	// best-effort, and a dropped *index* is self-correcting (the memory is still there for the
+	// reconciliation sweep to re-index) while a dropped *delete* is not - nothing afterwards knows
+	// the document should have gone. Claim does not consume: a row is removed only once the index
+	// has confirmed, so a crash between the two replays the deletion rather than losing it.
+	ClaimSearchDeletes(ctx context.Context, limit int) ([]SearchOutboxEntry, error)
+	ConfirmSearchDeletes(ctx context.Context, seqs []int64) error
+	PruneSearchOutbox(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error)
+	SearchOutboxDepth(ctx context.Context) (int64, error)
+
 	UsedBytes(ctx context.Context) (int64, error)
 	WALBytes() (int64, error)
 	Preserve(ctx context.Context) error
@@ -1053,10 +1071,12 @@ func (d *DB) UsedBytes(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 
-	// The forgotten log is excluded: page accounting measures the whole file, so counting it would
-	// let the record of what was evicted drive the eviction of live memories. The server drivers
-	// count live memory/event/link rows explicitly and so exclude it already. See tombstoneBytes.
-	used := (pageCount-freelistCount)*pageSize - d.tombstoneBytes(ctx)
+	// The forgotten log and the search outbox are excluded: page accounting measures the whole file,
+	// so counting either would let the record of what was deleted drive the eviction of live
+	// memories - and the outbox would be the sharper version of that, since it grows precisely when
+	// deletions are backing up. The server drivers count live memory/event/link rows explicitly and
+	// so exclude both already. See tombstoneBytes and searchOutboxBytes.
+	used := (pageCount-freelistCount)*pageSize - d.tombstoneBytes(ctx) - d.searchOutboxBytes(ctx)
 
 	return max(used, 0), nil
 }
@@ -1213,6 +1233,18 @@ func (d *DB) Purge(ctx context.Context) error {
 	if d.tombstoneTable {
 		if _, err := tx.Exec(`DELETE FROM ` + tombstonesTable); err != nil {
 			log.Errorf("failed to purge - deleting the forgotten log: %s", err.Error())
+			_ = tx.Rollback()
+
+			return err
+		}
+	}
+
+	// So does the outbox, for the plainer reason that a queued deletion is only meaningful against a
+	// store that still has the rest: Purge clears the search index wholesale, so every deletion the
+	// queue was holding has already happened.
+	if d.searchOutbox {
+		if _, err := tx.Exec(`DELETE FROM ` + searchOutboxTable); err != nil {
+			log.Errorf("failed to purge - emptying the search outbox: %s", err.Error())
 			_ = tx.Rollback()
 
 			return err

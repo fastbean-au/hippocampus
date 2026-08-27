@@ -301,6 +301,22 @@ type Server struct {
 	stopReconcile      chan struct{}
 	reconcileStopped   chan struct{}
 
+	// staleSweepEnabled makes that sweep bidirectional: as well as re-indexing memories whose
+	// document is missing, it enumerates the index and removes documents the primary store no
+	// longer has. See outbox.go for why the forward direction alone was not enough.
+	staleSweepEnabled bool
+
+	// The transactional outbox's drain (outbox.go): the worker that applies the index deletions
+	// recorded alongside the memory deletes that caused them, and the caps that bound the queue
+	// when it cannot. stopOutbox / outboxStopped coordinate its shutdown exactly as
+	// stopReconcile / reconcileStopped do, and are nil when nothing is draining - the search backend
+	// deletes transactionally already (SQLite's FTS trigger), holds nothing to delete (the no-op
+	// backend), or this is a replica.
+	outboxMaxAge  time.Duration
+	outboxMaxRows int64
+	stopOutbox    chan struct{}
+	outboxStopped chan struct{}
+
 	// objects is the optional S3 object store backing the Export/Import RPCs; nil (s3.bucket not
 	// configured) makes both fail with FAILED_PRECONDITION.
 	objects archive.ObjectStore
@@ -535,6 +551,7 @@ func New(deps Dependencies) *Server {
 	s.autoSleep(reset, period)
 
 	s.startReconcile(deps.Search)
+	s.startOutboxDrain(deps.Search)
 
 	// Built last, so the specs describe the server as it finally is - the search backend in
 	// particular is only decided by the dependency that was handed in, and the reconcile interval is
@@ -559,6 +576,7 @@ func New(deps Dependencies) *Server {
 func (s *Server) startReconcile(searchIndex search.Index) {
 	s.reconcileInterval = time.Duration(viper.GetInt("opensearch.reconcileIntervalSeconds")) * time.Second
 	s.reconcileBatchSize = viper.GetInt("opensearch.reconcileBatchSize")
+	s.staleSweepEnabled = viper.GetBool("opensearch.staleSweep")
 
 	if s.reconcileBatchSize <= 0 {
 		s.reconcileBatchSize = defaultReconcileBatchSize
@@ -589,6 +607,11 @@ func (s *Server) Stop() {
 		s.stopInstanceHeartbeat()
 
 		s.stopTopologyProber()
+
+		if s.stopOutbox != nil {
+			close(s.stopOutbox)
+			<-s.outboxStopped
+		}
 
 		if s.stopReconcile != nil {
 			close(s.stopReconcile)

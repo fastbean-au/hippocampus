@@ -267,7 +267,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same sixteen rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same eighteen rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -284,7 +284,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the sixteen are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the eighteen are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
   broker bridges, the ingestor) and read instruments declared in `integrations/*`, which
   `metricSourceFiles` reaches as FILES rather than imports — the root module deliberately does not
@@ -770,8 +770,37 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
     instance runs a periodic reconciliation sweep (`hippocampus/reconcile.go`, gated on
     `consolidation.enabled` + a positive `opensearch.reconcileIntervalSeconds`, started/stopped alongside
     `autoSleep`) that pages the primary store via `db.GetMemoriesPage` and re-indexes non-binary
-    memories through the normal async `IndexMemory`, healing missing documents (idempotent; heals
-    missing docs only — stale-doc removal stays a `--reindex` job). The manual one is the
+    memories through the normal async `IndexMemory`, healing missing documents (idempotent). Since
+    item 84 that sweep runs in **both directions**: `staleSweep` (`hippocampus/outbox.go`,
+    `opensearch.staleSweep`, on by default) enumerates the index and removes documents the primary
+    store no longer holds. Three things carry the reverse pass. (1) It exists because the forward
+    direction alone made the system **self-heal one way and drop both**: a dropped index operation is
+    recovered by the sweep, a dropped delete was permanent, and the divergence only ever grew — 4.38M
+    documents against 211,657 rows on a live deployment. (2) It enumerates on the mapped `timestamp`,
+    **not `_id`**, because `_id` has no doc values and sorting on it loads the field as fielddata:
+    measured at 26 bytes per document, which is heap cost proportional to the very thing the sweep
+    exists to bound. (3) A timestamp is not unique, and the cursor cannot be a plain `search_after`
+    key, because **the caller deletes what it enumerates** and every removal shifts what follows. So a
+    page normally ends on a timestamp **boundary** (the trailing group sharing the final instant is
+    held back), which nothing the caller deletes can move; only a page wholly inside one instant is
+    `Partial`, and there the caller subtracts its own deletions from the offset. The timestamp is read
+    from a **doc-value field, never the sort value** — the SDK decodes sort values into `[]any`, and a
+    UnixNano through float64 rounds by up to 256ns, upward as often as not, which steps the cursor
+    past documents nothing comes back for.
+    The **delete outbox** is the other half, and the mechanism to the sweep's backstop: `db/outbox.go`
+    records one `search_outbox` row per deleted memory **inside the delete's own transaction** (the
+    four chokepoints `pruneLinks` already funnels through), and a drain worker on the consolidating
+    instance claims → `DeleteMemoriesSync` (synchronous, bypassing the lossy queue) → confirms →
+    prunes. Claim does not consume, so a crash mid-pass replays rather than loses; re-deleting an
+    absent document is a no-op, which is what makes at-least-once right here. Four things to preserve:
+    `SetSearchOutbox` gates the **recording and the drain together** (a store queueing deletions
+    nothing drains is worse than one queueing none — a sleep cycle deleting 10k memories would leave
+    10k rows forever); the outbox is **excluded from SQLite's `UsedBytes`**, the tombstone lesson in
+    sharper form, since it grows precisely when deletions are backing up and would otherwise evict
+    live memories to make room for itself; it is **deletes only**, because a lost index operation
+    self-heals and a row per write is real cost on the write path; and it exists only for OpenSearch —
+    the SQLite FTS backend's deletes are an `AFTER DELETE` trigger and so were always transactional,
+    which makes this parity rather than a new guarantee. The manual one is the
     `--backfill-search` CLI mode (`backfill.go`), which rebuilds it from the primary store via synchronous
     `IndexMemorySync`/`RecreateIndex` calls that bypass the queue (safe: the tool has no worker or
     live writes of its own) and `db.GetIndexableMemoriesPage` keyset pagination — with `--reindex`

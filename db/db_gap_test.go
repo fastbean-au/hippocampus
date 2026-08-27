@@ -199,6 +199,7 @@ func TestPurge_CommitError(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM search_outbox`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit().WillReturnError(errors.New("boom"))
 
 	if err := d.Purge(context.Background()); err == nil {
@@ -217,6 +218,7 @@ func TestPurge_FinalPreserveError(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM memories`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM search_outbox`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	mock.ExpectExec(`PRAGMA incremental_vacuum`).WillReturnError(errors.New("boom"))
 
