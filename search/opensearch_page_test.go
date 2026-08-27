@@ -163,6 +163,18 @@ func TestBuildIndexPage_PropagatesAnUnreadableTimestamp(t *testing.T) {
 // timestamp changes what the cursor means, dropping docvalue_fields sends the timestamp back through
 // the SDK's lossy float64 sort value, and a non-inclusive range would skip the documents sharing the
 // boundary instant - which is the whole reason the offset exists.
+//
+// track_total_hits is the fourth, and it is the one that must not be "tidied away" as a pointless
+// cost. It disables OpenSearch's numeric-sort early termination, without which a sorted page is not
+// the true lowest-N but a non-exhaustive sample spread across the range - so the cursor advances past
+// documents that were never looked at. On the production index that behaviour terminated a full walk
+// after 208,023 documents of 2,086,990, and it did so silently.
+//
+// This is a SHAPE assertion and not a behavioural one, deliberately, because the behaviour is not
+// reproducible at any size a test can afford: the optimisation did not engage at 60,000 documents,
+// nor at 400,000, and it depends on segment structure as well as size - the same build swept one
+// 2M-document index exhaustively and skipped 90% of its twin. There is no honest way to catch this
+// with a test, so what is pinned here is the decision.
 func TestEnumerateIdsPage_QueryShape(t *testing.T) {
 	transport := &fakeTransport{}
 	idx := newTestOpenSearch(t, transport, 4)
@@ -187,6 +199,7 @@ func TestEnumerateIdsPage_QueryShape(t *testing.T) {
 
 	for _, want := range []string{
 		`"docvalue_fields":["timestamp"]`,
+		`"track_total_hits":true`,
 		`"sort":[{"timestamp":"asc"}]`,
 		`"gte":4242`,
 		`"from":7`,

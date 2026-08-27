@@ -33,6 +33,26 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The stale-document sweep no longer silently skips most of the index.** The enumeration sorts on
+  the mapped `timestamp`, and OpenSearch early-terminates a numeric sort using the field's point
+  index — so the page it returns is *not* the true lowest-N but a non-exhaustive sample spread across
+  the range. The cursor then advances past the highest timestamp it saw, and everything the
+  optimisation skipped is skipped by the sweep too, reported as a completed pass. Measured on the
+  production index: one page of 500 spanned a window holding 1,472,040 documents, and a full walk
+  terminated after 208,023 of 2,086,990.
+
+  The query now sets `track_total_hits`, the documented control for that optimisation. It costs
+  ~66ms per page against ~8ms, which is free in practice since the sweep already paces itself at
+  200ms between pages.
+
+  Worth knowing: the fault is **not deterministic**. It depends on segment structure as well as index
+  size — the same build swept one 2M-document index exhaustively while skipping 90% of its twin — so
+  a sweep appearing to work is not evidence that it does. It did not reproduce at 60,000 documents
+  nor at 400,000, so there is no test for it at any size a suite can afford; the query shape is
+  pinned instead, and the reasoning recorded with it.
+
 ## [0.38.1] - 2026-08-28
 
 ### Fixed

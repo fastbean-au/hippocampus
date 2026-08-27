@@ -133,6 +133,22 @@ func (o *OpenSearch) EnumerateIdsPage(ctx context.Context, cursor IndexCursor, s
 		"from":    cursor.Offset,
 		"_source": false,
 		"sort":    []any{map[string]any{"timestamp": "asc"}},
+
+		// NOT an optimisation, and not optional: without it this walk silently skips documents.
+		//
+		// Sorting on a numeric field lets OpenSearch early-terminate collection using the field's
+		// point index, and the page it then returns is NOT the true lowest-N - it is a
+		// non-exhaustive sample spread across the range. The cursor advances past the highest
+		// timestamp it saw, so everything the optimisation skipped is skipped by the sweep too, and
+		// nothing reports it. Measured on a 2M-document index: one page of 500 spanned a window
+		// holding 1,472,040 documents, and a full walk terminated after 208,023 of 2,086,990.
+		//
+		// track_total_hits: true disables that optimisation, which is the documented control for it.
+		// Wrapping the range in a bool.filter also happened to avoid it, but that is optimiser
+		// behaviour rather than a contract, and this walk's correctness cannot rest on it. The cost
+		// is real (~66ms against ~8ms per page on that index) and irrelevant here, since the sweep
+		// paces itself at reconcilePageDelay between pages anyway.
+		"track_total_hits": true,
 		"query": map[string]any{
 			"range": map[string]any{
 				"timestamp": map[string]any{"gte": cursor.Timestamp},
