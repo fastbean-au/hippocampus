@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 	log "github.com/sirupsen/logrus"
@@ -30,7 +31,14 @@ func (o *OpenSearch) DeleteMemoriesSync(ctx context.Context, ids []string) error
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, o.applyTimeout)
+	// applyTimeout bounds ONE round trip, so the budget has to scale with how many the batch will
+	// actually take. Giving a five-hundred-id batch a single operation's deadline is what made the
+	// stale sweep abandon and restart from the top of the index rather than converge, back when a
+	// batch was N sequential deletes; deleteIds is one request per chunk now, but the deadline still
+	// has to cover every chunk or a large drain reintroduces the same failure.
+	chunks := (len(ids) + bulkDeleteChunk - 1) / bulkDeleteChunk
+
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(chunks)*o.applyTimeout)
 	defer cancel()
 
 	if !o.indexReady.Load() {

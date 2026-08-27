@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,13 +21,22 @@ const blueskyMemoryId = "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.pos
 // which is the only form that shows whether a document id survived into a single path segment.
 // fakeTransport deliberately records the decoded url.URL.Path, which cannot tell the two apart.
 type pathCapturingTransport struct {
-	mu    sync.Mutex
-	paths []string
+	mu     sync.Mutex
+	paths  []string
+	bodies []string
 }
 
 func (p *pathCapturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body := ""
+
+	if req.Body != nil {
+		b, _ := io.ReadAll(req.Body)
+		body = string(b)
+	}
+
 	p.mu.Lock()
 	p.paths = append(p.paths, req.URL.EscapedPath())
+	p.bodies = append(p.bodies, body)
 	p.mu.Unlock()
 
 	return &http.Response{
@@ -35,6 +45,20 @@ func (p *pathCapturingTransport) RoundTrip(req *http.Request) (*http.Response, e
 		Body:       io.NopCloser(strings.NewReader(`{}`)),
 		Request:    req,
 	}, nil
+}
+
+// lastBody returns the body of the most recent request, for the assertions that are about what
+// travels in a bulk action line rather than in a path.
+func (p *pathCapturingTransport) lastBody() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if len(p.bodies) == 0 {
+
+		return ""
+	}
+
+	return p.bodies[len(p.bodies)-1]
 }
 
 func (p *pathCapturingTransport) recordedPaths() []string {
@@ -84,50 +108,83 @@ func TestOpenSearch_DocumentIdIsPathEscaped(t *testing.T) {
 	}
 	defer func() { _ = idx.Close() }()
 
-	cases := []struct {
-		name string
-		op   op
-	}{
-		{name: "index", op: op{kind: opIndex, doc: Doc{Id: blueskyMemoryId, Body: "a post"}}},
-		{name: "delete", op: op{kind: opDeleteIds, ids: []string{blueskyMemoryId}}},
-	}
+	// The two paths carry the id differently, and the difference is the point. An index write puts
+	// it in the request PATH, where it must be escaped into a single segment. A delete now travels
+	// in a _bulk BODY, where it must be RAW - the server percent-decodes a path before storing the
+	// _id, so the stored id is the raw string, and a URL-escaped id in a JSON body addresses a
+	// document that does not exist. Escaping in the wrong place fails exactly as silently as not
+	// escaping in the right one.
 
-	for _, v := range cases {
-		t.Run(v.name, func(t *testing.T) {
-			before := len(transport.recordedPaths())
+	t.Run("index escapes the id into one path segment", func(t *testing.T) {
+		before := len(transport.recordedPaths())
 
-			if err := idx.apply(context.Background(), v.op); err != nil {
-				t.Fatalf("apply: %s", err)
-			}
+		if err := idx.apply(context.Background(), op{kind: opIndex, doc: Doc{Id: blueskyMemoryId, Body: "a post"}}); err != nil {
+			t.Fatalf("apply: %s", err)
+		}
 
-			paths := transport.recordedPaths()[before:]
-			if len(paths) != 1 {
-				t.Fatalf("expected exactly one request, got %d: %v", len(paths), paths)
-			}
+		paths := transport.recordedPaths()[before:]
+		if len(paths) != 1 {
+			t.Fatalf("expected exactly one request, got %d: %v", len(paths), paths)
+		}
 
-			prefix := "/test-index/_doc/"
+		prefix := "/test-index/_doc/"
 
-			if !strings.HasPrefix(paths[0], prefix) {
-				t.Fatalf("expected a document path under %q, got %q", prefix, paths[0])
-			}
+		if !strings.HasPrefix(paths[0], prefix) {
+			t.Fatalf("expected a document path under %q, got %q", prefix, paths[0])
+		}
 
-			segment := strings.TrimPrefix(paths[0], prefix)
+		segment := strings.TrimPrefix(paths[0], prefix)
 
-			if strings.Contains(segment, "/") {
-				t.Errorf(
-					"the document id was not escaped into a single path segment: %q - the cluster sees a different route and the operation is lost",
-					paths[0],
-				)
-			}
+		if strings.Contains(segment, "/") {
+			t.Fatalf(
+				"the document id was not escaped into a single path segment: %q - the cluster sees a different route and the operation is lost",
+				paths[0],
+			)
+		}
 
-			id, err := url.PathUnescape(segment)
-			if err != nil {
-				t.Fatalf("the document id segment %q is not a valid path escaping: %s", segment, err)
-			}
+		id, err := url.PathUnescape(segment)
+		if err != nil {
+			t.Fatalf("the document id segment %q is not a valid path escaping: %s", segment, err)
+		}
 
-			if id != blueskyMemoryId {
-				t.Errorf("expected the escaped segment to decode back to %q, got %q", blueskyMemoryId, id)
-			}
-		})
-	}
+		if id != blueskyMemoryId {
+			t.Errorf("expected the escaped segment to decode back to %q, got %q", blueskyMemoryId, id)
+		}
+	})
+
+	t.Run("delete carries the raw id in the bulk body", func(t *testing.T) {
+		before := len(transport.recordedPaths())
+
+		if err := idx.apply(context.Background(), op{kind: opDeleteIds, ids: []string{blueskyMemoryId}}); err != nil {
+			t.Fatalf("apply: %s", err)
+		}
+
+		paths := transport.recordedPaths()[before:]
+		if len(paths) != 1 {
+			t.Fatalf("expected exactly one request, got %d: %v", len(paths), paths)
+		}
+
+		if paths[0] != "/_bulk" {
+			t.Fatalf("expected the delete to go through /_bulk, got %q", paths[0])
+		}
+
+		body := transport.lastBody()
+
+		var action struct {
+			Delete struct {
+				Index string `json:"_index"`
+				ID    string `json:"_id"`
+			} `json:"delete"`
+		}
+
+		if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &action); err != nil {
+			t.Fatalf("the bulk body is not a valid action line (%q): %s", body, err)
+		}
+
+		if action.Delete.ID != blueskyMemoryId {
+			t.Errorf("the bulk delete addresses %q, want the raw id %q - a URL-escaped id here "+
+				"targets a document that was never stored under that name",
+				action.Delete.ID, blueskyMemoryId)
+		}
+	})
 }

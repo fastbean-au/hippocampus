@@ -474,7 +474,11 @@ func TestOpenSearch_RecreateIndex(t *testing.T) {
 }
 
 // TestOpenSearch_DeleteMemories verifies the async id-delete path issues one DELETE per id through
-// the worker, and that an empty id set enqueues nothing.
+// the worker as ONE bulk request, and that an empty id set enqueues nothing.
+//
+// One request rather than one per id: a batch used to be N sequential round trips sharing a single
+// operation-sized deadline, which held up until the delete outbox and the stale sweep began passing
+// a page at a time and it stopped finishing inside its own timeout. See deleteIds.
 func TestOpenSearch_DeleteMemories(t *testing.T) {
 	transport := &fakeTransport{}
 	idx := newTestOpenSearch(t, transport, 16)
@@ -484,24 +488,32 @@ func TestOpenSearch_DeleteMemories(t *testing.T) {
 
 	idx.DeleteMemories([]string{"m1", "m2"})
 
-	waitFor(t, "worker to delete both documents", func() bool {
-		deletes := 0
-
+	waitFor(t, "worker to bulk delete both documents", func() bool {
 		for _, r := range transport.recorded() {
-			if r.method == "DELETE" && strings.HasPrefix(r.path, "/test-index/_doc/") {
-				deletes++
+			if strings.HasSuffix(r.path, "/_bulk") &&
+				strings.Contains(r.body, `"m1"`) && strings.Contains(r.body, `"m2"`) {
+
+				return true
 			}
 		}
 
-		return deletes == 2
+		return false
 	})
 
 	if err := idx.Close(); err != nil {
 		t.Fatalf("Close: %s", err)
 	}
 
-	if _, ok := bodyForPathSuffix(transport.recorded(), "/_doc/m1"); !ok {
-		t.Error("expected a delete for m1")
+	bulk := 0
+
+	for _, r := range transport.recorded() {
+		if strings.HasSuffix(r.path, "/_bulk") {
+			bulk++
+		}
+	}
+
+	if bulk != 1 {
+		t.Errorf("deleting two ids issued %d bulk requests, want exactly 1", bulk)
 	}
 }
 

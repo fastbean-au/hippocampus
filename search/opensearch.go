@@ -28,6 +28,11 @@ import (
 // cannot stall the queue indefinitely. The default; overridable per instance via Config.ApplyTimeout.
 const applyTimeout = 10 * time.Second
 
+// bulkDeleteChunk bounds how many ids go into one _bulk request. Large enough that a page-sized
+// batch is a single round trip, small enough that the request body stays modest and one failure
+// re-does little.
+const bulkDeleteChunk = 1000
+
 // applyMaxAttempts caps how many times the worker tries one operation against the cluster before
 // giving up. Every operation is idempotent (documents are keyed by memory id, deletes and the
 // event rewrites converge), so a transient failure - a brief network blip, a node restart, a
@@ -655,27 +660,8 @@ func (o *OpenSearch) apply(ctx context.Context, v op) error {
 		return nil
 
 	case opDeleteIds:
-		for _, id := range v.ids {
-			resp, err := o.client.Document.Delete(ctx, opensearchapi.DocumentDeleteReq{
-				Index:      o.index,
-				DocumentID: documentId(id),
-			})
 
-			// A 404 means the document was never indexed (e.g. binary memory, dropped op, or
-			// written while the cluster was down) - nothing to delete.
-			if err != nil && resp != nil && resp.Inspect().Response != nil &&
-				resp.Inspect().Response.StatusCode == http.StatusNotFound {
-				continue
-			}
-
-			tel.deleted.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", err == nil)))
-
-			if err != nil {
-				return fmt.Errorf("failed to delete document '%s': %w", id, err)
-			}
-		}
-
-		return nil
+		return o.deleteIds(ctx, v.ids)
 
 	case opDeleteByEvent:
 		// delete_by_query only sees refreshed documents; without the refresh, documents indexed
@@ -749,6 +735,98 @@ func (o *OpenSearch) apply(ctx context.Context, v op) error {
 	}
 
 	return fmt.Errorf("unknown operation kind %d", v.kind)
+}
+
+// deleteIds removes documents by id in one _bulk request per chunk.
+//
+// It was a loop of one Document.Delete per id, and that was survivable only while every caller
+// passed a handful of ids at a time. The delete outbox's drain and the stale half of the
+// reconciliation sweep both pass up to a page at a time, and against a real backlog - 4.4 million
+// stale documents on the deployment that motivated the outbox - N sequential round trips inside a
+// SINGLE applyTimeout meant the batch could not finish before its own deadline. The pass then
+// abandoned and restarted from the top of the index, so the sweep thrashed instead of converging.
+//
+// One request per chunk fixes the cost. The deadline is still one deadline for the whole call, but
+// it now bounds one round trip's worth of work rather than five hundred.
+func (o *OpenSearch) deleteIds(ctx context.Context, ids []string) error {
+	for start := 0; start < len(ids); start += bulkDeleteChunk {
+		end := min(start+bulkDeleteChunk, len(ids))
+
+		if err := o.bulkDelete(ctx, ids[start:end]); err != nil {
+
+			return err
+		}
+	}
+
+	return nil
+}
+
+// bulkDelete issues one chunk as a single _bulk request.
+//
+// A 404 on an individual item is success, not failure, for the same reason it was in the loop this
+// replaces: the document was never indexed (a binary memory, an operation dropped while the cluster
+// was down) and there is nothing to remove. That distinction has to be made per ITEM here - _bulk
+// answers 200 for the request and reports each item's own status - which is why the response is
+// inspected rather than trusted.
+func (o *OpenSearch) bulkDelete(ctx context.Context, ids []string) error {
+	var body strings.Builder
+
+	for _, id := range ids {
+		// The RAW id, not documentId(id). That helper exists only to survive being interpolated into
+		// a request PATH, and the server percent-decodes the path before use - so the stored _id is
+		// the raw string. Here the id travels in a JSON body, where json.Marshal is the only escaping
+		// required, and a URL-escaped id would address a document that does not exist. Every memory
+		// the Bluesky bridge writes is an at:// URI, so this is the common case rather than a corner.
+		action, err := json.Marshal(map[string]any{
+			"delete": map[string]any{"_index": o.index, "_id": id},
+		})
+		if err != nil {
+
+			return fmt.Errorf("failed to build the bulk delete for document '%s': %w", id, err)
+		}
+
+		body.Write(action)
+		body.WriteByte('\n')
+	}
+
+	resp, err := o.client.Bulk(ctx, opensearchapi.BulkReq{Body: strings.NewReader(body.String())})
+	if err != nil {
+		tel.deleted.Add(ctx, int64(len(ids)), metric.WithAttributes(attribute.Bool("success", false)))
+
+		return fmt.Errorf("failed to bulk delete %d documents: %w", len(ids), err)
+	}
+
+	failed := 0
+
+	var firstErr error
+
+	if resp != nil && resp.Errors {
+		for _, item := range resp.Items {
+			for _, v := range item {
+				// Absent is the outcome asked for, whether or not this call is what produced it.
+				if v.Status == http.StatusNotFound || v.Error == nil {
+					continue
+				}
+
+				failed++
+
+				if firstErr == nil {
+					firstErr = fmt.Errorf("failed to delete document '%s': %s: %s",
+						v.ID, v.Error.Type, v.Error.Reason)
+				}
+			}
+		}
+	}
+
+	tel.deleted.Add(ctx, int64(len(ids)-failed), metric.WithAttributes(attribute.Bool("success", true)))
+
+	if failed > 0 {
+		tel.deleted.Add(ctx, int64(failed), metric.WithAttributes(attribute.Bool("success", false)))
+
+		return fmt.Errorf("bulk delete: %d of %d documents failed, first: %w", failed, len(ids), firstErr)
+	}
+
+	return nil
 }
 
 func (o *OpenSearch) refresh(ctx context.Context) error {

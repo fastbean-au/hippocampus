@@ -33,6 +33,28 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Search-index deletes are one bulk request per batch, not one round trip per document.** Found in
+  production immediately after v0.38.0 shipped, which is the only place it could be found — it needs
+  a backlog to appear at all. `applyTimeout` bounds *one* operation (10s by default), but the delete
+  path looped N sequential round trips inside that single budget. That held up while every caller
+  passed a handful of ids at a time; v0.38.0's outbox drain and stale sweep both pass a page (500) at
+  a time, and against 4.4M stale documents a batch could not finish before its own deadline. Each
+  sweep pass then aborted and **restarted from the top of the index**, so the sweep thrashed rather
+  than converged — around 200 deletes/sec, and hours of load, for work that should take one pass.
+
+  A batch is now a single `_bulk` request, and the synchronous path scales its deadline by chunk
+  count rather than assuming one round trip. A per-item 404 is still success — the document was never
+  indexed, so there is nothing to remove — but that now has to be read per *item*, since `_bulk`
+  answers 200 for the request as a whole.
+
+  One trap worth recording: the bulk body must carry the **raw** id, never `documentId()`'s
+  URL-escaped form. That helper exists only to survive path interpolation, and the server
+  percent-decodes a path before storing `_id`, so an escaped id in a JSON body addresses a document
+  that was never stored under that name. Every memory the Bluesky bridge writes is an `at://` URI, so
+  this is the common case rather than a corner.
+
 ## [0.38.0] - 2026-08-27
 
 ### Fixed

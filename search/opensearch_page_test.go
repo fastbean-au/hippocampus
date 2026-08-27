@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -233,5 +234,68 @@ func TestDeleteMemoriesSync_NoIdsIsNotARequest(t *testing.T) {
 
 	if after := len(transport.recorded()); after != before {
 		t.Errorf("deleting no ids issued %d requests, want none", after-before)
+	}
+}
+
+// TestDeleteMemoriesSync_IsOneRequestPerBatch is the regression guard for a fault found in
+// production, not in review.
+//
+// Deletes used to be one Document.Delete round trip per id, inside a single applyTimeout sized for
+// ONE operation. That was survivable while every caller passed a handful of ids, and the delete
+// outbox's drain and the stale sweep then began passing a page at a time. Against a real backlog -
+// 4.4 million stale documents - five hundred sequential round trips could not finish inside a
+// ten-second deadline, so every sweep pass abandoned and restarted from the top of the index. The
+// sweep thrashed for hours instead of converging, and the symptom (slow) looked nothing like the
+// cause (a deadline covering the wrong unit of work).
+//
+// So the count is what is asserted. A batch is one bulk request; if this ever goes back to a loop
+// the number rises with the batch and this fails.
+func TestDeleteMemoriesSync_IsOneRequestPerBatch(t *testing.T) {
+	transport := &fakeTransport{}
+	idx := newTestOpenSearch(t, transport, 4)
+
+	t.Cleanup(func() { _ = idx.Close() })
+
+	before := len(transport.recorded())
+
+	ids := make([]string, 0, 500)
+
+	for i := range 500 {
+		ids = append(ids, fmt.Sprintf("bulk-%03d", i))
+	}
+
+	if err := idx.DeleteMemoriesSync(t.Context(), ids); err != nil {
+		t.Fatalf("DeleteMemoriesSync: %s", err)
+	}
+
+	issued := transport.recorded()[before:]
+
+	bulk := 0
+
+	for _, v := range issued {
+		if strings.Contains(v.path, "_bulk") {
+			bulk++
+		}
+	}
+
+	if bulk != 1 {
+		t.Errorf("deleting 500 ids issued %d bulk requests, want exactly 1", bulk)
+	}
+
+	if len(issued) > 2 {
+		t.Errorf("deleting 500 ids issued %d requests in total; a per-document loop has come back", len(issued))
+	}
+
+	// And the body must carry every id as a delete action, or the batch would silently under-delete.
+	var body string
+
+	for _, v := range issued {
+		if strings.Contains(v.path, "_bulk") {
+			body = v.body
+		}
+	}
+
+	if n := strings.Count(body, `"delete"`); n != 500 {
+		t.Errorf("the bulk body carries %d delete actions, want 500", n)
 	}
 }
