@@ -80,6 +80,22 @@ func expectSupersededIndexDrop(mock sqlmock.Sqlmock, drv driver) {
 	}
 }
 
+// expectSearchOutbox scripts initSearchOutbox: the outbox's CREATE TABLE plus its one index. Like
+// the forgotten log, MySQL has no CREATE INDEX IF NOT EXISTS, so its arm probes information_schema
+// and is scripted as already having the index.
+func expectSearchOutbox(mock sqlmock.Sqlmock, drv driver) {
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS search_outbox`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if drv == driverMySQL {
+		mock.ExpectQuery(`information_schema.statistics`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+		return
+	}
+
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS idx_search_outbox`).WillReturnResult(sqlmock.NewResult(0, 0))
+}
+
 // expectTombstones scripts initTombstones: the forgotten log's CREATE TABLE plus its two indexes.
 // MySQL has no CREATE INDEX IF NOT EXISTS, so its arm probes information_schema first and is
 // scripted as already having each index.
@@ -552,6 +568,7 @@ func TestInitPostgresSchemaFresh(t *testing.T) {
 	// ensureListingIndex, which follows the covering index: memories then events.
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectSearchOutbox(mock, driverPostgres)
 	expectTombstones(mock, driverPostgres)
 	expectInstances(mock, driverPostgres)
 
@@ -590,6 +607,7 @@ func TestInitPostgresSchemaMigrates(t *testing.T) {
 	// ensureListingIndex, which follows the covering index: memories then events.
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectSearchOutbox(mock, driverPostgres)
 	expectTombstones(mock, driverPostgres)
 	expectInstances(mock, driverPostgres)
 
@@ -654,6 +672,7 @@ func TestInitMySQLSchemaFresh(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	expectSearchOutbox(mock, driverMySQL)
 	expectTombstones(mock, driverMySQL)
 	expectInstances(mock, driverMySQL)
 
@@ -680,6 +699,7 @@ func expectPostgresSchemaInitFresh(mock sqlmock.Sqlmock) {
 	// ensureListingIndex, which follows the covering index: memories then events.
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectSearchOutbox(mock, driverPostgres)
 	expectTombstones(mock, driverPostgres)
 	expectInstances(mock, driverPostgres)
 }
@@ -724,6 +744,7 @@ func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`information_schema.statistics`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	expectSearchOutbox(mock, driverMySQL)
 	expectTombstones(mock, driverMySQL)
 	expectInstances(mock, driverMySQL)
 }

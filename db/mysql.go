@@ -308,6 +308,12 @@ func (d *DB) initMySQLSchema() error {
 	}
 
 	// The forgotten log (see tombstone.go).
+	// The search index's delete outbox (see outbox.go). Created whether or not an OpenSearch backend
+	// is configured, so enabling one later needs no migration and rows already queued stay drainable.
+	if err := d.initSearchOutbox(); err != nil {
+		return err
+	}
+
 	if err := d.initTombstones(); err != nil {
 		return err
 	}

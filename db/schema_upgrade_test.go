@@ -47,7 +47,8 @@ var schemaFixtures = []struct {
 	{"v0.23.0", "initContentSearch (FTS backfill over a non-empty store)"},
 	{"v0.25.0", "initLinkTables, dropLegacyRelationshipColumns, link_significance and metadata on both tables"},
 	{"v0.31.0", "initTombstones"},
-	{"v0.34.0", "none - the control; migrating this must be a no-op"},
+	{"v0.34.0", "initSearchOutbox"},
+	{"v0.37.0", "none - the control; migrating this must be a no-op"},
 }
 
 // seededMemory is a row scripts/schema-fixtures.sh writes into every fixture, with the values it
@@ -455,6 +456,7 @@ var schemaInits = []struct {
 			"dropLegacyRelationshipColumns":  "v0.25.0",
 			"migrateSignificanceToLevels":    "v0.4.0",
 			"initTombstones":                 "v0.31.0",
+			"initSearchOutbox":               "v0.34.0",
 			"initContentSearch":              "v0.23.0",
 
 			// The two indexes are rebuilt from whatever columns exist rather than migrating data,
@@ -486,6 +488,7 @@ var schemaInits = []struct {
 			"dropLegacyRelationshipColumns":  "v0.25.0",
 			"migrateSignificanceToLevels":    "v0.4.0",
 			"initTombstones":                 "v0.31.0",
+			"initSearchOutbox":               "v0.34.0",
 			"ensureCoveringIndex":            "v0.4.0",
 			"ensureListingIndex":             "v0.4.0",
 
@@ -516,6 +519,7 @@ var schemaInits = []struct {
 			"dropLegacyRelationshipColumns":  "v0.25.0",
 			"migrateSignificanceToLevels":    "v0.4.0",
 			"initTombstones":                 "v0.31.0",
+			"initSearchOutbox":               "v0.34.0",
 			"ensureCoveringIndex":            "v0.4.0",
 			"ensureListingIndex":             "v0.4.0",
 			"initInstances":                  "v0.31.0",

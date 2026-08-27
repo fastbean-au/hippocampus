@@ -927,6 +927,12 @@ func (d *DB) initSchema() error {
 		return err
 	}
 
+	// The search index's delete outbox (see outbox.go). Created whether or not an OpenSearch backend
+	// is configured, so enabling one later needs no migration and rows already queued stay drainable.
+	if err := d.initSearchOutbox(); err != nil {
+		return err
+	}
+
 	// The forgotten log (see tombstone.go). Created whether or not the policy enables it, so
 	// turning it on needs no migration and turning it off leaves what was recorded readable.
 	if err := d.initTombstones(); err != nil {

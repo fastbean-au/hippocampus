@@ -295,6 +295,7 @@ func TestConsolidateEventMemories_PerEventCleanupErrorsAreBestEffort(t *testing.
 	// existence probe answers in one query - the chunked read and delete are skipped entirely.
 	mock.ExpectQuery(`SELECT 1 FROM memory_links LIMIT 1`).
 		WillReturnRows(sqlmock.NewRows([]string{"1"}))
+	mock.ExpectExec(`INSERT INTO search_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	// ...but both per-event cleanup steps fail.

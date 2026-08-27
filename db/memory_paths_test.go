@@ -287,6 +287,7 @@ func TestDeleteMemoriesByIds_Failures(t *testing.T) {
 				mock.ExpectBegin()
 				mock.ExpectExec(`DELETE FROM memories WHERE id IN`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT 1 FROM memory_links`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+				mock.ExpectExec(`INSERT INTO search_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit().WillReturnError(errors.New("boom"))
 			},
 		},
@@ -337,6 +338,7 @@ func TestDeleteMemoriesIfUnrecalled_Failures(t *testing.T) {
 				mock.ExpectBegin()
 				mock.ExpectExec(`DELETE FROM memories WHERE id = \?`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT 1 FROM memory_links`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+				mock.ExpectExec(`INSERT INTO search_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit().WillReturnError(errors.New("boom"))
 			},
 		},
@@ -560,6 +562,7 @@ func TestDeleteEventMemories_Failures(t *testing.T) {
 					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("m1"))
 				mock.ExpectExec(`DELETE FROM memories WHERE event_id`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT 1 FROM memory_links`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+				mock.ExpectExec(`INSERT INTO search_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit().WillReturnError(errors.New("boom"))
 			},
 		},

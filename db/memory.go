@@ -518,6 +518,14 @@ func (d *DB) deleteMemoriesByIdsOnce(ctx context.Context, ids []string) (int, er
 		return 0, err
 	}
 
+	// And the search index's deletion, for the same reason: committed with the delete or not at all.
+	// See db/outbox.go.
+	if err := d.queueSearchDeletes(tx, ids); err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
@@ -650,6 +658,14 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 	// links must survive with it. This is the single point consolidation, eviction and Clear all
 	// funnel through, so it is the only place those three paths need to prune.
 	if err := d.pruneMemoryLinks(tx, deletedIds); err != nil {
+		_ = tx.Rollback()
+
+		return nil, err
+	}
+
+	// Only the ids that actually went, exactly as above: the outbox must never claim a memory is
+	// gone that the recall-race guard spared. See db/outbox.go.
+	if err := d.queueSearchDeletes(tx, deletedIds); err != nil {
 		_ = tx.Rollback()
 
 		return nil, err
@@ -806,6 +822,12 @@ func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, erro
 	}
 
 	if err := d.pruneMemoryLinks(tx, ids); err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
+	if err := d.queueSearchDeletes(tx, ids); err != nil {
 		_ = tx.Rollback()
 
 		return 0, err
@@ -1365,6 +1387,12 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 	}
 
 	if err := d.pruneMemoryLinks(tx, replacedIds); err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
+	if err := d.queueSearchDeletes(tx, replacedIds); err != nil {
 		_ = tx.Rollback()
 
 		return 0, err
