@@ -4,6 +4,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/fastbean-au/hippocampus/observability"
 )
 
 const scopeName = "github.com/fastbean-au/hippocampus/integrations/eventsource"
@@ -85,7 +87,8 @@ func newTelemetry() *telemetry {
 			"Memories written to the service, by broker and outcome (stored/exists/rejected/orphaned). "+
 				"One message may yield several."),
 		storeDuration: newFloat64Histogram(meter, "hippocampus.bridge.message.duration", "s",
-			"Time to transform and store one broker message, in seconds. Per-RPC latency is hippocampus.client.rpc.duration."),
+			"Time to transform and store one broker message, in seconds. Per-RPC latency is hippocampus.client.rpc.duration.",
+			observability.LatencyBuckets()),
 		bodyBytes: newInt64Histogram(meter, "hippocampus.bridge.body_bytes", "",
 			"Size in bytes of each memory body a bridge writes, mirroring the service's own memory.body_bytes."),
 		recalls: newInt64Counter(meter, "hippocampus.bridge.recalls",
@@ -116,8 +119,10 @@ func newInt64Histogram(meter metric.Meter, name string, unit string, description
 	return h
 }
 
-func newFloat64Histogram(meter metric.Meter, name string, unit string, description string) metric.Float64Histogram {
-	h, err := meter.Float64Histogram(name, metric.WithUnit(unit), metric.WithDescription(description))
+func newFloat64Histogram(meter metric.Meter, name string, unit string, description string, options ...metric.Float64HistogramOption) metric.Float64Histogram {
+	options = append([]metric.Float64HistogramOption{metric.WithUnit(unit), metric.WithDescription(description)}, options...)
+
+	h, err := meter.Float64Histogram(name, options...)
 	if err != nil {
 		log.Errorf("failed to create histogram '%s': %s", name, err.Error())
 	}

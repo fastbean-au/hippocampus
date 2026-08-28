@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/auth"
+	"github.com/fastbean-au/hippocampus/observability"
 )
 
 // hippocampusServicePrefix scopes the RPC instrumentation to the Hippocampus service, mirroring the
@@ -68,6 +69,7 @@ func newRPCInstruments() (metric.Int64Counter, metric.Float64Histogram) {
 		"hippocampus.rpc.duration",
 		metric.WithUnit("s"),
 		metric.WithDescription("Server-side duration of a Hippocampus RPC in seconds, by transport, RPC, response code, and outcome."),
+		observability.LatencyBuckets(),
 	)
 	if err != nil {
 		log.Errorf("failed to create RPC duration histogram: %s", err.Error())

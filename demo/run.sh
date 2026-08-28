@@ -23,15 +23,29 @@ cd "$(dirname "$0")/.."
 
 DEMO_DIR="demo"
 BIN_DIR="${DEMO_DIR}/bin"
-DATA_DIR="${DEMO_DIR}/data"
-PORT=8300
-GATEWAY_PORT=8080
+
+# Every path, port and container name below is overridable, with the demo's own values as the
+# defaults - so a plain ./demo/run.sh is exactly what it always was. The overrides exist for
+# demo/soak.sh, which drives this script rather than carrying a second copy of the orchestration:
+# starting the containers, waiting for each to answer, launching the service and the generator, and
+# shutting the two down in the right order is delicate enough once.
+DATA_DIR="${DATA_DIR:-${DEMO_DIR}/data}"
+CONFIG_FILE="${CONFIG_FILE:-${DEMO_DIR}/config.json}"
+PORT="${PORT:-8300}"
+GATEWAY_PORT="${GATEWAY_PORT:-8080}"
 MAX_BYTES="${MAX_BYTES:-$((1024 * 1024 * 1024))}"
 
 SEARCH="${SEARCH:-1}"
 OBSERVABILITY="${OBSERVABILITY:-1}"
-OTEL_CONTAINER="hippocampus-demo-otel-lgtm"
-OS_CONTAINER="hippocampus-demo-opensearch"
+OTEL_CONTAINER="${OTEL_CONTAINER:-hippocampus-demo-otel-lgtm}"
+OS_CONTAINER="${OS_CONTAINER:-hippocampus-demo-opensearch}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+OTLP_PORT="${OTLP_PORT:-4317}"
+
+# The collector's bundled Prometheus, published so that something other than a human with a browser
+# can read the metrics back - which is what makes an unattended soak run able to sample its own
+# subject. Grafana queries it in-container either way, so publishing it costs the demo nothing.
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
 OTEL_STARTED=""
 OS_STARTED=""
 CONTAINER_RUNTIME=""
@@ -156,7 +170,7 @@ if [[ -n ${OBSERVABILITY_RUNTIME_AVAILABLE} ]]; then
     DASHBOARD_DIR="${PWD}/deploy/compose/observability"
     PROVISION_DIR="/otel-lgtm/grafana/conf/provisioning/dashboards/custom"
     "${CONTAINER_RUNTIME}" run -d --rm --name "${OTEL_CONTAINER}" \
-        -p 3000:3000 -p 4317:4317 \
+        -p "${GRAFANA_PORT}:3000" -p "${OTLP_PORT}:4317" -p "${PROMETHEUS_PORT}:9090" \
         -e "GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=${PROVISION_DIR}/hippocampus.json" \
         -v "${DASHBOARD_DIR}/hippocampus-dashboard.json:${PROVISION_DIR}/hippocampus.json:ro" \
         -v "${DASHBOARD_DIR}/dashboards-provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro" \
@@ -164,9 +178,9 @@ if [[ -n ${OBSERVABILITY_RUNTIME_AVAILABLE} ]]; then
         grafana/otel-lgtm:latest > /dev/null
     OTEL_STARTED=1
 
-    echo "waiting for the collector's OTLP endpoint on port 4317"
+    echo "waiting for the collector's OTLP endpoint on port ${OTLP_PORT}"
     for _ in $(seq 1 100); do
-        if (echo > "/dev/tcp/127.0.0.1/4317") 2> /dev/null; then
+        if (echo > "/dev/tcp/127.0.0.1/${OTLP_PORT}") 2> /dev/null; then
             break
         fi
 
@@ -177,14 +191,14 @@ if [[ -n ${OBSERVABILITY_RUNTIME_AVAILABLE} ]]; then
     # pointing them at the collector without editing demo/config.json.
     export HIPPOCAMPUS_OBSERVABILITY_METRICS_ENABLED=true
     export HIPPOCAMPUS_OBSERVABILITY_TRACING_ENABLED=true
-    export HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT="localhost:4317"
+    export HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT="localhost:${OTLP_PORT}"
     export HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE=true
 
-    echo "grafana will be available at http://localhost:3000"
+    echo "grafana will be available at http://localhost:${GRAFANA_PORT}"
 fi
 
 echo "starting hippocampus"
-"${BIN_DIR}/hippocampus" -c "${DEMO_DIR}/config.json" &
+"${BIN_DIR}/hippocampus" -c "${CONFIG_FILE}" &
 SERVICE_PID=$!
 
 echo "waiting for the service on port ${PORT}"
@@ -207,7 +221,7 @@ if [[ ${HIPPOCAMPUS_OPENSEARCH_ENABLED:-} == "true" ]]; then
     echo "  content search is live (OpenSearch) - use the console's Search tab"
 fi
 if [[ -n ${OTEL_STARTED} ]]; then
-    echo "  grafana dashboard:         http://localhost:3000"
+    echo "  grafana dashboard:         http://localhost:${GRAFANA_PORT}"
 fi
 echo ""
 

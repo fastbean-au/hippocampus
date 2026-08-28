@@ -38,6 +38,12 @@ demo/data/
 # demo script names the directory and the rm that removes it.
 demo/data-bluesky/
 
+# Soak run output (demo/soak.sh): one directory per run holding its generated config, the samples,
+# the captured log and the report. A four-hour run's store lives under it too, so this is gigabytes.
+# The report is the artefact worth keeping and it is meant to be copied into TODO.md, not committed
+# here beside a database.
+demo/soak-runs/
+
 # Integration bridge build artifacts (`go build` in the module drops a binary named after the dir)
 hippocampus-mcp
 integrations/mcp/mcp

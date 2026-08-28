@@ -41,6 +41,7 @@ func newClientTelemetry() *clientTelemetry {
 		"hippocampus.client.rpc.duration",
 		metric.WithUnit("s"),
 		metric.WithDescription("Duration in seconds of each RPC made to a Hippocampus instance."),
+		LatencyBuckets(),
 	)
 	if err != nil {
 		log.Errorf("failed to create the client duration histogram: %s", err.Error())

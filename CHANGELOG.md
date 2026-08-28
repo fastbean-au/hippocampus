@@ -33,13 +33,48 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every duration histogram was unreadable, and one shipped alert fired permanently because of
+  it.** `hippocampus.rpc.duration`, `hippocampus.sleep.duration`,
+  `hippocampus.client.rpc.duration`, `hippocampus.bridge.message.duration` and
+  `hippocampus.ingestor.pass.duration` all record **seconds**, but none declared bucket boundaries,
+  so all five took the OpenTelemetry SDK's defaults — which are shaped for **milliseconds**
+  (`0, 5, 10, 25 … 10000`). The first finite bucket is therefore five seconds, coarser than every
+  observation a healthy deployment makes, so every observation landed in one bucket and
+  `histogram_quantile` interpolated across it. Measured on a live instance: the shipped
+  `HippocampusRequestLatencyHigh` expression returned a p95 of **4.75 s** against a real mean RPC
+  duration of **0.44 ms**. That alert fires above 1 s, so it fired on any instance serving traffic,
+  and no amount of the service getting faster could ever have cleared it. All five instruments now
+  carry explicit boundaries from `observability/histogram.go` — a latency ladder starting below a
+  millisecond, and a longer one for periodic passes (a sleep cycle, an ingestor pass) that reaches
+  ten minutes. The same expression now returns **0.56 ms**. Found by the new soak harness, which
+  needed a trustworthy sleep-cycle quantile of its own.
+
+### Added
+
+- **`demo/soak.sh` — a bounded, self-sampling soak harness** (TODO item 20). Runs the service under
+  the demo generator for a set number of hours, samples goroutines, RSS, sleep-cycle duration,
+  capacity convergence, the search outbox and the index/store document ratio on a timer, and writes
+  a report that reaches a verdict per check rather than leaving one to be inferred from a clean log.
+  It drives `demo/run.sh` rather than duplicating its orchestration, defaults to a **SQLite +
+  OpenSearch** profile (the only one that exercises item 84's delete outbox and reverse sweep, which
+  had no soak path at all before this), stops itself on a disk-space floor, and reports `UNKNOWN`
+  rather than passing when a check's data is missing. Output lands in `demo/soak-runs/` (gitignored).
+- **`hippocampus.runtime.goroutines`, `hippocampus.runtime.heap_bytes` and
+  `hippocampus.runtime.memory_bytes`** — process-health gauges published by every binary that calls
+  `observability.Init` (the service, the ingestor, the broker bridges). Attribute-free, so trivially
+  low-cardinality. The goroutine count is the one that earns its place: a leak is what a long-running
+  deployment actually suffers and the only failure a clean log will never show, and until now there
+  was no way to read it from outside the process.
+
 ## [0.38.2] - 2026-08-28
 
 ### Fixed
 
 - **The stale-document sweep no longer silently skips most of the index.** The enumeration sorts on
   the mapped `timestamp`, and OpenSearch early-terminates a numeric sort using the field's point
-  index — so the page it returns is *not* the true lowest-N but a non-exhaustive sample spread across
+  index — so the page it returns is _not_ the true lowest-N but a non-exhaustive sample spread across
   the range. The cursor then advances past the highest timestamp it saw, and everything the
   optimisation skipped is skipped by the sweep too, reported as a completed pass. Measured on the
   production index: one page of 500 spanned a window holding 1,472,040 documents, and a full walk
@@ -61,7 +96,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 - **Search-index deletes are one bulk request per batch, not one round trip per document.** Found in
   production immediately after v0.38.0 shipped, which is the only place it could be found — it needs
-  a backlog to appear at all. `applyTimeout` bounds *one* operation (10s by default), but the delete
+  a backlog to appear at all. `applyTimeout` bounds _one_ operation (10s by default), but the delete
   path looped N sequential round trips inside that single budget. That held up while every caller
   passed a handful of ids at a time; v0.38.0's outbox drain and stale sweep both pass a page (500) at
   a time, and against 4.4M stale documents a batch could not finish before its own deadline. Each
@@ -70,7 +105,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
   A batch is now a single `_bulk` request, and the synchronous path scales its deadline by chunk
   count rather than assuming one round trip. A per-item 404 is still success — the document was never
-  indexed, so there is nothing to remove — but that now has to be read per *item*, since `_bulk`
+  indexed, so there is nothing to remove — but that now has to be read per _item_, since `_bulk`
   answers 200 for the request as a whole.
 
   One trap worth recording: the bulk body must carry the **raw** id, never `documentId()`'s
@@ -85,8 +120,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 - **The OpenSearch index no longer accumulates stale documents under sustained write load.**
   Propagation to OpenSearch is an asynchronous bounded queue that drops on overflow, and the two
-  kinds of dropped operation were not equivalent: a dropped *index* self-heals, because the memory
-  still exists for the reconciliation sweep to re-index, while a dropped *delete* was permanent —
+  kinds of dropped operation were not equivalent: a dropped _index_ self-heals, because the memory
+  still exists for the reconciliation sweep to re-index, while a dropped _delete_ was permanent —
   nothing afterwards knew the document should have gone. Under any write rate above the queue's
   drain rate the index therefore diverged from the store forever. Measured on a live deployment:
   **4.38 million documents against 211,657 rows**, 20.7x, growing about 700 MB/day, with 25,056
@@ -108,7 +143,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
-- **The reconciliation sweep now runs in both directions.** It has always healed *missing*
+- **The reconciliation sweep now runs in both directions.** It has always healed _missing_
   documents; it now also enumerates the index and removes documents whose memory the primary store
   no longer holds — the job that previously required a manual `--backfill-search --reindex` that
   nothing scheduled and no operator was told they needed. This is the backstop for whatever the

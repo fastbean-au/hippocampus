@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""One sample of a soak run, emitted as a CSV row.
+
+Called on a timer by demo/soak.sh. Reads three sources, none of which it is allowed to fail on:
+the collector's Prometheus (every service metric), the OpenSearch index (its document count, which
+no service metric reports), and the local process table plus filesystem (RSS and free disk, neither
+of which a Go process can honestly report about itself).
+
+The rule throughout is that a source that does not answer yields an EMPTY FIELD rather than an
+error. A soak run must not end because Prometheus was restarting or a query was momentarily
+unscraped - a gap in one column of one row costs almost nothing, and losing the run costs hours.
+The report treats empty as unknown and says so, which is the honest reading and is distinguishable
+from a zero. That distinction matters more than it looks: zero goroutines and "we could not ask"
+render identically if empty is coerced.
+"""
+
+import argparse
+import csv
+import json
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+# The metrics sampled each interval, in report order: the CSV column name, and the PromQL that
+# produces it. Names are the OTLP->Prometheus rendering (dots to underscores, counters gaining
+# _total, second-unit histograms gaining _seconds), the same translation the shipped alert rules
+# use - see cmd/hippocampus/alerts_test.go, which is what holds those names to the instruments.
+#
+# max() rather than sum() on every gauge is deliberate: a run may have more than one instance
+# reporting (the horizontal-scaling profiles), and a gauge describing the STORE - used_bytes,
+# capacity_pressure, outbox_depth - is the same number seen from each of them, so summing would
+# multiply it by the replica count. Counters, describing work each instance did separately, do sum.
+QUERIES = [
+    # Process health. The leak signals, and the whole reason item 20 asks for goroutine counts:
+    # a leak is invisible in a clean log and in every domain metric.
+    ("goroutines", "max(hippocampus_runtime_goroutines)"),
+    ("heap_bytes", "max(hippocampus_runtime_heap_bytes)"),
+    ("go_memory_bytes", "max(hippocampus_runtime_memory_bytes)"),
+    # Store size and whether eviction is converging on the target rather than chasing it.
+    ("memories", "sum(hippocampus_memories_count)"),
+    ("events", "max(hippocampus_events_count)"),
+    ("used_bytes", "max(hippocampus_used_bytes)"),
+    ("capacity_bytes", "max(hippocampus_capacity_bytes)"),
+    ("capacity_pressure", "max(hippocampus_capacity_pressure)"),
+    # The sleep cycle, which has grown from one scan to roughly six since the last soak ran. p95
+    # over a 15m window rather than an average, because the question is whether the slow cycles are
+    # getting slower, and an average over a cycle that runs every two minutes hides that.
+    ("sleeps_ok", 'sum(hippocampus_sleeps_total{success="true"}) or vector(0)'),
+    ("sleeps_failed", 'sum(hippocampus_sleeps_total{success="false"}) or vector(0)'),
+    (
+        "sleep_p95_seconds",
+        "histogram_quantile(0.95, sum by (le) (rate(hippocampus_sleep_duration_seconds_bucket[15m])))",
+    ),
+    # Item 84's machinery. outbox_depth is the backpressure signal the in-memory queue could never
+    # publish, and a depth that climbs and does not come back down is the failure this soak exists
+    # to look for.
+    ("outbox_depth", "max(hippocampus_search_outbox_depth)"),
+    ("outbox_applied", "sum(hippocampus_search_outbox_applied_total) or vector(0)"),
+    ("outbox_abandoned", "sum(hippocampus_search_outbox_abandoned_total) or vector(0)"),
+    ("search_dropped", "sum(hippocampus_search_dropped_total) or vector(0)"),
+    ("stale_removed", "sum(hippocampus_search_stale_documents_removed_total) or vector(0)"),
+    # Faults. Counters, so the report reads them as deltas across the run.
+    #
+    # Every counter above and below carries `or vector(0)`, and no gauge does. A counter that has
+    # never been incremented is never EXPORTED - the SDK has no data point to send - so Prometheus
+    # holds no series and the query returns empty. For a counter, empty means zero and saying so is
+    # the honest reading; the alternative had a soak run report "we could not tell whether anything
+    # panicked" when what actually happened was that nothing did. A gauge is the opposite case: an
+    # absent gauge is a subsystem that is not running, which is genuinely unknown, so those are
+    # left to come back empty.
+    (
+        "rpc_server_errors",
+        'sum(hippocampus_rpc_requests_total{outcome="server_error"}) or vector(0)',
+    ),
+    ("rpc_requests", "sum(hippocampus_rpc_requests_total) or vector(0)"),
+    ("panics", "sum(hippocampus_panics_recovered_total) or vector(0)"),
+    ("ratelimit_rejected", "sum(hippocampus_ratelimit_rejected_total) or vector(0)"),
+]
+
+# Columns the sampler fills in itself rather than reading from Prometheus.
+LOCAL_COLUMNS = ["elapsed_seconds", "timestamp", "rss_bytes", "index_docs", "disk_free_bytes"]
+
+COLUMNS = LOCAL_COLUMNS + [name for name, _ in QUERIES]
+
+
+def http_json(url, timeout):
+    """GET a URL and decode it as JSON, returning None on any failure whatsoever.
+
+    Every caller treats None as "unknown", so there is deliberately no error path out of here.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return json.load(response)
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+
+
+def prometheus_value(base_url, query, timeout):
+    """Run one instant query and return its scalar value as a string, or "" if unavailable.
+
+    An empty result vector - the metric exists but has no current sample, or the instrument has not
+    reported yet - is "" rather than 0 for the reason in the module docstring.
+    """
+    url = "%s/api/v1/query?%s" % (
+        base_url.rstrip("/"),
+        urllib.parse.urlencode({"query": query}),
+    )
+
+    payload = http_json(url, timeout)
+    if payload is None or payload.get("status") != "success":
+        return ""
+
+    result = payload.get("data", {}).get("result", [])
+    if not result:
+        return ""
+
+    value = result[0].get("value", [None, None])[1]
+    if value is None or value in ("NaN", "+Inf", "-Inf"):
+        return ""
+
+    return str(value)
+
+
+def index_document_count(opensearch_url, index, timeout):
+    """The index's document count - item 84's actual measurement.
+
+    No service metric reports this, and it is the one number that says whether the store and its
+    index have diverged: the finding that opened item 84 was 4.38M documents against 211,657 rows.
+    """
+    if not opensearch_url or not index:
+        return ""
+
+    payload = http_json(
+        "%s/%s/_count" % (opensearch_url.rstrip("/"), urllib.parse.quote(index)), timeout
+    )
+    if payload is None or "count" not in payload:
+        return ""
+
+    return str(payload["count"])
+
+
+def resident_bytes(pid):
+    """Resident set size for a pid, in bytes, via ps.
+
+    The Go runtime cannot report this about itself portably - hippocampus.runtime.memory_bytes is
+    what it maps from the OS, which is a ceiling rather than the resident figure - so the real RSS
+    is read from outside the process. ps reports it in kibibytes on both macOS and Linux.
+    """
+    if not pid:
+        return ""
+
+    try:
+        output = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+    value = output.stdout.strip()
+    if not value.isdigit():
+        return ""
+
+    return str(int(value) * 1024)
+
+
+def free_bytes(path):
+    """Free space on the filesystem holding path.
+
+    Sampled because this soak's own failure mode is filling the disk: an OpenSearch index that
+    leaks documents is exactly what item 84 is about, and the host running this has ~10 GiB spare.
+    soak.sh aborts the run on a floor rather than letting the host fill.
+    """
+    try:
+        return str(shutil.disk_usage(path).free)
+    except OSError:
+        return ""
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--prometheus", default="http://127.0.0.1:9090")
+    parser.add_argument("--opensearch", default="")
+    parser.add_argument("--index", default="")
+    parser.add_argument("--pid", default="")
+    parser.add_argument("--disk-path", default=".")
+    parser.add_argument("--started", type=float, default=0.0, help="run start, unix seconds")
+    parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--header", action="store_true", help="print the CSV header and exit"
+    )
+    args = parser.parse_args()
+
+    writer = csv.writer(sys.stdout)
+
+    if args.header:
+        writer.writerow(COLUMNS)
+
+        return 0
+
+    now = time.time()
+    started = args.started or now
+
+    row = {
+        "elapsed_seconds": "%d" % int(now - started),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+        "rss_bytes": resident_bytes(args.pid),
+        "index_docs": index_document_count(args.opensearch, args.index, args.timeout),
+        "disk_free_bytes": free_bytes(args.disk_path),
+    }
+
+    for name, query in QUERIES:
+        row[name] = prometheus_value(args.prometheus, query, args.timeout)
+
+    writer.writerow([row[column] for column in COLUMNS])
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

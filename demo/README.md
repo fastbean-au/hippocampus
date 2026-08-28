@@ -64,15 +64,62 @@ eviction volume, `hippocampus.sleep.duration`, `hippocampus.used_bytes`, and
 `hippocampus.bytes.evicted` all become visible in real time alongside the generator's own latency
 log lines.
 
+## Unattended soak runs (`demo/soak.sh`)
+
+`run.sh` runs until you stop it. `soak.sh` wraps it in the thing item 20 actually asks for: a
+bounded run that samples itself and writes a report with verdicts.
+
+```sh
+./demo/soak.sh --hours 4                    # SQLite + OpenSearch (the default profile)
+./demo/soak.sh --hours 4 --profile sqlite   # no search backend
+./demo/soak.sh --hours 4 -- --bursty_workers 6
+```
+
+It drives `run.sh` rather than duplicating it, and adds four things: the duration, a sample every
+five minutes into a CSV, a disk-space floor that stops the run rather than filling the host, and
+`demo/soak/report.py`, which turns the samples into a verdict per check. Everything lands in
+`demo/soak-runs/<timestamp>-<profile>/` — the generated config, `samples.csv`, `run.log` and
+`report.md`. The report is the artefact worth keeping; the directory also holds the run's whole
+store, so it is gitignored.
+
+**Why SQLite + OpenSearch is the default profile.** `demo/config.json` has OpenSearch off, so
+before this there was no soak path that touched item 84's delete outbox or its reverse sweep at
+all — and those exist to close a defect (the index leaking stale documents under sustained write
+load, found at 20.7x more documents than rows on a live host) that only appears under exactly the
+load a soak applies. That check is the one in the report that reads `Index divergence`.
+
+What it checks, and why each one is there rather than left to a reading of the log:
+
+| Check                              | Looking for                                                                                                       |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Goroutines                         | A leak. The failure a clean log will never show, and the one item 20 names first.                                 |
+| Resident memory / Go mapped memory | The same, in bytes; RSS is read from `ps`, since a Go process cannot report its own honestly.                     |
+| Sleep cycle                        | Degradation. The cycle has grown from one scan to roughly six, and the question is whether that shows over hours. |
+| Eviction convergence               | `used_bytes` settling at the target rather than climbing past it or oscillating.                                  |
+| Index divergence                   | Item 84: OpenSearch documents against store rows. 1.0 is agreement.                                               |
+| Outbox drain                       | Queued deletions draining rather than accumulating.                                                               |
+| Index queue drops                  | Expected under load; it is the recovery, not the drop, that matters.                                              |
+| Faults                             | Panics, failed sleep cycles, and the RED server-error rate against the shipped alert's own 1% threshold.          |
+| Log                                | Error and warning lines, deduplicated with counts.                                                                |
+
+A check whose data is missing reports `UNKNOWN` rather than passing, because a check that could not
+run is not a check that passed. The exit code is non-zero only on a `FAIL`.
+
+The soak uses its own ports (gRPC 8400, gateway 8480, Grafana 3030), its own OpenSearch index
+(`hippocampus-soak`, deleted at both ends of the run unless `--keep-index`), and its own container
+names, so it can run beside a demo. `--profile postgres`/`--profile mysql` need `SOAK_POSTGRES_DSN`
+or `SOAK_MYSQL_DSN` pointing at a disposable database; add `OPENSEARCH=1` to give either a search
+backend as well.
+
 ## What the generator does
 
-| Worker (count)  | Behaviour                                                                     |
-| --------------- | ----------------------------------------------------------------------------- |
-| bursty (3)      | Creates a backdated event, then floods it with 20-200 memories in seconds     |
-| slow (4)        | Creates a live event and trickles memories into it for 1-5 minutes            |
-| loose (2)       | Stores backdated, low-significance memories with no event                     |
-| query (3)       | Range queries over events/memories, lookups by id, and reinforcing recalls    |
-| mutator (1)     | Significance updates, ending/merging/deleting events and memories, manual sleeps |
+| Worker (count) | Behaviour                                                                        |
+| -------------- | -------------------------------------------------------------------------------- |
+| bursty (3)     | Creates a backdated event, then floods it with 20-200 memories in seconds        |
+| slow (4)       | Creates a live event and trickles memories into it for 1-5 minutes               |
+| loose (2)      | Stores backdated, low-significance memories with no event                        |
+| query (3)      | Range queries over events/memories, lookups by id, and reinforcing recalls       |
+| mutator (1)    | Significance updates, ending/merging/deleting events and memories, manual sleeps |
 
 The demo config compresses time: `consolidation.unitsOfAgeInDays` is 0.002, making one age unit
 roughly three minutes, so decay that would take days in production plays out within a session.
@@ -138,13 +185,13 @@ decay, threshold 5, `recallSignificanceWeight: 5`) a post's lifetime is about
 `34.6 x effective-significance / capacity-pressure` seconds:
 
 | likes since last | effective significance | lifetime at pressure x1 |
-|---|---|---|
-| 0 | 10 | 5m 46s |
-| 1 | 15 | 8m 38s |
-| 3 | 25 | 14m 24s |
-| 10 | 60 | 34m 34s |
+| ---------------- | ---------------------- | ----------------------- |
+| 0                | 10                     | 5m 46s                  |
+| 1                | 15                     | 8m 38s                  |
+| 3                | 25                     | 14m 24s                 |
+| 10               | 60                     | 34m 34s                 |
 
-and each of those clocks restarts on the *next* like. Within half an hour you see the flat mass of
+and each of those clocks restarts on the _next_ like. Within half an hour you see the flat mass of
 unengaged posts turning over every few minutes, a visible tail of once- or twice-liked posts, and a
 handful that simply never leave.
 
@@ -169,7 +216,7 @@ handful that simply never leave.
 ### Related stories
 
 `TOPIC_LINKS` (on by default) relates posts about the same story, and
-`consolidation.linkRecallPropagation: 0.25` in the config is what makes those links *do* something:
+`consolidation.linkRecallPropagation: 0.25` in the config is what makes those links _do_ something:
 when a post is liked, its related posts have their decay clocks pulled a quarter of the way back
 towards "just recalled" too. So a story several outlets covered survives as a cluster, while a lone
 post with the same engagement does not — `linkSignificanceWeight` adds the second half of that, since

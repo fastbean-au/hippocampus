@@ -5,6 +5,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/fastbean-au/hippocampus/observability"
 )
 
 const scopeName = "github.com/fastbean-au/hippocampus/hippocampus"
@@ -89,7 +91,7 @@ func newTelemetry() *telemetry {
 		eventsEvicted:      newInt64Counter(meter, "hippocampus.events.evicted", "Number of events deleted because eviction removed their last memory."),
 
 		sleeps:           newInt64Counter(meter, "hippocampus.sleeps", "Number of sleep cycles run."),
-		sleepDuration:    newFloat64Histogram(meter, "hippocampus.sleep.duration", "s", "Duration of a full sleep cycle in seconds."),
+		sleepDuration:    newFloat64Histogram(meter, "hippocampus.sleep.duration", "s", "Duration of a full sleep cycle in seconds.", observability.CycleBuckets()),
 		capacityPressure: newFloat64Gauge(meter, "hippocampus.capacity_pressure", "Deletion-threshold multiplier derived from store utilisation, recalculated each sleep cycle."),
 		usedBytes:        newInt64Gauge(meter, "hippocampus.used_bytes", "Bytes the store occupies excluding free pages, measured each sleep cycle when a capacity target is set."),
 		capacityBytes:    newInt64Gauge(meter, "hippocampus.capacity_bytes", "The configured byte capacity target, exported alongside used_bytes so a dashboard need not hard-code the limit."),
@@ -145,8 +147,10 @@ func newInt64Histogram(meter metric.Meter, name string, unit string, description
 	return h
 }
 
-func newFloat64Histogram(meter metric.Meter, name string, unit string, description string) metric.Float64Histogram {
-	h, err := meter.Float64Histogram(name, metric.WithUnit(unit), metric.WithDescription(description))
+func newFloat64Histogram(meter metric.Meter, name string, unit string, description string, options ...metric.Float64HistogramOption) metric.Float64Histogram {
+	options = append([]metric.Float64HistogramOption{metric.WithUnit(unit), metric.WithDescription(description)}, options...)
+
+	h, err := meter.Float64Histogram(name, options...)
 	if err != nil {
 		log.Errorf("failed to create histogram '%s': %s", name, err.Error())
 	}

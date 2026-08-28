@@ -4,6 +4,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/fastbean-au/hippocampus/observability"
 )
 
 const scopeName = "github.com/fastbean-au/hippocampus/integrations/ingestor"
@@ -71,7 +73,8 @@ func newTelemetry() *telemetry {
 		passes: newInt64Counter(meter, "hippocampus.ingestor.passes",
 			"Passes run, by outcome (ok/failed)."),
 		passDuration: newFloat64Histogram(meter, "hippocampus.ingestor.pass.duration", "s",
-			"Duration of a full pass in seconds. Per-RPC latency is hippocampus.client.rpc.duration, recorded by the shared client interceptor."),
+			"Duration of a full pass in seconds. Per-RPC latency is hippocampus.client.rpc.duration, recorded by the shared client interceptor.",
+			observability.CycleBuckets()),
 		sinceLastRun: newFloat64Gauge(meter, "hippocampus.ingestor.seconds_since_last_pass",
 			"Seconds since the last pass completed. This is the staleness signal: a stalled ingestor looks exactly like a quiet one in every other metric."),
 	}
@@ -86,8 +89,10 @@ func newInt64Counter(meter metric.Meter, name string, description string) metric
 	return c
 }
 
-func newFloat64Histogram(meter metric.Meter, name string, unit string, description string) metric.Float64Histogram {
-	h, err := meter.Float64Histogram(name, metric.WithUnit(unit), metric.WithDescription(description))
+func newFloat64Histogram(meter metric.Meter, name string, unit string, description string, options ...metric.Float64HistogramOption) metric.Float64Histogram {
+	options = append([]metric.Float64HistogramOption{metric.WithUnit(unit), metric.WithDescription(description)}, options...)
+
+	h, err := meter.Float64Histogram(name, options...)
 	if err != nil {
 		log.Errorf("failed to create histogram '%s': %s", name, err.Error())
 	}

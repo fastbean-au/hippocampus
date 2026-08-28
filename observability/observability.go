@@ -175,6 +175,11 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 
 		otel.SetMeterProvider(mp)
 
+		// Registered only under an installed provider: against the global no-op meter the
+		// callback would never be invoked anyway, and registering it there would leave a
+		// registration attached to a provider that is about to be replaced.
+		registerRuntimeMetrics()
+
 		log.Info("metrics enabled")
 	}
 

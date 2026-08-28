@@ -60,6 +60,13 @@ groups:
       # and the bulk data-movement calls all scale with the store, so including them would make the
       # quantile a measure of store size rather than of service health. A new long-running RPC
       # needs adding to this matcher.
+      #
+      # This expression depends on hippocampus.rpc.duration carrying the EXPLICIT bucket boundaries
+      # in observability/histogram.go. The instrument records seconds and the OTel SDK's default
+      # boundaries are millisecond-shaped, so without them every observation lands in one 0-5s
+      # bucket and this p95 interpolates to ~4.75s regardless of the real latency - which is to say
+      # this alert fired permanently, on every deployment with traffic, until 2026-08-29.
+      # cmd/hippocampus/rpcbuckets_test.go is what holds the two together.
       - alert: HippocampusRequestLatencyHigh
         expr: histogram_quantile(0.95, sum by (le) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories"}[5m]))) > 1
         for: 15m
