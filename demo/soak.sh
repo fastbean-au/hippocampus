@@ -13,6 +13,27 @@
 #
 #   ./demo/soak.sh --hours 4 -- --bursty_workers 6
 #
+# OBSERVE-ONLY watches something already running instead of launching anything:
+#
+#   ./demo/soak.sh --observe-only --hours 4 \
+#       --prometheus http://127.0.0.1:9090 \
+#       --opensearch http://127.0.0.1:9200 --index agent-memories
+#
+# --selector scopes every query to one instance where a deployment runs several against one
+# collector, e.g. --selector 'job="agent"'. Without it the store gauges are read across every
+# instance reporting there while the index count beside them describes one index, and the
+# divergence check is then comparing two different populations. Note the service's own metrics
+# carry no instance label by design (item 60.1), so whether there is anything to select on depends
+# on what the collector adds - check before trusting a multi-instance reading.
+#
+# That mode exists because the deployed demo is a better long-duration instrument than any local
+# run - it has been up for weeks under a real workload, and it is where BOTH of the findings that
+# no test produced were found (item 84's 20.7x index divergence, item 73's bridge wedged for hours).
+# What it cannot be is item 20.2, which wants four controlled hours per DRIVER against HEAD: the
+# showcase stack is all-postgres, shares one store between five differently-loaded instances, and
+# cannot be started from a known empty state. So the two are complementary, and this mode is the
+# half that reads a deployment rather than creating one.
+#
 # WHY THIS EXISTS, since a soak that only proves "it did not crash" is not worth four hours: the
 # single soak run on record (item 20.4, 2026-07-15) predates links, the forgotten log, the retention
 # scan, a reconcile sweep that now re-embeds, the topology heartbeat, and item 84's delete outbox
@@ -30,6 +51,11 @@
 # The run drives demo/run.sh rather than starting anything itself, so there is one implementation
 # of the launch-and-shutdown sequence. This script contributes the bounded duration, the sampling,
 # the disk guard, and the report.
+#
+# Under --observe-only none of that launching happens: no config is generated, no container is
+# started, no index is deleted, and nothing is shut down at the end. The sampling and the report are
+# identical, which is the point - one definition of what a soak measures, whether the subject is a
+# store this script created or one that has been serving the public for a month.
 
 set -euo pipefail
 
@@ -59,6 +85,16 @@ export OS_CONTAINER="${OS_CONTAINER:-hippocampus-soak-opensearch}"
 
 OPENSEARCH_URL="${OPENSEARCH_URL:-http://127.0.0.1:9200}"
 OPENSEARCH_INDEX="${OPENSEARCH_INDEX:-hippocampus-soak}"
+
+# Observe-only: watch something already running rather than launching anything. The endpoints then
+# have to be supplied, since there is no run.sh to have chosen them.
+OBSERVE_ONLY=""
+PROMETHEUS_URL=""
+
+# PromQL label matchers scoping every sample to one instance. Needed wherever several instances
+# report to one collector, since a store gauge summed across all of them beside an index count that
+# describes only one is a ratio between two different populations.
+SELECTOR="${SELECTOR:-}"
 
 # The run aborts rather than filling the host. The index this profile exercises is precisely the
 # thing that grew 700 MB/day on the deployment that motivated item 84, so running out of disk is a
@@ -101,6 +137,36 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
 
+        --observe-only)
+            OBSERVE_ONLY=1
+            shift
+            ;;
+
+        --prometheus)
+            PROMETHEUS_URL="$2"
+            shift 2
+            ;;
+
+        --opensearch)
+            OPENSEARCH_URL="$2"
+            shift 2
+            ;;
+
+        --index)
+            OPENSEARCH_INDEX="$2"
+            shift 2
+            ;;
+
+        --pid)
+            OBSERVED_PID="$2"
+            shift 2
+            ;;
+
+        --selector)
+            SELECTOR="$2"
+            shift 2
+            ;;
+
         -h | --help)
             usage
 
@@ -135,8 +201,32 @@ fi
 
 DRIVER=""
 USE_OPENSEARCH=""
+OBSERVED_PID="${OBSERVED_PID:-}"
+
+if [[ -n ${OBSERVE_ONLY} ]]; then
+    if [[ -z ${PROMETHEUS_URL} ]]; then
+        echo "--observe-only needs --prometheus, since there is no collector of ours to infer it from" >&2
+        echo "  e.g. --prometheus http://127.0.0.1:9090 (ssh -L 9090:localhost:9090 for a remote host)" >&2
+
+        exit 2
+    fi
+
+    # The profile names a driver and a search backend so that a config can be generated. Observing
+    # generates nothing, so a profile here would be a claim about somebody else's deployment that
+    # this script is in no position to make - the report reads what the endpoints actually serve.
+    PROFILE="observed"
+    DRIVER="(observed)"
+
+    if [[ -n ${OPENSEARCH_INDEX} && ${OPENSEARCH_INDEX} != "hippocampus-soak" ]]; then
+        USE_OPENSEARCH=1
+    fi
+fi
 
 case "${PROFILE}" in
+    # Set already, by the --observe-only branch above.
+    observed)
+        ;;
+
     sqlite-opensearch)
         DRIVER="sqlite"
         USE_OPENSEARCH=1
@@ -165,6 +255,13 @@ esac
 # than six profile names, since the driver and the search backend are independent choices.
 if [[ ${OPENSEARCH:-} == "1" ]]; then
     USE_OPENSEARCH=1
+fi
+
+# Only a launched run gets a default: it is our collector on our port. An observed run has already
+# been required to name one above, because guessing at somebody else's endpoint and then reporting
+# UNKNOWN for four hours is worse than refusing.
+if [[ -z ${PROMETHEUS_URL} ]]; then
+    PROMETHEUS_URL="http://127.0.0.1:${PROMETHEUS_PORT}"
 fi
 
 DSN=""
@@ -212,13 +309,19 @@ RUN_LOG="${OUT_DIR}/run.log"
 META_JSON="${OUT_DIR}/meta.json"
 REPORT_MD="${OUT_DIR}/report.md"
 
-mkdir -p "${OUT_DIR}" "${DATA_DIR_ABS}"
+mkdir -p "${OUT_DIR}"
+
+if [[ -z ${OBSERVE_ONLY} ]]; then
+    mkdir -p "${DATA_DIR_ABS}"
+fi
 
 # The config is GENERATED from demo/config.json rather than being a fourth checked-in copy of it,
 # and the generated file is archived with the run. Both halves matter: the soak is then provably
 # running the demo's own tuning (the compressed decay clock, the byte cap, the sleep period) and
 # differs only where the profile says, and the report can point at the exact file that produced it
 # instead of at a config that may have been edited since.
+if [[ -z ${OBSERVE_ONLY} ]]; then
+
 python3 - "${CONFIG_FILE}" "${DRIVER}" "${DSN}" "${USE_OPENSEARCH:-}" "${OPENSEARCH_INDEX}" "${PORT}" "${GATEWAY_PORT}" "${DATA_DIR_ABS}" <<'PYEOF'
 import json
 import sys
@@ -281,6 +384,8 @@ export OBSERVABILITY=1
 # rather than the decay path.
 export MAX_BYTES="${MAX_BYTES:-$((4 * 1024 * 1024 * 1024))}"
 
+fi
+
 RUN_PID=""
 SAMPLER_STARTED=""
 EXIT_REASON="completed"
@@ -333,7 +438,10 @@ finish() {
     stop_run
     write_meta
 
-    if [[ -n ${USE_OPENSEARCH} && -z ${KEEP_INDEX} ]]; then
+    # Deleting the index is right for an index this script created and meaningless-to-catastrophic
+    # for one it did not, so it is gated on having launched the subject rather than on --keep-index
+    # alone. Observing must never mutate what it observes.
+    if [[ -z ${OBSERVE_ONLY} && -n ${USE_OPENSEARCH} && -z ${KEEP_INDEX} ]]; then
         echo "removing the soak index ${OPENSEARCH_INDEX}"
         curl -sf -X DELETE "${OPENSEARCH_URL}/${OPENSEARCH_INDEX}" > /dev/null 2>&1 || true
     fi
@@ -358,7 +466,8 @@ interrupted() {
 
 write_meta() {
     python3 - "${META_JSON}" "${PROFILE}" "${DRIVER}" "${USE_OPENSEARCH:-}" "${CONFIG_FILE}" "${STARTED_AT}" \
-        "${INTERVAL_MINUTES}" "${EXIT_REASON}" "${GENERATOR_ARGS_TEXT}" <<'PYEOF'
+        "${INTERVAL_MINUTES}" "${EXIT_REASON}" "${GENERATOR_ARGS_TEXT}" "${OBSERVE_ONLY:-}" \
+        "${PROMETHEUS_URL}" "${OPENSEARCH_INDEX}" <<'PYEOF'
 import json
 import subprocess
 import sys
@@ -374,7 +483,10 @@ import time
     interval,
     exit_reason,
     generator_args,
-) = sys.argv[1:10]
+    observe_only,
+    prometheus,
+    index,
+) = sys.argv[1:13]
 
 started = int(started)
 finished = int(time.time())
@@ -391,9 +503,21 @@ try:
 except (OSError, subprocess.SubprocessError):
     version = ""
 
+# A report has to say which mode produced it, because the two answer different questions and the
+# verdict tables look identical. An observed run says nothing about a build's behaviour under a
+# controlled workload; a launched one says nothing about a month of production.
+meta = {"mode": "observe-only" if observe_only else "launched"}
+
+if observe_only:
+    meta["profile"] = "observed deployment"
+    meta["driver"] = "(whatever the subject runs)"
+    meta["search"] = ("opensearch index %s" % index) if use_opensearch else "not sampled"
+    meta["observing"] = prometheus
+    meta["config"] = "(not ours; nothing was generated, started or stopped)"
+
 with open(out, "w", encoding="utf-8") as handle:
     json.dump(
-        {
+        dict({
             "profile": profile,
             "driver": driver,
             "search": "opensearch" if use_opensearch else "none (SQL fallback or no-op)",
@@ -405,7 +529,7 @@ with open(out, "w", encoding="utf-8") as handle:
             "interval": "%s minutes" % interval,
             "exit_reason": exit_reason,
             "generator_args": generator_args or "(none)",
-        },
+        }, **meta),
         handle,
         indent=2,
     )
@@ -416,6 +540,16 @@ PYEOF
 # service_pid finds the service run.sh started, matched on the generated config path so it can
 # never pick up a demo instance running beside this one.
 service_pid() {
+    # Observing a remote or containerised service, there is no local process to read RSS from, and
+    # --pid is how a caller running ON the subject's host supplies one. Empty leaves the rss_bytes
+    # column blank, which the report reads as unknown rather than as zero - the service's own
+    # hippocampus.runtime.memory_bytes still comes through Prometheus either way.
+    if [[ -n ${OBSERVE_ONLY} ]]; then
+        echo "${OBSERVED_PID}"
+
+        return
+    fi
+
     pgrep -f "demo/bin/hippocampus -c ${CONFIG_FILE}" 2> /dev/null | head -1 || true
 }
 
@@ -431,10 +565,11 @@ record_sample() {
     # Never allowed to end the run: a sample that fails is a gap in the CSV, and the report reads a
     # gap as unknown. Losing four hours because Prometheus was restarting would be absurd.
     python3 demo/soak/sample.py \
-        --prometheus "http://127.0.0.1:${PROMETHEUS_PORT}" \
+        --prometheus "${PROMETHEUS_URL}" \
         --opensearch "${opensearch_arg}" \
         --index "${OPENSEARCH_INDEX}" \
         --pid "${pid}" \
+        --selector "${SELECTOR}" \
         --disk-path "${OUT_DIR}" \
         --started "${STARTED_AT}" >> "${SAMPLES_CSV}" 2> /dev/null || true
 }
@@ -450,52 +585,83 @@ fi
 
 echo "  profile:   ${PROFILE} (driver ${DRIVER}, search ${SEARCH_LABEL})"
 echo "  duration:  ${HOURS}h, sampling every ${INTERVAL_MINUTES}m"
-echo "  config:    ${CONFIG_FILE}"
+
+if [[ -n ${OBSERVE_ONLY} ]]; then
+    echo "  observing: ${PROMETHEUS_URL}"
+
+    if [[ -n ${USE_OPENSEARCH} ]]; then
+        echo "             ${OPENSEARCH_URL} index ${OPENSEARCH_INDEX}"
+    fi
+else
+    echo "  config:    ${CONFIG_FILE}"
+fi
+
 echo "  output:    ${OUT_DIR}"
 echo ""
 
-if [[ -n ${USE_OPENSEARCH} && -z ${KEEP_INDEX} ]]; then
-    # A run must start from a known index state or the divergence check is measuring the last run
-    # as well as this one. Deleting only this soak's own index leaves any standing test cluster's
-    # other indices untouched.
-    curl -sf -X DELETE "${OPENSEARCH_URL}/${OPENSEARCH_INDEX}" > /dev/null 2>&1 || true
-fi
-
 python3 demo/soak/sample.py --header > "${SAMPLES_CSV}"
 
-echo "starting the run (output tees to ${RUN_LOG})"
-if [[ ${#GENERATOR_ARGS[@]} -gt 0 ]]; then
-    bash demo/run.sh "${GENERATOR_ARGS[@]}" > "${RUN_LOG}" 2>&1 &
-else
-    bash demo/run.sh > "${RUN_LOG}" 2>&1 &
-fi
-RUN_PID=$!
-
-echo "waiting for the gateway on port ${GATEWAY_PORT}"
-READY=""
-for _ in $(seq 1 300); do
-    if curl -sf "http://127.0.0.1:${GATEWAY_PORT}/healthz" > /dev/null 2>&1; then
-        READY=1
-
-        break
-    fi
-
-    if ! kill -0 "${RUN_PID}" 2> /dev/null; then
-        echo "the run exited before becoming ready - see ${RUN_LOG}" >&2
-        tail -30 "${RUN_LOG}" >&2
-        EXIT_REASON="failed to start"
+if [[ -n ${OBSERVE_ONLY} ]]; then
+    # One reachability check before committing to the duration, because the alternative is a run
+    # that samples nothing for four hours and reports UNKNOWN against every check - which looks
+    # identical to a subject that publishes no metrics.
+    if ! curl -sf "${PROMETHEUS_URL}/api/v1/query?query=up" > /dev/null 2>&1; then
+        echo "cannot reach Prometheus at ${PROMETHEUS_URL}" >&2
+        echo "  for a remote host: ssh -N -L 9090:localhost:9090 <host>, and publish the collector's" >&2
+        echo "  9090 if it is only on a container network" >&2
+        EXIT_REASON="Prometheus unreachable"
 
         exit 1
     fi
 
-    sleep 1
-done
+    if ! curl -sf "${PROMETHEUS_URL}/api/v1/query?query=hippocampus_runtime_goroutines" 2> /dev/null | grep -q '"result":\[{'; then
+        echo "note: the subject is not publishing hippocampus_runtime_goroutines - the leak checks" >&2
+        echo "      will report UNKNOWN. That gauge landed in v0.38.3; older builds do not have it." >&2
+    fi
 
-if [[ -z ${READY} ]]; then
-    echo "the gateway never became ready - see ${RUN_LOG}" >&2
-    EXIT_REASON="never became ready"
+    echo "observing for ${HOURS}h - nothing is started, and nothing will be stopped"
+else
+    if [[ -n ${USE_OPENSEARCH} && -z ${KEEP_INDEX} ]]; then
+        # A run must start from a known index state or the divergence check is measuring the last
+        # run as well as this one. Deleting only this soak's own index leaves any standing test
+        # cluster's other indices untouched.
+        curl -sf -X DELETE "${OPENSEARCH_URL}/${OPENSEARCH_INDEX}" > /dev/null 2>&1 || true
+    fi
 
-    exit 1
+    echo "starting the run (output tees to ${RUN_LOG})"
+    if [[ ${#GENERATOR_ARGS[@]} -gt 0 ]]; then
+        bash demo/run.sh "${GENERATOR_ARGS[@]}" > "${RUN_LOG}" 2>&1 &
+    else
+        bash demo/run.sh > "${RUN_LOG}" 2>&1 &
+    fi
+    RUN_PID=$!
+
+    echo "waiting for the gateway on port ${GATEWAY_PORT}"
+    READY=""
+    for _ in $(seq 1 300); do
+        if curl -sf "http://127.0.0.1:${GATEWAY_PORT}/healthz" > /dev/null 2>&1; then
+            READY=1
+
+            break
+        fi
+
+        if ! kill -0 "${RUN_PID}" 2> /dev/null; then
+            echo "the run exited before becoming ready - see ${RUN_LOG}" >&2
+            tail -30 "${RUN_LOG}" >&2
+            EXIT_REASON="failed to start"
+
+            exit 1
+        fi
+
+        sleep 1
+    done
+
+    if [[ -z ${READY} ]]; then
+        echo "the gateway never became ready - see ${RUN_LOG}" >&2
+        EXIT_REASON="never became ready"
+
+        exit 1
+    fi
 fi
 
 # The clock starts at readiness, not at launch, so that the warm-up the report discards is the
@@ -507,8 +673,12 @@ DEADLINE=$((STARTED_AT + DURATION_SECONDS))
 DEADLINE_TEXT="$(date -r "${DEADLINE}" '+%H:%M:%S' 2> /dev/null || date -d "@${DEADLINE}" '+%H:%M:%S' 2> /dev/null || true)"
 
 echo "running until ${DEADLINE_TEXT:-the deadline}"
-echo "  console: http://localhost:${GATEWAY_PORT}/ui"
-echo "  grafana: http://localhost:${GRAFANA_PORT}"
+
+if [[ -z ${OBSERVE_ONLY} ]]; then
+    echo "  console: http://localhost:${GATEWAY_PORT}/ui"
+    echo "  grafana: http://localhost:${GRAFANA_PORT}"
+fi
+
 echo ""
 
 SAMPLER_STARTED=1
@@ -519,7 +689,10 @@ NOW="${STARTED_AT}"
 while [[ ${NOW} -lt ${DEADLINE} ]]; do
     sleep "${INTERVAL_SECONDS}"
 
-    if ! kill -0 "${RUN_PID}" 2> /dev/null; then
+    # Only meaningful for a subject this script launched. Observing, an exited service is a fact to
+    # RECORD rather than a reason to stop looking - the gap in the samples is the finding, and it is
+    # precisely the shape of the outage item 73 went hours without anyone noticing.
+    if [[ -z ${OBSERVE_ONLY} ]] && ! kill -0 "${RUN_PID}" 2> /dev/null; then
         echo "the run exited early - see ${RUN_LOG}" >&2
         EXIT_REASON="the service or generator exited early"
 
@@ -528,6 +701,9 @@ while [[ ${NOW} -lt ${DEADLINE} ]]; do
 
     record_sample
 
+    # The floor guards the disk this script is WRITING to. Under --observe-only that is the
+    # sampler's own host and not the subject's, which nothing here can see - so the disk_free
+    # column means something different in the two modes, and the report says which.
     FREE="$(df -k "${OUT_DIR}" 2> /dev/null | awk 'NR == 2 { print $4 * 1024 }' || true)"
     if [[ -n ${FREE} && ${FREE} -lt ${DISK_FLOOR_BYTES} ]]; then
         FREE_TEXT="$(awk -v b="${FREE}" 'BEGIN { printf "%.1f GiB", b / 1073741824 }' || true)"

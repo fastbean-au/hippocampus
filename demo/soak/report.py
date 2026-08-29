@@ -91,6 +91,16 @@ MIN_TREND_SAMPLES = 8
 # a handful of cycles, and a p95 over three of them is one slow cycle away from any answer at all.
 MIN_SLEEP_CYCLES = 10
 
+# Counters whose delta must be non-negative. A negative one means the series was not describing a
+# single process for the whole run - see attribution_check.
+MONOTONIC_COUNTERS = [
+    "sleeps_ok",
+    "outbox_applied",
+    "search_dropped",
+    "stale_removed",
+    "rpc_requests",
+]
+
 PASS, WARN, FAIL, UNKNOWN = "PASS", "WARN", "FAIL", "UNKNOWN"
 
 MARKERS = {PASS: "✅", WARN: "⚠️", FAIL: "❌", UNKNOWN: "❔"}
@@ -518,6 +528,42 @@ def dropped_check(rows):
     return Check("Index queue drops", PASS, detail)
 
 
+def attribution_check(rows):
+    """Whether the samples describe ONE instance, which every other check silently assumes.
+
+    This exists because the first observe-only run against a real multi-instance deployment
+    produced a confident, entirely false verdict: "151.6 MiB of 7.6 MiB (1987% of target) - eviction
+    is not converging", on a healthy store. Five services were reporting to one collector under one
+    identity, so consecutive samples of `used_bytes` and `capacity_bytes` came from DIFFERENT
+    processes, and the ratio between them was a comparison of two unrelated stores.
+
+    A monotonic counter running BACKWARDS is the reliable tell, and it is unambiguous: a counter
+    cannot decrease within one process. It happens either because the series is being written by
+    several processes in turn, or because the process restarted mid-run. Both mean the same thing
+    for a report - the trends are not about one thing - so both are worth stopping on.
+
+    The service's own metrics deliberately carry no instance label (item 60.1), so the fix is
+    whatever the deployment's collector can add, applied through --selector.
+    """
+    backwards = []
+
+    for column in MONOTONIC_COUNTERS:
+        delta = counter_delta(rows, column)
+        if delta is not None and delta < 0:
+            backwards.append("%s %s" % (column, human_number(delta)))
+
+    if not backwards:
+        return Check("Metric attribution", PASS, "counters advance monotonically; the samples describe one instance")
+
+    return Check(
+        "Metric attribution",
+        FAIL,
+        "counters ran backwards (%s) - the series is not one process, so every trend below is "
+        "between unrelated populations. Scope the run with --selector, or give each instance its "
+        "own identity in the collector." % ", ".join(backwards),
+    )
+
+
 def log_check(path):
     """Errors and warnings in the captured output of the service and the generator.
 
@@ -669,8 +715,19 @@ def main():
             meta = json.load(handle)
 
     log_verdict, log_messages = log_check(args.log)
+    attribution = attribution_check(rows)
+
+    # Checks that compare one series against another are only meaningful if both describe the same
+    # process. Reported as UNKNOWN rather than dropped, so the report still says they were looked
+    # at and why they could not be answered.
+    def gated(check):
+        if attribution.verdict != FAIL:
+            return check
+
+        return Check(check.name, UNKNOWN, "not attributable to one instance; see Metric attribution")
 
     checks = [
+        attribution,
         growth_check(
             "Goroutines",
             numbers(rows, "goroutines"),
@@ -694,13 +751,19 @@ def main():
             fmt=human_bytes,
         ),
         sleep_check(rows),
-        eviction_check(rows),
-        index_divergence_check(rows),
-        outbox_check(rows),
-        dropped_check(rows),
-        fault_check(rows),
+        gated(eviction_check(rows)),
+        gated(index_divergence_check(rows)),
+        gated(outbox_check(rows)),
+        gated(dropped_check(rows)),
+        gated(fault_check(rows)),
         log_verdict,
     ]
+
+    if attribution.verdict == FAIL:
+        for i, check in enumerate(checks):
+            if check.name in ("Goroutines", "Resident memory", "Go mapped memory", "Sleep cycle") \
+                    and check.verdict in (PASS, WARN, FAIL):
+                checks[i] = Check(check.name, WARN, check.detail + " (across a collapsed series; treat as indicative only)")
 
     worst = min(checks, key=lambda check: SEVERITY.index(check.verdict)).verdict
 
@@ -711,6 +774,8 @@ def main():
     out.append("")
 
     for key, label in [
+        ("mode", "Mode"),
+        ("observing", "Observing"),
         ("profile", "Profile"),
         ("driver", "Driver"),
         ("search", "Search backend"),
@@ -726,6 +791,13 @@ def main():
             out.append("- **%s:** %s" % (label, meta[key]))
 
     out.append("- **Samples:** %d, every %s" % (len(rows), meta.get("interval", "?")))
+
+    if meta.get("mode") == "observe-only":
+        out.append(
+            "- **Note:** nothing was launched or stopped. `disk free` is the sampler's own host, "
+            "not the subject's, and `RSS` is blank unless `--pid` named a local process — the "
+            "service's own `runtime.memory_bytes` is the figure to read instead."
+        )
     out.append("")
     out.append("## Verdicts")
     out.append("")

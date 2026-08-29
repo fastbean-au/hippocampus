@@ -55,6 +55,11 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **`demo/soak.sh --observe-only`** — samples a deployment that is already running rather than
+  launching one, with the same checks and the same report. Includes `--selector` for scoping to one
+  instance, and an attribution check that detects metrics collapsing across several instances (a
+  monotonic counter running backwards) and reports the affected checks as UNKNOWN rather than
+  producing a confident, false verdict.
 - **`demo/soak.sh` — a bounded, self-sampling soak harness** (TODO item 20). Runs the service under
   the demo generator for a set number of hours, samples goroutines, RSS, sleep-cycle duration,
   capacity convergence, the search outbox and the index/store document ratio on a timer, and writes

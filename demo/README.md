@@ -105,6 +105,27 @@ What it checks, and why each one is there rather than left to a reading of the l
 A check whose data is missing reports `UNKNOWN` rather than passing, because a check that could not
 run is not a check that passed. The exit code is non-zero only on a `FAIL`.
 
+### Watching something already running
+
+```sh
+./demo/soak.sh --observe-only --hours 4 \
+    --prometheus http://127.0.0.1:9090 \
+    --opensearch http://127.0.0.1:9200 --index agent-memories
+```
+
+Samples a deployment instead of launching one — nothing is generated, started, or stopped, and the
+index is never deleted. Same checks, same report. It exists because a deployment that has been up
+for weeks is a better long-duration instrument than any four-hour run: both of the findings no test
+produced (the search index leaking stale documents, a bridge wedged for hours) came from one.
+
+It cannot replace the per-driver runs above, which need a controlled workload against a known
+starting state. And one caveat matters more than it looks: if several instances report to one
+collector without an instance label, their metrics collapse into one series and the samples describe
+no single process. The report detects that — a monotonic counter running backwards is unambiguous —
+and reports `Metric attribution` as a failure, marking every cross-series check UNKNOWN rather than
+producing a confident, false verdict. `--selector 'job="agent"'` scopes the run where the collector
+does distinguish instances.
+
 The soak uses its own ports (gRPC 8400, gateway 8480, Grafana 3030), its own OpenSearch index
 (`hippocampus-soak`, deleted at both ends of the run unless `--keep-index`), and its own container
 names, so it can run beside a demo. `--profile postgres`/`--profile mysql` need `SOAK_POSTGRES_DSN`
