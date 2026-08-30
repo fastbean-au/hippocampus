@@ -96,6 +96,20 @@ PROMETHEUS_URL=""
 # describes only one is a ratio between two different populations.
 SELECTOR="${SELECTOR:-}"
 
+# The byte capacity the soak imposes, overriding demo/config.json's 200 MB.
+#
+# It has to sit BELOW the equilibrium the generator settles at or evict() never runs: the
+# 2026-08-30 four-hour run settled at 96-111 MiB against a 200 MB target and produced not one
+# eviction line in four hours. Capacity PRESSURE still worked and reached 1.85, so the
+# pressure-scaled consolidation threshold was exercised - but eviction's own ordering, its
+# freed-bytes accounting and its minimumRetentionInDays interaction were never touched, which is a
+# large hole in a run whose whole subject is what bounds a store.
+#
+# 70 MB is comfortably under that measured floor, so eviction runs every cycle. The floor below it
+# is the hysteresis headroom eviction drains to; 90% mirrors the ratio demo/config.json uses.
+# Set CAPACITY_BYTES=0 to keep the demo's own value and reproduce the old behaviour.
+CAPACITY_BYTES="${CAPACITY_BYTES:-70000000}"
+
 # The run aborts rather than filling the host. The index this profile exercises is precisely the
 # thing that grew 700 MB/day on the deployment that motivated item 84, so running out of disk is a
 # foreseeable outcome of this test rather than an unrelated mishap.
@@ -164,6 +178,11 @@ while [[ $# -gt 0 ]]; do
 
         --selector)
             SELECTOR="$2"
+            shift 2
+            ;;
+
+        --capacity-bytes)
+            CAPACITY_BYTES="$2"
             shift 2
             ;;
 
@@ -322,11 +341,11 @@ fi
 # instead of at a config that may have been edited since.
 if [[ -z ${OBSERVE_ONLY} ]]; then
 
-python3 - "${CONFIG_FILE}" "${DRIVER}" "${DSN}" "${USE_OPENSEARCH:-}" "${OPENSEARCH_INDEX}" "${PORT}" "${GATEWAY_PORT}" "${DATA_DIR_ABS}" <<'PYEOF'
+python3 - "${CONFIG_FILE}" "${DRIVER}" "${DSN}" "${USE_OPENSEARCH:-}" "${OPENSEARCH_INDEX}" "${PORT}" "${GATEWAY_PORT}" "${DATA_DIR_ABS}" "${CAPACITY_BYTES}" <<'PYEOF'
 import json
 import sys
 
-out, driver, dsn, use_opensearch, index, port, gateway_port, data_dir = sys.argv[1:9]
+out, driver, dsn, use_opensearch, index, port, gateway_port, data_dir, capacity_bytes = sys.argv[1:10]
 
 with open("demo/config.json", encoding="utf-8") as handle:
     config = json.load(handle)
@@ -362,6 +381,13 @@ observability.setdefault("tracing", {})["enabled"] = False
 # a leak. Sixty seconds is the harness paying for its own measurement, which a test may do and a
 # deployment should not.
 config.setdefault("stats", {})["intervalSeconds"] = 60
+
+# The byte capacity, tightened below the generator's measured equilibrium so that eviction actually
+# runs - see the comment on CAPACITY_BYTES in soak.sh. Zero leaves demo/config.json's own value.
+if int(capacity_bytes) > 0:
+    consolidation = config.setdefault("consolidation", {})
+    consolidation["capacityBytes"] = int(capacity_bytes)
+    consolidation["capacityBytesFloor"] = int(int(capacity_bytes) * 0.9)
 
 with open(out, "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2)

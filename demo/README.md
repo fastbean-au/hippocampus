@@ -105,6 +105,15 @@ What it checks, and why each one is there rather than left to a reading of the l
 A check whose data is missing reports `UNKNOWN` rather than passing, because a check that could not
 run is not a check that passed. The exit code is non-zero only on a `FAIL`.
 
+Three checks additionally refuse to reach a verdict the evidence cannot support, because a report
+that cries wolf teaches its reader to ignore it: a growth series that **rose and then levelled off**
+is a working set filling, not a leak; the sleep-cycle trend is measured **only once the store stops
+growing**, since a cycle scanning a filling store gets slower by construction; and eviction is judged
+on whether it **ever brings the store back under the target**, not on the final sample, because the
+target is enforced once per cycle and the store sawtooths around it. `demo/soak/report_test.py`
+(`python3 -m unittest discover -s demo/soak`, no dependencies) pairs each of those with a test
+proving the genuine fault is still caught.
+
 ### Watching something already running
 
 ```sh
@@ -125,6 +134,13 @@ no single process. The report detects that — a monotonic counter running backw
 and reports `Metric attribution` as a failure, marking every cross-series check UNKNOWN rather than
 producing a confident, false verdict. `--selector 'job="agent"'` scopes the run where the collector
 does distinguish instances.
+
+**The byte cap is tightened, deliberately.** A soak generates its config from `demo/config.json` but
+overrides `consolidation.capacityBytes` to 70 MB (floor 63 MB). The demo's own 200 MB sits _above_
+the equilibrium the generator settles at, so `evict()` never runs — the four-hour run on 2026-08-30
+settled at 96–111 MiB and produced not one eviction line, leaving the whole eviction path untested
+while capacity _pressure_ worked fine and reached 1.85. `--capacity-bytes 0` restores the demo's
+value; any other number sets it.
 
 The soak uses its own ports (gRPC 8400, gateway 8480, Grafana 3030), its own OpenSearch index
 (`hippocampus-soak`, deleted at both ends of the run unless `--keep-index`), and its own container

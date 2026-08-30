@@ -55,6 +55,18 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **The soak report no longer reaches verdicts its evidence cannot support.** Three checks were
+  producing warnings on a demonstrably healthy four-hour run: a memory series that rose and then sat
+  perfectly flat for two hours was reported as "growing" (window medians can see that something
+  moved, not that the moving stopped); the sleep-cycle trend spanned the store filling from empty,
+  reporting expected scaling as a 150.9% regression; and eviction was judged on the final sample, so
+  a store correctly sawtoothing around its target failed whenever a run ended mid-tooth. Now a
+  plateau is recognised as one, the cycle is measured only at constant load (the same run reads
+  +31.4%), and eviction is judged on whether it ever brings the store back under. Each relaxation is
+  paired with a test proving the real fault is still caught — `demo/soak/report_test.py`.
+- **Soak runs tighten `consolidation.capacityBytes` to 70 MB** (`--capacity-bytes` to override). The
+  demo's own 200 MB target sits above the load generator's equilibrium, so `evict()` never ran at
+  all across a full four-hour soak.
 - **`demo/soak.sh --observe-only`** — samples a deployment that is already running rather than
   launching one, with the same checks and the same report. Includes `--selector` for scoping to one
   instance, and an attribution check that detects metrics collapsing across several instances (a

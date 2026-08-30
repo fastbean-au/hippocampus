@@ -76,6 +76,22 @@ OUTBOX_FAIL_DEPTH = 50000
 # soak and a deployment disagree about nothing.
 ERROR_RATE_FAIL = 0.01
 
+# A series counts as levelled off when its slope over the LAST HALF of the run is under this
+# fraction of its own level, per hour.
+#
+# This exists because the 2026-08-30 four-hour run reported "Go mapped memory +51.3% - growing" for
+# a series that rose to 224.7 MiB over two hours and then sat at EXACTLY 224.7 MiB for the remaining
+# 2h10m, while resident memory fell 6.6%. Comparing two window medians can only ever see that
+# something moved between them; it cannot see that the moving stopped. A process reaching its
+# working set and a process leaking look identical at the endpoints and completely different in the
+# tail, so the tail is what has to be asked.
+PLATEAU_SLOPE_RATIO = 0.05
+
+# How much the store's own size may vary and still count as settled, when locating the point after
+# which a cycle-duration trend means anything. Generous, because eviction and consolidation make the
+# row count oscillate by design - the demo generator's equilibrium swings roughly +/-10%.
+STEADY_STATE_TOLERANCE = 0.20
+
 # How much post-warm-up run a TREND verdict needs before it is allowed to say FAIL.
 #
 # This exists because the harness was caught crying wolf on its own validation run: over seven
@@ -162,6 +178,51 @@ def median(values):
         return ordered[middle]
 
     return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def has_plateaued(points):
+    """Whether a series has levelled off, judged on the slope over its last half.
+
+    Returns (plateaued, slope_per_hour, level). A series that rose and then stopped is not growing,
+    whatever its endpoints say - see PLATEAU_SLOPE_RATIO for the run that made this necessary.
+    """
+    if len(points) < MIN_TREND_SAMPLES:
+        return False, None, None
+
+    half = points[len(points) // 2 :]
+    slope = slope_per_hour(half)
+    level = median([value for _, value in half])
+
+    if slope is None or not level:
+        return False, None, None
+
+    return abs(slope) / abs(level) < PLATEAU_SLOPE_RATIO, slope, level
+
+
+def steady_state_start(rows, column="memories"):
+    """The elapsed second from which the store's size stops changing, or None if it never settles.
+
+    A cycle-duration trend is only meaningful at constant load. Measured from an empty store the
+    sleep cycle necessarily gets slower - it is scanning more - and reporting that as degradation
+    describes the fill, not the code. The 2026-08-30 run opened its comparison at 2,108 memories in
+    26 events and closed it at ~17,900 in ~535, and called the difference a 150.9% regression.
+
+    Located as the first sample from which every LATER sample stays within STEADY_STATE_TOLERANCE of
+    the run's final level, so a store still climbing at the end correctly yields None.
+    """
+    points = numbers(rows, column, skip_warmup=False)
+    if len(points) < MIN_TREND_SAMPLES:
+        return None
+
+    level = median([value for _, value in points[len(points) // 2 :]])
+    if not level:
+        return None
+
+    for i, (elapsed, _) in enumerate(points):
+        if all(abs(value - level) / level <= STEADY_STATE_TOLERANCE for _, value in points[i:]):
+            return elapsed
+
+    return None
 
 
 def window_medians(points, fraction=0.25):
@@ -292,6 +353,19 @@ def growth_check(name, points, warn_ratio, fail_ratio, warn_absolute=0, fail_abs
     over_fail = ratio >= fail_ratio and growth >= fail_absolute
     over_warn = ratio >= warn_ratio and growth >= warn_absolute
 
+    # Asked BEFORE the thresholds, because a series that has stopped moving is not growing whatever
+    # its endpoints differ by, and reporting it as growth is the crying-wolf failure that makes a
+    # reader discount the whole report.
+    plateaued, late_slope, level = has_plateaued(points)
+
+    if (over_warn or over_fail) and plateaued:
+        return Check(
+            name,
+            PASS,
+            "%s - rose, then LEVELLED OFF: %s/hour over the second half, %.1f%% of its own level. "
+            "A working set filling, not a leak." % (detail, fmt(late_slope), abs(late_slope) / abs(level) * 100.0),
+        )
+
     # A short window cannot tell a leak from a process reaching its working set, so it is not
     # allowed to claim one. Saying so is the point: the reader learns the run was too short rather
     # than that the service was fine.
@@ -320,9 +394,26 @@ def sleep_check(rows):
             "%s sleep cycles failed during the run" % human_number(failed),
         )
 
+    # The trend is only meaningful once the store has stopped growing; before that the cycle is
+    # scanning more each time by construction. Samples before the plateau are dropped rather than
+    # the whole check refused, so a run that reaches steady state still gets an answer.
+    settled = steady_state_start(rows)
+    context = ""
+
+    if settled is not None:
+        at_load = [point for point in points if point[0] >= settled]
+
+        if len(at_load) >= MIN_TREND_SAMPLES:
+            points = at_load
+            context = " (measured from %dm, once the store stopped growing)" % int(settled / 60)
+        else:
+            context = " (the store settled too late to judge a trend at constant load)"
+    else:
+        context = " (the store never settled; this spans the fill, so it is scaling and not necessarily degradation)"
+
     if len(points) < MIN_TREND_SAMPLES:
-        return Check("Sleep cycle", UNKNOWN, "only %d p95 samples outside the warm-up window; %d are needed"
-                     % (len(points), MIN_TREND_SAMPLES))
+        return Check("Sleep cycle", UNKNOWN, "only %d p95 samples to judge%s; %d are needed"
+                     % (len(points), context, MIN_TREND_SAMPLES))
 
     early, late = window_medians(points)
     if not early:
@@ -330,11 +421,13 @@ def sleep_check(rows):
 
     ratio = (late - early) / early
     cycles = counter_delta(rows, "sleeps_ok")
-    detail = "p95 %.3fs -> %.3fs (%+.1f%%) over %s successful cycles" % (
+    detail = "p95 %.3fs -> %.3fs (%+.1f%%, median %.3fs) over %s successful cycles%s" % (
         early,
         late,
         ratio * 100.0,
+        median([value for _, value in points]),
         human_number(cycles),
+        context,
     )
 
     # A p95 over a handful of cycles is one slow cycle away from any answer, and the demo's
@@ -342,6 +435,15 @@ def sleep_check(rows):
     if cycles is not None and cycles < MIN_SLEEP_CYCLES:
         return Check("Sleep cycle", UNKNOWN, detail + " - too few cycles to judge a trend (%d needed)"
                      % MIN_SLEEP_CYCLES)
+
+    plateaued, late_slope, level = has_plateaued(points)
+
+    if ratio >= SLEEP_WARN_RATIO and plateaued:
+        return Check(
+            "Sleep cycle",
+            PASS,
+            "%s - rose, then LEVELLED OFF at %.3fs (%+.3fs/hour over the second half)" % (detail, level, late_slope),
+        )
 
     if ratio >= SLEEP_FAIL_RATIO:
         return Check("Sleep cycle", FAIL, detail + " - the cycle is degrading as the run proceeds")
@@ -376,15 +478,46 @@ def eviction_check(rows):
         band,
     )
 
-    # A rising trend in the second half while over the target is the failure this check exists for:
-    # eviction is running and losing ground, which a single end-of-run reading cannot distinguish
-    # from a store that is simply full.
+    # Convergence is a question about the WHOLE window, not the last reading. The target is enforced
+    # once per sleep cycle, so a store held at it sawtooths: it climbs above between cycles and is
+    # cut back below on each one. Judging by the final sample alone reports a healthy store as
+    # failing whenever the run happens to end mid-tooth - which is exactly what a validation run
+    # with a deliberately tight cap did, on a store whose log showed eviction working perfectly and
+    # its freed-bytes estimate landing within 600 bytes of the overage.
+    #
+    # So the test is whether eviction ever brings the store back under the target. If it does, it is
+    # converging whatever the endpoint says; if it never does AND is still climbing, it is not.
+    returns_below = half and min(value for _, value in half) <= capacity
     slope = slope_per_hour(half)
+
+    if returns_below:
+        if ratio > EVICTION_WARN_RATIO:
+            return Check(
+                "Eviction convergence",
+                PASS,
+                detail + " - ended mid-cycle above the target, but eviction brings it back under each cycle",
+            )
+
+        return Check("Eviction convergence", PASS, detail)
+
+    # Never came back under. Over a short run that may still be the store filling towards a target
+    # it has not yet been asked to enforce, so the span gates the verdict exactly as it does for the
+    # growth checks.
+    span = half[-1][0] - half[0][0] if len(half) > 1 else 0
+
     if ratio > EVICTION_FAIL_RATIO or (ratio > 1.0 and slope is not None and slope > 0):
+        if span < MIN_TREND_SECONDS:
+            return Check(
+                "Eviction convergence",
+                WARN,
+                detail + " - above the target and never back under, but over only %d minutes; too "
+                "short to separate a store still filling from eviction losing ground" % int(span / 60),
+            )
+
         return Check(
             "Eviction convergence",
             FAIL,
-            detail + " - above the target and not coming down; eviction is not converging",
+            detail + " - above the target, never back under it, and still climbing; eviction is not converging",
         )
 
     if ratio > EVICTION_WARN_RATIO:
