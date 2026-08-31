@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -54,36 +55,15 @@ var (
 // item tables' own (VARCHAR(255) COLLATE utf8mb4_bin on MySQL, which cannot index unbounded TEXT
 // and would otherwise compare ids case-insensitively).
 func (d *DB) linkTableDDL(table string) string {
-	switch d.driver {
+	dialect := d.dialect()
 
-	case driverPostgres:
-		return `CREATE TABLE IF NOT EXISTS ` + table + ` (
-			from_id      TEXT NOT NULL,
-			to_id        TEXT NOT NULL,
-			significance INTEGER NOT NULL DEFAULT 0,
-			created      BIGINT NOT NULL DEFAULT 0,
-			PRIMARY KEY (from_id, to_id)
-		)`
-
-	case driverMySQL:
-		return `CREATE TABLE IF NOT EXISTS ` + table + ` (
-			from_id      VARCHAR(255) COLLATE utf8mb4_bin NOT NULL,
-			to_id        VARCHAR(255) COLLATE utf8mb4_bin NOT NULL,
-			significance INTEGER NOT NULL DEFAULT 0,
-			created      BIGINT NOT NULL DEFAULT 0,
-			PRIMARY KEY (from_id, to_id)
-		)`
-
-	default:
-		return `CREATE TABLE IF NOT EXISTS ` + table + ` (
-			from_id      TEXT NOT NULL,
-			to_id        TEXT NOT NULL,
-			significance INTEGER NOT NULL DEFAULT 0,
-			created      INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (from_id, to_id)
-		)`
-
-	}
+	return `CREATE TABLE IF NOT EXISTS ` + table + ` (
+		from_id      ` + dialect.idType + ` NOT NULL,
+		to_id        ` + dialect.idType + ` NOT NULL,
+		significance INTEGER NOT NULL DEFAULT 0,
+		created      ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
+		PRIMARY KEY (from_id, to_id)
+	)`
 }
 
 // initLinkTables creates both link graphs and their reverse indexes. The primary key already
@@ -99,19 +79,7 @@ func (d *DB) initLinkTables() error {
 			return err
 		}
 
-		index := "idx_" + table + "_to"
-
-		if d.driver == driverMySQL {
-			if err := d.createMySQLIndexIfMissing(table, index, `CREATE INDEX `+index+` ON `+table+` (to_id)`); err != nil {
-				return err
-			}
-
-			continue
-		}
-
-		if _, err := d.sql.Exec(`CREATE INDEX IF NOT EXISTS ` + index + ` ON ` + table + ` (to_id)`); err != nil {
-			log.Errorf("failed to create link index '%s': %s", index, err.Error())
-
+		if err := d.ensureIndex(table, "idx_"+table+"_to", `(to_id)`); err != nil {
 			return err
 		}
 	}
@@ -348,17 +316,16 @@ func (d *DB) pruneEventLinks(tx *sql.Tx, ids []string) error {
 	return d.pruneLinks(tx, eventGraph, ids)
 }
 
-// linkUpsert is the INSERT ... ON CONFLICT for a link row in the active dialect. Re-linking a pair
-// updates that edge's significance; created is left at its original value, so it keeps meaning
-// "when this association was first made" across a re-weighting.
+// linkUpsert is the upsert for a link row. Re-linking a pair updates that edge's significance;
+// created is deliberately absent from the update list, so it is left at its original value and
+// keeps meaning "when this association was first made" across a re-weighting.
 func (d *DB) linkUpsert(table string) string {
-	if d.driver == driverMySQL {
-		return `INSERT INTO ` + table + ` (from_id, to_id, significance, created) VALUES (?, ?, ?, ?) AS new
-			ON DUPLICATE KEY UPDATE significance = new.significance`
-	}
-
-	return `INSERT INTO ` + table + ` (from_id, to_id, significance, created) VALUES (?, ?, ?, ?)
-		ON CONFLICT (from_id, to_id) DO UPDATE SET significance = excluded.significance`
+	return d.upsert(upsertSpec{
+		table:   table,
+		columns: `from_id, to_id, significance, created`,
+		key:     []string{"from_id", "to_id"},
+		update:  []string{"significance"},
+	})
 }
 
 // createLinks upserts a set of links from one item and recalculates the aggregate for every id
@@ -887,12 +854,25 @@ func (d *DB) ReinforceLinkedMemories(ctx context.Context, ids []string, fraction
 	// A memory that has never been recalled decays from its creation timestamp, so that is the
 	// point the fraction moves from - otherwise a never-recalled memory would jump from the epoch
 	// and land almost at now, reinforcing it far more than a frequently recalled one.
-	greatest := `MAX(timestamp, time_recalled)`
-	if d.driver != driverSQLite {
-		greatest = `GREATEST(timestamp, time_recalled)`
-	}
+	greatest := d.greatest("timestamp", "time_recalled")
 
-	advanced := greatest + ` + CAST((? - ` + greatest + `) * ? AS ` + d.bigintType() + `)`
+	// The fraction is applied as an integer ratio rather than as a bound float, and that is a
+	// correctness fix rather than a stylistic one. The obvious spelling - `(? - greatest) * ?` with
+	// the fraction bound as a float64 - is silently WRONG on Postgres: the first parameter is
+	// inferred from its comparison with a bigint column, which makes the product's other operand
+	// bigint too, so 0.5 is encoded into an int8 parameter and arrives as 0. The whole UPDATE then
+	// advances every clock by nothing, and spreading activation is inert with no error anywhere.
+	// SQLite and MySQL are untyped/permissive enough to get it right, which is exactly why it
+	// survived: the shared suite only ever ran on SQLite. See TestReinforceLinkedMemories.
+	//
+	// Integer arithmetic has no such ambiguity on any dialect, and needs no CAST (whose target type
+	// was itself dialect-specific). Dividing BEFORE multiplying is load-bearing: the delta is a
+	// nanosecond count near 1e18, so multiplying first would overflow int64 on the two dialects
+	// whose bigint arithmetic actually overflows. The cost is truncation to fractionScale
+	// nanoseconds - a microsecond on a decay clock measured in days.
+	num, den := fractionRatio(fraction)
+
+	advanced := greatest + ` + (? - ` + greatest + `) / ? * ?`
 
 	// One global lock order; see lockorder.go. These ids come from the link graph, which is the
 	// order that disagreed with eviction's value ordering and produced the deadlocks.
@@ -902,8 +882,8 @@ func (d *DB) ReinforceLinkedMemories(ctx context.Context, ids []string, fraction
 		end := min(start+deleteChunkSize, len(ids))
 		chunk := ids[start:end]
 
-		args := make([]any, 0, len(chunk)+3)
-		args = append(args, now, fraction, now)
+		args := make([]any, 0, len(chunk)+4)
+		args = append(args, now, den, num, now)
 
 		for _, id := range chunk {
 			args = append(args, id)
@@ -922,14 +902,22 @@ func (d *DB) ReinforceLinkedMemories(ctx context.Context, ids []string, fraction
 	return nil
 }
 
-// bigintType names the 64-bit integer type a CAST must target in the active dialect. MySQL's CAST
-// spells it SIGNED and rejects BIGINT.
-func (d *DB) bigintType() string {
-	if d.driver == driverMySQL {
-		return "SIGNED"
+// fractionScale is the denominator fractionRatio expresses a fraction over. A thousand gives the
+// propagation fraction 0.1% granularity - finer than any configuration would distinguish - while
+// keeping the product below int64's range after the division (see ReinforceLinkedMemories).
+const fractionScale = 1000
+
+// fractionRatio expresses a 0-1 fraction as an integer numerator over fractionScale, so the SQL
+// applying it needs no float parameter and therefore no per-dialect type inference. The numerator
+// is rounded rather than truncated, and clamped to the scale, so a fraction of 1 stays exactly 1.
+func fractionRatio(fraction float64) (int64, int64) {
+	num := int64(math.Round(fraction * fractionScale))
+
+	if num > fractionScale {
+		num = fractionScale
 	}
 
-	return "BIGINT"
+	return num, fractionScale
 }
 
 // ImportMemoryLinks and ImportEventLinks write the link half of an import, after every memory and

@@ -342,7 +342,7 @@ func TestMySQL_BatchedDeleteRespectsRecallGuard(t *testing.T) {
 	}
 }
 
-// TestMySQL_BatchedDeleteAllRecalledInChunkNoOp exercises deleteChunkMySQL's empty-match branch:
+// TestMySQL_BatchedDeleteAllRecalledInChunkNoOp exercises deleteChunkWithoutReturning's empty-match branch:
 // when every snapshot in a chunk has since been recalled, the SELECT ... FOR UPDATE guard matches
 // nothing, so there is no DELETE to issue and the chunk contributes no ids - the whole call must
 // still succeed (not error) and leave every memory in place.

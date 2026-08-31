@@ -14,12 +14,7 @@ import (
 // TestGetMemoryConsolidationCandidates covers the lookup end to end: what it finds, what it leaves
 // out, and the decision inputs it must carry for the caller to be able to value a memory at all.
 func TestGetMemoryConsolidationCandidates(t *testing.T) {
-	database, err := New("")
-	if err != nil {
-		t.Fatalf("New: %s", err)
-	}
-
-	t.Cleanup(func() { _ = database.Close() })
+	database := newTestDB(t)
 
 	ctx := context.Background()
 
@@ -104,12 +99,7 @@ func TestGetMemoryConsolidationCandidates(t *testing.T) {
 
 // TestGetMemoryConsolidationCandidatesNoIds covers the empty request: no ids means no query.
 func TestGetMemoryConsolidationCandidatesNoIds(t *testing.T) {
-	database, err := New("")
-	if err != nil {
-		t.Fatalf("New: %s", err)
-	}
-
-	t.Cleanup(func() { _ = database.Close() })
+	database := newTestDB(t)
 
 	candidates, err := database.GetMemoryConsolidationCandidates(context.Background(), nil)
 	if err != nil {
@@ -125,12 +115,7 @@ func TestGetMemoryConsolidationCandidatesNoIds(t *testing.T) {
 // chunk holds must still find every memory among them, and must not deadlock on the single SQLite
 // connection by leaving a chunk's rows open across the next chunk's query.
 func TestGetMemoryConsolidationCandidatesChunks(t *testing.T) {
-	database, err := New("")
-	if err != nil {
-		t.Fatalf("New: %s", err)
-	}
-
-	t.Cleanup(func() { _ = database.Close() })
+	database := newTestDB(t)
 
 	ctx := context.Background()
 

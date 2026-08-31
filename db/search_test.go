@@ -49,6 +49,17 @@ func searchIds(t *testing.T, d *DB, query ContentQuery) []string {
 	return ids
 }
 
+// newContentSearchDB is newTestDB for this file: the FTS5 content index is a SQLite-only feature
+// (see ContentSearchAvailable), so every test here is about SQLite specifically rather than about
+// behaviour the three dialects must agree on, and skips under the shared suite's other dialects.
+func newContentSearchDB(t *testing.T) *DB {
+	t.Helper()
+
+	requireSQLite(t)
+
+	return newTestDB(t)
+}
+
 // ftsRowCount reports how many rows the FTS index holds, so tests can assert on the index itself
 // rather than only on what search returns through it.
 func ftsRowCount(t *testing.T, d *DB) int {
@@ -64,7 +75,7 @@ func ftsRowCount(t *testing.T, d *DB) int {
 }
 
 func TestContentSearchFindsAndFilters(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	if !d.ContentSearchAvailable() {
@@ -92,7 +103,7 @@ func TestContentSearchFindsAndFilters(t *testing.T) {
 // A group or event filter must restrict the matches, since both are how a caller scopes a search
 // to one slice of the store.
 func TestContentSearchAppliesFilters(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	if _, err := d.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "an event", TimeStart: 1, Significance: 1}); err != nil {
@@ -146,7 +157,7 @@ func TestContentSearchAppliesFilters(t *testing.T) {
 // Limit must bound the result set: an unbounded content search over a large store is exactly the
 // kind of query that has to stay bounded.
 func TestContentSearchRespectsLimit(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	for _, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
@@ -166,7 +177,7 @@ func TestContentSearchRespectsLimit(t *testing.T) {
 // The whole point of ranking by bm25 rather than returning matches in storage order: a memory that
 // is more about the term should come first.
 func TestContentSearchRanksByRelevance(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "diluted", "deployment "+strings.Repeat("unrelated words here ", 50), "ops")
@@ -185,7 +196,7 @@ func TestContentSearchRanksByRelevance(t *testing.T) {
 // Binary bodies are client-encoded and opaque, so they must never be indexed - the same rule the
 // OpenSearch path follows.
 func TestContentSearchSkipsBinaryMemories(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	memory := types.Memory{Id: "bin", TimeStamp: 1, Significance: 5, Body: "deployment payload", IsBinary: true}
@@ -206,7 +217,7 @@ func TestContentSearchSkipsBinaryMemories(t *testing.T) {
 // therefore take the plain body from inside the storage boundary - an index built from the stored
 // column would tokenise gzip bytes and match nothing.
 func TestContentSearchIndexesCompressedBodies(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	d.SetCompression(true, compressionMinBytesFloor)
@@ -233,7 +244,7 @@ func TestContentSearchIndexesCompressedBodies(t *testing.T) {
 // Updating a body must retire the old text as well as index the new one, or a memory keeps
 // matching something it no longer says.
 func TestContentSearchReindexesOnUpdate(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "m1", "the original wording", "ops")
@@ -263,7 +274,7 @@ func TestContentSearchReindexesOnUpdate(t *testing.T) {
 
 // An update that does not carry a body must leave the index alone rather than blanking it.
 func TestContentSearchUpdateWithoutBodyKeepsIndex(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "m1", "the original wording", "ops")
@@ -281,7 +292,7 @@ func TestContentSearchUpdateWithoutBodyKeepsIndex(t *testing.T) {
 // existence check this deletes nothing and inserts nothing (the INSERT ... SELECT matches no row),
 // but the test pins that it stays that way.
 func TestContentSearchUpdateOfAbsentMemoryIndexesNothing(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "m1", "the original wording", "ops")
@@ -307,7 +318,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("DeleteMemories", func(t *testing.T) {
-		d := newTestDB(t)
+		d := newContentSearchDB(t)
 		defer func() { _ = d.Close() }()
 
 		storeMemory(t, d, "m1", "forgettable content", "ops")
@@ -322,7 +333,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 	})
 
 	t.Run("Purge", func(t *testing.T) {
-		d := newTestDB(t)
+		d := newContentSearchDB(t)
 		defer func() { _ = d.Close() }()
 
 		storeMemory(t, d, "m1", "forgettable content", "ops")
@@ -337,7 +348,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 	})
 
 	t.Run("consolidation", func(t *testing.T) {
-		d := newTestDB(t)
+		d := newContentSearchDB(t)
 		defer func() { _ = d.Close() }()
 
 		storeMemory(t, d, "m1", "forgettable content", "ops")
@@ -352,7 +363,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 	})
 
 	t.Run("DeleteEventMemories", func(t *testing.T) {
-		d := newTestDB(t)
+		d := newContentSearchDB(t)
 		defer func() { _ = d.Close() }()
 
 		if _, err := d.CreateEvent(ctx, types.Event{Id: "e1", Name: "an event", TimeStart: 1, Significance: 1}); err != nil {
@@ -379,7 +390,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 func TestContentSearchFollowsSummaryReplacement(t *testing.T) {
 	ctx := context.Background()
 
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	if _, err := d.CreateEvent(ctx, types.Event{Id: "e1", Name: "an event", TimeStart: 1, Significance: 1}); err != nil {
@@ -412,7 +423,7 @@ func TestContentSearchFollowsSummaryReplacement(t *testing.T) {
 func TestContentSearchFollowsImport(t *testing.T) {
 	ctx := context.Background()
 
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "m1", "the original wording", "ops")
@@ -485,7 +496,7 @@ func TestContentSearchPopulatesOnUpgrade(t *testing.T) {
 func TestRebuildContentSearchRepairsAGap(t *testing.T) {
 	ctx := context.Background()
 
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "m1", "findable content", "ops")
@@ -513,7 +524,7 @@ func TestRebuildContentSearchRepairsAGap(t *testing.T) {
 // into the query's structure. None of these may error, and none may match a memory the plain words
 // would not have matched.
 func TestContentSearchSanitisesHostileQueries(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "m1", "deployment notes", "ops")
@@ -554,7 +565,7 @@ func TestContentSearchSanitisesHostileQueries(t *testing.T) {
 // The tokens are OR-ed, matching the OpenSearch backend's "match" query, so the two backends agree
 // on which memories match and not merely on how they rank them.
 func TestContentSearchOrsItsTokens(t *testing.T) {
-	d := newTestDB(t)
+	d := newContentSearchDB(t)
 	defer func() { _ = d.Close() }()
 
 	storeMemory(t, d, "m1", "deployment", "ops")

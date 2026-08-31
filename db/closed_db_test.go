@@ -98,8 +98,16 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 
 			return err
 		}},
-		{"Preserve", func() error { return db.Preserve(ctx) }},
 		{"Purge", func() error { return db.Purge(ctx) }},
+	}
+
+	// Preserve is SQLite's compaction and a documented no-op on the server drivers (autovacuum and
+	// InnoDB purge do the same job), so only there does it have a database to fail against.
+	if testDialect(t) == driverSQLite {
+		checks = append(checks, struct {
+			name string
+			call func() error
+		}{"Preserve", func() error { return db.Preserve(ctx) }})
 	}
 
 	for _, c := range checks {

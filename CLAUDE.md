@@ -107,6 +107,15 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN=<dsn>`/`HIPPOCAMPUS_TEST_MYSQL_DSN=<dsn>` `go test ./db`
   against any disposable database. The `proto-breaking` job gates the contract (above)
+- Run the `db` suite against a server dialect: `HIPPOCAMPUS_TEST_DIALECT=postgres go test ./db`
+  (or `mysql`), with that dialect's DSN set. It re-points `newTestDB` (`db/conformance_test.go`), so
+  the **same ~190 shared tests** execute there rather than on SQLite alone; CI runs all three. This
+  is the cross-dialect conformance suite, and it is the safety net any change under `db/` wants:
+  before it existed only 18 of the 74 `db.Store` methods had **any** server-driver coverage, and its
+  first run found spreading activation silently inert on Postgres (a float bound into an
+  integer-inferred parameter arriving as 0). A test that legitimately cannot run on a server dialect
+  calls `requireSQLite`; one that opens its own store instead of `newTestDB` is refused by
+  `TestSharedSuiteOpensThroughNewTestDB` unless its file is on that guard's allow-list
 - Cut a release: `scripts/release.sh --minor` (or `--patch`/`--major`/`--version X.Y.Z`) — runs the
   pre-flight, rolls `[Unreleased]` into a dated version section, rewrites both link references,
   commits and tags. It deliberately does **not** push (that is what starts the release workflow) and
@@ -554,9 +563,18 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     decay dynamics stay store-global.
 - `db/` — storage layer. One `DB` struct speaks three SQL dialects, selected by `storage.driver`
   (`sqlite`, the default, `postgres`, or `mysql`); nearly all query and consolidation logic is
-  shared, with a `driver` field branching the genuinely divergent pieces (DDL, `?`-vs-`$N`
-  placeholders via `rebind()`, `MAX(a,b)` vs `GREATEST`, upserts, and the
-  compaction/size-accounting methods). The `db.Store` interface (in `db.go`) is what
+  shared. **Everything the package knows about how the dialects differ lives in `db/dialect.go`**
+  (plus `metadata.go`, the JSON accessors) — a `dialect` table with one row per dialect carrying the
+  column types, expression fragments and capability flags the shared code splices in, alongside the
+  handful of helpers whose difference is structural rather than lexical (`upsert`, `ensureIndex`/
+  `dropIndexIfExists`, `columnProbe`, `registryLock`, `rebind`). `TestDialectKnowledgeIsConfined`
+  fails the build if any other non-test file compares `d.driver`, which is what makes a fourth
+  dialect a new row rather than a hunt through thirteen files. In particular `coreSchemaStatements`
+  and `coreColumnMigrations` are the events/memories schema written **once**: the three copies they
+  replaced differed only in column types, so keeping them apart bought nothing and risked the one
+  failure this schema cannot afford — a column added to one dialect's copy and forgotten in another,
+  which yields a store that opens, serves, and is missing a field on exactly one backend. The
+  `db.Store` interface (in `db.go`) is what
   `hippocampus.Server` and `stats` depend on — the seam for future non-SQL backends. Every
   `db.Store` method that issues a query takes a leading `ctx context.Context` (all but `WALBytes`,
   a filesystem stat, and `Close`), so an RPC's deadline/cancellation reaches the driver; the db

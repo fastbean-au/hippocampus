@@ -104,11 +104,11 @@ type ContentHit struct {
 	Score float64
 }
 
-// ContentSearchAvailable reports whether this database can answer content searches. Only the
-// SQLite driver can, and only when it is not a read-only tool open (which never runs the DDL that
-// creates the index).
+// ContentSearchAvailable reports whether this database can answer content searches. Only a dialect
+// carrying the FTS5 index can, and only when it is not a read-only tool open (which never runs the
+// DDL that creates the index).
 func (d *DB) ContentSearchAvailable() bool {
-	return d.driver == driverSQLite && !d.readOnly
+	return d.dialect().contentSearch && !d.readOnly
 }
 
 // initContentSearch creates the content-search index and populates it if it is empty but the store
@@ -117,7 +117,7 @@ func (d *DB) ContentSearchAvailable() bool {
 func (d *DB) initContentSearch() error {
 	log.Trace("func() db.initContentSearch")
 
-	if d.driver != driverSQLite {
+	if !d.dialect().contentSearch {
 		return nil
 	}
 
@@ -185,7 +185,7 @@ func (d *DB) backfillContentSearch() error {
 func (d *DB) RebuildContentSearch(ctx context.Context) error {
 	log.Trace("func() db.RebuildContentSearch")
 
-	if d.driver != driverSQLite {
+	if !d.dialect().contentSearch {
 		return nil
 	}
 

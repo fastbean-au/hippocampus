@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,7 +350,7 @@ func TestPurge_RollsBackWhenSignificanceLevelsDeleteFails(t *testing.T) {
 	// significance_levels is gone, so the normal joined read path can't be used; check the raw
 	// table directly.
 	var count int
-	if err := db.sql.QueryRow(`SELECT COUNT(*) FROM memories WHERE id = ?`, "m1").Scan(&count); err != nil {
+	if err := db.sql.QueryRow(db.rebind(`SELECT COUNT(*) FROM memories WHERE id = ?`), "m1").Scan(&count); err != nil {
 		t.Fatalf("count memories: %s", err)
 	}
 
@@ -369,15 +370,34 @@ func TestAddColumnIfMissing_AlterTableFails(t *testing.T) {
 	}
 }
 
-// TestAddColumnIfMissing_MySQLProbeSelection verifies the MySQL arm selects the
-// information_schema probe (rather than SQLite's pragma_table_info) - driving it against the
-// test's actual SQLite backend, where that probe fails, so the branch selection itself is
-// exercised even though the full MySQL path needs a real server (covered by mysql_test.go).
-func TestAddColumnIfMissing_MySQLProbeSelection(t *testing.T) {
-	db := newTestDB(t)
-	db.driver = driverMySQL
+// TestColumnProbeSelection verifies each dialect gets the probe it can actually run: SQLite the
+// pragma table-valued function, the two server dialects information_schema under the right spelling
+// of "the current schema". All three are written in the shared ? style and rebound by their caller
+// like any other query.
+//
+// It asserts on the SQL rather than on a mismatched driver field failing against another backend,
+// which is what it used to do: that shape only produced an error while the test happened to run on
+// SQLite, so under the shared suite's other dialects the probe succeeded and the assertion inverted.
+func TestColumnProbeSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		driver   driver
+		contains []string
+	}{
+		{name: "sqlite", driver: driverSQLite, contains: []string{"pragma_table_info(?)", "name = ?"}},
+		{name: "mysql", driver: driverMySQL, contains: []string{"information_schema.columns", "DATABASE()", "= ?"}},
+		{name: "postgres", driver: driverPostgres, contains: []string{"information_schema.columns", "CURRENT_SCHEMA()", "= ?"}},
+	}
 
-	if err := db.addColumnIfMissing("memories", "extra", "INTEGER NOT NULL DEFAULT 0"); err == nil {
-		t.Error("expected the MySQL information_schema probe to fail against a SQLite backend")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			probe := (&DB{driver: tt.driver}).columnProbe()
+
+			for _, want := range tt.contains {
+				if !strings.Contains(probe, want) {
+					t.Errorf("%s probe %q does not contain %q", tt.name, probe, want)
+				}
+			}
+		})
 	}
 }

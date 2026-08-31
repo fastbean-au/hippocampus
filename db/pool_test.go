@@ -19,6 +19,10 @@ func TestSetPoolLimits_AppliesMaxOpenConns(t *testing.T) {
 // untouched, so a misconfiguration cannot accidentally uncap or zero the pool. newTestDB is SQLite,
 // which caps itself at one connection in New.
 func TestSetPoolLimits_NonPositiveIsNoOp(t *testing.T) {
+	// The assertion is the SQLite cap specifically; the server drivers leave database/sql's own
+	// unlimited default in place, against which "untouched" has no distinguishing value to check.
+	requireSQLite(t)
+
 	d := newTestDB(t)
 
 	d.SetPoolLimits(0, 10)

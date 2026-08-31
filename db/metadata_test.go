@@ -780,6 +780,21 @@ func TestMetadataCountsTowardEvictionBytes(t *testing.T) {
 
 	expected := int64(types.MetadataSerialisedLen(metadata))
 
+	// Both server dialects store metadata in a parsed JSON type (jsonb on Postgres, JSON on MySQL)
+	// rather than as the bytes the client sent, so the accounting expression has to render it back to
+	// text - and both render their canonical form with the tokens separated ({"a": "b", "c": "d"})
+	// where Go's json.Marshal does not ({"a":"b","c":"d"}). That is one space after each of the n
+	// colons and after each of the n-1 commas. SQLite stores the text verbatim and needs no allowance.
+	//
+	// The divergence is a measurement convention, not an accounting fault: what the store requires is
+	// that UsedBytes and EvictMemories' freed estimate be exact complements of one another, and they
+	// are, because both go through metadataBytesExpr. Pinning the figure per dialect rather than
+	// loosening the comparison is deliberate - it keeps this a test that would fail if the two sites
+	// ever stopped measuring the same thing.
+	if testDialect(t) != driverSQLite {
+		expected += int64(2*len(metadata) - 1)
+	}
+
 	if withMetadata-bare != expected {
 		t.Errorf(
 			"expected eviction to count the metadata's %d bytes, but the estimate rose by %d (%d vs %d)",

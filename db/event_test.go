@@ -8,17 +8,6 @@ import (
 	"github.com/fastbean-au/hippocampus/types"
 )
 
-func newTestDB(t *testing.T) *DB {
-	t.Helper()
-
-	db, err := New("")
-	if err != nil {
-		t.Fatalf("failed to create test DB: %s", err)
-	}
-
-	return db
-}
-
 // stubServer implements the Server interface with fixed answers, so DB-level consolidation scans
 // can be tested without the hippocampus package.
 type stubServer struct {

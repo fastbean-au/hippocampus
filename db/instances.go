@@ -128,16 +128,7 @@ func (d *DB) initInstances() error {
 	// last_seen carries both the pruning cutoff and the staleness the view renders, and is the only
 	// column ever filtered on - the reads are a full listing of a table with as many rows as there
 	// are instances.
-	index := "idx_" + instancesTable + "_last_seen"
-	definition := `CREATE INDEX ` + index + ` ON ` + instancesTable + ` (last_seen)`
-
-	if d.driver == driverMySQL {
-		if err := d.createMySQLIndexIfMissing(instancesTable, index, definition); err != nil {
-			return err
-		}
-	} else if _, err := d.sql.Exec(`CREATE INDEX IF NOT EXISTS ` + index + ` ON ` + instancesTable + ` (last_seen)`); err != nil {
-		log.Errorf("failed to create instance registry index '%s': %s", index, err.Error())
-
+	if err := d.ensureIndex(instancesTable, "idx_"+instancesTable+"_last_seen", `(last_seen)`); err != nil {
 		return err
 	}
 
@@ -149,80 +140,46 @@ func (d *DB) initInstances() error {
 // instancesDDL is the CREATE TABLE for the registry in the active dialect. There is no SQLite
 // branch: the table is never created there, and offering one would invite it to be.
 func (d *DB) instancesDDL() string {
-	if d.driver == driverMySQL {
-		// id collates like the memory and event ids beside it, so two hostnames differing only in
-		// case are two instances here as they would be anywhere else in the schema.
-		return `CREATE TABLE IF NOT EXISTS ` + instancesTable + ` (
-			id                VARCHAR(255) COLLATE ` + mysqlBinaryCollation + ` PRIMARY KEY,
-			hostname          VARCHAR(255) NOT NULL DEFAULT '',
-			version           VARCHAR(255) NOT NULL DEFAULT '',
-			role              VARCHAR(32) NOT NULL DEFAULT '',
-			started_at        BIGINT NOT NULL DEFAULT 0,
-			last_seen         BIGINT NOT NULL DEFAULT 0,
-			heartbeat_seconds BIGINT NOT NULL DEFAULT 0,
-			has_search        BOOLEAN NOT NULL DEFAULT FALSE,
-			has_summariser    BOOLEAN NOT NULL DEFAULT FALSE,
-			has_embedder      BOOLEAN NOT NULL DEFAULT FALSE,
-			has_gateway       BOOLEAN NOT NULL DEFAULT FALSE
-		)`
-	}
+	dialect := d.dialect()
 
-	// heartbeat_seconds is BIGINT rather than INTEGER on both dialects, and that is not cosmetic: it
+	// id takes the dialect's id type, which on MySQL collates like the memory and event ids beside
+	// it, so two hostnames differing only in case are two instances here as they would be anywhere
+	// else in the schema.
+	//
+	// heartbeat_seconds is the 64-bit integer type rather than INTEGER, and that is not cosmetic: it
 	// is multiplied by a nanosecond scale in the pruning predicate, and Postgres types that whole
 	// expression - including the placeholder compared against it - from the column. As an INTEGER it
 	// infers int4, and then both the product and the UnixNano bound overflow, which is a runtime
 	// failure on every prune rather than a schema complaint at startup.
-
 	return `CREATE TABLE IF NOT EXISTS ` + instancesTable + ` (
-		id                TEXT PRIMARY KEY,
-		hostname          TEXT NOT NULL DEFAULT '',
-		version           TEXT NOT NULL DEFAULT '',
-		role              TEXT NOT NULL DEFAULT '',
-		started_at        BIGINT NOT NULL DEFAULT 0,
-		last_seen         BIGINT NOT NULL DEFAULT 0,
-		heartbeat_seconds BIGINT NOT NULL DEFAULT 0,
-		has_search        BOOLEAN NOT NULL DEFAULT FALSE,
-		has_summariser    BOOLEAN NOT NULL DEFAULT FALSE,
-		has_embedder      BOOLEAN NOT NULL DEFAULT FALSE,
-		has_gateway       BOOLEAN NOT NULL DEFAULT FALSE
+		id                ` + dialect.idType + ` PRIMARY KEY,
+		hostname          ` + dialect.labelType + ` NOT NULL DEFAULT '',
+		version           ` + dialect.labelType + ` NOT NULL DEFAULT '',
+		role              ` + dialect.labelType + ` NOT NULL DEFAULT '',
+		started_at        ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
+		last_seen         ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
+		heartbeat_seconds ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
+		has_search        ` + dialect.boolType + ` NOT NULL DEFAULT FALSE,
+		has_summariser    ` + dialect.boolType + ` NOT NULL DEFAULT FALSE,
+		has_embedder      ` + dialect.boolType + ` NOT NULL DEFAULT FALSE,
+		has_gateway       ` + dialect.boolType + ` NOT NULL DEFAULT FALSE
 	)`
 }
 
-// instanceUpsert is the INSERT ... ON CONFLICT for a registry row in the active dialect. Every
-// column is refreshed, including started_at and the capability flags: an instance that restarts with
-// a different configuration must not be described by the row its previous incarnation wrote.
+// instanceUpsert is the upsert for a registry row. Every column but the id is refreshed, including
+// started_at and the capability flags: an instance that restarts with a different configuration must
+// not be described by the row its previous incarnation wrote.
 func (d *DB) instanceUpsert() string {
-	columns := `(id, hostname, version, role, started_at, last_seen, heartbeat_seconds,
-		has_search, has_summariser, has_embedder, has_gateway)`
-	values := `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	if d.driver == driverMySQL {
-		return `INSERT INTO ` + instancesTable + ` ` + columns + ` ` + values + ` AS new
-			ON DUPLICATE KEY UPDATE
-				hostname = new.hostname,
-				version = new.version,
-				role = new.role,
-				started_at = new.started_at,
-				last_seen = new.last_seen,
-				heartbeat_seconds = new.heartbeat_seconds,
-				has_search = new.has_search,
-				has_summariser = new.has_summariser,
-				has_embedder = new.has_embedder,
-				has_gateway = new.has_gateway`
-	}
-
-	return `INSERT INTO ` + instancesTable + ` ` + columns + ` ` + values + `
-		ON CONFLICT (id) DO UPDATE SET
-			hostname = excluded.hostname,
-			version = excluded.version,
-			role = excluded.role,
-			started_at = excluded.started_at,
-			last_seen = excluded.last_seen,
-			heartbeat_seconds = excluded.heartbeat_seconds,
-			has_search = excluded.has_search,
-			has_summariser = excluded.has_summariser,
-			has_embedder = excluded.has_embedder,
-			has_gateway = excluded.has_gateway`
+	return d.upsert(upsertSpec{
+		table: instancesTable,
+		columns: `id, hostname, version, role, started_at, last_seen, heartbeat_seconds,
+			has_search, has_summariser, has_embedder, has_gateway`,
+		key: []string{"id"},
+		update: []string{
+			"hostname", "version", "role", "started_at", "last_seen", "heartbeat_seconds",
+			"has_search", "has_summariser", "has_embedder", "has_gateway",
+		},
+	})
 }
 
 // Heartbeat records this instance's liveness and prunes rows whose instances have stopped writing

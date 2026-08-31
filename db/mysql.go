@@ -157,52 +157,14 @@ func (d *DB) acquireMySQLInstanceLock() error {
 func (d *DB) initMySQLSchema() error {
 	log.Trace("func() db.initMySQLSchema")
 
+	// The two core tables plus the columns added to them since (see coreSchemaStatements and
+	// migrateCoreColumns, both shared with the other drivers; the dialect table in dialect.go is
+	// where this driver's VARCHAR ids, its binary collation and its default-less TEXT and BLOB
+	// columns are declared and explained).
+	//
 	// Statements run one at a time: go-sql-driver rejects multi-statement strings unless the DSN
 	// opts in, and requiring that of every deployment for startup DDL alone isn't worth it.
-	//
-	// Ids are VARCHAR rather than TEXT because MySQL cannot use an unbounded TEXT column as a
-	// primary key or in a full-column index; 255 characters comfortably holds the generated UUIDs
-	// and stays inside InnoDB's utf8mb4 index-width limit. TEXT and LONGBLOB columns carry no
-	// DEFAULT (MySQL only allows expression defaults on them) — every insert in the package
-	// supplies those columns explicitly.
-	//
-	// id, event_id, and group_name are COLLATE utf8mb4_bin so they compare byte-for-byte, matching
-	// SQLite and Postgres. Under MySQL's default collation (utf8mb4_0900_ai_ci) ids differing only
-	// in case or accent would be the same key — client ids "abc"/"ABC" would collide (a duplicate
-	// key on create, a silent merge on import) and keyset pagination would walk a different order —
-	// so the same archive would change record identity across drivers. See mysqlBinaryCollation.
-	statements := []string{
-		`CREATE TABLE IF NOT EXISTS events (
-			id                        VARCHAR(255) COLLATE utf8mb4_bin PRIMARY KEY,
-			time_start                BIGINT NOT NULL DEFAULT 0,
-			time_end                  BIGINT NOT NULL DEFAULT 0,
-			significance_level_id     BIGINT,
-			name                      TEXT NOT NULL,
-			description               TEXT NOT NULL,
-			memories_consolidated     BOOLEAN NOT NULL DEFAULT FALSE,
-			link_significance         BIGINT NOT NULL DEFAULT 0,
-			group_name                VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
-			metadata                  JSON
-		)`,
-
-		`CREATE TABLE IF NOT EXISTS memories (
-			id            VARCHAR(255) COLLATE utf8mb4_bin PRIMARY KEY,
-			timestamp     BIGINT NOT NULL DEFAULT 0,
-			significance_level_id BIGINT,
-			event_id      VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
-			is_binary     BOOLEAN NOT NULL DEFAULT FALSE,
-			time_recalled BIGINT NOT NULL DEFAULT 0,
-			recall_count  INTEGER NOT NULL DEFAULT 0,
-			is_summary    BOOLEAN NOT NULL DEFAULT FALSE,
-			group_name    VARCHAR(255) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
-			is_compressed BOOLEAN NOT NULL DEFAULT FALSE,
-			link_significance BIGINT NOT NULL DEFAULT 0,
-			body          LONGBLOB NOT NULL,
-			metadata      JSON
-		)`,
-
-		d.significanceLevelsDDL(),
-	}
+	statements := append(d.coreSchemaStatements(), d.significanceLevelsDDL())
 
 	for _, statement := range statements {
 		if _, err := d.sql.Exec(statement); err != nil {
@@ -212,45 +174,7 @@ func (d *DB) initMySQLSchema() error {
 		}
 	}
 
-	if err := d.addColumnIfMissing("memories", "is_summary", "BOOLEAN NOT NULL DEFAULT FALSE"); err != nil {
-		return err
-	}
-
-	// Bodies written before compression existed are all uncompressed, which is what the column's
-	// default already says of them, so adding it is the whole migration.
-	if err := d.addColumnIfMissing("memories", "is_compressed", "BOOLEAN NOT NULL DEFAULT FALSE"); err != nil {
-		return err
-	}
-
-	// The column is named group_name rather than group because GROUP is a reserved word; VARCHAR
-	// rather than TEXT so the column stays indexable, matching the ids.
-	if err := d.addColumnIfMissing("memories", "group_name", "VARCHAR(255) NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "group_name", "VARCHAR(255) NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-
-	// The link graph's denormalised aggregate (see link.go). 0 is right for a database that
-	// predates links: it has none, and initLinkTables creates the graph empty.
-	if err := d.addColumnIfMissing("memories", "link_significance", "BIGINT NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "link_significance", "BIGINT NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-
-	// Metadata (see types/metadata.go), NULL-able with no default. MySQL forbids a DEFAULT on a JSON
-	// column at all, but that restriction costs nothing here because the other two drivers must also
-	// leave it NULL: json_extract's SQLite equivalent raises "malformed JSON" on an empty string, so
-	// an ''-defaulted column would break the first metadata-filtered query against pre-migration rows.
-	if err := d.addColumnIfMissing("memories", "metadata", "JSON"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "metadata", "JSON"); err != nil {
+	if err := d.migrateCoreColumns(); err != nil {
 		return err
 	}
 
@@ -274,17 +198,6 @@ func (d *DB) initMySQLSchema() error {
 		if err := d.setMySQLColumnCollationIfNeeded(c.table, c.column, c.definition); err != nil {
 			return err
 		}
-	}
-
-	// The significance registry columns (see significance.go); backfilled from the old per-item
-	// significance column by migrateSignificanceToLevels, after which the covering index is rebuilt
-	// on significance_level_id.
-	if err := d.addColumnIfMissing("memories", "significance_level_id", "BIGINT"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "significance_level_id", "BIGINT"); err != nil {
-		return err
 	}
 
 	if err := d.initLinkTables(); err != nil {
@@ -361,37 +274,6 @@ func (d *DB) setMySQLColumnCollationIfNeeded(table string, column string, defini
 
 	if _, err := d.sql.Exec(`ALTER TABLE ` + table + ` MODIFY ` + column + ` ` + definition); err != nil {
 		log.Errorf("failed to migrate collation for column '%s' on table '%s': %s", column, table, err.Error())
-
-		return err
-	}
-
-	return nil
-}
-
-// createMySQLIndexIfMissing creates the index when it is not already present, standing in for the
-// CREATE INDEX IF NOT EXISTS the other dialects support natively.
-func (d *DB) createMySQLIndexIfMissing(table string, index string, definition string) error {
-	log.Trace("func() db.createMySQLIndexIfMissing")
-
-	var count int
-
-	if err := d.sql.QueryRow(
-		`SELECT COUNT(*) FROM information_schema.statistics
-		WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
-		table,
-		index,
-	).Scan(&count); err != nil {
-		log.Errorf("failed to check for index '%s' on table '%s': %s", index, table, err.Error())
-
-		return err
-	}
-
-	if count > 0 {
-		return nil
-	}
-
-	if _, err := d.sql.Exec(definition); err != nil {
-		log.Errorf("failed to create index '%s' on table '%s': %s", index, table, err.Error())
 
 		return err
 	}

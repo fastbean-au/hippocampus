@@ -94,6 +94,30 @@ jobs:
           HIPPOCAMPUS_TEST_OPENSEARCH_URL: http://localhost:9200
         run: go test -coverprofile=coverage.out ./...
 
+      # The same db suite, rerun against each server dialect. HIPPOCAMPUS_TEST_DIALECT re-points
+      # newTestDB (db/conformance_test.go), so the ~190 shared tests execute on Postgres and MySQL
+      # rather than on SQLite alone - which is what the step above still does, and what every run
+      # before this one did exclusively. Only 18 of the 74 db.Store methods had any server-driver
+      # coverage at all until this existed, leaving dialect-specific code in the link graph, the
+      # forgotten log and the search outbox with no test that had ever run the branch; the first run
+      # of this step found spreading activation to be silently inert on Postgres.
+      #
+      # A separate step rather than a matrix dimension: the two servers are already up for the step
+      # above, the run is under a minute each, and keeping it here means one job reports the whole
+      # root module. Coverage is deliberately not collected - the SQLite run above is the coverage
+      # baseline, and three profiles of the same lines would only obscure it.
+      - name: Test the db suite against each server dialect
+        env:
+          HIPPOCAMPUS_TEST_POSTGRES_DSN: postgres://hippocampus:hippocampus@localhost:5432/hippocampus_test?sslmode=disable
+          HIPPOCAMPUS_TEST_MYSQL_DSN: hippocampus:hippocampus@tcp(localhost:3306)/hippocampus_test
+          HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN: root:hippocampus@tcp(localhost:3306)/hippocampus_test
+        run: |
+          for dialect in postgres mysql; do
+            echo "::group::db suite on $dialect"
+            HIPPOCAMPUS_TEST_DIALECT="$dialect" go test -count=1 ./db
+            echo "::endgroup::"
+          done
+
       # Coverage is reported to Coveralls only on a push to main, never on a PR: fork PRs cannot see
       # the token secret, and PR coverage must not overwrite the mainline badge. This is what keeps
       # the README's ?branch=main badge fresh - the tag-triggered release runs report under the tag

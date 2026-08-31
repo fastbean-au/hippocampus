@@ -380,12 +380,8 @@ func (d *DB) RetainedStats(ctx context.Context, cutoff int64) (int, int64, error
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	// SQLite's two-argument MAX is a scalar function; Postgres and MySQL spell it GREATEST (their
-	// MAX is aggregate-only) - the same branch FindSummarisationCandidates makes.
-	greatest := `MAX(timestamp, time_recalled)`
-	if d.driver != driverSQLite {
-		greatest = `GREATEST(timestamp, time_recalled)`
-	}
+	// The same decay clock consolidation ages from, so the figure is comparable. See DB.greatest.
+	greatest := d.greatest("timestamp", "time_recalled")
 
 	var count int
 	var bytes sql.NullInt64

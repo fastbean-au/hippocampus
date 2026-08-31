@@ -33,6 +33,38 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Spreading activation was silently inert on PostgreSQL.** `linkRecallPropagation` advances the
+  decay clock of a recalled memory's linked neighbours by a fraction of their age. The UPDATE
+  applying that fraction bound it as a float into an expression whose other operand was a `BIGINT`
+  column, so PostgreSQL inferred the parameter as `bigint` too and `0.5` arrived as `0` — every
+  neighbour's clock advanced by nothing, on every recall, with no error anywhere. SQLite and MySQL
+  were unaffected. The fraction is now applied as an integer ratio, which no dialect can misinfer
+  and which needed no `CAST` (whose target type was itself dialect-specific). A deployment on
+  PostgreSQL that configured `consolidation.linkRecallPropagation` was getting none of it, and its
+  linked memories decayed as though unlinked.
+
+### Changed
+
+- **All SQL-dialect knowledge now lives in one file.** `db/dialect.go` holds a table with one row per
+  dialect — column types, expression fragments, capability flags — plus the few helpers whose
+  difference is structural rather than lexical (the upsert form, index management, the registry
+  lock). The 39 driver branches previously spread across 13 files are down to 5 across 2, and a
+  build-time guard refuses a new one anywhere else. Most visibly, the `events` and `memories` schema
+  is now written **once** instead of three times: the copies differed only in column types, so
+  keeping them apart risked a column being added to one dialect and forgotten in another — a store
+  that opens, serves, and is missing a field on exactly one backend. No stored schema changes; a
+  database written by any earlier version opens unchanged.
+
+- **The `db` test suite now runs against all three dialects.** `HIPPOCAMPUS_TEST_DIALECT` re-points
+  the suite's shared store constructor at PostgreSQL or MySQL, so the same ~190 tests execute on
+  each; CI runs all three. Previously only 18 of the 74 `db.Store` methods had any server-driver
+  coverage at all, which left dialect-specific code in the link graph, the forgotten log, the search
+  outbox, `PreviewConsolidation` and `RetainedStats` with no test that had ever run the branch — the
+  first run of the new suite found the PostgreSQL bug above. `addColumnIfMissing` now probes
+  correctly on all three dialects rather than being a syntax error on the one it is not called from.
+
 ## [0.38.3] - 2026-08-29
 
 ### Fixed

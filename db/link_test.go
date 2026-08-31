@@ -43,7 +43,7 @@ func linkSignificanceOfMemory(t *testing.T, db *DB, id string) int64 {
 
 	var total int64
 
-	err := db.sql.QueryRow(`SELECT link_significance FROM memories WHERE id = ?`, id).Scan(&total)
+	err := db.sql.QueryRow(db.rebind(`SELECT link_significance FROM memories WHERE id = ?`), id).Scan(&total)
 	if err != nil {
 		t.Fatalf("read link_significance of %s: %s", id, err)
 	}
@@ -930,15 +930,35 @@ func TestLinkUpsertMySQLUsesRowAlias(t *testing.T) {
 	}
 }
 
-// TestBigintTypeIsDialectCorrect pins the CAST target: MySQL spells the 64-bit integer SIGNED and
-// rejects BIGINT there.
-func TestBigintTypeIsDialectCorrect(t *testing.T) {
-	if got := (&DB{driver: driverMySQL}).bigintType(); got != "SIGNED" {
-		t.Errorf("MySQL CAST target = %q, want SIGNED", got)
+// TestFractionRatio pins the integer ratio spreading activation applies its fraction as. The
+// rounding and the clamp both matter: a truncating conversion would make 0.999 and 0.001 differ by
+// one part in a thousand at one end and by nothing at the other, and an unclamped fraction above 1
+// (which the caller already guards, belt and braces) would advance a clock past now.
+func TestFractionRatio(t *testing.T) {
+	tests := []struct {
+		name     string
+		fraction float64
+		wantNum  int64
+	}{
+		{name: "whole", fraction: 1, wantNum: fractionScale},
+		{name: "half", fraction: 0.5, wantNum: fractionScale / 2},
+		{name: "rounds up", fraction: 0.0006, wantNum: 1},
+		{name: "rounds down", fraction: 0.0004, wantNum: 0},
+		{name: "clamped above one", fraction: 1.5, wantNum: fractionScale},
 	}
 
-	if got := (&DB{driver: driverPostgres}).bigintType(); got != "BIGINT" {
-		t.Errorf("Postgres CAST target = %q, want BIGINT", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			num, den := fractionRatio(tt.fraction)
+
+			if num != tt.wantNum {
+				t.Errorf("fractionRatio(%v) numerator = %d, want %d", tt.fraction, num, tt.wantNum)
+			}
+
+			if den != fractionScale {
+				t.Errorf("fractionRatio(%v) denominator = %d, want %d", tt.fraction, den, fractionScale)
+			}
+		})
 	}
 }
 

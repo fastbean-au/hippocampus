@@ -116,40 +116,20 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 		return 0, nil
 	}
 
-	// The ELSE-less full overwrite still qualifies nothing but the excluded/new row, so both
-	// dialect arms stay unambiguous. significance travels as the rank on the wire and is resolved
-	// to a registry level id per row (find-or-create) below.
-	query := `INSERT INTO memories (` + memoryStoredColumns + `) VALUES ` + memoryValuePlaceholders + `
-		ON CONFLICT (id) DO UPDATE SET
-			timestamp     = excluded.timestamp,
-			significance_level_id = excluded.significance_level_id,
-			event_id      = excluded.event_id,
-			body          = excluded.body,
-			is_binary     = excluded.is_binary,
-			time_recalled = excluded.time_recalled,
-			recall_count  = excluded.recall_count,
-			is_summary    = excluded.is_summary,
-			group_name    = excluded.group_name,
-			is_compressed = excluded.is_compressed,
-			metadata      = excluded.metadata`
-
-	// MySQL has no ON CONFLICT; ON DUPLICATE KEY UPDATE with the 8.0.20+ row alias is the same
-	// upsert, with 'new' standing in for 'excluded'.
-	if d.driver == driverMySQL {
-		query = `INSERT INTO memories (` + memoryStoredColumns + `) VALUES ` + memoryValuePlaceholders + ` AS new
-		ON DUPLICATE KEY UPDATE
-			timestamp     = new.timestamp,
-			significance_level_id = new.significance_level_id,
-			event_id      = new.event_id,
-			body          = new.body,
-			is_binary     = new.is_binary,
-			time_recalled = new.time_recalled,
-			recall_count  = new.recall_count,
-			is_summary    = new.is_summary,
-			group_name    = new.group_name,
-			is_compressed = new.is_compressed,
-			metadata      = new.metadata`
-	}
+	// Every column but the id is overwritten, so an import is a full-state replacement of the row
+	// rather than a merge - which is what makes promote-then-drain at-least-once safe against an
+	// idempotent receiver. significance travels as the rank on the wire and is resolved to a
+	// registry level id per row (find-or-create) below.
+	query := d.upsert(upsertSpec{
+		table:   "memories",
+		columns: memoryStoredColumns,
+		values:  memoryValuePlaceholders,
+		key:     []string{"id"},
+		update: []string{
+			"timestamp", "significance_level_id", "event_id", "body", "is_binary",
+			"time_recalled", "recall_count", "is_summary", "group_name", "is_compressed", "metadata",
+		},
+	})
 
 	// The registry lock serialises level find-or-create against concurrent writers on the server
 	// drivers (a no-op on SQLite's single connection).
@@ -248,31 +228,16 @@ func (d *DB) ImportEvents(ctx context.Context, events []types.Event) (int, error
 		return 0, nil
 	}
 
-	query := `INSERT INTO events (` + eventStoredColumns + `) VALUES ` + eventValuePlaceholders + `
-		ON CONFLICT (id) DO UPDATE SET
-			time_start                = excluded.time_start,
-			time_end                  = excluded.time_end,
-			significance_level_id     = excluded.significance_level_id,
-			name                      = excluded.name,
-			description               = excluded.description,
-			memories_consolidated     = excluded.memories_consolidated,
-			link_significance         = excluded.link_significance,
-			group_name                = excluded.group_name,
-			metadata                  = excluded.metadata`
-
-	if d.driver == driverMySQL {
-		query = `INSERT INTO events (` + eventStoredColumns + `) VALUES ` + eventValuePlaceholders + ` AS new
-		ON DUPLICATE KEY UPDATE
-			time_start                = new.time_start,
-			time_end                  = new.time_end,
-			significance_level_id     = new.significance_level_id,
-			name                      = new.name,
-			description               = new.description,
-			memories_consolidated     = new.memories_consolidated,
-			link_significance         = new.link_significance,
-			group_name                = new.group_name,
-			metadata                  = new.metadata`
-	}
+	query := d.upsert(upsertSpec{
+		table:   "events",
+		columns: eventStoredColumns,
+		values:  eventValuePlaceholders,
+		key:     []string{"id"},
+		update: []string{
+			"time_start", "time_end", "significance_level_id", "name", "description",
+			"memories_consolidated", "link_significance", "group_name", "metadata",
+		},
+	})
 
 	releaseLock, err := d.acquireRegistryLock(ctx)
 	if err != nil {

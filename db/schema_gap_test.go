@@ -228,8 +228,7 @@ func TestInitPostgresSchema_Failures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			d, mock := newMockDB(t, driverPostgres)
 
-			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+			expectCoreSchema(mock, driverPostgres)
 
 			test.expect(mock)
 
@@ -285,34 +284,24 @@ func TestInitMySQLSchema_Failures(t *testing.T) {
 		},
 		{
 			name:    "link tables",
-			columns: 8,
+			columns: coreMigratedColumnCount,
 			expect: func(mock sqlmock.Sqlmock) {
 				for range 5 {
 					mock.ExpectQuery(`collation_name FROM information_schema`).
 						WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
 				}
-
-				mock.ExpectQuery(`column_name FROM information_schema`).
-					WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-				mock.ExpectQuery(`column_name FROM information_schema`).
-					WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
 
 				mock.ExpectExec(`CREATE TABLE IF NOT EXISTS \w+_links`).WillReturnError(errors.New("boom"))
 			},
 		},
 		{
 			name:    "legacy column drop",
-			columns: 8,
+			columns: coreMigratedColumnCount,
 			expect: func(mock sqlmock.Sqlmock) {
 				for range 5 {
 					mock.ExpectQuery(`collation_name FROM information_schema`).
 						WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
 				}
-
-				mock.ExpectQuery(`column_name FROM information_schema`).
-					WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-				mock.ExpectQuery(`column_name FROM information_schema`).
-					WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
 
 				expectLinkTables(mock, driverMySQL)
 				mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))

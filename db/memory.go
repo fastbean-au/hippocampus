@@ -419,7 +419,7 @@ func (d *DB) updatedRowExisted(ctx context.Context, res sql.Result, table string
 		return true, nil
 	}
 
-	if d.driver != driverMySQL {
+	if !d.dialect().countsChangedRows {
 		return false, nil
 	}
 
@@ -687,13 +687,13 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 // recalled since the scan in place, preserving the race-safety. It returns exactly the ids
 // deleted, which callers need for the search-index observer and eviction's freed-bytes accounting.
 //
-// SQLite deletes row by row (fast primary-key lookups, no round trips to batch away). The server
-// drivers batch the whole chunk into one guarded statement to cut the per-row network round trip:
-// Postgres deletes and reports the affected ids in one DELETE ... RETURNING, while MySQL - which has
-// no DELETE ... RETURNING - locks the matching rows with SELECT ... FOR UPDATE (closing the window
+// The embedded dialect deletes row by row (fast primary-key lookups, no round trips to batch away).
+// The server dialects batch the whole chunk into one guarded statement to cut the per-row network
+// round trip: one deletes and reports the affected ids in a single DELETE ... RETURNING, while a
+// dialect without RETURNING locks the matching rows with SELECT ... FOR UPDATE (closing the window
 // against a recall landing between the select and the delete) and deletes them by id.
 func (d *DB) deleteChunkIfUnrecalled(tx *sql.Tx, chunk []memoryRecallSnapshot) ([]string, error) {
-	if d.driver == driverSQLite {
+	if d.dialect().singleWriter {
 		return deleteChunkPerRow(tx, chunk)
 	}
 
@@ -707,8 +707,8 @@ func (d *DB) deleteChunkIfUnrecalled(tx *sql.Tx, chunk []memoryRecallSnapshot) (
 
 	guard := `(id, time_recalled, recall_count) IN (` + strings.Join(tuples, ", ") + `)`
 
-	if d.driver == driverMySQL {
-		return d.deleteChunkMySQL(tx, guard, args)
+	if !d.dialect().returning {
+		return d.deleteChunkWithoutReturning(tx, guard, args)
 	}
 
 	rows, err := tx.Query(d.rebind(`DELETE FROM memories WHERE `+guard+` RETURNING id`), args...)
@@ -744,10 +744,11 @@ func deleteChunkPerRow(tx *sql.Tx, chunk []memoryRecallSnapshot) ([]string, erro
 	return deleted, nil
 }
 
-// deleteChunkMySQL is deleteChunkIfUnrecalled's MySQL arm: SELECT ... FOR UPDATE locks exactly the
-// rows still matching the snapshot (so a concurrent recall cannot slip in between the select and
-// the delete), then they are deleted by id - MySQL having no DELETE ... RETURNING to do it in one.
-func (d *DB) deleteChunkMySQL(tx *sql.Tx, guard string, args []any) ([]string, error) {
+// deleteChunkWithoutReturning is deleteChunkIfUnrecalled's arm for a dialect with no DELETE ...
+// RETURNING to do it in one: SELECT ... FOR UPDATE locks exactly the rows still matching the
+// snapshot (so a concurrent recall cannot slip in between the select and the delete), then they are
+// deleted by id.
+func (d *DB) deleteChunkWithoutReturning(tx *sql.Tx, guard string, args []any) ([]string, error) {
 	rows, err := tx.Query(`SELECT id FROM memories WHERE `+guard+` FOR UPDATE`, args...)
 	if err != nil {
 		return nil, err
@@ -929,10 +930,10 @@ func (d *DB) RecallMemories(ctx context.Context, ids []string) (*[]types.Memory,
 
 		// MySQL has no UPDATE ... RETURNING at all, so its arm reinforces then reads back in one
 		// transaction; the others reinforce and return in a single statement.
-		if d.driver == driverMySQL {
-			chunkMemories, err = d.recallMemoriesMySQL(ctx, chunk, now)
-		} else {
+		if d.dialect().returning {
 			chunkMemories, err = d.recallMemoriesReturning(ctx, chunk, now)
+		} else {
+			chunkMemories, err = d.recallMemoriesWithoutReturning(ctx, chunk, now)
 		}
 
 		if err != nil {
@@ -1014,13 +1015,13 @@ func DedupeIds(ids []string) []string {
 	return out
 }
 
-// recallMemoriesMySQL is RecallMemories' MySQL arm: reinforce, then read the reinforced rows back
-// inside the same transaction, which is what UPDATE ... RETURNING does in one statement on the
-// other dialects. The transaction sees its own update, so the returned memories carry the new
+// recallMemoriesWithoutReturning is RecallMemories' arm for a dialect with no UPDATE ... RETURNING:
+// reinforce, then read the reinforced rows back inside the same transaction, which is what
+// RETURNING does in one statement on the dialects that have it. The transaction sees its own update, so the returned memories carry the new
 // recall state, and a row deleted between the two statements simply drops out of the result the
 // same way RETURNING would have omitted it.
-func (d *DB) recallMemoriesMySQL(ctx context.Context, ids []string, now int64) (*[]types.Memory, error) {
-	log.Trace("func() db.recallMemoriesMySQL")
+func (d *DB) recallMemoriesWithoutReturning(ctx context.Context, ids []string, now int64) (*[]types.Memory, error) {
+	log.Trace("func() db.recallMemoriesWithoutReturning")
 
 	var memories []types.Memory
 
@@ -1448,12 +1449,8 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 func (d *DB) FindSummarisationCandidates(ctx context.Context, minMemories int, maxTimestamp int64, limit int) ([]SummarisationCandidate, error) {
 	log.Trace("func() db.FindSummarisationCandidates")
 
-	// SQLite's two-argument MAX is a scalar function; Postgres and MySQL spell the same thing
-	// GREATEST (their MAX is aggregate-only).
-	greatest := `MAX(m.timestamp, m.time_recalled)`
-	if d.driver != driverSQLite {
-		greatest = `GREATEST(m.timestamp, m.time_recalled)`
-	}
+	// The decay clock: the later of a memory's creation and its last recall. See DB.greatest.
+	greatest := d.greatest("m.timestamp", "m.time_recalled")
 
 	// e.group_name rides along so the served list can be narrowed to a group-scoped caller without a
 	// second lookup; the scan itself stays store-wide (see SummarisationCandidate.Group).

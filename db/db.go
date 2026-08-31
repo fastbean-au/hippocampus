@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strconv"
-	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -234,16 +232,7 @@ func (d *DB) verifyInstanceLock() error {
 	_ = d.lockConn.Close()
 	d.lockConn = nil
 
-	switch d.driver {
-
-	case driverPostgres:
-		return d.acquireInstanceLock()
-
-	case driverMySQL:
-		return d.acquireMySQLInstanceLock()
-	}
-
-	return nil
+	return d.reacquireInstanceLock()
 }
 
 // SetMemoryDeleteObserver registers the function called with the ids of memories deleted by the
@@ -252,32 +241,6 @@ func (d *DB) verifyInstanceLock() error {
 // provide the same propagation differently.
 func (d *DB) SetMemoryDeleteObserver(fn func(ids []string)) {
 	d.memoryDeleteObserver = fn
-}
-
-// rebind converts ?-style placeholders to the $N style Postgres requires. Queries throughout the
-// package are written with ?, the shared style; SQLite consumes them as-is. None of the package's
-// SQL carries a literal '?' inside a string, so a plain character scan is sufficient.
-func (d *DB) rebind(query string) string {
-	if d.driver != driverPostgres {
-		return query
-	}
-
-	var b strings.Builder
-	n := 0
-
-	for i := 0; i < len(query); i++ {
-		if query[i] != '?' {
-			b.WriteByte(query[i])
-
-			continue
-		}
-
-		n++
-		b.WriteByte('$')
-		b.WriteString(strconv.Itoa(n))
-	}
-
-	return b.String()
 }
 
 // exec, query, and queryRow wrap the underlying database handle, rebinding placeholders for the
@@ -827,41 +790,14 @@ func (d *DB) initSchema() error {
 		}
 	}
 
-	schema := `
-	CREATE TABLE IF NOT EXISTS events (
-		id                        TEXT PRIMARY KEY,
-		time_start                INTEGER NOT NULL DEFAULT 0,
-		time_end                  INTEGER NOT NULL DEFAULT 0,
-		significance_level_id     INTEGER,
-		name                      TEXT NOT NULL DEFAULT '',
-		description               TEXT NOT NULL DEFAULT '',
-		memories_consolidated     INTEGER NOT NULL DEFAULT 0,
-		link_significance         INTEGER NOT NULL DEFAULT 0,
-		group_name                TEXT NOT NULL DEFAULT '',
-		metadata                  TEXT
-	);
+	// The two core tables plus the columns added to them since (see coreSchemaStatements and
+	// migrateCoreColumns, both shared with the server drivers).
+	for _, statement := range d.coreSchemaStatements() {
+		if _, err := d.sql.Exec(statement); err != nil {
+			log.Errorf("failed to initialise database schema: %s", err.Error())
 
-	CREATE TABLE IF NOT EXISTS memories (
-		id            TEXT PRIMARY KEY,
-		timestamp     INTEGER NOT NULL DEFAULT 0,
-		significance_level_id INTEGER,
-		event_id      TEXT NOT NULL DEFAULT '',
-		is_binary     INTEGER NOT NULL DEFAULT 0,
-		time_recalled INTEGER NOT NULL DEFAULT 0,
-		recall_count  INTEGER NOT NULL DEFAULT 0,
-		is_summary    INTEGER NOT NULL DEFAULT 0,
-		group_name    TEXT NOT NULL DEFAULT '',
-		is_compressed INTEGER NOT NULL DEFAULT 0,
-		link_significance INTEGER NOT NULL DEFAULT 0,
-		body          BLOB NOT NULL DEFAULT x'',
-		metadata      TEXT
-	);
-	`
-
-	if _, err := d.sql.Exec(schema); err != nil {
-		log.Errorf("failed to initialise database schema: %s", err.Error())
-
-		return err
+			return err
+		}
 	}
 
 	// The significance registry (see significance.go). One shared registry backs both tables; the
@@ -874,54 +810,7 @@ func (d *DB) initSchema() error {
 		return err
 	}
 
-	if err := d.addColumnIfMissing("memories", "is_summary", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-
-	// Bodies written before compression existed are all uncompressed, which is exactly what the
-	// column's default says of them, so no backfill is needed beyond adding the column.
-	if err := d.addColumnIfMissing("memories", "is_compressed", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-
-	// The column is named group_name rather than group because GROUP is a reserved word in every
-	// dialect the service speaks.
-	if err := d.addColumnIfMissing("memories", "group_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "group_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("memories", "significance_level_id", "INTEGER"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "significance_level_id", "INTEGER"); err != nil {
-		return err
-	}
-
-	// The link graph's denormalised aggregate. It defaults to 0, which is exactly right for a
-	// database that predates links: it has none, and initLinkTables creates the graph empty.
-	if err := d.addColumnIfMissing("memories", "link_significance", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "link_significance", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-
-	// Metadata (see types/metadata.go) is deliberately NULL-able with no default, unlike group_name
-	// beside it. json_extract raises "malformed JSON" on an empty string but returns NULL for NULL,
-	// so a column defaulting to '' would make the FIRST metadata-filtered query fail against every
-	// row written before this migration ran. NULL is the value all three dialects' JSON accessors
-	// agree means "no metadata here", so a row without it is uniformly excluded by a key predicate.
-	if err := d.addColumnIfMissing("memories", "metadata", "TEXT"); err != nil {
-		return err
-	}
-
-	if err := d.addColumnIfMissing("events", "metadata", "TEXT"); err != nil {
+	if err := d.migrateCoreColumns(); err != nil {
 		return err
 	}
 
@@ -991,18 +880,24 @@ func (d *DB) checkReadOnlyTables() error {
 // addColumnIfMissing adds a column to an existing table when it is not already present, so a
 // schema change introduced after the table was first created still applies to a database
 // written by an older version of the service. CREATE TABLE IF NOT EXISTS alone would silently
-// skip the change for any table that already exists. Used by the SQLite and MySQL schema
-// initialisers; Postgres supports ADD COLUMN IF NOT EXISTS natively.
+// skip the change for any table that already exists.
+//
+// A dialect offering ADD COLUMN IF NOT EXISTS is asked for it directly and never probes; the rest
+// read the table's shape first.
 func (d *DB) addColumnIfMissing(table string, column string, definition string) error {
 	log.Trace("func() db.addColumnIfMissing")
 
-	probe := `SELECT name FROM pragma_table_info(?) WHERE name = ?`
-	if d.driver == driverMySQL {
-		probe = `SELECT column_name FROM information_schema.columns
-			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`
+	if d.dialect().addColumnIfNotExists {
+		if _, err := d.sql.Exec(`ALTER TABLE ` + table + ` ADD COLUMN IF NOT EXISTS ` + column + ` ` + definition); err != nil {
+			log.Errorf("failed to add column '%s' to table '%s': %s", column, table, err.Error())
+
+			return err
+		}
+
+		return nil
 	}
 
-	rows, err := d.sql.Query(probe, table, column)
+	rows, err := d.sql.Query(d.rebind(d.columnProbe()), table, column)
 	if err != nil {
 		log.Errorf("failed to check for column '%s' on table '%s': %s", column, table, err.Error())
 
@@ -1044,7 +939,7 @@ func (d *DB) addColumnIfMissing(table string, column string, definition string) 
 func (d *DB) UsedBytes(ctx context.Context) (int64, error) {
 	log.Trace("func() db.UsedBytes")
 
-	if d.driver != driverSQLite {
+	if !d.dialect().pageAccounting {
 		return d.usedBytesLiveRows(ctx)
 	}
 
@@ -1115,7 +1010,7 @@ func (d *DB) WALBytes() (int64, error) {
 func (d *DB) Preserve(ctx context.Context) error {
 	log.Trace("func() db.Preserve")
 
-	if d.driver != driverSQLite || d.readOnly {
+	if !d.dialect().compacts || d.readOnly {
 		return nil
 	}
 

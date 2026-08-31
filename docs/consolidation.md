@@ -444,9 +444,11 @@ What that figure deliberately excludes is the forgotten log itself: on SQLite it
 subtracted, and the server drivers count live memory, event and link rows explicitly. The record
 of what was evicted must never become the reason something else is evicted.
 
-The schema itself lives in `initSchema` (`db/db.go`, with the server dialects in `postgres.go` and
-`mysql.go`); the table above is a second copy of it, held to the real one — column for column, and
-index membership included — by `TestDocumentedRowMatchesTheSchema` in `db/schemadocs_test.go`.
+The schema itself is written once, for all three dialects, in `coreSchemaStatements`
+(`db/dialect.go`); each driver's `initSchema`/`initPostgresSchema`/`initMySQLSchema` issues it and
+then applies the shared column migrations beside it. The table above is a second copy of it, held to
+the real one — column for column, and index membership included — by
+`TestDocumentedRowMatchesTheSchema` in `db/schemadocs_test.go`.
 
 ## Capacity target
 

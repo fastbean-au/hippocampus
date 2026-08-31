@@ -467,6 +467,7 @@ var schemaInits = []struct {
 		},
 		exempt: map[string]string{
 			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
+			"coreSchemaStatements":  "returns the CREATE TABLE IF NOT EXISTS for events and memories; not itself a migration step",
 		},
 	},
 	{
@@ -497,6 +498,7 @@ var schemaInits = []struct {
 			"initInstances": "v0.31.0",
 		},
 		exempt: map[string]string{
+			"coreSchemaStatements":  "returns the CREATE TABLE IF NOT EXISTS for events and memories; not itself a migration step",
 			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
 		},
 	},
@@ -531,6 +533,7 @@ var schemaInits = []struct {
 			"setMySQLColumnCollationIfNeeded": notReleasedBefore,
 		},
 		exempt: map[string]string{
+			"coreSchemaStatements":  "returns the CREATE TABLE IF NOT EXISTS for events and memories; not itself a migration step",
 			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
 		},
 	},
@@ -715,12 +718,92 @@ func migrationsIn(t *testing.T, file string, function string) []string {
 			return true
 		}
 
+		// A shared helper's migrations belong to whichever init calls it: all three now add their
+		// columns through one list rather than each spelling its own, and a guard reading only the
+		// init function itself would report every dialect as performing none of them.
+		if file, ok := sharedMigrationHelpers[selector.Sel.Name]; ok {
+			migrations = append(migrations, columnsMigratedBy(t, file, sharedMigrationLists[selector.Sel.Name])...)
+
+			return true
+		}
+
 		migrations = append(migrations, selector.Sel.Name)
 
 		return true
 	})
 
 	return migrations
+}
+
+// sharedMigrationHelpers names the helpers whose bodies carry migrations on the calling init's
+// behalf, and the file each lives in.
+var sharedMigrationHelpers = map[string]string{
+	"migrateCoreColumns": "dialect.go",
+}
+
+// sharedMigrationLists names, for each shared helper, the function whose declaration list carries
+// the actual table/column pairs.
+var sharedMigrationLists = map[string]string{
+	"migrateCoreColumns": "coreColumnMigrations",
+}
+
+// columnsMigratedBy reads the table/column pairs out of a shared migration helper's declaration
+// list. The entries are composite literals whose first two fields are the table and the column, so
+// this looks for exactly that shape and fails on a helper it cannot read rather than reporting an
+// empty list, which would silently disarm the guard.
+func columnsMigratedBy(t *testing.T, file string, function string) []string {
+	t.Helper()
+
+	fileSet := token.NewFileSet()
+
+	parsed, err := parser.ParseFile(fileSet, file, nil, 0)
+	if err != nil {
+		t.Fatalf("failed to parse %s: %s", file, err)
+	}
+
+	var body *ast.BlockStmt
+
+	for _, declaration := range parsed.Decls {
+		declared, ok := declaration.(*ast.FuncDecl)
+		if !ok || declared.Name.Name != function {
+			continue
+		}
+
+		body = declared.Body
+
+		break
+	}
+
+	if body == nil {
+		t.Fatalf("%s not found in %s — this guard is reading the wrong function", function, file)
+	}
+
+	var columns []string
+
+	ast.Inspect(body, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok || len(literal.Elts) < 2 {
+			return true
+		}
+
+		table, tableOK := literal.Elts[0].(*ast.BasicLit)
+		column, columnOK := literal.Elts[1].(*ast.BasicLit)
+
+		if !tableOK || !columnOK || table.Kind != token.STRING || column.Kind != token.STRING {
+			return true
+		}
+
+		columns = append(columns, strings.Trim(table.Value, `"`)+"."+strings.Trim(column.Value, `"`))
+
+		return true
+	})
+
+	if len(columns) == 0 {
+		t.Fatalf("%s declares no table/column pairs this guard can read — it has changed shape, and "+
+			"reading it as performing no migrations would disarm the guard entirely", function)
+	}
+
+	return columns
 }
 
 // addColumnPattern matches Postgres's native column addition inside a SQL string literal.

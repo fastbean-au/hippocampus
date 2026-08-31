@@ -135,7 +135,7 @@ func isRetryableWriteError(err error) bool {
 // the sole caller. Multi-statement transactions are not retried here - re-running them would need
 // the whole transaction body replayed, not just one statement.
 func (d *DB) withWriteRetry(ctx context.Context, fn func() error) error {
-	if d.driver == driverSQLite {
+	if d.dialect().singleWriter {
 
 		return fn()
 	}
@@ -189,7 +189,7 @@ func (d *DB) withWriteRetry(ctx context.Context, fn func() error) error {
 // A caller that cannot satisfy that must not use this - a transaction with a side effect outside the
 // database, or one whose input is consumed as it goes, would be replayed into a different outcome.
 func (d *DB) withTxRetry(ctx context.Context, what string, fn func() error) error {
-	if d.driver == driverSQLite {
+	if d.dialect().singleWriter {
 
 		return fn()
 	}

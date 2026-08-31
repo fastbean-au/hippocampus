@@ -515,12 +515,12 @@ func TestCompactSignificanceLevels(t *testing.T) {
 	// referencing the inflated level so its ordering must be preserved across compaction.
 	inflated := registryCompactionThreshold + 100
 
-	if _, err := d.sql.Exec(`INSERT INTO significance_levels (level_rank) VALUES (2), (5), (?)`, inflated); err != nil {
+	if _, err := d.sql.Exec(d.rebind(`INSERT INTO significance_levels (level_rank) VALUES (2), (5), (?)`), inflated); err != nil {
 		t.Fatal(err)
 	}
 
 	var topID int64
-	if err := d.sql.QueryRow(`SELECT id FROM significance_levels WHERE level_rank = ?`, inflated).Scan(&topID); err != nil {
+	if err := d.sql.QueryRow(d.rebind(`SELECT id FROM significance_levels WHERE level_rank = ?`), inflated).Scan(&topID); err != nil {
 		t.Fatal(err)
 	}
 
