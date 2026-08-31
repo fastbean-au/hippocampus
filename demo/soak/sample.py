@@ -46,11 +46,31 @@ QUERIES = [
     ("used_bytes", "max(hippocampus_used_bytes{SEL})"),
     ("capacity_bytes", "max(hippocampus_capacity_bytes{SEL})"),
     ("capacity_pressure", "max(hippocampus_capacity_pressure{SEL})"),
-    # The sleep cycle, which has grown from one scan to roughly six since the last soak ran. p95
-    # over a 15m window rather than an average, because the question is whether the slow cycles are
-    # getting slower, and an average over a cycle that runs every two minutes hides that.
+    # The sleep cycle, which has grown from one scan to roughly six since the last soak ran.
+    #
+    # THE JUDGED FIGURE IS THE MEAN, read from the histogram's own sum and count. It replaced a p95
+    # because a p95 is the wrong statistic for this sample size, not merely a noisy one: at the
+    # demo's 120-second sleep period a 15-minute window holds about EIGHT cycles, so a 95th
+    # percentile is asking where the 7.6th of 8 observations falls - which is a bucket boundary by
+    # construction. On the 2026-08-31 MySQL run that produced a perfectly bimodal series (twelve
+    # readings at 0.24s, twenty at 0.38-0.46s, nothing between: the top of one bucket and the
+    # inside of the next) and a reported "+56% slower" on a cycle whose true mean moved 0.1494 ->
+    # 0.1578s, or +5.6%, across three hours. No choice of bucket boundaries fixes that; only a
+    # statistic the sample size supports does, and a mean converges far faster than a tail.
+    #
+    # A 30-minute window rather than 15, because ~15 cycles is a steadier mean than ~8 and the run
+    # samples every five minutes anyway - consecutive windows overlap, which is what makes the
+    # series smooth enough to fit a trend to.
     ("sleeps_ok", 'sum(hippocampus_sleeps_total{success="true"SEL}) or vector(0)'),
     ("sleeps_failed", 'sum(hippocampus_sleeps_total{success="false"SEL}) or vector(0)'),
+    (
+        "sleep_mean_seconds",
+        "sum(rate(hippocampus_sleep_duration_seconds_sum{SEL}[30m])) "
+        "/ sum(rate(hippocampus_sleep_duration_seconds_count{SEL}[30m]))",
+    ),
+    # Kept, and deliberately NOT judged. It costs one query, every stored run has it, and a tail
+    # measure would become the more informative one on a deployment whose cycle rate is high enough
+    # to support it. Read it as context, never as a trend - see above.
     (
         "sleep_p95_seconds",
         "histogram_quantile(0.95, sum by (le) (rate(hippocampus_sleep_duration_seconds_bucket{SEL}[15m])))",

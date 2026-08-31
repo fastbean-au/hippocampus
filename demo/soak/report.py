@@ -53,6 +53,9 @@ MEMORY_FAIL_RATIO = 1.50
 # The sleep cycle. The specific worry item 20 was re-scoped around: the cycle has gone from one scan
 # to roughly six (links, the forgotten log, retention stats, the reconcile sweep, the outbox drain),
 # and the question is whether that shows as degradation over hours rather than in a unit test.
+#
+# Applied to the MEAN cycle time, not a quantile - see the note on the queries in sample.py for why
+# a p95 cannot be read at this cycle rate.
 SLEEP_WARN_RATIO = 0.50
 SLEEP_FAIL_RATIO = 2.00
 
@@ -384,7 +387,20 @@ def growth_check(name, points, warn_ratio, fail_ratio, warn_absolute=0, fail_abs
 
 
 def sleep_check(rows):
-    points = numbers(rows, "sleep_p95_seconds")
+    # The mean, from the histogram's sum and count. A run recorded before 2026-09-01 has no such
+    # column and falls back to the p95 it does have, reported as untrustworthy rather than silently
+    # judged - the estimator is the reason this check was rewritten.
+    column = "sleep_mean_seconds"
+    label = "mean"
+    caveat = ""
+
+    if not numbers(rows, column, skip_warmup=False):
+        column = "sleep_p95_seconds"
+        label = "p95"
+        caveat = " [FALLBACK: this run predates the mean column, and a p95 over ~8 cycles per " \
+                 "window is a bucket edge rather than a measurement - treat the trend as unusable]"
+
+    points = numbers(rows, column)
 
     failed = counter_delta(rows, "sleeps_failed")
     if failed:
@@ -412,22 +428,24 @@ def sleep_check(rows):
         context = " (the store never settled; this spans the fill, so it is scaling and not necessarily degradation)"
 
     if len(points) < MIN_TREND_SAMPLES:
-        return Check("Sleep cycle", UNKNOWN, "only %d p95 samples to judge%s; %d are needed"
+        return Check("Sleep cycle", UNKNOWN, "only %d cycle-time samples to judge%s; %d are needed"
                      % (len(points), context, MIN_TREND_SAMPLES))
 
     early, late = window_medians(points)
     if not early:
-        return Check("Sleep cycle", UNKNOWN, "no non-zero p95 baseline to compare against")
+        return Check("Sleep cycle", UNKNOWN, "no non-zero cycle-time baseline to compare against")
 
     ratio = (late - early) / early
     cycles = counter_delta(rows, "sleeps_ok")
-    detail = "p95 %.3fs -> %.3fs (%+.1f%%, median %.3fs) over %s successful cycles%s" % (
+    detail = "%s %.3fs -> %.3fs (%+.1f%%, median %.3fs) over %s successful cycles%s%s" % (
+        label,
         early,
         late,
         ratio * 100.0,
         median([value for _, value in points]),
         human_number(cycles),
         context,
+        caveat,
     )
 
     # A p95 over a handful of cycles is one slow cycle away from any answer, and the demo's
@@ -751,7 +769,7 @@ TABLE_COLUMNS = [
     ("memories", "memories", human_number),
     ("used_bytes", "used", human_bytes),
     ("capacity_pressure", "pressure", lambda v: "-" if v is None else "%.2f" % v),
-    ("sleep_p95_seconds", "sleep p95", lambda v: "-" if v is None else "%.2fs" % v),
+    ("sleep_mean_seconds", "cycle", lambda v: "-" if v is None else "%.3fs" % v),
     ("index_docs", "index docs", human_number),
     ("outbox_depth", "outbox", human_number),
     ("disk_free_bytes", "disk free", human_bytes),

@@ -55,6 +55,13 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **The soak report judges the sleep cycle on its mean, not a p95.** A 95th percentile is the wrong
+  statistic for this sample size rather than merely a noisy one: at the demo's 120-second sleep
+  period a window holds about eight cycles, so the quantile lands on a histogram bucket boundary by
+  construction. On the 2026-08-31 MySQL soak that produced a perfectly bimodal series — twelve
+  readings at 0.24s, twenty at 0.38–0.46s, nothing between — and a "+56% slower" warning on a cycle
+  whose true mean moved from 0.1494s to 0.1578s, or +5.6%, across three hours. The p95 is still
+  sampled and stored, but no longer judged.
 - **The soak report no longer reaches verdicts its evidence cannot support.** Three checks were
   producing warnings on a demonstrably healthy four-hour run: a memory series that rose and then sat
   perfectly flat for two hours was reported as "growing" (window medians can see that something

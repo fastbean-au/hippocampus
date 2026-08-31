@@ -133,11 +133,11 @@ class SteadyStateTests(unittest.TestCase):
         self.assertIsNone(report.steady_state_start(rows), "a store climbing to the last sample has not settled")
 
     def test_sleep_check_ignores_the_fill_phase(self):
-        # p95 climbs while the store fills, then holds flat - the 2026-08-30 shape, which the old
-        # comparison reported as +150.9%.
+        # The cycle climbs while the store fills, then holds flat - the 2026-08-30 shape, which the
+        # old comparison reported as +150.9%.
         memories = [2000, 6000, 11000, 15000] + [17500] * 14
-        p95 = [0.1, 0.25, 0.9, 1.75] + [2.2, 2.25, 2.15, 2.2, 2.3, 2.2, 2.16, 2.2, 2.24, 2.2, 2.18, 2.2, 2.22, 2.2]
-        rows = rows_from({"memories": memories, "sleep_p95_seconds": p95, "sleeps_ok": list(range(1, 19))})
+        mean = [0.1, 0.25, 0.9, 1.75] + [2.2, 2.25, 2.15, 2.2, 2.3, 2.2, 2.16, 2.2, 2.24, 2.2, 2.18, 2.2, 2.22, 2.2]
+        rows = rows_from({"memories": memories, "sleep_mean_seconds": mean, "sleeps_ok": list(range(1, 19))})
 
         check = report.sleep_check(rows)
 
@@ -147,13 +147,44 @@ class SteadyStateTests(unittest.TestCase):
     def test_sleep_check_still_catches_degradation_at_constant_load(self):
         # The regression that matters: the store is flat throughout, and the cycle still doubles.
         memories = [17500] * 20
-        p95 = [1.0 + 0.12 * i for i in range(20)]
-        rows = rows_from({"memories": memories, "sleep_p95_seconds": p95, "sleeps_ok": list(range(1, 21))})
+        mean = [1.0 + 0.12 * i for i in range(20)]
+        rows = rows_from({"memories": memories, "sleep_mean_seconds": mean, "sleeps_ok": list(range(1, 21))})
 
         check = report.sleep_check(rows)
 
         self.assertIn(check.verdict, (report.WARN, report.FAIL))
         self.assertNotIn("LEVELLED OFF", check.detail)
+
+    def test_sleep_check_prefers_the_mean_over_the_p95(self):
+        # Both columns present and disagreeing, which is the real 2026-08-31 MySQL situation: the
+        # p95 jumps between bucket edges while the mean barely moves. The mean must decide.
+        memories = [10000] * 20
+        mean = [0.150] * 10 + [0.158] * 10
+        p95 = [0.24] * 10 + [0.44] * 10
+
+        rows = rows_from({
+            "memories": memories,
+            "sleep_mean_seconds": mean,
+            "sleep_p95_seconds": p95,
+            "sleeps_ok": list(range(1, 21)),
+        })
+
+        check = report.sleep_check(rows)
+
+        self.assertEqual(check.verdict, report.PASS, "the p95's bucket-edge jump must not decide the verdict")
+        self.assertIn("mean ", check.detail)
+
+    def test_sleep_check_falls_back_to_p95_but_says_so(self):
+        # A run stored before the mean existed. It must still be readable, and must carry the
+        # warning that its trend cannot be trusted rather than being judged silently.
+        memories = [17500] * 20
+        p95 = [0.24] * 10 + [0.44] * 10
+        rows = rows_from({"memories": memories, "sleep_p95_seconds": p95, "sleeps_ok": list(range(1, 21))})
+
+        check = report.sleep_check(rows)
+
+        self.assertIn("FALLBACK", check.detail)
+        self.assertIn("unusable", check.detail)
 
     def test_a_failed_cycle_outranks_any_trend(self):
         rows = rows_from({"sleeps_ok": [1, 2, 3], "sleeps_failed": [0, 1, 2]})
