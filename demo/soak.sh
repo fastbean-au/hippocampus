@@ -96,19 +96,30 @@ PROMETHEUS_URL=""
 # describes only one is a ratio between two different populations.
 SELECTOR="${SELECTOR:-}"
 
-# The byte capacity the soak imposes, overriding demo/config.json's 200 MB.
+# The byte capacity the soak imposes, overriding demo/config.json's 200 MB. Defaulted PER DRIVER,
+# below, because the number is not portable.
 #
-# It has to sit BELOW the equilibrium the generator settles at or evict() never runs: the
-# 2026-08-30 four-hour run settled at 96-111 MiB against a 200 MB target and produced not one
-# eviction line in four hours. Capacity PRESSURE still worked and reached 1.85, so the
-# pressure-scaled consolidation threshold was exercised - but eviction's own ordering, its
-# freed-bytes accounting and its minimumRetentionInDays interaction were never touched, which is a
-# large hole in a run whose whole subject is what bounds a store.
+# It has to sit BELOW the equilibrium the generator settles at or evict() never runs: the 2026-08-30
+# four-hour SQLite run settled at 96-111 MiB against a 200 MB target and produced not one eviction
+# line in four hours. Capacity PRESSURE still worked and reached 1.85, so the pressure-scaled
+# consolidation threshold was exercised - but eviction's own ordering, its freed-bytes accounting
+# and its minimumRetentionInDays interaction were never touched.
 #
-# 70 MB is comfortably under that measured floor, so eviction runs every cycle. The floor below it
-# is the hysteresis headroom eviction drains to; 90% mirrors the ratio demo/config.json uses.
-# Set CAPACITY_BYTES=0 to keep the demo's own value and reproduce the old behaviour.
-CAPACITY_BYTES="${CAPACITY_BYTES:-70000000}"
+# AND THE EQUILIBRIUM IS DRIVER-SPECIFIC, because UsedBytes measures different things. SQLite counts
+# live PAGES - the whole file's data pages minus the freelist, so indexes, per-page overhead and
+# fragmentation are all in the figure. Postgres and MySQL estimate LIVE ROWS instead
+# (`usedBytesLiveRows`: payload octet_length plus a flat per-row allowance), deliberately, because a
+# file-size measure never shrinks after a DELETE on those engines and eviction would chase a number
+# that cannot fall. The two therefore disagree by roughly a factor of two on identical data:
+# measured on this generator, SQLite reports ~6,200 bytes per memory and Postgres ~3,350.
+#
+# So one cap cannot serve both. At the ~17,500-memory equilibrium the generator settles at, that is
+# ~104 MB on SQLite and ~58 MB on Postgres, and a 70 MB cap would put eviction to work on one and
+# leave it dormant on the other - which is exactly the hole the SQLite run had.
+#
+# The floor below each is the hysteresis headroom eviction drains to; 90% mirrors demo/config.json.
+# Set CAPACITY_BYTES=0 to keep the demo's own value and reproduce the pre-2026-08-30 behaviour.
+CAPACITY_BYTES="${CAPACITY_BYTES:-}"
 
 # The run aborts rather than filling the host. The index this profile exercises is precisely the
 # thing that grew 700 MB/day on the deployment that motivated item 84, so running out of disk is a
@@ -274,6 +285,24 @@ esac
 # than six profile names, since the driver and the search backend are independent choices.
 if [[ ${OPENSEARCH:-} == "1" ]]; then
     USE_OPENSEARCH=1
+fi
+
+# Per-driver, for the reason set out where CAPACITY_BYTES is declared: the page-based and
+# live-row-based UsedBytes implementations disagree by about a factor of two on identical data.
+if [[ -z ${CAPACITY_BYTES} ]]; then
+    case "${DRIVER}" in
+        sqlite)
+            CAPACITY_BYTES=70000000
+            ;;
+
+        postgres | mysql)
+            CAPACITY_BYTES=40000000
+            ;;
+
+        *)
+            CAPACITY_BYTES=0
+            ;;
+    esac
 fi
 
 # Only a launched run gets a default: it is our collector on our port. An observed run has already
