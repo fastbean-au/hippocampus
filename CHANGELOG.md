@@ -63,6 +63,20 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   restored from a partial backup, is repaired on the next open. Verified against every released
   schema fixture back to v0.4.0 on all three dialects.
 
+- **`hippocampus --schema-version`** prints a store's recorded schema version, its applied migrations
+  with timestamps, and what an upgrade would do — without starting the server, taking a lock, or
+  running any DDL, so it is safe beside a live instance. It exits non-zero when the store is newer
+  than the binary reading it.
+
+  It answers the question the startup log line cannot: after a refused downgrade the store will not
+  start, so a log line is no use. It deliberately bypasses the version gate rather than going through
+  the read-only opens, which would refuse the very store you are asking about.
+
+  `--output json` renders the same report for a script, with a `status` field
+  (`current`/`behind`/`ahead`) as the thing to branch on. The report goes to stdout and every
+  diagnostic to stderr, so the JSON stays parseable on the `ahead` path — where the process both
+  renders the report and then fails.
+
 ### Changed
 
 - **One schema, one initialiser.** The three per-driver schema initialisers are now a single ordered

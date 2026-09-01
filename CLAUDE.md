@@ -138,9 +138,16 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
 - Backfill/rebuild the OpenSearch index: `go run ./cmd/hippocampus --backfill-search [--reindex] -c config.json`
   (CLI mode in `backfill.go`, exits when done; requires `opensearch.enabled`; safe beside a live
   instance; see [Backfill and reindex](docs/configuration.md#backfill-and-reindex))
-- Read a store's schema version: `go run ./cmd/hippocampus --schema-version -c config.json` (CLI mode
-  in `schema.go` over `db.InspectSchema`; prints the recorded version, the applied migrations and
-  what an upgrade would do, then exits non-zero if the store is newer than this build). It
+- Read a store's schema version: `go run ./cmd/hippocampus --schema-version [--output json] -c config.json`
+  (CLI mode in `schema.go` over `db.InspectSchema`; prints the recorded version, the applied
+  migrations and what an upgrade would do, then exits non-zero if the store is newer than this
+  build). Both renderings derive their verdict from one `schemaStatus`, so the word in the text and
+  the `status` value in the JSON cannot disagree; the JSON is a projection rather than tags on
+  `db.SchemaReport`, on the same rule the MCP bridge follows — the wire shape is the command's
+  contract, and the storage layer should not acquire one by being marshalled. The mode points
+  logging at **stderr** before rendering, because stdout is a data channel: one log line on it makes
+  the JSON unparseable, and it is the `ahead` path — the one a deployment script gates on — that
+  both renders and then fatals. It
   deliberately does **not** go through the read-only constructors: those apply the version gate, so
   against the store an operator most needs this for — one a refused downgrade has left unopenable —
   they refuse and there is nothing left to report. Takes no lock and runs no DDL, so it is safe

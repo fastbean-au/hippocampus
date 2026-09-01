@@ -698,6 +698,45 @@ on. A store recorded _below_ this build's newest version is not necessarily behi
 only applies to one dialect is never recorded on the others, so the `status` line, not the numbers,
 is what says whether anything is pending.
 
+`--output json` renders the same report for a script:
+
+```sh
+hippocampus --schema-version --output json -c config.json
+```
+
+```json
+{
+  "dialect": "sqlite",
+  "status": "current",
+  "version": 12,
+  "supported": 12,
+  "has_ledger": true,
+  "pending": [],
+  "applied": [
+    {
+      "version": 1,
+      "name": "core_tables",
+      "applied_at": "2026-09-01T05:47:43Z"
+    }
+  ]
+}
+```
+
+`status` is the field to branch on — `current`, `behind` or `ahead` — and it accounts for the
+dialect-gated case the two version numbers cannot. `has_ledger` is `false` for a store written
+before schema versions existed, which is what separates its `"version": 0` from a real version zero
+that no release ever wrote. `pending` and `applied` are always arrays, never `null`, and an
+`applied_at` the store never recorded is `null` rather than a date in year one.
+
+The report goes to stdout and every diagnostic to stderr, so the JSON stays parseable even on the
+`ahead` path, where the process also exits non-zero:
+
+```sh
+if ! hippocampus --schema-version --output json -c config.json > report.json 2> error.log; then
+  jq -r .status report.json # "ahead" - do not start this build against this store
+fi
+```
+
 Upgrading is automatic and needs no step of yours: a newer build applies whatever migrations the
 store has not seen, in order, and logs what it is doing.
 

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
@@ -23,37 +25,95 @@ import (
 // It is a flag on this binary rather than a `hippo` subcommand. The CLI is a network client and
 // dials a running service; a stopped store has nothing to dial.
 //
-// The output is text rather than JSON. A caller scripting an upgrade wants the exit status, which is
-// non-zero when the store is ahead of this build, and a human reading a support question wants the
-// table.
-func reportSchemaVersion(storageDriver string, storageDirectory string, postgresDSN string, mysqlDSN string) {
-	target := storageDirectory
+// Two renderings, selected by --output. Text is the default and is what a human reading a support
+// question wants; JSON is what a deployment script wants, and its `status` field is the value to
+// branch on. The exit status carries the same verdict either way - non-zero when the store is ahead
+// of this build - so a script that only needs the gate need not parse anything at all.
+func reportSchemaVersion(cfg schemaVersionConfig) {
+	// Diagnostics to stderr for the rest of this mode, because stdout is now a data channel: in
+	// JSON mode a single log line on it makes the document unparseable, and initLogging has already
+	// pointed logging at stdout by the time this runs. Nothing after this needs it back - the mode
+	// renders and exits.
+	log.SetOutput(os.Stderr)
 
-	switch storageDriver {
+	target := cfg.StorageDirectory
+
+	switch cfg.StorageDriver {
 
 	case "postgres":
-		target = postgresDSN
+		target = cfg.PostgresDSN
 
 	case "mysql":
-		target = mysqlDSN
+		target = cfg.MySQLDSN
 
 	}
 
-	report, err := db.InspectSchema(storageDriver, target)
+	report, err := db.InspectSchema(cfg.StorageDriver, target)
 	if err != nil {
 		log.Fatalf("failed to read the schema version: %s", err.Error())
 	}
 
-	printSchemaReport(os.Stdout, report)
+	if cfg.JSON {
+		if err := printSchemaReportJSON(os.Stdout, report); err != nil {
+			log.Fatalf("failed to render the schema report: %s", err.Error())
+		}
+	} else {
+		printSchemaReport(os.Stdout, report)
+	}
 
 	// Non-zero, deliberately: this is what a deployment script gates on, and a store the running
 	// build cannot open must not read as success. It shares the binary's one failure exit rather
-	// than inventing a code of its own, so the message is what distinguishes it.
+	// than inventing a code of its own, so the message - on stderr, beside the report on stdout -
+	// is what distinguishes it.
 	if report.Ahead() {
 		log.Fatalf(
 			"this store cannot be opened by this build: it records schema version %d and this build understands up to %d",
 			report.Version, report.Supported,
 		)
+	}
+}
+
+// schemaVersionConfig is what the --schema-version mode needs from the configuration. A struct
+// rather than four positional strings, three of which are alternatives to one another.
+type schemaVersionConfig struct {
+	StorageDriver    string
+	StorageDirectory string
+	PostgresDSN      string
+	MySQLDSN         string
+
+	// JSON selects the machine-readable rendering.
+	JSON bool
+}
+
+// Schema status values. They are the field a script branches on, so they are a small closed set and
+// their spellings are part of the output's contract.
+const (
+	// schemaStatusCurrent: nothing pending. The store may still record a LOWER version than this
+	// build's newest - a migration gated to another dialect is never recorded here - which is why
+	// this is derived from what is pending rather than from the two numbers being equal.
+	schemaStatusCurrent = "current"
+
+	// schemaStatusBehind: migrations pending. Starting this build applies them.
+	schemaStatusBehind = "behind"
+
+	// schemaStatusAhead: written by a newer build. This one refuses to open it.
+	schemaStatusAhead = "ahead"
+)
+
+// schemaStatus reduces a report to its status. Both renderings derive from this rather than each
+// deciding for itself, so the word in the text output and the value in the JSON cannot disagree.
+func schemaStatus(report *db.SchemaReport) string {
+	switch {
+
+	case report.Ahead():
+		return schemaStatusAhead
+
+	case len(report.Pending) > 0:
+		return schemaStatusBehind
+
+	default:
+		return schemaStatusCurrent
+
 	}
 }
 
@@ -75,12 +135,12 @@ func printSchemaReport(w io.Writer, report *db.SchemaReport) {
 	_, _ = fmt.Fprintf(w, "version:   %d\n", report.Version)
 	_, _ = fmt.Fprintf(w, "supported: %d\n", report.Supported)
 
-	switch {
+	switch status := schemaStatus(report); {
 
-	case report.Ahead():
+	case status == schemaStatusAhead:
 		_, _ = fmt.Fprintf(w, "status:    AHEAD - written by a newer build; this one cannot open it\n")
 
-	case len(report.Pending) > 0:
+	case status == schemaStatusBehind:
 		_, _ = fmt.Fprintf(w, "status:    behind - %d migration(s) pending: %v\n", len(report.Pending), report.Pending)
 
 	case report.Version < report.Supported:
@@ -112,4 +172,73 @@ func printSchemaReport(w io.Writer, report *db.SchemaReport) {
 	}
 
 	_ = table.Flush()
+}
+
+// schemaReportJSON is the machine-readable rendering of a schema report.
+//
+// A projection rather than JSON tags on db.SchemaReport, following the same rule the MCP bridge
+// follows for proto messages: the wire shape is this command's contract with whatever parses it, and
+// the storage layer should not acquire one by being marshalled. It also lets the two things the Go
+// struct cannot say directly be said - a derived status, and a timestamp that is absent rather than
+// the zero time.
+type schemaReportJSON struct {
+	Dialect string `json:"dialect"`
+
+	// Status is the field to branch on: "current", "behind" or "ahead". See schemaStatus.
+	Status string `json:"status"`
+
+	// Version is the highest recorded migration version, and 0 when none is recorded. HasLedger is
+	// what separates that from a genuine version 0, which no build has ever written.
+	Version   int  `json:"version"`
+	Supported int  `json:"supported"`
+	HasLedger bool `json:"has_ledger"`
+
+	// Pending and Applied are always present, empty rather than null, so a consumer need not guard
+	// for the difference.
+	Pending []string               `json:"pending"`
+	Applied []appliedMigrationJSON `json:"applied"`
+}
+
+// appliedMigrationJSON is one recorded migration.
+type appliedMigrationJSON struct {
+	Version int    `json:"version"`
+	Name    string `json:"name"`
+
+	// AppliedAt is RFC3339 in UTC, and null for a row recorded without a timestamp - which the zero
+	// time would instead render as a date in year one, a value a consumer would have to know to
+	// distrust.
+	AppliedAt *string `json:"applied_at"`
+}
+
+// printSchemaReportJSON writes the machine-readable rendering.
+func printSchemaReportJSON(w io.Writer, report *db.SchemaReport) error {
+	out := schemaReportJSON{
+		Dialect:   report.Dialect,
+		Status:    schemaStatus(report),
+		Version:   report.Version,
+		Supported: report.Supported,
+		HasLedger: report.HasLedger,
+		Pending:   report.Pending,
+		Applied:   make([]appliedMigrationJSON, 0, len(report.Applied)),
+	}
+
+	if out.Pending == nil {
+		out.Pending = []string{}
+	}
+
+	for _, migration := range report.Applied {
+		applied := appliedMigrationJSON{Version: migration.Version, Name: migration.Name}
+
+		if !migration.AppliedAt.IsZero() {
+			when := migration.AppliedAt.UTC().Format(time.RFC3339)
+			applied.AppliedAt = &when
+		}
+
+		out.Applied = append(out.Applied, applied)
+	}
+
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+
+	return encoder.Encode(out)
 }

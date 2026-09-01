@@ -67,6 +67,7 @@ func execute(args []string) {
 	flags.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
 	flags.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
 	flags.Bool("schema-version", false, "print the configured store's schema version and exit; exits non-zero if the store is newer than this build")
+	flags.String("output", "text", "output format for --schema-version: text or json (used with --schema-version)")
 	flags.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
 	flags.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
 	flags.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
@@ -219,12 +220,18 @@ func execute(args []string) {
 	// the store's version is a question worth answering about a deployment whose configuration is
 	// also wrong - and it reads nothing validateConfig checks.
 	if viper.GetBool("schema-version") {
-		reportSchemaVersion(
-			viper.GetString("storage.driver"),
-			viper.GetString("storage.directory"),
-			viper.GetString("storage.postgres.dsn"),
-			viper.GetString("storage.mysql.dsn"),
-		)
+		output := viper.GetString("output")
+		if output != "text" && output != "json" {
+			log.Fatalf("--output %q is not a known format (expected 'text' or 'json')", output)
+		}
+
+		reportSchemaVersion(schemaVersionConfig{
+			StorageDriver:    viper.GetString("storage.driver"),
+			StorageDirectory: viper.GetString("storage.directory"),
+			PostgresDSN:      viper.GetString("storage.postgres.dsn"),
+			MySQLDSN:         viper.GetString("storage.mysql.dsn"),
+			JSON:             output == "json",
+		})
 
 		return
 	}
