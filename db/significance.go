@@ -589,9 +589,13 @@ func nullInt64(id int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: id, Valid: true}
 }
 
-// registryAdvisoryLockKey is the Postgres advisory-lock key serialising registry renumbering,
-// distinct from the single-consolidator instance lock (advisoryLockKey) so the two never contend.
+// registryAdvisoryLockKey is the advisory-lock key serialising registry renumbering, distinct from
+// the single-consolidator instance lock (advisoryLockKey) so the two never contend.
 const registryAdvisoryLockKey = advisoryLockKey + 1
+
+// registryLockName is the same lock under the dialect that names its locks rather than numbering
+// them. Scoped to the schema by namedLock.
+const registryLockName = "hippocampus:registry"
 
 // acquireRegistryLock serialises registry renumbering across instances on the server drivers, so
 // two replicas cannot open a gap (shift ranks) at the same time. It holds the lock on a dedicated
@@ -608,7 +612,7 @@ func (d *DB) acquireRegistryLock(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 
-	release, err := d.registryLock(ctx, conn)
+	release, err := d.namedLock(ctx, conn, registryAdvisoryLockKey, registryLockName)
 	if err != nil {
 		_ = conn.Close()
 

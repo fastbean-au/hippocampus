@@ -242,26 +242,7 @@ func sqliteColumnAbsent(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery(`pragma_table_info`).WillReturnRows(sqlmock.NewRows([]string{"name"}))
 }
 
-// expectSQLiteInitSchemaThrough queues the auto_vacuum/CREATE TABLE steps (all succeeding, auto_vacuum
-// already INCREMENTAL so VACUUM is skipped) plus the first (stopAt-1) of initSchema's
-// addColumnIfMissing calls, each reporting its column already present. stopAt is therefore a
-// position in that sequence, and every caller past the one being tested must be bumped when a
-// column is added - there are ten today, so stopAt of 11 means "every column already present".
-func expectSQLiteInitSchemaThrough(mock sqlmock.Sqlmock, stopAt int) {
-	mock.ExpectExec(`PRAGMA auto_vacuum = INCREMENTAL`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`PRAGMA auto_vacuum`).WillReturnRows(sqlmock.NewRows([]string{"auto_vacuum"}).AddRow(2))
-	// The two core tables are separate statements (coreSchemaStatements returns them that way, one
-	// of the dialects rejecting a multi-statement string), then the significance registry.
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	for i := 1; i < stopAt; i++ {
-		sqliteColumnPresent(mock)
-	}
-}
-
-func TestInitSchema_AutoVacuumQueryError(t *testing.T) {
+func TestInitSchema_ConfigureStorageQueryError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectExec(`PRAGMA auto_vacuum = INCREMENTAL`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -274,7 +255,7 @@ func TestInitSchema_AutoVacuumQueryError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-func TestInitSchema_VacuumExecError(t *testing.T) {
+func TestInitSchema_ConfigureStorageVacuumError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectExec(`PRAGMA auto_vacuum = INCREMENTAL`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -288,12 +269,14 @@ func TestInitSchema_VacuumExecError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-func TestInitSchema_CreateTablesError(t *testing.T) {
+// TestInitSchema_LedgerCreateError covers the migrations table itself failing to be created, which
+// is the one piece of schema that cannot be a migration and so has no recovery beyond failing.
+func TestInitSchema_LedgerCreateError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectExec(`PRAGMA auto_vacuum = INCREMENTAL`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`PRAGMA auto_vacuum`).WillReturnRows(sqlmock.NewRows([]string{"auto_vacuum"}).AddRow(2))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("boom"))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + schemaMigrationsTable).WillReturnError(errors.New("boom"))
 
 	if err := d.initSchema(); err == nil {
 		t.Fatal("expected an error")
@@ -302,14 +285,16 @@ func TestInitSchema_CreateTablesError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-func TestInitSchema_SignificanceLevelsDDLError(t *testing.T) {
+// TestInitSchema_LedgerReadError covers the ledger existing but being unreadable. It must fail
+// rather than proceed as though nothing had been applied: proceeding would run the `once`
+// migrations again, and one of those is a table rebuild.
+func TestInitSchema_LedgerReadError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectExec(`PRAGMA auto_vacuum = INCREMENTAL`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`PRAGMA auto_vacuum`).WillReturnRows(sqlmock.NewRows([]string{"auto_vacuum"}).AddRow(2))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnError(errors.New("boom"))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + schemaMigrationsTable).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT version FROM ` + schemaMigrationsTable).WillReturnError(errors.New("boom"))
 
 	if err := d.initSchema(); err == nil {
 		t.Fatal("expected an error")
@@ -318,191 +303,98 @@ func TestInitSchema_SignificanceLevelsDDLError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
-func TestInitSchema_AddColumnIsSummaryError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 1)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN is_summary`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
+// TestInitSchema_MigrationFailuresStopTheRun drives each migration failing in turn and requires the
+// run to stop there. It is table-driven off the real list rather than one test per step, so a
+// migration added to the list is covered without anyone remembering to add a test - which is the
+// same reason the column cases below read coreColumnMigrations.
+func TestInitSchema_MigrationFailuresStopTheRun(t *testing.T) {
+	failures := map[string]func(sqlmock.Sqlmock){
+		"core_tables": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("boom"))
+		},
+		"core_columns": func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
+		},
+		"link_tables": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS \w+_links`).WillReturnError(errors.New("boom"))
+		},
+		"drop_legacy_relationships": func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
+		},
+		"significance_levels": func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
+		},
+		"covering_index": func(mock sqlmock.Sqlmock) {
+			expectSupersededIndexDrop(mock, driverSQLite)
+			mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+		},
+		"listing_index": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+		},
+		"search_outbox": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS search_outbox`).WillReturnError(errors.New("boom"))
+		},
+		"forgotten_log": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memory_tombstones`).WillReturnError(errors.New("boom"))
+		},
+		"content_search": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE VIRTUAL TABLE IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+		},
 	}
 
-	expectationsMet(t, mock)
+	for _, migration := range (&DB{driver: driverSQLite}).migrations() {
+		if migration.when != nil && !migration.when(dialects[driverSQLite]) {
+			continue
+		}
+
+		fail, ok := failures[migration.name]
+		if !ok {
+			t.Errorf("migration %q has no failure case here - add one, or the step's error path is "+
+				"the one thing about it nothing exercises", migration.name)
+
+			continue
+		}
+
+		t.Run(migration.name, func(t *testing.T) {
+			d, mock := newMockDB(t, driverSQLite)
+
+			expectSchemaThrough(t, mock, driverSQLite, migration.name)
+			fail(mock)
+
+			if err := d.initSchema(); err == nil {
+				t.Fatalf("a failure in %s must stop schema initialisation", migration.name)
+			}
+
+			expectationsMet(t, mock)
+		})
+	}
 }
 
-func TestInitSchema_AddColumnIsCompressedError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 2)
+// TestInitSchema_EveryCoreColumnFailureStopsTheRun drives the column migration failing on each of
+// its columns in turn. It replaced ten near-identical tests that each hard-coded how many columns
+// preceded theirs, and it covers an eleventh column the day it is added.
+func TestInitSchema_EveryCoreColumnFailureStopsTheRun(t *testing.T) {
+	for i, column := range (&DB{driver: driverSQLite}).coreColumnMigrations() {
+		t.Run(column.table+"."+column.column, func(t *testing.T) {
+			d, mock := newMockDB(t, driverSQLite)
 
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN is_compressed`).WillReturnError(errors.New("boom"))
+			expectSchemaThrough(t, mock, driverSQLite, "core_columns")
 
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
+			for range i {
+				sqliteColumnPresent(mock)
+			}
+
+			sqliteColumnAbsent(mock)
+			mock.ExpectExec(`ALTER TABLE ` + column.table + ` ADD COLUMN ` + column.column).
+				WillReturnError(errors.New("boom"))
+
+			if err := d.initSchema(); err == nil {
+				t.Fatalf("a failure adding %s.%s must stop schema initialisation", column.table, column.column)
+			}
+
+			expectationsMet(t, mock)
+		})
 	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnMemoriesGroupNameError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 3)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnEventsGroupNameError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 4)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE events ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnMemoriesSignificanceLevelIDError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 5)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnEventsSignificanceLevelIDError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 6)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE events ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnMemoriesLinkSignificanceError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 7)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN link_significance`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnEventsLinkSignificanceError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 8)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE events ADD COLUMN link_significance`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnMemoriesMetadataError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 9)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN metadata`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_AddColumnEventsMetadataError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 10)
-
-	sqliteColumnAbsent(mock)
-	mock.ExpectExec(`ALTER TABLE events ADD COLUMN metadata`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_LinkTablesError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 11)
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memory_links`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_MigrateSignificanceError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 11)
-	expectLinkTables(mock, driverSQLite)
-	expectNoLegacyRelationshipColumns(mock)
-
-	// migrateSignificanceToLevels: its own columnExists probe fails.
-	mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitSchema_EnsureCoveringIndexError(t *testing.T) {
-	d, mock := newMockDB(t, driverSQLite)
-	expectSQLiteInitSchemaThrough(mock, 11)
-	expectLinkTables(mock, driverSQLite)
-	expectNoLegacyRelationshipColumns(mock)
-
-	// migrateSignificanceToLevels: old column absent -> no-op.
-	sqliteColumnAbsent(mock)
-	expectSupersededIndexDrop(mock, driverSQLite)
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
-
-	if err := d.initSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
 }
 
 // --- verifyInstanceLock: the Postgres/MySQL reacquisition branches (the SQLite/"neither" default

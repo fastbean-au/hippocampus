@@ -22,7 +22,9 @@ What each version number covers:
 - **Configuration keys.** A removed or renamed key is a breaking change. A new key always carries a
   default that preserves the previous behaviour, so an existing `config.json` keeps working.
 - **The stored database.** Schema additions are migrated in place on startup, so a store written by
-  an older version opens on a newer one. Downgrading is not supported.
+  an older version opens on a newer one. Downgrading is not supported, and since 0.39.0 that is
+  enforced rather than merely stated: a store records its schema version, and a build that does not
+  understand it refuses to open rather than serving a shape it only partly knows.
 - **The archive format** (`Export`/`Import`) is versioned in its own header, independently of the
   release version.
 
@@ -45,7 +47,28 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   PostgreSQL that configured `consolidation.linkRecallPropagation` was getting none of it, and its
   linked memories decayed as though unlinked.
 
+### Added
+
+- **The database schema is versioned, and downgrades are refused.** A `schema_migrations` table
+  records which of an ordered, named migration list a store has run, and the version it is at is
+  logged on every startup. Opening a store recorded at a version the running build does not declare
+  now fails with a message naming both versions and what to do about it, instead of serving a schema
+  the binary only partly understands — the failure mode "downgrading is not supported" described but
+  nothing prevented. The read-only tool opens (`--backfill-search`) apply the same gate, tolerating
+  the ledger being absent so a store written before this release is still backfillable.
+
+  The ledger records rather than decides: every migration still runs on every startup, because each
+  detects its own completion. That is what makes it safe to add to an existing store — there is no
+  baselining step to get wrong — and it keeps the property that a store whose index was dropped, or
+  restored from a partial backup, is repaired on the next open. Verified against every released
+  schema fixture back to v0.4.0 on all three dialects.
+
 ### Changed
+
+- **One schema, one initialiser.** The three per-driver schema initialisers are now a single ordered
+  migration list; what separated them was three dialect _capabilities_, not three procedures. The
+  schema-fixture drift guard reads that declared list rather than parsing the Go AST of whatever the
+  init functions happened to call, which removed about 150 lines of test machinery.
 
 - **All SQL-dialect knowledge now lives in one file.** `db/dialect.go` holds a table with one row per
   dialect — column types, expression fragments, capability flags — plus the few helpers whose

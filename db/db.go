@@ -756,11 +756,29 @@ func NewSQLiteReadOnly(directory string) (*DB, error) {
 		return nil, err
 	}
 
-	return &DB{sql: sqlDB, driver: driverSQLite, readOnly: true}, nil
+	d := &DB{sql: sqlDB, driver: driverSQLite, readOnly: true}
+
+	// The version gate. This open runs no DDL, so it applies the tolerant form - see
+	// verifySchemaVersion.
+	if err := d.verifySchemaVersion(); err != nil {
+		_ = sqlDB.Close()
+		log.Errorf("failed to open database read-only: %s", err.Error())
+
+		return nil, err
+	}
+
+	return d, nil
 }
 
-func (d *DB) initSchema() error {
-	log.Trace("func() db.initSchema")
+// configureStorage applies the storage-engine settings that must be in place before any schema
+// exists. Only the embedded dialect has any: both server dialects reclaim space on their own
+// schedule (see Preserve), which is the same capability this reads.
+func (d *DB) configureStorage() error {
+	log.Trace("func() db.configureStorage")
+
+	if !d.dialect().compacts {
+		return nil
+	}
 
 	// auto_vacuum can only be changed while the database is completely empty, and the
 	// journal-mode pragma in the DSN has already initialised page 1 by the time this runs, so
@@ -790,68 +808,6 @@ func (d *DB) initSchema() error {
 		}
 	}
 
-	// The two core tables plus the columns added to them since (see coreSchemaStatements and
-	// migrateCoreColumns, both shared with the server drivers).
-	for _, statement := range d.coreSchemaStatements() {
-		if _, err := d.sql.Exec(statement); err != nil {
-			log.Errorf("failed to initialise database schema: %s", err.Error())
-
-			return err
-		}
-	}
-
-	// The significance registry (see significance.go). One shared registry backs both tables; the
-	// covering index is created after the significance_level_id columns are guaranteed to exist
-	// (below), so a database migrated in place from the old per-item significance column gets the
-	// index rebuilt on the new column.
-	if _, err := d.sql.Exec(d.significanceLevelsDDL()); err != nil {
-		log.Errorf("failed to initialise significance registry: %s", err.Error())
-
-		return err
-	}
-
-	if err := d.migrateCoreColumns(); err != nil {
-		return err
-	}
-
-	if err := d.initLinkTables(); err != nil {
-		return err
-	}
-
-	if err := d.dropLegacyRelationshipColumns(); err != nil {
-		return err
-	}
-
-	if err := d.migrateSignificanceToLevels(); err != nil {
-		return err
-	}
-
-	if err := d.ensureCoveringIndex(); err != nil {
-		return err
-	}
-
-	if err := d.ensureListingIndex(); err != nil {
-		return err
-	}
-
-	// The search index's delete outbox (see outbox.go). Created whether or not an OpenSearch backend
-	// is configured, so enabling one later needs no migration and rows already queued stay drainable.
-	if err := d.initSearchOutbox(); err != nil {
-		return err
-	}
-
-	// The forgotten log (see tombstone.go). Created whether or not the policy enables it, so
-	// turning it on needs no migration and turning it off leaves what was recorded readable.
-	if err := d.initTombstones(); err != nil {
-		return err
-	}
-
-	// Last, because it reads memory bodies to populate itself on a store that predates it, and so
-	// wants every column and index above it already in place.
-	if err := d.initContentSearch(); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -874,7 +830,11 @@ func (d *DB) checkReadOnlyTables() error {
 		_ = rows.Close()
 	}
 
-	return nil
+	// The version gate, in the form a tool that runs no DDL can apply it: see verifySchemaVersion.
+	// A read-only tool cannot corrupt a store it does not understand, but it can produce a wrong
+	// ANSWER from one - a search index rebuilt from a schema whose meaning has moved is worse than
+	// no rebuild, because nothing about it looks wrong afterwards.
+	return d.verifySchemaVersion()
 }
 
 // addColumnIfMissing adds a column to an existing table when it is not already present, so a

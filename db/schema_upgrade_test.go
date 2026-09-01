@@ -2,12 +2,8 @@ package db
 
 import (
 	"context"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -422,121 +418,61 @@ func (s *countingServer) MemoryRetained(candidate MemoryConsolidationCandidate) 
 
 func (s *countingServer) DeletionThreshold() float64 { return 0 }
 
-// schemaInits is the three schema-init functions, each with its own migration list. THERE BEING
-// THREE is the fact this guard exists to keep in view: initSchema is SQLite's, and a fixture set
-// built for it alone leaves initPostgresSchema and initMySQLSchema unguarded — which is how
-// initInstances (server-only) and the whole of Postgres's native ADD COLUMN IF NOT EXISTS path came
-// to have no fixture behind them at all.
+// schemaFixtureTags maps each schema migration to the newest released fixture written BEFORE it
+// existed - the fixture that exercises it. notReleasedBefore marks one with no released predecessor.
 //
-// Each entry maps a migration to the newest fixture written BEFORE it existed — the fixture that
-// exercises it. notReleasedBefore marks one with no released predecessor.
-var schemaInits = []struct {
-	file     string
-	function string
-	fixture  string // the artefact under testdata/schema/<tag>/ that this dialect's fixtures use
-	declared map[string]string
-	exempt   map[string]string
-}{
-	{
-		file:     "db.go",
-		function: "initSchema",
-		fixture:  "hippocampus.db",
-		declared: map[string]string{
-			"memories.is_summary":            "v0.4.0",
-			"memories.is_compressed":         "v0.22.0",
-			"memories.group_name":            "v0.4.0",
-			"events.group_name":              "v0.4.0",
-			"memories.significance_level_id": "v0.4.0",
-			"events.significance_level_id":   "v0.4.0",
-			"memories.link_significance":     "v0.25.0",
-			"events.link_significance":       "v0.25.0",
-			"memories.metadata":              "v0.25.0",
-			"events.metadata":                "v0.25.0",
-			"initLinkTables":                 "v0.25.0",
-			"dropLegacyRelationshipColumns":  "v0.25.0",
-			"migrateSignificanceToLevels":    "v0.4.0",
-			"initTombstones":                 "v0.31.0",
-			"initSearchOutbox":               "v0.34.0",
-			"initContentSearch":              "v0.23.0",
+// It replaced three per-dialect maps read out of the Go AST of whatever the three init functions
+// happened to call. There is one list of migrations now, so there is one map, and it is read
+// directly. What survives from that arrangement is the thing it existed for: a migration added
+// without a fixture behind it fails the build rather than going unexercised, which is how
+// server-only steps came to have no fixture at all.
+//
+// The ten columns migrateCoreColumns adds are declared individually rather than under its name,
+// because they arrived across five releases and a single declaration would let an eleventh be
+// silently covered by the tenth's.
+var schemaFixtureTags = map[string]string{
+	"memories.is_summary":            "v0.4.0",
+	"memories.is_compressed":         "v0.22.0",
+	"memories.group_name":            "v0.4.0",
+	"events.group_name":              "v0.4.0",
+	"memories.significance_level_id": "v0.4.0",
+	"events.significance_level_id":   "v0.4.0",
+	"memories.link_significance":     "v0.25.0",
+	"events.link_significance":       "v0.25.0",
+	"memories.metadata":              "v0.25.0",
+	"events.metadata":                "v0.25.0",
 
-			// The two indexes are rebuilt from whatever columns exist rather than migrating data,
-			// so every fixture exercises them; the oldest is named because it is the one that
-			// proves the covering index survives being rebuilt onto significance_level_id.
-			"ensureCoveringIndex": "v0.4.0",
-			"ensureListingIndex":  "v0.4.0",
-		},
-		exempt: map[string]string{
-			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
-			"coreSchemaStatements":  "returns the CREATE TABLE IF NOT EXISTS for events and memories; not itself a migration step",
-		},
-	},
-	{
-		file:     "postgres.go",
-		function: "initPostgresSchema",
-		fixture:  "postgres.sql",
-		declared: map[string]string{
-			"memories.is_summary":            "v0.4.0",
-			"memories.is_compressed":         "v0.22.0",
-			"memories.group_name":            "v0.4.0",
-			"events.group_name":              "v0.4.0",
-			"memories.significance_level_id": "v0.4.0",
-			"events.significance_level_id":   "v0.4.0",
-			"memories.link_significance":     "v0.25.0",
-			"events.link_significance":       "v0.25.0",
-			"memories.metadata":              "v0.25.0",
-			"events.metadata":                "v0.25.0",
-			"initLinkTables":                 "v0.25.0",
-			"dropLegacyRelationshipColumns":  "v0.25.0",
-			"migrateSignificanceToLevels":    "v0.4.0",
-			"initTombstones":                 "v0.31.0",
-			"initSearchOutbox":               "v0.34.0",
-			"ensureCoveringIndex":            "v0.4.0",
-			"ensureListingIndex":             "v0.4.0",
+	"link_tables":               "v0.25.0",
+	"drop_legacy_relationships": "v0.25.0",
+	"significance_levels":       "v0.4.0",
+	"forgotten_log":             "v0.31.0",
+	"search_outbox":             "v0.34.0",
+	"instance_registry":         "v0.31.0",
+	"content_search":            "v0.23.0",
 
-			// The peers table (topology phase 3) shipped in v0.34.0, so v0.31.0 is the newest
-			// schema that predates it.
-			"initInstances": "v0.31.0",
-		},
-		exempt: map[string]string{
-			"coreSchemaStatements":  "returns the CREATE TABLE IF NOT EXISTS for events and memories; not itself a migration step",
-			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
-		},
-	},
-	{
-		file:     "mysql.go",
-		function: "initMySQLSchema",
-		fixture:  "mysql.sql",
-		declared: map[string]string{
-			"memories.is_summary":            "v0.4.0",
-			"memories.is_compressed":         "v0.22.0",
-			"memories.group_name":            "v0.4.0",
-			"events.group_name":              "v0.4.0",
-			"memories.significance_level_id": "v0.4.0",
-			"events.significance_level_id":   "v0.4.0",
-			"memories.link_significance":     "v0.25.0",
-			"events.link_significance":       "v0.25.0",
-			"memories.metadata":              "v0.25.0",
-			"events.metadata":                "v0.25.0",
-			"initLinkTables":                 "v0.25.0",
-			"dropLegacyRelationshipColumns":  "v0.25.0",
-			"migrateSignificanceToLevels":    "v0.4.0",
-			"initTombstones":                 "v0.31.0",
-			"initSearchOutbox":               "v0.34.0",
-			"ensureCoveringIndex":            "v0.4.0",
-			"ensureListingIndex":             "v0.4.0",
-			"initInstances":                  "v0.31.0",
+	// The two indexes are rebuilt from whatever columns exist rather than migrating data, so every
+	// fixture exercises them; the oldest is named because it is the one that proves the covering
+	// index survives being rebuilt onto significance_level_id.
+	"covering_index": "v0.4.0",
+	"listing_index":  "v0.4.0",
 
-			// The binary collation was pinned before v0.1.0, so no RELEASED schema predates it and
-			// no fixture can drive the migration itself. What the fixtures pin instead is the
-			// property it guarantees, on every released schema —
-			// TestSchemaUpgradeMySQLCollation.
-			"setMySQLColumnCollationIfNeeded": notReleasedBefore,
-		},
-		exempt: map[string]string{
-			"coreSchemaStatements":  "returns the CREATE TABLE IF NOT EXISTS for events and memories; not itself a migration step",
-			"significanceLevelsDDL": "returns DDL for the CREATE TABLE above it; not itself a migration step",
-		},
-	},
+	// The tables themselves are CREATE TABLE IF NOT EXISTS and so do nothing to an existing store,
+	// which is what every fixture is.
+	"core_tables": notReleasedBefore,
+
+	// The binary collation was pinned before v0.1.0, so no RELEASED schema predates it and no
+	// fixture can drive the migration itself. What the fixtures pin instead is the property it
+	// guarantees, on every released schema - TestSchemaUpgradeMySQLCollation.
+	"id_collation": notReleasedBefore,
+}
+
+// schemaFixtureArtefacts names the file under testdata/schema/<tag>/ that each dialect's fixtures
+// use. All three are checked, which is the other half of what the old three-entry table bought:
+// a fixture set built for the embedded dialect alone leaves the server dialects unguarded.
+var schemaFixtureArtefacts = map[driver]string{
+	driverSQLite:   "hippocampus.db",
+	driverPostgres: "postgres.sql",
+	driverMySQL:    "mysql.sql",
 }
 
 // notReleasedBefore marks a migration with no released predecessor schema: it was added in the same
@@ -557,22 +493,20 @@ const notReleasedBefore = "-"
 // fails, and so does a declaration whose migration has gone. The second direction is what stops the
 // lists becoming a record of what these functions used to do.
 func TestEverySchemaMigrationHasAFixture(t *testing.T) {
-	for _, init := range schemaInits {
-		t.Run(init.function, func(t *testing.T) {
-			performed := migrationsIn(t, init.file, init.function)
+	for driver, artefact := range schemaFixtureArtefacts {
+		d := &DB{driver: driver}
+
+		t.Run(d.dialect().name, func(t *testing.T) {
+			performed := migrationUnits(d)
 
 			for _, migration := range performed {
-				if _, ok := init.exempt[migration]; ok {
-					continue
-				}
-
-				tag, ok := init.declared[migration]
+				tag, ok := schemaFixtureTags[migration]
 				if !ok {
-					t.Errorf("%s performs %q but no fixture is declared for it.\n"+
-						"Decide which released schema predates it and add it to schemaInits; if none "+
-						"does, name notReleasedBefore. If a new fixture is needed, generate it with "+
-						"scripts/schema-fixtures.sh --driver all and add the tag to schemaFixtures.",
-						init.function, migration)
+					t.Errorf("the schema performs %q but no fixture is declared for it.\n"+
+						"Decide which released schema predates it and add it to schemaFixtureTags; if "+
+						"none does, name notReleasedBefore. If a new fixture is needed, generate it "+
+						"with scripts/schema-fixtures.sh --driver all and add the tag to "+
+						"schemaFixtures.", migration)
 
 					continue
 				}
@@ -581,29 +515,55 @@ func TestEverySchemaMigrationHasAFixture(t *testing.T) {
 					continue
 				}
 
-				if _, err := os.Stat(filepath.Join("testdata", "schema", tag, init.fixture)); err != nil {
+				if _, err := os.Stat(filepath.Join("testdata", "schema", tag, artefact)); err != nil {
 					t.Errorf("%q is declared against fixture %s/%s, which is not on disk: %s",
-						migration, tag, init.fixture, err)
-				}
-			}
-
-			// The reverse direction: a declaration whose migration is no longer performed.
-			for migration := range init.declared {
-				if !performs(performed, migration) {
-					t.Errorf("a fixture is declared for %q but %s no longer performs it — remove the "+
-						"declaration (and consider whether its fixture is still earning its place)",
-						migration, init.function)
-				}
-			}
-
-			for migration := range init.exempt {
-				if !performs(performed, migration) {
-					t.Errorf("%q is exempted but %s no longer calls it — remove the exemption",
-						migration, init.function)
+						migration, tag, artefact, err)
 				}
 			}
 		})
 	}
+
+	// The reverse direction, across every dialect at once: a declaration whose migration is no
+	// longer performed anywhere. It cannot be per-dialect, because a capability-gated migration is
+	// legitimately absent from two of the three.
+	everywhere := map[string]bool{}
+
+	for driver := range schemaFixtureArtefacts {
+		for _, migration := range migrationUnits(&DB{driver: driver}) {
+			everywhere[migration] = true
+		}
+	}
+
+	for migration := range schemaFixtureTags {
+		if !everywhere[migration] {
+			t.Errorf("a fixture is declared for %q but no dialect's schema performs it any more - "+
+				"remove the declaration (and consider whether its fixture is still earning its place)",
+				migration)
+		}
+	}
+}
+
+// migrationUnits is the list of things the fixture guard accounts for on one dialect: each
+// migration under its own name, except where a migration declares that it covers several - which
+// migrateCoreColumns does, its ten columns having arrived across five releases.
+func migrationUnits(d *DB) []string {
+	var units []string
+
+	for _, migration := range d.migrations() {
+		if migration.when != nil && !migration.when(d.dialect()) {
+			continue
+		}
+
+		if migration.covers != nil {
+			units = append(units, migration.covers(d)...)
+
+			continue
+		}
+
+		units = append(units, migration.name)
+	}
+
+	return units
 }
 
 // TestEveryFixtureCoversEveryDriver pins that a fixture tag carries an artefact for all three
@@ -620,205 +580,4 @@ func TestEveryFixtureCoversEveryDriver(t *testing.T) {
 			}
 		}
 	}
-}
-
-// performs reports whether a schema-init function's extracted migration list names this one.
-func performs(migrations []string, want string) bool {
-	for _, migration := range migrations {
-		if migration == want {
-			return true
-		}
-	}
-
-	return false
-}
-
-// migrationsIn reads the migration steps out of a schema-init function's source rather than taking
-// a list on trust — the list IS what drifts, which is the entire lesson of 74.7.
-//
-// Three shapes are recognised, because the three dialects express a column addition three ways:
-// an addColumnIfMissing call (SQLite and MySQL, which probe first) is named "<table>.<column>";
-// Postgres's native ALTER TABLE ... ADD COLUMN IF NOT EXISTS lives in a SQL string literal and is
-// named the same way; and any other method called on the receiver is named by the method.
-func migrationsIn(t *testing.T, file string, function string) []string {
-	t.Helper()
-
-	fileSet := token.NewFileSet()
-
-	parsed, err := parser.ParseFile(fileSet, file, nil, 0)
-	if err != nil {
-		t.Fatalf("failed to parse %s: %s", file, err)
-	}
-
-	var (
-		body     *ast.BlockStmt
-		receiver string
-	)
-
-	for _, declaration := range parsed.Decls {
-		declared, ok := declaration.(*ast.FuncDecl)
-		if !ok || declared.Name.Name != function || declared.Recv == nil {
-			continue
-		}
-
-		if len(declared.Recv.List) != 1 || len(declared.Recv.List[0].Names) != 1 {
-			t.Fatalf("%s's receiver is not a single named value; this guard reads calls on it", function)
-		}
-
-		body = declared.Body
-		receiver = declared.Recv.List[0].Names[0].Name
-
-		break
-	}
-
-	if body == nil {
-		t.Fatalf("%s not found in %s — this guard is reading the wrong function", function, file)
-	}
-
-	var migrations []string
-
-	ast.Inspect(body, func(node ast.Node) bool {
-		// Postgres adds its columns in raw SQL, so the migration is inside a string literal rather
-		// than in a call. Reading only calls would report that function as performing four
-		// migrations when it performs fourteen.
-		if literal, ok := node.(*ast.BasicLit); ok && literal.Kind == token.STRING {
-			for _, match := range addColumnPattern.FindAllStringSubmatch(literal.Value, -1) {
-				migrations = append(migrations, match[1]+"."+match[2])
-			}
-
-			return true
-		}
-
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-
-		// Only calls directly on the RECEIVER. d.sql.Exec and the like are a nested selector, and
-		// keying on "a selector over any identifier" would sweep up log.Errorf beside them — which
-		// is the difference between a guard and a list of every function initSchema calls.
-		identifier, ok := selector.X.(*ast.Ident)
-		if !ok || identifier.Name != receiver {
-			return true
-		}
-
-		if selector.Sel.Name == "addColumnIfMissing" {
-			if len(call.Args) < 2 {
-				t.Fatalf("addColumnIfMissing called with %d arguments — this guard reads the first two",
-					len(call.Args))
-			}
-
-			migrations = append(migrations, stringLiteral(t, call.Args[0])+"."+stringLiteral(t, call.Args[1]))
-
-			return true
-		}
-
-		// A shared helper's migrations belong to whichever init calls it: all three now add their
-		// columns through one list rather than each spelling its own, and a guard reading only the
-		// init function itself would report every dialect as performing none of them.
-		if file, ok := sharedMigrationHelpers[selector.Sel.Name]; ok {
-			migrations = append(migrations, columnsMigratedBy(t, file, sharedMigrationLists[selector.Sel.Name])...)
-
-			return true
-		}
-
-		migrations = append(migrations, selector.Sel.Name)
-
-		return true
-	})
-
-	return migrations
-}
-
-// sharedMigrationHelpers names the helpers whose bodies carry migrations on the calling init's
-// behalf, and the file each lives in.
-var sharedMigrationHelpers = map[string]string{
-	"migrateCoreColumns": "dialect.go",
-}
-
-// sharedMigrationLists names, for each shared helper, the function whose declaration list carries
-// the actual table/column pairs.
-var sharedMigrationLists = map[string]string{
-	"migrateCoreColumns": "coreColumnMigrations",
-}
-
-// columnsMigratedBy reads the table/column pairs out of a shared migration helper's declaration
-// list. The entries are composite literals whose first two fields are the table and the column, so
-// this looks for exactly that shape and fails on a helper it cannot read rather than reporting an
-// empty list, which would silently disarm the guard.
-func columnsMigratedBy(t *testing.T, file string, function string) []string {
-	t.Helper()
-
-	fileSet := token.NewFileSet()
-
-	parsed, err := parser.ParseFile(fileSet, file, nil, 0)
-	if err != nil {
-		t.Fatalf("failed to parse %s: %s", file, err)
-	}
-
-	var body *ast.BlockStmt
-
-	for _, declaration := range parsed.Decls {
-		declared, ok := declaration.(*ast.FuncDecl)
-		if !ok || declared.Name.Name != function {
-			continue
-		}
-
-		body = declared.Body
-
-		break
-	}
-
-	if body == nil {
-		t.Fatalf("%s not found in %s — this guard is reading the wrong function", function, file)
-	}
-
-	var columns []string
-
-	ast.Inspect(body, func(node ast.Node) bool {
-		literal, ok := node.(*ast.CompositeLit)
-		if !ok || len(literal.Elts) < 2 {
-			return true
-		}
-
-		table, tableOK := literal.Elts[0].(*ast.BasicLit)
-		column, columnOK := literal.Elts[1].(*ast.BasicLit)
-
-		if !tableOK || !columnOK || table.Kind != token.STRING || column.Kind != token.STRING {
-			return true
-		}
-
-		columns = append(columns, strings.Trim(table.Value, `"`)+"."+strings.Trim(column.Value, `"`))
-
-		return true
-	})
-
-	if len(columns) == 0 {
-		t.Fatalf("%s declares no table/column pairs this guard can read — it has changed shape, and "+
-			"reading it as performing no migrations would disarm the guard entirely", function)
-	}
-
-	return columns
-}
-
-// addColumnPattern matches Postgres's native column addition inside a SQL string literal.
-var addColumnPattern = regexp.MustCompile(`(?i)ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)`)
-
-// stringLiteral returns the value of a string-literal argument, failing when it is not one — a
-// migration named by a variable would make this guard silently incomplete.
-func stringLiteral(t *testing.T, expression ast.Expr) string {
-	t.Helper()
-
-	literal, ok := expression.(*ast.BasicLit)
-	if !ok || literal.Kind != token.STRING {
-		t.Fatalf("addColumnIfMissing is called with a non-literal argument, which this guard cannot "+
-			"read: %#v", expression)
-	}
-
-	return strings.Trim(literal.Value, `"`)
 }

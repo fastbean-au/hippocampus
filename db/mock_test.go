@@ -618,23 +618,10 @@ func TestRecallMemoriesMySQLUpdateError(t *testing.T) {
 func TestInitPostgresSchemaFresh(t *testing.T) {
 	d, mock := newMockDB(t, driverPostgres)
 
-	expectCoreSchema(mock, driverPostgres)
-	expectLinkTables(mock, driverPostgres)
-	expectNoLegacyRelationshipColumns(mock)
-	// migrateSignificanceToLevels: the old significance column is absent -> no-op.
-	mock.ExpectQuery(`information_schema.columns`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	expectSupersededIndexDrop(mock, driverPostgres)
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	// ensureListingIndex, which follows the covering index: memories then events.
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	expectSearchOutbox(mock, driverPostgres)
-	expectTombstones(mock, driverPostgres)
-	expectInstances(mock, driverPostgres)
+	expectSchemaThrough(t, mock, driverPostgres, "")
 
-	if err := d.initPostgresSchema(); err != nil {
-		t.Fatalf("initPostgresSchema: %v", err)
+	if err := d.initSchema(); err != nil {
+		t.Fatalf("initSchema: %v", err)
 	}
 
 	expectationsMet(t, mock)
@@ -646,9 +633,8 @@ func TestInitPostgresSchemaFresh(t *testing.T) {
 func TestInitPostgresSchemaMigrates(t *testing.T) {
 	d, mock := newMockDB(t, driverPostgres)
 
-	expectCoreSchema(mock, driverPostgres)
-	expectLinkTables(mock, driverPostgres)
-	expectNoLegacyRelationshipColumns(mock)
+	expectSchemaThrough(t, mock, driverPostgres, "significance_levels")
+
 	// migrateSignificanceToLevels: the old significance column exists.
 	mock.ExpectQuery(`information_schema.columns`).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("significance"))
@@ -662,17 +648,16 @@ func TestInitPostgresSchemaMigrates(t *testing.T) {
 	expectSupersededIndexDrop(mock, driverPostgres)
 	mock.ExpectExec(`ALTER TABLE memories DROP COLUMN significance`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`ALTER TABLE events DROP COLUMN significance`).WillReturnResult(sqlmock.NewResult(0, 0))
-	expectSupersededIndexDrop(mock, driverPostgres)
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	// ensureListingIndex, which follows the covering index: memories then events.
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	expectSearchOutbox(mock, driverPostgres)
-	expectTombstones(mock, driverPostgres)
-	expectInstances(mock, driverPostgres)
+	expectMigrationRecorded(mock)
 
-	if err := d.initPostgresSchema(); err != nil {
-		t.Fatalf("initPostgresSchema (migrate): %v", err)
+	// The remaining migrations, each finding its work already done.
+	for _, name := range []string{"covering_index", "listing_index", "search_outbox", "forgotten_log", "instance_registry"} {
+		expectFreshMigration(t, mock, driverPostgres, name)
+		expectMigrationRecorded(mock)
+	}
+
+	if err := d.initSchema(); err != nil {
+		t.Fatalf("initSchema (migrate): %v", err)
 	}
 
 	expectationsMet(t, mock)
@@ -687,70 +672,203 @@ func TestInitPostgresSchemaMigrates(t *testing.T) {
 func TestInitMySQLSchemaFresh(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
-	collationCorrect := func() {
-		mock.ExpectQuery(`collation_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
-	}
+	expectSchemaThrough(t, mock, driverMySQL, "")
 
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// migrateCoreColumns, every column already present.
-	expectCoreColumnMigrations(mock, driverMySQL)
-
-	// setMySQLColumnCollationIfNeeded x5, all already at the target collation.
-	for range 5 {
-		collationCorrect()
-	}
-
-	expectLinkTables(mock, driverMySQL)
-	expectNoLegacyRelationshipColumns(mock)
-
-	// migrateSignificanceToLevels: the old significance column is absent -> no-op.
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-
-	// ensureCoveringIndex: drop the superseded index names, then the current index is already present.
-	expectSupersededIndexDrop(mock, driverMySQL)
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	// ensureListingIndex's own probes, which follow the covering index's: memories then events.
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	expectSearchOutbox(mock, driverMySQL)
-	expectTombstones(mock, driverMySQL)
-	expectInstances(mock, driverMySQL)
-
-	if err := d.initMySQLSchema(); err != nil {
-		t.Fatalf("initMySQLSchema: %v", err)
+	if err := d.initSchema(); err != nil {
+		t.Fatalf("initSchema: %v", err)
 	}
 
 	expectationsMet(t, mock)
 }
 
 // --- schema-init expectation helpers, shared by the initSchema and setup* tests ---
+//
+// These are written in terms of MIGRATION NAMES rather than statement counts. initSchema walks one
+// declared list, so a test that wants to fail at a particular step says which step, and adding a
+// migration to the list does not silently leave every one of these tests scripting a prefix that
+// stops somewhere else.
+
+// expectSchemaPreamble queues everything initSchema issues before its first migration: the storage
+// configuration (embedded dialect only), the ledger table, the cross-instance lock (server dialects
+// only), and the read of what has already been applied.
+//
+// appliedVersions is what the ledger reports, so a test can drive the fresh case (none) or a store
+// that has already recorded some.
+func expectSchemaPreamble(mock sqlmock.Sqlmock, d driver, appliedVersions ...int) {
+	if dialects[d].compacts {
+		mock.ExpectExec(`PRAGMA auto_vacuum = INCREMENTAL`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery(`PRAGMA auto_vacuum`).WillReturnRows(sqlmock.NewRows([]string{"auto_vacuum"}).AddRow(2))
+	}
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + schemaMigrationsTable).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	expectSchemaLock(mock, d)
+
+	rows := sqlmock.NewRows([]string{"version"})
+	for _, version := range appliedVersions {
+		rows = rows.AddRow(version)
+	}
+
+	mock.ExpectQuery(`SELECT version FROM ` + schemaMigrationsTable).WillReturnRows(rows)
+}
+
+// expectSchemaLock queues the migration lock's acquisition on the dialects that take one.
+func expectSchemaLock(mock sqlmock.Sqlmock, d driver) {
+	switch d {
+
+	case driverPostgres:
+		mock.ExpectExec(`pg_advisory_lock`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	case driverMySQL:
+		mock.ExpectExec(`GET_LOCK`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	}
+}
+
+// expectSchemaUnlock queues its release, which initSchema defers and so issues as the last statement
+// of every run - the successful ones and the ones that stopped at a failing migration alike. sqlmock
+// matches in order, so it has to be scripted after whatever the test scripts last.
+func expectSchemaUnlock(mock sqlmock.Sqlmock, d driver) {
+	switch d {
+
+	case driverPostgres:
+		mock.ExpectExec(`pg_advisory_unlock`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	case driverMySQL:
+		mock.ExpectExec(`RELEASE_LOCK`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	}
+}
+
+// expectPoolClose queues the driver Close calls sql.DB.Close issues - one per pooled connection.
+//
+// A server dialect has TWO after a migration run, and the reason is worth knowing: initSchema pins a
+// connection for the cross-instance migration lock and issues its DDL on another, so the pool has
+// opened a second by the time it finishes. That is also why the pool must not be capped at one
+// connection before initSchema runs - it would deadlock against its own lock. Nothing does: the
+// embedded dialect caps itself at one but is single-writer and takes no lock, and SetPoolLimits is
+// applied by main.go long after the store is open.
+func expectPoolClose(mock sqlmock.Sqlmock, d driver) {
+	mock.ExpectClose()
+
+	if !dialects[d].singleWriter {
+		mock.ExpectClose()
+	}
+}
+
+// expectMigrationRecorded queues the ledger write that follows a migration having been applied.
+func expectMigrationRecorded(mock sqlmock.Sqlmock) {
+	mock.ExpectExec(`INSERT INTO ` + schemaMigrationsTable).WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+// expectSchemaThrough queues the whole of initSchema up to but NOT including the named migration,
+// with every step reporting the state a fresh database is in. Pass an empty name for the complete
+// run.
+//
+// It drives the real list, so a test scripting "up to link_tables" keeps meaning that when a
+// migration is inserted before it.
+func expectSchemaThrough(t *testing.T, mock sqlmock.Sqlmock, d driver, stopBefore string) {
+	t.Helper()
+
+	expectSchemaPreamble(mock, d)
+
+	for _, migration := range (&DB{driver: d}).migrations() {
+		if migration.name == stopBefore {
+			return
+		}
+
+		if migration.when != nil && !migration.when(dialects[d]) {
+			continue
+		}
+
+		expectFreshMigration(t, mock, d, migration.name)
+		expectMigrationRecorded(mock)
+	}
+
+	// Reaching the end without having matched means the caller named a step that is not in the
+	// list. Reporting it is the point: silently scripting the whole run would leave the test
+	// asserting something other than what its name says.
+	if stopBefore != "" {
+		t.Fatalf("no migration named %q - this helper is scripting a step that no longer exists", stopBefore)
+	}
+
+	// A complete run ends by releasing the lock; a partial one ends wherever its caller scripts the
+	// failure, and that caller adds the release itself.
+	expectSchemaUnlock(mock, d)
+}
+
+// expectFreshMigration queues the statements one migration issues against a database on which it
+// has nothing to do, which is what every step finds on a freshly created store.
+func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name string) {
+	t.Helper()
+
+	switch name {
+
+	case "core_tables":
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	case "core_columns":
+		expectCoreColumnMigrations(mock, d)
+
+	case "id_collation":
+		for range 5 {
+			mock.ExpectQuery(`collation_name FROM information_schema`).
+				WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
+		}
+
+	case "link_tables":
+		expectLinkTables(mock, d)
+
+	case "drop_legacy_relationships":
+		expectNoLegacyRelationshipColumns(mock)
+
+	case "significance_levels":
+		// The old per-item column is absent on anything this migration has already run against.
+		mock.ExpectQuery(`column_name FROM information_schema|pragma_table_info`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+
+	case "covering_index":
+		expectSupersededIndexDrop(mock, d)
+		expectIndexPresent(mock, d)
+
+	case "listing_index":
+		// memories then events.
+		expectIndexPresent(mock, d)
+		expectIndexPresent(mock, d)
+
+	case "search_outbox":
+		expectSearchOutbox(mock, d)
+
+	case "forgotten_log":
+		expectTombstones(mock, d)
+
+	case "instance_registry":
+		expectInstances(mock, d)
+
+	default:
+		t.Fatalf("expectFreshMigration has no script for migration %q", name)
+
+	}
+}
+
+// expectIndexPresent queues one ensureIndex reporting the index already there.
+func expectIndexPresent(mock sqlmock.Sqlmock, d driver) {
+	if dialects[d].indexIfNotExists {
+		mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+		return
+	}
+
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+}
 
 // coreMigratedColumnCount is how many columns migrateCoreColumns adds. Read off the shared list
 // rather than written out, so adding a column to the schema does not silently leave every mock
 // below one statement short of what init actually issues.
 var coreMigratedColumnCount = len((&DB{driver: driverSQLite}).coreColumnMigrations())
-
-// expectCoreSchema queues the statements every schema initialiser issues for the two core tables:
-// the CREATE TABLEs, the significance registry, and migrateCoreColumns reporting every column
-// already present (the fresh-database case, where the CREATE TABLE above just made them).
-//
-// The column half differs by dialect only in HOW it asks: the dialect with ADD COLUMN IF NOT EXISTS
-// issues one unconditional ALTER per column, the others probe first and then do nothing.
-func expectCoreSchema(mock sqlmock.Sqlmock, d driver) {
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	expectCoreColumnMigrations(mock, d)
-}
 
 // expectCoreColumnMigrations queues migrateCoreColumns' statements alone, every column present.
 func expectCoreColumnMigrations(mock sqlmock.Sqlmock, d driver) {
@@ -775,53 +893,18 @@ func expectCoreColumnMigrations(mock sqlmock.Sqlmock, d driver) {
 // coreMigratedColumnCount is how many columns migrateCoreColumns adds. Read off the shared list
 // rather than written out, so adding a column to the schema does not silently leave every mock
 // below one statement short of what init actually issues.
-// expectPostgresSchemaInitFresh queues the query expectations initPostgresSchema issues against a
-// fresh database (no significance migration).
-func expectPostgresSchemaInitFresh(mock sqlmock.Sqlmock) {
-	expectCoreSchema(mock, driverPostgres)
-	expectLinkTables(mock, driverPostgres)
-	expectNoLegacyRelationshipColumns(mock)
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	expectSupersededIndexDrop(mock, driverPostgres)
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	// ensureListingIndex, which follows the covering index: memories then events.
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
-	expectSearchOutbox(mock, driverPostgres)
-	expectTombstones(mock, driverPostgres)
-	expectInstances(mock, driverPostgres)
+// expectPostgresSchemaInitFresh and expectMySQLSchemaInitFresh queue a complete initSchema run
+// against a fresh database, for the setup* tests that care about the lock rather than the schema.
+func expectPostgresSchemaInitFresh(t *testing.T, mock sqlmock.Sqlmock) {
+	t.Helper()
+
+	expectSchemaThrough(t, mock, driverPostgres, "")
 }
 
-// expectMySQLSchemaInitFresh queues the query expectations initMySQLSchema issues against a fresh
-// database: three CREATE TABLEs, the addColumn/collation/migration probes (all reporting the
-// desired state), and the covering-index probe.
-func expectMySQLSchemaInitFresh(mock sqlmock.Sqlmock) {
-	expectCoreSchema(mock, driverMySQL)
+func expectMySQLSchemaInitFresh(t *testing.T, mock sqlmock.Sqlmock) {
+	t.Helper()
 
-	// Then the collation migration, all five already at the binary collation.
-	for range 5 {
-		mock.ExpectQuery(`collation_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
-	}
-
-	expectLinkTables(mock, driverMySQL)
-	expectNoLegacyRelationshipColumns(mock)
-
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-
-	expectSupersededIndexDrop(mock, driverMySQL)
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	// ensureListingIndex's own probes, which follow the covering index's: memories then events.
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	expectSearchOutbox(mock, driverMySQL)
-	expectTombstones(mock, driverMySQL)
-	expectInstances(mock, driverMySQL)
+	expectSchemaThrough(t, mock, driverMySQL, "")
 }
 
 // --- setupPostgres / setupPostgresReadOnly (the mockable core of NewPostgres*) ---
@@ -831,7 +914,7 @@ func TestSetupPostgresConsolidator(t *testing.T) {
 
 	mock.ExpectQuery(`pg_try_advisory_lock`).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
-	expectPostgresSchemaInitFresh(mock)
+	expectPostgresSchemaInitFresh(t, mock)
 
 	got, err := setupPostgres(d.sql, true)
 	if err != nil {
@@ -854,8 +937,8 @@ func TestSetupPostgresReplica(t *testing.T) {
 	d, mock := newMockDB(t, driverPostgres)
 
 	// consolidate false -> no advisory lock, no keepalive.
-	expectPostgresSchemaInitFresh(mock)
-	mock.ExpectClose()
+	expectPostgresSchemaInitFresh(t, mock)
+	expectPoolClose(mock, driverPostgres)
 
 	got, err := setupPostgres(d.sql, false)
 	if err != nil {
@@ -925,7 +1008,7 @@ func TestSetupMySQLConsolidator(t *testing.T) {
 
 	mock.ExpectQuery(`GET_LOCK`).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(int64(1)))
-	expectMySQLSchemaInitFresh(mock)
+	expectMySQLSchemaInitFresh(t, mock)
 
 	got, err := setupMySQL(d.sql, true)
 	if err != nil {
@@ -947,8 +1030,8 @@ func TestSetupMySQLConsolidator(t *testing.T) {
 func TestSetupMySQLReplica(t *testing.T) {
 	d, mock := newMockDB(t, driverMySQL)
 
-	expectMySQLSchemaInitFresh(mock)
-	mock.ExpectClose()
+	expectMySQLSchemaInitFresh(t, mock)
+	expectPoolClose(mock, driverMySQL)
 
 	got, err := setupMySQL(d.sql, false)
 	if err != nil {
@@ -1006,7 +1089,9 @@ func TestSetupPostgresSchemaInitFailsReleasesLock(t *testing.T) {
 
 	mock.ExpectQuery(`pg_try_advisory_lock`).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	expectSchemaThrough(t, mock, driverPostgres, "core_tables")
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("ddl failed"))
+	expectSchemaUnlock(mock, driverPostgres)
 	mock.ExpectClose()
 
 	if _, err := setupPostgres(d.sql, true); err == nil {
@@ -1450,183 +1535,6 @@ func TestEveryDriverHasADialect(t *testing.T) {
 // --- initPostgresSchema / initMySQLSchema failure branches not already covered by the fresh/
 // migrate success-path tests above. ---
 
-func TestInitPostgresSchema_SignificanceLevelsDDLError(t *testing.T) {
-	d, mock := newMockDB(t, driverPostgres)
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnError(errors.New("boom"))
-
-	if err := d.initPostgresSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitPostgresSchema_MigrateError(t *testing.T) {
-	d, mock := newMockDB(t, driverPostgres)
-
-	expectCoreSchema(mock, driverPostgres)
-	expectLinkTables(mock, driverPostgres)
-	expectNoLegacyRelationshipColumns(mock)
-	mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))
-
-	if err := d.initPostgresSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitPostgresSchema_EnsureCoveringIndexError(t *testing.T) {
-	d, mock := newMockDB(t, driverPostgres)
-
-	expectCoreSchema(mock, driverPostgres)
-	expectLinkTables(mock, driverPostgres)
-	expectNoLegacyRelationshipColumns(mock)
-	mock.ExpectQuery(`information_schema.columns`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	expectSupersededIndexDrop(mock, driverPostgres)
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
-	// No listing-index expectation: the covering index's failure aborts initPostgresSchema, and
-	// ensureListingIndex is never reached.
-
-	if err := d.initPostgresSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitMySQLSchema_CreateTableError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitMySQLSchema_AddColumnError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-	// addColumnIfMissing(memories, is_summary): probe reports missing, then the ALTER fails.
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN is_summary`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitMySQLSchema_CollationError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	expectCoreSchema(mock, driverMySQL)
-
-	// First collation probe (events.id) reports a mismatch, and the MODIFY fails.
-	mock.ExpectQuery(`collation_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow("utf8mb4_0900_ai_ci"))
-	mock.ExpectExec(`ALTER TABLE events MODIFY id`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-// TestInitMySQLSchema_SignificanceLevelIDColumnError covers a core column migration failing part
-// way through the list rather than on its first entry, which is what TestInitMySQLSchema_
-// AddColumnError covers.
-func TestInitMySQLSchema_SignificanceLevelIDColumnError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// The entries preceding memories.significance_level_id in coreColumnMigrations, all present.
-	for range indexOfCoreColumn(t, "memories", "significance_level_id") {
-		mock.ExpectQuery(`column_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-	}
-
-	// Then that column reports missing, and its ALTER fails.
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-// indexOfCoreColumn is the position of one entry in the shared column-migration list, so a test
-// wanting to fail on a particular column does not hard-code how many precede it.
-func indexOfCoreColumn(t *testing.T, table string, column string) int {
-	t.Helper()
-
-	for i, entry := range (&DB{driver: driverMySQL}).coreColumnMigrations() {
-		if entry.table == table && entry.column == column {
-			return i
-		}
-	}
-
-	t.Fatalf("coreColumnMigrations no longer carries %s.%s", table, column)
-
-	return 0
-}
-
-func TestInitMySQLSchema_EnsureCoveringIndexError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	collationCorrect := func() {
-		mock.ExpectQuery(`collation_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
-	}
-
-	expectCoreSchema(mock, driverMySQL)
-
-	for range 5 {
-		collationCorrect()
-	}
-
-	expectLinkTables(mock, driverMySQL)
-	expectNoLegacyRelationshipColumns(mock)
-
-	// migrateSignificanceToLevels: old column absent -> no-op.
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-
-	// ensureCoveringIndex: the superseded names are dropped, then the current index is reported
-	// absent and the CREATE INDEX fails.
-	expectSupersededIndexDrop(mock, driverMySQL)
-	mock.ExpectQuery(`information_schema.statistics`).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectExec(`CREATE INDEX`).WillReturnError(errors.New("boom"))
-	// No listing-index probe: the covering index's failure aborts initMySQLSchema, and
-	// ensureListingIndex is never reached.
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
 // --- loadSignificanceRanks error branches ---
 
 func TestLoadSignificanceRanks_ScanError(t *testing.T) {
@@ -1789,7 +1697,9 @@ func TestSetupMySQL_SchemaInitFailsReleasesLock(t *testing.T) {
 
 	mock.ExpectQuery(`GET_LOCK`).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(int64(1)))
+	expectSchemaThrough(t, mock, driverMySQL, "core_tables")
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("ddl failed"))
+	expectSchemaUnlock(mock, driverMySQL)
 	mock.ExpectClose()
 
 	if _, err := setupMySQL(d.sql, true); err == nil {
@@ -1802,106 +1712,3 @@ func TestSetupMySQL_SchemaInitFailsReleasesLock(t *testing.T) {
 // --- initMySQLSchema: the remaining addColumnIfMissing propagation branches not already
 // exercised by TestInitMySQLSchema_AddColumnError (is_summary) or
 // TestInitMySQLSchema_SignificanceLevelIDColumnError (memories.significance_level_id). ---
-
-func TestInitMySQLSchema_IsCompressedColumnError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	columnPresent := func() {
-		mock.ExpectQuery(`column_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-	}
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// is_summary present, then is_compressed reported missing and its ALTER fails.
-	columnPresent()
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN is_compressed`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitMySQLSchema_MemoriesGroupNameColumnError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	columnPresent := func() {
-		mock.ExpectQuery(`column_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-	}
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// is_summary present, then group_name(memories) reported missing and its ALTER fails.
-	columnPresent()
-	columnPresent()
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	mock.ExpectExec(`ALTER TABLE memories ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitMySQLSchema_EventsGroupNameColumnError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	columnPresent := func() {
-		mock.ExpectQuery(`column_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-	}
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// is_summary and group_name(memories) present, group_name(events) missing and its ALTER fails.
-	columnPresent()
-	columnPresent()
-	columnPresent()
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	mock.ExpectExec(`ALTER TABLE events ADD COLUMN group_name`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}
-
-func TestInitMySQLSchema_EventsSignificanceLevelIDColumnError(t *testing.T) {
-	d, mock := newMockDB(t, driverMySQL)
-
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// The entries preceding events.significance_level_id, all present.
-	for range indexOfCoreColumn(t, "events", "significance_level_id") {
-		mock.ExpectQuery(`column_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-	}
-
-	// Then that column reports missing, and its ALTER fails.
-	mock.ExpectQuery(`column_name FROM information_schema`).
-		WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
-	mock.ExpectExec(`ALTER TABLE events ADD COLUMN significance_level_id`).WillReturnError(errors.New("boom"))
-
-	if err := d.initMySQLSchema(); err == nil {
-		t.Fatal("expected an error")
-	}
-
-	expectationsMet(t, mock)
-}

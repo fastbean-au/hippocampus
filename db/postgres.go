@@ -57,7 +57,7 @@ func setupPostgres(sqlDB *sql.DB, consolidate bool) (*DB, error) {
 		}
 	}
 
-	if err := d.initPostgresSchema(); err != nil {
+	if err := d.initSchema(); err != nil {
 		if d.lockConn != nil {
 			_ = d.lockConn.Close()
 		}
@@ -194,67 +194,4 @@ func (d *DB) usedBytesLiveRows(ctx context.Context) (int64, error) {
 	}
 
 	return used, nil
-}
-
-func (d *DB) initPostgresSchema() error {
-	log.Trace("func() db.initPostgresSchema")
-
-	// The two core tables plus the columns added to them since (see coreSchemaStatements and
-	// migrateCoreColumns, both shared with the other drivers).
-	for _, statement := range d.coreSchemaStatements() {
-		if _, err := d.sql.Exec(statement); err != nil {
-			log.Errorf("failed to initialise postgres database schema: %s", err.Error())
-
-			return err
-		}
-	}
-
-	if _, err := d.sql.Exec(d.significanceLevelsDDL()); err != nil {
-		log.Errorf("failed to initialise significance registry: %s", err.Error())
-
-		return err
-	}
-
-	if err := d.migrateCoreColumns(); err != nil {
-		return err
-	}
-
-	if err := d.initLinkTables(); err != nil {
-		return err
-	}
-
-	if err := d.dropLegacyRelationshipColumns(); err != nil {
-		return err
-	}
-
-	if err := d.migrateSignificanceToLevels(); err != nil {
-		return err
-	}
-
-	if err := d.ensureCoveringIndex(); err != nil {
-		return err
-	}
-
-	if err := d.ensureListingIndex(); err != nil {
-		return err
-	}
-
-	// The forgotten log (see tombstone.go).
-	// The search index's delete outbox (see outbox.go). Created whether or not an OpenSearch backend
-	// is configured, so enabling one later needs no migration and rows already queued stay drainable.
-	if err := d.initSearchOutbox(); err != nil {
-		return err
-	}
-
-	if err := d.initTombstones(); err != nil {
-		return err
-	}
-
-	// The instance registry (see instances.go). Server drivers only: SQLite is single-instance by
-	// construction, so there are no peers for it to hold.
-	if err := d.initInstances(); err != nil {
-		return err
-	}
-
-	return nil
 }

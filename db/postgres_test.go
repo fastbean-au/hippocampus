@@ -467,7 +467,7 @@ func TestPostgres_ReadOnlyOpenFailsFastWithoutTables(t *testing.T) {
 
 	// Restore the shared schema for later tests regardless of the assertions below.
 	t.Cleanup(func() {
-		if err := database.initPostgresSchema(); err != nil {
+		if err := database.initSchema(); err != nil {
 			t.Fatalf("restore schema: %s", err)
 		}
 	})
@@ -753,7 +753,7 @@ func TestPostgres_MigrateSignificanceToLevels(t *testing.T) {
 		}
 	}
 
-	if err := d.initPostgresSchema(); err != nil {
+	if err := d.initSchema(); err != nil {
 		t.Fatalf("initPostgresSchema (migration): %s", err)
 	}
 

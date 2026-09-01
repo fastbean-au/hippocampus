@@ -79,7 +79,9 @@ state.
 Operational notes:
 
 - Start the consolidating instance first so it owns schema creation and any in-place migration; the
-  replicas assume the schema already exists.
+  replicas assume the schema already exists. They are safe if you do not: the migration run takes a
+  cross-instance lock, so instances starting together queue rather than racing one another's
+  `ALTER TABLE`. Starting the consolidator first simply avoids the wait.
 - Put a load balancer in front of all instances and route reads and writes to any of them.
 - The assignment is static, not dynamic leader election. If the consolidating instance dies,
   **promote** a replica by restarting it with `consolidation.enabled: true` — it takes the now-free
@@ -662,6 +664,42 @@ Two complementary approaches:
 into a fresh target. Record ids compare byte-for-byte across all three drivers, so identity is
 preserved across the move.
 
+### Schema versions, upgrades, and rollback
+
+The store carries a schema version, recorded in a `schema_migrations` table and logged on every
+startup:
+
+```text
+database schema at version 12 (postgres)
+```
+
+Upgrading is automatic and needs no step of yours: a newer build applies whatever migrations the
+store has not seen, in order, and logs what it is doing.
+
+```text
+upgrading the database schema from version 10 to 12
+database schema at version 12 (postgres)
+```
+
+**Rolling back to an older build is refused**, rather than silently allowed. A store recorded at a
+version the running build does not know about fails to open:
+
+```text
+database schema is newer than this build supports: the store records schema version 14, and this
+build understands up to 12. It was written by a newer Hippocampus; downgrading is not supported
+(see CHANGELOG.md). Run the newer version against it, or restore a backup taken before the upgrade
+```
+
+That is the message an aborted upgrade produces, and the two ways out are the ones it names: put the
+newer build back, or restore the backup you took first. **Take one before upgrading** — the older
+binary cannot open the store afterwards, so the backup is the only rollback there is.
+
+On a shared store the migration run takes a cross-instance lock, so several instances starting
+together queue rather than racing; the first to arrive migrates and the rest find the work done.
+
+The read-only tooling (`--backfill-search`) applies the same version check, and tolerates a store
+written before versions were recorded at all.
+
 ## Graceful shutdown
 
 On `SIGINT`/`SIGTERM` the service shuts down in order: stop the HTTP gateway, drain in-flight gRPC
@@ -795,58 +833,58 @@ Every attribute here is bounded to a handful of values — a bool, a small close
 name. **Nothing carries an id, a group, a client id, or anything else a caller controls**, which is
 what makes the whole set safe to keep at full resolution.
 
-| Metric                                 | Type          | Attributes                            | What it counts                                                              |
-| -------------------------------------- | ------------- | ------------------------------------- | --------------------------------------------------------------------------- |
-| `hippocampus.rpc.requests`             | counter       | `transport`, `rpc`, `code`, `outcome` | RPCs served — see [Request metrics](#request-metrics-red)                   |
-| `hippocampus.rpc.duration`             | histogram (s) | as above                              | Server-side duration of the same calls                                      |
-| `hippocampus.panics_recovered`         | counter       | `transport`                           | Handler panics caught by the recovery middleware                            |
-| `hippocampus.ratelimit.rejected`       | counter       | `transport`, `scope`                  | Requests refused by the [rate limiter](#rate-limiting)                      |
-| `hippocampus.ratelimit.clients`        | gauge         |                                       | Principals currently holding a per-client bucket                            |
-| `hippocampus.memories.stored`          | counter       |                                       | Memories accepted and written                                               |
-| `hippocampus.memories.rejected`        | counter       | `reason` (`invalid`/`insignificant`)  | Writes refused — `insignificant` is the decay model working, not a fault    |
-| `hippocampus.memories.recalled`        | counter       |                                       | Memories reinforced by `RecallMemories` or a reinforcing search             |
-| `hippocampus.memories.deleted`         | counter       |                                       | Memories deleted by a client, not by decay                                  |
-| `hippocampus.memories.consolidated`    | counter       | `has_event`                           | Memories forgotten by the sleep cycle                                       |
-| `hippocampus.memories.evicted`         | counter       |                                       | Memories deleted to meet the capacity target                                |
-| `hippocampus.memories.searched`        | counter       | `reinforce`                           | Memories returned by content search, by whether the search reinforced them  |
-| `hippocampus.memories.summarised`      | counter       |                                       | Memories replaced by a summary                                              |
-| `hippocampus.memories.count`           | gauge         | `has_event`                           | Memories currently stored                                                   |
-| `hippocampus.memories.retained`        | gauge         |                                       | Memories inside the retention window, exempt from both decay paths          |
-| `hippocampus.memory.body_bytes`        | histogram     |                                       | Size of each accepted memory body                                           |
-| `hippocampus.bytes.evicted`            | counter       |                                       | Estimated bytes reclaimed by eviction                                       |
-| `hippocampus.retained_bytes`           | gauge         |                                       | Stored bytes held by the retention window                                   |
-| `hippocampus.events.stored`            | counter       |                                       | Events accepted and written                                                 |
-| `hippocampus.events.rejected`          | counter       | `reason`                              | Event writes refused, classified as memories are                            |
-| `hippocampus.events.deleted`           | counter       |                                       | Events deleted by a client                                                  |
-| `hippocampus.events.merged`            | counter       |                                       | `MergeEvents` calls that moved memories                                     |
-| `hippocampus.events.consolidated`      | counter       | `has_memories`                        | Events forgotten by the sleep cycle                                         |
-| `hippocampus.events.evicted`           | counter       |                                       | Events dropped because eviction took their last memory                      |
-| `hippocampus.events.count`             | gauge         |                                       | Events currently stored                                                     |
-| `hippocampus.sleeps`                   | counter       | `success`                             | Sleep cycles run                                                            |
-| `hippocampus.sleep.duration`           | histogram (s) |                                       | How long a full cycle took                                                  |
-| `hippocampus.capacity_pressure`        | gauge         |                                       | The threshold multiplier the last cycle computed                            |
-| `hippocampus.used_bytes`               | gauge         |                                       | Bytes the store occupies (only with a byte capacity set)                    |
-| `hippocampus.capacity_bytes`           | gauge         |                                       | The configured target, so a query need not hard-code it                     |
-| `hippocampus.purges`                   | counter       | `success`                             | `Purge` calls                                                               |
-| `hippocampus.tombstones`               | gauge         |                                       | Records held by the [forgotten log](#what-was-forgotten--the-forgotten-log) |
-| `hippocampus.tombstones.deleted`       | counter       | `manual`                              | Forgotten-log records removed, by request or by the caps                    |
-| `hippocampus.summarisation_candidates` | gauge         |                                       | Events the last scan flagged as worth condensing                            |
-| `hippocampus.summaries.created`        | counter       |                                       | Summary memories written                                                    |
-| `hippocampus.summarisations`           | counter       | `success`                             | Embedded-LLM generation calls                                               |
-| `hippocampus.exports`                  | counter       | `success`                             | `Export` runs                                                               |
-| `hippocampus.imports`                  | counter       | `success`                             | `Import`/`ImportBatch` runs                                                 |
-| `hippocampus.transfers`                | counter       | `success`                             | `Transfer` runs                                                             |
-| `hippocampus.records.exported`         | counter       | `kind` (`event`/`memory`)             | Rows written to an archive or streamed to a target                          |
-| `hippocampus.records.imported`         | counter       | `kind`                                | Rows ingested                                                               |
-| `hippocampus.records.cleared`          | counter       | `kind`                                | Rows deleted by a manifest-scoped clear                                     |
-| `hippocampus.search.indexed`           | counter       | `success`                             | Documents written to the OpenSearch index                                   |
-| `hippocampus.search.deleted`           | counter       | `success`                             | Deletes applied to it                                                       |
-| `hippocampus.search.dropped`           | counter       | `op`                                  | Index operations abandoned — queue full, or every retry failed              |
-| `hippocampus.search.outbox_depth`      | gauge         |                                       | Index deletions recorded but not yet applied — the backpressure signal      |
-| `hippocampus.search.outbox.applied`    | counter       |                                       | Queued deletions drained and accepted by the index                          |
-| `hippocampus.search.outbox.abandoned`  | counter       |                                       | Queued deletions discarded at the caps, left to the stale sweep             |
-| `hippocampus.search.stale_documents_removed` | counter |                                     | Documents the sweep removed because the store no longer holds the memory    |
-| `hippocampus.search.queries`           | counter       | `success`                             | Content searches served by it                                               |
+| Metric                                       | Type          | Attributes                            | What it counts                                                              |
+| -------------------------------------------- | ------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| `hippocampus.rpc.requests`                   | counter       | `transport`, `rpc`, `code`, `outcome` | RPCs served — see [Request metrics](#request-metrics-red)                   |
+| `hippocampus.rpc.duration`                   | histogram (s) | as above                              | Server-side duration of the same calls                                      |
+| `hippocampus.panics_recovered`               | counter       | `transport`                           | Handler panics caught by the recovery middleware                            |
+| `hippocampus.ratelimit.rejected`             | counter       | `transport`, `scope`                  | Requests refused by the [rate limiter](#rate-limiting)                      |
+| `hippocampus.ratelimit.clients`              | gauge         |                                       | Principals currently holding a per-client bucket                            |
+| `hippocampus.memories.stored`                | counter       |                                       | Memories accepted and written                                               |
+| `hippocampus.memories.rejected`              | counter       | `reason` (`invalid`/`insignificant`)  | Writes refused — `insignificant` is the decay model working, not a fault    |
+| `hippocampus.memories.recalled`              | counter       |                                       | Memories reinforced by `RecallMemories` or a reinforcing search             |
+| `hippocampus.memories.deleted`               | counter       |                                       | Memories deleted by a client, not by decay                                  |
+| `hippocampus.memories.consolidated`          | counter       | `has_event`                           | Memories forgotten by the sleep cycle                                       |
+| `hippocampus.memories.evicted`               | counter       |                                       | Memories deleted to meet the capacity target                                |
+| `hippocampus.memories.searched`              | counter       | `reinforce`                           | Memories returned by content search, by whether the search reinforced them  |
+| `hippocampus.memories.summarised`            | counter       |                                       | Memories replaced by a summary                                              |
+| `hippocampus.memories.count`                 | gauge         | `has_event`                           | Memories currently stored                                                   |
+| `hippocampus.memories.retained`              | gauge         |                                       | Memories inside the retention window, exempt from both decay paths          |
+| `hippocampus.memory.body_bytes`              | histogram     |                                       | Size of each accepted memory body                                           |
+| `hippocampus.bytes.evicted`                  | counter       |                                       | Estimated bytes reclaimed by eviction                                       |
+| `hippocampus.retained_bytes`                 | gauge         |                                       | Stored bytes held by the retention window                                   |
+| `hippocampus.events.stored`                  | counter       |                                       | Events accepted and written                                                 |
+| `hippocampus.events.rejected`                | counter       | `reason`                              | Event writes refused, classified as memories are                            |
+| `hippocampus.events.deleted`                 | counter       |                                       | Events deleted by a client                                                  |
+| `hippocampus.events.merged`                  | counter       |                                       | `MergeEvents` calls that moved memories                                     |
+| `hippocampus.events.consolidated`            | counter       | `has_memories`                        | Events forgotten by the sleep cycle                                         |
+| `hippocampus.events.evicted`                 | counter       |                                       | Events dropped because eviction took their last memory                      |
+| `hippocampus.events.count`                   | gauge         |                                       | Events currently stored                                                     |
+| `hippocampus.sleeps`                         | counter       | `success`                             | Sleep cycles run                                                            |
+| `hippocampus.sleep.duration`                 | histogram (s) |                                       | How long a full cycle took                                                  |
+| `hippocampus.capacity_pressure`              | gauge         |                                       | The threshold multiplier the last cycle computed                            |
+| `hippocampus.used_bytes`                     | gauge         |                                       | Bytes the store occupies (only with a byte capacity set)                    |
+| `hippocampus.capacity_bytes`                 | gauge         |                                       | The configured target, so a query need not hard-code it                     |
+| `hippocampus.purges`                         | counter       | `success`                             | `Purge` calls                                                               |
+| `hippocampus.tombstones`                     | gauge         |                                       | Records held by the [forgotten log](#what-was-forgotten--the-forgotten-log) |
+| `hippocampus.tombstones.deleted`             | counter       | `manual`                              | Forgotten-log records removed, by request or by the caps                    |
+| `hippocampus.summarisation_candidates`       | gauge         |                                       | Events the last scan flagged as worth condensing                            |
+| `hippocampus.summaries.created`              | counter       |                                       | Summary memories written                                                    |
+| `hippocampus.summarisations`                 | counter       | `success`                             | Embedded-LLM generation calls                                               |
+| `hippocampus.exports`                        | counter       | `success`                             | `Export` runs                                                               |
+| `hippocampus.imports`                        | counter       | `success`                             | `Import`/`ImportBatch` runs                                                 |
+| `hippocampus.transfers`                      | counter       | `success`                             | `Transfer` runs                                                             |
+| `hippocampus.records.exported`               | counter       | `kind` (`event`/`memory`)             | Rows written to an archive or streamed to a target                          |
+| `hippocampus.records.imported`               | counter       | `kind`                                | Rows ingested                                                               |
+| `hippocampus.records.cleared`                | counter       | `kind`                                | Rows deleted by a manifest-scoped clear                                     |
+| `hippocampus.search.indexed`                 | counter       | `success`                             | Documents written to the OpenSearch index                                   |
+| `hippocampus.search.deleted`                 | counter       | `success`                             | Deletes applied to it                                                       |
+| `hippocampus.search.dropped`                 | counter       | `op`                                  | Index operations abandoned — queue full, or every retry failed              |
+| `hippocampus.search.outbox_depth`            | gauge         |                                       | Index deletions recorded but not yet applied — the backpressure signal      |
+| `hippocampus.search.outbox.applied`          | counter       |                                       | Queued deletions drained and accepted by the index                          |
+| `hippocampus.search.outbox.abandoned`        | counter       |                                       | Queued deletions discarded at the caps, left to the stale sweep             |
+| `hippocampus.search.stale_documents_removed` | counter       |                                       | Documents the sweep removed because the store no longer holds the memory    |
+| `hippocampus.search.queries`                 | counter       | `success`                             | Content searches served by it                                               |
 
 Three things the shape of this list says. The **four `search.*` counters exist only under
 `opensearch.enabled`** — the built-in FTS5 backend runs inside the primary write and has no queue to
@@ -1046,6 +1084,7 @@ from the proxy's address, which collapses every caller into one bucket; `rateLim
 is the fix, and is **off by default** because believing a caller-supplied header on a directly
 reachable listener lets any caller mint itself an unlimited number of buckets. Set it only when a
 proxy you control overwrites `X-Forwarded-For` rather than appending to it.
+
 ## Group scoping and the trust boundary
 
 **A shared store is a shared trust domain by default.** `group` is a label, not an access control:

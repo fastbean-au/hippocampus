@@ -52,7 +52,7 @@ func setupMySQL(sqlDB *sql.DB, consolidate bool) (*DB, error) {
 		}
 	}
 
-	if err := d.initMySQLSchema(); err != nil {
+	if err := d.initSchema(); err != nil {
 		if d.lockConn != nil {
 			_ = d.lockConn.Close()
 		}
@@ -154,35 +154,21 @@ func (d *DB) acquireMySQLInstanceLock() error {
 	return nil
 }
 
-func (d *DB) initMySQLSchema() error {
-	log.Trace("func() db.initMySQLSchema")
+// migrateIdCollation is the id_collation migration: it pins the id, event_id and group_name columns
+// to the binary collation on a database created before that was done.
+//
+// The CREATE TABLE the current schema issues already collates a new database correctly (see the
+// dialect table's idType), so this only ever has work on an older one. Under the server default
+// (utf8mb4_0900_ai_ci) ids differing only in case or accent are the SAME KEY: client ids "abc" and
+// "ABC" would collide - a duplicate key on create, a silent merge on import - and keyset pagination
+// would walk a different order, so the same archive would change record identity across drivers.
+//
+// definition is the full post-MODIFY column spec, with COLLATE immediately after the type and ahead
+// of any NOT NULL/DEFAULT, matching the CREATE TABLE definitions.
+func (d *DB) migrateIdCollation() error {
+	log.Trace("func() db.migrateIdCollation")
 
-	// The two core tables plus the columns added to them since (see coreSchemaStatements and
-	// migrateCoreColumns, both shared with the other drivers; the dialect table in dialect.go is
-	// where this driver's VARCHAR ids, its binary collation and its default-less TEXT and BLOB
-	// columns are declared and explained).
-	//
-	// Statements run one at a time: go-sql-driver rejects multi-statement strings unless the DSN
-	// opts in, and requiring that of every deployment for startup DDL alone isn't worth it.
-	statements := append(d.coreSchemaStatements(), d.significanceLevelsDDL())
-
-	for _, statement := range statements {
-		if _, err := d.sql.Exec(statement); err != nil {
-			log.Errorf("failed to initialise mysql database schema: %s", err.Error())
-
-			return err
-		}
-	}
-
-	if err := d.migrateCoreColumns(); err != nil {
-		return err
-	}
-
-	// Migrate the id/event_id/group_name collation on databases created before it was pinned to
-	// utf8mb4_bin. The CREATE TABLE above already collates new databases correctly, so these are
-	// no-ops there. definition is the full post-MODIFY column spec (COLLATE immediately after the
-	// type, ahead of any NOT NULL/DEFAULT), matching the CREATE TABLE definitions.
-	collations := []struct {
+	columns := []struct {
 		table      string
 		column     string
 		definition string
@@ -194,47 +180,10 @@ func (d *DB) initMySQLSchema() error {
 		{"memories", "group_name", "VARCHAR(255) COLLATE " + mysqlBinaryCollation + " NOT NULL DEFAULT ''"},
 	}
 
-	for _, c := range collations {
+	for _, c := range columns {
 		if err := d.setMySQLColumnCollationIfNeeded(c.table, c.column, c.definition); err != nil {
 			return err
 		}
-	}
-
-	if err := d.initLinkTables(); err != nil {
-		return err
-	}
-
-	if err := d.dropLegacyRelationshipColumns(); err != nil {
-		return err
-	}
-
-	if err := d.migrateSignificanceToLevels(); err != nil {
-		return err
-	}
-
-	if err := d.ensureCoveringIndex(); err != nil {
-		return err
-	}
-
-	if err := d.ensureListingIndex(); err != nil {
-		return err
-	}
-
-	// The forgotten log (see tombstone.go).
-	// The search index's delete outbox (see outbox.go). Created whether or not an OpenSearch backend
-	// is configured, so enabling one later needs no migration and rows already queued stay drainable.
-	if err := d.initSearchOutbox(); err != nil {
-		return err
-	}
-
-	if err := d.initTombstones(); err != nil {
-		return err
-	}
-
-	// The instance registry (see instances.go). Server drivers only: SQLite is single-instance by
-	// construction, so there are no peers for it to hold.
-	if err := d.initInstances(); err != nil {
-		return err
 	}
 
 	return nil

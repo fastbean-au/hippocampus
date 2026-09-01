@@ -457,7 +457,7 @@ func TestMySQL_ReadOnlyOpenFailsFastWithoutTables(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		if err := database.initMySQLSchema(); err != nil {
+		if err := database.initSchema(); err != nil {
 			t.Fatalf("restore schema: %s", err)
 		}
 	})
@@ -804,7 +804,7 @@ func TestMySQL_MigrateSignificanceToLevels(t *testing.T) {
 		}
 	}
 
-	if err := d.initMySQLSchema(); err != nil {
+	if err := d.initSchema(); err != nil {
 		t.Fatalf("initMySQLSchema (migration): %s", err)
 	}
 

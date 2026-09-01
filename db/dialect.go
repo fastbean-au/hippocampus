@@ -165,6 +165,12 @@ type dialect struct {
 	// MATCHED, so a no-op update is indistinguishable from one that matched nothing and existence
 	// has to be confirmed separately.
 	countsChangedRows bool
+
+	// idCollationMigration is set where an id column's collation is a property that can be wrong on
+	// a database created by an older version and has to be corrected in place. Only the dialect
+	// whose default collation is case-insensitive has one - the others compare byte-for-byte with no
+	// collation to state. See the id_collation migration.
+	idCollationMigration bool
 }
 
 // dialects is the table. One row per dialect; a fourth is a fourth row plus whatever structural
@@ -200,6 +206,7 @@ var dialects = map[driver]*dialect{
 		contentSearch:        true,
 		instanceRegistry:     false,
 		countsChangedRows:    false,
+		idCollationMigration: false,
 	},
 
 	driverPostgres: {
@@ -229,6 +236,7 @@ var dialects = map[driver]*dialect{
 		contentSearch:        false,
 		instanceRegistry:     true,
 		countsChangedRows:    false,
+		idCollationMigration: false,
 	},
 
 	driverMySQL: {
@@ -262,6 +270,7 @@ var dialects = map[driver]*dialect{
 		contentSearch:        false,
 		instanceRegistry:     true,
 		countsChangedRows:    true,
+		idCollationMigration: true,
 	},
 }
 
@@ -330,6 +339,9 @@ type upsertSpec struct {
 	// update names the columns re-written from the proposed row when the key already exists. A
 	// column in columns but not here keeps its stored value - which is how a re-link re-weights an
 	// edge without disturbing when it was created.
+	//
+	// Empty means keep the stored row entirely: an insert that loses the race leaves the winner's
+	// row exactly as it was, which is what a ledger recording when something FIRST happened needs.
 	update []string
 
 	// values overrides the generated single-row VALUES list. The bulk import paths build one tuple
@@ -359,6 +371,21 @@ func (d *DB) upsert(spec upsertSpec) string {
 	alias := d.dialect().upsertExcluded
 	if alias == "" {
 		alias = "new"
+	}
+
+	// Keeping the stored row is the third form, and the two dialects disagree about it more than
+	// they do about updating. One says so directly; the other has no DO NOTHING and expresses it as
+	// an assignment that changes nothing, which is the idiom rather than a trick.
+	if len(spec.update) == 0 {
+		if d.dialect().upsertExcluded == "" {
+			key := spec.key[0]
+
+			return insert + `
+		ON DUPLICATE KEY UPDATE ` + key + ` = ` + key
+		}
+
+		return insert + `
+		ON CONFLICT (` + strings.Join(spec.key, ", ") + `) DO NOTHING`
 	}
 
 	assignments := make([]string, len(spec.update))
@@ -482,29 +509,36 @@ func (d *DB) indexExists(table string, name string) (bool, error) {
 	return count > 0, nil
 }
 
-// registryLock takes the cross-instance lock serialising significance-registry renumbering, on a
-// dedicated connection, and returns a release function. Both server dialects have a session-scoped
-// named lock and spell it differently; the embedded dialect needs none, its single connection
-// already serialising every writer, and so is handled by its caller before reaching here.
-func (d *DB) registryLock(ctx context.Context, conn *sql.Conn) (func(), error) {
+// namedLock takes a session-scoped cross-instance lock on the supplied connection and returns its
+// release. Both server dialects have one and spell it completely differently - one takes a numeric
+// key, the other a string it must be told to scope to the current schema - which is the whole reason
+// this lives here rather than at either of its two call sites. The embedded dialect needs no lock at
+// all, its single connection already serialising every writer, and its callers say so before
+// reaching here.
+//
+// The lock is held by the SESSION, so the connection must stay checked out for as long as the lock
+// is wanted; every caller pins one and closes it after releasing.
+func (d *DB) namedLock(ctx context.Context, conn *sql.Conn, key int64, name string) (func(), error) {
 	switch d.driver {
 
 	case driverPostgres:
-		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, registryAdvisoryLockKey); err != nil {
+		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, key); err != nil {
 			return nil, err
 		}
 
 		return func() {
-			_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, registryAdvisoryLockKey)
+			_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, key)
 		}, nil
 
 	case driverMySQL:
-		if _, err := conn.ExecContext(ctx, `SELECT GET_LOCK(CONCAT('hippocampus:registry:', DATABASE()), 10)`); err != nil {
+		// Scoped to the schema, because a MySQL named lock is server-global: two deployments sharing
+		// one server would otherwise serialise against each other.
+		if _, err := conn.ExecContext(ctx, `SELECT GET_LOCK(CONCAT(?, ':', DATABASE()), ?)`, name, int(schemaLockTimeout.Seconds())); err != nil {
 			return nil, err
 		}
 
 		return func() {
-			_, _ = conn.ExecContext(context.Background(), `SELECT RELEASE_LOCK(CONCAT('hippocampus:registry:', DATABASE()))`)
+			_, _ = conn.ExecContext(context.Background(), `SELECT RELEASE_LOCK(CONCAT(?, ':', DATABASE()))`, name)
 		}, nil
 
 	}

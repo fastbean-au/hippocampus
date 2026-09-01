@@ -204,132 +204,163 @@ func TestNewSQLiteReadOnly_MissingFileFails(t *testing.T) {
 // share initLinkTables and dropLegacyRelationshipColumns, and a failure in either must stop
 // startup rather than leave a half-migrated schema. ---
 
-func TestInitPostgresSchema_Failures(t *testing.T) {
-	tests := []struct {
-		name   string
-		expect func(sqlmock.Sqlmock)
-	}{
-		{
-			name: "link tables",
-			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec(`CREATE TABLE IF NOT EXISTS \w+_links`).WillReturnError(errors.New("boom"))
-			},
+// serverDialects are the two dialects the shared failure tables below run against. The embedded
+// dialect has its own copies in db_gap_test.go, because its probes and its DDL differ enough that
+// scripting all three from one table would be less legible than two tables, not more.
+var serverDialects = []struct {
+	name   string
+	driver driver
+}{
+	{name: "postgres", driver: driverPostgres},
+	{name: "mysql", driver: driverMySQL},
+}
+
+// TestServerSchemaInitFailuresStopTheRun drives each migration failing in turn, on each server
+// dialect, and requires the run to stop there.
+//
+// It is table-driven off the real migration list rather than one test per step per dialect, which is
+// what it replaced: a step's error path is now covered the day the step is added, and a step whose
+// failure case nobody has written is reported rather than silently uncovered.
+func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
+	failures := map[string]func(sqlmock.Sqlmock, driver){
+		"core_tables": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnError(errors.New("boom"))
 		},
-		{
-			name: "legacy column drop",
-			expect: func(mock sqlmock.Sqlmock) {
-				expectLinkTables(mock, driverPostgres)
-				mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))
-			},
+		"core_columns": func(mock sqlmock.Sqlmock, d driver) {
+			if dialects[d].addColumnIfNotExists {
+				mock.ExpectExec(`ALTER TABLE .* ADD COLUMN IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+
+				return
+			}
+
+			mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
+		},
+		"id_collation": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectQuery(`collation_name FROM information_schema`).WillReturnError(errors.New("boom"))
+		},
+		"link_tables": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS \w+_links`).WillReturnError(errors.New("boom"))
+		},
+		"drop_legacy_relationships": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))
+		},
+		"significance_levels": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))
+		},
+		"covering_index": func(mock sqlmock.Sqlmock, d driver) {
+			expectSupersededIndexDrop(mock, d)
+			expectIndexFails(mock, d)
+		},
+		"listing_index": func(mock sqlmock.Sqlmock, d driver) {
+			expectIndexFails(mock, d)
+		},
+		"search_outbox": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS search_outbox`).WillReturnError(errors.New("boom"))
+		},
+		"forgotten_log": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memory_tombstones`).WillReturnError(errors.New("boom"))
+		},
+		"instance_registry": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS instances`).WillReturnError(errors.New("boom"))
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			d, mock := newMockDB(t, driverPostgres)
+	for _, dialect := range serverDialects {
+		t.Run(dialect.name, func(t *testing.T) {
+			for _, migration := range (&DB{driver: dialect.driver}).migrations() {
+				if migration.when != nil && !migration.when(dialects[dialect.driver]) {
+					continue
+				}
 
-			expectCoreSchema(mock, driverPostgres)
+				fail, ok := failures[migration.name]
+				if !ok {
+					t.Errorf("migration %q has no failure case here - add one, or the step's error "+
+						"path is the one thing about it nothing exercises", migration.name)
 
-			test.expect(mock)
+					continue
+				}
 
-			if err := d.initPostgresSchema(); err == nil {
-				t.Fatal("expected the failure to stop schema initialisation")
+				t.Run(migration.name, func(t *testing.T) {
+					d, mock := newMockDB(t, dialect.driver)
+
+					expectSchemaThrough(t, mock, dialect.driver, migration.name)
+					fail(mock, dialect.driver)
+					expectSchemaUnlock(mock, dialect.driver)
+
+					if err := d.initSchema(); err == nil {
+						t.Fatalf("a failure in %s must stop schema initialisation", migration.name)
+					}
+
+					expectationsMet(t, mock)
+				})
 			}
-
-			expectationsMet(t, mock)
 		})
 	}
 }
 
-func TestInitMySQLSchema_Failures(t *testing.T) {
-	// columnPresent scripts one addColumnIfMissing probe reporting the column already there.
-	columnPresent := func(mock sqlmock.Sqlmock) {
-		mock.ExpectQuery(`column_name FROM information_schema`).
-			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
-	}
+// TestServerSchemaInitEveryCoreColumnFailure drives the column migration failing on each of its
+// columns in turn, on each server dialect. It replaced a handful of tests that each hard-coded how
+// many columns preceded theirs, and it covers an eleventh column the day it is added.
+func TestServerSchemaInitEveryCoreColumnFailure(t *testing.T) {
+	for _, dialect := range serverDialects {
+		t.Run(dialect.name, func(t *testing.T) {
+			for i, column := range (&DB{driver: dialect.driver}).coreColumnMigrations() {
+				t.Run(column.table+"."+column.column, func(t *testing.T) {
+					d, mock := newMockDB(t, dialect.driver)
 
-	tests := []struct {
-		name string
-		// columns is how many addColumnIfMissing probes succeed before the failing one.
-		columns int
-		expect  func(sqlmock.Sqlmock)
-	}{
-		{
-			name:    "memories.link_significance",
-			columns: 2,
-			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
-			},
-		},
-		{
-			name:    "events.link_significance",
-			columns: 3,
-			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
-			},
-		},
-		{
-			name:    "memories.metadata",
-			columns: 4,
-			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
-			},
-		},
-		{
-			name:    "events.metadata",
-			columns: 5,
-			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
-			},
-		},
-		{
-			name:    "link tables",
-			columns: coreMigratedColumnCount,
-			expect: func(mock sqlmock.Sqlmock) {
-				for range 5 {
-					mock.ExpectQuery(`collation_name FROM information_schema`).
-						WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
-				}
+					expectSchemaThrough(t, mock, dialect.driver, "core_columns")
 
-				mock.ExpectExec(`CREATE TABLE IF NOT EXISTS \w+_links`).WillReturnError(errors.New("boom"))
-			},
-		},
-		{
-			name:    "legacy column drop",
-			columns: coreMigratedColumnCount,
-			expect: func(mock sqlmock.Sqlmock) {
-				for range 5 {
-					mock.ExpectQuery(`collation_name FROM information_schema`).
-						WillReturnRows(sqlmock.NewRows([]string{"collation_name"}).AddRow(mysqlBinaryCollation))
-				}
+					for range i {
+						expectOneCoreColumnPresent(mock, dialect.driver)
+					}
 
-				expectLinkTables(mock, driverMySQL)
-				mock.ExpectQuery(`information_schema.columns`).WillReturnError(errors.New("boom"))
-			},
-		},
-	}
+					if dialects[dialect.driver].addColumnIfNotExists {
+						mock.ExpectExec(`ALTER TABLE ` + column.table + ` ADD COLUMN IF NOT EXISTS ` + column.column).
+							WillReturnError(errors.New("boom"))
+					} else {
+						mock.ExpectQuery(`column_name FROM information_schema`).
+							WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+						mock.ExpectExec(`ALTER TABLE ` + column.table + ` ADD COLUMN ` + column.column).
+							WillReturnError(errors.New("boom"))
+					}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			d, mock := newMockDB(t, driverMySQL)
+					expectSchemaUnlock(mock, dialect.driver)
 
-			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS events`).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories`).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS significance_levels`).WillReturnResult(sqlmock.NewResult(0, 0))
+					if err := d.initSchema(); err == nil {
+						t.Fatalf("a failure adding %s.%s must stop schema initialisation", column.table, column.column)
+					}
 
-			for range test.columns {
-				columnPresent(mock)
+					expectationsMet(t, mock)
+				})
 			}
-
-			test.expect(mock)
-
-			if err := d.initMySQLSchema(); err == nil {
-				t.Fatal("expected the failure to stop schema initialisation")
-			}
-
-			expectationsMet(t, mock)
 		})
 	}
+}
+
+// expectIndexFails scripts one ensureIndex whose creation fails, in whichever form the dialect
+// issues it.
+func expectIndexFails(mock sqlmock.Sqlmock, d driver) {
+	if dialects[d].indexIfNotExists {
+		mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+
+		return
+	}
+
+	mock.ExpectQuery(`information_schema.statistics`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`CREATE INDEX`).WillReturnError(errors.New("boom"))
+}
+
+// expectOneCoreColumnPresent scripts one addColumnIfMissing finding its column already there.
+func expectOneCoreColumnPresent(mock sqlmock.Sqlmock, d driver) {
+	if dialects[d].addColumnIfNotExists {
+		mock.ExpectExec(`ALTER TABLE .* ADD COLUMN IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+		return
+	}
+
+	mock.ExpectQuery(`column_name FROM information_schema`).
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
 }
 
 // --- lock.go: the diagnostics the lock file carries. The refusal stands on the kernel's lock, not

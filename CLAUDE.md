@@ -573,7 +573,29 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   and `coreColumnMigrations` are the events/memories schema written **once**: the three copies they
   replaced differed only in column types, so keeping them apart bought nothing and risked the one
   failure this schema cannot afford — a column added to one dialect's copy and forgotten in another,
-  which yields a store that opens, serves, and is missing a field on exactly one backend. The
+  which yields a store that opens, serves, and is missing a field on exactly one backend.
+  `db/schema.go` is the other half: **one ordered, versioned migration list for every dialect**
+  (`migrations()`), run by a single `initSchema` — what used to be three per-driver initialisers,
+  which after the dialect table differed only in three dialect _capabilities_ (the embedded dialect
+  configures incremental vacuum and carries the content index, one server dialect migrates an id
+  collation, both keep a peer registry). Four things carry it. (1) The point is the **version gate**:
+  "downgrading is not supported" was a sentence in `CHANGELOG.md` with nothing enforcing it, and an
+  older binary opened a newer store, found every table it expected, and served — right up until it
+  met a migration whose meaning had moved. A store now records its version in `schema_migrations`
+  and a build that does not understand it refuses to open with `ErrSchemaTooNew`; the read-only tool
+  opens apply the same gate in a form that tolerates the ledger being **absent** (a pre-ledger store
+  must still be backfillable). (2) The ledger **records, it does not decide**: every migration runs
+  on every startup exactly as before, because each detects its own completion. Skipping recorded
+  steps was tried and reverted — it saves eight round trips and gives up self-healing, which
+  `TestSchemaHealsARevertedMigration` now pins. It is also what makes the ledger safe to add to
+  existing stores: no baselining, no "assume everything up to N already ran" heuristic. (3)
+  **Versions are never renumbered or reused** — a new migration appends — because a renumber
+  silently re-points every stored row at a different step; `TestMigrationVersionsAreStable` pins the
+  mapping, and `schemaFixtureTags` (`db/schema_upgrade_test.go`) requires each migration to name the
+  released fixture that exercises it. (4) The run is serialised across instances by a third named
+  lock (`namedLock`, beside the single-consolidator and significance-registry locks), so two
+  replicas starting together cannot race one another's `ALTER TABLE`; that lock pins a connection,
+  which is why the pool must not be capped at one before `initSchema` runs. The
   `db.Store` interface (in `db.go`) is what
   `hippocampus.Server` and `stats` depend on — the seam for future non-SQL backends. Every
   `db.Store` method that issues a query takes a leading `ctx context.Context` (all but `WALBytes`,
