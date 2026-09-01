@@ -35,6 +35,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-02
+
 ### Fixed
 
 - **Spreading activation was silently inert on PostgreSQL.** `linkRecallPropagation` advances the
@@ -1830,7 +1832,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.38.3...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/fastbean-au/hippocampus/compare/v0.38.3...v0.39.0
 [0.38.3]: https://github.com/fastbean-au/hippocampus/compare/v0.38.2...v0.38.3
 [0.38.2]: https://github.com/fastbean-au/hippocampus/compare/v0.38.1...v0.38.2
 [0.38.1]: https://github.com/fastbean-au/hippocampus/compare/v0.38.0...v0.38.1
