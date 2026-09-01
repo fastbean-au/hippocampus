@@ -70,6 +70,16 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   schema-fixture drift guard reads that declared list rather than parsing the Go AST of whatever the
   init functions happened to call, which removed about 150 lines of test machinery.
 
+- **The schema-upgrade fixtures had no entry for the current schema band.** `search_outbox` shipped
+  in 0.38.0 and the newest fixture was v0.37.0, so the schema every deployment in the field is
+  actually running had never been migrated by a test. A v0.38.3 fixture is now generated for all
+  three drivers — and it is the most valuable one in the set, being the last release that recorded no
+  schema version and therefore the upgrade every real store is about to perform. Two stale
+  declarations were corrected alongside it (v0.37.0 was annotated as a no-op control, and the
+  outbox's fixture was attributed to v0.34.0). `RELEASE.md` now requires regenerating fixtures when a
+  release changes the schema: the existing guard cannot catch the newest band having none, which is
+  exactly what had happened.
+
 - **All SQL-dialect knowledge now lives in one file.** `db/dialect.go` holds a table with one row per
   dialect — column types, expression fragments, capability flags — plus the few helpers whose
   difference is structural rather than lexical (the upsert form, index management, the registry

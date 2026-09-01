@@ -43,8 +43,9 @@ var schemaFixtures = []struct {
 	{"v0.23.0", "initContentSearch (FTS backfill over a non-empty store)"},
 	{"v0.25.0", "initLinkTables, dropLegacyRelationshipColumns, link_significance and metadata on both tables"},
 	{"v0.31.0", "initTombstones"},
-	{"v0.34.0", "initSearchOutbox"},
-	{"v0.37.0", "none - the control; migrating this must be a no-op"},
+	{"v0.34.0", "nothing of its own - it shares v0.37.0's schema, and is kept as the older end of that band"},
+	{"v0.37.0", "search_outbox"},
+	{"v0.38.3", "the schema ledger itself - the last release before schema_migrations existed, and so the upgrade every deployment in the field will actually perform"},
 }
 
 // seededMemory is a row scripts/schema-fixtures.sh writes into every fixture, with the values it
@@ -446,7 +447,7 @@ var schemaFixtureTags = map[string]string{
 	"drop_legacy_relationships": "v0.25.0",
 	"significance_levels":       "v0.4.0",
 	"forgotten_log":             "v0.31.0",
-	"search_outbox":             "v0.34.0",
+	"search_outbox":             "v0.37.0",
 	"instance_registry":         "v0.31.0",
 	"content_search":            "v0.23.0",
 

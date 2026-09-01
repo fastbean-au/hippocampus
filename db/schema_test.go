@@ -366,3 +366,208 @@ func TestSchemaHealsARevertedMigration(t *testing.T) {
 		t.Fatalf("the covering index was not restored on reopening: %s", err)
 	}
 }
+
+// TestInspectSchemaReportsACurrentStore covers the ordinary answer: a store this build wrote, read
+// back without opening it for service.
+func TestInspectSchemaReportsACurrentStore(t *testing.T) {
+	requireSQLite(t)
+
+	directory := t.TempDir()
+
+	database, err := New(directory)
+	if err != nil {
+		t.Fatalf("New: %s", err)
+	}
+
+	supported := database.schemaVersion()
+
+	if err := database.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	report, err := InspectSchema("sqlite", directory)
+	if err != nil {
+		t.Fatalf("InspectSchema: %s", err)
+	}
+
+	if report.Dialect != "sqlite" {
+		t.Errorf("dialect = %q, want sqlite", report.Dialect)
+	}
+
+	if !report.HasLedger {
+		t.Error("a store this build wrote must have a ledger")
+	}
+
+	if report.Supported != supported {
+		t.Errorf("supported = %d, want %d", report.Supported, supported)
+	}
+
+	if report.Ahead() {
+		t.Error("a store this build wrote is not ahead of it")
+	}
+
+	if len(report.Pending) != 0 {
+		t.Errorf("a store this build wrote has nothing pending, got %v", report.Pending)
+	}
+
+	// Every migration that applies to this dialect is reported, with its name and a real timestamp.
+	d := &DB{driver: driverSQLite}
+
+	wanted := 0
+
+	for _, migration := range d.migrations() {
+		if migration.when == nil || migration.when(d.dialect()) {
+			wanted++
+		}
+	}
+
+	if len(report.Applied) != wanted {
+		t.Errorf("reported %d applied migrations, want %d", len(report.Applied), wanted)
+	}
+
+	for _, migration := range report.Applied {
+		if migration.Name == "" {
+			t.Errorf("migration %d reported no name", migration.Version)
+		}
+
+		if migration.AppliedAt.IsZero() {
+			t.Errorf("migration %d (%s) reported no timestamp", migration.Version, migration.Name)
+		}
+	}
+}
+
+// TestInspectSchemaReportsAPreLedgerStore is the answer for every store in the field at the moment
+// the ledger ships: no migrations table, so nothing recorded and everything pending.
+//
+// HasLedger is what separates it from a store whose table was dropped, and the distinction is the
+// reason that field exists: both read as version 0, and only one of them is normal.
+func TestInspectSchemaReportsAPreLedgerStore(t *testing.T) {
+	requireSQLite(t)
+
+	directory := t.TempDir()
+
+	database, err := New(directory)
+	if err != nil {
+		t.Fatalf("New: %s", err)
+	}
+
+	if _, err := database.sql.Exec(`DROP TABLE ` + schemaMigrationsTable); err != nil {
+		t.Fatalf("dropping the ledger: %s", err)
+	}
+
+	if err := database.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	report, err := InspectSchema("sqlite", directory)
+	if err != nil {
+		t.Fatalf("a store with no ledger must be inspectable, not an error: %s", err)
+	}
+
+	if report.HasLedger {
+		t.Error("HasLedger must be false when there is no migrations table")
+	}
+
+	if report.Version != 0 {
+		t.Errorf("version = %d, want 0", report.Version)
+	}
+
+	// Everything applicable is pending, which is what tells an operator what an upgrade would do.
+	// Reporting none - which an early return would - would say the opposite.
+	if len(report.Pending) == 0 {
+		t.Error("a store with no ledger has every applicable migration pending, and must say so")
+	}
+
+	if report.Ahead() {
+		t.Error("a store with no recorded version is not ahead of anything")
+	}
+}
+
+// TestInspectSchemaReportsAFutureStore is the case this whole entry point exists for: the store the
+// read-only constructors refuse, so there is nothing left for them to report.
+func TestInspectSchemaReportsAFutureStore(t *testing.T) {
+	requireSQLite(t)
+
+	directory := t.TempDir()
+
+	database, err := New(directory)
+	if err != nil {
+		t.Fatalf("New: %s", err)
+	}
+
+	future := database.schemaVersion() + 1
+
+	if _, err := database.sql.Exec(
+		`INSERT INTO `+schemaMigrationsTable+` (version, name, applied_at) VALUES (?, ?, ?)`,
+		future, "from_the_future", 1,
+	); err != nil {
+		t.Fatalf("stamping a future version: %s", err)
+	}
+
+	if err := database.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	// The gated open refuses it - which is correct, and is exactly why inspection cannot go through
+	// that path.
+	if _, err := NewSQLiteReadOnly(directory); !errors.Is(err, ErrSchemaTooNew) {
+		t.Fatalf("the read-only open should refuse a future store, got %v", err)
+	}
+
+	report, err := InspectSchema("sqlite", directory)
+	if err != nil {
+		t.Fatalf("InspectSchema must read a store the gate refuses: %s", err)
+	}
+
+	if !report.Ahead() {
+		t.Errorf("version %d against supported %d must report as ahead", report.Version, report.Supported)
+	}
+
+	if report.Version != future {
+		t.Errorf("version = %d, want %d", report.Version, future)
+	}
+}
+
+// TestInspectSchemaFailsCleanly covers the two ways it cannot answer: a store that is not there, and
+// a driver it does not know. Both must be errors rather than an empty report, which would read as
+// "version 0" - indistinguishable from a real pre-ledger store.
+func TestInspectSchemaFailsCleanly(t *testing.T) {
+	requireSQLite(t)
+
+	if _, err := InspectSchema("sqlite", filepath.Join(t.TempDir(), "nothing-here")); err == nil {
+		t.Error("inspecting a directory with no database must fail")
+	}
+
+	if _, err := InspectSchema("sqlite", ""); err == nil {
+		t.Error("inspecting with no directory must fail")
+	}
+
+	if _, err := InspectSchema("cassandra", "whatever"); err == nil {
+		t.Error("an unknown driver must fail")
+	}
+}
+
+// TestInspectSchemaTakesNoLock verifies the tool is safe beside a live instance: inspecting a store
+// while the service holds it must neither block nor be refused.
+func TestInspectSchemaTakesNoLock(t *testing.T) {
+	requireSQLite(t)
+
+	directory := t.TempDir()
+
+	database, err := New(directory)
+	if err != nil {
+		t.Fatalf("New: %s", err)
+	}
+
+	// Still open, still holding the storage lock.
+	defer func() { _ = database.Close() }()
+
+	report, err := InspectSchema("sqlite", directory)
+	if err != nil {
+		t.Fatalf("inspecting a store a live instance holds must work: %s", err)
+	}
+
+	if report.Version != database.schemaVersion() {
+		t.Errorf("version = %d, want %d", report.Version, database.schemaVersion())
+	}
+}

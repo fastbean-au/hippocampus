@@ -10,11 +10,11 @@ two of the three unguarded, which is how `initInstances` (server-only) and the w
 native `ADD COLUMN IF NOT EXISTS` path came to have nothing behind them. So each tag carries three
 artefacts:
 
-| Artefact         | Driver     | Form                                                     |
-| ---------------- | ---------- | -------------------------------------------------------- |
-| `hippocampus.db` | SQLite     | the database file itself                                  |
-| `postgres.sql`   | PostgreSQL | a `pg_dump`, one statement per line                       |
-| `mysql.sql`      | MySQL      | a `mysqldump`, one statement per line                     |
+| Artefact         | Driver     | Form                                  |
+| ---------------- | ---------- | ------------------------------------- |
+| `hippocampus.db` | SQLite     | the database file itself              |
+| `postgres.sql`   | PostgreSQL | a `pg_dump`, one statement per line   |
+| `mysql.sql`      | MySQL      | a `mysqldump`, one statement per line |
 
 That is the fourth of the four promises in [`CHANGELOG.md`](../../../CHANGELOG.md)'s Compatibility
 section, and it was the only one with no mechanical guard behind it: the contract has `buf
@@ -27,14 +27,26 @@ Every tag between two entries below writes a byte-identical schema, so one fixtu
 Each is named by the **last** tag that wrote it — the version somebody would actually be upgrading
 from.
 
-| Fixture   | What `initSchema` must do to it that it need not do to the next one                                                    |
-| --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Fixture   | What `initSchema` must do to it that it need not do to the next one                                                                                        |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v0.4.0`  | `migrateSignificanceToLevels` — the one migration that moves **data** — plus `significance_level_id` on both tables and the covering index rebuilt onto it |
-| `v0.22.0` | `memories.is_compressed`                                                                                                 |
-| `v0.23.0` | `initContentSearch` — the FTS index created **and backfilled** over a non-empty store                                    |
-| `v0.25.0` | `initLinkTables`, `dropLegacyRelationshipColumns`, `link_significance` and `metadata` on both tables                      |
-| `v0.31.0` | `initTombstones`                                                                                                         |
-| `v0.34.0` | nothing — the control, and the only fixture whose migration should be a no-op                                            |
+| `v0.22.0` | `memories.is_compressed`                                                                                                                                   |
+| `v0.23.0` | `initContentSearch` — the FTS index created **and backfilled** over a non-empty store                                                                      |
+| `v0.25.0` | `initLinkTables`, `dropLegacyRelationshipColumns`, `link_significance` and `metadata` on both tables                                                       |
+| `v0.31.0` | `initTombstones`                                                                                                                                           |
+| `v0.34.0` | nothing of its own — it shares `v0.37.0`'s schema, and is kept as the older end of that band                                                               |
+| `v0.37.0` | `search_outbox`                                                                                                                                            |
+| `v0.38.3` | `schema_migrations` — the schema ledger itself                                                                                                             |
+
+`v0.38.3` is the most valuable fixture in the set, and the reason is worth stating: it is the last
+release that recorded no schema version at all, so migrating it is the upgrade **every deployment in
+the field will actually perform**. The others each prove one historical migration; this one proves
+the transition every real store is about to make.
+
+There is also no "control" fixture whose migration is a no-op, and there cannot be a durable one:
+the newest fixture is by construction the release before the one being cut, so as soon as a release
+changes the schema the previous control stops being one. What replaces it is the guard in
+`db/schema_upgrade_test.go`, which requires every migration to name a fixture predating it.
 
 ## How they are made
 
@@ -43,7 +55,8 @@ By [`scripts/schema-fixtures.sh`](../../../scripts/schema-fixtures.sh), which ch
 against a scratch database for the server ones.
 
 The dump tools live in the test containers rather than on the host, so the script shells into them
-with `podman exec` (runtime and container names are overridable by environment). **That container
+with `podman exec`. **The script's default container names are one machine's and will not match
+yours** — run `podman ps` and override what differs via the `FIXTURE_*` environment variables. **That container
 dependency is deliberately in the generator and not in the test**: because the dumps are normalised
 to one statement per line, replaying one needs no client binary and no SQL parser — just a DSN and a
 loop — so the tests run unchanged against CI's existing service containers.

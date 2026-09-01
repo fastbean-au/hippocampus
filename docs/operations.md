@@ -673,6 +673,31 @@ startup:
 database schema at version 12 (postgres)
 ```
 
+To read it from a store that is **not** running — which, after a refused downgrade, is the situation
+you are in:
+
+```sh
+hippocampus --schema-version -c config.json
+```
+
+```text
+dialect:   postgres
+version:   11
+supported: 12
+status:    current - nothing pending; the newer versions this build declares do not apply to this dialect
+
+applied migrations:
+  1   core_tables                2026-09-01 03:50:38Z
+  2   core_columns               2026-09-01 03:50:38Z
+  ...
+```
+
+It takes no lock and runs no DDL, so it is safe to run beside a live instance, and it exits non-zero
+when the store is newer than the binary reading it — which is what a deployment script should gate
+on. A store recorded _below_ this build's newest version is not necessarily behind: a migration that
+only applies to one dialect is never recorded on the others, so the `status` line, not the numbers,
+is what says whether anything is pending.
+
 Upgrading is automatic and needs no step of yours: a newer build applies whatever migrations the
 store has not seen, in order, and logs what it is doing.
 

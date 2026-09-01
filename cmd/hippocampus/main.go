@@ -66,6 +66,7 @@ func execute(args []string) {
 	flags.Duration("ttl", 24*time.Hour, "token lifetime (used with --mint-token)")
 	flags.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
 	flags.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
+	flags.Bool("schema-version", false, "print the configured store's schema version and exit; exits non-zero if the store is newer than this build")
 	flags.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
 	flags.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
 	flags.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
@@ -211,6 +212,21 @@ func execute(args []string) {
 			viper.GetString("storage.directory"),
 			viper.GetInt("port"),
 		)
+	}
+
+	// --schema-version is a CLI mode like --mint-token: it reads the store's recorded schema version
+	// and exits without starting the server (see schema.go). It runs before validateConfig, because
+	// the store's version is a question worth answering about a deployment whose configuration is
+	// also wrong - and it reads nothing validateConfig checks.
+	if viper.GetBool("schema-version") {
+		reportSchemaVersion(
+			viper.GetString("storage.driver"),
+			viper.GetString("storage.directory"),
+			viper.GetString("storage.postgres.dsn"),
+			viper.GetString("storage.mysql.dsn"),
+		)
+
+		return
 	}
 
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index

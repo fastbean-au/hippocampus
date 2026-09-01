@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"path"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -447,4 +449,181 @@ func newestVersion(applied map[int]bool) int {
 	}
 
 	return newest
+}
+
+// SchemaReport is what a store says about its own schema, read without opening it for service.
+type SchemaReport struct {
+	// Dialect names the SQL dialect the store was read as.
+	Dialect string
+
+	// Version is the highest migration version the store records, or 0 for one written before
+	// versions were recorded at all.
+	Version int
+
+	// Supported is the newest version the reading build declares.
+	Supported int
+
+	// HasLedger distinguishes a store with no migrations table from one whose table is empty. The
+	// first is a store written before the ledger existed - every deployment upgrading to it - and
+	// reads as version 0; the second should not occur, and if it does it means something dropped
+	// the table.
+	HasLedger bool
+
+	// Applied is every recorded migration, oldest first.
+	Applied []AppliedMigration
+
+	// Pending names the migrations this build declares for this dialect that the store has not
+	// recorded - what an upgrade would do. Empty on a current store.
+	Pending []string
+}
+
+// AppliedMigration is one recorded ledger row.
+type AppliedMigration struct {
+	Version   int
+	Name      string
+	AppliedAt time.Time
+}
+
+// Ahead reports whether the store was written by a build newer than the one reading it - the
+// condition that makes it unopenable.
+func (r *SchemaReport) Ahead() bool {
+	return r.Version > r.Supported
+}
+
+// InspectSchema reads a store's schema version without opening it for service, so an operator can
+// answer "what is this store at" for an instance that is stopped - or one that will not start.
+//
+// target is the storage directory for the embedded dialect and the DSN for the server ones.
+//
+// It opens the store itself rather than going through the read-only constructors, and that is the
+// point rather than an oversight: those apply the version gate, so against a store written by a
+// newer build - the case an operator most needs this for - they refuse to open and there is nothing
+// left to report. This reads and never refuses. It takes no lock, runs no DDL, and closes before
+// returning, so it is safe beside a live instance.
+func InspectSchema(driverName string, target string) (*SchemaReport, error) {
+	log.Trace("func() db.InspectSchema")
+
+	d, err := openForInspection(driverName, target)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = d.sql.Close() }()
+
+	report := &SchemaReport{
+		Dialect:   d.dialect().name,
+		Supported: d.schemaVersion(),
+	}
+
+	recorded := map[int]bool{}
+
+	// A store with no migrations table is not an error here, it is an answer: it was written before
+	// versions were recorded, so nothing is recorded and everything is pending. Anything else - an
+	// unreachable server, a permission failure - would be reported the same way, which is why the
+	// reason is logged.
+	if applied, err := d.readLedger(); err != nil {
+		log.Debugf("no schema migrations table to read: %s", err.Error())
+	} else {
+		report.HasLedger = true
+		report.Applied = applied
+
+		for _, migration := range applied {
+			recorded[migration.Version] = true
+
+			if migration.Version > report.Version {
+				report.Version = migration.Version
+			}
+		}
+	}
+
+	for _, migration := range d.migrations() {
+		if migration.when != nil && !migration.when(d.dialect()) {
+			continue
+		}
+
+		if !recorded[migration.version] {
+			report.Pending = append(report.Pending, migration.name)
+		}
+	}
+
+	return report, nil
+}
+
+// openForInspection opens a store read-only with no schema work of any kind - no DDL, no instance
+// lock, no version gate. Deliberately returns a bare handle rather than going through the read-only
+// constructors: everything they add is something this must not do.
+func openForInspection(driverName string, target string) (*DB, error) {
+	switch driverName {
+
+	case "sqlite":
+		if target == "" {
+			return nil, fmt.Errorf("a storage directory is required to inspect a sqlite store")
+		}
+
+		// The same read-only DSN NewSQLiteReadOnly uses: mode=ro rejects writes at the SQLite level
+		// and no journal-mode pragma is set, since that would write page 1.
+		sqlDB, err := sql.Open("sqlite", "file:"+path.Join(target, DataFile)+"?mode=ro&_pragma=busy_timeout(5000)")
+		if err != nil {
+			return nil, err
+		}
+
+		if err := sqlDB.Ping(); err != nil {
+			_ = sqlDB.Close()
+
+			return nil, fmt.Errorf("no database at '%s': %w", path.Join(target, DataFile), err)
+		}
+
+		return &DB{sql: sqlDB, driver: driverSQLite, readOnly: true}, nil
+
+	case "postgres":
+		sqlDB, err := sql.Open("pgx", target)
+		if err != nil {
+			return nil, err
+		}
+
+		return &DB{sql: sqlDB, driver: driverPostgres, readOnly: true}, nil
+
+	case "mysql":
+		sqlDB, err := sql.Open("mysql", target)
+		if err != nil {
+			return nil, err
+		}
+
+		return &DB{sql: sqlDB, driver: driverMySQL, readOnly: true}, nil
+
+	}
+
+	return nil, fmt.Errorf("unknown storage driver '%s' (expected 'sqlite', 'postgres', or 'mysql')", driverName)
+}
+
+// readLedger reads every recorded migration, oldest first. Errors when the table does not exist,
+// which InspectSchema treats as an answer rather than a failure.
+func (d *DB) readLedger() ([]AppliedMigration, error) {
+	rows, err := d.sql.Query(`SELECT version, name, applied_at FROM ` + schemaMigrationsTable + ` ORDER BY version`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var applied []AppliedMigration
+
+	for rows.Next() {
+		var (
+			migration AppliedMigration
+			appliedAt int64
+		)
+
+		if err := rows.Scan(&migration.Version, &migration.Name, &appliedAt); err != nil {
+			return nil, err
+		}
+
+		if appliedAt > 0 {
+			migration.AppliedAt = time.Unix(0, appliedAt)
+		}
+
+		applied = append(applied, migration)
+	}
+
+	return applied, rows.Err()
 }

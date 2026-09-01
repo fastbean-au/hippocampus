@@ -138,6 +138,14 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
 - Backfill/rebuild the OpenSearch index: `go run ./cmd/hippocampus --backfill-search [--reindex] -c config.json`
   (CLI mode in `backfill.go`, exits when done; requires `opensearch.enabled`; safe beside a live
   instance; see [Backfill and reindex](docs/configuration.md#backfill-and-reindex))
+- Read a store's schema version: `go run ./cmd/hippocampus --schema-version -c config.json` (CLI mode
+  in `schema.go` over `db.InspectSchema`; prints the recorded version, the applied migrations and
+  what an upgrade would do, then exits non-zero if the store is newer than this build). It
+  deliberately does **not** go through the read-only constructors: those apply the version gate, so
+  against the store an operator most needs this for — one a refused downgrade has left unopenable —
+  they refuse and there is nothing left to report. Takes no lock and runs no DDL, so it is safe
+  beside a live instance. It is a flag on this binary rather than a `hippo` subcommand because the
+  CLI is a network client and a stopped store has nothing to dial
 
 ## What this is
 

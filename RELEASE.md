@@ -75,6 +75,19 @@ Most of the mechanical checks are also enforced by `hooks/pre-commit`.
    heading here is what clears it again.
 7. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
    to release.
+8. **If this release changed the stored schema**, add its tag to `DEFAULT_TAGS` in
+   [`scripts/schema-fixtures.sh`](scripts/schema-fixtures.sh) and regenerate — after the tag exists,
+   so it is the last step rather than part of the pre-flight:
+
+   ```sh
+   scripts/schema-fixtures.sh --driver all vX.Y.Z
+   ```
+
+   The fixtures are what `db/schema_upgrade_test.go` replays, and they are the only test of
+   upgrading a store that a previous release actually wrote. The guard already refuses a migration
+   with no fixture predating it, so this cannot be forgotten for an _old_ band; what it cannot catch
+   is the **newest** band having none — and that is the band a real upgrade comes from. Commit the
+   generated files.
 
 The script goes further than steps 1–3 on one point: it also builds, vets and tests each integration
 module (`integrations/mcp`, `cli`, `eventsource`, `ingestor`, `otel/hippocampusexporter`) and runs

@@ -22,8 +22,9 @@
 #
 # Usage: scripts/schema-fixtures.sh [--driver sqlite|postgres|mysql|all] [tag ...]
 #
-# Container wiring is overridable by environment; the defaults match the containers the repo's
-# integration tests already use (hippo-test-pg, hippo-test-my).
+# Container wiring is overridable by environment. The defaults are ONE machine's container names and
+# will not match yours; `podman ps` first, and override what differs. Everything below is a
+# FIXTURE_* variable.
 
 set -euo pipefail
 
@@ -38,47 +39,56 @@ REPO="$(pwd)"
 #   v0.25.0 — before links and metadata (initLinkTables, dropLegacyRelationshipColumns,
 #             link_significance and metadata on both tables — the NULL-vs-'' trap)
 #   v0.31.0 — before the forgotten log (initTombstones)
-#   v0.34.0 — current release; the control, and the only fixture that should migrate to a no-op
-DEFAULT_TAGS=(v0.4.0 v0.22.0 v0.23.0 v0.25.0 v0.31.0 v0.34.0)
+#   v0.34.0 — the older end of the band v0.37.0 closes; kept, but adds no schema of its own
+#   v0.37.0 — before the search-index delete outbox (search_outbox)
+#   v0.38.3 — before the schema ledger (schema_migrations). The most valuable fixture in the set:
+#             it is the last release with no recorded version, so it is the upgrade every
+#             deployment in the field actually performs.
+#
+# ADD A TAG HERE WHENEVER A RELEASE CHANGES THE SCHEMA, and regenerate. The guard in
+# db/schema_upgrade_test.go requires every migration to name a fixture that predates it, so a
+# migration added without one fails the build - but nothing forces the NEWEST band to have a
+# fixture, and that is the band an upgrade is most likely to come from. See RELEASE.md.
+DEFAULT_TAGS=(v0.4.0 v0.22.0 v0.23.0 v0.25.0 v0.31.0 v0.34.0 v0.37.0 v0.38.3)
 
 DRIVERS=(sqlite)
 TAGS=()
 
-while [ $# -gt 0 ]; do
-  case "$1" in
+while [[ $# -gt 0 ]]; do
+	case "$1" in
 
-    --driver)
-      case "$2" in
+	--driver)
+		case "$2" in
 
-        all)
-          DRIVERS=(sqlite postgres mysql)
-          ;;
+		all)
+			DRIVERS=(sqlite postgres mysql)
+			;;
 
-        sqlite | postgres | mysql)
-          DRIVERS=("$2")
-          ;;
+		sqlite | postgres | mysql)
+			DRIVERS=("$2")
+			;;
 
-        *)
-          echo "unknown driver: $2" >&2
+		*)
+			echo "unknown driver: $2" >&2
 
-          exit 2
-          ;;
+			exit 2
+			;;
 
-      esac
+		esac
 
-      shift 2
-      ;;
+		shift 2
+		;;
 
-    *)
-      TAGS+=("$1")
+	*)
+		TAGS+=("$1")
 
-      shift
-      ;;
+		shift
+		;;
 
-  esac
+	esac
 done
 
-[ ${#TAGS[@]} -eq 0 ] && TAGS=("${DEFAULT_TAGS[@]}")
+[[ ${#TAGS[@]} -eq 0 ]] && TAGS=("${DEFAULT_TAGS[@]}")
 
 # The container each dump tool lives in, and how to reach the same server from the host. Overridable
 # so this is not welded to one machine's container names.
@@ -97,30 +107,30 @@ MY_PASSWORD="${FIXTURE_MY_PASSWORD:-test}"
 SCRATCH_DB="${FIXTURE_SCRATCH_DB:-hippocampus_fixture}"
 
 WORK="$(mktemp -d)"
-WORKTREE="$WORK/src"
+WORKTREE="${WORK}/src"
 GRPC_PORT=50999
 HTTP_PORT=8099
-BASE="http://127.0.0.1:$HTTP_PORT"
+BASE="http://127.0.0.1:${HTTP_PORT}"
 
 cleanup() {
-  [ -n "${SVC_PID:-}" ] && kill "$SVC_PID" 2>/dev/null || true
-  git -C "$REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
-  rm -rf "$WORK"
+	[[ -n ${SVC_PID:-} ]] && kill "${SVC_PID}" 2>/dev/null || true
+	git -C "${REPO}" worktree remove --force "${WORKTREE}" 2>/dev/null || true
+	rm -rf "${WORK}"
 }
 trap cleanup EXIT
 
 # post PATH JSON — fails the script on a non-2xx, since a silently unseeded fixture is worse than
 # no fixture at all: it would migrate cleanly and assert nothing.
 post() {
-  local path="$1" body="$2" code
-  code=$(curl -sS -o "$WORK/resp" -w '%{http_code}' -X POST "$BASE$path" \
-    -H 'content-type: application/json' -d "$body")
+	local path="$1" body="$2" code
+	code=$(curl -sS -o "${WORK}/resp" -w '%{http_code}' -X POST "${BASE}${path}" \
+		-H 'content-type: application/json' -d "${body}")
 
-  if [ "$code" != "200" ]; then
-    echo "  seed POST $path failed ($code): $(cat "$WORK/resp")" >&2
+	if [[ ${code} != "200" ]]; then
+		echo "  seed POST ${path} failed (${code}): $(cat "${WORK}/resp")" >&2
 
-    return 1
-  fi
+		return 1
+	fi
 }
 
 # seed writes the fixture dataset. Every field used here exists unchanged from v0.4.0 to HEAD
@@ -129,67 +139,74 @@ post() {
 # Timestamps are fixed rather than relative so a fixture is reproducible and the test can assert
 # exact values. 2026-01-01T00:00:00Z = 1767225600000000000ns.
 seed() {
-  local t=1767225600000000000
-  local day=86400000000000
+	local t=1767225600000000000
+	local day=86400000000000
 
-  # An event with memories written as one nested StoreEvent, the path that stamps the event id
-  # onto each memory.
-  post /v1/events "$(cat <<JSON
-{"id":"evt-alpha","time_start":$t,"significance":60,"name":"alpha event",
+	# An event with memories written as one nested StoreEvent, the path that stamps the event id
+	# onto each memory.
+	post /v1/events "$(
+		cat <<JSON
+{"id":"evt-alpha","time_start":${t},"significance":60,"name":"alpha event",
  "description":"seeded fixture event","group":"alpha",
  "memories":[
-   {"id":"mem-alpha-1","time_stamp":$t,"significance":50,"body":"alpha one: the quick brown fox"},
+   {"id":"mem-alpha-1","time_stamp":${t},"significance":50,"body":"alpha one: the quick brown fox"},
    {"id":"mem-alpha-2","time_stamp":$((t + day)),"significance":20,"body":"alpha two: jumps over the lazy dog"},
-   {"id":"mem-alpha-3","time_stamp":$((t + 2*day)),"significance":80,"body":"alpha three: pack my box with five dozen liquor jugs"}
+   {"id":"mem-alpha-3","time_stamp":$((t + 2 * day)),"significance":80,"body":"alpha three: pack my box with five dozen liquor jugs"}
  ]}
 JSON
-  )"
+	)"
 
-  # A second event, ended, in another group — so group scoping and time_end both have something
-  # to read on the migrated store.
-  post /v1/events "$(cat <<JSON
-{"id":"evt-beta","time_start":$((t + 3*day)),"time_end":$((t + 4*day)),"significance":30,
+	# A second event, ended, in another group — so group scoping and time_end both have something
+	# to read on the migrated store.
+	post /v1/events "$(
+		cat <<JSON
+{"id":"evt-beta","time_start":$((t + 3 * day)),"time_end":$((t + 4 * day)),"significance":30,
  "name":"beta event","description":"an ended event","group":"beta"}
 JSON
-  )"
+	)"
 
-  post /v1/memories "$(cat <<JSON
-{"id":"mem-beta-1","time_stamp":$((t + 3*day)),"significance":40,"event_id":"evt-beta",
+	post /v1/memories "$(
+		cat <<JSON
+{"id":"mem-beta-1","time_stamp":$((t + 3 * day)),"significance":40,"event_id":"evt-beta",
  "body":"beta one: sphinx of black quartz judge my vow","group":"beta"}
 JSON
-  )"
+	)"
 
-  # Loose memories, no event — the first consolidation pass's population.
-  post /v1/memories "$(cat <<JSON
-{"id":"mem-loose-1","time_stamp":$((t + 5*day)),"significance":70,
+	# Loose memories, no event — the first consolidation pass's population.
+	post /v1/memories "$(
+		cat <<JSON
+{"id":"mem-loose-1","time_stamp":$((t + 5 * day)),"significance":70,
  "body":"loose one: how vexingly quick daft zebras jump","group":"alpha"}
 JSON
-  )"
+	)"
 
-  post /v1/memories "$(cat <<JSON
-{"id":"mem-loose-2","time_stamp":$((t + 6*day)),"significance":10,
+	post /v1/memories "$(
+		cat <<JSON
+{"id":"mem-loose-2","time_stamp":$((t + 6 * day)),"significance":10,
  "body":"loose two: a low-significance memory that decay should reach first"}
 JSON
-  )"
+	)"
 
-  # A binary body — never content-indexed, and the row is_compressed must not touch.
-  post /v1/memories "$(cat <<JSON
-{"id":"mem-binary","time_stamp":$((t + 7*day)),"significance":45,"is_binary":"TRUE",
+	# A binary body — never content-indexed, and the row is_compressed must not touch.
+	post /v1/memories "$(
+		cat <<JSON
+{"id":"mem-binary","time_stamp":$((t + 7 * day)),"significance":45,"is_binary":"TRUE",
  "body":"YmluYXJ5IHBheWxvYWQ=","group":"alpha"}
 JSON
-  )"
+	)"
 
-  # A body long enough to clear storage.compression.minBytes on the versions that compress, so a
-  # fixture from >= v0.23.0 carries at least one is_compressed row and HEAD must read both kinds.
-  post /v1/memories "$(cat <<JSON
-{"id":"mem-long","time_stamp":$((t + 8*day)),"significance":55,"group":"alpha",
+	# A body long enough to clear storage.compression.minBytes on the versions that compress, so a
+	# fixture from >= v0.23.0 carries at least one is_compressed row and HEAD must read both kinds.
+	post /v1/memories "$(
+		cat <<JSON
+{"id":"mem-long","time_stamp":$((t + 8 * day)),"significance":55,"group":"alpha",
  "body":"$(printf 'the compressible body repeats itself so gzip has something to find. %.0s' {1..40})"}
 JSON
-  )"
+	)"
 
-  # Recall one, so the fixture carries a non-zero recall_count/time_recalled for the decay clock
-  # to age from after migration.
-  post /v1/memories/recall '{"ids":["mem-alpha-3"]}'
+	# Recall one, so the fixture carries a non-zero recall_count/time_recalled for the decay clock
+	# to age from after migration.
+	post /v1/memories/recall '{"ids":["mem-alpha-3"]}'
 }
 
 # storage_block emits the storage stanza for a driver, plus the sleep/consolidation settings every
@@ -197,42 +214,42 @@ JSON
 # can be consolidated or evicted before shutdown; the timed sleep cycle is disabled outright (a
 # non-positive period has meant "no timed sleep" since 19.3).
 storage_block() {
-  case "$1" in
+	case "$1" in
 
-    sqlite)
-      echo "\"storage\": { \"driver\": \"sqlite\", \"directory\": \"$DATA\" },"
-      ;;
+	sqlite)
+		echo "\"storage\": { \"driver\": \"sqlite\", \"directory\": \"${DATA}\" },"
+		;;
 
-    postgres)
-      echo "\"storage\": { \"driver\": \"postgres\", \"postgres\": { \"dsn\": \"postgres://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_HOST_PORT/$SCRATCH_DB?sslmode=disable\" } },"
-      ;;
+	postgres)
+		echo "\"storage\": { \"driver\": \"postgres\", \"postgres\": { \"dsn\": \"postgres://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${PG_HOST_PORT}/${SCRATCH_DB}?sslmode=disable\" } },"
+		;;
 
-    mysql)
-      echo "\"storage\": { \"driver\": \"mysql\", \"mysql\": { \"dsn\": \"$MY_USER:$MY_PASSWORD@tcp(127.0.0.1:$MY_HOST_PORT)/$SCRATCH_DB?parseTime=true\" } },"
-      ;;
+	mysql)
+		echo "\"storage\": { \"driver\": \"mysql\", \"mysql\": { \"dsn\": \"${MY_USER}:${MY_PASSWORD}@tcp(127.0.0.1:${MY_HOST_PORT})/${SCRATCH_DB}?parseTime=true\" } },"
+		;;
 
-  esac
+	esac
 }
 
 # reset_scratch drops and recreates the scratch database, so each tag starts from nothing. An
 # existing database would let one tag's schema survive into the next fixture, which is the one
 # failure this whole exercise would not notice.
 reset_scratch() {
-  case "$1" in
+	case "$1" in
 
-    postgres)
-      "$RUNTIME" exec -e PGPASSWORD="$PG_PASSWORD" "$PG_CONTAINER" \
-        psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 -q \
-        -c "DROP DATABASE IF EXISTS $SCRATCH_DB" -c "CREATE DATABASE $SCRATCH_DB" > /dev/null
-      ;;
+	postgres)
+		"${RUNTIME}" exec -e PGPASSWORD="${PG_PASSWORD}" "${PG_CONTAINER}" \
+			psql -U "${PG_USER}" -d postgres -v ON_ERROR_STOP=1 -q \
+			-c "DROP DATABASE IF EXISTS ${SCRATCH_DB}" -c "CREATE DATABASE ${SCRATCH_DB}" >/dev/null
+		;;
 
-    mysql)
-      "$RUNTIME" exec "$MY_CONTAINER" \
-        mysql -u"$MY_USER" -p"$MY_PASSWORD" \
-        -e "DROP DATABASE IF EXISTS $SCRATCH_DB; CREATE DATABASE $SCRATCH_DB" 2> /dev/null
-      ;;
+	mysql)
+		"${RUNTIME}" exec "${MY_CONTAINER}" \
+			mysql -u"${MY_USER}" -p"${MY_PASSWORD}" \
+			-e "DROP DATABASE IF EXISTS ${SCRATCH_DB}; CREATE DATABASE ${SCRATCH_DB}" 2>/dev/null
+		;;
 
-  esac
+	esac
 }
 
 # dump_scratch writes the seeded scratch database to stdout as SQL. --inserts /
@@ -240,20 +257,20 @@ reset_scratch() {
 # one enormous row list, because the test replays these over database/sql and has no client binary
 # to feed a COPY to.
 dump_scratch() {
-  case "$1" in
+	case "$1" in
 
-    postgres)
-      "$RUNTIME" exec -e PGPASSWORD="$PG_PASSWORD" "$PG_CONTAINER" \
-        pg_dump -U "$PG_USER" --inserts --no-owner --no-privileges --no-comments "$SCRATCH_DB"
-      ;;
+	postgres)
+		"${RUNTIME}" exec -e PGPASSWORD="${PG_PASSWORD}" "${PG_CONTAINER}" \
+			pg_dump -U "${PG_USER}" --inserts --no-owner --no-privileges --no-comments "${SCRATCH_DB}"
+		;;
 
-    mysql)
-      "$RUNTIME" exec "$MY_CONTAINER" \
-        mysqldump -u"$MY_USER" -p"$MY_PASSWORD" --skip-extended-insert --no-tablespaces \
-        --skip-comments --compact --skip-set-charset "$SCRATCH_DB" 2> /dev/null
-      ;;
+	mysql)
+		"${RUNTIME}" exec "${MY_CONTAINER}" \
+			mysqldump -u"${MY_USER}" -p"${MY_PASSWORD}" --skip-extended-insert --no-tablespaces \
+			--skip-comments --compact --skip-set-charset "${SCRATCH_DB}" 2>/dev/null
+		;;
 
-  esac
+	esac
 }
 
 # normalise_sql turns a dump into ONE STATEMENT PER LINE, which is the whole reason the test needs
@@ -264,7 +281,7 @@ dump_scratch() {
 # Statement termination tracks single-quote state rather than just looking for a trailing semicolon,
 # so a body containing one cannot split a statement in half.
 normalise_sql() {
-  python3 -c '
+	python3 -c '
 import re, sys
 
 # Lines that describe no schema. The backslash ones are psql META-COMMANDS (recent pg_dump wraps
@@ -308,29 +325,29 @@ if statement:
 mkdir -p db/testdata/schema
 
 for driver in "${DRIVERS[@]}"; do
-  for tag in "${TAGS[@]}"; do
-    echo "==> $tag ($driver)"
+	for tag in "${TAGS[@]}"; do
+		echo "==> ${tag} (${driver})"
 
-    rm -rf "$WORKTREE"
-    git -C "$REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
-    git -C "$REPO" worktree add --detach --quiet "$WORKTREE" "$tag"
+		rm -rf "${WORKTREE}"
+		git -C "${REPO}" worktree remove --force "${WORKTREE}" 2>/dev/null || true
+		git -C "${REPO}" worktree add --detach --quiet "${WORKTREE}" "${tag}"
 
-    echo "  building"
-    (cd "$WORKTREE" && unset GOROOT && go build -o "$WORK/hippocampus" ./cmd/hippocampus)
+		echo "  building"
+		(cd "${WORKTREE}" && unset GOROOT && go build -o "${WORK}/hippocampus" ./cmd/hippocampus)
 
-    DATA="$WORK/data"
-    rm -rf "$DATA"
-    mkdir -p "$DATA"
+		DATA="${WORK}/data"
+		rm -rf "${DATA}"
+		mkdir -p "${DATA}"
 
-    reset_scratch "$driver"
+		reset_scratch "${driver}"
 
-    cat > "$WORK/config.json" <<JSON
+		cat >"${WORK}/config.json" <<JSON
 {
   "logging": { "level": "warn", "json": false },
-  "port": $GRPC_PORT,
-  "gateway": { "port": $HTTP_PORT },
+  "port": ${GRPC_PORT},
+  "gateway": { "port": ${HTTP_PORT} },
   "auth": { "method": "none" },
-  $(storage_block "$driver")
+  $(storage_block "${driver}")
   "sleep": { "periodSeconds": 0 },
   "stats": { "intervalSeconds": 0 },
   "consolidation": {
@@ -347,81 +364,81 @@ for driver in "${DRIVERS[@]}"; do
 }
 JSON
 
-    echo "  starting"
-    "$WORK/hippocampus" -c "$WORK/config.json" > "$WORK/service.log" 2>&1 &
-    SVC_PID=$!
+		echo "  starting"
+		"${WORK}/hippocampus" -c "${WORK}/config.json" >"${WORK}/service.log" 2>&1 &
+		SVC_PID=$!
 
-    for _ in $(seq 1 50); do
-      curl -sf "$BASE/healthz" > /dev/null 2>&1 && break
-      sleep 0.2
-    done
+		for _ in $(seq 1 50); do
+			curl -sf "${BASE}/healthz" >/dev/null 2>&1 && break
+			sleep 0.2
+		done
 
-    if ! curl -sf "$BASE/healthz" > /dev/null 2>&1; then
-      echo "  service never became healthy; log follows" >&2
-      cat "$WORK/service.log" >&2
+		if ! curl -sf "${BASE}/healthz" >/dev/null 2>&1; then
+			echo "  service never became healthy; log follows" >&2
+			cat "${WORK}/service.log" >&2
 
-      exit 1
-    fi
+			exit 1
+		fi
 
-    echo "  seeding"
-    seed
+		echo "  seeding"
+		seed
 
-    echo "  stopping"
-    kill -TERM "$SVC_PID"
-    wait "$SVC_PID" 2>/dev/null || true
-    SVC_PID=""
+		echo "  stopping"
+		kill -TERM "${SVC_PID}"
+		wait "${SVC_PID}" 2>/dev/null || true
+		SVC_PID=""
 
-    OUT="db/testdata/schema/$tag"
-    mkdir -p "$OUT"
+		OUT="db/testdata/schema/${tag}"
+		mkdir -p "${OUT}"
 
-    case "$driver" in
+		case "${driver}" in
 
-      sqlite)
-        # A leftover -wal means the last connection did not checkpoint, and the fixture would carry
-        # its rows outside the file we commit.
-        if [ -e "$DATA/hippocampus.db-wal" ]; then
-          echo "  WAL still present after shutdown — refusing to commit a partial fixture" >&2
+		sqlite)
+			# A leftover -wal means the last connection did not checkpoint, and the fixture would carry
+			# its rows outside the file we commit.
+			if [[ -e "${DATA}/hippocampus.db-wal" ]]; then
+				echo "  WAL still present after shutdown — refusing to commit a partial fixture" >&2
 
-          exit 1
-        fi
+				exit 1
+			fi
 
-        cp "$DATA/hippocampus.db" "$OUT/hippocampus.db"
-        ARTEFACT="$OUT/hippocampus.db"
-        ;;
+			cp "${DATA}/hippocampus.db" "${OUT}/hippocampus.db"
+			ARTEFACT="${OUT}/hippocampus.db"
+			;;
 
-      *)
-        # Provenance rides in the file rather than in SOURCE beside it, so regenerating one
-        # driver's fixtures leaves the other drivers' files untouched. The test skips comment lines.
-        {
-          echo "-- generated by scripts/schema-fixtures.sh from $tag ($(git -C "$REPO" rev-parse --short "$tag^{commit}")) on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "-- one statement per line; replayed by db/schema_upgrade_test.go. Do not hand-edit."
-          dump_scratch "$driver" | normalise_sql
-        } > "$OUT/$driver.sql"
+		*)
+			# Provenance rides in the file rather than in SOURCE beside it, so regenerating one
+			# driver's fixtures leaves the other drivers' files untouched. The test skips comment lines.
+			{
+				echo "-- generated by scripts/schema-fixtures.sh from ${tag} ($(git -C "${REPO}" rev-parse --short "${tag}^{commit}")) on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+				echo "-- one statement per line; replayed by db/schema_upgrade_test.go. Do not hand-edit."
+				dump_scratch "${driver}" | normalise_sql
+			} >"${OUT}/${driver}.sql"
 
-        ARTEFACT="$OUT/$driver.sql"
+			ARTEFACT="${OUT}/${driver}.sql"
 
-        if [ "$(grep -cv '^--' "$ARTEFACT")" -lt 2 ]; then
-          echo "  the $driver dump carries no statements — refusing to commit it" >&2
+			if [[ "$(grep -cv '^--' "${ARTEFACT}")" -lt 2 ]]; then
+				echo "  the ${driver} dump carries no statements — refusing to commit it" >&2
 
-          exit 1
-        fi
+				exit 1
+			fi
 
-        reset_scratch "$driver"
-        ;;
+			reset_scratch "${driver}"
+			;;
 
-    esac
+		esac
 
-    if [ "$driver" = sqlite ]; then
-      cat > "$OUT/SOURCE" <<META
-tag:       $tag
-commit:    $(git -C "$REPO" rev-parse "$tag^{commit}")
+		if [[ ${driver} == sqlite ]]; then
+			cat >"${OUT}/SOURCE" <<META
+tag:       ${tag}
+commit:    $(git -C "${REPO}" rev-parse "${tag}^{commit}")
 generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 by:        scripts/schema-fixtures.sh
 META
-    fi
+		fi
 
-    echo "  wrote $ARTEFACT ($(wc -c < "$ARTEFACT" | tr -d ' ') bytes)"
-  done
+		echo "  wrote ${ARTEFACT} ($(wc -c <"${ARTEFACT}" | tr -d ' ') bytes)"
+	done
 done
 
 echo "done"
