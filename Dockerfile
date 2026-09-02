@@ -5,7 +5,7 @@
 # (linux/amd64 + linux/arm64) compiles each target natively rather than emulating the toolchain -
 # CGO is off, so cross-compilation is just a GOARCH switch. TARGETOS/TARGETARCH are supplied by
 # buildx; they must be re-declared as ARGs in this stage to be referenced.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -46,7 +46,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
 # on the host and point your MCP host at the service's exposed gRPC port (see docs/mcp.md). No
 # HEALTHCHECK: the streamable-HTTP handler exposes no health endpoint. It is built before the
 # default hippocampus stage so a plain (no-target) `docker compose build` still selects hippocampus.
-FROM alpine:3.22 AS mcp
+FROM alpine:3.24 AS mcp
 
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="hippocampus-mcp" \
@@ -69,7 +69,7 @@ ENTRYPOINT ["hippocampus-mcp"]
 # hippocampus stage so a no-`target` build still selects hippocampus. The wizard is purely static -
 # it holds no state, talks to no Hippocampus instance, and makes no outbound requests - so this image
 # is safe to publish on the open internet behind a proxy.
-FROM alpine:3.22 AS config-wizard
+FROM alpine:3.24 AS config-wizard
 
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="hippocampus-config-wizard" \
@@ -91,7 +91,7 @@ ENTRYPOINT ["hippocampus-config-wizard"]
 
 # Alpine rather than scratch/distroless: busybox wget enables the compose healthcheck against the
 # gateway's /healthz, which a shell-less image could not run.
-FROM alpine:3.22 AS hippocampus
+FROM alpine:3.24 AS hippocampus
 
 # Build identification. Pass --build-arg VERSION=<tag> to stamp a release; the running binary also
 # reports its embedded module/VCS version via --version and the /healthz body.
