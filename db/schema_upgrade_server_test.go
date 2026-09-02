@@ -215,7 +215,7 @@ func restoreServerFixture(t *testing.T, driver driver, tag string) *DB {
 		t.Fatalf("failed to connect to the %s server: %s", label, err)
 	}
 
-	defer admin.Close()
+	defer func() { _ = admin.Close() }()
 
 	// DROP first: a previous run killed mid-test leaves its scratch database behind, and a stale
 	// one would be silently reused and would still hold the PREVIOUS fixture's rows.
@@ -239,7 +239,7 @@ func restoreServerFixture(t *testing.T, driver driver, tag string) *DB {
 			return
 		}
 
-		defer cleanup.Close()
+		defer func() { _ = cleanup.Close() }()
 
 		if _, err := cleanup.Exec("DROP DATABASE IF EXISTS " + scratch); err != nil {
 			t.Logf("failed to drop the scratch database %s: %s", scratch, err)
@@ -284,14 +284,14 @@ func replayFixture(t *testing.T, driver driver, label string, dsn string, path s
 			path, label, err)
 	}
 
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	target, err := sql.Open(sqlDriverName(driver), dsn)
 	if err != nil {
 		t.Fatalf("failed to connect to the scratch database: %s", err)
 	}
 
-	defer target.Close()
+	defer func() { _ = target.Close() }()
 
 	scanner := bufio.NewScanner(file)
 

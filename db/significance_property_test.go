@@ -201,7 +201,7 @@ func assertRegistryRanksUnique(t *testing.T, d *DB, iteration int) {
 		t.Fatalf("iteration %d: reading the registry: %s", iteration, err)
 	}
 
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var rank, count int64

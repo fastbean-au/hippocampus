@@ -11,7 +11,7 @@
 # Build on the native BUILDPLATFORM and cross-compile to TARGETOS/TARGETARCH (CGO off), so a
 # multi-arch build compiles each target natively rather than emulating the toolchain under QEMU.
 # TARGETOS/TARGETARCH come from buildx and must be re-declared as ARGs in this stage to be referenced.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 
 ARG TARGETOS
 ARG TARGETARCH

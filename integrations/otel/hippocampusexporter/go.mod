@@ -1,6 +1,6 @@
 module github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/fastbean-au/hippocampus v0.39.0

@@ -5,7 +5,7 @@
 # (linux/amd64 + linux/arm64) compiles each target natively rather than emulating the toolchain -
 # CGO is off, so cross-compilation is just a GOARCH switch. TARGETOS/TARGETARCH are supplied by
 # buildx; they must be re-declared as ARGs in this stage to be referenced.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 
 ARG TARGETOS
 ARG TARGETARCH

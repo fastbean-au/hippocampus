@@ -1,6 +1,6 @@
 module github.com/fastbean-au/hippocampus
 
-go 1.25.9
+go 1.27.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2

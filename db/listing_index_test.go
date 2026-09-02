@@ -25,7 +25,7 @@ func TestListingIndexServesTheOrdering(t *testing.T) {
 		t.Fatalf("EXPLAIN QUERY PLAN: %s", err)
 	}
 
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var plan []string
 

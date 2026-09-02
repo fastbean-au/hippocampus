@@ -81,7 +81,7 @@ updates:
           - "*"
 
   # ---- Docker: the base images the published images are built on -----------------------------
-  # Every Dockerfile here floats a minor tag (golang:1.25-alpine, alpine:3.22), so these are the
+  # Every Dockerfile here floats a minor tag (golang:1.27-alpine, alpine:3.22), so these are the
   # PRs that say a new minor exists - infrequent, and the only notice this repository gets that
   # the base of every published image has moved.
   - package-ecosystem: "docker"

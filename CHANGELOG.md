@@ -97,6 +97,26 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Changed
 
+- **Go 1.27 across every build.** All six modules move their `go` directive to 1.27.0 and all four
+  Dockerfiles move to `golang:1.27-alpine`. The workflows need no change: every `setup-go` step
+  already reads `go-version-file`, so CI follows the module it builds.
+
+  The directives had already drifted apart — `eventsource`, `ingestor` and `hippocampusexporter`
+  were pulled to 1.26.0 by their own dependencies while the other three sat at 1.25.9, and the
+  Dockerfiles were still on `golang:1.25-alpine`, one line below what three of the modules required.
+  That combination builds only because `GOTOOLCHAIN` is unpinned and the image quietly downloads a
+  newer toolchain mid-build. Moving all six together is the state the `replace` directives want
+  anyway: a main module's `go` directive must be at least its dependencies', so the five modules
+  that replace the root can never sit below it.
+
+  **This forces golangci-lint to v2.** v1 cannot lint Go 1.27 at all — it fails with `export data
+  version 4 is greater than maximum supported version 2`, and rebuilding it under the new toolchain
+  does not help, because the limit is in the `x/tools` it vendors. v2's defaults then flagged six
+  pre-existing `defer x.Close()` calls in tests, now written as
+  `defer func() { _ = x.Close() }()` — the idiom the rest of the repository already uses. Nothing
+  outside test files changed. Note the linter is a local tool: it runs from `hooks/pre-commit` and
+  no CI job invokes it, so this is a requirement on a contributor's machine rather than on the build.
+
 - **Every module's dependencies updated to current.** The Go modules, the OpenTelemetry Collector
   manifest and the Obsidian plugin were all moved to the latest release of everything they depend
   on. Three of those upgrades needed code changes rather than a version bump, and the first two

@@ -9,7 +9,7 @@ backup, security) see the [Operations guide](operations.md); for the full config
 
 ## Prerequisites
 
-- **Go 1.25+** to build from source, **or** Docker to run the prebuilt image.
+- **Go 1.27+** to build from source, **or** Docker to run the prebuilt image.
 - Nothing else for the default SQLite driver — it is embedded and has no external dependencies.
 
 ## The fastest look: the demo stack
