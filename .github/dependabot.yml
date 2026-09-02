@@ -1,0 +1,98 @@
+# Dependabot configuration.
+#
+# WHY THIS EXISTS, and why the gomod entry is shaped the way it is.
+#
+# Until this file was added the repository had NO Dependabot configuration, which does not mean
+# Dependabot was doing nothing: security updates run from the repository's settings and need no
+# config, while VERSION updates require this file and were therefore never running at all. So the
+# only Dependabot pull requests this repository had ever seen were security ones, and which modules
+# they covered was inferred from the dependency graph rather than declared here.
+#
+# That inference missed one. The grpc 1.82.1 -> 1.83.1 security bump landed in five of the six Go
+# modules and skipped integrations/cli. Because the five integration modules each carry a
+# `replace github.com/fastbean-au/hippocampus => ../..`, a module left behind does not merely lag -
+# its recorded requirements disagree with the root's and `go build` REFUSES the module outright:
+#
+#     go: updates to go.mod needed; to update it:
+#             go mod tidy
+#
+# which is what turned the `cli` CI job red while every other job stayed green. The coupling is the
+# point: in this repository the six modules are not six independent dependency sets, they are one
+# set that must move together, and anything updating a strict subset of them produces a tree that
+# does not build.
+#
+# Hence `directories` (plural) plus `group-by: dependency-name`: one pull request per DEPENDENCY,
+# spanning every directory that has it, rather than one per dependency per directory. A grpc bump
+# arrives as a single PR touching all six go.mod files, which is the shape that cannot skew.
+#
+# THE LIMITATION WORTH KNOWING: `group-by` applies to VERSION updates only. A security update - the
+# exact case that broke the build - is still opened per directory, because Dependabot does not
+# group those across directories. Version updates now keep the six in step between advisories, so
+# the window is much smaller, but when a batch of same-dependency security PRs does arrive, MERGE
+# THEM TOGETHER. The `cli` CI job is the backstop either way: it fails on precisely this skew.
+#
+# NOT COVERED, deliberately: cmd/hippocampus/webuitest has no dependencies at all (node's built-in
+# test runner is the whole harness, which is a property that package documents and intends), so
+# there is nothing there to update or audit.
+
+version: 2
+
+updates:
+  # ---- Go: all six modules as one coupled set -----------------------------------------------
+  - package-ecosystem: "gomod"
+    directories:
+      - "/"
+      - "/integrations/cli"
+      - "/integrations/eventsource"
+      - "/integrations/ingestor"
+      - "/integrations/mcp"
+      - "/integrations/otel/hippocampusexporter"
+    schedule:
+      interval: "weekly"
+    # Six directories share most of their dependencies, so without a raised limit the default of
+    # five would leave the set perpetually part-updated - the condition this file exists to avoid.
+    open-pull-requests-limit: 15
+    groups:
+      go:
+        # One PR per dependency, across every directory that has it. See the header.
+        group-by: "dependency-name"
+        patterns:
+          - "*"
+
+  # ---- npm: the Obsidian plugin (the only JS project with dependencies) ----------------------
+  - package-ecosystem: "npm"
+    directory: "/integrations/obsidian"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      obsidian-dev:
+        patterns:
+          - "*"
+
+  # ---- GitHub Actions: the workflow files under .github/workflows ----------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # ---- Docker: the base images the published images are built on -----------------------------
+  # Every Dockerfile here floats a minor tag (golang:1.25-alpine, alpine:3.22), so these are the
+  # PRs that say a new minor exists - infrequent, and the only notice this repository gets that
+  # the base of every published image has moved.
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/integrations/eventsource"
+      - "/integrations/ingestor"
+      - "/integrations/otel/collector"
+    schedule:
+      interval: "weekly"
+    groups:
+      base-images:
+        patterns:
+          - "*"

@@ -104,7 +104,7 @@ func TestOpenSearchIntegration_MappingBootstrap(t *testing.T) {
 		t.Fatalf("Mapping.Get: %s", err)
 	}
 
-	index, ok := resp.Indices[idx.index]
+	index, ok := resp.GetIndices()[idx.index]
 	if !ok {
 		t.Fatalf("no mapping returned for index '%s'", idx.index)
 	}

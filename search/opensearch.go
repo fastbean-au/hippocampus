@@ -266,22 +266,6 @@ func (k opKind) String() string {
 	return "unknown"
 }
 
-// documentId escapes a memory id for use as the <id> segment of a /<index>/_doc/<id> request.
-//
-// The SDK interpolates DocumentID straight into the request path with no escaping of its own
-// (fmt.Sprintf("/%s/_doc/%s", ...)), so an id carrying a slash - which every memory written by the
-// Bluesky bridge does, being an at:// URI - stops being one path segment and becomes several. The
-// cluster is then asked for a route that is not a document operation at all: the index write is
-// rejected and the delete of that same id addresses nothing. Neither failure is visible anywhere
-// but the log, since search simply returns fewer results than it should.
-//
-// This covers the id, not the whole path: an address carrying a path prefix defeats it, because
-// the transport rebuilds url.URL.Path from its decoded form and drops the escaping (see the
-// warning in NewOpenSearch, which is all that can be done about it from here).
-func documentId(id string) string {
-	return url.PathEscape(id)
-}
-
 // op is one queued index mutation.
 type op struct {
 	kind      opKind
@@ -401,7 +385,7 @@ func NewOpenSearch(cfg Config) (*OpenSearch, error) {
 	return o, nil
 }
 
-// warnOnPathPrefixedAddresses logs the one case documentId's escaping cannot survive: a cluster
+// warnOnPathPrefixedAddresses logs the one case the SDK's path escaping cannot survive: a cluster
 // address with a path prefix (an OpenSearch behind a reverse proxy on a sub-path). The transport
 // prepends that prefix to the decoded url.URL.Path, which invalidates the escaped form and makes
 // Go fall back to re-escaping the decoded path - where a slash is a legal path character and stays
@@ -497,7 +481,7 @@ func (o *OpenSearch) checkVectorField(ctx context.Context) {
 		return
 	}
 
-	mapping, ok := resp.Indices[o.index]
+	mapping, ok := resp.GetIndices()[o.index]
 	if !ok {
 		log.Warnf("opensearch returned no mapping for index '%s'", o.index)
 
@@ -645,9 +629,16 @@ func (o *OpenSearch) apply(ctx context.Context, v op) error {
 			return fmt.Errorf("failed to marshal document '%s': %w", v.doc.Id, err)
 		}
 
+		// The RAW id. Do NOT escape it here: since v4.7.0 the SDK builds the request path through
+		// its own segment encoder, which percent-encodes the slash an at:// URI carries, so a
+		// url.PathEscape on this side is applied a second time and the cluster stores the document
+		// under a double-encoded id. Every later read and delete of that id then addresses nothing,
+		// which is the exact silent failure this call site used to escape in order to prevent -
+		// caused, after the upgrade, by the escaping itself. TestOpenSearch_DocumentIdIsPathEscaped
+		// asserts the recorded path, so it fails whichever way this drifts.
 		_, err = o.client.Index(ctx, opensearchapi.IndexReq{
 			Index:      o.index,
-			DocumentID: documentId(v.doc.Id),
+			DocumentID: v.doc.Id,
 			Body:       strings.NewReader(string(body)),
 		})
 
@@ -772,11 +763,12 @@ func (o *OpenSearch) bulkDelete(ctx context.Context, ids []string) error {
 	var body strings.Builder
 
 	for _, id := range ids {
-		// The RAW id, not documentId(id). That helper exists only to survive being interpolated into
-		// a request PATH, and the server percent-decodes the path before use - so the stored _id is
-		// the raw string. Here the id travels in a JSON body, where json.Marshal is the only escaping
-		// required, and a URL-escaped id would address a document that does not exist. Every memory
-		// the Bluesky bridge writes is an at:// URI, so this is the common case rather than a corner.
+		// The RAW id, and for a different reason from the index write above. There the SDK escapes
+		// because the id becomes a path SEGMENT and the server percent-decodes it before use, so the
+		// stored _id is the raw string either way. Here the id travels in a JSON body, where
+		// json.Marshal is the only escaping required and a URL-escaped id would address a document
+		// that does not exist. Every memory the Bluesky bridge writes is an at:// URI, so this is
+		// the common case rather than a corner.
 		action, err := json.Marshal(map[string]any{
 			"delete": map[string]any{"_index": o.index, "_id": id},
 		})
@@ -830,7 +822,7 @@ func (o *OpenSearch) bulkDelete(ctx context.Context, ids []string) error {
 }
 
 func (o *OpenSearch) refresh(ctx context.Context) error {
-	if _, err := o.client.Indices.Refresh(ctx, &opensearchapi.IndicesRefreshReq{Indices: []string{o.index}}); err != nil {
+	if _, err := o.client.Indices.Refresh(ctx, &opensearchapi.IndicesRefreshReq{Index: []string{o.index}}); err != nil {
 		return fmt.Errorf("failed to refresh index '%s': %w", o.index, err)
 	}
 

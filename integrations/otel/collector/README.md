@@ -35,7 +35,7 @@ The collector is assembled with the
 from [`builder-config.yaml`](builder-config.yaml):
 
 ```sh
-go install go.opentelemetry.io/collector/cmd/builder@v0.157.0
+go install go.opentelemetry.io/collector/cmd/builder@v0.160.0
 cd integrations/otel/collector
 builder --config builder-config.yaml
 ```

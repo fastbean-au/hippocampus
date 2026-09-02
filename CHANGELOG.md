@@ -35,6 +35,96 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Security
+
+- **`google.golang.org/grpc` 1.82.1 → 1.83.2, closing an unauthenticated remote OOM against the gRPC
+  listener** ([GHSA-vp52-pcj8-j9qc](https://github.com/grpc/grpc-go/security/advisories/GHSA-vp52-pcj8-j9qc),
+  CVE-2026-84304, high). A caller could open a stream and fragment its payload into millions of tiny
+  HTTP/2 DATA frames. Each fragment carries its own tracking and queue-allocation overhead, so a
+  payload sitting well inside the configured connection and stream flow-control windows could still
+  inflate the heap until the process panicked or was killed; multiplexing streams multiplies it.
+
+  Three things about the exposure are worth stating plainly, because none of them are obvious from
+  the advisory title. It is **pre-authentication**: the frames are consumed by the transport before
+  any interceptor runs, so `auth.method`, the authoriser and the group scope are all downstream of
+  it, and an instance requiring a signed token was exactly as reachable as one that did not. It is
+  the **gRPC listener** specifically (`bindAddress`, 50051 by default) and not the `/v1` gateway,
+  which is served by `net/http`. And the gRPC hardening keys do not cover it — `maxRecvMsgBytes`
+  bounds an assembled message rather than the frames it arrives in, and `maxConcurrentStreams` only
+  reduces the multiplier. The fix is entirely in the dependency, so running this build is the whole
+  of the action; no configuration changes.
+
+  **The version to look for is 1.83.1, not 1.83.0.** grpc-go lists the change that actually closes
+  this under *Performance* in its own notes ("restrict memory overhead of buffering small data
+  frames"), while the *Security* heading of the same pair of releases carries the `xds/rbac` fixes —
+  so checking for "the release with the security section" finds 1.83.0, which is still affected. The
+  mitigation is receive-buffer compaction, on by default, with
+  `GRPC_GO_EXPERIMENTAL_ENABLE_RECEIVE_BUFFER_COMPACTION=false` as an upstream escape hatch that
+  should not be needed here.
+
+  Updated in **every** module — the service and all five under `integrations/`. Only the service
+  ships a listener, so the rest is consistency rather than exposure. Dependabot reached five of the
+  six; `integrations/cli` was left on 1.82.1 and, because it `replace`s the root module, its recorded
+  requirements then disagreed with the root's and `go build` refused the module outright. That was
+  the `cli` CI job's failure, and it is the shape to watch for: this repository has **no
+  `.github/dependabot.yml`**, so which modules get a PR is whatever GitHub infers rather than
+  anything declared. The other advisories fixed in the same releases are all `xds/rbac`, which
+  nothing here reaches: there is no xDS anywhere in the module graph.
+
+### Added
+
+- **A Dependabot configuration, covering all six Go modules as one coupled set.** There was none, and
+  the absence was not neutral: security updates run from the repository's settings and need no
+  config, while **version updates require the file** and so had never run at all. Which modules the
+  security updates reached was therefore inferred from the dependency graph rather than declared —
+  and the inference missed `integrations/cli`, which is what turned that CI job red while every
+  other job stayed green.
+
+  The shape follows from the `replace` directives. Each integration module replaces the root, so a
+  module left behind does not merely lag — its recorded requirements disagree with the root's and
+  `go build` refuses it outright. The six are one dependency set that has to move together, so the
+  `gomod` entry lists all six under `directories` with `group-by: dependency-name`, which offers a
+  shared dependency as **one pull request spanning every module** rather than one per module.
+
+  Two limits are worth stating rather than discovering. `group-by` applies to **version** updates
+  only — a security update is still opened per directory, which is exactly the case that broke the
+  build, so a batch of those wants merging together. And a config file can itself go stale, so
+  `TestDependabotCoversEveryGoModule` compares it against the modules actually on disk: a seventh
+  module added without a line in that file fails the build instead of being quietly skipped.
+  `npm` (the Obsidian plugin), `github-actions` and `docker` (the base images every published image
+  is built on) are covered too; `cmd/hippocampus/webuitest` is deliberately not, having no
+  dependencies to update.
+
+### Changed
+
+- **Every module's dependencies updated to current.** The Go modules, the OpenTelemetry Collector
+  manifest and the Obsidian plugin were all moved to the latest release of everything they depend
+  on. Three of those upgrades needed code changes rather than a version bump, and the first two
+  arrived with nothing in the version number or the import path to announce themselves — `go get -u`
+  took both and reported success:
+
+  - **`opensearch-go/v4` 4.6.0 → 4.7.3 double-encoded every document id.** 4.7.0 moved request-path
+    construction behind a builder that percent-encodes each segment, which is exactly what
+    `documentId` had been doing by hand — so ids were escaped twice, and the cluster stored each
+    document under an id nothing would ever address again. Every memory the Bluesky bridge writes is
+    an `at://` URI, so this was the common case, and its failure is silent: writes land somewhere
+    unreachable and deletes match nothing. The helper is gone and the raw id is passed through, which
+    is now correct precisely because the SDK escapes. The same release also made
+    `MappingGetResp.Indices` an accessor and renamed `IndicesRefreshReq.Indices` to `Index`; those
+    two at least fail to compile.
+  - **`gobwas/glob` 0.2.3 → 1.0.0 removed `glob.Glob`** while keeping the same import path, so the
+    upgrade broke `collector/confmap`, which still requires 0.2.3. It is pinned back in
+    `integrations/otel/hippocampusexporter`.
+  - **TypeScript 7 removed `baseUrl` and `moduleResolution: node`.** The Obsidian plugin's
+    `tsconfig.json` moves to `moduleResolution: bundler` — the algorithm matching how esbuild
+    actually bundles it — and declares `types: ["node"]`, which that resolution mode no longer
+    infers. `baseUrl` was doing nothing: every import in the plugin is relative or a bare package.
+
+  Also: the OpenTelemetry Collector manifest moves 0.157.0 → 0.160.0, which the exporter's own
+  dependencies had already outgrown, and the OCB binary it names is now a separate module
+  (`go install go.opentelemetry.io/collector/cmd/builder@latest`). The service's `go` directive rises
+  to 1.25.9 because `opensearch-go` requires it.
+
 ## [0.39.0] - 2026-09-02
 
 ### Fixed
