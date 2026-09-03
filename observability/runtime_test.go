@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -99,29 +100,46 @@ func TestRuntimeMetricsArePublished(t *testing.T) {
 	}
 }
 
+// goroutineSample collects the goroutines gauge and reads runtime.NumGoroutine beside it, so the
+// caller holds the gauge's value and the runtime's own count from what is, for this purpose, the
+// same instant.
+func goroutineSample(t *testing.T) (int64, int) {
+	t.Helper()
+
+	for _, m := range collectRuntimeMetrics(t) {
+		if m.Name != "hippocampus.runtime.goroutines" {
+			continue
+		}
+
+		return m.Data.(metricdata.Gauge[int64]).DataPoints[0].Value, runtime.NumGoroutine()
+	}
+
+	t.Fatal("the goroutines gauge was not published")
+
+	return 0, 0
+}
+
 // TestRuntimeGoroutineGaugeTracksGrowth verifies the goroutine gauge actually moves, which is the
 // entire reason it exists. Registering an observable gauge that returns a constant would satisfy
 // the test above and be useless for finding a leak.
+//
+// The movement is measured against a control read of runtime.NumGoroutine taken beside each
+// collection, NOT against the number of goroutines started below. Goroutines this test knows
+// nothing about - a previous test in this package leaving a gRPC connection to wind down, say -
+// exit on their own schedule while it runs, so the gauge's delta is legitimately a goroutine or
+// two under the number started: CI has seen 25 started and the gauge move by 24. The control sees
+// exactly the same churn, which is what makes it the honest comparison, and a gauge reporting a
+// constant fails it just as loudly.
 func TestRuntimeGoroutineGaugeTracksGrowth(t *testing.T) {
-	goroutineCount := func(t *testing.T) int64 {
-		t.Helper()
+	const (
+		extra = 25
 
-		for _, m := range collectRuntimeMetrics(t) {
-			if m.Name != "hippocampus.runtime.goroutines" {
-				continue
-			}
+		// Covers the goroutines that may come and go between the callback observing the gauge and
+		// the control read a few instructions later.
+		tolerance = 2
+	)
 
-			return m.Data.(metricdata.Gauge[int64]).DataPoints[0].Value
-		}
-
-		t.Fatal("the goroutines gauge was not published")
-
-		return 0
-	}
-
-	before := goroutineCount(t)
-
-	const extra = 25
+	before, controlBefore := goroutineSample(t)
 
 	release := make(chan struct{})
 	running := make(chan struct{}, extra)
@@ -137,10 +155,34 @@ func TestRuntimeGoroutineGaugeTracksGrowth(t *testing.T) {
 		<-running
 	}
 
-	after := goroutineCount(t)
+	after, controlAfter := goroutineSample(t)
 	close(release)
 
-	if after-before < extra {
-		t.Errorf("started %d goroutines but the gauge moved from %d to %d", extra, before, after)
+	samples := []struct {
+		when    string
+		gauge   int64
+		control int
+	}{
+		{"before", before, controlBefore},
+		{"after", after, controlAfter},
+	}
+
+	for _, sample := range samples {
+		if diff := sample.gauge - int64(sample.control); diff > tolerance || diff < -tolerance {
+			t.Errorf("%s starting the goroutines the gauge reported %d and the runtime reported %d",
+				sample.when, sample.gauge, sample.control)
+		}
+	}
+
+	// The control must have grown by what was started, or the premise of the test - that those
+	// goroutines are all still blocked - did not hold and the comparison below proves nothing.
+	if growth := controlAfter - controlBefore; growth < extra-tolerance {
+		t.Errorf("started %d goroutines but the runtime count moved from %d to %d",
+			extra, controlBefore, controlAfter)
+	}
+
+	if growth := after - before; growth < int64(controlAfter-controlBefore)-tolerance {
+		t.Errorf("started %d goroutines but the gauge moved from %d to %d while the runtime moved from %d to %d",
+			extra, before, after, controlBefore, controlAfter)
 	}
 }

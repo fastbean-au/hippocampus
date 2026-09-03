@@ -16,7 +16,7 @@ ARG TARGETOS
 ARG TARGETARCH
 
 # Must track otelcol_version in builder-config.yaml.
-ARG OCB_VERSION=0.157.0
+ARG OCB_VERSION=0.160.0
 
 # git: the go toolchain needs it to resolve some collector-contrib module dependencies. The git
 # version is left unpinned to track the alpine repo, matching the unpinned tooling used elsewhere.

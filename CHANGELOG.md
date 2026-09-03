@@ -35,6 +35,26 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/cleanup.sh`** — reclaims the disk a build, test, demo or soak run leaves behind. By
+  default it removes only what costs nothing to recreate (the gitignored `demo/` output, stray
+  module binaries, coverage profiles, dangling image layers, orphaned anonymous container volumes)
+  and then trims the podman VM disk; `--images`/`--build-cache`/`--trunk` clear caches that cost a
+  re-download, so they are opt-in, and `--dry-run` lists everything first. The trim is the reason
+  this is a script: on macOS the podman machine's disk is a sparse file, so a prune frees space
+  inside the guest and returns none of it to the host until `fstrim` runs inside the VM. It refuses
+  to touch `~/.hippocampus` and the Go module cache, and selects volumes by `dangling=true` plus an
+  anonymous name so the test databases and named compose state are never candidates.
+
+### Fixed
+
+- **The OTEL collector image builds again.** 0.40.0's dependency bump moved the collector manifest
+  and the exporter module to OpenTelemetry Collector 0.160.0 but left the collector `Dockerfile`
+  installing OCB 0.157.0, which its own comment requires to track `otelcol_version`. A builder
+  generates a distribution against the API of its own release, so the skewed pair failed to compile
+  (`go.opentelemetry.io/collector/confmap/xconfmap`) and the multi-arch image build failed.
+
 ## [0.40.0] - 2026-09-03
 
 ### Security

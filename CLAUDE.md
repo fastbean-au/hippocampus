@@ -123,6 +123,20 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   `origin/main`, or — the one that matters — a changelog whose newest version heading is not the
   current tag, which is how seventeen releases once shipped with their entries still under
   `[Unreleased]`
+- Reclaim disk after builds/tests/soaks: `scripts/cleanup.sh` (add `--dry-run` to see it first).
+  By default it removes only what costs nothing to recreate — `demo/bin`/`demo/data`/
+  `demo/data-bluesky`/`demo/soak-runs`, stray module binaries, coverage profiles, dangling image
+  layers, and orphaned **anonymous** container volumes — then trims the podman VM disk.
+  `--images`/`--build-cache`/`--trunk` (or `--all`) additionally clear things that cost a
+  re-download or a cold rebuild, which is why they are opt-in. Two things carry it. (1) **The trim
+  is the point**: on macOS the podman machine's disk is a sparse file, so pruning frees space
+  inside the guest and returns none of it to the host — `podman system df` reports gigabytes
+  reclaimed while `df` does not move, and only `fstrim` inside the VM punches the holes back out.
+  (2) Volumes are selected by `dangling=true` **and** a 64-hex name, not by letting the engine
+  refuse the in-use ones: the first filter protects the test databases (which hang off *stopped*
+  containers, and that is how they survive a reboot), the second protects named compose state, and
+  relying on the refusal instead would make `--dry-run` overstate what it is about to delete. It
+  never touches `~/.hippocampus` (a personal instance's real store) or the Go module cache
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
   list); its **Compatibility** section states what a version number covers — contract, config keys,
   stored schema — and what is exempt. `RELEASE.md` carries the process, including the changelog step
