@@ -33,7 +33,7 @@ COPY . .
 WORKDIR /src/integrations/otel/collector
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} builder --config builder-config.yaml
 
-FROM alpine:3.22 AS otel-collector
+FROM alpine:3.24 AS otel-collector
 
 # checkov:skip=CKV_DOCKER_2: the bundled config enables no health_check extension, so there is no
 # endpoint to probe; liveness is left to the orchestrator (mirrors the root Dockerfile's mcp stage).
