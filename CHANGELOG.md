@@ -35,6 +35,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-09-03
+
 ### Added
 
 - **`scripts/cleanup.sh`** — reclaims the disk a build, test, demo or soak run leaves behind. By
@@ -1964,7 +1966,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.40.1...HEAD
+[0.40.1]: https://github.com/fastbean-au/hippocampus/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/fastbean-au/hippocampus/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/fastbean-au/hippocampus/compare/v0.38.3...v0.39.0
 [0.38.3]: https://github.com/fastbean-au/hippocampus/compare/v0.38.2...v0.38.3
