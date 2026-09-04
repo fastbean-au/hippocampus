@@ -1653,6 +1653,14 @@ Reaching either cap logs a warning and increments `hippocampus.search.outbox.aba
 discarded becomes the stale pass's job to find. Watch `hippocampus.search.outbox_depth` — sustained
 growth is the index failing to keep up, which the old in-memory queue had no way to report at all.
 
+Like the [callback queue](#when-the-receiver-is-down), the outbox is **excluded from the capacity
+target**, and for the same reason: it grows precisely when deletions are backing up, so counting it
+would raise capacity pressure and evict live memories to make room for the record of memories
+already deleted. It is not excluded from the disk — at the default `maxRows` a stuck index can hold
+a million queued rows that eviction will never notice — so budget for it alongside `capacityBytes`.
+See [The capacity target bounds the memories, not the
+database](operations.md#the-capacity-target-bounds-the-memories-not-the-database).
+
 #### Backfill and reindex
 
 The reconciliation sweep above heals a missing document on its own, but two cases still want an
@@ -1853,7 +1861,8 @@ ever receive.
 The queue is **excluded from the capacity target**, which is not tidiness. It grows precisely when a
 receiver is down, and it can carry memory bodies; counted as stored bytes it would raise capacity
 pressure and evict live memories to make room for the news that memories were evicted. It is not
-excluded from the disk.
+excluded from the disk — see [The capacity target bounds the memories, not the
+database](operations.md#the-capacity-target-bounds-the-memories-not-the-database).
 
 Watch `hippocampus.callbacks.queue_depth` — a rising depth with a non-zero
 `hippocampus.callbacks.delivered{outcome="failed"}` rate is a receiver that is refusing; a deep queue

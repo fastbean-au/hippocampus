@@ -346,6 +346,35 @@ Three consequences for sizing:
 3. Budget disk and memory against the **physical** footprint of your chosen driver, but tune
    `capacityBytes` against the counted size.
 
+### The capacity target bounds the memories, not the database
+
+The counted figure is the memories, the events and the link graph — and nothing else. Several
+optional features keep their own tables in the same store, and those tables are **deliberately
+outside** the target: each grows precisely when something is going wrong, so counting it would raise
+capacity pressure and evict live memories to make room for the record of memories being evicted.
+They are excluded from the capacity target; they are not excluded from the disk.
+
+| Feature                                                              | Table               | Bounded by                                                               | Default cap                              |
+| -------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------ | ---------------------------------------- |
+| [Forgotten log](#what-was-forgotten--the-forgotten-log)               | `memory_tombstones` | `consolidation.tombstones.maxRows` / `.maxAgeInDays`, trimmed each cycle  | 100,000 rows or 30 days (feature is off) |
+| [Delete outbox](configuration.md#the-delete-outbox)                   | `search_outbox`     | `opensearch.outbox.maxRows` / `.maxAgeHours`                              | 1,000,000 rows or 24 hours               |
+| [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue` | `callbacks.maxRows` / `.maxAgeHours`                                      | 1,000,000 rows or 24 hours               |
+| [Peer registry](#seeing-the-deployment) (server drivers)              | `instances`         | one row per live instance, each pruned against its own heartbeat interval | negligible                               |
+
+Setting a bound to 0 removes it, which is supported — the forgotten log warns at startup when both
+of its bounds are gone — but an unbounded table here grows until the disk stops it, and eviction
+will never notice. **Size the disk for `capacityBytes` plus the caps of whatever you have enabled**,
+not for `capacityBytes` alone. Two of the defaults are a million rows each, and the callback queue
+can carry memory bodies (`callbacks.includeBodies`), so on a store with callbacks and an OpenSearch
+index that headroom is not a rounding error.
+
+One thing runs the other way. On **SQLite** the [content search](configuration.md#content-search)
+index (`memories_fts`) lives in the same database file and page accounting counts it, so the same
+`capacityBytes` holds fewer memories and eviction starts sooner than it would with search unused.
+The index is contentless — an inverted index, not a second copy of the bodies — so the overhead is a
+fraction of the text, but it is real and it is inside the target. The server drivers' live-row
+estimate does not see it at all.
+
 ### MySQL: size the InnoDB buffer pool to the working set
 
 This is the single most important MySQL tuning knob for Hippocampus. In a soak test, the default
@@ -527,7 +556,8 @@ Four things to know before turning it on.
   `maxAgeInDays` are applied at the end of every cycle and a record past either bound is trimmed;
   setting both to 0 removes the bounds, which is supported and warned about at startup. The log is
   excluded from the store's measured size, so it never raises capacity pressure or triggers
-  eviction — but it does still occupy disk.
+  eviction — but it does still occupy disk, and is one of the tables [the disk budget has to cover
+  on top of `capacityBytes`](#the-capacity-target-bounds-the-memories-not-the-database).
 - **Turning it off does not delete anything.** Disabling stops the writing _and_ the trimming, so
   what was already recorded stays readable. Emptying the log is always an explicit request
   (`hippo forgotten clear`, `POST /v1/memories/forgotten/delete`) — a configuration change must
@@ -585,7 +615,8 @@ for deployments without a metrics stack.
 
 The queue is excluded from the capacity target — it grows precisely when a receiver is down, and it
 can carry memory bodies, so counting it would evict live memories to make room for the news that
-memories were evicted — but it is **not** excluded from the disk. `hippo callbacks clear` discards
+memories were evicted — but it is **not** excluded from the [disk
+budget](#the-capacity-target-bounds-the-memories-not-the-database). `hippo callbacks clear` discards
 pending deliveries when a receiver is gone for good; it requires `--before` or `--all`.
 
 ## Seeing the deployment

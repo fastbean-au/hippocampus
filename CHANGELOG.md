@@ -81,6 +81,19 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 - The schema is at **version 13**: the callback queue adds one table (`callback_queue`), migrated in
   place on startup like every addition before it.
+- **The capacity target's boundaries are written down.** `consolidation.capacityBytes` counts the
+  memories, the events and the link graph and nothing else — every feature that keeps its own table
+  (the forgotten log, the search delete outbox, the callback queue, the peer registry) is
+  deliberately excluded from it, because each grows precisely when something is wrong and counting
+  it would evict live memories to make room for the record of memories being evicted. That was true
+  in the code and stated feature-by-feature at best, so a disk sized from `capacityBytes` alone was
+  undersized by whatever those tables' own caps allow — two of which default to a million rows.
+  `docs/operations.md` now has one section listing them with their bounds, the outbox section in
+  `docs/configuration.md` says what the callback queue's already did, and the configuration wizard
+  raises the same note against the capacity fields naming whichever of them the current selections
+  have enabled. The same section records the case that runs the other way: on SQLite the
+  content-search index lives in the database file and _is_ counted, so search costs capacity there
+  and nothing on the server drivers.
 
 ## [0.40.1] - 2026-09-03
 

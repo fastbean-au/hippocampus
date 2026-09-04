@@ -119,6 +119,16 @@ function formatBytes(value) {
   return `${value} bytes`;
 }
 
+// joinList renders a list as prose - "a", "a and b", "a, b and c" - so a message naming whichever
+// features the current selections have enabled reads as a sentence rather than an array.
+function joinList(items) {
+  if (items.length < 2) {
+    return items.join("");
+  }
+
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 /* ------------------------------------------------------- deployment targets */
 
 // Each target carries the filesystem conventions its artefacts use, so choosing one moves
@@ -2122,6 +2132,47 @@ function validate() {
       "warn",
       "memory",
       "consolidation.capacityBytes is set without a floor, so eviction stops the moment it reaches the target and re-triggers on the next write. Set consolidation.capacityBytesFloor to about 85% of the target.",
+    );
+  }
+
+  // The capacity target counts the memories, events and links and nothing else. Every feature that
+  // keeps its own table is deliberately outside it - each grows precisely when something is wrong,
+  // so counting it would evict live memories to make room for the record of memories being evicted
+  // - which means the disk budget is the capacity plus those tables' own bounds, and nothing in the
+  // form says so unless this does.
+  if (capacityBytes > 0) {
+    const uncounted = [];
+
+    if (val("consolidation.tombstones.enabled")) {
+      uncounted.push(
+        "the forgotten log (consolidation.tombstones.maxRows / .maxAgeInDays)",
+      );
+    }
+
+    if (val("opensearch.enabled")) {
+      uncounted.push(
+        "the search delete outbox (opensearch.outbox.maxRows / .maxAgeHours)",
+      );
+    }
+
+    if (val("callbacks.enabled")) {
+      uncounted.push("the callback queue (callbacks.maxRows / .maxAgeHours)");
+    }
+
+    if (uncounted.length > 0) {
+      add(
+        "info",
+        "memory",
+        `consolidation.capacityBytes counts the memories, events and links \u2014 not ${joinList(uncounted)}. Each keeps its own table in the same store and is excluded from the target, so it can never raise capacity pressure or evict live memories; none of them is excluded from the disk. Size the volume for the capacity plus those bounds.`,
+      );
+    }
+  }
+
+  if (capacityBytes > 0 && driver === "sqlite" && !val("opensearch.enabled")) {
+    add(
+      "info",
+      "memory",
+      "Content search on the sqlite driver is an index inside the same database file, and unlike the forgotten log, the search outbox and the callback queue it is counted against consolidation.capacityBytes \u2014 so the same target holds somewhat fewer memories than it would with search unused. The index is contentless (no second copy of the bodies), so the overhead is a fraction of the text.",
     );
   }
 
