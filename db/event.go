@@ -263,6 +263,15 @@ func (d *DB) DeleteEvent(ctx context.Context, id string) (bool, error) {
 	}
 	defer cancel()
 
+	// Captured before the delete: the group is only readable while the row still exists. A no-op
+	// unless callbacks.allDeletions is on, this being an explicit request rather than decay.
+	captured, err := d.captureEventCallback(tx, []string{id}, CauseClient)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return false, err
+	}
+
 	res, err := tx.Exec(d.rebind(`DELETE FROM events WHERE id = ?`), id)
 	if err != nil {
 		_ = tx.Rollback()
@@ -275,6 +284,15 @@ func (d *DB) DeleteEvent(ctx context.Context, id string) (bool, error) {
 		_ = tx.Rollback()
 
 		return false, err
+	}
+
+	// Only when a row actually went: an unknown id is a NotFound, not a deletion to announce.
+	if n > 0 {
+		if err := d.queueEventCallbacks(tx, captured, CauseClient, 0); err != nil {
+			_ = tx.Rollback()
+
+			return false, err
+		}
 	}
 
 	// Links to and from the deleted event go with it, and the events still standing at the far end
@@ -299,7 +317,13 @@ func (d *DB) DeleteEvent(ctx context.Context, id string) (bool, error) {
 // emptiness in the same statement as the delete closes that window, so a memory written mid-scan
 // keeps its parent event instead of being left with a dangling event_id. Returns whether the
 // event was deleted.
-func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
+//
+// cause names why the event is going, and exists for the callback queue: every caller reaches here
+// because the event became empty, but WHY its memories went differs - a consolidation pass, an
+// eviction, or a Clear - and a receiver told only "cascade" could not tell a store that is
+// forgetting from one that is being drained. It is a parameter rather than something derived here
+// because this function cannot know: by the time it runs, the memories are already gone.
+func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string, cause DeleteCause) (bool, error) {
 	log.Trace("func() db.DeleteEventIfEmpty")
 
 	tx, cancel, err := d.beginTx(ctx)
@@ -307,6 +331,13 @@ func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
 		return false, err
 	}
 	defer cancel()
+
+	captured, err := d.captureEventCallback(tx, []string{id}, cause)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return false, err
+	}
 
 	res, err := tx.Exec(
 		d.rebind(`DELETE FROM events WHERE id = ? AND NOT EXISTS (SELECT 1 FROM memories WHERE event_id = ?)`),
@@ -327,9 +358,16 @@ func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
 	}
 
 	// Only prune when the event actually went: the emptiness guard may have spared it, and a spared
-	// event keeps its links.
+	// event keeps its links. The callback follows the same guard, for the sharper version of the
+	// same reason - announcing an event the guard spared would be simply untrue.
 	if n > 0 {
 		if err := d.pruneEventLinks(tx, []string{id}); err != nil {
+			_ = tx.Rollback()
+
+			return false, err
+		}
+
+		if err := d.queueEventCallbacks(tx, captured, cause, d.cycleId(cause)); err != nil {
 			_ = tx.Rollback()
 
 			return false, err
@@ -338,6 +376,11 @@ func (d *DB) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
 
 	if err := tx.Commit(); err != nil {
 		return false, err
+	}
+
+	// Post-commit, so an open cycle's completion callback names events that actually went.
+	if n > 0 {
+		d.collectForgotten(cause, nil, eventItemIds(captured))
 	}
 
 	return n > 0, nil
@@ -584,7 +627,7 @@ func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 	var retErr error
 
 	for _, id := range deletions {
-		deleted, err := d.DeleteEventIfEmpty(ctx, id)
+		deleted, err := d.DeleteEventIfEmpty(ctx, id, CauseConsolidation)
 		if err != nil {
 			log.Errorf("failed to delete event '%s' for event consolidation: %s", id, err.Error())
 

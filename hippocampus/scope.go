@@ -156,6 +156,18 @@ var scopes = map[string]scopeMode{
 	// actually decides this caller's own memories' fate. A per-partition figure would be the
 	// misleading one.
 	"GetConsolidationStatus": scopeNone,
+
+	// The callback queue's pair are refused to a scoped caller, and the reason is structural rather
+	// than a judgement about sensitivity. A queued delivery batches every memory one delete chunk
+	// removed, and a chunk routinely spans groups, so a row carries no single group a predicate
+	// could select on - there is nothing to scope BY. Splitting deliveries per group to manufacture
+	// one would undo the batching that keeps a cycle forgetting ten thousand memories from becoming
+	// ten thousand HTTP requests, which is the queue's whole reason for batching.
+	//
+	// So a bound caller could only ever be shown infrastructure that is not theirs, which is
+	// PreviewConsolidation's situation exactly.
+	"GetCallbackQueue":    scopeUnbound,
+	"DeleteCallbackQueue": scopeUnbound,
 }
 
 // scopedGroups returns the caller's group scope and whether they are bound to one at all. Handlers

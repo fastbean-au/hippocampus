@@ -146,6 +146,18 @@ func (c *httpClient) DeleteForgottenMemories(ctx context.Context, in *contract.D
 	return out, c.do(ctx, http.MethodPost, "/v1/memories/forgotten/delete", nil, in, out)
 }
 
+func (c *httpClient) GetCallbackQueue(ctx context.Context, in *contract.GetCallbackQueueRequest, _ ...grpc.CallOption) (*contract.GetCallbackQueueResponse, error) {
+	out := &contract.GetCallbackQueueResponse{}
+
+	return out, c.doQuery(ctx, http.MethodGet, "/v1/callbacks/queue", in, nil, out)
+}
+
+func (c *httpClient) DeleteCallbackQueue(ctx context.Context, in *contract.DeleteCallbackQueueRequest, _ ...grpc.CallOption) (*contract.DeleteCallbackQueueResponse, error) {
+	out := &contract.DeleteCallbackQueueResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/callbacks/queue/delete", nil, in, out)
+}
+
 func (c *httpClient) ExplainConsolidation(ctx context.Context, in *contract.ExplainConsolidationRequest, _ ...grpc.CallOption) (*contract.ExplainConsolidationResponse, error) {
 	out := &contract.ExplainConsolidationResponse{}
 

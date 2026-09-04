@@ -16,6 +16,97 @@
     "application/json"
   ],
   "paths": {
+    "/v1/callbacks/queue": {
+      "get": {
+        "summary": "GetCallbackQueue reports what the outbound callback queue is holding: how many deliveries are\nwaiting, how old the oldest is, and a page of the pending ones.",
+        "description": "Where the forgotten log answers \"what went\", the callbacks are the push half of the same\nquestion - and a queue is the thing that stands between a deletion and whoever was told about\nit. This exists so an operator can see a backlog before deciding what to do about it: a purge\nwith no way to see what is being purged is not an operator tool.\n\nIt never returns a delivery's payload. A queued delivery may carry memory bodies\n(callbacks.includeBodies), and this is a view of a backlog rather than a second way to read\nthe store's contents.",
+        "operationId": "Hippocampus_GetCallbackQueue",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetCallbackQueueResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "description": "UNSPECIFIED returns every kind",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "CALLBACK_KIND_UNSPECIFIED",
+              "CALLBACK_KIND_MEMORY_FORGOTTEN",
+              "CALLBACK_KIND_EVENT_FORGOTTEN",
+              "CALLBACK_KIND_SLEEP_COMPLETED"
+            ],
+            "default": "CALLBACK_KIND_UNSPECIFIED"
+          },
+          {
+            "name": "afterSeq",
+            "description": "pagination: return deliveries above this seq (pass the highest seq of the previous page)",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "limit",
+            "description": "\u003c= 0 selects the default (100), values above the cap (1000) are clamped down to it",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/callbacks/queue/delete": {
+      "post": {
+        "summary": "DeleteCallbackQueue empties the outbound callback queue, or the part of it queued before a\ncutoff.",
+        "description": "It exists for the reason DeleteForgottenMemories does: the queue's automatic bounds\n(callbacks.maxRows/maxAgeHours) only apply while callbacks are enabled, so turning the feature\noff leaves whatever was already queued in place rather than destroying it. Discarding those\ndeliveries is therefore always an explicit request - this one - and it is a real discard: a\ndeleted delivery is a notification nobody will ever receive.",
+        "operationId": "Hippocampus_DeleteCallbackQueue",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteCallbackQueueResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "DeleteCallbackQueueRequest empties the callback queue. Supply before_time to discard only what was\nqueued before it, or all to empty the queue entirely - one of the two is required, so an empty\nrequest can never silently discard every pending notification.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1DeleteCallbackQueueRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/clear": {
       "post": {
         "summary": "Clear deletes exactly the records captured by the Export/Transfer run that produced the\nmanifest. Memories recalled (or re-created) since the capture survive, as do events that\nstill have memories.",
@@ -1846,6 +1937,17 @@
       "default": "UNSPECIFIED",
       "description": "Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an\nexplicitly-set value from one left absent. It carries Memory.is_binary - where UNSPECIFIED and\nFALSE are treated identically by the server (both mean not-binary) and only TRUE marks a memory\nas binary - and the boolean list filters (GetMemoriesRequest's recalled/is_summary/is_binary),\nwhere the distinction matters rather more: a proto3 bool cannot say \"only the memories whose\nis_summary is false\", because an unset bool and an explicit false are the same byte on the wire.\n\n - UNSPECIFIED: not set; on Memory.is_binary the server treats this the same as FALSE, on a filter it applies no restriction\n - FALSE: explicitly false\n - TRUE: explicitly true"
     },
+    "v1CallbackKind": {
+      "type": "string",
+      "enum": [
+        "CALLBACK_KIND_UNSPECIFIED",
+        "CALLBACK_KIND_MEMORY_FORGOTTEN",
+        "CALLBACK_KIND_EVENT_FORGOTTEN",
+        "CALLBACK_KIND_SLEEP_COMPLETED"
+      ],
+      "default": "CALLBACK_KIND_UNSPECIFIED",
+      "description": "CallbackKind is what a queued delivery is about."
+    },
     "v1ClearRequest": {
       "type": "object",
       "properties": {
@@ -1983,6 +2085,45 @@
         }
       },
       "description": "DecayPoint is one sample of a decay curve: the value the configured algorithm gives an item of the\nrequested significance once its decay clock reads age_days."
+    },
+    "v1DeleteCallbackQueueRequest": {
+      "type": "object",
+      "properties": {
+        "beforeTime": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; discards deliveries queued before this"
+        },
+        "all": {
+          "type": "boolean",
+          "title": "discard every delivery; ignored when before_time is set"
+        }
+      },
+      "description": "DeleteCallbackQueueRequest empties the callback queue. Supply before_time to discard only what was\nqueued before it, or all to empty the queue entirely - one of the two is required, so an empty\nrequest can never silently discard every pending notification."
+    },
+    "v1DeleteCallbackQueueResponse": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "v1DeleteCause": {
+      "type": "string",
+      "enum": [
+        "DELETE_CAUSE_UNSPECIFIED",
+        "DELETE_CAUSE_CONSOLIDATION",
+        "DELETE_CAUSE_EVICTION",
+        "DELETE_CAUSE_CLIENT",
+        "DELETE_CAUSE_CLEAR",
+        "DELETE_CAUSE_CASCADE",
+        "DELETE_CAUSE_SUMMARY_REPLACE",
+        "DELETE_CAUSE_PURGE"
+      ],
+      "default": "DELETE_CAUSE_UNSPECIFIED",
+      "description": "DeleteCause is why the records a delivery describes were deleted. The two decay causes are the\nonly ones reported unless callbacks.allDeletions widens the feed."
     },
     "v1DeleteForgottenMemoriesRequest": {
       "type": "object",
@@ -2362,6 +2503,37 @@
           "type": "boolean"
         }
       }
+    },
+    "v1GetCallbackQueueResponse": {
+      "type": "object",
+      "properties": {
+        "deliveries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1QueuedCallback"
+          }
+        },
+        "depth": {
+          "type": "string",
+          "format": "int64",
+          "title": "every delivery waiting, not just this page"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "oldestQueuedAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; 0 when the queue is empty"
+        },
+        "nextSeq": {
+          "type": "string",
+          "format": "int64",
+          "title": "pass as after_seq for the next page; 0 when the page is the last"
+        }
+      },
+      "description": "GetCallbackQueueResponse carries one page of the queue.\n\nenabled reports whether the service is currently recording deliveries. It matters for the same\nreason the forgotten log's does: an empty queue is ambiguous without it - everything has been\ndelivered, or nothing is being queued."
     },
     "v1GetConsolidationStatusResponse": {
       "type": "object",
@@ -2884,6 +3056,56 @@
       },
       "description": "PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are\nalways complete; candidates is a bounded sample of the individual memories, ordered by value\nascending so the least valuable - those furthest past the threshold - come first.\n\nThe preview accounts for the cycle's own ordering: consolidation runs first, so the memories it\nwould delete are excluded from the eviction pool and their bytes are already reclaimed before\neviction is considered at all. A memory therefore appears at most once, under the rule that\nwould actually claim it."
     },
+    "v1QueuedCallback": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "string",
+          "format": "int64",
+          "title": "surrogate key; also the pagination cursor"
+        },
+        "kind": {
+          "$ref": "#/definitions/v1CallbackKind"
+        },
+        "cause": {
+          "$ref": "#/definitions/v1DeleteCause"
+        },
+        "cycleId": {
+          "type": "string",
+          "format": "int64",
+          "title": "groups every delivery one sleep cycle produced; 0 outside a cycle"
+        },
+        "chunk": {
+          "type": "integer",
+          "format": "int32",
+          "title": "1-based, for a sleep-cycle delivery split across several"
+        },
+        "chunks": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "itemCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "how many memories or events this delivery describes"
+        },
+        "queuedAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; when the deletion happened, not when it was last attempted"
+        },
+        "attempts": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "nextAttemptAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; when the dispatcher may next try"
+        }
+      },
+      "description": "QueuedCallback is one delivery waiting to be sent, described without its payload.\n\nattempts and next_attempt_at are what separate a queue that is draining from one that is stuck:\na rising attempt count against a receding deadline is a receiver that is refusing, while a deep\nqueue with zero attempts is simply one the dispatcher has not reached yet."
+    },
     "v1RecallMemoriesRequest": {
       "type": "object",
       "properties": {
@@ -3173,10 +3395,11 @@
         "TOPOLOGY_NODE_KIND_BRIDGE",
         "TOPOLOGY_NODE_KIND_INGESTOR",
         "TOPOLOGY_NODE_KIND_MCP_BRIDGE",
-        "TOPOLOGY_NODE_KIND_CLIENT"
+        "TOPOLOGY_NODE_KIND_CLIENT",
+        "TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER"
       ],
       "default": "TOPOLOGY_NODE_KIND_UNSPECIFIED",
-      "description": "TopologyNodeKind names what a component in the deployment graph IS. It is deliberately coarse:\nthe console draws one shape per kind and an operator reads one word, so a kind exists only where\nit changes how a node is drawn or what its attributes mean.\n\nThe set describes the deployment's component types, not what a given build happens to emit. An\ninstance can only report what it knows (see TopologyNodeSource), so the kinds that dial IN -\nbridges, the ingestor, MCP servers, clients - appear only where an operator has declared them or\nwhere they have been observed calling.\n\n - TOPOLOGY_NODE_KIND_UNSPECIFIED: not set\n - TOPOLOGY_NODE_KIND_INSTANCE: a Hippocampus instance: this one, or a peer sharing its store\n - TOPOLOGY_NODE_KIND_STORE: the primary store (SQLite file, PostgreSQL, MySQL)\n - TOPOLOGY_NODE_KIND_SEARCH_INDEX: the secondary content-search index\n - TOPOLOGY_NODE_KIND_SUMMARISER: the embedded LLM behind SummariseMemories\n - TOPOLOGY_NODE_KIND_EMBEDDER: the embedding model behind semantic search\n - TOPOLOGY_NODE_KIND_OBJECT_STORE: the S3 bucket behind Export/Import\n - TOPOLOGY_NODE_KIND_TRANSFER_TARGET: the instance Transfer sends to\n - TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER: the IdP whose JWKS verifies tokens\n - TOPOLOGY_NODE_KIND_COLLECTOR: the OTLP endpoint metrics and traces are exported to\n - TOPOLOGY_NODE_KIND_BRIDGE: an event-sourcing broker bridge\n - TOPOLOGY_NODE_KIND_INGESTOR: the edge-to-central ingestor\n - TOPOLOGY_NODE_KIND_MCP_BRIDGE: an MCP server bridging an LLM host to this service\n - TOPOLOGY_NODE_KIND_CLIENT: any other client of this service"
+      "description": "TopologyNodeKind names what a component in the deployment graph IS. It is deliberately coarse:\nthe console draws one shape per kind and an operator reads one word, so a kind exists only where\nit changes how a node is drawn or what its attributes mean.\n\nThe set describes the deployment's component types, not what a given build happens to emit. An\ninstance can only report what it knows (see TopologyNodeSource), so the kinds that dial IN -\nbridges, the ingestor, MCP servers, clients - appear only where an operator has declared them or\nwhere they have been observed calling.\n\n - TOPOLOGY_NODE_KIND_UNSPECIFIED: not set\n - TOPOLOGY_NODE_KIND_INSTANCE: a Hippocampus instance: this one, or a peer sharing its store\n - TOPOLOGY_NODE_KIND_STORE: the primary store (SQLite file, PostgreSQL, MySQL)\n - TOPOLOGY_NODE_KIND_SEARCH_INDEX: the secondary content-search index\n - TOPOLOGY_NODE_KIND_SUMMARISER: the embedded LLM behind SummariseMemories\n - TOPOLOGY_NODE_KIND_EMBEDDER: the embedding model behind semantic search\n - TOPOLOGY_NODE_KIND_OBJECT_STORE: the S3 bucket behind Export/Import\n - TOPOLOGY_NODE_KIND_TRANSFER_TARGET: the instance Transfer sends to\n - TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER: the IdP whose JWKS verifies tokens\n - TOPOLOGY_NODE_KIND_COLLECTOR: the OTLP endpoint metrics and traces are exported to\n - TOPOLOGY_NODE_KIND_BRIDGE: an event-sourcing broker bridge\n - TOPOLOGY_NODE_KIND_INGESTOR: the edge-to-central ingestor\n - TOPOLOGY_NODE_KIND_MCP_BRIDGE: an MCP server bridging an LLM host to this service\n - TOPOLOGY_NODE_KIND_CLIENT: any other client of this service\n - TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER: the endpoint outbound callbacks are delivered to"
     },
     "v1TopologyNodeSource": {
       "type": "string",

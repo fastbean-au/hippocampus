@@ -126,7 +126,7 @@ func TestDeleteEventIfEmpty_Failures(t *testing.T) {
 			d, mock := newMockDB(t, driverSQLite)
 			test.expect(mock)
 
-			if _, err := d.DeleteEventIfEmpty(context.Background(), "e1"); err == nil {
+			if _, err := d.DeleteEventIfEmpty(context.Background(), "e1", CauseConsolidation); err == nil {
 				t.Fatal("expected the failure to propagate")
 			}
 
@@ -144,7 +144,7 @@ func TestDeleteEventIfEmpty_SparedEventSkipsThePrune(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
-	deleted, err := d.DeleteEventIfEmpty(context.Background(), "e1")
+	deleted, err := d.DeleteEventIfEmpty(context.Background(), "e1", CauseConsolidation)
 	if err != nil {
 		t.Fatalf("DeleteEventIfEmpty: %v", err)
 	}
@@ -262,6 +262,9 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 		},
 		"instance_registry": func(mock sqlmock.Sqlmock, _ driver) {
 			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS instances`).WillReturnError(errors.New("boom"))
+		},
+		"callback_queue": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS callback_queue`).WillReturnError(errors.New("boom"))
 		},
 	}
 

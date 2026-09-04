@@ -49,6 +49,8 @@ func TestDeliberateTiers(t *testing.T) {
 		"GetForgottenMemories":    TierReader,
 		"PreviewConsolidation":    TierAdmin,
 		"DeleteForgottenMemories": TierAdmin,
+		"GetCallbackQueue":        TierAdmin,
+		"DeleteCallbackQueue":     TierAdmin,
 	}
 
 	for method, tier := range want {

@@ -92,7 +92,7 @@ type schemaMigration struct {
 // these steps arrived across seventeen releases, several of them are already the accumulated result
 // of earlier ones, and no store anywhere is at an intermediate point between them - every store in
 // existence has either seen all of them or is about to. What the ledger needs to be honest about is
-// the future, and it is: version 12 is where this list ends today, and a store recording 13 was
+// the future, and it is: version 13 is where this list ends today, and a store recording 14 was
 // written by something this build has not met.
 func (d *DB) migrations() []schemaMigration {
 	return []schemaMigration{
@@ -169,12 +169,17 @@ func (d *DB) migrations() []schemaMigration {
 			apply:   (*DB).initInstances,
 		},
 		{
-			// Last, because it reads memory bodies to populate itself on a store that predates it,
-			// and so wants every column and index above it already in place.
+			// Reads memory bodies to populate itself on a store that predates it, and so wants every
+			// column and index above it already in place.
 			version: 12,
 			name:    "content_search",
 			when:    func(dialect *dialect) bool { return dialect.contentSearch },
 			apply:   (*DB).initContentSearch,
+		},
+		{
+			version: 13,
+			name:    "callback_queue",
+			apply:   (*DB).initCallbackQueue,
 		},
 	}
 }

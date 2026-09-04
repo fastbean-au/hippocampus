@@ -472,6 +472,138 @@ groups:
                     type: last
                     params: []
 
+      - uid: hippocampus-callback-queue-backlog
+        title: HippocampusCallbackQueueBacklog
+        condition: B
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus cannot deliver callbacks as fast as it records them"
+          description: "Callback deliveries are being recorded faster than the receiver at callbacks.url accepts them, so the store is holding notifications about memories it has already forgotten. Nothing is lost yet - the queue is durable and drains once the receiver keeps up - but it is excluded from the capacity target, not from the disk. Check the receiver. If the backlog reaches callbacks.maxRows or maxAgeHours the oldest deliveries are discarded, and unlike a queued index deletion nothing recovers them."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max(hippocampus_callbacks_queue_depth) > 10000
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-callback-deliveries-failing
+        title: HippocampusCallbackDeliveriesFailing
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus callback deliveries are being refused"
+          description: "The receiver at callbacks.url is refusing deliveries, or is unreachable. Each failure is deferred on an exponential backoff and retried, so nothing is lost while this fires - but the queue grows for as long as it lasts, and once it reaches callbacks.maxRows or maxAgeHours the oldest notifications are discarded permanently. Check the receiver's health and, if authentication is configured, that its token or signing secret still matches."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_callbacks_delivered_total{outcome="failed"}[15m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
+      - uid: hippocampus-callbacks-abandoning
+        title: HippocampusCallbacksAbandoning
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is discarding undelivered callbacks"
+          description: "The callback queue has hit its caps and is discarding deliveries the receiver never accepted. These notifications are lost: nothing re-derives them, because the memories they describe are already gone. This means the receiver has been unreachable for long enough to exhaust callbacks.maxAgeHours or maxRows - treat it as a receiver outage, not as tuning, and expect a gap in whatever downstream system consumes these."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_callbacks_abandoned_total[15m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
       - uid: hippocampus-search-outbox-abandoning
         title: HippocampusSearchOutboxAbandoning
         condition: B

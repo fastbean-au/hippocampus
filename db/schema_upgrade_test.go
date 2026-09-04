@@ -450,6 +450,7 @@ var schemaFixtureTags = map[string]string{
 	"search_outbox":             "v0.37.0",
 	"instance_registry":         "v0.31.0",
 	"content_search":            "v0.23.0",
+	"callback_queue":            notReleasedBefore,
 
 	// The two indexes are rebuilt from whatever columns exist rather than migrating data, so every
 	// fixture exercises them; the oldest is named because it is the one that proves the covering

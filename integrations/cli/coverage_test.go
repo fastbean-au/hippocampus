@@ -46,6 +46,16 @@ func TestHTTPClientAllMethods(t *testing.T) {
 		{"Purge", func() error { _, err := c.Purge(ctx, &contract.EmptyRequest{}); return err }},
 		{"Sleep", func() error { _, err := c.Sleep(ctx, &contract.EmptyRequest{}); return err }},
 		{"WhoAmI", func() error { _, err := c.WhoAmI(ctx, &contract.EmptyRequest{}); return err }},
+		{"GetCallbackQueue", func() error {
+			_, err := c.GetCallbackQueue(ctx, &contract.GetCallbackQueueRequest{Limit: 10})
+
+			return err
+		}},
+		{"DeleteCallbackQueue", func() error {
+			_, err := c.DeleteCallbackQueue(ctx, &contract.DeleteCallbackQueueRequest{All: true})
+
+			return err
+		}},
 		{"GetConsolidationStatus", func() error {
 			_, err := c.GetConsolidationStatus(ctx, &contract.EmptyRequest{})
 
@@ -140,6 +150,8 @@ func TestAllHandlersSucceed(t *testing.T) {
 		{"event list", []string{"--memories"}},
 		{"whoami", nil},
 		{"sleep", nil},
+		{"callbacks queue", nil},
+		{"callbacks clear", []string{"--all"}},
 		{"purge", []string{"--yes"}},
 		{"summary candidates", nil},
 		{"summary replace", []string{"--event-id", "e", "--body", "s"}},

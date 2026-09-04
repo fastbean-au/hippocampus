@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -117,6 +118,22 @@ type DB struct {
 	// AFTER DELETE trigger, so queueing for it would be pure write cost with nothing to drain the
 	// rows. Set once at startup via SetSearchOutbox, before serving, like the compression policy.
 	searchOutbox bool
+
+	// callbacks is the outbound callback policy (see callbacks.go). The zero value records nothing,
+	// which is the default. Set once at startup via SetCallbackPolicy, before serving, so it needs
+	// no lock - the same treatment the forgotten log and compression get.
+	callbacks CallbackPolicy
+
+	// callbackTable records that initCallbackQueue has run, so the read-only opens (which skip
+	// initSchema entirely) never query a table they cannot be sure exists.
+	callbackTable bool
+
+	// cycle is the open sleep cycle's id collection, or nil outside one (see callbacks.go). Unlike
+	// the policy fields beside it this changes while the store is serving - once per cycle - so it
+	// takes a lock. Contention is nil in practice: only the two decay passes contribute, and only
+	// one cycle runs at a time.
+	cycle   *cycleCollection
+	cycleMu sync.Mutex
 
 	// compression is the write-side memory-body compression policy (see compress.go). The zero
 	// value stores every body verbatim. It governs writes only — reads follow each row's own
@@ -535,6 +552,18 @@ type Store interface {
 	// inflated toward the int32 ceiling; a best-effort maintenance step run from the sleep cycle.
 	CompactSignificanceLevels(ctx context.Context) error
 
+	BeginCallbackCycle(cycleId int64)
+	EndCallbackCycle() (memoryIds []string, eventIds []string, memoryMore int, eventMore int)
+	QueueCallbacks(ctx context.Context, deliveries []CallbackDelivery) error
+	ClaimCallbacks(ctx context.Context, limit int, now int64) ([]CallbackDelivery, error)
+	ConfirmCallbacks(ctx context.Context, seqs []int64) error
+	DeferCallbacks(ctx context.Context, seqs []int64, nextAttemptAt int64) error
+	PruneCallbackQueue(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error)
+	CallbackQueueDepth(ctx context.Context) (int64, error)
+	OldestQueuedCallback(ctx context.Context) (int64, error)
+	GetCallbackQueue(ctx context.Context, filter CallbackQueueFilter) ([]CallbackDelivery, error)
+	DeleteCallbackQueue(ctx context.Context, before int64) (int64, error)
+
 	ConsolidateMemories(ctx context.Context, s Server) (int, error)
 	ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error)
 	ConsolidateEvents(ctx context.Context, s Server) (int, error)
@@ -606,7 +635,7 @@ type Store interface {
 	ImportMemories(ctx context.Context, memories []types.Memory) (int, error)
 	ImportEvents(ctx context.Context, events []types.Event) (int, error)
 	ClearMemories(ctx context.Context, snapshots []MemoryRecallSnapshot) (int, error)
-	DeleteEventIfEmpty(ctx context.Context, id string) (bool, error)
+	DeleteEventIfEmpty(ctx context.Context, id string, cause DeleteCause) (bool, error)
 
 	// The instance registry (see instances.go): one row per instance sharing this store, which is
 	// what makes a horizontally-scaled deployment able to name its own peers - and what makes "no
@@ -926,12 +955,18 @@ func (d *DB) UsedBytes(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 
-	// The forgotten log and the search outbox are excluded: page accounting measures the whole file,
-	// so counting either would let the record of what was deleted drive the eviction of live
-	// memories - and the outbox would be the sharper version of that, since it grows precisely when
-	// deletions are backing up. The server drivers count live memory/event/link rows explicitly and
-	// so exclude both already. See tombstoneBytes and searchOutboxBytes.
-	used := (pageCount-freelistCount)*pageSize - d.tombstoneBytes(ctx) - d.searchOutboxBytes(ctx)
+	// The forgotten log, the search outbox and the callback queue are excluded: page accounting
+	// measures the whole file, so counting any of them would let the record of what was deleted
+	// drive the eviction of live memories. The outbox is the sharper version of that, since it grows
+	// precisely when deletions are backing up, and the callback queue is sharper again - it grows
+	// when a receiver is down AND it can carry memory bodies, so without this the news that memories
+	// were evicted would evict memories to make room for itself. The server drivers count live
+	// memory/event/link rows explicitly and so exclude all three already. See tombstoneBytes,
+	// searchOutboxBytes and callbackQueueBytes.
+	used := (pageCount-freelistCount)*pageSize -
+		d.tombstoneBytes(ctx) -
+		d.searchOutboxBytes(ctx) -
+		d.callbackQueueBytes(ctx)
 
 	return max(used, 0), nil
 }
@@ -1100,6 +1135,18 @@ func (d *DB) Purge(ctx context.Context) error {
 	if d.searchOutbox {
 		if _, err := tx.Exec(`DELETE FROM ` + searchOutboxTable); err != nil {
 			log.Errorf("failed to purge - emptying the search outbox: %s", err.Error())
+			_ = tx.Rollback()
+
+			return err
+		}
+	}
+
+	// And so does the callback queue. A queued delivery describes records that are going; after a
+	// Purge there is nothing left for a receiver to reconcile against, and Purge is itself the
+	// explicit request to leave nothing behind.
+	if d.callbackTable {
+		if _, err := tx.Exec(`DELETE FROM ` + callbackQueueTable); err != nil {
+			log.Errorf("failed to purge - emptying the callback queue: %s", err.Error())
 			_ = tx.Rollback()
 
 			return err

@@ -340,6 +340,9 @@ func TestInitSchema_MigrationFailuresStopTheRun(t *testing.T) {
 		"content_search": func(mock sqlmock.Sqlmock) {
 			mock.ExpectExec(`CREATE VIRTUAL TABLE IF NOT EXISTS`).WillReturnError(errors.New("boom"))
 		},
+		"callback_queue": func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS callback_queue`).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, migration := range (&DB{driver: driverSQLite}).migrations() {

@@ -54,7 +54,7 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 		{"UpdateEvent", func() error { _, err := db.UpdateEvent(ctx, event); return err }},
 		{"UpdateEvent (no-op probe)", func() error { _, err := db.UpdateEvent(ctx, types.Event{Id: "e1"}); return err }},
 		{"DeleteEvent", func() error { _, err := db.DeleteEvent(ctx, "e1"); return err }},
-		{"DeleteEventIfEmpty", func() error { _, err := db.DeleteEventIfEmpty(ctx, "e1"); return err }},
+		{"DeleteEventIfEmpty", func() error { _, err := db.DeleteEventIfEmpty(ctx, "e1", CauseConsolidation); return err }},
 		{"EventExists", func() error { _, err := db.EventExists(ctx, "e1"); return err }},
 		{"GetEvent", func() error { _, err := db.GetEvent(ctx, "e1"); return err }},
 		{"GetEvents", func() error { _, err := db.GetEvents(ctx, EventFilter{}); return err }},

@@ -34,6 +34,13 @@ func (s *Server) sleep(trigger string) error {
 	// them, and there is no second source of truth to drift.
 	report := &cycleReport{startedAt: ts, trigger: trigger}
 
+	// The cycle's id, and the window in which the store collects the ids its passes delete. Opened
+	// here and closed below, so its lifetime is exactly this call; a no-op unless callbacks are on,
+	// which is why the counts-only altitude of cycleReport is unaffected on every other deployment.
+	cycleId := ts.UnixNano()
+
+	s.db.BeginCallbackCycle(cycleId)
+
 	e1 := s.consolidate(ctx, report)
 
 	s.scanSummarisationCandidates(ctx, report)
@@ -90,6 +97,11 @@ func (s *Server) sleep(trigger string) error {
 	}
 
 	s.lastCycle.Store(report)
+
+	// Last of all, and after the report is published: the completion callback describes a finished
+	// cycle, including a failed one - "the last cycle deleted 40 and then failed" is as much a thing
+	// a receiver needs to hear as a clean run. Best-effort, and never allowed to fail the cycle.
+	s.queueCycleCallback(ctx, cycleId, report)
 
 	return err
 }

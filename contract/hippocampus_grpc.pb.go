@@ -26,6 +26,8 @@ const (
 	Hippocampus_GetConsolidationStatus_FullMethodName     = "/hippocampus.v1.Hippocampus/GetConsolidationStatus"
 	Hippocampus_GetForgottenMemories_FullMethodName       = "/hippocampus.v1.Hippocampus/GetForgottenMemories"
 	Hippocampus_DeleteForgottenMemories_FullMethodName    = "/hippocampus.v1.Hippocampus/DeleteForgottenMemories"
+	Hippocampus_GetCallbackQueue_FullMethodName           = "/hippocampus.v1.Hippocampus/GetCallbackQueue"
+	Hippocampus_DeleteCallbackQueue_FullMethodName        = "/hippocampus.v1.Hippocampus/DeleteCallbackQueue"
 	Hippocampus_WhoAmI_FullMethodName                     = "/hippocampus.v1.Hippocampus/WhoAmI"
 	Hippocampus_GetTopology_FullMethodName                = "/hippocampus.v1.Hippocampus/GetTopology"
 	Hippocampus_StoreEvent_FullMethodName                 = "/hippocampus.v1.Hippocampus/StoreEvent"
@@ -128,6 +130,27 @@ type HippocampusClient interface {
 	// already recorded in place, so that a configuration change never destroys a record somebody
 	// kept. Removing it is therefore always an explicit request - this one.
 	DeleteForgottenMemories(ctx context.Context, in *DeleteForgottenMemoriesRequest, opts ...grpc.CallOption) (*DeleteForgottenMemoriesResponse, error)
+	// GetCallbackQueue reports what the outbound callback queue is holding: how many deliveries are
+	// waiting, how old the oldest is, and a page of the pending ones.
+	//
+	// Where the forgotten log answers "what went", the callbacks are the push half of the same
+	// question - and a queue is the thing that stands between a deletion and whoever was told about
+	// it. This exists so an operator can see a backlog before deciding what to do about it: a purge
+	// with no way to see what is being purged is not an operator tool.
+	//
+	// It never returns a delivery's payload. A queued delivery may carry memory bodies
+	// (callbacks.includeBodies), and this is a view of a backlog rather than a second way to read
+	// the store's contents.
+	GetCallbackQueue(ctx context.Context, in *GetCallbackQueueRequest, opts ...grpc.CallOption) (*GetCallbackQueueResponse, error)
+	// DeleteCallbackQueue empties the outbound callback queue, or the part of it queued before a
+	// cutoff.
+	//
+	// It exists for the reason DeleteForgottenMemories does: the queue's automatic bounds
+	// (callbacks.maxRows/maxAgeHours) only apply while callbacks are enabled, so turning the feature
+	// off leaves whatever was already queued in place rather than destroying it. Discarding those
+	// deliveries is therefore always an explicit request - this one - and it is a real discard: a
+	// deleted delivery is a notification nobody will ever receive.
+	DeleteCallbackQueue(ctx context.Context, in *DeleteCallbackQueueRequest, opts ...grpc.CallOption) (*DeleteCallbackQueueResponse, error)
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -331,6 +354,26 @@ func (c *hippocampusClient) DeleteForgottenMemories(ctx context.Context, in *Del
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteForgottenMemoriesResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_DeleteForgottenMemories_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) GetCallbackQueue(ctx context.Context, in *GetCallbackQueueRequest, opts ...grpc.CallOption) (*GetCallbackQueueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCallbackQueueResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetCallbackQueue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) DeleteCallbackQueue(ctx context.Context, in *DeleteCallbackQueueRequest, opts ...grpc.CallOption) (*DeleteCallbackQueueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteCallbackQueueResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_DeleteCallbackQueue_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -698,6 +741,27 @@ type HippocampusServer interface {
 	// already recorded in place, so that a configuration change never destroys a record somebody
 	// kept. Removing it is therefore always an explicit request - this one.
 	DeleteForgottenMemories(context.Context, *DeleteForgottenMemoriesRequest) (*DeleteForgottenMemoriesResponse, error)
+	// GetCallbackQueue reports what the outbound callback queue is holding: how many deliveries are
+	// waiting, how old the oldest is, and a page of the pending ones.
+	//
+	// Where the forgotten log answers "what went", the callbacks are the push half of the same
+	// question - and a queue is the thing that stands between a deletion and whoever was told about
+	// it. This exists so an operator can see a backlog before deciding what to do about it: a purge
+	// with no way to see what is being purged is not an operator tool.
+	//
+	// It never returns a delivery's payload. A queued delivery may carry memory bodies
+	// (callbacks.includeBodies), and this is a view of a backlog rather than a second way to read
+	// the store's contents.
+	GetCallbackQueue(context.Context, *GetCallbackQueueRequest) (*GetCallbackQueueResponse, error)
+	// DeleteCallbackQueue empties the outbound callback queue, or the part of it queued before a
+	// cutoff.
+	//
+	// It exists for the reason DeleteForgottenMemories does: the queue's automatic bounds
+	// (callbacks.maxRows/maxAgeHours) only apply while callbacks are enabled, so turning the feature
+	// off leaves whatever was already queued in place rather than destroying it. Discarding those
+	// deliveries is therefore always an explicit request - this one - and it is a real discard: a
+	// deleted delivery is a notification nobody will ever receive.
+	DeleteCallbackQueue(context.Context, *DeleteCallbackQueueRequest) (*DeleteCallbackQueueResponse, error)
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -857,6 +921,12 @@ func (UnimplementedHippocampusServer) GetForgottenMemories(context.Context, *Get
 }
 func (UnimplementedHippocampusServer) DeleteForgottenMemories(context.Context, *DeleteForgottenMemoriesRequest) (*DeleteForgottenMemoriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteForgottenMemories not implemented")
+}
+func (UnimplementedHippocampusServer) GetCallbackQueue(context.Context, *GetCallbackQueueRequest) (*GetCallbackQueueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCallbackQueue not implemented")
+}
+func (UnimplementedHippocampusServer) DeleteCallbackQueue(context.Context, *DeleteCallbackQueueRequest) (*DeleteCallbackQueueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteCallbackQueue not implemented")
 }
 func (UnimplementedHippocampusServer) WhoAmI(context.Context, *EmptyRequest) (*WhoAmIResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WhoAmI not implemented")
@@ -1088,6 +1158,42 @@ func _Hippocampus_DeleteForgottenMemories_Handler(srv interface{}, ctx context.C
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HippocampusServer).DeleteForgottenMemories(ctx, req.(*DeleteForgottenMemoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_GetCallbackQueue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCallbackQueueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).GetCallbackQueue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_GetCallbackQueue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).GetCallbackQueue(ctx, req.(*GetCallbackQueueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_DeleteCallbackQueue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteCallbackQueueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).DeleteCallbackQueue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_DeleteCallbackQueue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).DeleteCallbackQueue(ctx, req.(*DeleteCallbackQueueRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1648,6 +1754,14 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteForgottenMemories",
 			Handler:    _Hippocampus_DeleteForgottenMemories_Handler,
+		},
+		{
+			MethodName: "GetCallbackQueue",
+			Handler:    _Hippocampus_GetCallbackQueue_Handler,
+		},
+		{
+			MethodName: "DeleteCallbackQueue",
+			Handler:    _Hippocampus_DeleteCallbackQueue_Handler,
 		},
 		{
 			MethodName: "WhoAmI",

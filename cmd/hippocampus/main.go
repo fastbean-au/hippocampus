@@ -37,6 +37,7 @@ import (
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/embed"
 	"github.com/fastbean-au/hippocampus/hippocampus"
+	"github.com/fastbean-au/hippocampus/notify"
 	"github.com/fastbean-au/hippocampus/observability"
 	"github.com/fastbean-au/hippocampus/ratelimit"
 	"github.com/fastbean-au/hippocampus/search"
@@ -327,6 +328,26 @@ func setStartupDefaults() {
 	// disables that bound.
 	viper.SetDefault("consolidation.tombstones.maxRows", 100000)
 	viper.SetDefault("consolidation.tombstones.maxAgeInDays", 30)
+
+	// Outbound callbacks (see docs/operations.md). Off by default - a deployment with no receiver
+	// should queue nothing at all - but every bound is defaulted anyway, on the same reasoning as
+	// the forgotten log above: turning it on gets a queue that is already bounded rather than one
+	// that grows until a receiver's outage fills the disk. An explicit 0 on either cap disables it.
+	//
+	// The three event toggles default ON because the feature as a whole is off: an operator who has
+	// configured a URL wants the callbacks, and having to then enable them individually would be a
+	// second switch for the same decision.
+	viper.SetDefault("callbacks.timeoutSeconds", 10)
+	viper.SetDefault("callbacks.maxBodyBytes", 65536)
+	viper.SetDefault("callbacks.maxIdsPerDelivery", 500)
+	viper.SetDefault("callbacks.maxRows", 1000000)
+	viper.SetDefault("callbacks.maxAgeHours", 24)
+	viper.SetDefault("callbacks.batchSize", 100)
+	viper.SetDefault("callbacks.retryBaseBackoffSeconds", 1)
+	viper.SetDefault("callbacks.retryMaxBackoffSeconds", 300)
+	viper.SetDefault("callbacks.events.memoryForgotten", true)
+	viper.SetDefault("callbacks.events.eventForgotten", true)
+	viper.SetDefault("callbacks.events.sleepCompleted", true)
 
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
@@ -642,6 +663,37 @@ func run(ctx context.Context, version versionInfo) error {
 		log.Debug("s3 object store initialised")
 	}
 
+	// initialise the optional outbound callback sink. The no-op unless callbacks.enabled, and the
+	// no-op is not merely a disabled feature: it gates the persisted queue's recording as well as
+	// its dispatch, so a deployment with no receiver never writes a row. Construction validates the
+	// configuration and deliberately does not dial - a receiver that happens to be down at startup
+	// is exactly what the queue exists to survive.
+	notifier := notify.NewNoop()
+
+	if viper.GetBool("callbacks.enabled") {
+		log.Debug("initialising the callback sink")
+
+		hook, err := notify.NewWebhook(notify.Config{
+			URL:           viper.GetString("callbacks.url"),
+			Token:         viper.GetString("callbacks.token"),
+			SigningSecret: viper.GetString("callbacks.signingSecret"),
+			Timeout:       time.Duration(viper.GetInt("callbacks.timeoutSeconds")) * time.Second,
+			TLS: notify.TLSConfig{
+				CACertFile:         viper.GetString("callbacks.tls.caCertFile"),
+				CertFile:           viper.GetString("callbacks.tls.certFile"),
+				KeyFile:            viper.GetString("callbacks.tls.keyFile"),
+				InsecureSkipVerify: viper.GetBool("callbacks.tls.insecureSkipVerify"),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialise the callback sink: %w", err)
+		}
+
+		notifier = hook
+
+		log.Infof("callbacks enabled, delivering to %s", viper.GetString("callbacks.url"))
+	}
+
 	// initialise auth and TLS. auth.method selects the verification scheme: "none" (the
 	// default, preserving the no-auth behaviour of every prior release), "hmac" (shared-secret
 	// HS256, tokens minted by --mint-token), or "idp" (RS256 against an identity provider's
@@ -825,6 +877,7 @@ func run(ctx context.Context, version versionInfo) error {
 		Objects:    objects,
 		Summariser: summariser,
 		Embedder:   embedder,
+		Notifier:   notifier,
 		Version:    version.Version,
 	})
 
@@ -1774,8 +1827,78 @@ func validateConfig() error {
 		return err
 	}
 
+	if err := validateCallbackConfig(); err != nil {
+		return err
+	}
+
 	if err := validateTopologyConfig(); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// validateCallbackConfig checks the outbound callback settings.
+//
+// A missing URL is fatal rather than a warning: callbacks.enabled with nothing to send to would
+// record a row per forgotten memory into a queue that can never drain, which is the one arrangement
+// the feature is built to avoid. Everything else here is a bound, where a negative value is a typo
+// and 0 deliberately means "no bound".
+func validateCallbackConfig() error {
+	if !viper.GetBool("callbacks.enabled") {
+		return nil
+	}
+
+	url := strings.TrimSpace(viper.GetString("callbacks.url"))
+	if url == "" {
+		return fmt.Errorf("callbacks.url is required when callbacks.enabled is set (or inject it as HIPPOCAMPUS_CALLBACKS_URL)")
+	}
+
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return fmt.Errorf("callbacks.url must be an http:// or https:// URL, got %q", url)
+	}
+
+	bounds := map[string]int{
+		"callbacks.timeoutSeconds":          viper.GetInt("callbacks.timeoutSeconds"),
+		"callbacks.maxBodyBytes":            viper.GetInt("callbacks.maxBodyBytes"),
+		"callbacks.maxIdsPerDelivery":       viper.GetInt("callbacks.maxIdsPerDelivery"),
+		"callbacks.maxRows":                 viper.GetInt("callbacks.maxRows"),
+		"callbacks.maxAgeHours":             viper.GetInt("callbacks.maxAgeHours"),
+		"callbacks.batchSize":               viper.GetInt("callbacks.batchSize"),
+		"callbacks.retryBaseBackoffSeconds": viper.GetInt("callbacks.retryBaseBackoffSeconds"),
+		"callbacks.retryMaxBackoffSeconds":  viper.GetInt("callbacks.retryMaxBackoffSeconds"),
+	}
+
+	for key, value := range bounds {
+		if value < 0 {
+			return fmt.Errorf("%s must not be negative, got %d", key, value)
+		}
+	}
+
+	// A body carried without a cap makes one large memory able to fill the queue and the delivery
+	// alike; a warning rather than an error, because an operator who knows their bodies are small
+	// is entitled to say so.
+	if viper.GetBool("callbacks.includeBodies") && viper.GetInt("callbacks.maxBodyBytes") <= 0 {
+		log.Warn(
+			"callbacks.includeBodies is set with no callbacks.maxBodyBytes, so a single large " +
+				"memory can be carried whole into the queue and the delivery",
+		)
+	}
+
+	if strings.HasPrefix(url, "http://") && viper.GetString("callbacks.signingSecret") != "" {
+		log.Warn(
+			"callbacks.signingSecret is set on a plain http:// callbacks.url: the signature proves " +
+				"the body was not altered, but the body itself - which may carry memory bodies - " +
+				"travels in the clear",
+		)
+	}
+
+	if viper.GetInt("callbacks.maxRows") <= 0 && viper.GetInt("callbacks.maxAgeHours") <= 0 {
+		log.Warn(
+			"callbacks are enabled with neither callbacks.maxRows nor callbacks.maxAgeHours set, " +
+				"so an unreachable receiver will grow the queue without bound; it is excluded from " +
+				"the capacity target but not from the disk",
+		)
 	}
 
 	return nil

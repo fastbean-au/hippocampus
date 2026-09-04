@@ -138,6 +138,38 @@ service Hippocampus {
 		};
 	}
 
+	// GetCallbackQueue reports what the outbound callback queue is holding: how many deliveries are
+	// waiting, how old the oldest is, and a page of the pending ones.
+	//
+	// Where the forgotten log answers "what went", the callbacks are the push half of the same
+	// question - and a queue is the thing that stands between a deletion and whoever was told about
+	// it. This exists so an operator can see a backlog before deciding what to do about it: a purge
+	// with no way to see what is being purged is not an operator tool.
+	//
+	// It never returns a delivery's payload. A queued delivery may carry memory bodies
+	// (callbacks.includeBodies), and this is a view of a backlog rather than a second way to read
+	// the store's contents.
+	rpc GetCallbackQueue(GetCallbackQueueRequest) returns (GetCallbackQueueResponse) {
+		option (google.api.http) = {
+			get: "/v1/callbacks/queue"
+		};
+	}
+
+	// DeleteCallbackQueue empties the outbound callback queue, or the part of it queued before a
+	// cutoff.
+	//
+	// It exists for the reason DeleteForgottenMemories does: the queue's automatic bounds
+	// (callbacks.maxRows/maxAgeHours) only apply while callbacks are enabled, so turning the feature
+	// off leaves whatever was already queued in place rather than destroying it. Discarding those
+	// deliveries is therefore always an explicit request - this one - and it is a real discard: a
+	// deleted delivery is a notification nobody will ever receive.
+	rpc DeleteCallbackQueue(DeleteCallbackQueueRequest) returns (DeleteCallbackQueueResponse) {
+		option (google.api.http) = {
+			post: "/v1/callbacks/queue/delete"
+			body: "*"
+		};
+	}
+
 	// WhoAmI reports the authenticated caller's identity and effective authorization tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
@@ -1030,6 +1062,79 @@ message DeleteForgottenMemoriesResponse {
 	int64                                  deleted                   = 1;
 }
 
+// CallbackKind is what a queued delivery is about.
+enum CallbackKind {
+	CALLBACK_KIND_UNSPECIFIED = 0;
+	CALLBACK_KIND_MEMORY_FORGOTTEN = 1;
+	CALLBACK_KIND_EVENT_FORGOTTEN = 2;
+	CALLBACK_KIND_SLEEP_COMPLETED = 3;
+}
+
+// DeleteCause is why the records a delivery describes were deleted. The two decay causes are the
+// only ones reported unless callbacks.allDeletions widens the feed.
+enum DeleteCause {
+	DELETE_CAUSE_UNSPECIFIED = 0;
+	DELETE_CAUSE_CONSOLIDATION = 1;
+	DELETE_CAUSE_EVICTION = 2;
+	DELETE_CAUSE_CLIENT = 3;
+	DELETE_CAUSE_CLEAR = 4;
+	DELETE_CAUSE_CASCADE = 5;
+	DELETE_CAUSE_SUMMARY_REPLACE = 6;
+	DELETE_CAUSE_PURGE = 7;
+}
+
+// QueuedCallback is one delivery waiting to be sent, described without its payload.
+//
+// attempts and next_attempt_at are what separate a queue that is draining from one that is stuck:
+// a rising attempt count against a receding deadline is a receiver that is refusing, while a deep
+// queue with zero attempts is simply one the dispatcher has not reached yet.
+message QueuedCallback {
+	int64                                  seq                       = 1; // surrogate key; also the pagination cursor
+	CallbackKind                           kind                      = 2;
+	DeleteCause                            cause                     = 3;
+	int64                                  cycle_id                  = 4; // groups every delivery one sleep cycle produced; 0 outside a cycle
+	int32                                  chunk                     = 5; // 1-based, for a sleep-cycle delivery split across several
+	int32                                  chunks                    = 6;
+	int32                                  item_count                = 7; // how many memories or events this delivery describes
+	int64                                  queued_at                 = 8; // UnixNano; when the deletion happened, not when it was last attempted
+	int32                                  attempts                  = 9;
+	int64                                  next_attempt_at           = 10; // UnixNano; when the dispatcher may next try
+}
+
+// GetCallbackQueueRequest selects pending deliveries. Every field is optional; an empty request
+// returns the oldest page - the order the dispatcher will send them in, which is the order an
+// operator looking at a backlog wants.
+message GetCallbackQueueRequest {
+	CallbackKind                           kind                      = 1; // UNSPECIFIED returns every kind
+	int64                                  after_seq                 = 2; // pagination: return deliveries above this seq (pass the highest seq of the previous page)
+	int32                                  limit                     = 3; // <= 0 selects the default (100), values above the cap (1000) are clamped down to it
+}
+
+// GetCallbackQueueResponse carries one page of the queue.
+//
+// enabled reports whether the service is currently recording deliveries. It matters for the same
+// reason the forgotten log's does: an empty queue is ambiguous without it - everything has been
+// delivered, or nothing is being queued.
+message GetCallbackQueueResponse {
+	repeated QueuedCallback                deliveries                = 1;
+	int64                                  depth                     = 2; // every delivery waiting, not just this page
+	bool                                   enabled                   = 3;
+	int64                                  oldest_queued_at          = 4; // UnixNano; 0 when the queue is empty
+	int64                                  next_seq                  = 5; // pass as after_seq for the next page; 0 when the page is the last
+}
+
+// DeleteCallbackQueueRequest empties the callback queue. Supply before_time to discard only what was
+// queued before it, or all to empty the queue entirely - one of the two is required, so an empty
+// request can never silently discard every pending notification.
+message DeleteCallbackQueueRequest {
+	int64                                  before_time               = 1; // UnixNano; discards deliveries queued before this
+	bool                                   all                       = 2; // discard every delivery; ignored when before_time is set
+}
+
+message DeleteCallbackQueueResponse {
+	int64                                  deleted                   = 1;
+}
+
 // DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance
 // value, so a client can plot it without reimplementing the maths (which is what
 // docs/consolidation.md's value tables describe, and what the config wizard's preview approximates).
@@ -1275,6 +1380,7 @@ enum TopologyNodeKind {
 	TOPOLOGY_NODE_KIND_INGESTOR                                      = 11; // the edge-to-central ingestor
 	TOPOLOGY_NODE_KIND_MCP_BRIDGE                                    = 12; // an MCP server bridging an LLM host to this service
 	TOPOLOGY_NODE_KIND_CLIENT                                        = 13; // any other client of this service
+	TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER                             = 14; // the endpoint outbound callbacks are delivered to
 }
 
 // TopologyNodeSource says HOW this instance came to know about a node, and is the most important

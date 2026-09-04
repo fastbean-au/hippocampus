@@ -98,6 +98,22 @@ func expectSearchOutbox(mock sqlmock.Sqlmock, drv driver) {
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS idx_search_outbox`).WillReturnResult(sqlmock.NewResult(0, 0))
 }
 
+// expectCallbackQueue queues initCallbackQueue's statements: the table and its two indexes.
+func expectCallbackQueue(mock sqlmock.Sqlmock, drv driver) {
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS callback_queue`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	for range 2 {
+		if drv == driverMySQL {
+			mock.ExpectQuery(`information_schema.statistics`).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+			continue
+		}
+
+		mock.ExpectExec(`CREATE INDEX IF NOT EXISTS idx_callback_queue`).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+}
+
 // expectTombstones scripts initTombstones: the forgotten log's CREATE TABLE plus its two indexes.
 // MySQL has no CREATE INDEX IF NOT EXISTS, so its arm probes information_schema first and is
 // scripted as already having each index.
@@ -650,9 +666,24 @@ func TestInitPostgresSchemaMigrates(t *testing.T) {
 	mock.ExpectExec(`ALTER TABLE events DROP COLUMN significance`).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectMigrationRecorded(mock)
 
-	// The remaining migrations, each finding its work already done.
-	for _, name := range []string{"covering_index", "listing_index", "search_outbox", "forgotten_log", "instance_registry"} {
-		expectFreshMigration(t, mock, driverPostgres, name)
+	// The remaining migrations, each finding its work already done. Read off the real list rather
+	// than written out, so a migration appended after this one is scripted here too - a hand-written
+	// tail would leave this test one statement short of what init actually issues, and the failure
+	// would name the new migration rather than this list.
+	remaining := false
+
+	for _, migration := range (&DB{driver: driverPostgres}).migrations() {
+		if migration.name == "significance_levels" {
+			remaining = true
+
+			continue
+		}
+
+		if !remaining || (migration.when != nil && !migration.when(dialects[driverPostgres])) {
+			continue
+		}
+
+		expectFreshMigration(t, mock, driverPostgres, migration.name)
 		expectMigrationRecorded(mock)
 	}
 
@@ -846,6 +877,16 @@ func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name str
 
 	case "instance_registry":
 		expectInstances(mock, d)
+
+	case "content_search":
+		// The virtual table, then the backfill's two counts: an index that already has rows does
+		// nothing further, which is what a fresh store looks like after the table is created.
+		mock.ExpectExec(`CREATE VIRTUAL TABLE IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery(`count\(\*\) FROM ` + contentSearchTable).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	case "callback_queue":
+		expectCallbackQueue(mock, d)
 
 	default:
 		t.Fatalf("expectFreshMigration has no script for migration %q", name)

@@ -205,6 +205,48 @@ groups:
           description: "Index deletions are being recorded in the outbox faster than they can be applied to the search index, so the index is holding documents for memories the store has already forgotten. Unlike a dropped index operation this is durable - nothing is lost, and the queue drains once the cluster keeps up - but the backlog costs disk and dilutes bm25 ranking until it does. Check the OpenSearch cluster's health. If the backlog reaches opensearch.outbox.maxRows or maxAgeHours the oldest entries are discarded to the reconciliation sweep."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
 
+      # The callback queue's counterpart, and a harder failure than the outbox's: there is no sweep
+      # behind this queue, so a delivery discarded at the caps is a notification nobody will ever
+      # receive.
+      - alert: HippocampusCallbackQueueBacklog
+        expr: max(hippocampus_callbacks_queue_depth) > 10000
+        for: 30m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus cannot deliver callbacks as fast as it records them"
+          description: "Callback deliveries are being recorded faster than the receiver at callbacks.url accepts them, so the store is holding notifications about memories it has already forgotten. Nothing is lost yet - the queue is durable and drains once the receiver keeps up - but it is excluded from the capacity target, not from the disk. Check the receiver. If the backlog reaches callbacks.maxRows or maxAgeHours the oldest deliveries are discarded, and unlike a queued index deletion nothing recovers them."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # The receiver is answering with something other than a 2xx, or not answering at all. Separate
+      # from the backlog above because it fires first: a failing receiver shows here within minutes,
+      # while the depth takes as long as the deletion rate needs to build ten thousand deliveries.
+      - alert: HippocampusCallbackDeliveriesFailing
+        expr: sum(rate(hippocampus_callbacks_delivered_total{outcome="failed"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus callback deliveries are being refused"
+          description: "The receiver at callbacks.url is refusing deliveries, or is unreachable. Each failure is deferred on an exponential backoff and retried, so nothing is lost while this fires - but the queue grows for as long as it lasts, and once it reaches callbacks.maxRows or maxAgeHours the oldest notifications are discarded permanently. Check the receiver's health and, if authentication is configured, that its token or signing secret still matches."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
+      # The escalation of both: the caps have started discarding notifications the receiver never
+      # took. Critical rather than warning, because unlike every other discard in this file there is
+      # no backstop - no sweep, no rebuild, no way to ask again.
+      - alert: HippocampusCallbacksAbandoning
+        expr: sum(rate(hippocampus_callbacks_abandoned_total[15m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is discarding undelivered callbacks"
+          description: "The callback queue has hit its caps and is discarding deliveries the receiver never accepted. These notifications are lost: nothing re-derives them, because the memories they describe are already gone. This means the receiver has been unreachable for long enough to exhaust callbacks.maxAgeHours or maxRows - treat it as a receiver outage, not as tuning, and expect a gap in whatever downstream system consumes these."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
       # The escalation of the above: the caps have started discarding deletions the index never
       # took. This is the one condition here that leaves the index knowingly wrong until a sweep
       # finds it.

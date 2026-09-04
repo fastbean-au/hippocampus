@@ -196,6 +196,7 @@ const (
 	topologyNodeTransfer   = "transfer"
 	topologyNodeIdP        = "idp"
 	topologyNodeCollector  = "collector"
+	topologyNodeCallbacks  = "callbacks"
 
 	// topologyDeclaredPrefix namespaces a declared component's id, so an operator naming a component
 	// "store" cannot collide with the primary store's node and quietly replace it on the diagram.
@@ -383,6 +384,7 @@ func (s *Server) buildTopologySpecs() ([]topologyNodeSpec, []topologyEdgeSpec) {
 		s.transferNodeSpec(),
 		identityProviderNodeSpec(),
 		collectorNodeSpec(),
+		callbackNodeSpec(),
 	}
 
 	for _, component := range s.topology.components {
@@ -403,6 +405,7 @@ func (s *Server) buildTopologySpecs() ([]topologyNodeSpec, []topologyEdgeSpec) {
 		{from: topologyNodeSelf, to: topologyNodeTransfer, label: "transfers to", optional: true},
 		{from: topologyNodeSelf, to: topologyNodeIdP, label: "fetches keys from", optional: true},
 		{from: topologyNodeSelf, to: topologyNodeCollector, label: "exports to", optional: true},
+		{from: topologyNodeSelf, to: topologyNodeCallbacks, label: "notifies", optional: true},
 	}
 
 	// Inbound, and the only edges in the graph that are. A declared component holds an address for
@@ -782,6 +785,73 @@ func collectorNodeSpec() topologyNodeSpec {
 	}
 
 	return spec
+}
+
+// callbackNodeSpec describes the outbound callback receiver.
+//
+// Never probed, and for the IdP's reason rather than the collector's: this endpoint belongs to
+// somebody else. A reader-visible console page must not turn into a timer-driven request against a
+// third party's service, and a probe would tell an operator nothing the delivery metrics do not -
+// hippocampus.callbacks.queue_depth and the delivered counter already say whether the receiver is
+// accepting real traffic, which is a better answer than whether it answers a synthetic one.
+func callbackNodeSpec() topologyNodeSpec {
+	spec := topologyNodeSpec{
+		id:     topologyNodeCallbacks,
+		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER,
+		name:   "Callback receiver",
+		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
+	}
+
+	if !viper.GetBool("callbacks.enabled") {
+		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
+		spec.attributes = []topologyAttribute{
+			{key: "enable_with", value: "callbacks.enabled"},
+		}
+
+		return spec
+	}
+
+	// Redacted at construction, like every other endpoint here: a callback URL can carry credentials
+	// in its userinfo, and the Server must never hold one for this purpose.
+	spec.detail = redactEndpoint(viper.GetString("callbacks.url"))
+	spec.attributes = []topologyAttribute{
+		{key: "scope", value: callbackScopeDescription()},
+		{key: "bodies", value: enabledDescription(viper.GetBool("callbacks.includeBodies"))},
+		{key: "authentication", value: callbackAuthDescription()},
+		{key: "probing", value: "off (a third party's endpoint, and the delivery metrics answer better)"},
+	}
+
+	return spec
+}
+
+// callbackScopeDescription renders which deletions the receiver is told about.
+func callbackScopeDescription() string {
+	if viper.GetBool("callbacks.allDeletions") {
+		return "every deletion"
+	}
+
+	return "consolidation and eviction only"
+}
+
+// callbackAuthDescription names how deliveries authenticate themselves, without naming the secrets.
+func callbackAuthDescription() string {
+	token := viper.GetString("callbacks.token") != ""
+	signed := viper.GetString("callbacks.signingSecret") != ""
+
+	switch {
+
+	case token && signed:
+		return "bearer token and signature"
+
+	case token:
+		return "bearer token"
+
+	case signed:
+		return "signature"
+
+	}
+
+	return "none"
 }
 
 // The small renderers below exist so that a value an operator reads is never a bare zero. "0" in a

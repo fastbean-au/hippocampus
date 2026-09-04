@@ -156,5 +156,27 @@
       "maxRows": 100000,
       "maxAgeInDays": 30
     }
+  },
+  "callbacks": {
+    "enabled": false,
+    "url": "",
+    "token": "",
+    "signingSecret": "",
+    "timeoutSeconds": 10,
+    "allDeletions": false,
+    "includeBodies": false,
+    "maxBodyBytes": 65536,
+    "maxIdsPerDelivery": 500,
+    "maxRows": 1000000,
+    "maxAgeHours": 24,
+    "events": {
+      "memoryForgotten": true,
+      "eventForgotten": true,
+      "sleepCompleted": true
+    },
+    "tls": {
+      "enabled": false,
+      "caCertFile": ""
+    }
   }
 }

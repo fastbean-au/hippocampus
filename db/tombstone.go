@@ -146,8 +146,16 @@ func ForgottenLimit(requested int) int {
 // forgetReason is why a batch of memories is being deleted. It travels into
 // deleteMemoriesIfUnrecalled so the chokepoint can record the decision without knowing which pass
 // called it; the zero value (ForgetRuleNone) means "not forgetting", and writes no tombstones.
+//
+// It carries TWO answers to "why", because the two features that ask want different questions
+// answered. rule is the forgotten log's: which decay rule took this, a question with no answer for a
+// client-initiated delete, which is why Clear passes the zero rule and writes nothing. cause is the
+// callback queue's: what kind of deletion this was at all, including the ones that are not decay -
+// which is what callbacks.allDeletions widens the feed to include. Keeping them separate is what
+// lets the log go on meaning what it has always meant.
 type forgetReason struct {
 	rule      ForgetRule
+	cause     DeleteCause
 	threshold float64
 }
 
@@ -158,15 +166,23 @@ func (r forgetReason) recording() bool {
 	return r.rule != ForgetRuleNone
 }
 
-// forgetReasonFor is how a consolidation or eviction pass names why it is deleting. It returns the
-// zero reason - which records nothing - whenever the log is off, so the gate is applied once per
-// pass rather than once per row.
-func (d *DB) forgetReasonFor(rule ForgetRule, s Server) forgetReason {
+// forgetReasonFor is how a consolidation or eviction pass names why it is deleting.
+//
+// The forgotten log's half is gated here rather than per row: with the log off, the rule stays
+// ForgetRuleNone and nothing downstream computes a value or captures a tombstone. The callback
+// queue's half is not gated the same way, because a cause is not a cost - it is one integer that
+// travels with the batch, and the queue applies its own policy to it.
+func (d *DB) forgetReasonFor(rule ForgetRule, cause DeleteCause, s Server) forgetReason {
+	reason := forgetReason{cause: cause}
+
 	if !d.tombstones.Enabled || !d.tombstoneTable {
-		return forgetReason{}
+		return reason
 	}
 
-	return forgetReason{rule: rule, threshold: s.DeletionThreshold()}
+	reason.rule = rule
+	reason.threshold = s.DeletionThreshold()
+
+	return reason
 }
 
 // tombstoneDDL is the CREATE TABLE for the forgotten log in the active dialect.
@@ -234,6 +250,10 @@ func (d *DB) initTombstones() error {
 }
 
 // tombstoneRow is one captured memory, read from the row before it is deleted.
+//
+// body and bodyOmitted are populated only when the caller asked for bodies (the callback queue's
+// includeBodies), and are never written to the forgotten log - a tombstone reports that something
+// was lost and is deliberately not an undelete.
 type tombstoneRow struct {
 	id           string
 	eventId      string
@@ -244,6 +264,8 @@ type tombstoneRow struct {
 	timeStamp    int64
 	timeRecalled int64
 	recallCount  int32
+	body         string
+	bodyOmitted  bool
 }
 
 // recordTombstones captures the rows a delete chunk is about to remove. It runs INSIDE the delete's
@@ -258,13 +280,50 @@ type tombstoneRow struct {
 // The capture is a superset - a memory recalled between this and the delete is spared by the
 // delete's own guard - so writeTombstones is given the ids that actually went and writes only
 // those. Value comes from the snapshot, being the number the pass computed to select the row.
-func (d *DB) recordTombstones(tx *sql.Tx, chunk []memoryRecallSnapshot) (map[string]tombstoneRow, error) {
-	ids := make([]any, 0, len(chunk))
+func (d *DB) recordTombstones(tx *sql.Tx, chunk []memoryRecallSnapshot, withBodies bool) (map[string]tombstoneRow, error) {
+	ids := make([]string, 0, len(chunk))
 	values := make(map[string]float64, len(chunk))
 
 	for _, item := range chunk {
 		ids = append(ids, item.id)
 		values[item.id] = item.value
+	}
+
+	return d.captureMemoryRows(tx, ids, values, withBodies)
+}
+
+// captureMemoryRows is the capture itself, addressed by id.
+//
+// Split out from recordTombstones because the id-addressing delete paths (a client's DeleteMemories,
+// an event's memories going with it) have no scan and so no snapshots to pass - but they capture the
+// same columns, from the same rows, for the same reason, and a second copy of this SELECT is a
+// second place for the column list to drift.
+//
+// values is what each pass computed to select the row; it is the forgotten log's, and empty for the
+// paths that are not forgetting.
+func (d *DB) captureMemoryRows(
+	tx *sql.Tx,
+	memoryIds []string,
+	values map[string]float64,
+	withBodies bool,
+) (map[string]tombstoneRow, error) {
+	if len(memoryIds) == 0 {
+		return nil, nil
+	}
+
+	ids := make([]any, 0, len(memoryIds))
+
+	for _, id := range memoryIds {
+		ids = append(ids, id)
+	}
+
+	// The body is read only when a caller has asked for one. It is the single most expensive column
+	// in the table and the whole reason the consolidation scans stay on the covering index, so the
+	// forgotten log - which never wants it - must not start paying for it because something else
+	// might.
+	bodyColumns := ""
+	if withBodies {
+		bodyColumns = `, m.body, m.is_compressed`
 	}
 
 	// The significance registry is joined rather than snapshotted in Go: the rank is what a reader
@@ -274,7 +333,7 @@ func (d *DB) recordTombstones(tx *sql.Tx, chunk []memoryRecallSnapshot) (map[str
 		d.rebind(
 			`SELECT m.id, m.event_id, m.group_name, COALESCE(l.level_rank, 0),
 				length(m.body) + `+d.metadataBytesExpr("m.")+`,
-				m.timestamp, m.time_recalled, m.recall_count
+				m.timestamp, m.time_recalled, m.recall_count`+bodyColumns+`
 			FROM memories m LEFT JOIN significance_levels l ON l.id = m.significance_level_id
 			WHERE m.id IN (`+placeholders(len(ids))+`)`,
 		),
@@ -287,12 +346,16 @@ func (d *DB) recordTombstones(tx *sql.Tx, chunk []memoryRecallSnapshot) (map[str
 	}
 	defer func() { _ = rows.Close() }()
 
-	captured := make(map[string]tombstoneRow, len(chunk))
+	captured := make(map[string]tombstoneRow, len(memoryIds))
 
 	for rows.Next() {
-		var row tombstoneRow
+		var (
+			row          tombstoneRow
+			stored       []byte
+			isCompressed bool
+		)
 
-		if err := rows.Scan(
+		targets := []any{
 			&row.id,
 			&row.eventId,
 			&row.group,
@@ -301,10 +364,20 @@ func (d *DB) recordTombstones(tx *sql.Tx, chunk []memoryRecallSnapshot) (map[str
 			&row.timeStamp,
 			&row.timeRecalled,
 			&row.recallCount,
-		); err != nil {
+		}
+
+		if withBodies {
+			targets = append(targets, &stored, &isCompressed)
+		}
+
+		if err := rows.Scan(targets...); err != nil {
 			log.Errorf("failed to scan a tombstone: %s", err.Error())
 
 			return nil, err
+		}
+
+		if withBodies {
+			row.body, row.bodyOmitted = d.capturedBody(row.id, stored, isCompressed)
 		}
 
 		row.value = values[row.id]
@@ -318,6 +391,28 @@ func (d *DB) recordTombstones(tx *sql.Tx, chunk []memoryRecallSnapshot) (map[str
 	}
 
 	return captured, nil
+}
+
+// capturedBody decompresses a captured body and applies the size cap, returning the body to carry
+// and whether it was left out.
+//
+// A body over the cap is OMITTED, never truncated. A receiver cannot tell a truncated body from a
+// whole one, so truncation would hand it something that looks complete and is not - which is worse
+// than telling it plainly that there was a body and it did not fit. A body that fails to decompress
+// is treated the same way: the row is still worth reporting, and the flag says what is missing.
+func (d *DB) capturedBody(id string, stored []byte, isCompressed bool) (string, bool) {
+	body, err := decompressBody(stored, isCompressed)
+	if err != nil {
+		log.Warnf("failed to decompress the body of %s for a callback, omitting it: %s", id, err.Error())
+
+		return "", true
+	}
+
+	if d.callbacks.MaxBodyBytes > 0 && len(body) > d.callbacks.MaxBodyBytes {
+		return "", true
+	}
+
+	return body, false
 }
 
 // writeTombstones inserts one row per id that was actually deleted, in the same transaction as the

@@ -1369,12 +1369,12 @@ type failDeleteEventIfEmptyStore struct {
 	err    error
 }
 
-func (f failDeleteEventIfEmptyStore) DeleteEventIfEmpty(ctx context.Context, id string) (bool, error) {
+func (f failDeleteEventIfEmptyStore) DeleteEventIfEmpty(ctx context.Context, id string, cause db.DeleteCause) (bool, error) {
 	if id == f.failId {
 		return false, f.err
 	}
 
-	return f.Store.DeleteEventIfEmpty(ctx, id)
+	return f.Store.DeleteEventIfEmpty(ctx, id, cause)
 }
 
 // TestClearManifest_EventDeleteErrorLoggedAndSkipped verifies a failing DeleteEventIfEmpty for one

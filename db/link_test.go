@@ -313,7 +313,7 @@ func TestPruneEventLinksOnEventDelete(t *testing.T) {
 		{
 			name: "DeleteEventIfEmpty",
 			delete: func(t *testing.T, db *DB) {
-				deleted, err := db.DeleteEventIfEmpty(ctx, "e1")
+				deleted, err := db.DeleteEventIfEmpty(ctx, "e1", CauseConsolidation)
 				if err != nil {
 					t.Fatalf("DeleteEventIfEmpty: %s", err)
 				}
@@ -374,7 +374,7 @@ func TestDeleteEventIfEmptySparedEventKeepsItsLinks(t *testing.T) {
 		t.Fatalf("LinkEvents: %s", err)
 	}
 
-	if deleted, err := db.DeleteEventIfEmpty(ctx, "e1"); err != nil {
+	if deleted, err := db.DeleteEventIfEmpty(ctx, "e1", CauseConsolidation); err != nil {
 		t.Fatalf("DeleteEventIfEmpty: %s", err)
 	} else if deleted {
 		t.Fatal("a non-empty event should not have been deleted")

@@ -35,6 +35,53 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **Outbound callbacks, backed by a persisted queue.** Everything the service offered about
+  forgetting was pull — `PreviewConsolidation`, `ExplainConsolidation`, `GetConsolidationStatus`,
+  `GetForgottenMemories` all require a client to be asking. With `callbacks.enabled` and a
+  `callbacks.url` the service now POSTs JSON to that endpoint when it forgets memories or events and
+  when a sleep cycle finishes, so a system downstream of the store learns about a deletion instead of
+  discovering it by asking for a record and finding nothing. Off by default.
+
+  A delivery is recorded in the **same database transaction as the deletion that produced it** and
+  sent by a background worker, so there is no boundary at which a notification can be dropped: a
+  receiver that is down is a backlog rather than a silent loss, and a crash between the deletion and
+  the delivery replays on restart. That matters more here than for the search-index outbox it is
+  modelled on, because a callback about a deletion cannot be reconstructed afterwards — once the
+  memory is gone, nothing re-derives the notification. Delivery is at-least-once; receivers should be
+  idempotent, and the `cycle_id` and chunk numbering are what let one recognise a repeat.
+
+  A delivery is a **batch**: one consolidation chunk that removed five hundred memories is one
+  request, not five hundred, and a sleep-cycle completion's id list is chunked at
+  `callbacks.maxIdsPerDelivery`. Only the two decay paths speak by default —
+  `callbacks.allDeletions` widens the feed to client deletes, clears, cascades, summary replacements
+  and purges, each tagged with its cause. `callbacks.includeBodies` adds memory bodies, capped by
+  `callbacks.maxBodyBytes`; a body over the cap is **omitted and flagged**, never truncated.
+  `callbacks.token` and `callbacks.signingSecret` authenticate deliveries (bearer token, and an
+  HMAC-SHA256 signature over the timestamp and body); `callbacks.tls` accepts the same trust options
+  as `opensearch.tls`, and redirects are never followed.
+
+  A failed delivery is deferred on a jittered exponential backoff rather than dropped, and nothing is
+  abandoned on an attempt count — only the queue's own `maxRows`/`maxAgeHours` bounds remove an
+  undelivered delivery, which is logged at Warn and counted. The queue is excluded from the capacity
+  target, since it grows precisely when a receiver is down and can carry bodies; counting it would
+  evict live memories to make room for the news that memories were evicted.
+
+  New RPCs `GetCallbackQueue` (`GET /v1/callbacks/queue`) and `DeleteCallbackQueue`
+  (`POST /v1/callbacks/queue/delete`), both `admin`, both refused to a group-scoped caller — a
+  delivery batches memories across groups, so there is nothing to scope it by. `hippo callbacks
+  queue` and `hippo callbacks clear` are the CLI half. Four metrics
+  (`hippocampus.callbacks.queue_depth`/`.delivered`/`.abandoned`/`.delivery.duration`), three shipped
+  alert rules, a config-wizard card, and a `Callback receiver` node in `GetTopology` — never probed,
+  since it is a third party's endpoint and the delivery metrics answer better. See
+  [Outbound callbacks](docs/configuration.md#outbound-callbacks).
+
+### Changed
+
+- The schema is at **version 13**: the callback queue adds one table (`callback_queue`), migrated in
+  place on startup like every addition before it.
+
 ## [0.40.1] - 2026-09-03
 
 ### Added

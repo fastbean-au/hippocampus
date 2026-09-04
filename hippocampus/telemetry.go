@@ -54,6 +54,11 @@ type telemetry struct {
 	searchOutboxAbandoned metric.Int64Counter
 	staleDocumentsRemoved metric.Int64Counter
 
+	callbackQueueDepth metric.Int64Gauge
+	callbacksDelivered metric.Int64Counter
+	callbacksAbandoned metric.Int64Counter
+	callbackDuration   metric.Float64Histogram
+
 	summarisationCandidates metric.Int64Gauge
 	memoriesSummarised      metric.Int64Counter
 	summariesCreated        metric.Int64Counter
@@ -114,6 +119,16 @@ func newTelemetry() *telemetry {
 		searchOutboxApplied:   newInt64Counter(meter, "hippocampus.search.outbox.applied", "Index deletions drained from the outbox and accepted by the search index."),
 		searchOutboxAbandoned: newInt64Counter(meter, "hippocampus.search.outbox.abandoned", "Queued index deletions discarded by the outbox caps before the index accepted them, leaving them to the reconciliation sweep."),
 		staleDocumentsRemoved: newInt64Counter(meter, "hippocampus.search.stale_documents_removed", "Search-index documents removed by the reconciliation sweep because the primary store no longer holds the memory."),
+
+		// The outbound callback queue. Depth answers the question the delivered counter cannot: a
+		// receiver that is refusing everything still produces delivery attempts, so a failure rate
+		// says something is wrong while depth says how far behind it has fallen. Abandoned is
+		// depth's escalation, and it is worse than the search outbox's namesake - there is no sweep
+		// behind this queue, so an abandoned delivery is a notification nobody will ever get.
+		callbackQueueDepth: newInt64Gauge(meter, "hippocampus.callbacks.queue_depth", "Callback deliveries recorded but not yet accepted by the receiver. Sustained growth means the receiver is failing or unreachable."),
+		callbacksDelivered: newInt64Counter(meter, "hippocampus.callbacks.delivered", "Callback delivery attempts, by kind and outcome."),
+		callbacksAbandoned: newInt64Counter(meter, "hippocampus.callbacks.abandoned", "Queued callbacks discarded by the queue caps before the receiver accepted them. Unlike a dropped index deletion, nothing recovers these."),
+		callbackDuration:   newFloat64Histogram(meter, "hippocampus.callbacks.delivery.duration", "s", "Duration of one callback delivery attempt in seconds.", observability.LatencyBuckets()),
 
 		summarisationCandidates: newInt64Gauge(meter, "hippocampus.summarisation_candidates", "Number of events identified as summarisation candidates by the most recent sleep cycle."),
 		memoriesSummarised:      newInt64Counter(meter, "hippocampus.memories.summarised", "Number of memories replaced by a summary memory (ReplaceMemoriesWithSummary or SummariseMemories)."),

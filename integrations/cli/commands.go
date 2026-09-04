@@ -263,6 +263,24 @@ func commands() map[string]command {
 			},
 			run: runForgottenClear,
 		},
+		"callbacks queue": {
+			summary: "show the outbound callback queue",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("kind", "", "only this kind: memory-forgotten, event-forgotten or sleep-completed")
+				fs.Int64("after-seq", 0, "pagination: the next_seq reported by the previous page")
+				fs.Int32("limit", 0, "deliveries to return (default 100, max 1000)")
+			},
+			run: runCallbackQueue,
+		},
+		"callbacks clear": {
+			summary: "discard pending callbacks (destructive)",
+			hint:    "--before T | --all",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("before", "", "discard deliveries queued before this RFC3339 time")
+				fs.Bool("all", false, "discard every pending delivery")
+			},
+			run: runCallbackClear,
+		},
 		"purge": {
 			summary: "delete every event and memory (destructive)",
 			hint:    "--yes",
@@ -1148,6 +1166,77 @@ func runForgottenList(ctx context.Context, client contract.HippocampusClient, fs
 	}
 
 	return r.render(resp)
+}
+
+// runCallbackQueue shows what the outbound callback queue is holding.
+//
+// The kind flag takes a hyphenated spelling rather than the wire enum's SHOUTING_SNAKE, matching
+// what --rule does for the forgotten log: an operator types what reads as a word, and the mapping
+// lives in one place.
+func runCallbackQueue(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	kind, err := callbackKindFromFlag(fs, "kind")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.GetCallbackQueue(ctx, &contract.GetCallbackQueueRequest{
+		Kind:     kind,
+		AfterSeq: i64(fs, "after-seq"),
+		Limit:    i32(fs, "limit"),
+	})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runCallbackClear discards pending deliveries. It requires --before or --all for the same reason
+// the RPC does, and a sharper one than the forgotten log's: what this destroys is not a record of a
+// notification but the notification itself, and nothing else will ever send it.
+func runCallbackClear(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	before, err := parseTime(fs, "before")
+	if err != nil {
+		return err
+	}
+
+	all := b(fs, "all")
+
+	if before == 0 && !all {
+		return fmt.Errorf("clearing the callback queue requires --before or --all")
+	}
+
+	resp, err := client.DeleteCallbackQueue(ctx, &contract.DeleteCallbackQueueRequest{
+		BeforeTime: before,
+		All:        all,
+	})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// callbackKindFromFlag maps the operator-facing spelling onto the wire enum. An empty flag means
+// every kind, which is what the RPC reads UNSPECIFIED as.
+func callbackKindFromFlag(fs *pflag.FlagSet, name string) (contract.CallbackKind, error) {
+	switch strings.ToLower(strings.TrimSpace(str(fs, name))) {
+
+	case "":
+		return contract.CallbackKind_CALLBACK_KIND_UNSPECIFIED, nil
+
+	case "memory-forgotten", "memory":
+		return contract.CallbackKind_CALLBACK_KIND_MEMORY_FORGOTTEN, nil
+
+	case "event-forgotten", "event":
+		return contract.CallbackKind_CALLBACK_KIND_EVENT_FORGOTTEN, nil
+
+	case "sleep-completed", "sleep":
+		return contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED, nil
+
+	}
+
+	return 0, fmt.Errorf("--%s must be memory-forgotten, event-forgotten or sleep-completed", name)
 }
 
 // runForgottenClear empties the log. It requires --before or --all for the same reason the RPC

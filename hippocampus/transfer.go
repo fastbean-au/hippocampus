@@ -265,7 +265,7 @@ func (s *Server) clearManifest(ctx context.Context, manifest *transferManifest) 
 	eventsCleared := 0
 
 	for _, id := range manifest.eventIds {
-		deleted, err := s.db.DeleteEventIfEmpty(ctx, id)
+		deleted, err := s.db.DeleteEventIfEmpty(ctx, id, db.CauseClear)
 		if err != nil {
 			log.Errorf("failed to delete event '%s' during clear: %s", id, err.Error())
 

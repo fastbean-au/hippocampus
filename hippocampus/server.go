@@ -24,6 +24,7 @@ import (
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/embed"
+	"github.com/fastbean-au/hippocampus/notify"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/summarise"
 )
@@ -317,6 +318,27 @@ type Server struct {
 	stopOutbox    chan struct{}
 	outboxStopped chan struct{}
 
+	// The outbound callback queue's dispatcher (callbacks.go): the worker that posts the deliveries
+	// recorded alongside the deletions that caused them, its sink, and the caps that bound the queue
+	// when the receiver cannot keep up. Held and shut down exactly as the outbox drain is, and nil
+	// when nothing is dispatching - no sink is configured, or this is a replica.
+	notifier          notify.Notifier
+	callbacksEnabled  bool
+	callbackMaxAge    time.Duration
+	callbackMaxRows   int64
+	callbackBatchSize int
+	callbackBaseBack  time.Duration
+	callbackMaxBack   time.Duration
+	callbackChunkIds  int
+
+	// callbackSleepEvents is callbacks.events.sleepCompleted, resolved at startup rather than read
+	// per cycle: the sleep cycle is not a place to be consulting viper, and the other two toggles
+	// live on the store's CallbackPolicy for the same reason.
+	callbackSleepEvents bool
+
+	stopCallbacks    chan struct{}
+	callbacksStopped chan struct{}
+
 	// objects is the optional S3 object store backing the Export/Import RPCs; nil (s3.bucket not
 	// configured) makes both fail with FAILED_PRECONDITION.
 	objects archive.ObjectStore
@@ -449,6 +471,10 @@ type Dependencies struct {
 	// Embedder is the optional text embedder backing semantic search (nil -> disabled).
 	Embedder embed.Embedder
 
+	// Notifier is the optional outbound callback sink (nil -> disabled). A disabled sink gates the
+	// queue's recording as well as its dispatch, so a store never queues what nothing will send.
+	Notifier notify.Notifier
+
 	// Version is the build identification main.go already derived (runtime/debug.ReadBuildInfo),
 	// passed in rather than re-read here because the -ldflags override that makes a release report
 	// its tag lives in package main and nowhere else. Reported by GetTopology on the self node;
@@ -552,6 +578,7 @@ func New(deps Dependencies) *Server {
 
 	s.startReconcile(deps.Search)
 	s.startOutboxDrain(deps.Search)
+	s.startCallbackDispatch(deps.Notifier)
 
 	// Built last, so the specs describe the server as it finally is - the search backend in
 	// particular is only decided by the dependency that was handed in, and the reconcile interval is
@@ -607,6 +634,11 @@ func (s *Server) Stop() {
 		s.stopInstanceHeartbeat()
 
 		s.stopTopologyProber()
+
+		if s.stopCallbacks != nil {
+			close(s.stopCallbacks)
+			<-s.callbacksStopped
+		}
 
 		if s.stopOutbox != nil {
 			close(s.stopOutbox)

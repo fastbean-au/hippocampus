@@ -129,7 +129,7 @@ func TestDeleteEventIfEmpty(t *testing.T) {
 		t.Fatalf("CreateMemory: %s", err)
 	}
 
-	deleted, err := db.DeleteEventIfEmpty(context.Background(), "empty")
+	deleted, err := db.DeleteEventIfEmpty(context.Background(), "empty", CauseConsolidation)
 	if err != nil {
 		t.Fatalf("DeleteEventIfEmpty(empty): %s", err)
 	}
@@ -142,7 +142,7 @@ func TestDeleteEventIfEmpty(t *testing.T) {
 		t.Error("expected 'empty' to be gone")
 	}
 
-	deleted, err = db.DeleteEventIfEmpty(context.Background(), "occupied")
+	deleted, err = db.DeleteEventIfEmpty(context.Background(), "occupied", CauseConsolidation)
 	if err != nil {
 		t.Fatalf("DeleteEventIfEmpty(occupied): %s", err)
 	}

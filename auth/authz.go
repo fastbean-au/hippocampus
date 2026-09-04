@@ -186,6 +186,14 @@ var policies = map[string]rpcPolicy{
 	// scopeFilter, so a scoped admin empties their own partition of the log and no more.
 	"DeleteForgottenMemories": {TierAdmin, http.MethodPost, "/v1/memories/forgotten/delete"},
 
+	// The callback queue's pair are both admin, unlike the forgotten log's split. The read is not
+	// the harmless half here: the queue is a deployment-wide operational structure rather than a
+	// record of the caller's own data, it cannot be group-scoped at all (see hippocampus/scope.go),
+	// and its depth is a fact about the deployment's health rather than about anybody's memories.
+	// The delete is destructive on notifications nothing else will ever send.
+	"GetCallbackQueue":    {TierAdmin, http.MethodGet, "/v1/callbacks/queue"},
+	"DeleteCallbackQueue": {TierAdmin, http.MethodPost, "/v1/callbacks/queue/delete"},
+
 	"Export":   {TierAdmin, http.MethodPost, "/v1/export"},
 	"Transfer": {TierAdmin, http.MethodPost, "/v1/transfer"},
 	"Clear":    {TierAdmin, http.MethodPost, "/v1/clear"},

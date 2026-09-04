@@ -537,6 +537,19 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 		}
 	})
 
+	t.Run("the callback queue is refused", func(t *testing.T) {
+		// Both halves, because a queued delivery batches memories across groups and so cannot be
+		// partitioned: a bound caller could only ever be shown - or empty - infrastructure that is
+		// not theirs.
+		if _, err := s.GetCallbackQueue(ctx, &contract.GetCallbackQueueRequest{}); status.Code(err) != codes.PermissionDenied {
+			t.Errorf("GetCallbackQueue = %v, want PermissionDenied", err)
+		}
+
+		if _, err := s.DeleteCallbackQueue(ctx, &contract.DeleteCallbackQueueRequest{All: true}); status.Code(err) != codes.PermissionDenied {
+			t.Errorf("DeleteCallbackQueue = %v, want PermissionDenied", err)
+		}
+	})
+
 	t.Run("GetTopology is refused", func(t *testing.T) {
 		_, err := s.GetTopology(ctx, &contract.EmptyRequest{})
 
@@ -792,6 +805,8 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"ImportBatch":             true,
 		"GetForgottenMemories":    true,
 		"DeleteForgottenMemories": true,
+		"GetCallbackQueue":        true,
+		"DeleteCallbackQueue":     true,
 
 		// Export, Transfer and Clear are covered through walkStore, which is the entirety of what
 		// each of them scopes - they differ only in what they do with the manifest it returns (an S3

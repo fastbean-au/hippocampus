@@ -53,6 +53,18 @@ func (f *fakeClient) DeleteForgottenMemories(_ context.Context, in *contract.Del
 	return &contract.DeleteForgottenMemoriesResponse{}, f.err
 }
 
+func (f *fakeClient) GetCallbackQueue(_ context.Context, in *contract.GetCallbackQueueRequest, _ ...grpc.CallOption) (*contract.GetCallbackQueueResponse, error) {
+	f.capture(in)
+
+	return &contract.GetCallbackQueueResponse{Enabled: true}, f.err
+}
+
+func (f *fakeClient) DeleteCallbackQueue(_ context.Context, in *contract.DeleteCallbackQueueRequest, _ ...grpc.CallOption) (*contract.DeleteCallbackQueueResponse, error) {
+	f.capture(in)
+
+	return &contract.DeleteCallbackQueueResponse{}, f.err
+}
+
 func (f *fakeClient) ExplainConsolidation(_ context.Context, in *contract.ExplainConsolidationRequest, _ ...grpc.CallOption) (*contract.ExplainConsolidationResponse, error) {
 	f.capture(in)
 

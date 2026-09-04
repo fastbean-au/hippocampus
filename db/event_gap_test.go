@@ -101,7 +101,7 @@ func TestDeleteEventIfEmpty_RowsAffectedError(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnResult(sqlmock.NewErrorResult(errors.New("boom")))
 	mock.ExpectRollback()
 
-	if _, err := d.DeleteEventIfEmpty(context.Background(), "e1"); err == nil {
+	if _, err := d.DeleteEventIfEmpty(context.Background(), "e1", CauseConsolidation); err == nil {
 		t.Fatal("expected an error")
 	}
 

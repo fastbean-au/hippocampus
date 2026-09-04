@@ -560,6 +560,34 @@ The console's **Decay** tab shows the log beside the dry run — the log to any 
 and the log's Clear button to an administrator — and the **Now** tab carries a short feed of the
 most recent losses.
 
+### Being told what was forgotten — outbound callbacks
+
+The log above, the dry run and the status RPC are all things a client has to **ask** for.
+[Outbound callbacks](configuration.md#outbound-callbacks) are the other direction: with
+`callbacks.enabled` and a `callbacks.url`, the service POSTs JSON to that endpoint when it forgets
+memories or events and when a sleep cycle finishes, so a system downstream of the store learns about
+a deletion instead of discovering it by asking for a record and finding nothing.
+
+Operationally the thing to know is that it is backed by a **persisted queue**, not a fire-and-forget
+call. A delivery is written in the same transaction as the deletion that produced it, so a receiver
+that is down becomes a backlog rather than a silent loss, and a restart mid-backlog replays. Delivery
+is at-least-once; receivers must be idempotent, and the `cycle_id` plus chunk numbering are what let
+one recognise a repeat.
+
+That makes the backlog the thing to watch. `hippocampus.callbacks.queue_depth` rising alongside a
+non-zero `hippocampus.callbacks.delivered{outcome="failed"}` rate is a receiver that is refusing;
+`hippo callbacks queue` shows the same thing per delivery, with the attempt count and next-attempt
+deadline that separate a queue which is draining from one that is stuck. Three shipped alert rules
+cover it. The escalation is `hippocampus.callbacks.abandoned`, and it is worse than its search-index
+namesake: there is no sweep behind this queue, so a delivery discarded at
+`callbacks.maxRows`/`maxAgeHours` is a notification nobody will ever receive. It is logged at Warn
+for deployments without a metrics stack.
+
+The queue is excluded from the capacity target — it grows precisely when a receiver is down, and it
+can carry memory bodies, so counting it would evict live memories to make room for the news that
+memories were evicted — but it is **not** excluded from the disk. `hippo callbacks clear` discards
+pending deliveries when a receiver is gone for good; it requires `--before` or `--all`.
+
 ## Seeing the deployment
 
 `hippo topology`, and the console's **Deployment** tab, report the deployment as one instance
@@ -949,6 +977,10 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.search.outbox.abandoned`        | counter       |                                       | Queued deletions discarded at the caps, left to the stale sweep             |
 | `hippocampus.search.stale_documents_removed` | counter       |                                       | Documents the sweep removed because the store no longer holds the memory    |
 | `hippocampus.search.queries`                 | counter       | `success`                             | Content searches served by it                                               |
+| `hippocampus.callbacks.queue_depth`          | gauge         |                                       | [Callback](configuration.md#outbound-callbacks) deliveries recorded but not yet accepted — the backpressure signal |
+| `hippocampus.callbacks.delivered`            | counter       | `kind`, `outcome`                     | Callback delivery attempts, by what they were about and whether they landed |
+| `hippocampus.callbacks.abandoned`            | counter       |                                       | Queued callbacks discarded at the caps — unlike an index deletion, nothing recovers these |
+| `hippocampus.callbacks.delivery.duration`    | histogram (s) | `outcome`                             | How long one delivery attempt took                                          |
 
 Three things the shape of this list says. The **four `search.*` counters exist only under
 `opensearch.enabled`** — the built-in FTS5 backend runs inside the primary write and has no queue to

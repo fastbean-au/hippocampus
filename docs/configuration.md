@@ -260,6 +260,8 @@ a JSON body:
 | `GetConsolidationStatus`     | GET    | `/v1/consolidation/status`        |
 | `GetForgottenMemories`       | GET    | `/v1/memories/forgotten`          |
 | `DeleteForgottenMemories`    | POST   | `/v1/memories/forgotten/delete`   |
+| `GetCallbackQueue`           | GET    | `/v1/callbacks/queue`             |
+| `DeleteCallbackQueue`        | POST   | `/v1/callbacks/queue/delete`      |
 | `Purge`                      | POST   | `/v1/purge`                       |
 | `WhoAmI`                     | GET    | `/v1/whoami`                      |
 | `GetTopology`                | GET    | `/v1/topology`                    |
@@ -970,7 +972,7 @@ everything a lower one can:
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `WhoAmI`, `GetTopology`¹ |
 | `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `Export`, `Transfer`, `Clear`                                                                                                             |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                    |
 
 The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and
 `GetForgottenMemories` — are all `reader`, while the dry run beside them is `admin`. What separates
@@ -984,6 +986,15 @@ handing `reader` tokens to untrusted clients while keeping a long `maxAgeInDays`
 what it describes, so it leaves a trace of groups, sizes and timing that the live store would by
 then have discarded. Emptying it (`DeleteForgottenMemories`) is `admin` either way — it is
 destructive, and destructive on an audit record rather than on data the caller put there.
+
+The [callback queue](#outbound-callbacks) pair are **both** `admin`, which is a different split from
+the forgotten log's and rests on a different fact. The read is not the harmless half here: the queue
+is a deployment-wide operational structure rather than a record of the caller's own data, its depth
+describes the deployment's health rather than anybody's memories, and — the part that decides it —
+it cannot be group-scoped at all. A queued delivery batches every memory one delete chunk removed,
+and a chunk routinely spans groups, so there is no single group a predicate could select on. Both
+are therefore refused outright to a group-scoped caller, on the same footing as the preview.
+
 ¹ `GetTopology` is the one RPC whose tier a deployment may change, via `topology.minimumTier`; the
 table gives its default. See [Deployment topology](#deployment-topology). What is **not**
 configurable is its refusal to a group-scoped caller, which is the same rule that governs the
@@ -1712,6 +1723,193 @@ model default). Binary memories are excluded from the prompt (their bodies are o
 Ollama with the optional `ollama` compose profile (see `docker-compose.yaml`), with the configured
 model pulled (`docker compose exec ollama ollama pull <model>`). For the full behaviour, see
 [Summarisation → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
+
+### Outbound callbacks
+
+Everything else the service offers about forgetting is **pull**: `PreviewConsolidation` asks what
+would go, `ExplainConsolidation` where one memory stands, `GetConsolidationStatus` when the next
+cycle is due, and `GetForgottenMemories` what went. Each needs a client to be asking. Callbacks are
+the push half — the service tells a configured HTTP endpoint that it has forgotten something, or
+that a sleep cycle has finished — so a system that treats Hippocampus as its forgetting front-half
+(an archive tier, a cache to invalidate, an index elsewhere) learns about a deletion instead of
+discovering it by asking for a record and finding nothing.
+
+Off by default. Enabling it needs a URL and nothing else:
+
+```json
+"callbacks": {
+    "enabled": true,
+    "url": "https://receiver.example.com/hippocampus",
+    "token": "",
+    "signingSecret": "",
+    "timeoutSeconds": 10,
+    "allDeletions": false,
+    "includeBodies": false,
+    "maxBodyBytes": 65536,
+    "maxIdsPerDelivery": 500,
+    "events": {
+        "memoryForgotten": true,
+        "eventForgotten": true,
+        "sleepCompleted": true
+    },
+    "tls": {
+        "enabled": false,
+        "caCertFile": ""
+    }
+}
+```
+
+#### It is backed by a persisted queue, and that is the point
+
+A delivery is recorded **in the same database transaction as the deletion that produced it**, and a
+background worker sends it afterwards. There is no in-memory queue and so no boundary at which a
+notification can be dropped; a crash between the deletion and the delivery replays on restart, and a
+receiver that is down for an hour is an hour of table growth rather than an hour of silent loss.
+
+That matters more here than anywhere else in the service, because a callback about a deletion cannot
+be reconstructed after the fact. Every other thing the service tells the outside world can be asked
+for again. Once a memory is gone, a notification nobody received is simply lost.
+
+Delivery is therefore **at-least-once**: a delivery is removed from the queue only once the receiver
+has returned a 2xx, so a response that never arrives means the delivery is sent again. Receivers
+should be idempotent. `cycle_id` and the chunk numbering are what let one recognise a repeat.
+
+#### What a delivery carries
+
+A POST of JSON, one per batch — a consolidation chunk that removed five hundred memories is **one**
+request, not five hundred:
+
+```json
+{
+  "kind": "memory_forgotten",
+  "cause": "consolidation",
+  "queued_at": 1788476468760678000,
+  "cycle_id": 1788476468000000000,
+  "items": [
+    { "id": "m-1", "event_id": "e-1", "group": "svc-a", "significance": 3, "bytes": 118 }
+  ]
+}
+```
+
+`kind` is one of `memory_forgotten`, `event_forgotten` or `sleep_completed`. `cause` is why:
+`consolidation` or `eviction` (the two decay paths), or — only with `allDeletions` — `client`,
+`clear`, `cascade`, `summary_replace` or `purge`. `cycle_id` groups every delivery one sleep cycle
+produced, including its completion, so a receiver can assemble a whole cycle without keeping state.
+
+A `sleep_completed` delivery adds a `cycle` object (the trigger, the counts, the bytes freed, whether
+it succeeded) and carries the ids the cycle forgot, **chunked** at `maxIdsPerDelivery` with `chunk`
+and `chunks` numbering them from 1 — a cycle that forgets ten thousand memories must not become one
+unbounded request. Every chunk repeats the `cycle` summary, so a receiver that misses one still knows
+what the cycle did. An item whose `id` and `event_id` are the same names an event rather than a
+memory.
+
+#### Which deletions speak
+
+By default only the two decay paths — consolidation and eviction. That is the narrow default on
+purpose: a client that called `DeleteMemories` already knows the memory is gone, and `Clear` is the
+second half of a move the caller initiated. `callbacks.allDeletions` widens the feed to every
+deletion, each tagged with its `cause` so a receiver can filter rather than guess.
+
+`callbacks.events.memoryForgotten`/`eventForgotten`/`sleepCompleted` switch off a kind entirely. They
+default **on**, since the feature as a whole is off — an operator who has configured a URL wants the
+callbacks, and needing to then enable each one would be a second switch for one decision. Turning one
+off stops the rows being written, which is cheaper than writing them for a receiver to discard.
+
+#### Bodies
+
+`includeBodies` adds each memory's body to its item. It is off by default and costs a body read per
+forgotten memory plus real space in the queue — the consolidation scans deliberately never touch the
+body column, and this is the one thing that makes them touch it (only for the handful of rows being
+deleted, by primary key, so the scans themselves are unaffected).
+
+A body over `maxBodyBytes` (64 KiB by default) is **omitted and flagged**, never truncated: the item
+carries `"body_omitted": true` with no `body`. A receiver cannot tell a truncated body from a whole
+one, which makes truncation worse than omission.
+
+#### Authenticating the receiver
+
+`callbacks.token` is sent as `Authorization: Bearer`. `callbacks.signingSecret` additionally signs
+each delivery: `X-Hippocampus-Timestamp` carries a UnixNano instant and `X-Hippocampus-Signature`
+carries `sha256=` plus the hex HMAC-SHA256 of `<timestamp>.<body>` under the secret. The timestamp is
+inside the signature rather than beside it, so a captured delivery cannot be replayed with a fresh
+one; a receiver that cares about replay rejects a timestamp that is too old. Both are secrets and
+both are injectable as `HIPPOCAMPUS_CALLBACKS_TOKEN` / `HIPPOCAMPUS_CALLBACKS_SIGNINGSECRET`.
+
+`callbacks.tls` accepts the same trust options as [`opensearch.tls`](#securing-the-connection) for an
+`https://` receiver serving a private-CA or mutual-TLS certificate. Redirects are **never followed** —
+a redirect would forward the bearer token and the signature to whatever host the endpoint named — and
+are reported as a failed delivery.
+
+#### When the receiver is down
+
+A failed delivery is deferred, not dropped: its attempt count rises and its next attempt moves out on
+a jittered exponential backoff from `retryBaseBackoffSeconds` (1) to `retryMaxBackoffSeconds` (300).
+Nothing is abandoned on an attempt count. The only thing that removes an undelivered delivery is the
+queue's own bounds — `maxRows` (1,000,000) and `maxAgeHours` (24) — and passing them is logged at
+**Warn** and counted (`hippocampus.callbacks.abandoned`), because unlike a dropped search-index
+deletion there is no sweep behind this queue: an abandoned callback is a notification nobody will
+ever receive.
+
+The queue is **excluded from the capacity target**, which is not tidiness. It grows precisely when a
+receiver is down, and it can carry memory bodies; counted as stored bytes it would raise capacity
+pressure and evict live memories to make room for the news that memories were evicted. It is not
+excluded from the disk.
+
+Watch `hippocampus.callbacks.queue_depth` — a rising depth with a non-zero
+`hippocampus.callbacks.delivered{outcome="failed"}` rate is a receiver that is refusing; a deep queue
+with no attempts is one the dispatcher has not reached yet. Both shipped alert rules cover this.
+
+#### Inspecting and emptying the queue
+
+`GET /v1/callbacks/queue` (`GetCallbackQueue`) reports the depth, the oldest queued instant, and a
+page of pending deliveries with their attempt counts and next-attempt deadlines. It never returns a
+delivery's payload — a queued delivery may carry memory bodies, and this is a view of a backlog
+rather than a second way to read the store.
+
+`POST /v1/callbacks/queue/delete` (`DeleteCallbackQueue`) discards pending deliveries, either
+`{"all": true}` or `{"before_time": <UnixNano>}`. One of the two is **required**, so an empty request
+can never be read as "discard everything". It exists because the automatic bounds stop applying the
+moment callbacks are turned off: disabling the feature leaves what was already queued in place rather
+than destroying it, so discarding those deliveries has to be an explicit act. It is a real discard —
+a deleted delivery is a notification that will never be sent.
+
+Both are `admin` and both are refused to a group-scoped caller; see
+[Authorisation](#authorisation) for why.
+
+#### Where it runs
+
+Only on the instance that consolidates (`consolidation.enabled`). A replica neither records nor
+dispatches: forgetting happens on the consolidator, and a replica's own deletions are
+client-initiated ones the client already knows about — recording them on every replica would multiply
+a widened feed by the replica count with nothing to drain it. The queue is shared, so one owner
+drains it.
+
+#### Every key
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `callbacks.enabled` | `false` | The feature switch. Off, nothing is queued and nothing is sent. |
+| `callbacks.url` | — | The endpoint each delivery is POSTed to. Required when enabled; startup fails without it. |
+| `callbacks.token` | `""` | Sent as `Authorization: Bearer`. Secret. |
+| `callbacks.signingSecret` | `""` | Keys the HMAC signature header. Secret; use at least 32 random bytes. |
+| `callbacks.timeoutSeconds` | `10` | Bounds one delivery attempt. |
+| `callbacks.allDeletions` | `false` | Widen the feed from the two decay paths to every deletion. |
+| `callbacks.includeBodies` | `false` | Carry each memory's body. Costs a body read per forgotten memory and space in the queue. |
+| `callbacks.maxBodyBytes` | `65536` | Caps one carried body; over it the body is omitted and flagged. 0 removes the cap. |
+| `callbacks.maxIdsPerDelivery` | `500` | Bounds one sleep-cycle chunk. |
+| `callbacks.events.memoryForgotten` | `true` | Record memory-deletion callbacks. |
+| `callbacks.events.eventForgotten` | `true` | Record event-deletion callbacks. |
+| `callbacks.events.sleepCompleted` | `true` | Record sleep-cycle completion callbacks. |
+| `callbacks.maxRows` | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound. |
+| `callbacks.maxAgeHours` | `24` | Queue age cap, applied alongside the row cap. 0 removes the bound. |
+| `callbacks.batchSize` | `100` | How many deliveries one dispatch pass claims. |
+| `callbacks.retryBaseBackoffSeconds` | `1` | First retry delay; doubles per attempt, jittered. |
+| `callbacks.retryMaxBackoffSeconds` | `300` | Ceiling on that backoff. |
+| `callbacks.tls.enabled` | `false` | Customise TLS for an `https://` receiver. |
+| `callbacks.tls.caCertFile` | `""` | PEM CA bundle trusted in place of the system pool. |
+| `callbacks.tls.certFile` | `""` | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither. |
+| `callbacks.tls.keyFile` | `""` | The matching key. |
+| `callbacks.tls.insecureSkipVerify` | `false` | Dev-only: disables certificate verification. |
 
 ### Transfer and archive
 

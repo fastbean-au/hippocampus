@@ -135,6 +135,7 @@ func resetTestStore(t *testing.T, d *DB) {
 		significanceLevelsTable,
 		tombstonesTable,
 		searchOutboxTable,
+		callbackQueueTable,
 	}
 
 	if d.instanceTable {
@@ -150,7 +151,7 @@ func resetTestStore(t *testing.T, d *DB) {
 	resetTestSequences(t, d)
 }
 
-// resetTestSequences returns the AUTO_INCREMENT / SERIAL counters on the two tables carrying a
+// resetTestSequences returns the AUTO_INCREMENT / SERIAL counters on the tables carrying a
 // surrogate key to their starting value, so seq-ordering assertions do not depend on how many rows
 // earlier tests inserted. SQLite's in-memory database is new each time and needs nothing.
 func resetTestSequences(t *testing.T, d *DB) {
@@ -169,12 +170,14 @@ func resetTestSequences(t *testing.T, d *DB) {
 		statements = []string{
 			`SELECT setval(pg_get_serial_sequence('` + tombstonesTable + `', 'seq'), 1, false)`,
 			`SELECT setval(pg_get_serial_sequence('` + searchOutboxTable + `', 'seq'), 1, false)`,
+			`SELECT setval(pg_get_serial_sequence('` + callbackQueueTable + `', 'seq'), 1, false)`,
 		}
 
 	case driverMySQL:
 		statements = []string{
 			`ALTER TABLE ` + tombstonesTable + ` AUTO_INCREMENT = 1`,
 			`ALTER TABLE ` + searchOutboxTable + ` AUTO_INCREMENT = 1`,
+			`ALTER TABLE ` + callbackQueueTable + ` AUTO_INCREMENT = 1`,
 		}
 
 	default:

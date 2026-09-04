@@ -1140,6 +1140,154 @@ const STEPS = [
           },
         ],
       },
+      {
+        title: "Deletion callbacks",
+        blurb:
+          "Tell an HTTP endpoint what the store has forgotten, instead of waiting to be asked. Deliveries are recorded in the same transaction as the deletion and sent by a background worker, so a receiver that is down is a backlog rather than a silent loss.",
+        fields: [
+          {
+            key: "callbacks.enabled",
+            label: "Send callbacks",
+            type: "bool",
+            def: false,
+            help: "Off by default. Enabling it needs a URL and nothing else; every bound below is already set.",
+          },
+          {
+            key: "callbacks.url",
+            label: "Receiver URL",
+            type: "text",
+            def: "",
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Each delivery is POSTed here as JSON. The service refuses to start with callbacks on and no URL, because it would queue a row per forgotten memory that nothing could ever drain.",
+          },
+          {
+            key: "callbacks.token",
+            label: "Bearer token",
+            type: "text",
+            def: "",
+            secret: true,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Sent as an Authorization header, if the receiver wants one. Leave it blank and inject it as an environment override.",
+          },
+          {
+            key: "callbacks.signingSecret",
+            label: "Signing secret",
+            type: "text",
+            def: "",
+            secret: true,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Signs each delivery (HMAC-SHA256 over the timestamp and the body) so a receiver can verify it came from this instance unaltered. Use at least 32 random bytes.",
+          },
+          {
+            key: "callbacks.timeoutSeconds",
+            label: "Delivery timeout (seconds)",
+            type: "int",
+            def: 10,
+            svc: 10,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Bounds one attempt. A receiver that hangs must not be able to hold the dispatcher open past a shutdown.",
+          },
+          {
+            key: "callbacks.allDeletions",
+            label: "Report every deletion, not just decay",
+            type: "bool",
+            def: false,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Off, only consolidation and eviction speak — a client that called DeleteMemories already knows. On, client deletes, clears, cascades and purges are reported too, each tagged with its cause.",
+          },
+          {
+            key: "callbacks.includeBodies",
+            label: "Include memory bodies",
+            type: "bool",
+            def: false,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Off by default: it costs a body read per forgotten memory and real space in the queue. On, a receiver can archive what was forgotten rather than only learn that it was.",
+          },
+          {
+            key: "callbacks.maxBodyBytes",
+            label: "Largest body to carry (bytes)",
+            type: "int",
+            def: 65536,
+            svc: 65536,
+            when: (s) =>
+              value(s, "callbacks.enabled") && value(s, "callbacks.includeBodies"),
+            help: "A body over this is omitted and flagged, never truncated — a receiver cannot tell a truncated body from a whole one. 0 removes the cap.",
+          },
+          {
+            key: "callbacks.events.memoryForgotten",
+            label: "Report forgotten memories",
+            type: "bool",
+            def: true,
+            svc: true,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Turning a kind off stops the rows being written, which is cheaper than writing them for a receiver to discard.",
+          },
+          {
+            key: "callbacks.events.eventForgotten",
+            label: "Report forgotten events",
+            type: "bool",
+            def: true,
+            svc: true,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "An event goes when its last memory does, or when a caller deletes it.",
+          },
+          {
+            key: "callbacks.events.sleepCompleted",
+            label: "Report finished sleep cycles",
+            type: "bool",
+            def: true,
+            svc: true,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "One delivery per cycle carrying the counts and the ids it forgot, chunked so a large cycle never becomes one unbounded request.",
+          },
+          {
+            key: "callbacks.maxIdsPerDelivery",
+            label: "Ids per sleep-cycle delivery",
+            type: "int",
+            def: 500,
+            svc: 500,
+            when: (s) =>
+              value(s, "callbacks.enabled") &&
+              value(s, "callbacks.events.sleepCompleted"),
+            help: "A cycle forgetting more than this is split into several numbered deliveries sharing one cycle id.",
+          },
+          {
+            key: "callbacks.maxRows",
+            label: "Queue at most (deliveries)",
+            type: "int",
+            def: 1000000,
+            svc: 1000000,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Reached only when the receiver cannot keep up. Past it the oldest undelivered callbacks are abandoned — and unlike a dropped index update, nothing recovers those. 0 removes the bound.",
+          },
+          {
+            key: "callbacks.maxAgeHours",
+            label: "Queue for at most (hours)",
+            type: "int",
+            def: 24,
+            svc: 24,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Applied alongside the delivery cap. Hours rather than days: this queue is meant to drain in seconds, so a day of backlog is already an outage. 0 removes this bound.",
+          },
+          {
+            key: "callbacks.tls.enabled",
+            label: "Customise TLS for the receiver",
+            type: "bool",
+            def: false,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "Only needed for an https:// receiver whose certificate the system pool does not trust. A public certificate needs nothing here.",
+          },
+          {
+            key: "callbacks.tls.caCertFile",
+            label: "CA certificate file",
+            type: "text",
+            def: "",
+            when: (s) =>
+              value(s, "callbacks.enabled") && value(s, "callbacks.tls.enabled"),
+            help: "A PEM bundle trusted in place of the system pool, for a receiver serving a private-CA certificate.",
+          },
+        ],
+      },
     ],
   },
   {
@@ -1869,6 +2017,78 @@ function validate() {
       "memory",
       "consolidation.minimumRetentionInDays must not be negative.",
     );
+  }
+
+  if (val("callbacks.enabled")) {
+    const url = String(val("callbacks.url")).trim();
+
+    if (!url) {
+      add(
+        "error",
+        "memory",
+        "callbacks.url is required when callbacks.enabled is set \u2014 the service refuses to start without it, because it would queue a delivery per forgotten memory that nothing could ever drain. Supply it here, or inject it as HIPPOCAMPUS_CALLBACKS_URL.",
+      );
+    } else if (!/^https?:\/\//.test(url)) {
+      add(
+        "error",
+        "memory",
+        "callbacks.url must be an http:// or https:// URL.",
+      );
+    } else if (url.startsWith("http://") && val("callbacks.signingSecret")) {
+      add(
+        "warn",
+        "memory",
+        "callbacks.signingSecret is set on a plain http:// URL. The signature proves the body was not altered, but the body itself \u2014 which may carry memory bodies \u2014 travels in the clear.",
+      );
+    }
+
+    const secret = String(val("callbacks.signingSecret") || "");
+
+    if (secret && secret.length < 32) {
+      add(
+        "warn",
+        "memory",
+        "callbacks.signingSecret is shorter than 32 characters. It keys an HMAC: use at least 32 random bytes, or a receiver's verification is easier to forge than it looks.",
+      );
+    }
+
+    if (
+      val("callbacks.includeBodies") &&
+      Number(val("callbacks.maxBodyBytes")) <= 0
+    ) {
+      add(
+        "warn",
+        "memory",
+        "callbacks.includeBodies is set with no callbacks.maxBodyBytes, so a single large memory can be carried whole into the queue and the delivery.",
+      );
+    }
+
+    if (
+      Number(val("callbacks.maxRows")) === 0 &&
+      Number(val("callbacks.maxAgeHours")) === 0
+    ) {
+      add(
+        "warn",
+        "memory",
+        "Both callback queue bounds are 0, so an unreachable receiver grows the queue until the disk stops it. The queue is excluded from the capacity target, not from the disk.",
+      );
+    }
+
+    if (val("callbacks.tls.enabled") && !val("callbacks.tls.caCertFile")) {
+      add(
+        "warn",
+        "memory",
+        "callbacks.tls is enabled with no caCertFile, which verifies against the system certificate pool \u2014 the same as leaving the block off. Set caCertFile only for a receiver serving a private-CA certificate.",
+      );
+    }
+
+    if (!val("consolidation.enabled")) {
+      add(
+        "warn",
+        "memory",
+        "Callbacks are enabled on an instance that does not consolidate. A replica neither records nor dispatches them: forgetting happens on the consolidator, and its dispatcher drains the shared queue.",
+      );
+    }
   }
 
   const capacityBytes = Number(val("consolidation.capacityBytes"));

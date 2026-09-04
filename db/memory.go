@@ -485,6 +485,16 @@ func (d *DB) deleteMemoriesByIdsOnce(ctx context.Context, ids []string) (int, er
 
 	ids = lockOrderedIDs(ids)
 
+	// Captured before the delete, because the columns a callback carries are only readable while
+	// the rows still exist. A no-op unless callbacks.allDeletions is on: a client that asked for a
+	// deletion already knows about it, so the narrow default has nothing to tell here.
+	delivery, notifying, err := d.captureMemoryCallback(tx, ids, CauseClient)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
 	for start := 0; start < len(ids); start += deleteChunkSize {
 		end := start + deleteChunkSize
 		if end > len(ids) {
@@ -524,6 +534,14 @@ func (d *DB) deleteMemoriesByIdsOnce(ctx context.Context, ids []string) (int, er
 		_ = tx.Rollback()
 
 		return 0, err
+	}
+
+	if notifying {
+		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+			_ = tx.Rollback()
+
+			return 0, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -615,7 +633,18 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 	defer cancel()
 
 	recording := reason.recording()
+	notifying := d.wantsMemoryCallbacks(reason.cause)
+
+	// The two features share ONE read of the rows about to go. They want overlapping columns (group,
+	// event, significance rank, size) and the read is a primary-key lookup over the handful being
+	// deleted, so doing it twice would double the cost of having both on for no gain. Only the body
+	// is asked for conditionally, being the expensive column.
+	capturing := recording || notifying
+	withBodies := notifying && d.callbacks.IncludeBodies
+
 	deletedIds := make([]string, 0, len(items))
+
+	var deliveries []CallbackDelivery
 
 	// One global lock order, shared with every other statement that locks a set of rows. Sorted
 	// before chunking, so the chunks are ordered against each other as well as within themselves.
@@ -627,8 +656,8 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 
 		var captured map[string]tombstoneRow
 
-		if recording {
-			captured, err = d.recordTombstones(tx, chunk)
+		if capturing {
+			captured, err = d.recordTombstones(tx, chunk, withBodies)
 			if err != nil {
 				_ = tx.Rollback()
 
@@ -648,6 +677,15 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 				_ = tx.Rollback()
 
 				return nil, err
+			}
+		}
+
+		// One delivery per chunk, built from the ids that ACTUALLY went - the same rule the
+		// tombstones and the outbox follow, and for the same reason: a receiver must never be told
+		// a memory is gone that the recall-race guard spared.
+		if notifying {
+			if delivery, ok := memoryDelivery(captured, ids, reason, d.cycleId(reason.cause)); ok {
+				deliveries = append(deliveries, delivery)
 			}
 		}
 
@@ -671,6 +709,16 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 		return nil, err
 	}
 
+	// In this transaction for the reason the outbox is in it: a delivery announcing a deletion must
+	// commit with the deletion or not at all, so there is no boundary at which the notification can
+	// be lost and no window in which it can describe a memory that is still there. See
+	// db/callbacks.go.
+	if err := d.queueCallbacks(tx, deliveries); err != nil {
+		_ = tx.Rollback()
+
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -678,6 +726,11 @@ func (d *DB) deleteMemoriesIfUnrecalledOnce(
 	if d.memoryDeleteObserver != nil && len(deletedIds) > 0 {
 		d.memoryDeleteObserver(deletedIds)
 	}
+
+	// Post-commit, like the observer above and for the same reason: an open sleep cycle is
+	// assembling the list its completion callback will carry, and it must describe what actually
+	// went rather than what a rolled-back transaction attempted.
+	d.collectForgotten(reason.cause, deletedIds, nil)
 
 	return deletedIds, nil
 }
@@ -815,11 +868,28 @@ func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, erro
 		return 0, err
 	}
 
+	// The memories are going because the event is: a cascade, not a decision anybody made about
+	// each of them. Captured before the delete, and a no-op under the narrow default.
+	delivery, notifying, err := d.captureMemoryCallback(tx, ids, CauseCascade)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
 	res, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE event_id = ?`), eventId)
 	if err != nil {
 		_ = tx.Rollback()
 
 		return 0, err
+	}
+
+	if notifying {
+		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+			_ = tx.Rollback()
+
+			return 0, err
+		}
 	}
 
 	if err := d.pruneMemoryLinks(tx, ids); err != nil {
@@ -1373,6 +1443,16 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		return 0, err
 	}
 
+	// These memories are being condensed rather than forgotten - their content survives in the
+	// summary - which is why the cause is its own and not one of the decay ones. Captured before
+	// the delete, and a no-op under the narrow default.
+	delivery, notifying, err := d.captureMemoryCallback(tx, replacedIds, CauseSummaryReplace)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return 0, err
+	}
+
 	res, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE event_id = ?`), eventId)
 	if err != nil {
 		_ = tx.Rollback()
@@ -1385,6 +1465,14 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		_ = tx.Rollback()
 
 		return 0, err
+	}
+
+	if notifying {
+		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+			_ = tx.Rollback()
+
+			return 0, err
+		}
 	}
 
 	if err := d.pruneMemoryLinks(tx, replacedIds); err != nil {
@@ -1810,7 +1898,7 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 	defer func() { _ = rows.Close() }()
 
 	var deletions []memoryRecallSnapshot
-	reason := d.forgetReasonFor(ForgetRuleConsolidation, s)
+	reason := d.forgetReasonFor(ForgetRuleConsolidation, CauseConsolidation, s)
 
 	for rows.Next() {
 		var id string
@@ -2011,7 +2099,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		}
 	}
 
-	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions, d.forgetReasonFor(ForgetRuleEviction, s))
+	deletedIds, err := d.deleteMemoriesIfUnrecalled(ctx, deletions, d.forgetReasonFor(ForgetRuleEviction, CauseEviction, s))
 	if err != nil {
 		log.Errorf("failed to delete evicted memories: %s", err.Error())
 
@@ -2050,7 +2138,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		if evicted == memoriesPerEvent[id] {
 			var err error
 
-			deleted, err = d.DeleteEventIfEmpty(ctx, id)
+			deleted, err = d.DeleteEventIfEmpty(ctx, id, CauseEviction)
 			if err != nil {
 				log.Errorf("failed to delete event '%s' after eviction: %s", id, err.Error())
 
@@ -2099,7 +2187,7 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 
 	eventDeletions := make(map[string]EventDeletion)
 	var memoryDeletions []memoryRecallSnapshot
-	reason := d.forgetReasonFor(ForgetRuleConsolidation, s)
+	reason := d.forgetReasonFor(ForgetRuleConsolidation, CauseConsolidation, s)
 
 	ranks, err := d.loadSignificanceRanks(ctx)
 	if err != nil {
@@ -2220,7 +2308,7 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 		if !event.undeletedMemory {
 			var err error
 
-			deleted, err = d.DeleteEventIfEmpty(ctx, id)
+			deleted, err = d.DeleteEventIfEmpty(ctx, id, CauseConsolidation)
 			if err != nil {
 				log.Errorf("failed to delete event '%s' for memory consolidation: %s", id, err.Error())
 

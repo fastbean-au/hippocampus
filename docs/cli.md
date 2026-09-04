@@ -184,6 +184,8 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `status`          | when the next cycle is due, and what the last one forgot                                       |
 | `forgotten list`  | list memories a cycle forgot, and why (`--memory-id`, `--group`, `--rule`, `--since`)          |
 | `forgotten clear` | delete records from the forgotten log (`--before` or `--all`)                                  |
+| `callbacks queue` | show the outbound callback queue: depth, ages, attempt counts (`--kind`, `--limit`)            |
+| `callbacks clear` | discard pending callbacks (`--before` or `--all`)                                              |
 | `purge`           | delete every event and memory (requires `--yes`)                                               |
 
 `sleep --dry-run` reports what a cycle would forget and deletes nothing — see
@@ -211,6 +213,22 @@ returns a body. `forgotten clear` requires `--before` or `--all`: it destroys th
 was destroyed, so it must never be something a bare command does. Neither is affected by the log's
 configured caps, which trim but never empty it, and which stop being applied at all once recording
 is turned off.
+
+`callbacks queue` shows what the outbound [callback queue](configuration.md#outbound-callbacks) is
+holding — the depth, how old the oldest waiting delivery is, and a page of pending ones with their
+attempt counts and next-attempt deadlines. That pair is what separates a queue that is draining from
+one that is stuck: rising attempts against a receding deadline is a receiver that is refusing, while
+a deep queue with zero attempts is one the dispatcher has not reached yet. It never prints a
+delivery's payload, which may carry memory bodies. `--kind` narrows it to `memory-forgotten`,
+`event-forgotten` or `sleep-completed`.
+
+`callbacks clear` requires `--before` or `--all`, and is a harder discard than `forgotten clear`:
+what it destroys is not the record of a notification but the notification itself, and nothing else
+will ever send it. It exists because the queue's caps stop applying the moment callbacks are turned
+off, so disabling the feature leaves whatever was queued in place rather than destroying it.
+
+Both are `admin`, and both are refused to a group-scoped token — a queued delivery batches memories
+across groups, so there is nothing to scope it by.
 
 `whoami` reports the token's [group scope](configuration.md#group-scoping) on its own line —
 `groups: unscoped (whole store)` when the token carries none, which is the state to check first when
