@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/fastbean-au/hippocampus/types"
 )
@@ -17,6 +18,11 @@ import (
 // elsewhere.
 func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 	db := newTestDB(t)
+
+	// The callback queue's methods are gated on the policy: with callbacks off they return nil
+	// rather than touching the database, which would read as a pass here. Enabling it first is
+	// what puts them on the same footing as everything else in this sweep.
+	db.SetCallbackPolicy(CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
 
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close: %s", err)
@@ -99,6 +105,20 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 			return err
 		}},
 		{"Purge", func() error { return db.Purge(ctx) }},
+		{"QueueCallbacks", func() error {
+			return db.QueueCallbacks(ctx, []CallbackDelivery{{
+				Kind: CallbackKindMemoryForgotten, Cause: CauseConsolidation,
+				Payload: CallbackPayload{Items: []CallbackItem{{Id: "m1"}}},
+			}})
+		}},
+		{"ClaimCallbacks", func() error { _, err := db.ClaimCallbacks(ctx, 10, 1); return err }},
+		{"ConfirmCallbacks", func() error { return db.ConfirmCallbacks(ctx, []int64{1}) }},
+		{"DeferCallbacks", func() error { return db.DeferCallbacks(ctx, []int64{1}, 2) }},
+		{"PruneCallbackQueue", func() error { _, err := db.PruneCallbackQueue(ctx, time.Hour, 10); return err }},
+		{"CallbackQueueDepth", func() error { _, err := db.CallbackQueueDepth(ctx); return err }},
+		{"OldestQueuedCallback", func() error { _, err := db.OldestQueuedCallback(ctx); return err }},
+		{"GetCallbackQueue", func() error { _, err := db.GetCallbackQueue(ctx, CallbackQueueFilter{}); return err }},
+		{"DeleteCallbackQueue", func() error { _, err := db.DeleteCallbackQueue(ctx, 0); return err }},
 	}
 
 	// Preserve is SQLite's compaction and a documented no-op on the server drivers (autovacuum and

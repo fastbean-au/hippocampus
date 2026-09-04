@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -434,5 +435,51 @@ func TestWebhookRejectsAnUnbuildableRequest(t *testing.T) {
 
 	if err := hook.Deliver(context.Background(), sampleDelivery()); err == nil {
 		t.Error("an unbuildable request was reported as sent")
+	}
+}
+
+// erroringBody is a response body that fails partway through being read, which is what a connection
+// dropped mid-response looks like to the client.
+type erroringBody struct{}
+
+func (erroringBody) Read(p []byte) (int, error) {
+	return 0, errors.New("connection reset while reading the response")
+}
+
+func (erroringBody) Close() error {
+	return nil
+}
+
+// erroringTransport hands back a 200 whose body cannot be read.
+type erroringTransport struct{}
+
+func (erroringTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       erroringBody{},
+	}, nil
+}
+
+// TestWebhookFailsWhenTheResponseCannotBeRead pins that a truncated response is a failed delivery
+// rather than a successful one.
+//
+// The status line arriving is not proof the receiver processed anything - a connection dropped
+// mid-response is exactly the case where it may not have - and the queue's whole guarantee rests on
+// Deliver returning an error for anything the receiver did not certainly accept. Reporting success
+// here would confirm the row and discard the notification.
+func TestWebhookFailsWhenTheResponseCannotBeRead(t *testing.T) {
+	hook, err := NewWebhook(Config{URL: "http://example.com/hook", Transport: erroringTransport{}})
+	if err != nil {
+		t.Fatalf("NewWebhook: %s", err.Error())
+	}
+
+	err = hook.Deliver(context.Background(), sampleDelivery())
+	if err == nil {
+		t.Fatal("a 200 whose body could not be read was reported as delivered")
+	}
+
+	if !strings.Contains(err.Error(), "reading the callback response") {
+		t.Errorf("the error does not name the problem: %s", err.Error())
 	}
 }

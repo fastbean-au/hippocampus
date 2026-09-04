@@ -155,6 +155,10 @@ func (w *Webhook) Endpoint() string {
 func (w *Webhook) Deliver(ctx context.Context, delivery Delivery) error {
 	log.Trace("func() notify.Deliver")
 
+	// The marshal guard is defensive and currently unreachable, which is why nothing exercises it:
+	// Delivery is a concrete tree of strings, numbers and bools, and json.Marshal sanitises invalid
+	// UTF-8 rather than refusing it (TestWebhookSanitisesInvalidUTF8 pins that). It is kept because
+	// it would become reachable the day Delivery gains a field that is not one of those things.
 	body, err := json.Marshal(delivery)
 	if err != nil {
 		log.Errorf("failed to encode a callback delivery: %s", err.Error())

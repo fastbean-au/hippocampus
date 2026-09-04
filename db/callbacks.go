@@ -174,12 +174,6 @@ func (d *DB) SetCallbackPolicy(policy CallbackPolicy) {
 	d.callbacks = policy
 }
 
-// CallbacksEnabled reports whether deliveries are being recorded. The consolidation passes consult
-// it to decide whether to retain the ids they delete, so a store with callbacks off pays nothing.
-func (d *DB) CallbacksEnabled() bool {
-	return d.callbacks.Enabled && d.callbackTable
-}
-
 // CallbackItem is one record a delivery is about, as the store holds it.
 type CallbackItem struct {
 	Id           string `json:"id"`
@@ -397,6 +391,13 @@ func (d *DB) QueueCallbacks(ctx context.Context, deliveries []CallbackDelivery) 
 // memory bodies do it, so a queue written under one setting reads correctly under another - and a
 // compression failure stores the payload verbatim rather than failing the delete, since verbatim is
 // always a valid representation.
+//
+// Both failure branches are defensive and currently unreachable, which is why nothing exercises
+// them: CallbackPayload is a concrete tree of strings, numbers and bools, so json.Marshal cannot
+// fail on it (it sanitises invalid UTF-8 rather than refusing it), and gzipBytes writes to a
+// bytes.Buffer, which cannot fail either. They are kept because either would become reachable the
+// day this struct gains a field that is not one of those things, and a silently-empty payload is a
+// far worse failure than a refused one.
 func encodeCallbackPayload(payload CallbackPayload) ([]byte, bool, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
