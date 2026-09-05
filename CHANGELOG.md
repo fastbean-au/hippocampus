@@ -74,6 +74,14 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   covered without anybody remembering to add it, with a companion test pinning that all three
   storage drivers stay represented among them.
 
+- **A callbacks row on the bundled Grafana dashboard**: queue depth, delivery rate by kind and
+  outcome with the abandon rate beside it, and delivery duration. The callback queue shipped in
+  0.41.0 with instruments and three alert rules but nothing to look at between "fine" and "paging
+  somebody" — and a persisted queue against somebody else's endpoint is exactly the thing whose
+  normal shape you want to know before it goes wrong. The delivery-duration panel is the early one:
+  a receiver in trouble slows down before the depth moves, and long before `callbacks.timeoutSeconds`
+  turns it into a failure.
+
 ### Changed
 
 - **The compatibility promise now covers the values a configuration key accepts, not only the key.**
