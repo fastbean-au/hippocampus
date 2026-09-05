@@ -42,10 +42,11 @@ pre-flight plus the one command that starts all of that.
 
 ## Local pre-flight
 
-**[`scripts/release.sh`](scripts/release.sh) runs steps 1–3 and 6–7 for you** — the mechanical ones.
-What is left below is the two judgement calls it cannot make (the benchmarks and the coverage
-review) and the writing of the changelog entries themselves, which must be done _before_ the script
-is run: it rolls what is in `[Unreleased]` and refuses when that section is empty.
+**[`scripts/release.sh`](scripts/release.sh) runs steps 1–3 and 7–8 for you** — the mechanical ones.
+What is left below is the three judgement calls it cannot make (the benchmarks, the coverage review,
+and the compatibility question) and the writing of the changelog entries themselves, which must be
+done _before_ the script is run: it rolls what is in `[Unreleased]` and refuses when that section is
+empty.
 
 Most of the mechanical checks are also enforced by `hooks/pre-commit`.
 
@@ -66,16 +67,34 @@ Most of the mechanical checks are also enforced by `hooks/pre-commit`.
    release workflow — the main-package wiring is covered by the docker smoke tests in CI, not unit
    coverage.)
 
-6. Update [`CHANGELOG.md`](CHANGELOG.md): rename the `[Unreleased]` heading to the version and its
+6. **Compatibility question: does this release reject any input the last one accepted?** Ask it of
+   every validation rule that changed — a narrowed range on an existing key, a new rule about how
+   two keys combine, a default that moved — and ask it about the values a deployment in the field
+   plausibly holds, not the ones in this repository. `TestShippedConfigsAreValid` covers what is in
+   the tree and covers only that; the configurations a tightened check actually breaks are by
+   definition the ones whose author could not see them, which is how 0.41.0 stopped two instances on
+   the public demo from starting. `hippocampus --check-config -c <file>` answers it for a single
+   configuration, so an unfamiliar one — an operator's, a deployment's — can be tried against the
+   new binary before the release rather than after it.
+
+   Refusing configuration a previous version accepted is a **breaking change** even though no key
+   was removed or renamed, and it presents as a service that no longer starts. Anything this turns
+   up is a **Breaking** entry in step 7, naming the values that are no longer accepted and what to
+   set instead — not merely the rule that changed — plus the version increment
+   [Compatibility](#compatibility) requires. The contract has `proto-breaking` to compare it against
+   the previous tag and the stored schema has the version ledger and the upgrade fixtures;
+   configuration has this question, and nothing else.
+
+7. Update [`CHANGELOG.md`](CHANGELOG.md): rename the `[Unreleased]` heading to the version and its
    date, open a fresh empty `[Unreleased]` (bare, with no version marker), and add the two link
    references at the foot of the file. Anything under **Breaking** must also be reflected in the
    release notes people actually read — see [Compatibility](#compatibility) below. If the release
    you are heading towards is a **major** increment, say so in the heading while the work is in
    flight — `## [Unreleased] (v2.0.0)` — which is what stands the contract gate down; renaming the
    heading here is what clears it again.
-7. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
+8. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
    to release.
-8. **If this release changed the stored schema**, add its tag to `DEFAULT_TAGS` in
+9. **If this release changed the stored schema**, add its tag to `DEFAULT_TAGS` in
    [`scripts/schema-fixtures.sh`](scripts/schema-fixtures.sh) and regenerate — after the tag exists,
    so it is the last step rather than part of the pre-flight:
 
@@ -98,7 +117,7 @@ investigated.
 ## Compatibility
 
 What a version number promises, and what is exempt, is stated once in
-[`CHANGELOG.md`](CHANGELOG.md#compatibility) rather than repeated here. Two parts of it are the
+[`CHANGELOG.md`](CHANGELOG.md#compatibility) rather than repeated here. Three parts of it are the
 release process's business:
 
 - **The contract is gated, not merely documented.** The `proto-breaking` CI job runs `buf breaking`
@@ -122,8 +141,18 @@ release process's business:
   Only a **major** increment over the baseline stands the gate down; declaring a minor or patch
   leaves it binding, which is most of the reason to declare one. Anything the parser does not
   recognise — no marker, a typo, a version below the baseline — leaves the gate binding too, so a
-  mistake shows up as a red build rather than as a silently disabled check. Step 6 of the pre-flight
+  mistake shows up as a red build rather than as a silently disabled check. Step 7 of the pre-flight
   clears the marker along with the heading, so it never outlives its release.
+
+- **Configuration has no gate, only the question in step 6.** A break there is not a key that
+  disappeared — that one is obvious, and shows up in a diff of the documentation. It is a key that
+  stayed exactly where it was and stopped accepting a value it used to take: a narrowed range, a
+  tightened pairing rule, a bound that moved. `buf breaking` has nothing to compare, the tests in
+  this repository only ever see the configurations in this repository, and the deployments the rule
+  breaks are by construction the ones its author could not see — so the only thing standing between
+  a tightened check and a service that will not restart is somebody asking. It is worth asking of
+  every startup validation that changed in the release, and worth answering with
+  `--check-config` against a configuration that did not come from this tree.
 
 - **A deliberate break needs three things**, in this order: agreement that it is worth doing _now_
   (pre-1.0 is far cheaper than after — every generated client is a copy of the contract, and there
@@ -139,7 +168,7 @@ release process's business:
 scripts/release.sh --minor          # or --patch, --major, or --version 1.2.3
 ```
 
-That runs the pre-flight above, rolls the changelog (step 6), commits it, and creates the tag.
+That runs the pre-flight above, rolls the changelog (step 7), commits it, and creates the tag.
 Choose the increment with normal semver rules: patch for fixes, minor for backward-compatible
 features, major for breaking changes — remembering that pre-1.0, a breaking change goes in a minor.
 
@@ -154,8 +183,8 @@ git push origin v1.2.3
 ### What the script refuses, and why
 
 The manual process drifted badly once: seventeen releases (v0.24.0 through v0.32.2) shipped without
-step
-6 ever being done, so every entry since v0.23.0 accumulated under one `[Unreleased]` heading. Nothing
+the changelog step ever being done, so every entry since v0.23.0 accumulated under one `[Unreleased]`
+heading. Nothing
 caught it, because the tag is what triggers a release and the changelog was not on that path. The
 script puts it on that path and stops on each way that goes wrong:
 

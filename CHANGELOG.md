@@ -19,8 +19,17 @@ What each version number covers:
   already permits a break — a pre-1.0 baseline, or a major increment declared in the `[Unreleased]`
   heading (see [RELEASE.md](RELEASE.md#compatibility)) — so the report is worth reading even when
   the build is green.
-- **Configuration keys.** A removed or renamed key is a breaking change. A new key always carries a
-  default that preserves the previous behaviour, so an existing `config.json` keeps working.
+- **Configuration keys, and the values they accept.** A removed or renamed key is a breaking change,
+  and a new key always carries a default that preserves the previous behaviour, so an existing
+  `config.json` keeps working. **Narrowing the accepted range of an existing key is a breaking
+  change too**: a value the previous release ran on and this one refuses at startup stops a service
+  that was working, which is the same outcome as removing the key it is set on. Tightening a
+  validation rule reads like a fix — 0.41.0's deletion-threshold check was filed under **Fixed** —
+  but it belongs under **Breaking**, naming which values are no longer accepted and what to set
+  instead. There is no mechanical gate for this the way `proto-breaking` gates the contract; the
+  release pre-flight asks the question instead (see
+  [RELEASE.md](RELEASE.md#local-pre-flight)), and `hippocampus --check-config` is how a deployment
+  can answer it for its own configuration before the upgrade rather than during it.
 - **The stored database.** Schema additions are migrated in place on startup, so a store written by
   an older version opens on a newer one. Downgrading is not supported, and since 0.39.0 that is
   enforced rather than merely stated: a store records its schema version, and a build that does not
@@ -64,6 +73,19 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   the same validation over every configuration file in the repository, found by glob so a new one is
   covered without anybody remembering to add it, with a companion test pinning that all three
   storage drivers stay represented among them.
+
+### Changed
+
+- **The compatibility promise now covers the values a configuration key accepts, not only the key.**
+  The **Compatibility** section above was written entirely about keys — removed, renamed, added —
+  and said nothing about the accepted *range* of a key that stayed exactly where it was. So
+  0.41.0's deletion-threshold check was filed under **Fixed**, which is where tightening a
+  validation rule looks like it belongs, and the release that could not start two demo instances
+  announced itself as a fix. Refusing input a previous version accepted is a break; it is now
+  written down as one, and the release pre-flight asks the question directly — *does this release
+  reject any configuration the last one accepted?* — because unlike the contract, which the
+  `proto-breaking` job compares against the previous tag mechanically, there is no automatic answer
+  for configuration and probably cannot be one.
 
 ### Fixed
 

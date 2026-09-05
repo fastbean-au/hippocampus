@@ -3,12 +3,12 @@
 # Cut a Hippocampus release: roll the changelog, commit it, and create the tag.
 #
 # This exists because the manual process drifted. Seventeen releases (v0.24.0 through v0.32.2)
-# shipped without step 6 of RELEASE.md's pre-flight ever being done, so every entry since v0.23.0
-# accumulated under one "[Unreleased]" heading and the compatibility promise the changelog makes -
-# "read the Breaking section of every release you skip over" - became unfulfillable. Nothing caught
-# it, because the tag is what triggers the release and the changelog is not on that path. So this
-# script puts it on that path, and refuses to tag when the changelog is not in the state a release
-# needs.
+# shipped without the changelog step of RELEASE.md's pre-flight ever being done, so every entry
+# since v0.23.0 accumulated under one "[Unreleased]" heading and the compatibility promise the
+# changelog makes - "read the Breaking section of every release you skip over" - became
+# unfulfillable. Nothing caught it, because the tag is what triggers the release and the changelog
+# is not on that path. So this script puts it on that path, and refuses to tag when the changelog is
+# not in the state a release needs.
 #
 # It deliberately does NOT push. Pushing the tag is what starts the release workflow - builds,
 # GHCR images, the Homebrew tap - and that should be a separate, deliberate keystroke. The script

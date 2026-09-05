@@ -138,10 +138,16 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   relying on the refusal instead would make `--dry-run` overstate what it is about to delete. It
   never touches `~/.hippocampus` (a personal instance's real store) or the Go module cache
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
-  list); its **Compatibility** section states what a version number covers — contract, config keys,
-  stored schema — and what is exempt. `RELEASE.md` carries the process, including the changelog step
-  in the pre-flight and what a deliberate break requires. Pre-1.0, a breaking change goes in a minor
-  release
+  list); its **Compatibility** section states what a version number covers — contract, config keys
+  **and the values they accept**, stored schema — and what is exempt. `RELEASE.md` carries the
+  process, including the changelog step in the pre-flight and what a deliberate break requires.
+  Pre-1.0, a breaking change goes in a minor release. Narrowing a key's accepted range is a break
+  even though the key is untouched, and it is the only class with **no** mechanical gate behind it —
+  `buf breaking` covers the contract, the version ledger and upgrade fixtures cover the schema, and
+  `TestShippedConfigsAreValid` only ever sees the configurations in this tree — so the pre-flight
+  asks it as a question (step 6) instead. 0.41.0 is the case: a tightened
+  `consolidation.deletionThreshold` check, filed under **Fixed**, that stopped two demo instances
+  from starting
 - Run the configuration wizard (root module, second binary):
   `go run ./cmd/config-wizard` (serves the browser-based config/deployment builder on `:8091`;
   static assets only, no service connection; `--port`/`--bind-address`/`--log-level`, all
