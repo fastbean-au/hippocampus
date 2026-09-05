@@ -368,6 +368,37 @@ Two things decay-only does not bound, both by design: an actively recalled worki
 low `aggressiveness` produces lifetimes with no practical end. Both are floors under the store's size
 that no decay setting reaches.
 
+### Capacity target only: the store as a fixed-size buffer
+
+The mirror image of decay-only is a positive `consolidation.capacityBytes` with
+`consolidation.deletionThreshold` at or below 0. Value-based consolidation is switched off, nothing
+is forgotten while the store is under its target, and once it crosses, eviction takes the
+lowest-value memories down to the floor. The value function still chooses _which_ memories go; it no
+longer chooses when. The startup line names it:
+
+```text
+forgetting mode: capacity target only - value-based consolidation is off (deletion threshold 0),
+so nothing is forgotten until the store passes 160000000 bytes; eviction then reclaims the
+lowest-value memories down to a floor of 144000000
+```
+
+Reach for it when the store is a buffer of the most valuable recent material rather than a set of
+records with individual lifetimes — a working set for an agent, say, where "keep as much as fits" is
+the actual requirement and any lifetime derived from significance would be arbitrary. What you give
+up is prediction: `days_until_forgotten` reports `-1` for every memory, correctly, because nothing
+crosses a threshold and how long a memory survives depends entirely on what is written after it.
+
+Two operational consequences. `hippocampus_memories_consolidated_total` sits at zero permanently, so
+any alert comparing it against arrivals — `HippocampusStoreGrowing` among them — needs eviction to be
+the term it looks at. And `consolidation.minimumRetentionInDays` becomes the one thing that can
+defeat the target, since retention overrides the capacity bound: set it too high in this mode and
+eviction has nothing left it is allowed to reclaim. Watch `hippocampus_memories_retained` against
+`hippocampus_memories_count` for that, which is the pairing those gauges exist for.
+
+Note that `consolidation.capacityMemories` cannot stand in for `capacityBytes` here — a row capacity
+only scales the pressure that scales the threshold, and nothing evicts on the row count, so the
+combination forgets nothing and is refused at startup.
+
 ### `capacityBytes` is measured on _stored logical_ bytes
 
 The byte-capacity target (`consolidation.capacityBytes`, with hysteresis floor

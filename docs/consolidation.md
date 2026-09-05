@@ -452,9 +452,9 @@ the real one — column for column, and index membership included — by
 
 ## Forgetting modes
 
-Everything above describes one value model, but it can be configured to run in either of two modes,
-and the choice between them is the most consequential one in this file. Both forget. They differ in
-what decides _when_.
+Everything above describes one value model, but it can be configured to run in any of three modes,
+and the choice between them is the most consequential one in this file. All three forget. They differ
+in what decides _when_.
 
 **Decay-only** — `consolidation.capacityBytes` and `consolidation.capacityMemories` both `0` (the
 mechanism disabled on both axes). Forgetting is driven by the value threshold alone: a memory's
@@ -465,8 +465,22 @@ The store's size is an emergent property rather than a setting.
 into the deletion threshold, and a byte target additionally evicts once the target is crossed (see
 [Capacity target](#capacity-target)).
 
+**Capacity target only** — `consolidation.capacityBytes` positive and
+`consolidation.deletionThreshold` at or below `0`. Value-based consolidation is switched off, and
+eviction is the only thing that forgets: nothing is deleted while the store is under its target, and
+once it crosses, the lowest-value memories go until it is back at the floor. A memory is kept for
+exactly as long as the store has room for it. This is the closed-loop end taken to its limit, and it
+is the mode to choose when the store is a fixed-size buffer of the most valuable recent material
+rather than a set of records with individual lifetimes — the value function still decides _which_
+memories go, it just no longer decides _when_ anything goes.
+
+Note that `consolidation.capacityMemories` cannot stand in for `capacityBytes` here: a row capacity
+only scales the pressure that scales the threshold, and scaling a non-positive threshold leaves it
+non-positive, so that pairing forgets nothing. Startup refuses it for that reason.
+
 The distinction is open-loop against closed-loop, and it is a genuine trade rather than a default
-and a deviation from it.
+and a deviation from it. The service resolves which of the three is in force at startup and logs it,
+so the choice is a declaration rather than an absence.
 
 ### Decay-only is the predictable one
 

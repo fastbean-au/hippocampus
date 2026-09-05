@@ -1807,12 +1807,28 @@ func validateConfig() error {
 	// The deletion threshold is the value every memory is compared against, so a non-positive one
 	// makes `value < threshold` false for every memory and disables value-based consolidation
 	// entirely - the same silent failure the method-3 aggressiveness check above exists to catch,
-	// reached by a much more obvious route. Refuse it here rather than let a store serve for months
-	// forgetting nothing. An unset key falls back to setStartupDefaults' value, so this refuses the
-	// mistake without making the key mandatory; there is no "disable forgetting" idiom to preserve,
-	// because consolidation.enabled and a non-positive sleep.periodSeconds are both already that.
+	// reached by a much more obvious route. An unset key falls back to setStartupDefaults' value, so
+	// this refuses the mistake without making the key mandatory.
+	//
+	// It is refused only when nothing else would forget anything either, because switching value-
+	// based consolidation off is a real configuration and not always a mistake: a store with a byte
+	// capacity forgets on the capacity target alone (eviction in ascending value order), which keeps
+	// a memory for as long as the store has room for it rather than for a lifetime derived from its
+	// significance. That is the closed-loop end of the trade docs/consolidation.md's Forgetting modes
+	// section names, and neither of the two idioms this check was first written against is a
+	// substitute for it - consolidation.enabled and a non-positive sleep.periodSeconds both disable
+	// EVICTION as well, which is the mechanism the mode runs on.
+	//
+	// capacityMemories deliberately does not rescue it. A row capacity only scales the pressure that
+	// scales the threshold, and scaling a non-positive threshold leaves it non-positive; nothing
+	// evicts on the row count, so that pairing really does forget nothing.
 	if threshold := viper.GetFloat64("consolidation.deletionThreshold"); threshold <= 0 {
-		return fmt.Errorf("consolidation.deletionThreshold must be greater than 0, got %v", threshold)
+		if capacityBytes := viper.GetInt64("consolidation.capacityBytes"); capacityBytes <= 0 {
+			return fmt.Errorf(
+				"consolidation.deletionThreshold must be greater than 0 (or set consolidation.capacityBytes to forget on the capacity target alone), got %v",
+				threshold,
+			)
+		}
 	}
 
 	// A negative retention window is meaningless (0 disables the floor). Catch it at startup rather

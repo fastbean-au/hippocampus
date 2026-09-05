@@ -35,6 +35,33 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Fixed
+
+- **0.41.0 refused a working configuration: forgetting on the capacity target alone.** The new
+  `consolidation.deletionThreshold` check rejected any non-positive value at startup, on the
+  reasoning that switching value-based consolidation off has no legitimate use because
+  `consolidation.enabled` and a non-positive `sleep.periodSeconds` are both already a way to disable
+  forgetting. Neither is equivalent: both also disable **eviction**, and a store with a byte capacity
+  and no deletion threshold is a coherent, deliberate mode — nothing is forgotten while it is under
+  its target, and once it crosses, the lowest-value memories go until it is back at the floor. A
+  memory is kept for as long as the store has room for it. Two instances on the public demo were
+  configured exactly that way and could not start on 0.41.0.
+
+  The threshold is now refused only when nothing else would forget anything either — which is the
+  silent no-op the check exists to catch — and accepted when `consolidation.capacityBytes` gives
+  eviction something to reclaim against. `capacityMemories` deliberately does not rescue it: a row
+  capacity only scales the pressure that scales the threshold, scaling a non-positive threshold
+  leaves it non-positive, and nothing evicts on the row count, so that pairing really does forget
+  nothing. The error message now names the alternative rather than only the rule.
+
+  `logForgettingMode` gains the third mode it was missing, so the startup line says `forgetting mode:
+  capacity target only` rather than describing a decay curve that is not running, and the
+  configuration wizard mirrors the same relaxation — a warning where it used to be an error.
+  `docs/consolidation.md`'s **Forgetting modes** section and `docs/operations.md`'s sizing half both
+  cover three modes now instead of two, including what the mode gives up: `days_until_forgotten` is
+  `-1` for every memory, correctly, and `hippocampus_memories_consolidated_total` stays at zero, so
+  an alert comparing arrivals against removals has to look at eviction.
+
 ## [0.41.0] - 2026-09-05
 
 ### Added

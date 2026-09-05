@@ -2023,12 +2023,24 @@ function validate() {
     );
   }
 
+  // Mirrors validateConfig: a non-positive threshold switches value-based consolidation off, which
+  // is a real configuration when a byte capacity gives eviction something to reclaim against, and a
+  // store that forgets nothing when it does not. capacityMemories does not rescue it - a row
+  // capacity only scales the pressure that scales the threshold, and nothing evicts on it.
   if (!(Number(val("consolidation.deletionThreshold")) > 0)) {
-    add(
-      "error",
-      "memory",
-      "consolidation.deletionThreshold must be greater than 0 \u2014 at or below it no value is ever under the threshold, so nothing is ever consolidated and the store only grows.",
-    );
+    if (Number(val("consolidation.capacityBytes")) > 0) {
+      add(
+        "warn",
+        "memory",
+        "consolidation.deletionThreshold is at or below 0, so value-based consolidation is off and this store forgets on the capacity target alone \u2014 a memory is kept for as long as the store has room for it, rather than for a lifetime set by its significance.",
+      );
+    } else {
+      add(
+        "error",
+        "memory",
+        "consolidation.deletionThreshold must be greater than 0 \u2014 at or below it no value is ever under the threshold, so nothing is ever consolidated and the store only grows. Set consolidation.capacityBytes to forget on the capacity target alone instead.",
+      );
+    }
   }
 
   if (Number(val("consolidation.minimumRetentionInDays")) < 0) {

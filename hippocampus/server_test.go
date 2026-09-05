@@ -835,6 +835,34 @@ func TestLogForgettingMode(t *testing.T) {
 			notWant: []string{"no hysteresis floor set"},
 		},
 		{
+			// The mode the deletionThreshold check refused outright when it landed: value-based
+			// consolidation switched off on purpose, forgetting left entirely to eviction. It must
+			// be named as its own mode rather than reported as "decay with a capacity target",
+			// which would describe a decay curve that is not running.
+			name: "a capacity target with the threshold off is capacity-only",
+			consolidation: Consolidation{
+				deletionThreshold:  0,
+				capacityBytes:      160000000,
+				capacityBytesFloor: 144000000,
+			},
+			want: []string{
+				"forgetting mode: capacity target only",
+				"value-based consolidation is off",
+				"passes 160000000 bytes",
+				"floor of 144000000",
+			},
+			notWant: []string{"decay with a capacity target"},
+		},
+		{
+			name: "capacity-only with no floor says so rather than printing the same number twice",
+			consolidation: Consolidation{
+				deletionThreshold: -1,
+				capacityBytes:     1024,
+			},
+			want:    []string{"forgetting mode: capacity target only", "no hysteresis floor set"},
+			notWant: []string{"floor of 1024"},
+		},
+		{
 			// evictionFloor() rejects a floor above the target, so this must fall back to the
 			// no-floor wording rather than printing a floor eviction would never reclaim to.
 			name: "a floor above the target falls back to the no-floor wording",

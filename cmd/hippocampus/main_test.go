@@ -375,6 +375,65 @@ func TestValidateConfig(t *testing.T) {
 	}
 }
 
+// TestValidateConfigCapacityOnlyForgetting is the regression test for a mode the deletionThreshold
+// check refused outright when it landed: a store that forgets on the capacity target ALONE, with
+// value-based consolidation deliberately switched off by a non-positive threshold.
+//
+// The check's original reasoning was that a non-positive threshold has no legitimate use, because
+// "consolidation.enabled and a non-positive sleep.periodSeconds are both already" the way to disable
+// forgetting. Neither is equivalent: both also disable EVICTION, which is the mechanism this mode
+// runs on. Two live instances on the public demo were configured exactly this way and could not
+// start.
+//
+// So the threshold is refused only when nothing else would forget anything either - which is the
+// silent no-op the check exists to catch - and permitted when consolidation.capacityBytes gives
+// eviction something to reclaim against. capacityMemories deliberately does NOT rescue it: a row
+// capacity only scales the pressure that scales the threshold, and scaling a non-positive threshold
+// leaves it non-positive, so that combination really does forget nothing.
+func TestValidateConfigCapacityOnlyForgetting(t *testing.T) {
+	cases := []struct {
+		name             string
+		threshold        float64
+		capacityBytes    int
+		capacityMemories int
+		wantErr          bool
+	}{
+		{name: "zero threshold with a byte capacity", threshold: 0.0, capacityBytes: 160000000, wantErr: false},
+		{name: "negative threshold with a byte capacity", threshold: -1.0, capacityBytes: 160000000, wantErr: false},
+		{name: "zero threshold with no capacity at all", threshold: 0.0, wantErr: true},
+		{name: "zero threshold with only a row capacity", threshold: 0.0, capacityMemories: 100000, wantErr: true},
+		{name: "positive threshold with no capacity", threshold: 10.0, wantErr: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validConsolidationConfig()
+			viper.Set("consolidation.deletionThreshold", tc.threshold)
+			viper.Set("consolidation.capacityBytes", tc.capacityBytes)
+			viper.Set("consolidation.capacityMemories", tc.capacityMemories)
+
+			err := validateConfig()
+
+			if tc.wantErr && err == nil {
+				t.Fatalf("validateConfig(threshold=%v, capacityBytes=%d, capacityMemories=%d) = nil, want error",
+					tc.threshold,
+					tc.capacityBytes,
+					tc.capacityMemories,
+				)
+			}
+
+			if !tc.wantErr && err != nil {
+				t.Fatalf("validateConfig(threshold=%v, capacityBytes=%d, capacityMemories=%d) = %v, want nil",
+					tc.threshold,
+					tc.capacityBytes,
+					tc.capacityMemories,
+					err,
+				)
+			}
+		})
+	}
+}
+
 // TestValidateConfigMethod3Aggressiveness is a regression test for the method-3 decay factor
 // 1 + ln(aggressiveness): any aggressiveness at or below 1/e (~0.368) makes the factor
 // non-positive, so calculateValue returns MaxFloat64 for every item and value-based consolidation

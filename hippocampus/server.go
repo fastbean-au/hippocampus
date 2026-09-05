@@ -599,7 +599,7 @@ func New(deps Dependencies) *Server {
 	return s
 }
 
-// logForgettingMode names which of the two modes in docs/consolidation.md this instance is running,
+// logForgettingMode names which of the modes in docs/consolidation.md this instance is running,
 // once, at startup.
 //
 // The two are configured by an ABSENCE - a capacity target left at zero is decay-only - which is
@@ -636,6 +636,32 @@ func (s *Server) logForgettingMode() {
 		log.Infof(
 			"forgetting mode: decay with row-capacity pressure - the deletion threshold is scaled by the memory count against consolidation.capacityMemories (%d), but nothing is evicted on the row count; set consolidation.capacityBytes for a hard bound",
 			s.consolidation.capacityMemories,
+		)
+
+		return
+	}
+
+	// Value-based consolidation switched off deliberately: eviction against the byte capacity is the
+	// only thing that forgets, so a memory is kept for exactly as long as the store has room for it
+	// and its lifetime is a function of the aggregate write rate rather than of its own
+	// significance. validateConfig guarantees capacityBytes is positive here - a non-positive
+	// threshold with nothing to evict against forgets nothing at all and is refused at startup.
+	if s.consolidation.deletionThreshold <= 0 {
+		if floor := s.evictionFloor(); floor != s.consolidation.capacityBytes {
+			log.Infof(
+				"forgetting mode: capacity target only - value-based consolidation is off (deletion threshold %g), so nothing is forgotten until the store passes %d bytes; eviction then reclaims the lowest-value memories down to a floor of %d",
+				s.consolidation.deletionThreshold,
+				s.consolidation.capacityBytes,
+				floor,
+			)
+
+			return
+		}
+
+		log.Infof(
+			"forgetting mode: capacity target only - value-based consolidation is off (deletion threshold %g), so nothing is forgotten until the store passes %d bytes (no hysteresis floor set); eviction then reclaims the lowest-value memories",
+			s.consolidation.deletionThreshold,
+			s.consolidation.capacityBytes,
 		)
 
 		return
