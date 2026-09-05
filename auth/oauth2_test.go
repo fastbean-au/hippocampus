@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -672,5 +673,65 @@ func TestSubtleMismatch(t *testing.T) {
 
 	if !subtleMismatch("a", "b") {
 		t.Error("differing values should mismatch")
+	}
+}
+
+// TestOAuth2Login_LoginEntropyFailure verifies that when the entropy source fails, Login returns a
+// generic 500 and starts no flow, rather than redirecting the browser to the provider with a
+// predictable (or empty) CSRF state and OIDC nonce - the two values whose unguessability is the
+// whole point of the return leg's checks.
+//
+// It covers both randomToken calls, and serverError with them: the state is minted first, so a
+// source that fails only on the second read exercises the nonce branch.
+func TestOAuth2Login_LoginEntropyFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		failAfter  int
+		wantCookie bool
+	}{
+		{name: "the state cannot be minted", failAfter: 0},
+		{name: "the nonce cannot be minted", failAfter: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idp := newFakeIDP(t, "console-client")
+			login := newTestLogin(t, idp)
+
+			orig := randRead
+			t.Cleanup(func() { randRead = orig })
+
+			var reads int
+
+			randRead = func(b []byte) (int, error) {
+				if reads >= tt.failAfter {
+					return 0, fmt.Errorf("no entropy")
+				}
+
+				reads++
+
+				return orig(b)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+			rec := httptest.NewRecorder()
+
+			login.Login(rec, req)
+
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("expected 500, got %d", rec.Code)
+			}
+
+			// No redirect, so the browser is never sent to the provider on a flow that could not be
+			// bound to this session.
+			if loc := rec.Header().Get("Location"); loc != "" {
+				t.Errorf("expected no redirect, got Location %q", loc)
+			}
+
+			// And no half-set cookies: Login writes all three only after both values are in hand.
+			if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+				t.Errorf("expected no cookies to be set, got %d", len(cookies))
+			}
+		})
 	}
 }

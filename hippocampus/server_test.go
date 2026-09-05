@@ -779,3 +779,227 @@ func TestServicePrefixMatchesDescriptor(t *testing.T) {
 		t.Fatalf("hippocampusServicePrefix = %q, want %q", hippocampusServicePrefix, want)
 	}
 }
+
+// TestLogForgettingMode covers the startup line that turns a configuration ABSENCE into a
+// declaration. The two modes in docs/consolidation.md are configured by leaving a capacity target
+// at zero, which is what made them indistinguishable from each other and from a store misconfigured
+// into forgetting nothing at all - all three presented as silence. Each branch must therefore name
+// the mode it is in, and the row-capacity one must say plainly that nothing is evicted on the row
+// count, since "capacityMemories: 100000" reads like a cap and is not one.
+func TestLogForgettingMode(t *testing.T) {
+	tests := []struct {
+		name          string
+		consolidation Consolidation
+		want          []string
+		notWant       []string
+	}{
+		{
+			name: "neither axis configured is decay-only",
+			consolidation: Consolidation{
+				deletionThreshold: 0.5,
+				method:            1,
+				aggressiveness:    1.0,
+			},
+			want: []string{"forgetting mode: decay-only", "threshold 0.5", "method 1", "hippocampus.used_bytes"},
+		},
+		{
+			name: "a row capacity alone scales pressure and evicts nothing",
+			consolidation: Consolidation{
+				deletionThreshold: 0.5,
+				capacityMemories:  100000,
+			},
+			want: []string{
+				"forgetting mode: decay with row-capacity pressure",
+				"consolidation.capacityMemories (100000)",
+				"nothing is evicted on the row count",
+				"set consolidation.capacityBytes",
+			},
+		},
+		{
+			name: "a capacity target with no floor says so rather than printing the same number twice",
+			consolidation: Consolidation{
+				deletionThreshold: 0.5,
+				capacityBytes:     1024,
+			},
+			want:    []string{"forgetting mode: decay with a capacity target", "at or below 1024 bytes", "no hysteresis floor set"},
+			notWant: []string{"reclaiming down to a floor"},
+		},
+		{
+			name: "a floor below the target is reported as hysteresis headroom",
+			consolidation: Consolidation{
+				deletionThreshold:  0.5,
+				capacityBytes:      1024,
+				capacityBytesFloor: 512,
+			},
+			want:    []string{"forgetting mode: decay with a capacity target", "at or below 1024 bytes", "reclaiming down to a floor of 512"},
+			notWant: []string{"no hysteresis floor set"},
+		},
+		{
+			// evictionFloor() rejects a floor above the target, so this must fall back to the
+			// no-floor wording rather than printing a floor eviction would never reclaim to.
+			name: "a floor above the target falls back to the no-floor wording",
+			consolidation: Consolidation{
+				deletionThreshold:  0.5,
+				capacityBytes:      1024,
+				capacityBytesFloor: 4096,
+			},
+			want:    []string{"no hysteresis floor set"},
+			notWant: []string{"reclaiming down to a floor"},
+		},
+		{
+			// Both axes set: the byte target wins the branch, since it is the one that actually
+			// bounds the store.
+			name: "both axes configured reports the capacity target",
+			consolidation: Consolidation{
+				deletionThreshold: 0.5,
+				capacityMemories:  100000,
+				capacityBytes:     1024,
+			},
+			want:    []string{"forgetting mode: decay with a capacity target"},
+			notWant: []string{"row-capacity pressure", "decay-only"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+
+			restoreOutput := log.StandardLogger().Out
+			restoreLevel := log.GetLevel()
+
+			log.SetOutput(&buf)
+			log.SetLevel(log.InfoLevel)
+
+			t.Cleanup(func() {
+				log.SetOutput(restoreOutput)
+				log.SetLevel(restoreLevel)
+			})
+
+			s := &Server{consolidation: tt.consolidation}
+			s.logForgettingMode()
+
+			for _, want := range tt.want {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("expected the log line to contain %q, got: %s", want, buf.String())
+				}
+			}
+
+			for _, notWant := range tt.notWant {
+				if strings.Contains(buf.String(), notWant) {
+					t.Errorf("expected the log line NOT to contain %q, got: %s", notWant, buf.String())
+				}
+			}
+		})
+	}
+}
+
+// TestStopDrainsEveryWorker verifies Stop closes each optional worker's stop channel and WAITS for
+// it to confirm, not merely signals it. That wait is the contract: the caller closes the database
+// next, so a worker still running when Stop returns is one issuing queries against a closed store.
+//
+// Each case makes exactly one worker slow to confirm and the rest immediate, so a dropped wait is
+// caught for that worker specifically - with every worker slow, the others' waits would mask it.
+//
+// The channels are wired directly rather than through startCallbacks/startOutbox, which need a
+// notifier and a delete-syncing search backend respectively; what is under test here is Stop's
+// drain, not their construction.
+func TestStopDrainsEveryWorker(t *testing.T) {
+	// Long enough that a Stop skipping this worker's wait returns well inside it, short enough not
+	// to slow the suite.
+	const confirmDelay = 300 * time.Millisecond
+
+	workers := []string{"callbacks", "outbox", "reconcile", "sleep"}
+
+	for i, slow := range workers {
+		t.Run(slow, func(t *testing.T) {
+			s := &Server{}
+
+			s.stopCallbacks = make(chan struct{})
+			s.callbacksStopped = make(chan struct{})
+			s.stopOutbox = make(chan struct{})
+			s.outboxStopped = make(chan struct{})
+			s.stopReconcile = make(chan struct{})
+			s.reconcileStopped = make(chan struct{})
+			s.stopSleep = make(chan struct{})
+			s.sleepStopped = make(chan struct{})
+
+			channels := []struct {
+				stop    chan struct{}
+				stopped chan struct{}
+			}{
+				{s.stopCallbacks, s.callbacksStopped},
+				{s.stopOutbox, s.outboxStopped},
+				{s.stopReconcile, s.reconcileStopped},
+				{s.stopSleep, s.sleepStopped},
+			}
+
+			for j, channel := range channels {
+				go func() {
+					<-channel.stop
+
+					if j == i {
+						time.Sleep(confirmDelay)
+					}
+
+					close(channel.stopped)
+				}()
+			}
+
+			started := time.Now()
+			done := make(chan struct{})
+
+			go func() {
+				s.Stop()
+				close(done)
+			}()
+
+			select {
+
+			case <-done:
+
+			case <-time.After(5 * time.Second):
+				t.Fatal("Stop did not return; a worker's confirmation was never awaited or never arrived")
+			}
+
+			if elapsed := time.Since(started); elapsed < confirmDelay {
+				t.Errorf("Stop returned after %s without waiting for the %s worker to confirm", elapsed, slow)
+			}
+
+			for j, channel := range channels {
+				select {
+
+				case <-channel.stopped:
+
+				default:
+					t.Errorf("the %s worker had not confirmed when Stop returned", workers[j])
+				}
+			}
+
+			// Safe to call more than once: stopOnce means the second call must not re-close a channel
+			// it already closed, which would panic.
+			s.Stop()
+		})
+	}
+}
+
+// TestStopIsANoOpWithoutWorkers verifies Stop on a Server built directly in a test - one that never
+// ran New, so none of the optional workers were started - returns rather than blocking on a
+// confirmation nothing will send.
+func TestStopIsANoOpWithoutWorkers(t *testing.T) {
+	s := &Server{}
+
+	done := make(chan struct{})
+
+	go func() {
+		s.Stop()
+		close(done)
+	}()
+
+	select {
+
+	case <-done:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop blocked on a worker that was never started")
+	}
+}

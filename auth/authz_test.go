@@ -551,3 +551,89 @@ func TestRolesFromClaimProviderShapes(t *testing.T) {
 		t.Fatalf("expected [writer] from a scalar nested claim, got %v", got)
 	}
 }
+
+// TestTierNames verifies the exported name list is the tier hierarchy in order, lowest first, and
+// agrees with what parseTier accepts. Configuration keyed by tier (the per-tier rate limits are the
+// first) enumerates and validates against this, so a name here that the resolver does not recognise
+// would let a config file name a tier that silently matches nobody.
+func TestTierNames(t *testing.T) {
+	names := TierNames()
+
+	want := []string{"reader", "writer", "admin"}
+	if len(names) != len(want) {
+		t.Fatalf("TierNames() = %v, want %v", names, want)
+	}
+
+	var previous Tier
+
+	for i, name := range names {
+		if name != want[i] {
+			t.Errorf("TierNames()[%d] = %q, want %q", i, name, want[i])
+		}
+
+		tier, ok := parseTier(name)
+		if !ok {
+			t.Fatalf("parseTier(%q) did not recognise a name TierNames reports", name)
+		}
+
+		if i > 0 && tier <= previous {
+			t.Errorf("TierNames() is not ordered lowest first: %q does not exceed %q", name, names[i-1])
+		}
+
+		previous = tier
+	}
+}
+
+// TestHasPolicy verifies the cross-check other tables use to confirm they name an RPC the same way
+// this one does. What it exists to catch is two tables disagreeing about an RPC's name, which would
+// leave a real RPC unguarded while both coverage tests still passed - so a misspelling must report
+// false rather than being tolerated.
+func TestHasPolicy(t *testing.T) {
+	tests := []struct {
+		rpc  string
+		want bool
+	}{
+		{rpc: "WhoAmI", want: true},
+		{rpc: "Purge", want: true},
+		{rpc: "StoreMemory", want: true},
+		{rpc: "whoami", want: false},
+		{rpc: "/hippocampus.v1.Hippocampus/WhoAmI", want: false},
+		{rpc: "NoSuchRPC", want: false},
+		{rpc: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.rpc, func(t *testing.T) {
+			if got := HasPolicy(tt.rpc); got != tt.want {
+				t.Errorf("HasPolicy(%q) = %v, want %v", tt.rpc, got, tt.want)
+			}
+		})
+	}
+
+	// Every RPC the table declares must report true, so HasPolicy cannot drift from the table it
+	// reports on.
+	for rpc := range policies {
+		if !HasPolicy(rpc) {
+			t.Errorf("HasPolicy(%q) = false for an RPC the policy table declares", rpc)
+		}
+	}
+}
+
+// TestRolesFromClaim_UndottedNameMissing covers resolveClaim's early return: a claim name with no
+// dot in it that is not present as a literal key resolves to nothing, rather than being walked as a
+// (single-segment) path.
+func TestRolesFromClaim_UndottedNameMissing(t *testing.T) {
+	token, err := MintToken(MintRequest{
+		Secret:   "test-secret",
+		ClientID: "client-1",
+		TTL:      time.Hour,
+		Roles:    []string{"reader"},
+	})
+	if err != nil {
+		t.Fatalf("MintToken: %s", err)
+	}
+
+	if roles := stringsFromClaim(token, "entitlements"); roles != nil {
+		t.Errorf("expected no roles from an absent undotted claim, got %v", roles)
+	}
+}

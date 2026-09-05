@@ -824,3 +824,91 @@ func TestJWKSVerifier_KeyForToken_ForcedRefreshFindsRotatedKey(t *testing.T) {
 		t.Errorf("expected the rotated-in key to verify via keyForToken's own forced refresh: %s", err)
 	}
 }
+
+// TestJWKSVerifier_GroupsClaim covers the auth.groupsClaim path: when the provider publishes the
+// group scope under a non-standard claim name, Verify resolves Claims.Groups from there. It is the
+// group-scoping counterpart of the roles resolution, and matters more than it looks - a scope that
+// silently failed to resolve would present as an unscoped token, which is the MOST privileged shape
+// there is rather than the least.
+func TestJWKSVerifier_GroupsClaim(t *testing.T) {
+	key := testRSAKey(t)
+
+	keySet := &testKeySet{}
+	keySet.set(testJWK("key-1", &key.PublicKey))
+
+	srv := httptest.NewServer(http.HandlerFunc(keySet.serve))
+	defer srv.Close()
+
+	v, err := NewJWKSVerifier(JWKSConfig{
+		JWKSURL:         srv.URL,
+		RefreshInterval: time.Minute,
+		GroupsClaim:     "tenants",
+	})
+	if err != nil {
+		t.Fatalf("NewJWKSVerifier: %s", err)
+	}
+
+	raw := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"exp":     time.Now().Add(time.Hour).Unix(),
+		"tenants": []any{"sales", "support"},
+		// A standard "groups" claim is present too, so the test proves the configured name wins
+		// rather than merely that something was read.
+		"groups": []any{"everything"},
+	})
+	raw.Header["kid"] = "key-1"
+
+	signed, err := raw.SignedString(key)
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	claims, err := v.Verify(signed)
+	if err != nil {
+		t.Fatalf("Verify: %s", err)
+	}
+
+	if len(claims.Groups) != 2 || claims.Groups[0] != "sales" || claims.Groups[1] != "support" {
+		t.Fatalf("expected groups [sales support] from the tenants claim, got %v", claims.Groups)
+	}
+}
+
+// TestJWKSVerifier_NestedGroupsClaim covers the dotted-path fallback for the group scope, the shape
+// Keycloak produces (realm_access.roles), applied to groups.
+func TestJWKSVerifier_NestedGroupsClaim(t *testing.T) {
+	key := testRSAKey(t)
+
+	keySet := &testKeySet{}
+	keySet.set(testJWK("key-1", &key.PublicKey))
+
+	srv := httptest.NewServer(http.HandlerFunc(keySet.serve))
+	defer srv.Close()
+
+	v, err := NewJWKSVerifier(JWKSConfig{
+		JWKSURL:         srv.URL,
+		RefreshInterval: time.Minute,
+		GroupsClaim:     "realm_access.tenants",
+	})
+	if err != nil {
+		t.Fatalf("NewJWKSVerifier: %s", err)
+	}
+
+	raw := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"exp":          time.Now().Add(time.Hour).Unix(),
+		"realm_access": map[string]any{"tenants": []any{"sales"}},
+	})
+	raw.Header["kid"] = "key-1"
+
+	signed, err := raw.SignedString(key)
+	if err != nil {
+		t.Fatalf("SignedString: %s", err)
+	}
+
+	claims, err := v.Verify(signed)
+	if err != nil {
+		t.Fatalf("Verify: %s", err)
+	}
+
+	if len(claims.Groups) != 1 || claims.Groups[0] != "sales" {
+		t.Fatalf("expected groups [sales] from the nested claim, got %v", claims.Groups)
+	}
+}

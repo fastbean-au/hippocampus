@@ -32,3 +32,58 @@ func TestClientIDFromContext_RoundTrip(t *testing.T) {
 		t.Errorf("expected client id 'client-9', got %q", clientID)
 	}
 }
+
+// TestGroupsFromContext covers the contract callers must branch on: the bool, never the slice's
+// length. "No scope" and "scoped to nothing" are indistinguishable from the slice alone, and
+// defaulting either way is a bug - one empties every read on an unauthenticated instance, the other
+// hands a bound token the whole store.
+func TestGroupsFromContext(t *testing.T) {
+	tests := []struct {
+		name       string
+		ctx        context.Context
+		wantGroups []string
+		wantBound  bool
+	}{
+		{
+			name:      "no claims at all reports unbound",
+			ctx:       context.Background(),
+			wantBound: false,
+		},
+		{
+			name:      "verified claims carrying no groups report unbound",
+			ctx:       ContextWithClaims(context.Background(), &Claims{ClientID: "client-1"}),
+			wantBound: false,
+		},
+		{
+			name:      "an empty groups slice reports unbound",
+			ctx:       ContextWithClaims(context.Background(), &Claims{ClientID: "client-1", Groups: []string{}}),
+			wantBound: false,
+		},
+		{
+			name:       "a scoped token reports its groups and bound",
+			ctx:        ContextWithClaims(context.Background(), &Claims{ClientID: "client-1", Groups: []string{"sales", "support"}}),
+			wantGroups: []string{"sales", "support"},
+			wantBound:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groups, bound := GroupsFromContext(tt.ctx)
+
+			if bound != tt.wantBound {
+				t.Fatalf("bound = %v, want %v", bound, tt.wantBound)
+			}
+
+			if len(groups) != len(tt.wantGroups) {
+				t.Fatalf("groups = %v, want %v", groups, tt.wantGroups)
+			}
+
+			for i, v := range tt.wantGroups {
+				if groups[i] != v {
+					t.Errorf("groups[%d] = %q, want %q", i, groups[i], v)
+				}
+			}
+		})
+	}
+}

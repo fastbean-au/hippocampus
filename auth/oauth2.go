@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -506,7 +505,9 @@ func nonceFromToken(token string) string {
 func randomToken() (string, error) {
 	buf := make([]byte, 32)
 
-	if _, err := rand.Read(buf); err != nil {
+	// Through randRead (the same seam token ids use) rather than rand.Read directly, so a test can
+	// force the practically unreachable read failure and exercise Login's error path.
+	if _, err := randRead(buf); err != nil {
 		return "", fmt.Errorf("auth: failed to read random bytes: %s", err.Error())
 	}
 
