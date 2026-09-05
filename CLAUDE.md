@@ -167,6 +167,23 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   they refuse and there is nothing left to report. Takes no lock and runs no DDL, so it is safe
   beside a live instance. It is a flag on this binary rather than a `hippo` subcommand because the
   CLI is a network client and a stopped store has nothing to dial
+- Validate a configuration without starting: `go run ./cmd/hippocampus --check-config [--output json] -c config.json`
+  (CLI mode in `checkconfig.go`, exits non-zero when the service would refuse to start; touches no
+  store and no network, so it is safe in a build step or beside a live instance). It checks the
+  **resolved** configuration, not the file — the same read, `HIPPOCAMPUS_*` overrides and defaults a
+  real start applies — because viper's precedence means a sound `config.json` can still be invalid
+  once a container's env injection lands. It reports **every** problem rather than the first, which
+  is why `validateConfig` is now a thin wrapper over `configProblems() []error`: a pre-flight tool
+  surfacing one fault per run sends an operator around the restart loop once per mistake, and
+  startup gains the same list for free. Its dispatch sits **above** the "no configuration file"
+  Warn line (unlike every other CLI mode's) for the reason `--schema-version` documents about its
+  own output — logging writes to stdout, so a Warn line emitted before the mode can redirect it
+  corrupts the JSON; the same reasoning moved that warning below `--schema-version` too, where it
+  had been silently breaking `--output json` on a host with no config file.
+  `TestShippedConfigsAreValid` is the other half: it runs `configProblems` over every configuration
+  file in the repo (glob-based, so a new one is covered without anybody remembering), with
+  `TestShippedConfigsCoverEveryDriver` pinning that all three drivers stay represented. Both exist
+  because 0.41.0 shipped a rule that no configuration here violated and two on the public demo did
 
 ## What this is
 

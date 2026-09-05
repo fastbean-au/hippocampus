@@ -35,7 +35,46 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **`--check-config`: validate a configuration without starting the service.** A validation rule is
+  only ever written against the configurations its author can see, and the deployments it breaks are
+  the ones they cannot — which is exactly how 0.41.0's deletion-threshold check shipped past every
+  configuration in this repository and stopped two instances on the public demo from starting. The
+  validation already existed; what was missing was any way to run it *without* starting, so the
+  answer arrived from a crash loop rather than from a deploy pipeline.
+
+  `hippocampus --check-config -c config.json` runs the same checks a real start runs, reports what
+  is wrong, and exits — touching no store, no network and no identity provider, so it is safe in a
+  build step or beside a live instance. `--output json` renders the same report for a script;
+  `status` is the field to branch on and the exit status carries the same verdict, so a pipeline
+  need not parse anything to gate on it.
+
+  Two decisions carry it. It checks the **resolved** configuration rather than the file, because
+  viper's precedence is flag > env > file > default and a `config.json` that is sound alone can be
+  invalid once a container's `HIPPOCAMPUS_*` overrides land — so the report names which file it read
+  and whether it fell back to the built-in defaults, since a check that passes against defaults says
+  nothing about the file you meant to hand it. And it reports **every** problem rather than the
+  first: `validateConfig` is now a thin wrapper over a `configProblems() []error`, because a
+  pre-flight tool surfacing one fault per run sends an operator around the restart loop once per
+  mistake. Startup gains the same list for free — a configuration with three mistakes now names
+  three.
+
+  `TestShippedConfigsAreValid` is the other half, and the one that would have caught 0.41.0: it runs
+  the same validation over every configuration file in the repository, found by glob so a new one is
+  covered without anybody remembering to add it, with a companion test pinning that all three
+  storage drivers stay represented among them.
+
 ### Fixed
+
+- **`--schema-version --output json` emitted a log line above the document when no config file
+  existed.** The mode points logging at stderr before rendering, precisely so a script can parse
+  stdout — but the "no configuration file, starting on built-in defaults" warning is logged before
+  the mode is dispatched at all, so on a host configured entirely through `HIPPOCAMPUS_*`
+  environment variables the JSON was preceded by a Warn line and could not be parsed. The warning
+  now sits below every CLI mode that renders to stdout, and above `--backfill-search`, which renders
+  nothing and does want to say which store it is about to spend an hour on.
+
 
 - **0.41.0 refused a working configuration: forgetting on the capacity target alone.** The new
   `consolidation.deletionThreshold` check rejected any non-positive value at startup, on the

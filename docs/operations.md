@@ -119,6 +119,71 @@ died (failover, network, an idle-timeout that outpaced the keepalive) and restar
 resolved. Run under a supervisor (systemd, Kubernetes, Docker restart policy) so a fail-stop is
 followed by a clean restart.
 
+## Validating a configuration before it starts
+
+`--check-config` runs the service's own startup validation, reports everything wrong with the
+configuration, and exits — without opening the store, dialling anything, or starting a server:
+
+```sh
+hippocampus --check-config -c config.json
+```
+
+```text
+config:  config.json
+driver:  postgres
+status:  valid
+```
+
+On a bad configuration it reports **every** problem rather than the first, because a pre-flight tool
+that surfaces one fault per run sends you around the restart loop once per mistake:
+
+```text
+config:  config.json
+driver:  sqlite
+status:  INVALID - 3 problem(s); the service would refuse to start
+
+  - consolidation.unitsOfAgeInDays must be greater than 0, got 0
+  - consolidation.method must be between 1 and 6, got 9
+  - storage.directory must be set for storage.driver 'sqlite' (an empty directory selects the test-only in-memory database)
+```
+
+The exit status carries the verdict, so a deploy pipeline can gate on it without parsing anything,
+and `--output json` renders the same report for one that wants the detail:
+
+```sh
+hippocampus --check-config --output json -c config.json
+```
+
+```json
+{
+  "status": "valid",
+  "config_file": "config.json",
+  "defaulted": false,
+  "driver": "postgres",
+  "problems": []
+}
+```
+
+`status` is the field to branch on — `valid` or `invalid`. `problems` is always an array, never
+`null`. `defaulted` is `true` when no configuration file was found at all, which is worth checking
+in a pipeline: running on the built-in defaults is supported, so it passes validation, and a check
+that passes says nothing about the file you meant to hand it.
+
+Two things make it worth running rather than trusting the file to be right:
+
+- **It checks the configuration the service would actually resolve**, not the file. viper's
+  precedence is flag, then environment, then file, then default, so a `config.json` that is sound on
+  its own can still be invalid once a container's `HIPPOCAMPUS_*` overrides are applied — and a key
+  the file omits is checked at whatever the built-in default is. Run it in the environment the
+  service will run in.
+- **It is what catches a validation rule that tightened underneath you.** Rules are added between
+  releases; 0.41.0 added one that a working, deliberate configuration did not satisfy. Upgrading a
+  deployment is a good moment to run this against the new binary before the old container is
+  replaced.
+
+It touches no store and no network, so it is safe anywhere — beside a live instance, or in a build
+step that has neither.
+
 ## Running as a service
 
 The binary is a foreground process: it runs until it receives `SIGINT`/`SIGTERM`, then shuts down

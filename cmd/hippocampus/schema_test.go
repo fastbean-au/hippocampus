@@ -346,6 +346,44 @@ func TestReportSchemaVersion_JSONStdoutStaysParseable(t *testing.T) {
 	}
 }
 
+// TestExecute_SchemaVersionJSONStaysParseableWithNoConfigFile is the same property
+// TestReportSchemaVersion_JSONStdoutStaysParseable pins, one step earlier in the startup path and
+// reached by a different route: the "no configuration file" warning is logged at Warn, this binary
+// logs to stdout, and it fired BEFORE this mode's dispatch - so the mode's own stdout/stderr split
+// could not help, and `--schema-version --output json` on a host without a config file emitted a log
+// line above the document. Invisible to every other test here, all of which write a config file.
+func TestExecute_SchemaVersionJSONStaysParseableWithNoConfigFile(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+	defer log.StandardLogger().SetOutput(log.StandardLogger().Out)
+
+	directory := t.TempDir()
+
+	database, err := db.New(directory)
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+
+	if err := database.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	// The store comes from an environment override rather than a file, which is the arrangement this
+	// is about: no -c, no config.json in the package directory, so execute takes the configMissing
+	// path and would have logged its warning to stdout.
+	t.Setenv("HIPPOCAMPUS_STORAGE_DIRECTORY", directory)
+
+	out := captureStdout(t, func() {
+		execute([]string{"--schema-version", "--output", "json"})
+	})
+
+	var decoded map[string]any
+
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("stdout must be parseable JSON when no config file exists: %s\n%s", err, out)
+	}
+}
+
 // TestExecute_SchemaVersion drives the flag wiring: --schema-version reads the configured store and
 // returns without starting the server, and --output json changes the rendering rather than being
 // silently ignored.

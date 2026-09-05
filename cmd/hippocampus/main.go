@@ -68,7 +68,8 @@ func execute(args []string) {
 	flags.String("signing-secret", "", "override auth.signingSecret from the config file (used with --mint-token)")
 	flags.String("kid", "", "signing-key id to stamp on a minted token; defaults to auth.activeKid or the first auth.signingKeys entry (used with --mint-token)")
 	flags.Bool("schema-version", false, "print the configured store's schema version and exit; exits non-zero if the store is newer than this build")
-	flags.String("output", "text", "output format for --schema-version: text or json (used with --schema-version)")
+	flags.Bool("check-config", false, "validate the resolved configuration and exit; exits non-zero if the service would refuse to start on it")
+	flags.String("output", "text", "output format for --schema-version and --check-config: text or json")
 	flags.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
 	flags.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
 	flags.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
@@ -203,17 +204,28 @@ func execute(args []string) {
 
 	setStartupDefaults()
 
-	// Said once, at Warn, and only here: it is after --mint-token has returned (logging writes to
-	// stdout, which that mode needs to itself) and after the defaults are set, so it can report the
-	// values actually in force. Running on defaults is supported, but it is never what a deployment
-	// wants, so it must not be silent.
-	if configMissing {
-		log.Warnf("no configuration file at '%s' - starting on built-in defaults: %s storage in '%s', gRPC on port %d, no authentication",
-			configFile,
-			viper.GetString("storage.driver"),
-			viper.GetString("storage.directory"),
-			viper.GetInt("port"),
-		)
+	// --check-config is a CLI mode like --mint-token: it validates the resolved configuration and
+	// exits without opening the store or starting the server (see checkconfig.go).
+	//
+	// It runs BEFORE the configMissing warning below rather than after it, for the reason that mode
+	// documents about its own output: logging writes to stdout, and --output json makes stdout a
+	// data channel, so a Warn line emitted first would sit above the document and make it
+	// unparseable. Nothing is lost by moving ahead of it - the report states whether it is checking
+	// a file or the built-in defaults, which is what that warning would have said.
+	if viper.GetBool("check-config") {
+		output := viper.GetString("output")
+		if output != "text" && output != "json" {
+			log.Fatalf("--output %q is not a known format (expected 'text' or 'json')", output)
+		}
+
+		checkConfig(checkConfigConfig{
+			ConfigFile:    configFile,
+			ConfigMissing: configMissing,
+			Driver:        viper.GetString("storage.driver"),
+			JSON:          output == "json",
+		})
+
+		return
 	}
 
 	// --schema-version is a CLI mode like --mint-token: it reads the store's recorded schema version
@@ -235,6 +247,27 @@ func execute(args []string) {
 		})
 
 		return
+	}
+
+	// Said once, at Warn, and only here. Its position is load-bearing in both directions. It is
+	// after the defaults are set, so it can report the values actually in force, and after every CLI
+	// mode that RENDERS to stdout has returned - --mint-token, --check-config and --schema-version -
+	// because logging in this service writes to stdout, and a Warn line above a document the caller
+	// asked for as JSON makes it unparseable. Each of those modes points logging at stderr, but only
+	// once it is running, which is too late for a line emitted before the dispatch.
+	//
+	// It stays ABOVE --backfill-search, which renders nothing and does want it: that mode runs for a
+	// long time against a real store, and which store is exactly what an operator needs to know.
+	//
+	// Running on defaults is supported, but it is never what a deployment wants, so it must not be
+	// silent.
+	if configMissing {
+		log.Warnf("no configuration file at '%s' - starting on built-in defaults: %s storage in '%s', gRPC on port %d, no authentication",
+			configFile,
+			viper.GetString("storage.driver"),
+			viper.GetString("storage.directory"),
+			viper.GetInt("port"),
+		)
 	}
 
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
@@ -1775,21 +1808,40 @@ func configureEnvOverrides() {
 	viper.AutomaticEnv()
 }
 
-// validateConfig rejects consolidation settings that would make the service behave destructively.
-// It reads straight from viper (all viper access lives in main.go) and returns a single error
-// describing the first problem found. sleep.periodSeconds is not checked here: a
+// validateConfig rejects settings that would make the service behave destructively. It reads
+// straight from viper (all viper access lives in main.go) and returns every problem it finds joined
+// into one error, or nil when the configuration is sound. sleep.periodSeconds is not checked here: a
 // non-positive value is a supported "no timed sleep" mode handled by autoSleep.
 func validateConfig() error {
+	return errors.Join(configProblems()...)
+}
+
+// configProblems runs every configuration check and returns all of them that failed, in the order
+// they are declared.
+//
+// It reports all of them rather than the first for the sake of the --check-config mode, which is a
+// pre-flight tool: an operator running it wants the list of what to fix, not one item of it per run,
+// and a deploy pipeline gating on it gets one failed build instead of five. Startup gains the same
+// thing for free - a configuration with three mistakes in it now names three rather than sending an
+// operator around the restart loop once per mistake.
+//
+// Checks are therefore independent by construction: none may assume an earlier one passed, since
+// none of them stop the rest running. Where two checks genuinely overlap (a method-3 configuration
+// with a non-positive aggressiveness trips both the generic bound and the 1/e one) reporting both is
+// correct - they are two true statements about the same value.
+func configProblems() []error {
+	var problems []error
+
 	if unitsOfAgeInDays := viper.GetFloat64("consolidation.unitsOfAgeInDays"); unitsOfAgeInDays <= 0 {
-		return fmt.Errorf("consolidation.unitsOfAgeInDays must be greater than 0, got %v", unitsOfAgeInDays)
+		problems = append(problems, fmt.Errorf("consolidation.unitsOfAgeInDays must be greater than 0, got %v", unitsOfAgeInDays))
 	}
 
 	if method := viper.GetInt("consolidation.method"); method < 1 || method > 6 {
-		return fmt.Errorf("consolidation.method must be between 1 and 6, got %d", method)
+		problems = append(problems, fmt.Errorf("consolidation.method must be between 1 and 6, got %d", method))
 	}
 
 	if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= 0 {
-		return fmt.Errorf("consolidation.aggressiveness must be greater than 0, got %v", aggressiveness)
+		problems = append(problems, fmt.Errorf("consolidation.aggressiveness must be greater than 0, got %v", aggressiveness))
 	}
 
 	// Method 3's decay factor is 1 + ln(aggressiveness), which goes non-positive for any
@@ -1800,7 +1852,7 @@ func validateConfig() error {
 	// that quietly never forgets anything.
 	if method := viper.GetInt("consolidation.method"); method == 3 {
 		if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= math.Exp(-1) {
-			return fmt.Errorf("consolidation.aggressiveness must be greater than 1/e (~0.368) for consolidation.method 3, got %v", aggressiveness)
+			problems = append(problems, fmt.Errorf("consolidation.aggressiveness must be greater than 1/e (~0.368) for consolidation.method 3, got %v", aggressiveness))
 		}
 	}
 
@@ -1824,17 +1876,17 @@ func validateConfig() error {
 	// evicts on the row count, so that pairing really does forget nothing.
 	if threshold := viper.GetFloat64("consolidation.deletionThreshold"); threshold <= 0 {
 		if capacityBytes := viper.GetInt64("consolidation.capacityBytes"); capacityBytes <= 0 {
-			return fmt.Errorf(
+			problems = append(problems, fmt.Errorf(
 				"consolidation.deletionThreshold must be greater than 0 (or set consolidation.capacityBytes to forget on the capacity target alone), got %v",
 				threshold,
-			)
+			))
 		}
 	}
 
 	// A negative retention window is meaningless (0 disables the floor). Catch it at startup rather
 	// than let a mis-signed value silently disable the guarantee that overrides the capacity target.
 	if retention := viper.GetInt("consolidation.minimumRetentionInDays"); retention < 0 {
-		return fmt.Errorf("consolidation.minimumRetentionInDays must not be negative, got %d", retention)
+		problems = append(problems, fmt.Errorf("consolidation.minimumRetentionInDays must not be negative, got %d", retention))
 	}
 
 	// sleep.periodSeconds is deliberately not validated: a non-positive value disables automatic
@@ -1846,36 +1898,36 @@ func validateConfig() error {
 	// reached by a real deployment. The postgres/mysql drivers use their own DSN
 	// keys, not storage.directory.
 	if viper.GetString("storage.driver") == "sqlite" && viper.GetString("storage.directory") == "" {
-		return fmt.Errorf("storage.directory must be set for storage.driver 'sqlite' (an empty directory selects the test-only in-memory database)")
+		problems = append(problems, fmt.Errorf("storage.directory must be set for storage.driver 'sqlite' (an empty directory selects the test-only in-memory database)"))
 	}
 
 	// The forgotten log's bounds. A negative value is meaningless (0 disables that bound), and
 	// getting the sign wrong on the one thing standing between an optional log and unbounded growth
 	// should not be discoverable only by watching the store fill.
 	if maxRows := viper.GetInt("consolidation.tombstones.maxRows"); maxRows < 0 {
-		return fmt.Errorf("consolidation.tombstones.maxRows must not be negative, got %d", maxRows)
+		problems = append(problems, fmt.Errorf("consolidation.tombstones.maxRows must not be negative, got %d", maxRows))
 	}
 
 	if maxAge := viper.GetInt("consolidation.tombstones.maxAgeInDays"); maxAge < 0 {
-		return fmt.Errorf("consolidation.tombstones.maxAgeInDays must not be negative, got %d", maxAge)
+		problems = append(problems, fmt.Errorf("consolidation.tombstones.maxAgeInDays must not be negative, got %d", maxAge))
 	}
 
 	// Cross-origin access. An entry that does not match what a browser actually sends in the Origin
 	// header - a trailing slash being the usual way to get it wrong - presents as CORS simply not
 	// working rather than as a configuration error, so refuse it at startup instead.
 	if err := validateCORSOrigins(parseCORSOrigins(viper.Get("gateway.corsOrigins"))); err != nil {
-		return err
+		problems = append(problems, err)
 	}
 
 	if err := validateCallbackConfig(); err != nil {
-		return err
+		problems = append(problems, err)
 	}
 
 	if err := validateTopologyConfig(); err != nil {
-		return err
+		problems = append(problems, err)
 	}
 
-	return nil
+	return problems
 }
 
 // validateCallbackConfig checks the outbound callback settings.
