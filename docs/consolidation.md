@@ -1,7 +1,7 @@
 # Memory consolidation
 
-How Hippocampus decides what to forget: the value model, the six deletion algorithms, the
-byte-capacity target, checkpoint-triggered eviction, and summarisation. For the knobs that
+How Hippocampus decides what to forget: the value model, the six deletion algorithms, the two
+forgetting modes, the byte-capacity target, checkpoint-triggered eviction, and summarisation. For the knobs that
 drive these, see [Configurability](configuration.md); for operational tuning, the
 [Operations guide](operations.md).
 
@@ -450,12 +450,121 @@ then applies the shared column migrations beside it. The table above is a second
 the real one — column for column, and index membership included — by
 `TestDocumentedRowMatchesTheSchema` in `db/schemadocs_test.go`.
 
+## Forgetting modes
+
+Everything above describes one value model, but it can be configured to run in either of two modes,
+and the choice between them is the most consequential one in this file. Both forget. They differ in
+what decides _when_.
+
+**Decay-only** — `consolidation.capacityBytes` and `consolidation.capacityMemories` both `0` (the
+mechanism disabled on both axes). Forgetting is driven by the value threshold alone: a memory's
+lifetime is a function of its own effective significance and the configuration, and of nothing else.
+The store's size is an emergent property rather than a setting.
+
+**Decay with a capacity target** — either capacity key positive. How full the store is feeds back
+into the deletion threshold, and a byte target additionally evicts once the target is crossed (see
+[Capacity target](#capacity-target)).
+
+The distinction is open-loop against closed-loop, and it is a genuine trade rather than a default
+and a deviation from it.
+
+### Decay-only is the predictable one
+
+Under decay-only every memory has a finite, deterministic lifetime that depends only on its
+effective significance. For method 1 (the default), value $S / age ^ a$ crosses the threshold at
+
+$$ L(S) = \left( { S \over threshold } \right) ^ { 1 \over a } \text{ age units} $$
+
+That number is knowable before the memory is written, is the same today as it will be in a year, and
+is unaffected by what anybody else stores. It is what makes `days_until_forgotten` (from
+`hippo memory explain`, or the console's Decay tab) a prediction rather than an estimate.
+
+A capacity target buys reactivity by giving that up. Under pressure the effective threshold moves
+with the store's fullness, so how long _your_ data survives becomes a function of the aggregate write
+rate — a busy hour elsewhere shortens it. For a store whose contract with its clients is "significant
+things persist", open-loop is the more honest of the two.
+
+The predictability is also what lets a decay-only deployment be sized in advance. At equilibrium the
+store holds, for each significance band, the memories written into it during one lifetime of that
+band:
+
+$$ size \approx \sum_{bands} arrivals_{band} \times L(S_{band}) $$
+
+The lifetime tables under [Consolidation algorithms](#consolidation-algorithms) give $L$ for every
+method across a range of settings; `hippo memory explain` gives it for a memory that actually exists,
+and is the authority, because it bisects the configured curve rather than assuming method 1's closed
+form.
+
+### What decay-only does not bound
+
+Two things have no ceiling, both deliberately:
+
+- **Recall reinforcement.** Every recall resets the decay clock _and_ adds
+  `consolidation.recallSignificanceWeight` to effective significance, so an actively recalled working
+  set never ages out. Nothing bounds it — that is what reinforcement is for — but it means the
+  store's floor is the size of whatever is genuinely in use.
+- **Very durable memories.** High significance against a low `consolidation.aggressiveness` produces
+  lifetimes with no practical end: the tables above reach $10^{30}$ age units at significance
+  1,000,000 and an aggressiveness of 0.1. Such a memory is permanent in every sense that matters.
+
+So "bounded at equilibrium" assumes a roughly stationary arrival rate and a bounded significance
+distribution. **Decay-only has no transient control**: a burst is absorbed at full size and stays
+until it ages out on its own schedule. Where the disk is a hard constraint rather than a budget, that
+is the reason to set a capacity target.
+
+### Watch size, not pressure
+
+The two modes want watching differently, and the instrument that matters in one is the constant in
+the other.
+
+A capacity-bounded store's size is pinned by construction, so `hippocampus.capacity_pressure` is the
+interesting series — it says how hard the store is working to stay inside its target. In decay-only
+that series is flat at exactly 1.0 by construction and says nothing, while the store's size, being
+the output of the loop, is the number that tells you whether the configuration is in equilibrium with
+the write rate. `hippocampus.used_bytes` is published in both modes for that reason, and
+`hippo memory explain` reports `used_bytes` and `memory_count` alongside whatever memories it was
+asked about.
+
+The question a decay-only deployment is really asking is whether it is keeping up, and that is a
+comparison of rates rather than a level:
+
+```promql
+sum(rate(hippocampus_memories_stored_total[1h]))
+  > sum(rate(hippocampus_memories_consolidated_total[1h]))
+    + sum(rate(hippocampus_memories_evicted_total[1h]))
+```
+
+Each side is summed because the three counters carry different attribute sets, and a bare vector
+match between them would silently never fire. `HippocampusStoreGrowing` ships with exactly that
+expression.
+
+Sustained, that says the decay settings do not forget as fast as the store is being written to, and
+the store will grow until they do. It is the decay-only counterpart to
+`HippocampusCapacityPressureHigh`, which cannot fire in this mode. Both ship in
+[the alert rules](../deploy/observability/prometheus-alerts.yaml).
+
+### `capacityMemories` scales pressure; it never evicts
+
+Worth stating plainly, because a row capacity reads like a cap and is not one. Eviction is gated on
+`consolidation.capacityBytes` alone — there is no row-count eviction anywhere. `capacityMemories`
+contributes to the pressure calculation and nothing else, so a store configured with a row capacity
+and no byte capacity has the feedback term but no hard bound.
+
+That is still a real control loop rather than a decoration: pressure grows without limit, so at
+`consolidation.capacityPressureExponent` 4.0 the threshold doubles at the configured row capacity and
+is ten times higher at about 1.7 times it, which shortens lifetimes sharply past the target. But
+nothing is ever deleted _because_ the row count is high, and the row count the store settles at is
+wherever the arrival rate meets those shortened lifetimes — not the number configured. Set
+`capacityBytes` if what you need is a bound.
+
 ## Capacity target
 
-Value-threshold forgetting alone cannot bound the store's size: when everything remaining is
+Value-threshold forgetting alone reaches an equilibrium but cannot be given a target, and it
+cannot hold one at all when the arrival rate is not stationary: when everything remaining is
 young, significant, or recently recalled, nothing falls below the deletion threshold no matter
-how full the store is. `consolidation.capacityBytes` (0 disables the mechanism) sets a hard
-target. After the normal consolidation passes, each sleep cycle measures the store's live bytes
+how full the store is. This is the closed-loop half of [Forgetting modes](#forgetting-modes) —
+reach for it when the store's size is a constraint rather than a consequence.
+`consolidation.capacityBytes` (0 disables the mechanism) sets a hard target. After the normal consolidation passes, each sleep cycle measures the store's live bytes
 (on SQLite, the database's pages excluding those already freed but not yet vacuumed; on
 Postgres, an estimate from the live rows themselves — see [Storage](configuration.md#storage)) and, if the
 target is exceeded, deletes memories in ascending order of their current decayed value until

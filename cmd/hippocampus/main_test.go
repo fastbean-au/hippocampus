@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -24,8 +25,11 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/fastbean-au/hippocampus/auth"
+	"github.com/fastbean-au/hippocampus/contract"
+	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/hippocampus"
 	"github.com/fastbean-au/hippocampus/search"
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 // TestNewGatewayServer_HardeningTimeouts is a regression test: the gateway HTTP
@@ -173,6 +177,7 @@ func validConsolidationConfig() {
 	viper.Set("consolidation.unitsOfAgeInDays", 1.0)
 	viper.Set("consolidation.method", 1)
 	viper.Set("consolidation.aggressiveness", 1.0)
+	viper.Set("consolidation.deletionThreshold", 10.0)
 	viper.Set("sleep.periodSeconds", 60)
 	viper.Set("storage.driver", "sqlite")
 	viper.Set("storage.directory", "/var/lib/hippocampus")
@@ -191,6 +196,92 @@ func TestStartupDefaultsAreAValidConfiguration(t *testing.T) {
 
 	if err := validateConfig(); err != nil {
 		t.Fatalf("the built-in defaults do not form a valid configuration: %s", err.Error())
+	}
+}
+
+// TestStartupDefaultsActuallyForget is the regression test for a store that started, validated,
+// served, and forgot nothing at all.
+//
+// TestStartupDefaultsAreAValidConfiguration below asserts the built-in defaults are *valid*, which
+// they always were - consolidation.deletionThreshold and sleep.periodSeconds are not among the keys
+// validateConfig refuses at zero, so both read as 0 and neither failed anything. A zero threshold
+// makes the comparison in shouldConsolidate `value < 0`, which no positive value satisfies, so
+// consolidation became a complete no-op; a zero period disabled the timed cycle that would have run
+// it. `go run ./cmd/hippocampus` on a fresh clone therefore produced a memory service that never
+// forgot, and said so only in a passing Info line.
+//
+// Valid is not the same as functional, so this drives a real cycle over a real store rather than
+// checking the keys: the defaults must forget a maximally forgettable memory.
+func TestStartupDefaultsActuallyForget(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("failed to open an in-memory store: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	// Ten years old, the lowest significance the store accepts, never recalled, no event and no
+	// links: nothing else in the value model can be keeping this alive.
+	ancient := time.Now().AddDate(-10, 0, 0).UnixNano()
+
+	if _, err := database.CreateMemory(context.Background(), types.Memory{
+		Id:           "m1",
+		TimeStamp:    ancient,
+		Significance: 1,
+		Body:         "trivial",
+	}); err != nil {
+		t.Fatalf("failed to store the test memory: %s", err)
+	}
+
+	server := hippocampus.New(hippocampus.Dependencies{DB: database})
+
+	if _, err := server.Sleep(context.Background(), &contract.EmptyRequest{}); err != nil {
+		t.Fatalf("Sleep: %s", err)
+	}
+
+	memories, err := database.GetMemoriesByIds(context.Background(), []string{"m1"})
+	if err != nil {
+		t.Fatalf("failed to read the test memory back: %s", err)
+	}
+
+	if len(*memories) != 0 {
+		t.Errorf("a full sleep cycle on the built-in defaults forgot nothing: a ten-year-old memory of significance 1 survived (deletionThreshold=%v)",
+			viper.GetFloat64("consolidation.deletionThreshold"),
+		)
+	}
+}
+
+// TestStartupDefaultsRunTimedSleepCycles pins the other half of the same bug: even with a threshold
+// that forgets, a zero sleep.periodSeconds means no cycle ever runs to apply it. autoSleep treats a
+// non-positive period as "no timed cycle", which is a supported *configured* mode (an import-only
+// instance) but must never be what an unconfigured one falls into.
+func TestStartupDefaultsRunTimedSleepCycles(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+
+	if period := viper.GetInt("sleep.periodSeconds"); period <= 0 {
+		t.Errorf("the built-in defaults leave sleep.periodSeconds at %d, so no timed sleep cycle ever runs", period)
+	}
+}
+
+// TestStartupDefaultsEnableConsolidation guards the third key the defaults did not carry.
+// consolidation.enabled is defaulted true, but that SetDefault lived in run() rather than beside
+// the other startup defaults, so the defaults could not be asserted as a unit - and an instance
+// built from them alone read it as false and rejected its own Sleep RPC.
+func TestStartupDefaultsEnableConsolidation(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+
+	if !viper.GetBool("consolidation.enabled") {
+		t.Error("the built-in defaults leave consolidation.enabled false, so the instance runs no sleep cycle at all")
 	}
 }
 
@@ -239,6 +330,15 @@ func TestValidateConfig(t *testing.T) {
 
 		{name: "aggressiveness zero", key: "consolidation.aggressiveness", value: 0.0, wantErr: true},
 		{name: "aggressiveness negative", key: "consolidation.aggressiveness", value: -0.5, wantErr: true},
+
+		// deletionThreshold: an explicitly configured 0 or negative makes `value < threshold` false
+		// for every memory, silently disabling value-based consolidation entirely - the same class
+		// of quiet failure the method-3 aggressiveness check above exists to catch. An *unset* key
+		// still falls back to setStartupDefaults' value, so this refuses the mistake without
+		// making the key mandatory.
+		{name: "deletionThreshold zero", key: "consolidation.deletionThreshold", value: 0.0, wantErr: true},
+		{name: "deletionThreshold negative", key: "consolidation.deletionThreshold", value: -1.0, wantErr: true},
+		{name: "deletionThreshold positive", key: "consolidation.deletionThreshold", value: 0.5, wantErr: false},
 
 		// minimumRetentionInDays: 0 disables the floor (fine), a positive value enables it (fine), a
 		// negative value is a mis-signed mistake and must be rejected.

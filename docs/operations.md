@@ -317,6 +317,57 @@ have no equivalent of; they reject the setting at startup rather than silently i
 
 ## Sizing and capacity tuning
 
+### Decay-only: no capacity target at all
+
+Leaving both `consolidation.capacityBytes` and `consolidation.capacityMemories` at 0 is a supported
+and deliberate configuration, not an omission — see
+[Forgetting modes](consolidation.md#forgetting-modes) for the model. The store then forgets on the
+deletion threshold alone, its size is an emergent property rather than a setting, and every memory's
+lifetime stays a function of its own significance rather than of the aggregate write rate. The
+service names the mode it resolved in a startup line, so which one is in force is never a matter of
+inference:
+
+```text
+forgetting mode: decay-only - memories are forgotten on the deletion threshold alone
+(threshold 10, method 1, aggressiveness 1); the store's size is not bounded by
+configuration, so watch hippocampus.used_bytes
+```
+
+Operationally the mode inverts which instrument matters. A capacity-bounded store's size is pinned
+by construction, so `hippocampus_capacity_pressure` is what you watch — it says how hard the store is
+working to stay inside its target. In decay-only that series is flat at exactly 1.0 and carries no
+information, while **size is the output of the loop** and therefore the thing to watch.
+`hippocampus_used_bytes` is published in both modes for this reason, and `hippo memory explain`
+reports `used_bytes` and `memory_count` on every call.
+
+The alert to run is `HippocampusStoreGrowing`, which compares arrival against removal rather than
+level:
+
+```promql
+sum(rate(hippocampus_memories_stored_total[1h]))
+  > sum(rate(hippocampus_memories_consolidated_total[1h]))
+    + sum(rate(hippocampus_memories_evicted_total[1h]))
+```
+
+Sustained, that means the decay settings do not forget as fast as the store is being written to. Three
+responses, in the order worth trying:
+
+1. **Check it is not simply a burst.** Decay-only has no transient control: a spike is absorbed at
+   full size and stays until it ages out on its own schedule. Six hours of growth after a one-off
+   import is the mechanism working.
+2. **Strengthen the decay** if the growth is structural — raise `consolidation.deletionThreshold`
+   (remembering it moves with your significance scale), raise `consolidation.aggressiveness`, or lower
+   `consolidation.unitsOfAgeInDays` to compress the clock. `hippo sleep --dry-run` shows what the
+   change would forget before you commit to it.
+3. **Set a capacity target** if the store's size is a hard constraint rather than a budget. That is
+   the closed-loop mode, and the trade it makes is that retention then depends on the aggregate write
+   rate rather than on each memory's own significance.
+
+Two things decay-only does not bound, both by design: an actively recalled working set never ages out
+(every recall resets the clock and adds to effective significance), and a high significance against a
+low `aggressiveness` produces lifetimes with no practical end. Both are floors under the store's size
+that no decay setting reaches.
+
 ### `capacityBytes` is measured on _stored logical_ bytes
 
 The byte-capacity target (`consolidation.capacityBytes`, with hysteresis floor

@@ -298,27 +298,46 @@ func (s *Server) evictionFloor() int64 {
 	return floor
 }
 
-// evict enforces the capacity target: when the store's used bytes still exceed
-// consolidation.capacityBytes after the normal consolidation passes, the least valuable memories
-// are deleted until the excess is reclaimed. Unlike consolidation this applies no minimum-age
-// protection — the bound must be achievable even when everything in the store is fresh — but the
-// value ranking still deletes the least significant, least recently recalled memories first.
+// evict measures the store, and enforces the capacity target when one is configured: if the used
+// bytes still exceed consolidation.capacityBytes after the normal consolidation passes, the least
+// valuable memories are deleted until the excess is reclaimed. Unlike consolidation this applies no
+// minimum-age protection — the bound must be achievable even when everything in the store is fresh —
+// but the value ranking still deletes the least significant, least recently recalled memories first.
+//
+// The measurement happens in BOTH forgetting modes and only the decision is gated, which is the
+// distinction that matters here. It used to be taken inside the gate, so a decay-only store — the
+// mode whose size is unbounded by configuration, and therefore the one whose size most wants
+// watching — was the single configuration that published no hippocampus.used_bytes at all. A
+// capacity-bounded store's size is pinned by construction and capacity_pressure is the interesting
+// series; in decay-only that series is flat at 1.0 and size is the only thing that says whether the
+// configuration is keeping up with the write rate. See docs/consolidation.md, "Forgetting modes".
 func (s *Server) evict(ctx context.Context, report *cycleReport) error {
 	log.Debug("evict()")
-
-	if s.consolidation.capacityBytes <= 0 {
-		return nil
-	}
 
 	ctx, span := tel.tracer.Start(ctx, "evict")
 	defer span.End()
 
+	bounded := s.consolidation.capacityBytes > 0
+
+	span.SetAttributes(attribute.Bool("capacity_bounded", bounded))
+
 	used, err := s.db.UsedBytes(ctx)
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
 
-		return err
+		// Under a capacity target the reading IS the decision, so a failure has to fail the cycle.
+		// Decay-only takes the same reading for the gauge alone, and a mode that previously never
+		// read used bytes at all must not begin failing cycles because a query taken purely for
+		// observability failed - the cycle had nothing to evict either way.
+		if bounded {
+			span.SetStatus(codes.Error, err.Error())
+
+			return err
+		}
+
+		log.Warnf("failed to measure the store's used bytes: %s", err.Error())
+
+		return nil
 	}
 
 	// Cache this fresh, post-consolidation reading for the next cycle's pressure calculation, so
@@ -326,9 +345,14 @@ func (s *Server) evict(ctx context.Context, report *cycleReport) error {
 	s.consolidation.lastUsedBytes = used
 
 	tel.usedBytes.Record(ctx, used)
-	tel.capacityBytes.Record(ctx, s.consolidation.capacityBytes)
 
 	s.recordRetention(ctx)
+
+	if !bounded {
+		return nil
+	}
+
+	tel.capacityBytes.Record(ctx, s.consolidation.capacityBytes)
 
 	if used <= s.consolidation.capacityBytes {
 		return nil
@@ -375,12 +399,17 @@ func (s *Server) evict(ctx context.Context, report *cycleReport) error {
 // recordRetention publishes how much of the store the minimum retention floor is holding, as a
 // count and as bytes.
 //
-// It is called from evict, so it costs nothing unless a byte capacity is configured - and it is
-// skipped entirely without a retention floor, when the answer is always zero. That gate is the
-// point: the pair only means anything against a capacity target, because retention OVERRIDES that
-// target. Once retained_bytes approaches capacity_bytes the store cannot be brought back under its
-// capacity however hard eviction runs, and this is what makes that visible before it becomes a disk
-// problem rather than only when someone asks for a dry run.
+// It is skipped entirely without a retention floor, when the answer is always zero. The WARNING
+// below additionally needs a capacity target, because that is the failure it describes: retention
+// OVERRIDES the target, so once retained_bytes approaches capacity_bytes the store cannot be brought
+// back under its capacity however hard eviction runs, and this makes that visible before it becomes
+// a disk problem rather than only when someone asks for a dry run. Without a target there is nothing
+// for the bytes to be unreachable against, and comparing against a zero capacity would warn on every
+// cycle of every decay-only store.
+//
+// The gauges themselves are published in both forgetting modes. They mean less without a target but
+// not nothing: retained bytes is a floor under the store's size, which in decay-only - where the
+// size is unbounded by configuration - is a figure an operator is sizing against.
 //
 // Best-effort: it is one extra aggregate scan per cycle, and a failure must not fail the cycle, so
 // it logs and moves on, leaving the gauges at their previous reading.
@@ -403,7 +432,7 @@ func (s *Server) recordRetention(ctx context.Context) {
 
 	// Worth a log line, not only a metric: this is the condition under which the capacity target
 	// silently stops being achievable, and not every deployment runs the metrics stack.
-	if bytes >= s.consolidation.capacityBytes {
+	if s.consolidation.capacityBytes > 0 && bytes >= s.consolidation.capacityBytes {
 		log.Warnf(
 			"minimum retention is holding %d bytes across %d memories, at or above the %d byte capacity target - eviction cannot bring the store under its capacity until this data ages out",
 			bytes,

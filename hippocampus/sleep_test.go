@@ -1105,6 +1105,73 @@ func TestEvict_UsedBytesErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestEvict_MeasuresTheStoreWithoutACapacityTarget pins fix (3) of the decay-only work: the store's
+// size must be measured, and hippocampus.used_bytes published, whether or not a capacity target is
+// configured.
+//
+// It used to be measured only inside the capacity gate, which meant the one number an operator of an
+// UNBOUNDED store needs was precisely the one never emitted - size is the output of the loop in
+// decay-only mode, where a capacity-bounded store's size is pinned and pressure is the interesting
+// figure instead. lastUsedBytes is the observable proxy for the gauge: it is written from the same
+// reading, immediately before the recording.
+func TestEvict_MeasuresTheStoreWithoutACapacityTarget(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{db: database}
+
+	for _, id := range []string{"m1", "m2", "m3"} {
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{
+			Id: id, TimeStamp: 100, Significance: 1, Body: "a reasonably sized memory body",
+		}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+	}
+
+	// Decay-only: no capacity target on either axis.
+	s.consolidation.capacityBytes = 0
+	s.consolidation.capacityMemories = 0
+
+	if err := s.evict(context.Background(), &cycleReport{}); err != nil {
+		t.Fatalf("evict: %s", err)
+	}
+
+	if s.consolidation.lastUsedBytes <= 0 {
+		t.Errorf("a decay-only store measured no used bytes (%d), so hippocampus.used_bytes is never published for the mode that most needs it", s.consolidation.lastUsedBytes)
+	}
+
+	// Measuring must not have become evicting: nothing is over any target here.
+	with, without := s.db.CountMemories(context.Background())
+	if with+without != 3 {
+		t.Errorf("a decay-only store evicted: %d of 3 memories remain", with+without)
+	}
+}
+
+// TestEvict_MeasurementFailureIsBestEffortWithoutACapacityTarget is the other half of that change.
+// Under a capacity target the reading IS the eviction decision, so a failure must fail the cycle
+// (TestEvict_UsedBytesErrorPropagates). Decay-only takes the same reading for the gauge alone, and a
+// store that previously never read used bytes at all must not start failing cycles because a query
+// taken purely for observability failed.
+func TestEvict_MeasurementFailureIsBestEffortWithoutACapacityTarget(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{
+		db:            failUsedBytesStore{Store: database, err: errors.New("used bytes boom")},
+		consolidation: Consolidation{capacityBytes: 0},
+	}
+
+	if err := s.evict(context.Background(), &cycleReport{}); err != nil {
+		t.Errorf("a failed measurement failed a decay-only cycle that had nothing to evict: %v", err)
+	}
+}
+
 // failEvictMemoriesStore wraps a real db.Store, reports an inflated UsedBytes so eviction always
 // judges the store over capacity, and forces EvictMemories itself to fail - so evict()'s second
 // error arm (after a successful UsedBytes read) can be exercised.

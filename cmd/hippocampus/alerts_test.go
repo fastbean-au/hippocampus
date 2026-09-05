@@ -24,6 +24,11 @@ const (
 	prometheusAlertsPath = "../../deploy/observability/prometheus-alerts.yaml"
 	grafanaAlertsPath    = "../../deploy/compose/observability/alerting-rules.yaml"
 
+	// claudeMdPath is checked because CLAUDE.md states how many rules ship, in prose, twice - and
+	// prose is the one copy of a fact that nothing evaluates. See
+	// TestClaudeMdRuleCountIsCurrent.
+	claudeMdPath = "../../CLAUDE.md"
+
 	// grafanaDatasourceUID is the uid otel-lgtm gives its Prometheus, and the one the provisioned
 	// dashboard queries. A rule naming anything else provisions cleanly and then fails on every
 	// evaluation, so it is worth asserting rather than discovering.
@@ -264,6 +269,120 @@ func TestAlertRulesMatchAcrossFiles(t *testing.T) {
 		compareStringMaps(t, name, "labels", expected.labels, actual.labels)
 		compareStringMaps(t, name, "annotations", expected.annotations, actual.annotations)
 	}
+}
+
+// TestClaudeMdRuleCountIsCurrent holds the rule count CLAUDE.md states, in words, to the number of
+// rules that actually ship.
+//
+// The paragraph it guards makes exactly this argument about the two YAML files - "two copies of a
+// PromQL expression that nothing in the repo executes is exactly what drifts" - and then states the
+// count in prose, which is a third copy that nothing executes either. It had drifted by four before
+// anybody noticed, in the sentence explaining why drift guards exist.
+//
+// Both figures are checked: the total, and the size of the hippocampus-clients group, since that one
+// reads as "N of the M" and a change to either number invalidates the sentence.
+func TestClaudeMdRuleCountIsCurrent(t *testing.T) {
+	source, err := os.ReadFile(claudeMdPath)
+	if err != nil {
+		t.Fatalf("failed to read CLAUDE.md: %s", err.Error())
+	}
+
+	claudeMd := string(source)
+
+	total, clients := ruleCounts(t)
+	totalWord := numberWord(t, total)
+	clientsWord := numberWord(t, clients)
+
+	// Both sentences are quoted with enough of their surroundings that only the real one can match.
+	// A bare word would not do: "six" appears eight times in CLAUDE.md and all but one are about
+	// something else entirely, so the clients-group check would pass however far it had drifted -
+	// a guard that cannot fail being the failure mode this whole file exists to avoid.
+	for _, want := range []string{
+		"the same " + totalWord + " rules as Grafana-managed rules",
+		capitalise(clientsWord) + " of the " + totalWord + " are a second group",
+	} {
+		if !strings.Contains(claudeMd, want) {
+			t.Errorf("CLAUDE.md's alert-rules paragraph does not say %q, but %d rules ship, %d of them in the %s group",
+				want,
+				total,
+				clients,
+				clientsGroupName,
+			)
+		}
+	}
+}
+
+// numberWord spells a count out, failing loudly rather than silently matching nothing when the count
+// grows past the table.
+func numberWord(t *testing.T, count int) string {
+	t.Helper()
+
+	word, ok := numberWords[count]
+	if !ok {
+		t.Fatalf("no spelled-out form for %d - extend numberWords", count)
+	}
+
+	return word
+}
+
+// capitalise upper-cases the first letter, since one of the two sentences starts with its number.
+func capitalise(in string) string {
+	if in == "" {
+		return in
+	}
+
+	return strings.ToUpper(in[:1]) + in[1:]
+}
+
+// ruleCounts returns how many alert rules ship in total, and how many of them are in the
+// hippocampus-clients group. It reads the prometheus file, which TestAlertRulesMatchAcrossFiles
+// already holds the grafana one to name for name.
+func ruleCounts(t *testing.T) (int, int) {
+	t.Helper()
+
+	source, err := os.ReadFile(prometheusAlertsPath)
+	if err != nil {
+		t.Fatalf("failed to read the prometheus alert rules: %s", err.Error())
+	}
+
+	var file prometheusRuleFile
+	if err := yaml.Unmarshal(source, &file); err != nil {
+		t.Fatalf("failed to parse the prometheus alert rules: %s", err.Error())
+	}
+
+	var total, clients int
+
+	for _, group := range file.Groups {
+		total += len(group.Rules)
+
+		if group.Name == clientsGroupName {
+			clients += len(group.Rules)
+		}
+	}
+
+	if total == 0 {
+		t.Fatal("found no alert rules at all, so the count guard is not guarding anything")
+	}
+
+	return total, clients
+}
+
+// clientsGroupName is the second rule group: the alerts about the processes that dial the service
+// rather than about the service itself.
+const clientsGroupName = "hippocampus-clients"
+
+// numberWords spells out the counts CLAUDE.md writes as words. Deliberately a small fixed table
+// rather than a general speller - the range that matters is "how many alert rules are there", and a
+// count outside it fails loudly above rather than silently matching nothing.
+var numberWords = map[int]string{
+	1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven",
+	8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen",
+	14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen",
+	19: "nineteen", 20: "twenty", 21: "twenty-one", 22: "twenty-two", 23: "twenty-three",
+	24: "twenty-four", 25: "twenty-five", 26: "twenty-six", 27: "twenty-seven",
+	28: "twenty-eight", 29: "twenty-nine", 30: "thirty", 31: "thirty-one", 32: "thirty-two",
+	33: "thirty-three", 34: "thirty-four", 35: "thirty-five", 36: "thirty-six",
+	37: "thirty-seven", 38: "thirty-eight", 39: "thirty-nine", 40: "forty",
 }
 
 func compareStringMaps(t *testing.T, alertName string, what string, expected map[string]string, actual map[string]string) {

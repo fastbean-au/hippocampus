@@ -305,7 +305,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same eighteen rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-two rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -322,7 +322,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the eighteen are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the twenty-two are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
   broker bridges, the ingestor) and read instruments declared in `integrations/*`, which
   `metricSourceFiles` reaches as FILES rather than imports — the root module deliberately does not

@@ -574,6 +574,10 @@ func New(deps Dependencies) *Server {
 		s.consolidation.walTriggerBytes = 0
 	}
 
+	if s.consolidationEnabled {
+		s.logForgettingMode()
+	}
+
 	s.autoSleep(reset, period)
 
 	s.startReconcile(deps.Search)
@@ -593,6 +597,67 @@ func New(deps Dependencies) *Server {
 	s.startInstanceHeartbeat()
 
 	return s
+}
+
+// logForgettingMode names which of the two modes in docs/consolidation.md this instance is running,
+// once, at startup.
+//
+// The two are configured by an ABSENCE - a capacity target left at zero is decay-only - which is
+// what made them indistinguishable from each other and, before the deletion threshold was defaulted
+// and validated, from a store that had been misconfigured into forgetting nothing at all. All three
+// presented as silence. Saying which one is in force turns the absence into a declaration, and it is
+// the line an operator wants in the log when the store is a different size than they expected.
+//
+// Deliberately not a warning in either mode: decay-only is a supported choice with real advantages
+// (a memory's lifetime stays a function of its own significance rather than of the aggregate write
+// rate), not a capacity target somebody forgot to set.
+func (s *Server) logForgettingMode() {
+	log.Trace("func() logForgettingMode()")
+
+	// Both axes disabled: nothing feeds the store's fullness back into the threshold, so the
+	// threshold is exactly as configured for the life of the process and every memory's lifetime is
+	// determined by its own significance alone.
+	if s.consolidation.capacityBytes <= 0 && s.consolidation.capacityMemories <= 0 {
+		log.Infof(
+			"forgetting mode: decay-only - memories are forgotten on the deletion threshold alone (threshold %g, method %d, aggressiveness %g); the store's size is not bounded by configuration, so watch hippocampus.used_bytes",
+			s.consolidation.deletionThreshold,
+			s.consolidation.method,
+			s.consolidation.aggressiveness,
+		)
+
+		return
+	}
+
+	// A row capacity scales the pressure that scales the threshold, and nothing more - eviction is
+	// gated on capacityBytes alone. Said plainly because "capacityMemories: 100000" reads like a cap
+	// and is not one; it is a control loop whose equilibrium is wherever the arrival rate meets the
+	// shortened lifetimes, not the number configured.
+	if s.consolidation.capacityBytes <= 0 {
+		log.Infof(
+			"forgetting mode: decay with row-capacity pressure - the deletion threshold is scaled by the memory count against consolidation.capacityMemories (%d), but nothing is evicted on the row count; set consolidation.capacityBytes for a hard bound",
+			s.consolidation.capacityMemories,
+		)
+
+		return
+	}
+
+	// evictionFloor() returns the target itself when no floor is configured, so reporting it
+	// unconditionally prints the same number twice and reads like a bug in the line rather than an
+	// absent setting.
+	if floor := s.evictionFloor(); floor != s.consolidation.capacityBytes {
+		log.Infof(
+			"forgetting mode: decay with a capacity target - eviction holds the store at or below %d bytes, reclaiming down to a floor of %d, and capacity pressure scales the deletion threshold",
+			s.consolidation.capacityBytes,
+			floor,
+		)
+
+		return
+	}
+
+	log.Infof(
+		"forgetting mode: decay with a capacity target - eviction holds the store at or below %d bytes (no hysteresis floor set), and capacity pressure scales the deletion threshold",
+		s.consolidation.capacityBytes,
+	)
 }
 
 // startReconcile launches the periodic search-index reconciliation sweep when it is warranted: a

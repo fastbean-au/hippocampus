@@ -115,6 +115,32 @@ groups:
 
       # --- Capacity ------------------------------------------------------------------------
 
+      # The decay-only counterpart to HippocampusCapacityPressureHigh, and the reason used_bytes is
+      # published without a capacity target (docs/consolidation.md, "Forgetting modes"). With both
+      # capacity axes at 0 the store is bounded only by its decay settings reaching an equilibrium
+      # with the write rate, capacity_pressure is flat at exactly 1.0, and every capacity rule here
+      # is inert - so the question has to be asked as a comparison of rates rather than a level:
+      # is the store forgetting as fast as it is being written to?
+      #
+      # Sustained, a no means the store will grow until the decay settings catch up, which for a
+      # stationary arrival rate they eventually do and for a growing one they do not. Both sides are
+      # summed so the comparison matches on no labels at all: the three counters carry different
+      # attribute sets, and a bare vector match between them would silently never fire.
+      #
+      # The 1h windows must stay comfortably above sleep.periodSeconds - forgetting arrives in
+      # per-cycle bursts, so a window near the period reads every gap between cycles as a shortfall.
+      - alert: HippocampusStoreGrowing
+        expr: sum(rate(hippocampus_memories_stored_total[1h])) > sum(rate(hippocampus_memories_consolidated_total[1h])) + sum(rate(hippocampus_memories_evicted_total[1h]))
+        for: 6h
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is storing faster than it is forgetting"
+          description: "Memories have been arriving faster than consolidation and eviction remove them for six hours, so the store is growing. On a decay-only deployment (no consolidation.capacityBytes or capacityMemories) that is the only signal there is, since capacity pressure cannot rise - either the decay settings are too weak for the write rate (raise consolidation.deletionThreshold or aggressiveness, or lower unitsOfAgeInDays), or set a capacity target if the store's size needs a bound rather than an equilibrium. Watch hippocampus_used_bytes for the trend."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#decay-only-no-capacity-target-at-all"
+
+
       # capacity_pressure is 1 + utilisation^capacityPressureExponent, and exactly 1.0 when no
       # capacity target is configured - so this cannot fire on a deployment that has set none. At
       # the default exponent of 1, 1.9 is 90% of the target.
@@ -129,8 +155,9 @@ groups:
           description: "Capacity pressure has been sustained near or above the configured target, so the decay threshold is being scaled up and memories are being forgotten sooner than the decay settings alone would forget them. Either raise consolidation.capacityBytes/capacityMemories, or accept the shorter retention. Note that the threshold maps to a different utilisation if consolidation.capacityPressureExponent is not 1."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
 
-      # used_bytes and capacity_bytes are only published when a byte target is set, so this is
-      # inert without one.
+      # used_bytes is published in both forgetting modes, but capacity_bytes only when a byte
+      # target is set, so the comparison has nothing to match against and this stays inert on a
+      # decay-only store. HippocampusStoreGrowing below is that mode's counterpart.
       - alert: HippocampusStoreOverCapacity
         expr: max(hippocampus_used_bytes) > max(hippocampus_capacity_bytes)
         for: 1h

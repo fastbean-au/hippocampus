@@ -313,6 +313,19 @@ func setStartupDefaults() {
 	viper.SetDefault("consolidation.unitsOfAgeInDays", 1.0)
 	viper.SetDefault("storage.directory", "./data")
 
+	// The three keys that made the defaults VALID but not FUNCTIONAL, which is the sharper form of
+	// the same mistake. None of them was refused at zero, so all three read as their zero value and
+	// nothing failed: a zero deletionThreshold makes shouldConsolidate's comparison `value < 0`,
+	// which no positive value satisfies, so consolidation became a total no-op; a zero
+	// sleep.periodSeconds disabled the timed cycle that would have applied it; and
+	// consolidation.enabled was defaulted in run() rather than here, so an instance built from the
+	// defaults alone rejected its own Sleep RPC. A memory service that starts, validates, serves,
+	// and forgets nothing is a worse failure than one that refuses to start, because only the
+	// second is noticed. Values match the repo's own config.json.
+	viper.SetDefault("consolidation.deletionThreshold", 10.0)
+	viper.SetDefault("sleep.periodSeconds", 3600)
+	viper.SetDefault("consolidation.enabled", true)
+
 	// Search result ranking. Both default to a mild influence rather than off: a store that knows
 	// how significant each memory is, and how often it has been recalled, should use that when
 	// deciding what to show first - text relevance alone is what a search engine without those
@@ -438,13 +451,13 @@ func run(ctx context.Context, version versionInfo) error {
 	// embedded, zero-dependency behaviour of every prior release.
 	log.Debug("initialising database")
 
-	// consolidation.enabled (default true) selects whether this instance runs the sleep cycle. In a
-	// horizontally scaled deployment against a shared postgres/mysql database, exactly one instance
-	// runs with it true - it takes the single-consolidator instance lock and runs consolidation -
-	// while the rest run it false as read/write replicas that skip the lock and never sleep.
-	// Passed to the server driver so a replica does not contend for the lock, and to the
-	// gRPC server so it neither starts the sleep loop nor accepts the manual Sleep RPC.
-	viper.SetDefault("consolidation.enabled", true)
+	// consolidation.enabled (defaulted true in setStartupDefaults) selects whether this instance
+	// runs the sleep cycle. In a horizontally scaled deployment against a shared postgres/mysql
+	// database, exactly one instance runs with it true - it takes the single-consolidator instance
+	// lock and runs consolidation - while the rest run it false as read/write replicas that skip
+	// the lock and never sleep. Passed to the server driver so a replica does not contend for the
+	// lock, and to the gRPC server so it neither starts the sleep loop nor accepts the manual
+	// Sleep RPC.
 	consolidate := viper.GetBool("consolidation.enabled")
 
 	if !consolidate && viper.GetString("storage.driver") == "sqlite" {
@@ -1789,6 +1802,17 @@ func validateConfig() error {
 		if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= math.Exp(-1) {
 			return fmt.Errorf("consolidation.aggressiveness must be greater than 1/e (~0.368) for consolidation.method 3, got %v", aggressiveness)
 		}
+	}
+
+	// The deletion threshold is the value every memory is compared against, so a non-positive one
+	// makes `value < threshold` false for every memory and disables value-based consolidation
+	// entirely - the same silent failure the method-3 aggressiveness check above exists to catch,
+	// reached by a much more obvious route. Refuse it here rather than let a store serve for months
+	// forgetting nothing. An unset key falls back to setStartupDefaults' value, so this refuses the
+	// mistake without making the key mandatory; there is no "disable forgetting" idiom to preserve,
+	// because consolidation.enabled and a non-positive sleep.periodSeconds are both already that.
+	if threshold := viper.GetFloat64("consolidation.deletionThreshold"); threshold <= 0 {
+		return fmt.Errorf("consolidation.deletionThreshold must be greater than 0, got %v", threshold)
 	}
 
 	// A negative retention window is meaningless (0 disables the floor). Catch it at startup rather

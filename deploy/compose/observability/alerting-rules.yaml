@@ -208,6 +208,50 @@ groups:
                     type: last
                     params: []
 
+      - uid: hippocampus-store-growing
+        title: HippocampusStoreGrowing
+        condition: B
+        for: 6h
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is storing faster than it is forgetting"
+          description: "Memories have been arriving faster than consolidation and eviction remove them for six hours, so the store is growing. On a decay-only deployment (no consolidation.capacityBytes or capacityMemories) that is the only signal there is, since capacity pressure cannot rise - either the decay settings are too weak for the write rate (raise consolidation.deletionThreshold or aggressiveness, or lower unitsOfAgeInDays), or set a capacity target if the store's size needs a bound rather than an equilibrium. Watch hippocampus_used_bytes for the trend."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#decay-only-no-capacity-target-at-all"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_memories_stored_total[1h])) > sum(rate(hippocampus_memories_consolidated_total[1h])) + sum(rate(hippocampus_memories_evicted_total[1h]))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+
       - uid: hippocampus-capacity-pressure
         title: HippocampusCapacityPressureHigh
         condition: B

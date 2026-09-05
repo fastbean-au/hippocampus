@@ -77,8 +77,50 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   since it is a third party's endpoint and the delivery metrics answer better. See
   [Outbound callbacks](docs/configuration.md#outbound-callbacks).
 
+### Fixed
+
+- **The built-in defaults forgot nothing at all.** Running with no `config.json` on the default path
+  is a supported mode, and `validateConfig` refuses the four keys that are fatal at zero — but
+  `consolidation.deletionThreshold` and `sleep.periodSeconds` were neither defaulted nor refused, so
+  both read as 0. A zero threshold makes the consolidation comparison `value < 0`, which no positive
+  value satisfies, so consolidation was a complete no-op; a zero period disabled the timed cycle that
+  would have run it. `go run ./cmd/hippocampus` on a fresh clone therefore produced a memory service
+  that started, validated, served, and never forgot, announcing it only in a passing Info line. Both
+  are now defaulted to the values the repo's own `config.json` carries (10 and 3600), as is
+  `consolidation.enabled`, whose `SetDefault` lived in `run()` rather than beside the other startup
+  defaults and so could not be asserted with them.
+
+  A configured `consolidation.deletionThreshold` of 0 or less is now **refused at startup** rather
+  than accepted, on the same reasoning as the existing method-3 aggressiveness check: it silently
+  disables value-based consolidation, and there is no "disable forgetting" idiom it takes away, since
+  `consolidation.enabled` and a non-positive `sleep.periodSeconds` are both already that. An unset key
+  still falls back to the default, so the key stays optional.
+
 ### Changed
 
+- **Decay-only is a first-class forgetting mode.** A store with no capacity target on either axis is
+  a deliberate configuration, not a capacity target somebody forgot to set: forgetting runs on the
+  value threshold alone, so a memory's lifetime stays a function of its own significance rather than
+  of the aggregate write rate, and `days_until_forgotten` is a prediction rather than an estimate.
+  `docs/consolidation.md` gains a **Forgetting modes** section naming the open-loop/closed-loop trade,
+  the sizing formula that lets a decay-only deployment be provisioned in advance, and the two things
+  the mode does not bound (an actively recalled working set, and very durable memories);
+  `docs/operations.md` gains the operational half. The service now **logs which mode it resolved** at
+  startup, so the choice is a declaration rather than an absence.
+
+  Two supporting changes. `hippocampus.used_bytes` is published in **both** modes — it was recorded
+  only inside the eviction gate, which meant the one number an operator of an unbounded store needs
+  was precisely the one never emitted, since a capacity-bounded store's size is pinned and pressure is
+  the interesting series while a decay-only store's size is the output of the loop. The measurement is
+  best-effort without a capacity target (where it feeds only the gauge) and still fails the cycle with
+  one (where it *is* the eviction decision). And a new `HippocampusStoreGrowing` alert ships in both
+  rule files, comparing arrival against removal rather than level, because every capacity rule is
+  inert in this mode and `capacity_pressure` is flat at exactly 1.0.
+
+  Also written down, because a row capacity reads like a cap and is not one: `capacityMemories`
+  scales the pressure that scales the threshold and **nothing evicts on it** — eviction is gated on
+  `capacityBytes` alone. Every shipped configuration sets a row capacity and leaves the byte capacity
+  at 0, so this is the mode most deployments are actually in.
 - The schema is at **version 13**: the callback queue adds one table (`callback_queue`), migrated in
   place on startup like every addition before it.
 - **The capacity target's boundaries are written down.** `consolidation.capacityBytes` counts the

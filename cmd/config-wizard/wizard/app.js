@@ -947,6 +947,7 @@ const STEPS = [
             label: "Sleep cycle period (seconds)",
             type: "int",
             def: 3600,
+            svc: 3600,
             help: "How often consolidation runs. 0 or less disables the timed cycle entirely — supported for an instance driven only by the manual Sleep RPC or the WAL trigger.",
           },
         ],
@@ -985,6 +986,7 @@ const STEPS = [
             label: "Deletion threshold",
             type: "float",
             def: 10,
+            svc: 10.0,
             help: "Value below which an item is consolidated away, before capacity pressure scales it. In significance-over-age units, so it moves with your significance scale: multiply every significance by ten and this must be multiplied by ten too, or things start being forgotten sooner or later than before without anyone changing it. Capacity eviction is unaffected — it ranks candidates against each other, never against this.",
           },
           {
@@ -2018,6 +2020,14 @@ function validate() {
       "error",
       "memory",
       "consolidation.aggressiveness must exceed 1/e (~0.368) for method 3 — at or below it the decay factor goes non-positive and nothing is ever consolidated.",
+    );
+  }
+
+  if (!(Number(val("consolidation.deletionThreshold")) > 0)) {
+    add(
+      "error",
+      "memory",
+      "consolidation.deletionThreshold must be greater than 0 \u2014 at or below it no value is ever under the threshold, so nothing is ever consolidated and the store only grows.",
     );
   }
 
