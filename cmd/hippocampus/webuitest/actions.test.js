@@ -404,3 +404,72 @@ test("leaving the drill-down is wired to the back button and to the nav", () => 
     "a nav click must leave the drill-down before switching tabs",
   );
 });
+
+// The tour points at panels by id, opens tabs by name, and asks app.js to prime a table by name.
+// None of those three throws when it is wrong: an unknown id highlights nothing (the popover
+// silently centres), an unknown tab name deselects every tab and leaves a blank page, and an unknown
+// primer is skipped, leaving a stop that points at "Nothing loaded yet." Exactly the failure shape
+// the rest of this file exists for, and the same cheap answer - compare the lists.
+test("every tour step points at a panel, a tab and a primer that exist", () => {
+  const table = libCode.match(/export const TOUR_STEPS = \[(.*?)\n\];/s);
+
+  assert.ok(table, "TOUR_STEPS not found in lib.js");
+
+  const steps = table[1];
+  const targets = matchAll(steps, /target: "([\w-]+)"/g);
+  const tabs = matchAll(steps, /tab: "([\w-]+)"/g);
+  const primers = matchAll(steps, /prime: "([\w-]+)"/g);
+
+  assert.ok(targets.length > 6, `only parsed ${targets.length} tour targets`);
+
+  for (const id of targets) {
+    assert.ok(
+      htmlCode.includes(`id="${id}"`),
+      `a tour step points at #${id}, which is not in the markup`,
+    );
+  }
+
+  for (const tab of new Set(tabs)) {
+    assert.ok(
+      htmlCode.includes(`data-tab="${tab}"`),
+      `a tour step opens the ${tab} tab, which the console does not have`,
+    );
+  }
+
+  const declared = new Set(
+    matchAll(
+      appCode.match(/const TOUR_PRIMERS = \{(.*?)\n\};/s)[1],
+      /^ {2}([a-z]+):/gm,
+    ),
+  );
+
+  assert.ok(declared.size > 0, "TOUR_PRIMERS not found in app.js");
+
+  for (const prime of new Set(primers)) {
+    assert.ok(
+      declared.has(prime),
+      `a tour step asks for the ${prime} primer, which app.js does not implement`,
+    );
+  }
+});
+
+// The popover is written entirely from script - the markup carries the shell and not one word of a
+// step - so every id app.js writes into has to be there. A missing one is a null and a throw at the
+// moment somebody takes the tour, which is the one moment no other test here reaches.
+test("the tour popover names elements that exist", () => {
+  for (const id of [
+    "tour",
+    "tour-backdrop",
+    "tour-btn",
+    "tour-progress",
+    "tour-title",
+    "tour-body",
+    "tour-prev",
+    "tour-next",
+  ]) {
+    assert.ok(
+      htmlCode.includes(`id="${id}"`),
+      `the tour names #${id}, which is not in the markup`,
+    );
+  }
+});

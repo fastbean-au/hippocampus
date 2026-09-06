@@ -133,7 +133,7 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   inside the guest and returns none of it to the host — `podman system df` reports gigabytes
   reclaimed while `df` does not move, and only `fstrim` inside the VM punches the holes back out.
   (2) Volumes are selected by `dangling=true` **and** a 64-hex name, not by letting the engine
-  refuse the in-use ones: the first filter protects the test databases (which hang off *stopped*
+  refuse the in-use ones: the first filter protects the test databases (which hang off _stopped_
   containers, and that is how they survive a reboot), the second protects named compose state, and
   relying on the refusal instead would make `--dry-run` overstate what it is about to delete. It
   never touches `~/.hippocampus` (a personal instance's real store) or the Go module cache
@@ -235,7 +235,18 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   tables, the current capacity pressure and threshold, an inline-SVG decay curve, and an
   `admin`-gated dry-run panel over `PreviewConsolidation`. It computes **no** decay maths of its own
   — every number and every curve point is served — which is the whole reason those RPCs report what
-  they do). `main.go` —
+  they do. A **guided tour** (item 93; `TOUR_STEPS`/`tourSteps`/`tourPlacement` in `lib.js`, the DOM
+  layer at the foot of `app.js`) walks a first-time reader through the RELATIONSHIPS between those
+  numbers rather than the tabs, since none of them is visible in any one panel. Four things carry it.
+  It runs over the **live** console, not a seeded story — each stop opens its tab, primes the table
+  it points at through the `TOUR_PRIMERS` allow-list, and quotes figures read at the moment the stop
+  opens, every body still reading as a complete thought when a figure has not arrived. It is
+  **filtered by capability**, because pointing at a panel a replica or a reader does not have teaches
+  that the console is broken. It is **offered once and always reachable** (unprompted on a first
+  visit behind one `localStorage` key, plus a header control), because most visitors to a public demo
+  arrive exactly once. And the popover is repositioned by a **ResizeObserver** as well as on scroll:
+  the tour is offered as soon as capabilities resolve, which is before the Now tab's fetches answer,
+  so the card a stop points at is routinely half its final height when it is measured). `main.go` —
   bootstrap only: reads the JSON config file into viper (**optional on the default path** — an
   absent `./config.json` starts the service on `setStartupDefaults`' built-in defaults with a Warn
   line naming them, while a `--config_file` given explicitly must exist; `setStartupDefaults` is a

@@ -1003,3 +1003,327 @@ export function topologyCheckedLabel(nowMs, node) {
 
   return "checked " + ageLabel(nowMs, node.checkedAt);
 }
+
+// ---------------------------------------------------------------------- tour
+
+// The guided tour: what a first-time reader is walked through, and where each stop points.
+//
+// The console reports seven tabs' worth of numbers and assumes the premise behind them. Everything
+// that makes this store interesting is a RELATIONSHIP between those numbers - significance against
+// age, recall against the decay clock, capacity pressure against the threshold, an event ending
+// with its last memory - and none of those is visible in any one panel. The tour is the cheapest
+// way to make the console teach them rather than merely report them.
+//
+// Three decisions are worth stating, because each had a defensible alternative.
+//
+// It runs over the LIVE console rather than a seeded story. The demo's store is real and moves
+// under the reader, which is exactly why a step may not say "look at this number": every figure a
+// step quotes is read from the page at the moment that step opens, and every body must still read
+// sensibly with the figure absent. facts is therefore optional at every use below, and a step that
+// cannot quote a number says the relationship instead of inventing one.
+//
+// It is filtered by CAPABILITY, not written for the demo. A replica has no Decay tab, a reader no
+// dry run, a store with tombstones off nothing to show in the feed - and a tour that pointed at a
+// panel the reader cannot see would teach the console is broken. tourSteps is the whole of that
+// decision and is a pure table so the matrix can be tested rather than signed in to.
+//
+// It is both offered once and always reachable. Most visitors to a public demo arrive exactly once,
+// so waiting to be asked wastes the only visit there will be; an operator who has seen it wants it
+// gone and occasionally wants it back. app.js starts it unprompted on a first visit and the header
+// carries a control for every visit after that.
+//
+// A step is: which tab it belongs to, the id of the element it points at, its heading, and a body
+// that may read the facts. `needs` is the capability predicate; absent means always. `prime` names
+// an app.js loader to run on arrival, so a stop does not point at a table nobody has filled in.
+export const TOUR_STEPS = [
+  {
+    id: "premise",
+    tab: "now",
+    target: "now-hero",
+    title: "This store is meant to forget",
+    body: () =>
+      `A memory here is not a row that stays until something deletes it. It carries a
+       <em>significance</em>, it loses value as it ages, and once that value falls below the
+       store's threshold the next consolidation cycle deletes it — permanently, body and all.
+       <p class="tour-note">Every number in this console is computed by the service, by the same
+        code that does the forgetting. Nothing on this page is an estimate of it.</p>`,
+  },
+  {
+    id: "held",
+    tab: "now",
+    target: "now-headline",
+    title: "What it holds, and what it just lost",
+    body: (f) =>
+      `These three figures are the whole state of the store in one line: what it holds, what the
+       last cycle took, and when the next one is due.
+       ${heldSentence(f)}`,
+  },
+  {
+    id: "cycle",
+    tab: "now",
+    target: "now-cycle-card",
+    needs: (caps) => caps.consolidation,
+    title: "Forgetting happens in cycles",
+    body: (f) =>
+      `Nothing decays away between cycles. A <em>sleep cycle</em> runs
+       ${f.period > 0 ? "on a timer" : "when the Sleep RPC or the write-ahead log asks for one"},
+       walks the store, and deletes everything that has fallen below the threshold — so a memory
+       is not gone the moment it becomes forgettable, it is gone the next time the store looks.
+       <p class="tour-note">The two counts are kept apart because they are different events.
+        <em>Decayed away</em> is the value model working. <em>Evicted</em> is the store being over
+        its capacity target and having to take something that was still above the threshold.</p>`,
+  },
+  {
+    id: "pressure",
+    tab: "now",
+    target: "now-capacity",
+    needs: (caps) => caps.consolidation,
+    title: "A full store forgets harder",
+    body: (f) => pressureBody(f),
+  },
+  {
+    id: "forgotten",
+    tab: "now",
+    target: "now-forgotten-card",
+    needs: (caps) => caps.consolidation && caps.tombstones,
+    title: "What went, and what decided it",
+    body: (f) =>
+      `The one view that can speak about a memory that no longer exists: a record per deletion
+       carrying the <em>value</em> the cycle computed and the <em>threshold</em> then in force.
+       ${forgottenSentence(f)}
+       <p class="tour-note">Value and threshold are separate columns rather than "value &lt;
+        threshold", because on an eviction the value was <em>above</em> the threshold and the
+        memory went anyway.</p>`,
+  },
+  {
+    id: "significance",
+    tab: "memories",
+    target: "memory-filter-card",
+    prime: "memories",
+    title: "Significance is the differentiator",
+    body: () =>
+      `Two memories of the same age are separated by one thing: how significant they were said to
+       be when they were stored. It is the input every decay curve starts from, so it decides how
+       long something survives.
+       <p class="tour-note">The significance filter reads that directly — <em>Highest only</em> is
+        the store's most durable records, <em>Lowest only</em> is what will go first.</p>`,
+  },
+  {
+    id: "recall",
+    tab: "memories",
+    target: "memories-card",
+    prime: "memories",
+    title: "Recalling a memory keeps it alive",
+    body: () =>
+      `This is the relationship that makes the store more than an expiry date. <strong>Recall</strong>
+       on any row resets that memory's decay clock and raises its effective significance a little —
+       age is measured from the last recall, not from when it was stored, so something asked for
+       often is effectively never old.
+       <p class="tour-note"><strong>Links</strong> are the other half. A link raises the effective
+        significance of <em>both</em> ends, with diminishing returns, so a well-connected memory
+        decays more slowly than an isolated one of the same significance.</p>`,
+  },
+  {
+    id: "events",
+    tab: "events",
+    target: "events-card",
+    prime: "events",
+    title: "An event is a span its memories share",
+    body: () =>
+      `An event is a named stretch of time with a significance of its own, and a memory attached to
+       one is valued using both. That makes an event a way to keep a whole episode alive, or to let
+       a whole episode go.
+       <p class="tour-note">The relationship runs both ways: an event is deleted when its last
+        memory is forgotten, and forgetting an event's memories takes the event with them.</p>`,
+  },
+  {
+    id: "value",
+    tab: "decay",
+    target: "decay-status",
+    needs: (caps) => caps.consolidation,
+    title: "Value against threshold",
+    body: (f) =>
+      `This is where the two numbers meet.
+       ${thresholdSentence(f)}
+       Every memory's value is computed from its significance, its links, how often it has been
+       recalled, and how long since it last was — and it is compared against that one threshold.
+       <p class="tour-note">The Value column on the tables you have just seen is served from here
+        too. This console computes no decay maths of its own.</p>`,
+  },
+  {
+    id: "curve",
+    tab: "decay",
+    target: "decay-curve",
+    needs: (caps) => caps.consolidation,
+    title: "The shape of forgetting",
+    body: () =>
+      `The curve is significance against age under this store's configured method, with the
+       threshold drawn across it: where they cross is when a memory of that significance is
+       forgotten, assuming nobody recalls it first.
+       <p class="tour-note">Click the value of any memory in any table to plot that memory's own
+        curve, and how many days it has left.</p>`,
+  },
+  {
+    id: "preview",
+    tab: "decay",
+    target: "preview-card",
+    needs: (caps) => caps.consolidation && caps.isUnboundAdmin,
+    title: "Ask before it happens",
+    body: () =>
+      `The dry run reports exactly what a cycle running now would delete, and deletes nothing. It
+       is a separate call from the cycle itself rather than a flag on it, so it can be granted to
+       someone who may not be trusted to run the destructive one.`,
+  },
+  {
+    id: "deployment",
+    tab: "deployment",
+    target: "topology-diagram",
+    needs: (caps) => caps.topology,
+    title: "What this instance is attached to",
+    body: () =>
+      `An instance can only honestly report itself, whatever it dials, and the peers it finds
+       registered on a shared database. Everything else in a deployment connects <em>to</em> it, so
+       each component says where it was learnt from rather than the diagram implying a survey.`,
+  },
+  {
+    id: "done",
+    title: "That is the tour",
+    body: () =>
+      `The store forgets on a schedule, significance and recall decide what survives it, and every
+       figure here is served rather than guessed.
+       <p class="tour-note">Reopen this any time from <strong>Tour</strong> in the header.</p>`,
+  },
+];
+
+// heldSentence quotes the live figures, and says nothing when they have not arrived. The Now tab
+// fetches asynchronously and the tour can open before it answers, so this must read as a complete
+// thought either way rather than as a sentence with a hole in it.
+function heldSentence(facts) {
+  if (!facts || facts.held === null || facts.held === undefined) return "";
+
+  const held = `<p class="tour-note">Right now: <strong>${esc(Number(facts.held).toLocaleString())}</strong> memories held`;
+
+  if (facts.forgottenLast === null || facts.forgottenLast === undefined) {
+    return held + ".</p>";
+  }
+
+  return (
+    held +
+    `, and the last cycle forgot
+     <strong>${esc(Number(facts.forgottenLast).toLocaleString())}</strong> of them.</p>`
+  );
+}
+
+// pressureBody has three readings rather than one, because a store with no capacity target is not a
+// store at zero pressure - it has no second axis at all, and describing pressure there would point
+// at a meter that is not drawn.
+function pressureBody(facts) {
+  const lede = `The decay model is not the only thing deciding. A store also has a capacity target, and as it
+     fills, the deletion threshold is scaled up — so the fuller it is, the more it forgets per
+     cycle, and the harder a memory has to work to stay.`;
+
+  if (!facts || !facts.capacity) {
+    return (
+      lede +
+      `<p class="tour-note">This store has no capacity target configured, so nothing is evicted to
+        make room and memories are forgotten only as they decay.</p>`
+    );
+  }
+
+  return (
+    lede +
+    `<p class="tour-note">This one is at <strong>${esc(Math.round(facts.capacity.fraction * 100))}%</strong>
+      of its ${esc(facts.capacity.axis)} target, which multiplies the threshold by
+      <strong>${esc(num(facts.pressure))}</strong>.</p>`
+  );
+}
+
+// forgottenSentence is quiet when the log is empty, which on a young store it usually is. Claiming a
+// count of zero reads as the feature being broken rather than as nothing having gone yet.
+function forgottenSentence(facts) {
+  if (!facts || !facts.tombstoneTotal) return "";
+
+  return `<p class="tour-note">This store has recorded
+   <strong>${esc(Number(facts.tombstoneTotal).toLocaleString())}</strong> of them.</p>`;
+}
+
+function thresholdSentence(facts) {
+  if (!facts || facts.threshold === null || facts.threshold === undefined) {
+    return "";
+  }
+
+  return `A memory of this store is forgotten once its value falls below
+   <strong>${esc(num(facts.threshold))}</strong>.`;
+}
+
+// tourSteps is the tour a given caller actually gets. Steps whose panel this deployment does not
+// serve, or this token may not see, are dropped rather than shown as unavailable: a tour is a claim
+// that the thing it points at is there, and pointing at a hidden card teaches that the console is
+// broken. Pure, and a table, so the whole matrix is testable without signing in as each shape.
+export function tourSteps(caps) {
+  return TOUR_STEPS.filter((step) => !step.needs || step.needs(caps || {}));
+}
+
+// tourProgress is the "3 of 11" label. Trivial, and here rather than inline in app.js only so the
+// one-based conversion is pinned - an off-by-one in it is the kind of thing nobody reads.
+export function tourProgress(index, total) {
+  return `${index + 1} of ${total}`;
+}
+
+// tourPlacement positions the popover against the element the step points at, in viewport
+// coordinates - the popover is fixed, so it can be repositioned from a scroll handler without
+// re-measuring the page.
+//
+// A null rect means the step points at nothing (the closing step, or a panel that turned out not to
+// be rendered), and the answer is the centre of the viewport rather than a corner: a card floating
+// beside nothing reads as a mispositioned tooltip, whereas a centred one reads as a card.
+//
+// Otherwise it prefers below the target, falls back to above, and when neither side has room takes
+// whichever has more and clamps. Clamping rather than overflowing is the whole point: a popover
+// pushed off the bottom of a phone screen is a tour that cannot be advanced.
+export function tourPlacement(rect, viewport, pop, gap, margin) {
+  const space = gap === undefined ? 12 : gap;
+  const edge = margin === undefined ? 12 : margin;
+
+  const centre = () => ({
+    placement: "centre",
+    top: Math.max(edge, (viewport.height - pop.height) / 2),
+    left: Math.max(edge, (viewport.width - pop.width) / 2),
+  });
+
+  if (!rect) return centre();
+
+  const left = Math.max(
+    edge,
+    Math.min(
+      rect.left + rect.width / 2 - pop.width / 2,
+      viewport.width - pop.width - edge,
+    ),
+  );
+
+  const below = rect.top + rect.height + space;
+  const above = rect.top - space - pop.height;
+
+  if (below + pop.height <= viewport.height - edge) {
+    return { placement: "below", top: below, left };
+  }
+
+  if (above >= edge) {
+    return { placement: "above", top: above, left };
+  }
+
+  // Neither side fits. Take the roomier one and clamp into the viewport, which may overlap the
+  // target - unavoidable when the target is taller than the space around it, and better than a
+  // popover with its buttons off-screen.
+  const roomBelow = viewport.height - (rect.top + rect.height);
+  const roomAbove = rect.top;
+  const top = Math.max(
+    edge,
+    Math.min(
+      roomBelow >= roomAbove ? below : above,
+      viewport.height - pop.height - edge,
+    ),
+  );
+
+  return { placement: roomBelow >= roomAbove ? "below" : "above", top, left };
+}

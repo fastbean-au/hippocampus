@@ -9,6 +9,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  TOUR_STEPS,
+  tourPlacement,
+  tourProgress,
+  tourSteps,
   ageLabel,
   capacityMeter,
   countdownFraction,
@@ -1351,4 +1355,231 @@ test("topologySource names a declared component as declared", () => {
     topologySource("TOPOLOGY_NODE_SOURCE_DECLARED"),
     "declared by an operator",
   );
+});
+
+// ------------------------------------------------------------------- the tour
+//
+// The tour points at panels. Every failure mode it has is a step pointing at something that is not
+// there - a card behind a capability this caller does not carry, a popover placed off the bottom of
+// the screen - and none of those throws. They are all a reader looking at nothing, which is why the
+// filter and the placement are pure and tested here rather than only by taking the tour.
+
+// The capability shapes the console actually resolves, so the matrix below is the real one rather
+// than an invented set of flags.
+const unauthenticated = capsFromWhoAmI({
+  role: null,
+  authEnabled: false,
+  consolidationEnabled: true,
+  tombstonesEnabled: true,
+  topologyTier: "reader",
+});
+
+test("the tour's steps are well formed, since a broken one is silent", () => {
+  const ids = new Set();
+
+  for (const step of TOUR_STEPS) {
+    assert.ok(step.id, "every step needs an id");
+    assert.ok(!ids.has(step.id), `duplicate step id ${step.id}`);
+    ids.add(step.id);
+
+    assert.equal(typeof step.title, "string");
+    assert.ok(step.title.length, `step ${step.id} has no title`);
+    assert.equal(typeof step.body, "function");
+    assert.ok(
+      step.body({}).length > 40,
+      `step ${step.id} says nothing without facts`,
+    );
+  }
+});
+
+// A step that primes a tab it does not open primes whatever tab the reader happens to be on, which
+// is a load nobody asked for against a table nobody is looking at. That the tab, the target and the
+// primer all EXIST is checked in actions.test.js, which can read the markup.
+test("a step never primes a tab it does not open", () => {
+  for (const step of TOUR_STEPS) {
+    if (step.prime) {
+      assert.ok(step.tab, `step ${step.id} primes a tab it does not open`);
+    }
+  }
+});
+
+// The filter is the whole of "do not point at a panel this caller cannot see". Each shape below is a
+// deployment or token the console genuinely resolves, and the steps dropped are exactly the panels
+// that shape hides.
+test("tourSteps drops the stops a caller could not see", () => {
+  const idsFor = (caps) => tourSteps(caps).map((s) => s.id);
+
+  const everything = idsFor({
+    consolidation: true,
+    tombstones: true,
+    isUnboundAdmin: true,
+    topology: true,
+  });
+
+  assert.deepEqual(
+    everything,
+    TOUR_STEPS.map((s) => s.id),
+  );
+
+  // A replica consolidates nothing: no Decay tab, no cycle, no capacity, no forgotten log.
+  const replica = idsFor({ consolidation: false, topology: true });
+
+  for (const dropped of [
+    "cycle",
+    "pressure",
+    "forgotten",
+    "value",
+    "curve",
+    "preview",
+  ]) {
+    assert.ok(!replica.includes(dropped), `${dropped} survived on a replica`);
+  }
+
+  assert.ok(replica.includes("premise"));
+  assert.ok(replica.includes("recall"));
+  assert.ok(replica.includes("deployment"));
+
+  // A reader may see the decay model but not the dry run, which is admin AND unscoped.
+  const reader = idsFor({ consolidation: true, tombstones: true });
+
+  assert.ok(reader.includes("value"));
+  assert.ok(!reader.includes("preview"));
+
+  // A store recording no tombstones has an empty feed, and a group-scoped caller is refused the
+  // topology outright.
+  const scoped = idsFor({ consolidation: true, tombstones: false });
+
+  assert.ok(!scoped.includes("forgotten"));
+  assert.ok(!scoped.includes("deployment"));
+
+  // Closed capabilities still leave a tour: the premise does not depend on anything being served.
+  const refused = tourSteps(capsWhenRefused(403));
+
+  assert.ok(
+    refused.length >= 4,
+    "a refused caller is left with no tour at all",
+  );
+  assert.ok(refused.some((s) => s.id === "premise"));
+});
+
+test("an unauthenticated console gets the whole tour", () => {
+  assert.deepEqual(
+    tourSteps(unauthenticated).map((s) => s.id),
+    TOUR_STEPS.map((s) => s.id),
+  );
+});
+
+// The demo's store moves under the reader, so a step may quote a figure only if it has one. Both
+// halves matter: the number must appear when it is there, and the sentence must still read when it
+// is not.
+test("a step quotes live figures when it has them and omits them when it does not", () => {
+  const step = (id) => TOUR_STEPS.find((s) => s.id === id);
+
+  const held = step("held");
+
+  assert.ok(!held.body({}).includes("Right now"));
+  assert.ok(!held.body({ held: null }).includes("Right now"));
+
+  const quoted = held.body({ held: 12431, forgottenLast: 87 });
+
+  assert.ok(quoted.includes("12,431"));
+  assert.ok(quoted.includes("87"));
+
+  // A count with no cycle behind it stops at the count rather than trailing off.
+  const partial = held.body({ held: 5, forgottenLast: null });
+
+  assert.ok(partial.includes("5"));
+  assert.ok(!partial.includes("last cycle forgot"));
+
+  // No capacity target is not zero pressure: it is a different sentence, and the meter it would
+  // point at is not drawn.
+  const pressure = step("pressure");
+
+  assert.ok(pressure.body({}).includes("no capacity target"));
+  assert.ok(
+    pressure
+      .body({ capacity: { fraction: 0.734, axis: "bytes" }, pressure: 1.42 })
+      .includes("73%"),
+  );
+
+  // A store recording nothing must not claim it has forgotten nothing.
+  const forgotten = step("forgotten");
+
+  assert.ok(!forgotten.body({ tombstoneTotal: 0 }).includes("recorded"));
+  assert.ok(forgotten.body({ tombstoneTotal: 4210 }).includes("4,210"));
+
+  const value = step("value");
+
+  assert.ok(!value.body({}).includes("falls below"));
+  assert.ok(value.body({ threshold: 0.25 }).includes("0.25"));
+});
+
+test("tourProgress counts from one", () => {
+  assert.equal(tourProgress(0, 11), "1 of 11");
+  assert.equal(tourProgress(10, 11), "11 of 11");
+});
+
+// Placement's only real failure is a popover the reader cannot reach: off the bottom of a phone, off
+// the side of a narrow window, or anchored to a target that turned out not to be rendered.
+test("tourPlacement prefers below the target, then above", () => {
+  const viewport = { width: 1000, height: 800 };
+  const pop = { width: 360, height: 200 };
+
+  const below = tourPlacement(
+    { top: 100, left: 300, width: 400, height: 120 },
+    viewport,
+    pop,
+  );
+
+  assert.equal(below.placement, "below");
+  assert.equal(below.top, 232);
+  assert.equal(below.left, 320, "the popover centres on its target");
+
+  // No room underneath, plenty above.
+  const above = tourPlacement(
+    { top: 500, left: 300, width: 400, height: 260 },
+    viewport,
+    pop,
+  );
+
+  assert.equal(above.placement, "above");
+  assert.equal(above.top, 288);
+});
+
+test("tourPlacement keeps the popover on screen whatever the target does", () => {
+  const viewport = { width: 400, height: 500 };
+  const pop = { width: 360, height: 220 };
+
+  // A target taller than the space around it: neither side fits, and the answer must still be a
+  // popover whose buttons are reachable.
+  const squeezed = tourPlacement(
+    { top: 20, left: 10, width: 380, height: 460 },
+    viewport,
+    pop,
+  );
+
+  assert.ok(squeezed.top >= 12);
+  assert.ok(squeezed.top + pop.height <= viewport.height - 12);
+
+  // A target at the right-hand edge must not push the popover off it.
+  const edge = tourPlacement(
+    { top: 10, left: 380, width: 200, height: 40 },
+    viewport,
+    pop,
+  );
+
+  assert.ok(edge.left >= 12);
+  assert.ok(edge.left + pop.width <= viewport.width - 12);
+});
+
+test("tourPlacement centres when the step points at nothing", () => {
+  const at = tourPlacement(
+    null,
+    { width: 1000, height: 800 },
+    { width: 360, height: 200 },
+  );
+
+  assert.equal(at.placement, "centre");
+  assert.equal(at.top, 300);
+  assert.equal(at.left, 320);
 });

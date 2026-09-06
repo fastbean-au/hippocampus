@@ -22,6 +22,18 @@
     <header>
       <h1><span>&#129504;</span> Hippocampus Console</h1>
       <div class="token-box">
+        <!-- Always reachable, in every auth mode and at every role: the tour is filtered to what
+         this caller can actually see rather than withheld from callers who can see less. It sits
+         outside .gated's hiding of the console body but inside .token-box, which that class hides,
+         so a login card is never decorated with an invitation to tour what is behind it. -->
+        <button
+          id="tour-btn"
+          class="btn ghost small"
+          data-act="start-tour"
+          title="a guided walk through what this store does"
+        >
+          Tour
+        </button>
         <span
           id="role-pill"
           class="pill hidden"
@@ -268,7 +280,7 @@
             >
           </div>
         </div>
-        <div class="card" data-enter="memory-filter">
+        <div class="card" id="memory-filter-card" data-enter="memory-filter">
           <h2>Filter</h2>
           <div class="row">
             <div class="field wide">
@@ -370,7 +382,7 @@
             </button>
           </div>
         </div>
-        <div class="card">
+        <div class="card" id="memories-card">
           <div class="events-head">
             <h2>Memories</h2>
             <div class="pager">
@@ -839,7 +851,7 @@
 
         <!-- unbound-only, not admin-only: PreviewConsolidation is scopeUnbound, so a group-scoped
          admin is refused it outright however high their tier. -->
-        <div class="card unbound-only">
+        <div class="card unbound-only" id="preview-card">
           <h2>What would be forgotten now</h2>
           <p class="muted pull-up">
             A dry run of the consolidation cycle: it reports what a cycle
@@ -973,6 +985,52 @@
     </main>
 
     <div id="toast"></div>
+
+    <!-- ===================== GUIDED TOUR ===================== -->
+    <!-- Two elements and no content: every word of a step is written by app.js from the table in
+     lib.js, so the tour that a reader gets is the one their capabilities allow rather than markup
+     that has to be hidden afterwards.
+
+     The backdrop dims the page and swallows clicks, which is what makes the highlight mean
+     something. It deliberately does NOT dismiss the tour: it carries no data-act, because losing
+     your place four stops in to a stray click is worse than the one extra click of leaving on
+     purpose. Esc, Done and the close button are the ways out.
+
+     The highlighted element is raised ABOVE the backdrop rather than cut out of it, so it stays
+     clickable — the reader can recall the memory the tour is pointing at without leaving the tour.
+     -->
+    <div id="tour-backdrop" class="hidden" aria-hidden="true"></div>
+    <div
+      id="tour"
+      class="hidden"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="tour-title"
+      aria-describedby="tour-body"
+      tabindex="-1"
+    >
+      <div class="tour-head">
+        <span id="tour-progress" class="muted fs-11"></span>
+        <button
+          class="tour-close"
+          data-act="end-tour"
+          id="tour-close"
+          aria-label="Close the tour"
+        >
+          &times;
+        </button>
+      </div>
+      <h2 id="tour-title"></h2>
+      <div id="tour-body"></div>
+      <div class="tour-actions">
+        <button class="btn ghost small" data-act="tour-prev" id="tour-prev">
+          &lsaquo; Back
+        </button>
+        <button class="btn small" data-act="tour-next" id="tour-next">
+          Next &rsaquo;
+        </button>
+      </div>
+    </div>
 
     <script type="module" src="/ui/app.js"></script>
   </body>

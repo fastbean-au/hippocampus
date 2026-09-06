@@ -40,6 +40,24 @@ an `admin`. **Those hidden controls are a convenience, not a boundary** — the 
 tier on every request, and a hidden button is simply one nobody is invited to press. See
 [The web console](security.md#the-web-console-ui) for what that boundary actually is.
 
+## The guided tour
+
+The console assumes its own premise: seven tabs of numbers, all of them meaningful only if you
+already know that this store forgets. A **Tour** control in the header walks a first-time reader
+through the relationships between them — significance against age, recall resetting the decay clock,
+capacity pressure lifting the threshold, an event ending with its last memory — pointing at the
+panel that shows each one. It runs unprompted on a first visit and is reachable from the header on
+every visit after that.
+
+It runs over the **live** console rather than a canned story: each stop opens the tab it is about,
+loads the table it points at if nothing has loaded it yet, and quotes this store's actual figures
+where it has them. It is also filtered by what the caller can see — a replica has no cycle to
+describe, a `reader` no dry run, a store with the forgotten log off nothing in the feed — so the
+tour never points at a panel that is not there.
+
+Arrow keys step, `Esc` leaves, and the highlighted panel stays clickable throughout: the tour dims
+the page around what it is describing rather than locking it.
+
 ## The tabs
 
 | Tab            | What it answers                                                                                           |

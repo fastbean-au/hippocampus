@@ -1009,3 +1009,90 @@ svg.topology .off .tdetail {
   margin: 0;
   word-break: break-word;
 }
+
+/* ---------------------------------------------------------------------- tour
+   The guided tour. Two fixed layers plus one class on whatever the current step points at.
+
+   The highlight is an outline on the target itself, raised above the backdrop, rather than a hole
+   cut in the backdrop: a cut-out has to be re-cut on every scroll and every reflow, and it makes the
+   thing it highlights unclickable. Raising the element keeps it live, so the reader can press the
+   Recall button the tour is describing without leaving the tour. It works because every element a
+   step points at is inside <main>, which starts no stacking context of its own — a target inside the
+   sticky header could not be raised past it, which is why no step points at one.
+
+   #tour's own top/left are set through the CSSOM by placeTour, never as a style attribute: the page
+   is served under a CSP with no unsafe-inline, and a style attribute there fails silently. Same rule
+   as the meters. */
+#tour-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(6, 8, 12, 0.62);
+}
+#tour {
+  position: fixed;
+  z-index: 42;
+  width: min(360px, calc(100vw - 24px));
+  background: var(--panel);
+  border: 1px solid var(--accent-2);
+  border-radius: 8px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+#tour h2 {
+  margin: 2px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.tour-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tour-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.tour-close:hover {
+  color: var(--text);
+}
+#tour-body {
+  font-size: 13px;
+  color: var(--text);
+}
+/* The second paragraph of a step: the aside that names the control, or quotes the live figure. Set
+   apart because it is the part a reader skims back to, and marked with the accent rather than
+   indented so it survives the narrow width the popover has on a phone. */
+#tour-body .tour-note {
+  margin: 10px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+#tour-body strong {
+  color: var(--text);
+}
+.tour-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+/* Raised above the backdrop and ringed. outline rather than border, so nothing the target contains
+   shifts by two pixels when the step arrives at it, and scroll-margin so scrollIntoView does not
+   tuck it under the sticky header. */
+.tour-target {
+  position: relative;
+  z-index: 41;
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 6px;
+  scroll-margin: 80px 0 24px;
+}

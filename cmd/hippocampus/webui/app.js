@@ -34,6 +34,9 @@ import {
   topologySource,
   topologyStatus,
   topologySvg,
+  tourPlacement,
+  tourProgress,
+  tourSteps,
 } from "./lib.js";
 
 // ------------------------------------------------------------------ helpers
@@ -339,6 +342,14 @@ function applyCaps() {
   applySearchModes();
   applyScope();
   applyGate();
+
+  // After applyGate, because it is what decided whether there is a console to tour: this is reached
+  // on the first load AND after a sign-in, and offerTourOnce is what makes it happen at most once.
+  // A session that lapses mid-tour raises the gate UNDER the popover, which would leave a tour of a
+  // console that is no longer on screen - so the same call that offers it also takes it away.
+  if (document.body.classList.contains("gated")) endTour();
+
+  offerTourOnce();
 
   // Sign out is offered only where there is a session to end: a deployment with authentication on
   // and a role resolved for this caller.
@@ -761,6 +772,12 @@ const ACTIONS = {
   "forgotten-next": () => forgottenPage(1),
   "clear-forgotten": () => clearForgotten(),
 
+  // --- The guided tour
+  "start-tour": () => startTour(),
+  "tour-next": () => tourGo(1),
+  "tour-prev": () => tourGo(-1),
+  "end-tour": () => endTour(),
+
   // --- Deployment tab
   "load-topology": () => loadTopology(),
   "topology-filter": () => renderTopology(),
@@ -951,7 +968,13 @@ const TAB_LOADERS = {
   decay: () => {
     // A live view of the store's current standing: loaded the first time it is opened rather than
     // on page load, since it costs the server a snapshot.
-    if (!decayInputs) loadDecay();
+    //
+    // The guard is "has this tab been drawn", NOT "have we ever seen a snapshot". It was the latter,
+    // and decayInputs is also written by decorateValues - the per-row value column on the Memories
+    // and Search tables - so listing memories and then opening Decay found the guard already
+    // satisfied and left the tab reading "Nothing loaded yet" with a Refresh button as the only way
+    // out of it. Two different questions that happened to share a variable.
+    if (!decayRendered) loadDecay();
   },
   deployment: () => startTopologyPolling(),
 };
@@ -984,6 +1007,11 @@ document.querySelectorAll("nav button").forEach((b) => {
     // back to a list that is not there.
     closeLinks();
     closeEvent();
+
+    // The tour drives the tabs itself (renderTour calls showTab, not this listener), so reaching
+    // here at all means the reader has navigated by hand - which is them leaving, not a step.
+    endTour();
+
     showTab(b.dataset.tab);
   });
 });
@@ -2289,6 +2317,11 @@ let decayAvailable = true;
 // per-page valuation or the Decay tab's own refresh. They are the same snapshot either way.
 let decayInputs = null;
 
+// decayRendered says whether the Decay TAB has been drawn, which decayInputs does not: the value
+// column writes that one too, from a call that renders nothing here. Set where the panel is
+// actually filled in, so every path that fills it counts and none that does not can.
+let decayRendered = false;
+
 // decorateValues fills the value column of a rendered table. It is best-effort by design: the rows
 // are already useful, and a deployment that will not answer must cost a dash rather than an error.
 async function decorateValues(memories) {
@@ -2897,6 +2930,8 @@ async function loadDecay() {
 // pressure leads because it is the one figure that explains a store suddenly forgetting faster
 // without anything having been reconfigured.
 function renderDecayStatus(data) {
+  decayRendered = true;
+
   const pressure = Number(data.capacityPressure || 0);
   const threshold = Number(data.deletionThreshold || 0);
   const configured = pressure > 0 ? threshold / pressure : threshold;
@@ -3861,3 +3896,301 @@ function markTopologySelection() {
     el.classList.toggle("selected", el.dataset.node === topologySelected);
   });
 }
+
+// ------------------------------------------------------------------- the tour
+//
+// The DOM half of the guided tour; the steps themselves, the capability filter and the placement
+// arithmetic are in lib.js, where they can be tested. What is here is the four things that need a
+// page: which tab a step is on, which element it points at, where the popover goes, and the one
+// localStorage key that stops a returning reader being offered it again.
+//
+// It runs over the LIVE console rather than a seeded story, which is the decision every other one
+// here follows from. The figures a step quotes are read at the moment it opens (tourFacts), and a
+// step whose panel has not been filled in yet primes it rather than pointing at an empty table.
+
+const TOUR_SEEN_KEY = "hippocampus_tour_seen";
+
+// TOUR_PRIMERS is the allow-list of loaders a step may ask for on arrival. An allow-list rather than
+// a lookup of a name onto something callable, for the same reason enterActions is one: the name
+// arrives from a data table, and resolving one of those to a function is how a table entry becomes a
+// way to call anything on the page.
+//
+// Each is conditional on the table being empty, so a tour opened over a console somebody has already
+// been working in does not throw away their filter and reload it.
+const TOUR_PRIMERS = {
+  memories: () => {
+    if (!memRegistry.size) loadMemories();
+  },
+  events: () => {
+    if (!evRegistry.size) loadEvents();
+  },
+};
+
+// tour is the run in progress: the steps this caller gets, and where they are in them. Null when the
+// tour is closed, which is also what every handler here guards on.
+let tour = null;
+
+// tourTarget is the element the current step points at, held so the highlight can be taken off it
+// when the step changes - the id alone is not enough, since a step whose panel was not rendered
+// highlights nothing and must not clear somebody else's class.
+let tourTarget = null;
+
+// tourWatcher re-places the popover when the page under it CHANGES SHAPE, which a scroll listener
+// cannot see and which this console does constantly: the tour is offered as soon as capabilities
+// resolve, which is before the Now tab's three fetches have answered, so the card a step points at
+// is routinely a heading and a paragraph at the moment it is measured and a full panel of figures a
+// moment later. Placed once, the popover ends up over the thing it was pointing under.
+//
+// It watches the popover (its own height changes with each step), the target, and the body (a card
+// growing ABOVE the target moves it without changing its size). Nothing it does can feed back:
+// #tour is fixed, so positioning it resizes nothing.
+let tourWatcher = null;
+
+// hasSeenTour answers whether to offer it unprompted. A browser that refuses storage (private mode,
+// a locked-down profile) answers TRUE rather than false: without somewhere to record it, offering
+// would mean offering on every single load, and a tour that cannot be dismissed permanently is worse
+// than one that is never volunteered. The header control still works.
+function hasSeenTour() {
+  try {
+    return localStorage.getItem(TOUR_SEEN_KEY) === "1";
+  } catch (e) {
+    return true;
+  }
+}
+
+function rememberTourSeen() {
+  try {
+    localStorage.setItem(TOUR_SEEN_KEY, "1");
+  } catch (e) {
+    // Nothing to do: hasSeenTour already treats an unwritable store as seen.
+  }
+}
+
+// offerTourOnce starts it unprompted on a first visit. Most visitors to a public demo arrive exactly
+// once, so a tour that waits to be asked for is a tour that is never taken - but it must not stand in
+// front of a login card (there is no console behind it to point at) and it must not interrupt a
+// reader who is already in one.
+function offerTourOnce() {
+  if (tour || hasSeenTour()) return;
+  if (document.body.classList.contains("gated")) return;
+
+  startTour();
+}
+
+// tourFacts is the live reading a step may quote. Everything is nullable and every consumer in
+// lib.js treats it that way: the Now tab fetches asynchronously and the tour can open before it has
+// answered, so a step must read as a complete thought with the figures absent.
+function tourFacts() {
+  const status = nowState.status;
+  const explain = nowState.explain;
+  const forgotten = nowState.forgotten;
+  const last = status && status.lastCycle;
+  const replica = nowState.replicaCount;
+
+  return {
+    consolidating: !!(status && status.consolidationEnabled),
+    // A replica refuses the explain call, and its count comes from the listing instead - the same
+    // fallback the headline makes, for the same reason.
+    held: explain
+      ? Number(explain.memoryCount || 0)
+      : replica === undefined
+        ? null
+        : replica,
+    forgottenLast: last
+      ? Number(last.memoriesConsolidated || 0) +
+        Number(last.memoriesEvicted || 0)
+      : null,
+    period: status ? Number(status.periodSeconds || 0) : 0,
+    threshold: explain ? Number(explain.deletionThreshold || 0) : null,
+    pressure: explain ? Number(explain.capacityPressure || 0) : null,
+    capacity: explain ? capacityMeter(explain) : null,
+    // Only when the log is switched on: a total of zero from a store that records nothing would read
+    // as a store that has forgotten nothing, which is the opposite of what it means.
+    tombstoneTotal:
+      forgotten && forgotten.enabled ? Number(forgotten.total || 0) : null,
+  };
+}
+
+// startTour opens it at the first step. The step list is recomputed on every start rather than held:
+// a token can change under a running console, and a tour built for the caller who was here before
+// would point at a Decay tab this one has just lost.
+function startTour() {
+  const steps = tourSteps(caps);
+
+  if (!steps.length) return;
+
+  rememberTourSeen();
+
+  tour = { steps, index: 0 };
+
+  $("tour-backdrop").classList.remove("hidden");
+  $("tour").classList.remove("hidden");
+
+  // Revealed before the first placement, because placeTour measures the popover and a hidden
+  // element measures zero. The scroll listener captures, so an inner scroller (a wide table's
+  // wrapper) repositions the popover too rather than sliding its target out from under it.
+  window.addEventListener("scroll", placeTour, {
+    passive: true,
+    capture: true,
+  });
+  window.addEventListener("resize", placeTour);
+
+  tourWatcher = new ResizeObserver(() => placeTour());
+
+  renderTour();
+}
+
+function endTour() {
+  if (!tour) return;
+
+  tour = null;
+
+  markTourTarget(null);
+
+  $("tour-backdrop").classList.add("hidden");
+  $("tour").classList.add("hidden");
+
+  window.removeEventListener("scroll", placeTour, { capture: true });
+  window.removeEventListener("resize", placeTour);
+
+  if (tourWatcher) {
+    tourWatcher.disconnect();
+    tourWatcher = null;
+  }
+
+  // Hand focus back to the control that opens it, so a keyboard reader leaving the tour is not
+  // dropped at the top of the document with no idea where they are.
+  $("tour-btn").focus();
+}
+
+// tourGo moves by one step, and running off the end is how the tour finishes - the last step's
+// button says Done and does exactly this, so there is one way out of the last step rather than two
+// controls that must agree.
+function tourGo(delta) {
+  if (!tour) return;
+
+  const next = tour.index + delta;
+
+  if (next < 0) return;
+
+  if (next >= tour.steps.length) {
+    endTour();
+
+    return;
+  }
+
+  tour.index = next;
+
+  renderTour();
+}
+
+function renderTour() {
+  if (!tour) return;
+
+  const step = tour.steps[tour.index];
+
+  // A step names the tab it belongs to; the closing one names none and stays wherever the reader
+  // finished, which is the tab it just finished talking about.
+  if (step.tab) showTab(step.tab);
+
+  const prime = step.prime && TOUR_PRIMERS[step.prime];
+
+  if (prime) prime();
+
+  $("tour-progress").textContent = tourProgress(tour.index, tour.steps.length);
+  $("tour-title").textContent = step.title;
+
+  // innerHTML, and safely: a step body is a template literal in lib.js and everything it
+  // interpolates is a number from the service run through esc(). No step body ever carries a group
+  // label, a memory body, or anything else a client wrote.
+  $("tour-body").innerHTML = step.body(tourFacts());
+
+  $("tour-prev").disabled = tour.index === 0;
+  $("tour-next").textContent =
+    tour.index === tour.steps.length - 1 ? "Done" : "Next ›";
+
+  markTourTarget(step.target);
+  placeTour();
+
+  // Focus the popover rather than its Next button: it is a labelled dialog, so a screen reader
+  // announces the step's heading and body on arrival, where focusing the button would announce only
+  // the word "Next".
+  $("tour").focus();
+}
+
+// markTourTarget moves the highlight. A step whose panel is not rendered - a card behind a class
+// this caller does not carry, a table that has not loaded - loses its highlight rather than its
+// step: the prose still says the thing, and placeTour centres the popover instead of anchoring it
+// to a rectangle of zeroes in the top-left corner.
+function markTourTarget(id) {
+  if (tourTarget) tourTarget.classList.remove("tour-target");
+
+  const el = id ? $(id) : null;
+
+  tourTarget = el && el.getClientRects().length ? el : null;
+
+  if (tourWatcher) {
+    tourWatcher.disconnect();
+    tourWatcher.observe($("tour"));
+    tourWatcher.observe(document.body);
+
+    if (tourTarget) tourWatcher.observe(tourTarget);
+  }
+
+  if (!tourTarget) return;
+
+  tourTarget.classList.add("tour-target");
+  tourTarget.scrollIntoView({ behavior: scrollBehaviour(), block: "center" });
+}
+
+// placeTour writes the popover's position through the CSSOM. It is a scroll and resize handler as
+// well as part of a render, which is what makes the smooth scroll above safe: the target moves for a
+// few hundred milliseconds after scrollIntoView, and the popover follows it rather than being
+// measured once against a rectangle that is about to be somewhere else.
+//
+// Assigning el.style is not what the console's CSP forbids - a style ATTRIBUTE in markup is, and
+// fails silently when it is. Same rule as applyMeterWidths.
+function placeTour() {
+  if (!tour) return;
+
+  const pop = $("tour");
+  const box = tourTarget ? tourTarget.getBoundingClientRect() : null;
+  const at = tourPlacement(
+    box && {
+      top: box.top,
+      left: box.left,
+      width: box.width,
+      height: box.height,
+    },
+    { width: window.innerWidth, height: window.innerHeight },
+    { width: pop.offsetWidth, height: pop.offsetHeight },
+  );
+
+  pop.style.top = at.top + "px";
+  pop.style.left = at.left + "px";
+}
+
+// The tour's own keys. Escape leaves, the arrows step - the same keys a reader already expects of
+// anything that presents itself one panel at a time. Enter is deliberately not one of them: the
+// console's Enter handler submits the card a field sits in, and the highlighted panel stays live.
+document.addEventListener("keydown", (ev) => {
+  if (!tour || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+
+  if (ev.key === "Escape") {
+    endTour();
+
+    return;
+  }
+
+  if (ev.key === "ArrowRight") {
+    ev.preventDefault();
+    tourGo(1);
+
+    return;
+  }
+
+  if (ev.key === "ArrowLeft") {
+    ev.preventDefault();
+    tourGo(-1);
+  }
+});

@@ -50,7 +50,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   only ever written against the configurations its author can see, and the deployments it breaks are
   the ones they cannot — which is exactly how 0.41.0's deletion-threshold check shipped past every
   configuration in this repository and stopped two instances on the public demo from starting. The
-  validation already existed; what was missing was any way to run it *without* starting, so the
+  validation already existed; what was missing was any way to run it _without_ starting, so the
   answer arrived from a crash loop rather than from a deploy pipeline.
 
   `hippocampus --check-config -c config.json` runs the same checks a real start runs, reports what
@@ -74,6 +74,32 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   covered without anybody remembering to add it, with a companion test pinning that all three
   storage drivers stay represented among them.
 
+- **A guided tour in the embedded web console.** The console has seven tabs of numbers and assumes
+  the premise behind all of them. Everything that makes this store interesting is a _relationship_
+  between those numbers — significance against age, recall resetting the decay clock, capacity
+  pressure lifting the threshold, an event ending with its last memory — and not one of them is
+  visible in any single panel, so a first-time visitor to the public demo had no path through it.
+
+  A **Tour** control in the header walks through those relationships, pointing at the panel that
+  shows each. It runs unprompted on a first visit (remembered in the browser, so it is offered once)
+  and is reachable from the header for every visit after that — for a public demo the honest answer
+  is both, since most visitors arrive exactly once.
+
+  Three decisions carry it. It runs over the **live** console rather than a seeded read-only story:
+  each stop opens the tab it is about, primes the table it points at if nothing has loaded one, and
+  quotes this store's own figures — read at the moment the stop opens, and every stop still reads as
+  a complete thought when a figure has not arrived, because the demo's store moves under the reader.
+  It is **filtered by capability**: a replica has no cycle to describe, a `reader` no dry run, a
+  store with the forgotten log off nothing in the feed, and pointing at a panel that is not there
+  would teach that the console is broken. And it is **hand-rolled**, in `lib.js` plus a thin DOM
+  layer in `app.js`, because the console carries no bundler and no dependencies and is served under
+  a CSP with no `unsafe-inline` — a tour library injecting inline styles or handlers would be
+  blocked silently.
+
+  The step table, the capability filter and the placement arithmetic are pure and tested under
+  `node --test`; two new drift guards pin that every stop points at an element, a tab and a loader
+  that actually exist, alongside the existing ones for the action table.
+
 - **A callbacks row on the bundled Grafana dashboard**: queue depth, delivery rate by kind and
   outcome with the abandon rate beside it, and delivery duration. The callback queue shipped in
   0.41.0 with instruments and three alert rules but nothing to look at between "fine" and "paging
@@ -86,16 +112,25 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 - **The compatibility promise now covers the values a configuration key accepts, not only the key.**
   The **Compatibility** section above was written entirely about keys — removed, renamed, added —
-  and said nothing about the accepted *range* of a key that stayed exactly where it was. So
+  and said nothing about the accepted _range_ of a key that stayed exactly where it was. So
   0.41.0's deletion-threshold check was filed under **Fixed**, which is where tightening a
   validation rule looks like it belongs, and the release that could not start two demo instances
   announced itself as a fix. Refusing input a previous version accepted is a break; it is now
-  written down as one, and the release pre-flight asks the question directly — *does this release
-  reject any configuration the last one accepted?* — because unlike the contract, which the
+  written down as one, and the release pre-flight asks the question directly — _does this release
+  reject any configuration the last one accepted?_ — because unlike the contract, which the
   `proto-breaking` job compares against the previous tag mechanically, there is no automatic answer
   for configuration and probably cannot be one.
 
 ### Fixed
+
+- **The console's Decay tab rendered empty if you had listed memories first.** The tab loads its
+  snapshot the first time it is opened, guarded on whether one had ever been seen — but the memory
+  and search tables' per-row _value_ column writes that same variable, from a call that renders
+  nothing on the Decay tab. So listing memories and then opening Decay found the guard already
+  satisfied, and the tab stood at "Nothing loaded yet" with Refresh as the only way out of it. Two
+  different questions had come to share one variable; the guard now asks whether the tab has been
+  drawn, set where it is actually drawn. Found by the guided tour above, which walks that exact
+  path.
 
 - **`--schema-version --output json` emitted a log line above the document when no config file
   existed.** The mode points logging at stderr before rendering, precisely so a script can parse
@@ -104,7 +139,6 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   environment variables the JSON was preceded by a Warn line and could not be parsed. The warning
   now sits below every CLI mode that renders to stdout, and above `--backfill-search`, which renders
   nothing and does want to say which store it is about to spend an hour on.
-
 
 - **0.41.0 refused a working configuration: forgetting on the capacity target alone.** The new
   `consolidation.deletionThreshold` check rejected any non-positive value at startup, on the
@@ -124,7 +158,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   nothing. The error message now names the alternative rather than only the rule.
 
   `logForgettingMode` gains the third mode it was missing, so the startup line says `forgetting mode:
-  capacity target only` rather than describing a decay curve that is not running, and the
+capacity target only` rather than describing a decay curve that is not running, and the
   configuration wizard mirrors the same relaxation — a warning where it used to be an error.
   `docs/consolidation.md`'s **Forgetting modes** section and `docs/operations.md`'s sizing half both
   cover three modes now instead of two, including what the mode gives up: `days_until_forgotten` is
@@ -169,7 +203,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   New RPCs `GetCallbackQueue` (`GET /v1/callbacks/queue`) and `DeleteCallbackQueue`
   (`POST /v1/callbacks/queue/delete`), both `admin`, both refused to a group-scoped caller — a
   delivery batches memories across groups, so there is nothing to scope it by. `hippo callbacks
-  queue` and `hippo callbacks clear` are the CLI half. Four metrics
+queue` and `hippo callbacks clear` are the CLI half. Four metrics
   (`hippocampus.callbacks.queue_depth`/`.delivered`/`.abandoned`/`.delivery.duration`), three shipped
   alert rules, a config-wizard card, and a `Callback receiver` node in `GetTopology` — never probed,
   since it is a third party's endpoint and the delivery metrics answer better. See
@@ -211,7 +245,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   was precisely the one never emitted, since a capacity-bounded store's size is pinned and pressure is
   the interesting series while a decay-only store's size is the output of the loop. The measurement is
   best-effort without a capacity target (where it feeds only the gauge) and still fails the cycle with
-  one (where it *is* the eviction decision). And a new `HippocampusStoreGrowing` alert ships in both
+  one (where it _is_ the eviction decision). And a new `HippocampusStoreGrowing` alert ships in both
   rule files, comparing arrival against removal rather than level, because every capacity rule is
   inert in this mode and `capacity_pressure` is flat at exactly 1.0.
 
@@ -219,6 +253,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   scales the pressure that scales the threshold and **nothing evicts on it** — eviction is gated on
   `capacityBytes` alone. Every shipped configuration sets a row capacity and leaves the byte capacity
   at 0, so this is the mode most deployments are actually in.
+
 - The schema is at **version 13**: the callback queue adds one table (`callback_queue`), migrated in
   place on startup like every addition before it.
 - **The capacity target's boundaries are written down.** `consolidation.capacityBytes` counts the
@@ -279,8 +314,8 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   of the action; no configuration changes.
 
   **The version to look for is 1.83.1, not 1.83.0.** grpc-go lists the change that actually closes
-  this under *Performance* in its own notes ("restrict memory overhead of buffering small data
-  frames"), while the *Security* heading of the same pair of releases carries the `xds/rbac` fixes —
+  this under _Performance_ in its own notes ("restrict memory overhead of buffering small data
+  frames"), while the _Security_ heading of the same pair of releases carries the `xds/rbac` fixes —
   so checking for "the release with the security section" finds 1.83.0, which is still affected. The
   mitigation is receive-buffer compaction, on by default, with
   `GRPC_GO_EXPERIMENTAL_ENABLE_RECEIVE_BUFFER_COMPACTION=false` as an upstream escape hatch that
@@ -334,7 +369,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   that replace the root can never sit below it.
 
   **This forces golangci-lint to v2.** v1 cannot lint Go 1.27 at all — it fails with `export data
-  version 4 is greater than maximum supported version 2`, and rebuilding it under the new toolchain
+version 4 is greater than maximum supported version 2`, and rebuilding it under the new toolchain
   does not help, because the limit is in the `x/tools` it vendors. v2's defaults then flagged six
   pre-existing `defer x.Close()` calls in tests, now written as
   `defer func() { _ = x.Close() }()` — the idiom the rest of the repository already uses. Nothing
