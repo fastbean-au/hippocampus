@@ -77,6 +77,11 @@ func TestHTTPClientAllMethods(t *testing.T) {
 		{"GetEventById", func() error { _, err := c.GetEventById(ctx, &contract.GetEventByIdRequest{Id: "e"}); return err }},
 		{"GetEvents", func() error { _, err := c.GetEvents(ctx, &contract.GetEventsRequest{Limit: 5}); return err }},
 		{"StoreMemory", func() error { _, err := c.StoreMemory(ctx, &contract.Memory{Body: "b"}); return err }},
+		{"StoreMemories", func() error {
+			_, err := c.StoreMemories(ctx, &contract.StoreMemoriesRequest{Memories: []*contract.Memory{{Body: "b"}}})
+
+			return err
+		}},
 		{"UpdateMemory", func() error { _, err := c.UpdateMemory(ctx, &contract.Memory{Id: "m", Body: "b"}); return err }},
 		{"DeleteMemories", func() error {
 			_, err := c.DeleteMemories(ctx, &contract.DeleteMemoriesRequest{Ids: []string{"m"}})

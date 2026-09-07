@@ -40,6 +40,14 @@ func commands() map[string]command {
 			flags:   memoryWriteFlags,
 			run:     runMemoryStore,
 		},
+		"memory store-batch": {
+			summary: "store many memories from a JSON StoreMemoriesRequest file",
+			hint:    "--file PATH ('-' for stdin)",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("file", "", "JSON StoreMemoriesRequest file, or '-' for stdin (required)")
+			},
+			run: runMemoryStoreBatch,
+		},
 		"memory update": {
 			summary: "apply a partial update to an existing memory",
 			hint:    "--id ID [--body <text>] [--significance N] [--group G] [--metadata k=v] [--clear-metadata]",
@@ -515,6 +523,33 @@ func runMemoryStore(ctx context.Context, client contract.HippocampusClient, fs *
 	memory.IsBinary = boolValue(fs, "binary")
 
 	resp, err := client.StoreMemory(ctx, memory)
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runMemoryStoreBatch sends a batch through the write path. It takes a file rather than flags
+// because a batch of unrelated memories has nothing in common to express as flags - which is the
+// same reason import-batch takes one.
+func runMemoryStoreBatch(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	path := str(fs, "file")
+	if path == "" {
+		return fmt.Errorf("--file is required")
+	}
+
+	data, err := readFileOrStdin(path)
+	if err != nil {
+		return err
+	}
+
+	req := &contract.StoreMemoriesRequest{}
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(data, req); err != nil {
+		return fmt.Errorf("failed to parse %s as a StoreMemoriesRequest: %w", path, err)
+	}
+
+	resp, err := client.StoreMemories(ctx, req)
 	if err != nil {
 		return err
 	}

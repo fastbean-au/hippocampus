@@ -312,6 +312,25 @@ service Hippocampus {
 		};
 	}
 
+	// StoreMemories creates many memories in one call - the write-path counterpart to ImportBatch,
+	// for a producer holding a batch of unrelated memories (a broker bridge, a log pipeline) that
+	// would otherwise send one StoreMemory per record.
+	//
+	// Every memory goes through exactly the validation, defaulting and minimum-significance gate
+	// StoreMemory applies, and each is written in its own transaction: one bad record does not fail
+	// the rest, and a partial success is the useful answer. It is NOT ImportBatch - nothing carries
+	// recall history here, and nothing is upserted; a memory naming an id the store already holds
+	// fails with ALREADY_EXISTS in its own result rather than replacing a live row.
+	//
+	// results is positional: results[i] describes memories[i]. The RPC itself fails only for a
+	// batch-level fault (no memories, more than the cap, a cancelled context).
+	rpc StoreMemories(StoreMemoriesRequest) returns (StoreMemoriesResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/batch"
+			body: "*"
+		};
+	}
+
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
 	// (significance, body, event_id, group, time_stamp, metadata) overwrite the stored row. is_binary and
 	// is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
@@ -749,6 +768,35 @@ message GetMemoriesResponse {
 message StoreMemoryResponse {
 	string                                 id                        = 1; // the stored memory's id; empty when the memory was not retained
 	bool                                   rejected                  = 2; // true when the memory was dropped for significance below memory.minimumSignificance
+}
+
+// StoreMemoriesRequest carries a batch of unrelated memories for the write path. Each is written
+// independently, so they need share nothing - not an event, not a group, not a significance.
+message StoreMemoriesRequest {
+	repeated Memory                        memories                  = 1; // at most 500; a larger batch is refused with INVALID_ARGUMENT rather than truncated
+}
+
+// StoreMemoryResult is one memory's outcome. Exactly one of the three states holds: stored (id
+// set), rejected for insignificance (rejected true, id empty, code OK), or failed (code non-zero
+// and error naming why, id empty).
+//
+// A failure is reported here rather than as the call's error, so one bad record does not discard
+// the batch. A caller that checks only the RPC's error status therefore learns nothing about the
+// individual records - read the results.
+message StoreMemoryResult {
+	string                                 id                        = 1; // the stored memory's id; empty when the memory was rejected or failed
+	bool                                   rejected                  = 2; // true when the memory was dropped for significance below memory.minimumSignificance - not an error, exactly as on StoreMemoryResponse
+	int32                                  code                      = 3; // the gRPC status code this memory failed with (google.rpc.Code; 0 = OK), so a producer can tell a permanent rejection from a retryable one without parsing error
+	string                                 error                     = 4; // the failure message; empty unless code is non-zero
+}
+
+// StoreMemoriesResponse reports one result per requested memory, positionally: results[i]
+// describes the request's memories[i], and len(results) always equals len(memories).
+message StoreMemoriesResponse {
+	repeated StoreMemoryResult             results                   = 1;
+	int32                                  stored                    = 2; // memories written
+	int32                                  rejected                  = 3; // memories dropped for significance below memory.minimumSignificance
+	int32                                  failed                    = 4; // memories that could not be written; each carries its code and error in results
 }
 
 message DeleteMemoriesRequest {

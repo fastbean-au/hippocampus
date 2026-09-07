@@ -281,6 +281,7 @@ a JSON body:
 | `MergeEvents`                | POST   | `/v1/events/merge`                |
 | `ReplaceMemoriesWithSummary` | POST   | `/v1/events/{event_id}/summary`   |
 | `StoreMemory`                | POST   | `/v1/memories`                    |
+| `StoreMemories`              | POST   | `/v1/memories/batch`              |
 | `UpdateMemory`               | PATCH  | `/v1/memories/{id}`               |
 | `GetMemories`                | GET    | `/v1/memories`                    |
 | `DeleteMemories`             | POST   | `/v1/memories/delete`             |
@@ -698,6 +699,13 @@ caller being throttled is by definition the most recent, so it is never the one 
 `hippocampus.ratelimit.clients` reports how many are tracked — see
 [Rate limiting](operations.md#rate-limiting) for what to watch.
 
+A **request** is the unit, not a record: one `StoreMemories` or `ImportBatch` call spends one token
+however many memories it carries. That is deliberate — the limiter exists to bound request rate and
+concurrency, and the size of a call is already bounded by `maxRecvMsgBytes` and, for the batch
+write, by its 500-memory cap. A deployment that needs to bound ingest *volume* wants
+`consolidation.capacityBytes` and the decay cycle, which is what actually decides how much this
+store keeps.
+
 ### Health and readiness
 
 The gateway exposes two probe endpoints, both always open (no token) so orchestrators can reach
@@ -1084,7 +1092,7 @@ everything a lower one can:
 | Tier     | May call                                                                                                                                                                                                                                     |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `GetSignificanceLevels`, `WhoAmI`, `GetTopology`¹ |
-| `writer` | everything `reader` can, plus `StoreEvent`, `UpdateEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
+| `writer` | everything `reader` can, plus `StoreEvent`, `UpdateEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `StoreMemories`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                    |
 
 The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and

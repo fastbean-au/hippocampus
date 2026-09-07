@@ -11,6 +11,8 @@ import (
 	"go.opentelemetry.io/collector/config/configoptional"
 	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
+
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 // Event bucketing modes for EventBucket.
@@ -77,6 +79,28 @@ type Config struct {
 	BodyFrom       string `mapstructure:"body_from"`
 	PrefixSeverity bool   `mapstructure:"prefix_severity"`
 
+	// Metadata is stamped on every memory, before any attribute-derived labels are added.
+	Metadata map[string]string `mapstructure:"metadata"`
+
+	// MetadataFrom names the attributes to copy onto each memory's metadata, and MetadataPrefix
+	// copies every attribute whose name carries that prefix (the prefix is stripped from the
+	// resulting key). Both read the record's own attributes, its scope's, and the resource's, the
+	// most specific winning.
+	//
+	// Both are opt-in selections rather than "copy every attribute", for the reason the broker
+	// bridges' MetadataHeaders documents: a log record's attribute set is unbounded and largely
+	// machinery, so copying it wholesale would fill each memory's metadata budget with noise and
+	// hand the key space to whatever instrumented the application rather than to the operator.
+	MetadataFrom   []string `mapstructure:"metadata_from"`
+	MetadataPrefix string   `mapstructure:"metadata_prefix"`
+
+	// TraceMetadata records each record's trace and span ids as the metadata labels "trace_id" and
+	// "span_id" (default true). It is on by default, and is the one selection with no analogue in
+	// the broker bridges: correlating a memory that survived the decay cycle back to the trace that
+	// produced it is the reason a log pipeline would choose this store, and a caller cannot ask for
+	// it after the fact - GetMemories filters on metadata, so an unrecorded id is unfindable.
+	TraceMetadata bool `mapstructure:"trace_metadata"`
+
 	Significance SignificanceConfig `mapstructure:"significance"`
 }
 
@@ -110,6 +134,23 @@ func (c *Config) Validate() error {
 
 	if s.Jitter < 0 {
 		return fmt.Errorf("significance.jitter must be non-negative")
+	}
+
+	// A fixed label the service would refuse is a configuration error, not a per-record one: it is
+	// the operator's own value, it is on every memory, and reporting it at startup is the only
+	// chance to report it once rather than once per record.
+	for k, v := range c.Metadata {
+		if normaliseMetadataKey(k) == "" {
+			return fmt.Errorf("metadata key %q normalises to nothing; a key must start with a letter or digit", k)
+		}
+
+		if len(v) > types.MaxMetadataValueLength {
+			return fmt.Errorf("metadata value for key %q is %d bytes (max %d)", k, len(v), types.MaxMetadataValueLength)
+		}
+	}
+
+	if len(c.Metadata) > types.MaxMetadataKeys {
+		return fmt.Errorf("metadata carries %d keys (max %d)", len(c.Metadata), types.MaxMetadataKeys)
 	}
 
 	return nil

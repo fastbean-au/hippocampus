@@ -157,6 +157,17 @@ func (f *fakeClient) StoreMemory(_ context.Context, in *contract.Memory, _ ...gr
 	return &contract.StoreMemoryResponse{Id: "m-new"}, f.err
 }
 
+func (f *fakeClient) StoreMemories(_ context.Context, in *contract.StoreMemoriesRequest, _ ...grpc.CallOption) (*contract.StoreMemoriesResponse, error) {
+	f.capture(in)
+
+	results := make([]*contract.StoreMemoryResult, 0, len(in.GetMemories()))
+	for range in.GetMemories() {
+		results = append(results, &contract.StoreMemoryResult{Id: "m-new"})
+	}
+
+	return &contract.StoreMemoriesResponse{Results: results, Stored: int32(len(results))}, f.err
+}
+
 func (f *fakeClient) UpdateMemory(_ context.Context, in *contract.Memory, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
 	f.capture(in)
 

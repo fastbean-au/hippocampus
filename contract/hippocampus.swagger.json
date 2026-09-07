@@ -1225,6 +1225,41 @@
         ]
       }
     },
+    "/v1/memories/batch": {
+      "post": {
+        "summary": "StoreMemories creates many memories in one call - the write-path counterpart to ImportBatch,\nfor a producer holding a batch of unrelated memories (a broker bridge, a log pipeline) that\nwould otherwise send one StoreMemory per record.",
+        "description": "Every memory goes through exactly the validation, defaulting and minimum-significance gate\nStoreMemory applies, and each is written in its own transaction: one bad record does not fail\nthe rest, and a partial success is the useful answer. It is NOT ImportBatch - nothing carries\nrecall history here, and nothing is upserted; a memory naming an id the store already holds\nfails with ALREADY_EXISTS in its own result rather than replacing a live row.\n\nresults is positional: results[i] describes memories[i]. The RPC itself fails only for a\nbatch-level fault (no memories, more than the cap, a cancelled context).",
+        "operationId": "Hippocampus_StoreMemories",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StoreMemoriesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "StoreMemoriesRequest carries a batch of unrelated memories for the write path. Each is written\nindependently, so they need share nothing - not an event, not a group, not a significance.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1StoreMemoriesRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/memories/delete": {
       "post": {
         "summary": "DeleteMemories deletes the given memories by id; unknown ids are silently ignored.",
@@ -3491,6 +3526,48 @@
       },
       "description": "StoreEventResponse carries the stored event's id and how many of its nested memories were\nretained. An event whose significance is below event.minimumSignificance is quietly forgotten,\nlike a brain that simply does not retain the insignificant: no error is returned, id is empty,\nmemory_count is 0 (its nested memories are not stored either), and rejected is true.\n\nNested-memory creation is best-effort: the event is committed first, so a nested memory that\nfails validation, is dropped for insignificance, or hits a store error does not fail the event\ncreate and is not individually reported here - memory_count is only the count actually retained.\nStore memories individually if you need per-memory success/failure."
     },
+    "v1StoreMemoriesRequest": {
+      "type": "object",
+      "properties": {
+        "memories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Memory"
+          },
+          "title": "at most 500; a larger batch is refused with INVALID_ARGUMENT rather than truncated"
+        }
+      },
+      "description": "StoreMemoriesRequest carries a batch of unrelated memories for the write path. Each is written\nindependently, so they need share nothing - not an event, not a group, not a significance."
+    },
+    "v1StoreMemoriesResponse": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1StoreMemoryResult"
+          }
+        },
+        "stored": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories written"
+        },
+        "rejected": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories dropped for significance below memory.minimumSignificance"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories that could not be written; each carries its code and error in results"
+        }
+      },
+      "description": "StoreMemoriesResponse reports one result per requested memory, positionally: results[i]\ndescribes the request's memories[i], and len(results) always equals len(memories)."
+    },
     "v1StoreMemoryResponse": {
       "type": "object",
       "properties": {
@@ -3504,6 +3581,29 @@
         }
       },
       "description": "StoreMemoryResponse carries the stored memory's id. A memory whose significance is below\nmemory.minimumSignificance is quietly forgotten, like a brain that simply does not retain the\ninsignificant: no error is returned, id is empty, and rejected is true."
+    },
+    "v1StoreMemoryResult": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "the stored memory's id; empty when the memory was rejected or failed"
+        },
+        "rejected": {
+          "type": "boolean",
+          "title": "true when the memory was dropped for significance below memory.minimumSignificance - not an error, exactly as on StoreMemoryResponse"
+        },
+        "code": {
+          "type": "integer",
+          "format": "int32",
+          "title": "the gRPC status code this memory failed with (google.rpc.Code; 0 = OK), so a producer can tell a permanent rejection from a retryable one without parsing error"
+        },
+        "error": {
+          "type": "string",
+          "title": "the failure message; empty unless code is non-zero"
+        }
+      },
+      "description": "StoreMemoryResult is one memory's outcome. Exactly one of the three states holds: stored (id\nset), rejected for insignificance (rejected true, id empty, code OK), or failed (code non-zero\nand error naming why, id empty).\n\nA failure is reported here rather than as the call's error, so one bad record does not discard\nthe batch. A caller that checks only the RPC's error status therefore learns nothing about the\nindividual records - read the results."
     },
     "v1SummarisationCandidate": {
       "type": "object",

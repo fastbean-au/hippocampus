@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter/internal/metadata"
@@ -30,11 +31,15 @@ type fakeClient struct {
 	events   []*contract.Event
 	ended    []*contract.EndEventRequest
 
-	nextEventID int
-	storeMemErr error
-	rejectMem   bool
-	storeEvtErr error
-	emptyEvtID  bool
+	batches []int
+
+	nextEventID  int
+	storeMemErr  error
+	storeMemsErr error
+	failWith     []codes.Code
+	rejectMem    bool
+	storeEvtErr  error
+	emptyEvtID   bool
 }
 
 func (f *fakeClient) StoreMemory(_ context.Context, in *contract.Memory, _ ...grpc.CallOption) (*contract.StoreMemoryResponse, error) {
@@ -48,6 +53,54 @@ func (f *fakeClient) StoreMemory(_ context.Context, in *contract.Memory, _ ...gr
 	f.memories = append(f.memories, in)
 
 	return &contract.StoreMemoryResponse{Id: "m", Rejected: f.rejectMem}, nil
+}
+
+// StoreMemories records the same memories StoreMemory does, so a test asserting on what was stored
+// need not care which transport carried it, and honours the same injected error/rejection knobs.
+// batches records the size of each call, which is what a test of the batching itself asserts on.
+func (f *fakeClient) StoreMemories(_ context.Context, in *contract.StoreMemoriesRequest, _ ...grpc.CallOption) (*contract.StoreMemoriesResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.batches = append(f.batches, len(in.GetMemories()))
+
+	if f.storeMemsErr != nil {
+		return nil, f.storeMemsErr
+	}
+
+	if f.storeMemErr != nil {
+		return nil, f.storeMemErr
+	}
+
+	res := &contract.StoreMemoriesResponse{}
+
+	for i, m := range in.GetMemories() {
+		switch {
+
+		case f.failWith != nil && i < len(f.failWith) && f.failWith[i] != codes.OK:
+			res.Failed++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{
+				Code:  int32(f.failWith[i]),
+				Error: "refused",
+			})
+
+		case f.rejectMem:
+			f.memories = append(f.memories, m)
+			res.Rejected++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Rejected: true})
+
+		default:
+			f.memories = append(f.memories, m)
+			res.Stored++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Id: "m"})
+
+		}
+	}
+
+	return res, nil
 }
 
 func (f *fakeClient) StoreEvent(_ context.Context, in *contract.Event, _ ...grpc.CallOption) (*contract.StoreEventResponse, error) {

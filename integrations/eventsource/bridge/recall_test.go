@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -624,6 +625,125 @@ func TestStoreMemoriesSkipsNils(t *testing.T) {
 
 	if len(fake.calls) != 1 {
 		t.Errorf("StoreMemory called %d times, want 1", len(fake.calls))
+	}
+}
+
+// TestStoreMemoriesSendsOneCallPerPage is the point of the batch write: a polled page that used to
+// cost one RPC per post now costs one.
+func TestStoreMemoriesSendsOneCallPerPage(t *testing.T) {
+	fake := &fakeStorer{}
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	mems := make([]*contract.Memory, 0, 20)
+	for i := range 20 {
+		mems = append(mems, &contract.Memory{Id: fmt.Sprintf("at://%d", i), Body: "x"})
+	}
+
+	if err := s.StoreMemories(context.Background(), mems); err != nil {
+		t.Fatalf("StoreMemories: %s", err)
+	}
+
+	if len(fake.batches) != 1 || fake.batches[0] != 20 {
+		t.Errorf("calls = %v, want one call carrying all 20", fake.batches)
+	}
+}
+
+// TestStoreMemoriesChunks pins that a page larger than the chunk cannot build one oversized message,
+// for the reason TestImportMemoriesChunks pins the same of the seeding path.
+func TestStoreMemoriesChunks(t *testing.T) {
+	fake := &fakeStorer{}
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	mems := make([]*contract.Memory, 0, storeChunkSize+5)
+	for i := range storeChunkSize + 5 {
+		mems = append(mems, &contract.Memory{Id: fmt.Sprintf("at://%d", i), Body: "x"})
+	}
+
+	if err := s.StoreMemories(context.Background(), mems); err != nil {
+		t.Fatalf("StoreMemories: %s", err)
+	}
+
+	if len(fake.batches) != 2 || fake.batches[0] != storeChunkSize || fake.batches[1] != 5 {
+		t.Errorf("calls = %v, want %d then 5", fake.batches, storeChunkSize)
+	}
+}
+
+// TestStoreMemoriesNamesTheFailingMemoryAcrossChunks: an error must name the memory's position in
+// the caller's page, not its position within a chunk the caller never sees.
+func TestStoreMemoriesNamesTheFailingMemoryAcrossChunks(t *testing.T) {
+	fake := &fakeStorer{
+		errFor: func(in *contract.Memory) error {
+			if in.GetId() == "at://102" {
+				return status.Error(codes.InvalidArgument, "body is not valid UTF-8")
+			}
+
+			return nil
+		},
+	}
+
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	mems := make([]*contract.Memory, 0, storeChunkSize+10)
+	for i := range storeChunkSize + 10 {
+		mems = append(mems, &contract.Memory{Id: fmt.Sprintf("at://%d", i), Body: "x"})
+	}
+
+	err := s.StoreMemories(context.Background(), mems)
+	if err == nil {
+		t.Fatal("expected the failing memory to fail the page")
+	}
+
+	if !strings.Contains(err.Error(), fmt.Sprintf("memory 103 of %d", storeChunkSize+10)) {
+		t.Errorf("error = %q, want it to name memory 103 of the caller's page", err)
+	}
+}
+
+// TestStoreMemoriesFallsBackWhenUnsupported covers a bridge pointed at a service predating
+// StoreMemories: it must keep writing, and must not spend a failed call per poll rediscovering it.
+func TestStoreMemoriesFallsBackWhenUnsupported(t *testing.T) {
+	fake := &fakeStorer{batchErr: status.Error(codes.Unimplemented, "unknown method StoreMemories")}
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	page := []*contract.Memory{{Id: "at://a", Body: "one"}, {Id: "at://b", Body: "two"}}
+
+	for range 2 {
+		if err := s.StoreMemories(context.Background(), page); err != nil {
+			t.Fatalf("StoreMemories: %s", err)
+		}
+	}
+
+	if len(fake.batches) != 1 {
+		t.Errorf("the batch RPC was attempted %d times, want the fallback to latch after one", len(fake.batches))
+	}
+
+	if len(fake.calls) != 4 {
+		t.Errorf("StoreMemory called %d times, want every memory of both pages written singly", len(fake.calls))
+	}
+}
+
+// shortResultStorer answers a batch write with fewer results than it was sent, which is the one
+// response that cannot be read positionally at all.
+type shortResultStorer struct {
+	contract.HippocampusClient
+}
+
+func (shortResultStorer) StoreMemories(context.Context, *contract.StoreMemoriesRequest, ...grpc.CallOption) (*contract.StoreMemoriesResponse, error) {
+	return &contract.StoreMemoriesResponse{Results: []*contract.StoreMemoryResult{{Id: "a"}}}, nil
+}
+
+// TestStoreMemoriesRefusesAMismatchedResultCount: reporting one memory's outcome against another
+// would be worse than failing the page, so a response that does not answer for every memory is an
+// error rather than a best-effort read.
+func TestStoreMemoriesRefusesAMismatchedResultCount(t *testing.T) {
+	s := NewStore(shortResultStorer{}, TransformerFunc(oneMemory), 0, "bluesky")
+
+	err := s.StoreMemories(context.Background(), []*contract.Memory{{Id: "a", Body: "x"}, {Id: "b", Body: "y"}})
+	if err == nil {
+		t.Fatal("expected a short result list to fail the page")
+	}
+
+	if !strings.Contains(err.Error(), "1 results for 2 memories") {
+		t.Errorf("error = %q, want it to name the mismatch", err)
 	}
 }
 

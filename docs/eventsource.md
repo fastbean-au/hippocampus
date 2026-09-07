@@ -33,7 +33,7 @@ broker-agnostic `bridge.Message`, and the core turns that into one or more memor
 `Transformer` and writes them over gRPC.
 
 ```text
-broker ─▶ adapter (nats/mqtt/rabbitmq/kafka/bluesky) ─▶ bridge.Store ─▶ Transformer ─▶ StoreMemory RPC ─▶ Hippocampus
+broker ─▶ adapter (nats/mqtt/rabbitmq/kafka/bluesky) ─▶ bridge.Store ─▶ Transformer ─▶ StoreMemory/StoreMemories RPC ─▶ Hippocampus
 ```
 
 A delivery that fails to store (a transform error or a gRPC transport failure) is treated as failed
@@ -127,7 +127,7 @@ Two deliberate behaviours:
   broker the message is therefore not acked and is redelivered, which is the right outcome for a
   transient outage.
 
-The bridge's token needs the **writer** tier for `StoreMemory`; the Bluesky bridge additionally needs
+The bridge's token needs the **writer** tier for `StoreMemory`/`StoreMemories`; the Bluesky bridge additionally needs
 it to be unscoped and writer-tier for reinforcement to work at all (see below).
 
 Dialling a service that terminates its own TLS uses the same trust options every other client here
@@ -390,10 +390,16 @@ costs nothing, because a backfill is a read of the feed followed by an idempoten
 returned.
 
 Seeding is the **only** write that uses `ImportBatch` (the one RPC that can carry recall history),
-and it happens once. Polling uses `StoreMemory` and treats `AlreadyExists` as "already have it" —
-which is what lets re-reading the same feed page need no bookmark, and, crucially, leaves an existing
-memory's accumulated reinforcement alone. An upsert on every poll would silently roll live
-reinforcement back to whatever the feed last reported.
+and it happens once. Polling uses `StoreMemories` — one call per page, in chunks of a hundred — and
+treats `AlreadyExists` as "already have it", which is what lets re-reading the same feed page need no
+bookmark and, crucially, leaves an existing memory's accumulated reinforcement alone. An upsert on
+every poll would silently roll live reinforcement back to whatever the feed last reported.
+
+The batch write reports per memory, which is what makes that page-at-a-time write safe: each memory
+is validated and written independently and answered with its own status, so the page's routine
+duplicates and the occasional memory naming an event the store no longer holds are skipped
+individually rather than aborting the write at the first one. A service predating `StoreMemories`
+answers `Unimplemented`, and the bridge falls back to a call per memory for the life of the process.
 
 ### Threads
 

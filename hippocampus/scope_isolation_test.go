@@ -368,6 +368,53 @@ func TestGroupScopeIsolation_Writes(t *testing.T) {
 		assertNotFound(t, "StoreMemory(event_id=e-b)", err)
 	})
 
+	t.Run("StoreMemories scopes each memory independently", func(t *testing.T) {
+		res, err := s.StoreMemories(ctx, &contract.StoreMemoriesRequest{Memories: []*contract.Memory{
+			{Id: "batch-1", Body: "x", Significance: 5},
+			{Id: "batch-2", Body: "x", Significance: 5, Group: "b"},
+			{Id: "batch-3", Body: "x", Significance: 5, EventId: "e-b"},
+		}})
+		if err != nil {
+			t.Fatalf("StoreMemories: %s", err)
+		}
+
+		results := res.GetResults()
+		if len(results) != 3 {
+			t.Fatalf("StoreMemories returned %d results, want 3", len(results))
+		}
+
+		// The batch is scoped per memory, not per call: the caller's own memory lands stamped with
+		// their group, and the two crossing the boundary are refused individually, each with the
+		// code the same memory would have earned from StoreMemory.
+		stored, err := s.db.GetMemoriesByIds(context.Background(), []string{results[0].GetId()})
+		if err != nil || len(*stored) != 1 {
+			t.Fatalf("reading back the stored memory: %v", err)
+		}
+
+		if got := (*stored)[0].Group; got != "a" {
+			t.Errorf("StoreMemories stamped group %q, want %q", got, "a")
+		}
+
+		if codes.Code(results[1].GetCode()) != codes.PermissionDenied {
+			t.Errorf("StoreMemories(group=b) result = %v, want PermissionDenied", codes.Code(results[1].GetCode()))
+		}
+
+		if codes.Code(results[2].GetCode()) != codes.NotFound {
+			t.Errorf("StoreMemories(event_id=e-b) result = %v, want NotFound", codes.Code(results[2].GetCode()))
+		}
+
+		for _, id := range []string{"batch-2", "batch-3"} {
+			out, err := s.db.GetMemoriesByIds(context.Background(), []string{id})
+			if err != nil {
+				t.Fatalf("reading back %s: %s", id, err)
+			}
+
+			if len(*out) != 0 {
+				t.Errorf("%s was written despite crossing the caller's scope", id)
+			}
+		}
+	})
+
 	t.Run("StoreEvent stamps the caller's group", func(t *testing.T) {
 		res, err := s.StoreEvent(ctx, &contract.Event{Id: "new-e", Name: "n", Significance: 5})
 		if err != nil {
@@ -835,6 +882,7 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 
 		// TestGroupScopeIsolation_Writes
 		"StoreMemory":                true,
+		"StoreMemories":              true,
 		"StoreEvent":                 true,
 		"UpdateMemory":               true,
 		"DeleteMemories":             true,

@@ -49,6 +49,11 @@ func createDefaultConfig() component.Config {
 
 		BodyFrom: bodyFromRecordBody,
 
+		// On by default: a memory that outlives the log it came from is only correlatable back to
+		// its trace if the id was recorded at write time, and two labels is a cost worth paying for
+		// the question this store exists to answer later.
+		TraceMetadata: true,
+
 		// Defaults mirror the docs/demonstrations.md logs mapping: monotonic by severity so the
 		// decay cycle forgets DEBUG/INFO noise first and keeps ERROR/FATAL.
 		Significance: SignificanceConfig{

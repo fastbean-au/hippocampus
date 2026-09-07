@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/fastbean-au/hippocampus/observability"
@@ -18,12 +19,17 @@ import (
 // hippocampusClient is the narrow slice of the generated Hippocampus client the Store needs, so
 // tests can substitute a fake. contract.HippocampusClient satisfies it.
 //
-// It names six RPCs and no more, deliberately: this interface IS the module's statement of what a
+// It names seven RPCs and no more, deliberately: this interface IS the module's statement of what a
 // bridge is permitted to do to a store. A bridge writes memories, opens the events they belong to,
 // relates them to each other, reinforces what an upstream stream tells it was engaged with, honours
 // an upstream deletion, and seeds a store from an upstream that already has history. It does not
 // list, search, export, summarise, or clear. Dial hands back the whole generated client, so this declaration is the only
 // thing standing between an adapter and Purge - widening it wants a reason in the commit message.
+//
+// StoreMemories grants nothing StoreMemory did not: it is the same write, the same validation and
+// the same TierWriter, applied to many memories in one call rather than one call each. It is here
+// because a polled source hands back a page at a time - a feed poll is a hundred posts - and a call
+// per post spent a round trip, an interceptor chain, a rate-limit token and a transaction on each.
 //
 // ImportBatch is the one that deserves its reason here. It is a full-state upsert that carries
 // recall history, which StoreMemory deliberately refuses to (a fresh memory is never pre-reinforced,
@@ -34,6 +40,7 @@ import (
 // service. It is TierWriter, the same tier StoreMemory already needs, so it grants no new privilege.
 type hippocampusClient interface {
 	StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error)
+	StoreMemories(ctx context.Context, in *contract.StoreMemoriesRequest, opts ...grpc.CallOption) (*contract.StoreMemoriesResponse, error)
 	StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error)
 	RecallMemories(ctx context.Context, in *contract.RecallMemoriesRequest, opts ...grpc.CallOption) (*contract.GetMemoriesResponse, error)
 	DeleteMemories(ctx context.Context, in *contract.DeleteMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
@@ -49,6 +56,11 @@ type Store struct {
 	client      hippocampusClient
 	transformer Transformer
 	callTimeout time.Duration
+
+	// batchUnsupported latches when the service answers StoreMemories with Unimplemented, which is
+	// how a build predating that RPC presents. A Store is shared by an adapter's goroutines, hence
+	// the atomic.
+	batchUnsupported atomic.Bool
 
 	// broker names which adapter this Store serves, and is the one attribute that distinguishes the
 	// four bridges' metrics when several ship to the same collector.

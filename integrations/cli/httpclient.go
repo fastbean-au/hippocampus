@@ -122,6 +122,12 @@ func (c *httpClient) StoreMemory(ctx context.Context, in *contract.Memory, _ ...
 	return out, c.do(ctx, http.MethodPost, "/v1/memories", nil, in, out)
 }
 
+func (c *httpClient) StoreMemories(ctx context.Context, in *contract.StoreMemoriesRequest, _ ...grpc.CallOption) (*contract.StoreMemoriesResponse, error) {
+	out := &contract.StoreMemoriesResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/memories/batch", nil, in, out)
+}
+
 func (c *httpClient) UpdateMemory(ctx context.Context, in *contract.Memory, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
 	out := &contract.GeneralResponse{}
 

@@ -357,6 +357,12 @@ suggests:
 - **Insignificance is not an error.** `StoreMemory` and `StoreEvent` return `rejected: true` with an
   empty id when the item is below `memory.minimumSignificance` / `event.minimumSignificance`. The
   call succeeded; the memory was quietly dropped. Check `rejected`, not just the status.
+- **A batch write reports per record, not per call.** `StoreMemories` returns one result per
+  memory, positionally, and the call itself fails only for a batch-level fault (no memories, more
+  than 500, a cancelled context). A client that checks only the status learns nothing about the
+  individual records: read `results[i].code`, which carries the status the same memory would have
+  earned from `StoreMemory`. It is also **not** `ImportBatch` — nothing is upserted, so a memory
+  naming an id the store already holds fails with `ALREADY_EXISTS` rather than replacing a live row.
 - **Memories disappear.** A consolidation cycle deletes them, so an id held by a client can stop
   resolving at any time. That is the product, not a fault — treat a missing id as expected.
 - **Recall is a write.** `RecallMemories` (and `SearchMemories` with `reinforce`) resets the decay

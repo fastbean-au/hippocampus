@@ -46,6 +46,75 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **`StoreMemories`: a validated batch write.** A producer holding a batch of unrelated memories had
+  two options and both were wrong. Loop `StoreMemory` and spend a round trip, an interceptor chain,
+  a rate-limit token and a transaction on every record — which is what the broker bridges and the
+  OpenTelemetry logs exporter did, the latter on a batch `exporterhelper` had already assembled for
+  it. Or use `ImportBatch` and give up the write path: it is a full-state upsert by id that
+  deliberately carries no defaulting, no minimum-significance gate and no clock-skew guard, so
+  re-sending a live id silently rolls its recall count back to whatever the sender last knew.
+
+  `POST /v1/memories/batch` takes up to 500 memories and applies **exactly** the validation,
+  defaulting, group stamping and minimum-significance gate `StoreMemory` applies — per memory, in
+  its own transaction. That is the whole design: a partial success is the useful answer to a
+  producer that cannot re-author a record it did not write, and one transaction over 500 records
+  would hold a write lock across 500 significance resolutions. The response carries one result per
+  memory, positionally, each with the gRPC code that memory would have earned on its own, so a
+  caller can tell a permanent rejection from a retryable one without parsing a message. The call
+  itself fails only for a batch-level fault: no memories, more than the cap, or a cancelled context.
+
+  It is not `ImportBatch`: nothing is upserted, and a memory naming an id the store already holds
+  fails `ALREADY_EXISTS` in its own result rather than replacing a live row. The 500 cap is the page
+  size `Transfer` already sends `ImportBatch` in, so a producer that batches for one of the two
+  batch writes has the right number for both. `writer` tier, group-scoped per memory, and reachable
+  as `hippo memory store-batch --file`.
+
+  One thing to know before pointing a high-volume producer at it: the rate limiter's unit is a
+  request, so a 500-memory call spends one token, exactly as `ImportBatch` always has. What bounds
+  how much such a producer keeps is `consolidation.capacityBytes` and the decay cycle.
+
+- **The OpenTelemetry logs exporter records attributes, and writes in batches.** It mapped severity,
+  body, timestamp and `service.name` and discarded everything else — so `trace_id`, `span_id`,
+  `k8s.pod.name`, `http.status_code`, `error.type`, everything that makes a log record queryable,
+  stopped at the boundary. Memory metadata and the metadata filters shipped two weeks after the
+  exporter did and nothing revisited it.
+
+  Four selections now feed a memory's metadata, each overriding the last on a shared key: fixed
+  `metadata` labels, `trace_metadata` (**on by default**), the named `metadata_from` attributes, and
+  everything under `metadata_prefix` with the prefix stripped. Attributes resolve record → scope →
+  resource, most specific winning. `trace_metadata` is the one with no counterpart in the broker
+  bridges and the reason to default it on: correlating a memory that survived the decay cycle back
+  to the trace that produced it is why a log pipeline would choose this store, and `GetMemories`
+  filters on metadata — an id not written cannot be recovered later.
+
+  Keys are normalised to the service's charset, so semantic-convention names pass through as
+  themselves. A label exceeding the service's metadata bounds is dropped and logged at debug rather
+  than sent and refused, because the record is not at fault; a **fixed** label that could never fit
+  is refused at startup instead.
+
+  The exporter also stores one collector batch per `StoreMemories` call rather than one call per
+  record, splitting at the service's cap. A transport failure is still handed back for retry; a
+  per-memory failure is not, because some of the batch landed and a fresh memory mints a new id on
+  every send — the exception being a call in which nothing landed and every failure was transient.
+  Pointed at a service predating `StoreMemories`, it notices the `Unimplemented` once, says so, and
+  falls back to the per-record path.
+
+- **The broker bridges write a page in one call.** A Bluesky feed poll is about a hundred posts and
+  each was its own RPC; the polled path and `HandleEvent`'s already-exists fallback now use
+  `StoreMemories`, in chunks of a hundred, with the same `Unimplemented` fallback the exporter has.
+
+  Nothing about how a page is judged changed, and that is the point: the batch RPC answers per
+  memory, which is exactly the reading the bridges already applied a call at a time — a memory the
+  store already holds is a success (re-reading a ranked feed hands back the same posts, and an
+  upsert would roll back reinforcement), a memory naming an event the store no longer holds is
+  skipped, and anything else fails the page. A batch write that reported one status for the whole
+  page would have reintroduced the stall that tolerance exists to prevent: a polled source returns
+  the same page every read, so a single unwritable memory aborting the page means every memory after
+  it is never written, on every poll, forever.
+
+  One behavioural note for anyone who has tuned it: `--call-timeout` bounds a **call**, and a call is
+  now up to a hundred memories rather than one.
+
 - **Content search on `postgres` and `mysql`.** `SearchMemories` now works without an OpenSearch
   cluster on every storage driver, not just `sqlite`. There is nothing to configure and nothing to
   run alongside: the index lives in the same database as the memories, is created at startup, and is

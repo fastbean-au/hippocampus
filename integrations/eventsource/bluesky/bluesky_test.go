@@ -1164,3 +1164,41 @@ func TestServeDialsNothingOnACancelledContext(t *testing.T) {
 		t.Error("serve dialled despite its context already being cancelled")
 	}
 }
+
+// StoreMemories delegates to StoreMemory so a fake answers a batch write exactly as it answers the
+// single one, and every existing expectation holds through the batch path. A gRPC status error
+// becomes that memory's own result, as the service would report it; anything else is a transport
+// failure and fails the call.
+func (f *fakeClient) StoreMemories(ctx context.Context, in *contract.StoreMemoriesRequest, opts ...grpc.CallOption) (*contract.StoreMemoriesResponse, error) {
+	res := &contract.StoreMemoriesResponse{}
+
+	for _, m := range in.GetMemories() {
+		resp, err := f.StoreMemory(ctx, m, opts...)
+
+		switch {
+
+		case err != nil:
+			st, ok := status.FromError(err)
+			if !ok {
+				return nil, err
+			}
+
+			res.Failed++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Code: int32(st.Code()), Error: st.Message()})
+
+		case resp.GetRejected():
+			res.Rejected++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Rejected: true})
+
+		default:
+			res.Stored++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Id: resp.GetId()})
+
+		}
+	}
+
+	return res, nil
+}

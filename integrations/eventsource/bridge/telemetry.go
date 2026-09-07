@@ -40,7 +40,7 @@ const (
 // needs to look different from one that is keeping up.
 // "orphaned" is a MEMORY outcome only, never a message one: it is one memory refused because the
 // event it names is not in the store, which the batch write skips rather than aborting on (see
-// storeEach). It is separate from "rejected" because the two say opposite things about the bridge -
+// storeBatch, and storeEach for the reasoning). It is separate from "rejected" because the two say opposite things about the bridge -
 // rejected is the decay model declining an insignificant memory, orphaned is a memory that could
 // have been stored had its event been opened first, so a non-zero rate is worth looking at.
 const (

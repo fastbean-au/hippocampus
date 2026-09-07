@@ -38,10 +38,16 @@ type fakeStorer struct {
 	recallErr  error
 	deleted    [][]string
 	deleteErr  error
-	imported   [][]*contract.Memory
-	importErr  error
-	linked     []storerLink
-	linkErr    error
+	// batches records the size of each StoreMemories call, which is what a test of the batching
+	// itself asserts on; batchErr scripts a failure of the batch RPC alone, so the fallback to the
+	// per-memory path can be driven.
+	batches  []int
+	batchErr error
+
+	imported  [][]*contract.Memory
+	importErr error
+	linked    []storerLink
+	linkErr   error
 }
 
 type storerLink struct {
@@ -276,4 +282,48 @@ func TestStore_HandleSkipsNilMemory(t *testing.T) {
 	if len(fake.calls) != 1 {
 		t.Fatalf("StoreMemory calls = %d, want 1 (nil skipped)", len(fake.calls))
 	}
+}
+
+// StoreMemories delegates to StoreMemory so a fake answers a batch write exactly as it answers the
+// single one, and every existing expectation holds through the batch path. A gRPC status error
+// becomes that memory's own result, as the service would report it; anything else is a transport
+// failure and fails the call.
+func (f *fakeStorer) StoreMemories(ctx context.Context, in *contract.StoreMemoriesRequest, opts ...grpc.CallOption) (*contract.StoreMemoriesResponse, error) {
+	f.batches = append(f.batches, len(in.GetMemories()))
+
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
+
+	res := &contract.StoreMemoriesResponse{}
+
+	for _, m := range in.GetMemories() {
+		resp, err := f.StoreMemory(ctx, m, opts...)
+
+		switch {
+
+		case err != nil:
+			st, ok := status.FromError(err)
+			if !ok {
+				return nil, err
+			}
+
+			res.Failed++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Code: int32(st.Code()), Error: st.Message()})
+
+		case resp.GetRejected():
+			res.Rejected++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Rejected: true})
+
+		default:
+			res.Stored++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Id: resp.GetId()})
+
+		}
+	}
+
+	return res, nil
 }

@@ -234,7 +234,158 @@ func (s *Store) HandleEvent(ctx context.Context, msg Message, ev *contract.Event
 // leaves the existing memory ALONE, so reinforcement it has accumulated since is not overwritten.
 // ImportMemories would clobber exactly that, which is why polling must not use it.
 func (s *Store) StoreMemories(ctx context.Context, mems []*contract.Memory) error {
-	return s.storeEach(ctx, mems)
+	return s.storeBatch(ctx, mems)
+}
+
+// storeChunkSize bounds one StoreMemories call, for the reason importChunkSize gives: a large page
+// must not build a message over the receiver's frame limit. It is well under the service's own
+// 500-memory cap, and a feed page is a hundred posts, so it costs no extra round trips in practice.
+const storeChunkSize = 100
+
+// storeBatch writes memories with one RPC per chunk instead of one per memory.
+//
+// The per-memory reading of the outcomes is unchanged and is the whole reason the batch write fits
+// here: StoreMemories validates and writes each memory independently and answers with a result per
+// memory carrying the code that memory alone earned, which is exactly the three-way reading
+// storeEach already did a call at a time - already held is a success, an orphan is skipped, anything
+// else fails the page.
+//
+// One thing does change, and it is worth knowing: callTimeout bounds one CALL, so a chunk of a
+// hundred memories now shares the budget that a single memory used to have to itself.
+func (s *Store) storeBatch(ctx context.Context, mems []*contract.Memory) error {
+	log.Trace("Store.storeBatch()")
+
+	// A service predating StoreMemories answers Unimplemented. The fallback latches: an instance
+	// does not grow an RPC while it is running, and re-probing per chunk would spend a failed call
+	// on every poll for the life of the process.
+	if s.batchUnsupported.Load() {
+		return s.storeEach(ctx, mems)
+	}
+
+	for start := 0; start < len(mems); start += storeChunkSize {
+		end := min(start+storeChunkSize, len(mems))
+
+		if err := s.storeChunk(ctx, mems[start:end], start, len(mems)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// storeChunk issues one StoreMemories call and reads its results. offset is the chunk's position in
+// the caller's slice and total its length, so a failure names the memory the way storeEach's error
+// did rather than naming it within a chunk the caller never sees.
+func (s *Store) storeChunk(ctx context.Context, mems []*contract.Memory, offset int, total int) error {
+	// nil entries are dropped rather than sent: they carry no position the caller could act on, and
+	// the service would answer each with an InvalidArgument that would then fail the page. storeEach
+	// skipped them, so this keeps that.
+	sent := make([]*contract.Memory, 0, len(mems))
+	positions := make([]int, 0, len(mems))
+
+	for i, v := range mems {
+		if v == nil {
+			continue
+		}
+
+		sent = append(sent, v)
+		positions = append(positions, offset+i)
+	}
+
+	if len(sent) == 0 {
+		return nil
+	}
+
+	callCtx, cancel := s.callContext(ctx)
+	defer cancel()
+
+	resp, err := s.client.StoreMemories(callCtx, &contract.StoreMemoriesRequest{Memories: sent})
+	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			s.batchUnsupported.Store(true)
+
+			log.Info("the service does not serve StoreMemories; storing one memory per call from here on")
+
+			return s.storeEach(ctx, mems)
+		}
+
+		return fmt.Errorf("storing memories %d-%d of %d: %w", offset+1, offset+len(mems), total, err)
+	}
+
+	// The results are positional, so a response answering for a different number of memories cannot
+	// be read at all - reporting the wrong memory's outcome would be worse than failing the page.
+	if len(resp.GetResults()) != len(sent) {
+		return fmt.Errorf("storing memories: the store answered %d results for %d memories", len(resp.GetResults()), len(sent))
+	}
+
+	for i, result := range resp.GetResults() {
+		if err := s.applyResult(ctx, sent[i], result); err != nil {
+			return fmt.Errorf("storing memory %d of %d: %w", positions[i]+1, total, err)
+		}
+	}
+
+	return nil
+}
+
+// applyResult reads one memory's outcome from a batch write, recording exactly what the single-write
+// path records for the same outcome. It returns an error only for a failure that should take the
+// page with it; see storeEach for why "already held" and "names an event the store does not have"
+// are not among them.
+func (s *Store) applyResult(ctx context.Context, mem *contract.Memory, result *contract.StoreMemoryResult) error {
+	code := codes.Code(result.GetCode())
+
+	switch {
+
+	case code == codes.OK && result.GetRejected():
+		log.WithFields(log.Fields{
+			"significance": mem.GetSignificance(),
+			"group":        mem.GetGroup(),
+		}).
+			Debug("memory dropped below minimum significance")
+
+		tel.memories.Add(ctx, 1, observability.WithGroup(
+			attribute.String(attrBroker, s.broker),
+			attribute.String(attrOutcome, OutcomeRejected),
+		))
+
+		return nil
+
+	case code == codes.OK:
+		log.WithFields(log.Fields{
+			"id":    result.GetId(),
+			"group": mem.GetGroup(),
+		}).
+			Trace("stored memory")
+
+		tel.memories.Add(ctx, 1, observability.WithGroup(
+			attribute.String(attrBroker, s.broker),
+			attribute.String(attrOutcome, OutcomeStored),
+		))
+
+		tel.bodyBytes.Record(ctx, int64(len(mem.GetBody())), observability.WithGroup(
+			attribute.String(attrBroker, s.broker),
+		))
+
+		return nil
+
+	case code == codes.AlreadyExists:
+		return nil
+
+	case code == codes.FailedPrecondition && mem.GetEventId() != "":
+		s.recordOrphaned(ctx)
+
+		log.WithFields(log.Fields{
+			"id":       mem.GetId(),
+			"event_id": mem.GetEventId(),
+		}).
+			Debug("memory skipped: the event it names is not in the store")
+
+		return nil
+
+	default:
+		return fmt.Errorf("%s: %s", code, result.GetError())
+
+	}
 }
 
 // ImportMemories upserts memories WITH their recall history, in chunks.
@@ -290,8 +441,8 @@ func (s *Store) importChunk(ctx context.Context, mems []*contract.Memory) (int, 
 	return n, nil
 }
 
-// storeEach writes memories one at a time, for the paths where nesting them in an event create was
-// not possible. A memory the store already holds is AlreadyExists, which is a success here for the
+// storeEach writes memories one at a time. It is the fallback for a service that does not serve
+// StoreMemories, and the path HandleEvent takes when an event it did not open already exists. A memory the store already holds is AlreadyExists, which is a success here for the
 // same reason it is on the event: the id is the upstream record's, so a replayed frame writing the
 // same memory twice is exactly what at-least-once delivery is expected to do.
 //

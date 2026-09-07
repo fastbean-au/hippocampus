@@ -777,7 +777,16 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   or eviction chases a figure it cannot reach: `EvictMemories`, `usedBytesLiveRows`,
   `PreviewConsolidation`, and `RetainedStats`.
 - `contract/` — the gRPC contract (`hippocampus.proto`) and generated code. RPCs cover
-  event/memory CRUD plus `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
+  event/memory CRUD plus `StoreMemories` (the **write-path** batch, and the counterpart to
+  `ImportBatch` rather than a variant of it: up to 500 unrelated memories, each through exactly
+  `StoreMemory`'s validation/defaulting/minimum-significance gate in its own transaction, and each
+  answered by its own positional result carrying the gRPC code that memory alone earned. Nothing is
+  upserted — an id the store holds fails `ALREADY_EXISTS` in its result — and the call fails only for
+  a batch-level fault. Per memory rather than per batch because a partial success is the useful
+  answer to a producer that cannot re-author a record it did not write, and one transaction would
+  hold a write lock across 500 significance resolutions; the cap is the page size `Transfer` already
+  sends `ImportBatch` in, so a producer learns one number. Deliberately off the MCP surface, on the
+  same rule that excludes `ImportBatch`), `Sleep`, `Purge`, `MergeEvents`, `RecallMemories`,
   `ReplaceMemoriesWithSummary`, `GetSummarisationCandidates`, `SummariseMemories` (the embedded-LLM
   generate-and-replace), `PreviewConsolidation`/`ExplainConsolidation`/`GetConsolidationStatus` (the
   forgetting-transparency set: what a cycle would forget, where an individual memory stands, and
@@ -1200,8 +1209,16 @@ github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stay
   - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
     top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace
-github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter turning each log
-    record into a `StoreMemory` call (severity→significance, `service.name`→`group`); `collector/`
+github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter turning each
+    collector batch into one `StoreMemories` call (severity→significance, `service.name`→`group`,
+    and metadata from four selections: fixed labels, `trace_metadata`'s `trace_id`/`span_id` — on by
+    default, since a trace id not written at ingest cannot be recovered by a metadata filter later —
+    the named `metadata_from` attributes and everything under `metadata_prefix`, resolved record →
+    scope → resource). Two things carry the write. A per-memory failure is **not** handed back for
+    retry, because `exporterhelper` retries whole batches and a fresh memory mints a new id per send,
+    so a partial success would store its survivors twice; the exception is a call in which nothing
+    landed and every failure was transient. And the `Unimplemented` fallback to per-record
+    `StoreMemory` **latches**, since a service does not grow an RPC while it is running. `collector/`
     is the OCB builder manifest (`builder-config.yaml`) that links it into a runnable collector. See
     the two READMEs and `otel/collector`'s walkthrough. **NB the root module does not import this
     module**, so the main build is unaffected by it.
@@ -1234,10 +1251,19 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     implementation in the `hippocampus-gen` repo, down to the Auth0 audience quirk, so one Keycloak
     realm configures both), and `RegisterCommonFlags`
     (pflag only — each `cmd/*` main owns its viper reads, per the convention). The client seam
-    (`hippocampusClient`, `bridge/store.go`) names **four** RPCs and no more — `StoreMemory`,
-    `StoreEvent`, `RecallMemories`, `DeleteMemories` — and that unexported interface IS the module's
+    (`hippocampusClient`, `bridge/store.go`) names **seven** RPCs and no more — `StoreMemory`,
+    `StoreMemories`, `StoreEvent`, `RecallMemories`, `DeleteMemories`, `ImportBatch`, `LinkMemories`
+    — and that unexported interface IS the module's
     statement of what a bridge may do to a store: `Dial` hands back the whole generated client, so
-    this declaration is the only thing standing between an adapter and `Purge`. Beyond `Handle`,
+    this declaration is the only thing standing between an adapter and `Purge`. `StoreMemories` is
+    what the polled paths (`Store.StoreMemories`, and `HandleEvent`'s fallback) write through since
+    item 106.3: one call per page in chunks of 100, reading each memory's own result exactly as
+    `storeEach` read each call's — already held is a success, a memory naming an event the store does
+    not hold is skipped, anything else fails the page — so the page-at-a-time write keeps the
+    per-memory tolerance that stopped a polled source stalling on its own first orphan.
+    `storeEach` remains as the latching fallback for a service answering `Unimplemented`, and one
+    thing does change with the batch: `--call-timeout` bounds a CALL, so a chunk of a hundred shares
+    the budget one memory used to have. Beyond `Handle`,
     `bridge/recall.go` adds `Recall`/`Forget`/`EnsureEvent`/`HandleEvent`, which share one rule — **an
     id the store does not have is never an error** (recall is an `UPDATE ... WHERE id IN (...)` that
     matches nothing, a duplicate create is `AlreadyExists`, a delete reports `Ok false`) — and that

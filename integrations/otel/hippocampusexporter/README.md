@@ -19,6 +19,7 @@ open events.
 | `SeverityNumber` (falling back to `SeverityText`) | `significance` via the `significance` table, jittered and clamped |
 | `Timestamp` (falling back to `ObservedTimestamp`) | `time_stamp` (a future timestamp is clamped to now, so the service's clock-skew guard never rejects it) |
 | attribute named by `group_from` (default `service.name`) | `group` (else `default_group`) |
+| `TraceID`/`SpanID`, the attributes named by `metadata_from`, those carrying `metadata_prefix`, and the fixed `metadata` labels | `metadata` (see below) |
 | — | `event_id`, when `create_events` is true (see below) |
 
 ### Events
@@ -38,6 +39,35 @@ Examples:
 Event bookkeeping is best-effort: if an event can't be created, the memory is still stored, just
 without an `event_id`.
 
+### Metadata
+
+A memory's `metadata` is what makes it findable later: `GetMemories` and `SearchMemories` filter on
+it, so an attribute not recorded at write time cannot be recovered afterwards. Four selections feed
+it, applied in this order, each overriding the last on a shared key:
+
+| Setting | What it records |
+|---|---|
+| `metadata` | fixed labels stamped on every memory (`{pipeline: logs}`) |
+| `trace_metadata` (default **true**) | the record's `TraceID`/`SpanID` as `trace_id`/`span_id`, in the lower-case hex every other tool prints |
+| `metadata_from` | the named attributes, resolved record → scope → resource, most specific winning |
+| `metadata_prefix` | every attribute whose name carries the prefix, which is stripped from the key (`app.memory.tenant` → `tenant`) |
+
+`trace_metadata` is on by default because correlating a memory that survived the decay cycle back to
+the trace that produced it is the reason a log pipeline would choose this store, and no later query
+can recover an id that was never written.
+
+`metadata_from` and `metadata_prefix` are opt-in **selections** rather than "copy every attribute":
+a record's attribute set is unbounded and mostly machinery, so copying it wholesale would fill each
+memory's metadata budget with noise and hand the key space to whatever instrumented the application.
+
+Keys are normalised to the service's metadata charset (lower-cased, anything outside
+`[A-Za-z0-9._:/-]` replaced with `_`), so semantic-convention names such as `http.status_code` and
+`k8s.pod.name` pass through as themselves. Anything exceeding the service's metadata bounds (32
+keys, 512 bytes a value, 4 KiB in total) is dropped and logged at debug rather than sent and
+refused — a label the store would reject must not fail the record carrying it. A **fixed** label
+that could never fit is refused at startup instead, since it is the operator's own value and it is
+on every memory.
+
 ## Configuration
 
 ```yaml
@@ -56,6 +86,11 @@ exporters:
     event_significance: 12000
     body_from: body               # "body", or an attribute name
     prefix_severity: false        # prepend "[LEVEL] " to the body
+    trace_metadata: true          # record trace_id/span_id as metadata labels
+    metadata:                     # fixed labels on every memory
+      pipeline: logs
+    metadata_from: [http.status_code, k8s.pod.name, error.type]
+    metadata_prefix: "app.memory."  # copy these attributes, prefix stripped from the key
     significance:
       trace: 1000
       debug: 2000
@@ -93,12 +128,28 @@ go test -cover ./...
 
 `exporter_test.go` drives `pushLogs` against a fake Hippocampus client, covering the
 severity→significance mapping, future-timestamp clamping, group extraction, the memories-only and
-memories+events paths, configurable composite event keys, and `rejected`/error handling.
+memories+events paths, configurable composite event keys, and `rejected`/error handling. `batch_test.go` covers the batch write, its split at the service cap, the
+`Unimplemented` fallback and the retry policy; `metadata_map_test.go` covers the four metadata
+selections, key normalisation and the bounds.
 `factory_test.go` and `extras_test.go` cover the factory/lifecycle (`start`/`shutdown`, including the
 bearer-token and TLS wiring), `config.go` validation, and the severity/bucket helpers.
 
+## Batching
+
+One collector batch is one `StoreMemories` call (split at the service's 500-memory cap), not one
+`StoreMemory` per record — `exporterhelper` has already batched these, and sending them singly spent
+a round trip, an interceptor chain, a rate-limit token and a transaction on each. Every memory is
+still validated, defaulted and significance-gated individually, so one unusable record does not cost
+its neighbours.
+
+A service predating `StoreMemories` answers `Unimplemented`; the exporter notices once, says so, and
+falls back to the per-record path for the life of the process.
+
 ## Caveats
 
-- Delivery is at-least-once: a retried batch re-issues `StoreMemory`, which mints a fresh id each
-  call, so a transient failure can duplicate the records that already succeeded in that batch.
+- Delivery is at-least-once, and the retry unit is a whole batch: a **transport** failure is handed
+  back to `exporterhelper`, which re-sends every record in it, and a fresh memory mints a new id per
+  call. A **per-memory** failure is therefore deliberately not retried — some of the batch landed,
+  and re-sending it would store those twice. The one exception is a call in which nothing landed and
+  every failure was transient, which is safe to send again.
 - Binary log bodies aren't special-cased; bodies are sent as UTF-8 strings.

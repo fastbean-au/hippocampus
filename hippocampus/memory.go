@@ -61,6 +61,14 @@ func sortDirection(in contract.SortDirection) db.SortDirection {
 }
 
 func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contract.StoreMemoryResponse, error) {
+	return s.storeMemory(ctx, in)
+}
+
+// storeMemory is the single write path behind StoreMemory and StoreMemories: validation, the
+// minimum-significance gate, group stamping, the event-existence check, significance resolution,
+// link targets and the write itself. StoreMemories calls it once per memory so a batch is held to
+// exactly the rules a single write is, rather than to a second copy of them.
+func (s *Server) storeMemory(ctx context.Context, in *contract.Memory) (*contract.StoreMemoryResponse, error) {
 	var res contract.StoreMemoryResponse
 
 	memory := types.MemoryFromProto(in)
@@ -174,6 +182,90 @@ func (s *Server) StoreMemory(ctx context.Context, in *contract.Memory) (*contrac
 	}
 
 	return &res, mapError(err)
+}
+
+// maxStoreMemoriesBatch bounds one StoreMemories call. It is the page size Transfer already sends
+// ImportBatch in (transfer.batchSize's default), so a producer that batches for one of the two
+// batch writes has the right number for both - which is the whole point of picking it rather than
+// a number of this RPC's own.
+//
+// It is a record count and not a byte budget because the work here is per record: each memory is
+// its own validation, significance resolution and transaction. The frame limit still applies on
+// top, exactly as it does to ImportBatch.
+const maxStoreMemoriesBatch = 500
+
+// StoreMemories writes a batch of unrelated memories through the same path StoreMemory uses,
+// one transaction per memory.
+//
+// Per memory rather than per batch, deliberately, and both halves of that matter. A partial success
+// is the useful answer to a producer holding records it did not author - a broker bridge or a log
+// pipeline cannot re-author a record that failed validation, so failing its 499 well-formed
+// neighbours only costs the store data it could have kept. And a single transaction over 500
+// records would hold a write lock across 500 significance resolutions, which is exactly the
+// contention a store that consolidates on a timer cannot afford.
+//
+// The call itself fails only for a batch-level fault: an empty request, one over the cap, or a
+// cancelled context. Everything else is reported per memory, in a result carrying the gRPC code
+// the same memory would have failed a StoreMemory call with.
+func (s *Server) StoreMemories(ctx context.Context, in *contract.StoreMemoriesRequest) (*contract.StoreMemoriesResponse, error) {
+	log.Trace("StoreMemories()")
+
+	memories := in.GetMemories()
+
+	if len(memories) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one memory must be provided")
+	}
+
+	if len(memories) > maxStoreMemoriesBatch {
+		return nil, status.Errorf(
+			codes.InvalidArgument,
+			"%d memories exceeds the %d-memory limit for one StoreMemories call; send several batches",
+			len(memories),
+			maxStoreMemoriesBatch,
+		)
+	}
+
+	res := &contract.StoreMemoriesResponse{Results: make([]*contract.StoreMemoryResult, 0, len(memories))}
+
+	for _, memory := range memories {
+		// A cancelled caller is the one fault that is not this record's own: the records after it
+		// would each fail identically, and reporting 400 context errors as per-memory results would
+		// bury the one thing that actually happened. Stop and say so.
+		if err := ctx.Err(); err != nil {
+			return nil, mapError(err)
+		}
+
+		stored, err := s.storeMemory(ctx, memory)
+
+		switch {
+
+		case err != nil:
+			res.Failed++
+
+			result := &contract.StoreMemoryResult{Error: err.Error()}
+			if st, ok := status.FromError(err); ok {
+				result.Code = int32(st.Code())
+				result.Error = st.Message()
+			} else {
+				result.Code = int32(codes.Unknown)
+			}
+
+			res.Results = append(res.Results, result)
+
+		case stored.GetRejected():
+			res.Rejected++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Rejected: true})
+
+		default:
+			res.Stored++
+
+			res.Results = append(res.Results, &contract.StoreMemoryResult{Id: stored.GetId()})
+
+		}
+	}
+
+	return res, nil
 }
 
 // UpdateMemory applies a partial update to an existing memory: only the content fields carrying a

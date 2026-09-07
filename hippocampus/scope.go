@@ -115,10 +115,11 @@ var scopes = map[string]scopeMode{
 
 	// Writes stamp the group. Import and ImportBatch are writes too, not filtered reads: they upsert
 	// rows carrying a group of their own, which must be one the caller holds.
-	"StoreEvent":  scopeWrite,
-	"StoreMemory": scopeWrite,
-	"Import":      scopeWrite,
-	"ImportBatch": scopeWrite,
+	"StoreEvent":    scopeWrite,
+	"StoreMemory":   scopeWrite,
+	"StoreMemories": scopeWrite,
+	"Import":        scopeWrite,
+	"ImportBatch":   scopeWrite,
 
 	// Refused to a scoped caller.
 	//

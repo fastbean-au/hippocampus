@@ -323,6 +323,42 @@ func TestSummaryReplaceRequiresEventID(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreBatchFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "memories.json")
+
+	batch := `{"memories":[{"body":"one","significance":3},{"body":"two","significance":4}]}`
+
+	if err := os.WriteFile(path, []byte(batch), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	req, out, err := runCommand(t, "memory store-batch", []string{"--file", path}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, ok := req.(*contract.StoreMemoriesRequest)
+	if !ok {
+		t.Fatalf("captured %T, want *contract.StoreMemoriesRequest", req)
+	}
+
+	if len(got.GetMemories()) != 2 || got.GetMemories()[1].GetBody() != "two" {
+		t.Fatalf("memories = %+v", got.GetMemories())
+	}
+
+	if !strings.Contains(out, "m-new") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+func TestMemoryStoreBatchRequiresFile(t *testing.T) {
+	_, _, err := runCommand(t, "memory store-batch", nil, &fakeClient{})
+	if err == nil || !strings.Contains(err.Error(), "--file is required") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestImportBatchFromFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "batch.json")

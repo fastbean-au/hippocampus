@@ -46,6 +46,13 @@ exporters:
     event_bucket: day
     event_name_template: "{key} — {bucket}"
     prefix_severity: false
+    # Metadata is what makes a surviving memory findable later: GetMemories filters on it, and an
+    # attribute not recorded here cannot be recovered afterwards. trace_metadata (on by default)
+    # records trace_id/span_id; metadata_from names attributes to copy; metadata_prefix copies a
+    # whole namespace with the prefix stripped from the key.
+    trace_metadata: true
+    metadata_from: [http.status_code, error.type, k8s.pod.name]
+    # metadata_prefix: "app.memory."
     significance:
       trace: 1000
       debug: 2000

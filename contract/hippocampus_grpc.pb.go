@@ -40,6 +40,7 @@ const (
 	Hippocampus_GetEventById_FullMethodName               = "/hippocampus.v1.Hippocampus/GetEventById"
 	Hippocampus_GetEvents_FullMethodName                  = "/hippocampus.v1.Hippocampus/GetEvents"
 	Hippocampus_StoreMemory_FullMethodName                = "/hippocampus.v1.Hippocampus/StoreMemory"
+	Hippocampus_StoreMemories_FullMethodName              = "/hippocampus.v1.Hippocampus/StoreMemories"
 	Hippocampus_UpdateMemory_FullMethodName               = "/hippocampus.v1.Hippocampus/UpdateMemory"
 	Hippocampus_DeleteMemories_FullMethodName             = "/hippocampus.v1.Hippocampus/DeleteMemories"
 	Hippocampus_GetMemories_FullMethodName                = "/hippocampus.v1.Hippocampus/GetMemories"
@@ -229,6 +230,19 @@ type HippocampusClient interface {
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
 	// see StoreMemoryResponse.
 	StoreMemory(ctx context.Context, in *Memory, opts ...grpc.CallOption) (*StoreMemoryResponse, error)
+	// StoreMemories creates many memories in one call - the write-path counterpart to ImportBatch,
+	// for a producer holding a batch of unrelated memories (a broker bridge, a log pipeline) that
+	// would otherwise send one StoreMemory per record.
+	//
+	// Every memory goes through exactly the validation, defaulting and minimum-significance gate
+	// StoreMemory applies, and each is written in its own transaction: one bad record does not fail
+	// the rest, and a partial success is the useful answer. It is NOT ImportBatch - nothing carries
+	// recall history here, and nothing is upserted; a memory naming an id the store already holds
+	// fails with ALREADY_EXISTS in its own result rather than replacing a live row.
+	//
+	// results is positional: results[i] describes memories[i]. The RPC itself fails only for a
+	// batch-level fault (no memories, more than the cap, a cancelled context).
+	StoreMemories(ctx context.Context, in *StoreMemoriesRequest, opts ...grpc.CallOption) (*StoreMemoriesResponse, error)
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
 	// (significance, body, event_id, group, time_stamp, metadata) overwrite the stored row. is_binary and
 	// is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
@@ -519,6 +533,16 @@ func (c *hippocampusClient) StoreMemory(ctx context.Context, in *Memory, opts ..
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StoreMemoryResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_StoreMemory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) StoreMemories(ctx context.Context, in *StoreMemoriesRequest, opts ...grpc.CallOption) (*StoreMemoriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StoreMemoriesResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_StoreMemories_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -883,6 +907,19 @@ type HippocampusServer interface {
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
 	// see StoreMemoryResponse.
 	StoreMemory(context.Context, *Memory) (*StoreMemoryResponse, error)
+	// StoreMemories creates many memories in one call - the write-path counterpart to ImportBatch,
+	// for a producer holding a batch of unrelated memories (a broker bridge, a log pipeline) that
+	// would otherwise send one StoreMemory per record.
+	//
+	// Every memory goes through exactly the validation, defaulting and minimum-significance gate
+	// StoreMemory applies, and each is written in its own transaction: one bad record does not fail
+	// the rest, and a partial success is the useful answer. It is NOT ImportBatch - nothing carries
+	// recall history here, and nothing is upserted; a memory naming an id the store already holds
+	// fails with ALREADY_EXISTS in its own result rather than replacing a live row.
+	//
+	// results is positional: results[i] describes memories[i]. The RPC itself fails only for a
+	// batch-level fault (no memories, more than the cap, a cancelled context).
+	StoreMemories(context.Context, *StoreMemoriesRequest) (*StoreMemoriesResponse, error)
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
 	// (significance, body, event_id, group, time_stamp, metadata) overwrite the stored row. is_binary and
 	// is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
@@ -1031,6 +1068,9 @@ func (UnimplementedHippocampusServer) GetEvents(context.Context, *GetEventsReque
 }
 func (UnimplementedHippocampusServer) StoreMemory(context.Context, *Memory) (*StoreMemoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StoreMemory not implemented")
+}
+func (UnimplementedHippocampusServer) StoreMemories(context.Context, *StoreMemoriesRequest) (*StoreMemoriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StoreMemories not implemented")
 }
 func (UnimplementedHippocampusServer) UpdateMemory(context.Context, *Memory) (*GeneralResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateMemory not implemented")
@@ -1488,6 +1528,24 @@ func _Hippocampus_StoreMemory_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Hippocampus_StoreMemories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StoreMemoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).StoreMemories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_StoreMemories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).StoreMemories(ctx, req.(*StoreMemoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Hippocampus_UpdateMemory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Memory)
 	if err := dec(in); err != nil {
@@ -1920,6 +1978,10 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StoreMemory",
 			Handler:    _Hippocampus_StoreMemory_Handler,
+		},
+		{
+			MethodName: "StoreMemories",
+			Handler:    _Hippocampus_StoreMemories_Handler,
 		},
 		{
 			MethodName: "UpdateMemory",

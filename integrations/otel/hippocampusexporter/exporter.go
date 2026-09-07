@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -19,7 +20,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/contract"
 )
@@ -28,6 +31,7 @@ import (
 // tests can substitute a fake. *contract.hippocampusClient satisfies it structurally.
 type hippoClient interface {
 	StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error)
+	StoreMemories(ctx context.Context, in *contract.StoreMemoriesRequest, opts ...grpc.CallOption) (*contract.StoreMemoriesResponse, error)
 	StoreEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.StoreEventResponse, error)
 	EndEvent(ctx context.Context, in *contract.EndEventRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
 }
@@ -51,6 +55,10 @@ type hippoExporter struct {
 	// nowFn and jitterFn are injectable so tests are deterministic.
 	nowFn    func() time.Time
 	jitterFn func(spread int32) int32
+
+	// batchUnsupported latches when the service answers StoreMemories with Unimplemented, which is
+	// how a build predating that RPC presents.
+	batchUnsupported atomic.Bool
 
 	mu     sync.Mutex
 	events map[string]*eventState
@@ -117,61 +125,188 @@ func (e *hippoExporter) shutdown(ctx context.Context) error {
 	return nil
 }
 
+// maxBatchMemories bounds one StoreMemories call. It is the service's own per-call cap; a larger
+// collector batch is split rather than refused.
+const maxBatchMemories = 500
+
 // pushLogs converts each log record to a Hippocampus memory (and, when configured, attaches it to a
-// keyed event) and stores it. A transport error is returned so exporterhelper retries the batch; a
-// significance-drop (StoreMemoryResponse.Rejected) is counted, not treated as an error.
+// keyed event) and stores the lot with StoreMemories.
+//
+// One call per batch rather than one per record: exporterhelper has already batched these, and
+// sending them one at a time spent a round trip, an interceptor chain, a rate-limit token and a
+// transaction on each. The batch write validates every memory individually, so the collector's
+// batch is not an all-or-nothing unit either.
+//
+// A transport error is returned so exporterhelper retries the batch. A per-memory failure is not:
+// re-sending the batch would duplicate every memory that did land, since a fresh memory carries no
+// client-chosen id to make the retry idempotent. The exception is a call in which nothing landed
+// and every failure was retryable, which is a batch worth retrying and safe to.
 func (e *hippoExporter) pushLogs(ctx context.Context, ld plog.Logs) error {
-	var errs error
+	memories := make([]*contract.Memory, 0, ld.LogRecordCount())
 
 	rls := ld.ResourceLogs()
 	for i := 0; i < rls.Len(); i++ {
 		rl := rls.At(i)
-		resAttrs := rl.Resource().Attributes()
 		sls := rl.ScopeLogs()
 
 		for j := 0; j < sls.Len(); j++ {
-			lrs := sls.At(j).LogRecords()
+			sl := sls.At(j)
+			attrs := recordAttributes{
+				resource: rl.Resource().Attributes(),
+				scope:    sl.Scope().Attributes(),
+				record:   pcommon.NewMap(),
+			}
+
+			lrs := sl.LogRecords()
 
 			for k := 0; k < lrs.Len(); k++ {
-				if err := e.storeRecord(ctx, resAttrs, lrs.At(k)); err != nil {
-					errs = errors.Join(errs, err)
-				}
+				lr := lrs.At(k)
+				attrs.record = lr.Attributes()
+
+				memories = append(memories, e.memoryFor(ctx, attrs, lr))
 			}
+		}
+	}
+
+	if len(memories) == 0 {
+		return nil
+	}
+
+	var errs error
+
+	for start := 0; start < len(memories); start += maxBatchMemories {
+		end := min(start+maxBatchMemories, len(memories))
+
+		if err := e.storeBatch(ctx, memories[start:end]); err != nil {
+			errs = errors.Join(errs, err)
 		}
 	}
 
 	return errs
 }
 
-func (e *hippoExporter) storeRecord(ctx context.Context, resAttrs pcommon.Map, lr plog.LogRecord) error {
+// memoryFor maps one log record onto a memory, resolving its event first when events are enabled.
+func (e *hippoExporter) memoryFor(ctx context.Context, attrs recordAttributes, lr plog.LogRecord) *contract.Memory {
 	ts := e.recordTime(lr)
-	group := e.lookup(resAttrs, lr.Attributes(), e.cfg.GroupFrom, e.cfg.DefaultGroup)
+	group := attrs.lookup(e.cfg.GroupFrom, e.cfg.DefaultGroup)
 
 	mem := &contract.Memory{
 		Body:         e.recordBody(lr),
 		Significance: e.significance(lr),
 		TimeStamp:    ts.UnixNano(),
 		Group:        group,
+		Metadata:     e.metadata(attrs, lr),
 	}
 
 	if e.cfg.CreateEvents {
-		if eid := e.eventID(ctx, resAttrs, lr, ts, group); eid != "" {
+		if eid := e.eventID(ctx, attrs, lr, ts, group); eid != "" {
 			mem.EventId = eid
 		}
 	}
 
-	resp, err := e.client.StoreMemory(ctx, mem)
-	if err != nil {
-		return fmt.Errorf("storing memory: %w", err)
+	return mem
+}
+
+// storeBatch writes one chunk, falling back to a memory-at-a-time loop against a service too old to
+// carry StoreMemories. The fallback latches: an instance does not grow the RPC while it is running,
+// and probing once per batch would cost a failed call per export for the life of the process.
+func (e *hippoExporter) storeBatch(ctx context.Context, memories []*contract.Memory) error {
+	if e.batchUnsupported.Load() {
+		return e.storeEach(ctx, memories)
 	}
 
-	if resp.GetRejected() {
-		e.logger.Debug("memory dropped below minimum significance",
-			zap.Int32("significance", mem.GetSignificance()),
+	resp, err := e.client.StoreMemories(ctx, &contract.StoreMemoriesRequest{Memories: memories})
+	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			e.batchUnsupported.Store(true)
+			e.logger.Info("service does not serve StoreMemories; falling back to one call per record",
+				zap.Error(err))
+
+			return e.storeEach(ctx, memories)
+		}
+
+		return fmt.Errorf("storing %d memories: %w", len(memories), err)
+	}
+
+	return e.reportResults(memories, resp)
+}
+
+// reportResults logs what the batch write did with each memory, and reports the one case worth
+// retrying: nothing was written and every failure was transient.
+func (e *hippoExporter) reportResults(memories []*contract.Memory, resp *contract.StoreMemoriesResponse) error {
+	if resp.GetRejected() > 0 {
+		e.logger.Debug("memories dropped below minimum significance", zap.Int32("count", resp.GetRejected()))
+	}
+
+	if resp.GetFailed() == 0 {
+		return nil
+	}
+
+	retryable := true
+
+	for i, result := range resp.GetResults() {
+		code := codes.Code(result.GetCode())
+		if code == codes.OK {
+			continue
+		}
+
+		group := ""
+		if i < len(memories) {
+			group = memories[i].GetGroup()
+		}
+
+		e.logger.Warn("memory rejected by the store",
+			zap.String("code", code.String()),
+			zap.String("error", result.GetError()),
 			zap.String("group", group))
+
+		retryable = retryable && isRetryable(code)
+	}
+
+	// Only a call in which NOTHING landed is safe to hand back for retry; a partial success would
+	// be re-sent in full and stored twice.
+	if retryable && resp.GetStored() == 0 && resp.GetRejected() == 0 {
+		return fmt.Errorf("storing %d memories: every memory failed transiently", len(memories))
 	}
 
 	return nil
+}
+
+// isRetryable reports whether a per-memory failure is worth sending again. A validation fault, a
+// missing event or a refused group will fail identically forever; a timeout or an unavailable
+// backend will not.
+func isRetryable(code codes.Code) bool {
+	switch code {
+
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
+		return true
+
+	default:
+		return false
+
+	}
+}
+
+// storeEach is the pre-batch path, kept for a service that does not serve StoreMemories.
+func (e *hippoExporter) storeEach(ctx context.Context, memories []*contract.Memory) error {
+	var errs error
+
+	for _, mem := range memories {
+		resp, err := e.client.StoreMemory(ctx, mem)
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("storing memory: %w", err))
+
+			continue
+		}
+
+		if resp.GetRejected() {
+			e.logger.Debug("memory dropped below minimum significance",
+				zap.Int32("significance", mem.GetSignificance()),
+				zap.String("group", mem.GetGroup()))
+		}
+	}
+
+	return errs
 }
 
 // recordTime resolves the record timestamp (falling back to the observed timestamp) and clamps a
@@ -251,8 +386,8 @@ func (e *hippoExporter) significance(lr plog.LogRecord) int32 {
 // eventID returns the id of the event this record belongs to, creating one (and ending the prior
 // event for the same key when the bucket rolls) as needed. Best-effort: on any failure it returns
 // "" and the memory is stored without an event link.
-func (e *hippoExporter) eventID(ctx context.Context, resAttrs pcommon.Map, lr plog.LogRecord, ts time.Time, group string) string {
-	joinedKey, name, bucket := e.eventKey(resAttrs, lr, ts)
+func (e *hippoExporter) eventID(ctx context.Context, attrs recordAttributes, lr plog.LogRecord, ts time.Time, group string) string {
+	joinedKey, name, bucket := e.eventKey(attrs, ts)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -299,10 +434,10 @@ func (e *hippoExporter) eventID(ctx context.Context, resAttrs pcommon.Map, lr pl
 
 // eventKey computes the joined key (from EventKeyFrom), the rendered event name, and the time
 // bucket suffix for a record.
-func (e *hippoExporter) eventKey(resAttrs pcommon.Map, lr plog.LogRecord, ts time.Time) (string, string, string) {
+func (e *hippoExporter) eventKey(attrs recordAttributes, ts time.Time) (string, string, string) {
 	parts := make([]string, 0, len(e.cfg.EventKeyFrom))
 	for _, name := range e.cfg.EventKeyFrom {
-		parts = append(parts, e.lookup(resAttrs, lr.Attributes(), name, e.cfg.DefaultGroup))
+		parts = append(parts, attrs.lookup(name, e.cfg.DefaultGroup))
 	}
 
 	joined := strings.Join(parts, ":")
@@ -319,26 +454,6 @@ func (e *hippoExporter) eventKey(resAttrs pcommon.Map, lr plog.LogRecord, ts tim
 	// The state map is keyed by the stable joined key; the bucket is compared separately so a roll
 	// ends the prior event and opens a fresh one under the same key.
 	return joined, name, bucket
-}
-
-// lookup resolves an attribute by name, preferring the record's own attributes over the resource's,
-// falling back to def when absent or empty.
-func (e *hippoExporter) lookup(resAttrs pcommon.Map, recAttrs pcommon.Map, name string, def string) string {
-	if name != "" {
-		if v, ok := recAttrs.Get(name); ok {
-			if s := v.AsString(); s != "" {
-				return s
-			}
-		}
-
-		if v, ok := resAttrs.Get(name); ok {
-			if s := v.AsString(); s != "" {
-				return s
-			}
-		}
-	}
-
-	return def
 }
 
 // bearerTokenInterceptor stamps "authorization: Bearer <token>" onto every RPC, matching the

@@ -162,6 +162,7 @@ var policies = map[string]rpcPolicy{
 	"MergeEvents":                {TierWriter, http.MethodPost, "/v1/events/merge"},
 	"DeleteEvent":                {TierWriter, http.MethodDelete, "/v1/events/*"},
 	"StoreMemory":                {TierWriter, http.MethodPost, "/v1/memories"},
+	"StoreMemories":              {TierWriter, http.MethodPost, "/v1/memories/batch"},
 	"UpdateMemory":               {TierWriter, http.MethodPatch, "/v1/memories/*"},
 	"DeleteMemories":             {TierWriter, http.MethodPost, "/v1/memories/delete"},
 	"ReplaceMemoriesWithSummary": {TierWriter, http.MethodPost, "/v1/events/*/summary"},

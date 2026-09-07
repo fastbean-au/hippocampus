@@ -569,7 +569,7 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 // stamped with it, since the Transformer only sets an event for a reply.
 //
 // Best-effort, and the reason it can be is that a failure is survivable either way: a reply whose
-// thread could not be opened is skipped individually by storeEach rather than taking the page with
+// thread could not be opened is skipped by the batch write rather than taking the page with
 // it, and a top-level post has its stamp taken back off so it is stored loose rather than skipped -
 // which is what --events none does with every post anyway. The roots cache makes this at most one
 // RPC per thread, not per post.
