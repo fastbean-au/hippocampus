@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -74,11 +75,20 @@ func writeSelfSignedCert(t *testing.T) (string, string) {
 		t.Fatalf("GenerateKey: %s", err)
 	}
 
+	// Marked as a CA and carrying the loopback SANs so the same throwaway pair can serve as a
+	// listener's certificate, as a client's, and as the CA bundle both are verified against - which
+	// is what makes a real handshake testable here without a certificate hierarchy.
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "hippocampus-test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "hippocampus-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
@@ -114,7 +124,7 @@ func writeSelfSignedCert(t *testing.T) (string, string) {
 func TestLoadServerTLS_PinsMinVersion(t *testing.T) {
 	certPath, keyPath := writeSelfSignedCert(t)
 
-	cfg, err := loadServerTLS(certPath, keyPath)
+	cfg, err := loadServerTLS(certPath, keyPath, "", false)
 	if err != nil {
 		t.Fatalf("loadServerTLS: %s", err)
 	}
@@ -131,9 +141,177 @@ func TestLoadServerTLS_PinsMinVersion(t *testing.T) {
 // TestLoadServerTLS_BadPairFails confirms a missing or unreadable certificate/key pair fails fast
 // rather than returning a usable-looking config.
 func TestLoadServerTLS_BadPairFails(t *testing.T) {
-	if _, err := loadServerTLS("/nonexistent/cert.pem", "/nonexistent/key.pem"); err == nil {
+	if _, err := loadServerTLS("/nonexistent/cert.pem", "/nonexistent/key.pem", "", false); err == nil {
 		t.Error("expected loadServerTLS to fail on a missing certificate/key pair")
 	}
+}
+
+// TestLoadServerTLS_ClientCertificates covers item 101's addition: without a CA bundle the listener
+// asks for nothing (which is every release before this one), with one it verifies a certificate
+// that is offered, and requireClientCert makes it mandatory.
+func TestLoadServerTLS_ClientCertificates(t *testing.T) {
+	certPath, keyPath := writeSelfSignedCert(t)
+
+	cfg, err := loadServerTLS(certPath, keyPath, "", false)
+	if err != nil {
+		t.Fatalf("loadServerTLS: %s", err)
+	}
+
+	if cfg.ClientAuth != tls.NoClientCert || cfg.ClientCAs != nil {
+		t.Errorf("expected no client certificate to be requested without a CA bundle, got ClientAuth %v", cfg.ClientAuth)
+	}
+
+	// The certificate is self-signed, so it serves as its own CA bundle here.
+	cfg, err = loadServerTLS(certPath, keyPath, certPath, false)
+	if err != nil {
+		t.Fatalf("loadServerTLS with a client CA: %s", err)
+	}
+
+	if cfg.ClientAuth != tls.VerifyClientCertIfGiven {
+		t.Errorf("expected VerifyClientCertIfGiven, got %v", cfg.ClientAuth)
+	}
+
+	if cfg.ClientCAs == nil {
+		t.Error("expected the client CA pool to be populated")
+	}
+
+	cfg, err = loadServerTLS(certPath, keyPath, certPath, true)
+	if err != nil {
+		t.Fatalf("loadServerTLS requiring a client certificate: %s", err)
+	}
+
+	if cfg.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Errorf("expected RequireAndVerifyClientCert, got %v", cfg.ClientAuth)
+	}
+}
+
+// TestLoadServerTLS_RequireWithoutCAFails pins the refusal that keeps tls.requireClientCert from
+// meaning the opposite of what it reads as: with no ClientCAs, Go verifies against the system roots,
+// so "required" would admit every certificate any public CA has ever issued.
+func TestLoadServerTLS_RequireWithoutCAFails(t *testing.T) {
+	certPath, keyPath := writeSelfSignedCert(t)
+
+	if _, err := loadServerTLS(certPath, keyPath, "", true); err == nil {
+		t.Error("expected tls.requireClientCert without tls.clientCaFile to be refused")
+	}
+}
+
+// TestLoadServerTLS_UnusableCAFails covers the two ways the bundle itself can be wrong: a path that
+// is not there, and a file carrying no PEM certificates. Both would otherwise leave an empty pool,
+// which rejects every client certificate at handshake time rather than at startup.
+func TestLoadServerTLS_UnusableCAFails(t *testing.T) {
+	certPath, keyPath := writeSelfSignedCert(t)
+
+	if _, err := loadServerTLS(certPath, keyPath, filepath.Join(t.TempDir(), "absent.pem"), false); err == nil {
+		t.Error("expected a missing tls.clientCaFile to fail")
+	}
+
+	empty := filepath.Join(t.TempDir(), "empty.pem")
+	if err := os.WriteFile(empty, []byte("not a certificate\n"), 0o600); err != nil {
+		t.Fatalf("write: %s", err)
+	}
+
+	if _, err := loadServerTLS(certPath, keyPath, empty, false); err == nil {
+		t.Error("expected a tls.clientCaFile with no PEM certificates to fail")
+	}
+}
+
+// TestLoadServerTLS_HandshakeEnforcesClientCertificates is the end-to-end half of item 101, and the
+// property no unit assertion on a tls.Config can give: that a listener built this way actually asks
+// for a client certificate and actually refuses a connection without one.
+//
+// It is worth a real handshake because the failure this closes is silent in exactly the other
+// direction. A client configured to present a certificate to a server that never requests one does
+// not fail - the handshake succeeds and the certificate is simply never sent - so "mutual TLS is
+// configured" and "mutual TLS is happening" look identical from both ends.
+func TestLoadServerTLS_HandshakeEnforcesClientCertificates(t *testing.T) {
+	certPath, keyPath := writeSelfSignedCert(t)
+
+	pem, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read cert: %s", err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		t.Fatal("the test certificate did not parse as a CA bundle")
+	}
+
+	clientCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("LoadX509KeyPair: %s", err)
+	}
+
+	// get drives one request against a listener built from the given server config, with the client
+	// offering a certificate or not.
+	get := func(t *testing.T, serverConf *tls.Config, offer bool) error {
+		t.Helper()
+
+		server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		server.TLS = serverConf
+		server.StartTLS()
+
+		defer server.Close()
+
+		clientConf := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+		if offer {
+			clientConf.Certificates = []tls.Certificate{clientCert}
+		}
+
+		client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientConf}}
+
+		res, err := client.Get(server.URL)
+		if err != nil {
+			return err
+		}
+
+		defer func() { _ = res.Body.Close() }()
+
+		return nil
+	}
+
+	t.Run("no client CA asks for nothing", func(t *testing.T) {
+		conf, err := loadServerTLS(certPath, keyPath, "", false)
+		if err != nil {
+			t.Fatalf("loadServerTLS: %s", err)
+		}
+
+		if err := get(t, conf, false); err != nil {
+			t.Errorf("a client with no certificate should be admitted: %s", err)
+		}
+	})
+
+	t.Run("verified when offered", func(t *testing.T) {
+		conf, err := loadServerTLS(certPath, keyPath, certPath, false)
+		if err != nil {
+			t.Fatalf("loadServerTLS: %s", err)
+		}
+
+		if err := get(t, conf, true); err != nil {
+			t.Errorf("a client offering a verifiable certificate should be admitted: %s", err)
+		}
+
+		if err := get(t, conf, false); err != nil {
+			t.Errorf("a client offering none should still be admitted without requireClientCert: %s", err)
+		}
+	})
+
+	t.Run("required", func(t *testing.T) {
+		conf, err := loadServerTLS(certPath, keyPath, certPath, true)
+		if err != nil {
+			t.Fatalf("loadServerTLS: %s", err)
+		}
+
+		if err := get(t, conf, true); err != nil {
+			t.Errorf("a client offering a verifiable certificate should be admitted: %s", err)
+		}
+
+		if err := get(t, conf, false); err == nil {
+			t.Error("expected a client offering no certificate to be refused")
+		}
+	})
 }
 
 // TestMaxRequestBytesMiddleware verifies the gateway body cap: a body within the limit reaches the

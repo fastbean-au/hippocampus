@@ -19,6 +19,7 @@ services:
     ports:
       - "50051:50051"
       - "8080:8080"
+      - "9464:9464" # Prometheus scrape endpoint (only listening when PROMETHEUS=true)
     volumes:
       - ./config.corporate.json:/etc/hippocampus/config.json:ro
     depends_on:
@@ -33,6 +34,11 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_TRACING_ENABLED: "${OBSERVABILITY:-false}"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
+      # The scrape endpoint, the pull half of the same metrics. Separate from OBSERVABILITY
+      # because it needs no collector at all: PROMETHEUS=true publishes them on :9464 for a
+      # Prometheus (or a curl) to read, which is what the rule files in
+      # deploy/observability/ are written against.
+      HIPPOCAMPUS_OBSERVABILITY_PROMETHEUS_ENABLED: "${PROMETHEUS:-false}"
       # Embedded-LLM summarisation (optional). Off unless OLLAMA=true and the `ollama` profile is
       # active. Pull the model once the stack is up:
       #   docker compose -f deploy/compose/docker-compose.corporate.yaml exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"

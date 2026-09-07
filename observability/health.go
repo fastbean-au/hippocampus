@@ -54,6 +54,18 @@ type HealthConfig struct {
 	// select the package defaults.
 	CheckTimeout time.Duration
 	CacheTTL     time.Duration
+
+	// MetricsHandler, when non-nil, is served at DefaultMetricsPath alongside the probes - this is
+	// how the client daemons expose a Prometheus scrape endpoint. It rides on the probe listener
+	// rather than a port of its own because these processes are already asking an operator for one
+	// port they did not previously need, and everything served here is the same kind of thing: a
+	// private operational surface, never the component's actual work. The service takes the other
+	// route (observability.MetricsServer) because its own listener is the public API.
+	//
+	// It is a handler rather than a bool so the caller decides - PrometheusHandler returns nil when
+	// no scrape reader was installed, and a nil handler mounts no route at all rather than one that
+	// answers with nothing.
+	MetricsHandler http.Handler
 }
 
 // HealthServer serves /healthz (process liveness) and /readyz (dependency readiness) for the
@@ -103,6 +115,10 @@ func (h *HealthServer) Handler() http.Handler {
 	mux.HandleFunc("/healthz", h.liveness)
 	mux.HandleFunc("/readyz", h.readiness)
 
+	if h.cfg.MetricsHandler != nil {
+		mux.Handle(DefaultMetricsPath, h.cfg.MetricsHandler)
+	}
+
 	return mux
 }
 
@@ -113,6 +129,13 @@ func (h *HealthServer) Handler() http.Handler {
 func (h *HealthServer) Start() error {
 	if h.cfg.Port == 0 {
 		log.Warnf("%s: health endpoints disabled (port 0): no /healthz or /readyz for an orchestrator to probe", h.cfg.Component)
+
+		// Said separately, because the scrape endpoint is served from this listener: turning the
+		// probe port off silently takes the metrics with it, and a scraper's view of that is
+		// indistinguishable from a process that is not running.
+		if h.cfg.MetricsHandler != nil {
+			log.Warnf("%s: the Prometheus scrape endpoint is served on the health port, so it is disabled too", h.cfg.Component)
+		}
 
 		return nil
 	}
@@ -138,7 +161,13 @@ func (h *HealthServer) Start() error {
 		}
 	}()
 
-	log.Infof("%s: health endpoints on %s (/healthz, /readyz)", h.cfg.Component, address)
+	paths := "/healthz, /readyz"
+
+	if h.cfg.MetricsHandler != nil {
+		paths += ", " + DefaultMetricsPath
+	}
+
+	log.Infof("%s: health endpoints on %s (%s)", h.cfg.Component, address, paths)
 
 	return nil
 }

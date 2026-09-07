@@ -228,7 +228,9 @@ the store back under its target. They are published when `minimumRetentionInDays
 ### Health endpoints
 
 The ingestor serves `/healthz` and `/readyz` on `--health-port` (**8090 by default**; 0 disables).
-Running several client daemons on one host means giving each its own port.
+Running several client daemons on one host means giving each its own port. With `--prometheus` the
+same listener also serves `/metrics` — see [Metrics](#metrics) below — so turning the port off takes
+the metrics with it.
 
 | Endpoint | Answers | Fails when |
 | --- | --- | --- |
@@ -257,6 +259,9 @@ logs. Declaring it needs no change here — the endpoint already exists for the 
 ### Metrics
 
 `--metrics` exports over OTLP/gRPC to `--otlp-endpoint`, exactly as the service does.
+`--prometheus` serves the same metrics at `/metrics` on `--health-port` for a Prometheus to scrape
+instead. The two are independent and either can stand alone — the instruments and their attributes
+are identical, only the way they leave the process differs.
 
 | Metric | Type | Attributes |
 | --- | --- | --- |
@@ -561,6 +566,7 @@ need not appear in argv.
 | `--health-port` | 8090 | `/healthz` and `/readyz` (0 disables) |
 | `--health-bind-address` | all | interface for the probe listener |
 | `--metrics`, `--tracing` | off | OTLP/gRPC export |
+| `--prometheus` | off | serve the metrics at `/metrics` on the health port, for scraping |
 | `--otlp-endpoint` | SDK default | collector endpoint |
 | `--otlp-insecure` | on | connect to the collector without TLS |
 | `--tracing-sampling-ratio` | 0.1 | fraction of locally started traces sampled |

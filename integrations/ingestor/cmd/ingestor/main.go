@@ -110,6 +110,7 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.Int("metrics-interval-seconds", 0, "OTEL metric export interval (0 selects the SDK default)")
 	fs.String("metrics-group", "", "tenancy label stamped on this process's telemetry as a resource attribute (see docs/ingestor.md)")
 	fs.Int("health-port", 8090, "port serving /healthz and /readyz (0 disables)")
+	fs.Bool("prometheus", false, "serve the metrics for Prometheus to scrape at /metrics on the health port, instead of (or as well as) pushing them with --metrics")
 	fs.String("health-bind-address", "", "interface for the health listener (empty binds all)")
 
 	if err := fs.Parse(args); err != nil {
@@ -191,6 +192,7 @@ func run(ctx context.Context) error {
 		MetricsIntervalSeconds: viper.GetInt("metrics-interval-seconds"),
 		OTLPEndpoint:           viper.GetString("otlp-endpoint"),
 		OTLPInsecure:           viper.GetBool("otlp-insecure"),
+		PrometheusEnabled:      viper.GetBool("prometheus"),
 		ServiceName:            "hippocampus-ingestor",
 		ServiceVersion:         version,
 		Group:                  viper.GetString("metrics-group"),
@@ -244,6 +246,11 @@ func run(ctx context.Context) error {
 		BindAddress: viper.GetString("health-bind-address"),
 		Version:     version,
 		Component:   "hippocampus-ingestor",
+
+		// The scrape endpoint rides on the probe listener, as it does for the bridges: this
+		// process already asks for one operational port, and a second would be one more thing to
+		// route. Nil unless --prometheus installed the reader, which mounts no route at all.
+		MetricsHandler: observability.PrometheusHandler(),
 		Checks: map[string]observability.Check{
 			sourceEndpoint: observability.GRPCHealthCheck(sourceConn),
 			targetEndpoint: observability.GRPCHealthCheck(targetConn),

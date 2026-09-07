@@ -133,6 +133,43 @@ them except the local proxy.
 The same applies to the **Transfer client**: setting `transfer.token` without `transfer.tls` sends
 the token in plaintext to the target, and the service warns at startup.
 
+### Mutual TLS
+
+`tls.clientCaFile` makes both listeners request and verify a **client** certificate, and
+`tls.requireClientCert` makes offering one mandatory (see
+[Mutual TLS](configuration.md#mutual-tls)). Both default off, in which case neither listener asks
+for a certificate at all — which matters to know, because a client configured to present one to a
+server that never requests it does not fail: the handshake succeeds, the certificate is simply never
+sent, and nothing says so. Every client-side TLS block in this project carries a `certFile`/`keyFile`
+pair for this purpose (`opensearch.tls`, `transfer.tls`, `callbacks.tls`, the MCP bridge, the `hippo`
+CLI, the event-source bridges), so if you have configured one of those, this is the other half.
+
+It is a **second, independent** control and not a substitute for authentication. A certificate says
+which *process* is connecting; a token says which client it is acting as and at what tier. Nothing
+here derives a client id, a role or a group scope from the certificate — authorisation has one
+source, and a second one that silently outranked it would be worse than none. Use mutual TLS to
+decide who may open a connection at all, and tokens to decide what they may do with it.
+
+`tls.requireClientCert` needs `tls.clientCaFile`; the service refuses the pair otherwise, because
+with no bundle nominated Go verifies against the system roots and "required" would then admit any
+certificate any public CA has ever issued. It also applies to `/healthz` and `/readyz`, since the
+handshake precedes the request — give an orchestrator's probe a certificate, or terminate TLS ahead
+of the listener.
+
+If you are terminating mTLS upstream instead, that is a supported topology and the reason the
+listeners left it alone for so long: bind them to loopback as above, and let the mesh or ingress own
+the certificates.
+
+### The metrics endpoint
+
+`observability.prometheus.enabled` opens a **third listener** (default `:9464`), and it is
+unauthenticated by design — most scrapers cannot present a token, and a metrics endpoint on the
+gateway would instead expose the store's size, capacity pressure and RPC rates to every API caller.
+Nothing on it carries memory content, a client id, a group name or an id of any kind: the metric
+attributes are booleans and small enumerations, by the same cardinality rule that keeps them cheap.
+It is still an operational surface, so bind it with `observability.prometheus.bindAddress` or fence
+it with a NetworkPolicy rather than leaving it on every interface of a publicly reachable instance.
+
 ## Rate limiting and transport hardening
 
 [Rate limiting](configuration.md#rate-limiting) (`rateLimit.enabled`, off by default) admits requests

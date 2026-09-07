@@ -887,7 +887,7 @@ const STEPS = [
       {
         title: "TLS",
         blurb:
-          "Terminate TLS here, or leave it off and terminate it upstream in a proxy, sidecar, or ingress.",
+          "Terminate TLS here, or leave it off and terminate it upstream in a proxy, sidecar, or ingress. Naming a client CA also turns on mutual TLS, which is what the certFile/keyFile pairs the clients offer are for; it says which process is connecting, while a token still says which client and at what tier.",
         fields: [
           {
             key: "tls.enabled",
@@ -910,6 +910,23 @@ const STEPS = [
             def: "",
             when: (s) => value(s, "tls.enabled"),
             placeholder: "/etc/hippocampus/tls/tls.key",
+          },
+          {
+            key: "tls.clientCaFile",
+            label: "Client CA bundle (mutual TLS)",
+            type: "text",
+            def: "",
+            when: (s) => value(s, "tls.enabled"),
+            placeholder: "/etc/hippocampus/tls/client-ca.crt",
+            help: "Empty asks for no client certificate, which is what every release before this did. Set it and a certificate that is offered is verified against this bundle.",
+          },
+          {
+            key: "tls.requireClientCert",
+            label: "Require a client certificate",
+            type: "bool",
+            def: false,
+            when: (s) => value(s, "tls.clientCaFile"),
+            help: "Refuses a connection that offers none — including /healthz and /readyz, since the handshake precedes the request.",
           },
         ],
       },
@@ -1631,6 +1648,44 @@ const STEPS = [
         ],
       },
       {
+        title: "Prometheus scrape endpoint",
+        blurb:
+          "Serve the metrics for Prometheus to pull, instead of (or as well as) pushing them over OTLP. This is what the shipped alert rules in deploy/observability/ expect, and what a cluster running kube-prometheus-stack needs — without it that deployment has to run an OTel collector purely as a protocol adapter. It gets its own port so it can be reachable by your scraper and by nothing else: the gateway is the public API, and a scrape endpoint on it would hand every caller the store's size, capacity pressure and RPC rates.",
+        fields: [
+          {
+            key: "observability.prometheus.enabled",
+            label: "Serve /metrics for scraping",
+            type: "bool",
+            def: false,
+          },
+          {
+            key: "observability.prometheus.port",
+            label: "Metrics port",
+            type: "int",
+            def: 9464,
+            svc: 9464,
+            when: (s) => value(s, "observability.prometheus.enabled"),
+            help: "9464 is the OpenTelemetry Prometheus exporter's conventional port. It must differ from the gRPC and gateway ports.",
+          },
+          {
+            key: "observability.prometheus.bindAddress",
+            label: "Metrics bind address",
+            type: "text",
+            def: "",
+            when: (s) => value(s, "observability.prometheus.enabled"),
+            help: "Empty binds every interface. Restrict it to the interface your scraper reaches the instance on.",
+          },
+          {
+            key: "observability.prometheus.path",
+            label: "Metrics path",
+            type: "text",
+            def: "/metrics",
+            svc: "/metrics",
+            when: (s) => value(s, "observability.prometheus.enabled"),
+          },
+        ],
+      },
+      {
         title: "Deployment view",
         blurb:
           "GetTopology reports what this instance is attached to and the last known health of each part, backing the console's Deployment tab and `hippo topology`. It describes only what this instance knows — itself and what it dials — so anything that dials IN has to be declared below.",
@@ -2287,6 +2342,24 @@ function validate() {
       "error",
       "security",
       "tls.enabled needs both tls.certFile and tls.keyFile.",
+    );
+  }
+
+  // Mirrors the service's own refusal: with no ClientCAs, Go verifies a required client certificate
+  // against the system roots, so "required" would admit anything a public CA has ever signed.
+  if (val("tls.requireClientCert") && !val("tls.clientCaFile")) {
+    add(
+      "error",
+      "security",
+      "tls.requireClientCert needs tls.clientCaFile — a client certificate can only be required against a CA bundle you nominate.",
+    );
+  }
+
+  if (val("tls.requireClientCert") && Number(val("gateway.port")) > 0) {
+    add(
+      "warn",
+      "security",
+      "tls.requireClientCert applies to the gateway's /healthz and /readyz as well, since the handshake precedes the request. Give the probe client a certificate, or terminate TLS ahead of this listener.",
     );
   }
 

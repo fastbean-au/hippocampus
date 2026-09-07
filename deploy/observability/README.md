@@ -11,6 +11,18 @@ rule_files:
   - /etc/prometheus/hippocampus-alerts.yaml
 ```
 
+## Getting the series there
+
+These rules query the series names the OTLP-to-Prometheus translation produces, and there are two
+ways to have them. Set `observability.prometheus.enabled` and the service serves them for scraping
+directly, on a listener of its own (default `:9464/metrics`); the Kubernetes overlays under
+[`deploy/k8s/`](../k8s/README.md) ship with that on and annotated. Or run an OpenTelemetry collector
+with `observability.metrics.enabled` pointed at it and let its Prometheus exporter do the
+translation. Either produces the same names, which is the point — nothing here assumes a collector.
+
+The client-side components in the `hippocampus-clients` group below take the same choice as a
+`--prometheus` flag, and serve `/metrics` on the `--health-port` they already listen on.
+
 Twenty-two rules in two groups. `hippocampus` is the service itself — sixteen rules covering what
 actually goes wrong:
 

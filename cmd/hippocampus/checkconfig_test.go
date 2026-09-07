@@ -293,3 +293,67 @@ func TestExecute_CheckConfigRejectsAnUnknownFormat(t *testing.T) {
 		execute([]string{"--check-config", "--output", "yaml", "-c", config})
 	})
 }
+
+// TestConfigProblems_MetricsEndpoint covers the four ways the Prometheus scrape endpoint can be
+// configured into silence. Every one of them presents identically from outside - the process starts,
+// the configuration reads as enabled, and nothing is ever scraped - which sends an operator to look
+// at the service rather than at the four keys describing where it listens.
+func TestConfigProblems_MetricsEndpoint(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+	viper.Set("storage.directory", t.TempDir())
+	viper.Set("port", 50051)
+	viper.Set("gateway.port", 8080)
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected the defaults alone to be valid, got %v", problems)
+	}
+
+	// Every one of these is inert while the endpoint is off, so nothing is refused until it is on.
+	viper.Set("observability.prometheus.port", 0)
+	viper.Set("observability.prometheus.path", "metrics")
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected the settings to be ignored while the endpoint is disabled, got %v", problems)
+	}
+
+	viper.Set("observability.prometheus.enabled", true)
+
+	cases := []struct {
+		name string
+		port any
+		path string
+		want string
+	}{
+		{name: "port 0", port: 0, path: "/metrics", want: "observability.prometheus.port"},
+		{name: "port out of range", port: 70000, path: "/metrics", want: "observability.prometheus.port"},
+		{name: "relative path", port: 9464, path: "metrics", want: "observability.prometheus.path"},
+		{name: "collides with the gRPC port", port: 50051, path: "/metrics", want: "port"},
+		{name: "collides with the gateway", port: 8080, path: "/metrics", want: "gateway.port"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			viper.Set("observability.prometheus.port", tc.port)
+			viper.Set("observability.prometheus.path", tc.path)
+
+			problems := configProblems()
+			if len(problems) != 1 {
+				t.Fatalf("expected exactly one problem, got %v", problems)
+			}
+
+			if !strings.Contains(problems[0].Error(), tc.want) {
+				t.Errorf("the problem does not name %s: %s", tc.want, problems[0].Error())
+			}
+		})
+	}
+
+	viper.Set("observability.prometheus.port", 9464)
+	viper.Set("observability.prometheus.path", "/metrics")
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected a port of its own to be valid, got %v", problems)
+	}
+}

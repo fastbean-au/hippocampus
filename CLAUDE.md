@@ -283,8 +283,21 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   `InterceptorLogger` keeps its Trace entry/exit lines
   but also logs a failing RPC at Warn — Info for client-fault codes — so failures are visible at the
   default log level, adding a `client_id` field from the stashed claims when present; when `tls.enabled`,
-  `credentials.NewServerTLSFromFile` is added via `grpc.Creds`. Auth without
-  `tls.enabled` only logs a warning — TLS may be terminated upstream instead. gRPC **server
+  the `*tls.Config` `loadServerTLS` builds is added via `grpc.Creds` and shared with the gateway. Auth without
+  `tls.enabled` only logs a warning — TLS may be terminated upstream instead. That config is also
+  where **mutual TLS** lives (item 101): `tls.clientCaFile` populates `ClientCAs` and sets
+  `VerifyClientCertIfGiven`, `tls.requireClientCert` raises it to `RequireAndVerifyClientCert`. Three
+  things carry it. It exists because six client-side TLS blocks in this repo (`opensearch.tls`,
+  `transfer.tls`, `callbacks.tls`, the MCP bridge, the `hippo` CLI, the event-source bridges) have
+  always carried a `certFile`/`keyFile` pair while no listener ever requested one — and that failure
+  is **silent**, since a client presenting a certificate to a server that does not ask completes the
+  handshake and never sends it, which is why the test drives a real handshake rather than asserting on
+  the config. `requireClientCert` without a CA file is **refused**, because Go verifies against the
+  system roots when `ClientCAs` is nil, so "required" would admit every certificate any public CA has
+  ever issued. And **nothing is derived from the certificate** — no client id, no role, no group scope:
+  a certificate says which process is connecting, a token says which client and at what tier, and
+  authorisation keeps one source. Requiring a certificate covers the gateway's `/healthz`/`/readyz`
+  too (the handshake precedes the request), which is warned about at startup. gRPC **server
   reflection** is registered beside `RegisterHippocampusServer` when `reflectionSetting` says so —
   `reflection.enabled` when set, otherwise derived from `auth.method` (on under `none`, off under
   `hmac`/`idp`), with the choice and its reason logged. It cannot be gated by the auth interceptor
@@ -1362,9 +1375,29 @@ github.com/fastbean-au/hippocampus => ../..`), which is what makes `github.com/g
   service, the ingestor and the four broker bridges use one implementation (it began as
   `cmd/hippocampus/observability.go` and was promoted, not copied; the integration modules already
   depend on the root module for the contract, and the root already carried the OTEL dependencies, so
-  sharing costs neither side anything). Three pieces. `Init` installs the global tracer/meter
+  sharing costs neither side anything). Four pieces. `Init` installs the global tracer/meter
   providers and returns a flush func, unchanged from the service's version apart from a
-  configurable `service.name`. `HealthServer` serves `/healthz` (liveness) and `/readyz` (a named
+  configurable `service.name`. Metrics leave the process by either or both of **two readers** on one
+  meter provider - the OTLP/gRPC push exporter (`MetricsEnabled`) and a **Prometheus scrape reader**
+  (`PrometheusEnabled`, `prometheus.go`), independent in both directions because push and scrape are
+  different collection models rather than encodings of one decision: a kube-prometheus-stack cluster
+  scrapes, and before item 105 it had to run a collector purely as a protocol adapter in front of
+  this service. Two decisions there are load-bearing rather than incidental. The name-**translation
+  strategy is pinned** to `UnderscoreEscapingWithSuffixes`: the exporter's default follows
+  `prometheus/common`'s global name-validation scheme, which under `utf8` leaves the dots in the
+  instrument names, and every expression in `deploy/observability/` is written against the
+  underscored form - `TestScrapeNamesMatchTheAlertRules` holds the served names against the shipped
+  rules in both directions. And the exporter gets **its own registry** rather than
+  `prometheus.DefaultRegisterer`, whose Go-runtime and process collectors nothing here declares or
+  alerts on (`runtime.go` already publishes the runtime figures this project does claim) and which
+  would make a second `Init` in one process fail on a duplicate registration. `PrometheusHandler`
+  publishes the handler for a caller to mount; `MetricsServer` is the **service's** standalone
+  listener for it, deliberately not the gateway - a scrape endpoint on the public API surface would
+  hand every caller the store's size, capacity pressure and RPC rates, while gating it behind a
+  token would put it out of reach of most scrapers, and keeping it off the gateway is also what
+  keeps a scrape out of `hippocampus.rpc.*`'s denominator for free. The client daemons take the
+  other route (`HealthConfig.MetricsHandler`, `/metrics` on the probe port they already bind), since
+  that port is already their private operational surface. `HealthServer` serves `/healthz` (liveness) and `/readyz` (a named
   map of dependency checks, cached so a probe cannot become its own load), with `GRPCHealthCheck`
   probing `grpc.health.v1.Health` — chosen because it is exempt from the auth interceptor, touches
   no data, and is driven on the service side by its own database readiness, so "ready" means the far

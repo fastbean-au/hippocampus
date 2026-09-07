@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -333,6 +334,13 @@ func setStartupDefaults() {
 	viper.SetDefault("storage.compression.minBytes", 512)
 	viper.SetDefault("shutdown.timeoutSeconds", 10)
 
+	// The Prometheus scrape endpoint. Off by default (a listener nobody asked for is a listener
+	// nobody firewalled), but its port and path are defaulted so that enabling it is one boolean:
+	// 9464 is the port the OpenTelemetry Prometheus exporter conventionally uses, which is what a
+	// scrape config is most likely already written against.
+	viper.SetDefault("observability.prometheus.port", 9464)
+	viper.SetDefault("observability.prometheus.path", "/metrics")
+
 	// The OpenAPI document is served by default, which is what every version before the key existed
 	// did. It is defaulted rather than left to read as a zero bool precisely because the zero value
 	// is the opposite of the existing behaviour, and an unset key must not silently remove an
@@ -476,6 +484,7 @@ func run(ctx context.Context, version versionInfo) error {
 		MetricsIntervalSeconds: viper.GetInt("observability.metrics.exportIntervalSeconds"),
 		OTLPEndpoint:           viper.GetString("observability.otlp.endpoint"),
 		OTLPInsecure:           viper.GetBool("observability.otlp.insecure"),
+		PrometheusEnabled:      viper.GetBool("observability.prometheus.enabled"),
 		ServiceVersion:         version.Version,
 	}
 
@@ -484,6 +493,25 @@ func run(ctx context.Context, version versionInfo) error {
 		return fmt.Errorf("failed to initialise observability: %w", err)
 	}
 	log.Debug("observability initialised")
+
+	// The scrape endpoint, on a listener of its own rather than the gateway - see
+	// observability.MetricsServer for why that separation is the point rather than an
+	// implementation detail. Started here, immediately after Init, so a port clash fails startup
+	// before the database is opened; a no-op when the scrape reader was not installed.
+	metricsServer := observability.NewMetricsServer(observability.MetricsConfig{
+		Port:        viper.GetInt("observability.prometheus.port"),
+		BindAddress: viper.GetString("observability.prometheus.bindAddress"),
+		Path:        viper.GetString("observability.prometheus.path"),
+		Component:   "hippocampus",
+	})
+
+	if err := metricsServer.Start(); err != nil {
+		// Observability is already installed, so unwind it before returning - otherwise a bad
+		// metrics port leaves exporter goroutines behind in a process reporting a startup failure.
+		flushObservability(shutdownObservability)
+
+		return fmt.Errorf("failed to start the metrics endpoint: %w", err)
+	}
 
 	// initialise DB. storage.driver selects the backend; sqlite (the default) preserves the
 	// embedded, zero-dependency behaviour of every prior release.
@@ -795,12 +823,38 @@ func run(ctx context.Context, version versionInfo) error {
 	var tlsConf *tls.Config
 
 	if tlsEnabled {
-		cfg, err := loadServerTLS(viper.GetString("tls.certFile"), viper.GetString("tls.keyFile"))
+		clientCAFile := viper.GetString("tls.clientCaFile")
+		requireClientCert := viper.GetBool("tls.requireClientCert")
+
+		cfg, err := loadServerTLS(
+			viper.GetString("tls.certFile"),
+			viper.GetString("tls.keyFile"),
+			clientCAFile,
+			requireClientCert,
+		)
 		if err != nil {
 			return fmt.Errorf("failed to load TLS credentials: %w", err)
 		}
 
 		tlsConf = cfg
+
+		if clientCAFile != "" {
+			mode := "verified when offered"
+
+			if requireClientCert {
+				mode = "required"
+			}
+
+			log.Infof("mutual TLS enabled on both listeners: client certificates %s against %s", mode, clientCAFile)
+
+			// The probes are exempt from authentication but not from the handshake, which happens
+			// before a request has a path: requiring a certificate makes /healthz and /readyz
+			// unreachable to an orchestrator that does not carry one, and a failing liveness probe
+			// restarts a perfectly healthy instance.
+			if requireClientCert && viper.GetInt("gateway.port") > 0 {
+				log.Warn("tls.requireClientCert applies to the gateway's /healthz and /readyz too, since the handshake precedes the request: give the probe client a certificate, or terminate TLS ahead of this listener")
+			}
+		}
 	}
 
 	var verifier auth.Verifier
@@ -1396,6 +1450,13 @@ func run(ctx context.Context, version versionInfo) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
+	// Stop answering scrapes first. A collection triggered after the meter provider has been shut
+	// down reports nothing, and a scraper reading that would record a store with no memories rather
+	// than a store that is no longer there.
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		log.Errorf("failed to shut down the metrics endpoint cleanly: %s", err.Error())
+	}
+
 	if err := shutdownObservability(shutdownCtx); err != nil {
 		log.Errorf("failed to shut down observability cleanly: %s", err.Error())
 	}
@@ -1795,20 +1856,87 @@ func newGatewayServer(bindAddress string, port int, handler http.Handler) *http.
 	}
 }
 
+// observabilityFlushTimeout bounds the exporter flush on a bootstrap failure. The configured
+// shutdown.timeoutSeconds is not used here: this path runs before the configuration has been
+// validated as a whole, and a startup that is already failing should not also be able to hang.
+const observabilityFlushTimeout = 5 * time.Second
+
+// flushObservability stops the exporters during a bootstrap failure, logging rather than returning
+// a problem: the caller is already returning one, and there is nothing left to do about a failed
+// flush at that point.
+func flushObservability(shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), observabilityFlushTimeout)
+	defer cancel()
+
+	if err := shutdown(ctx); err != nil {
+		log.Errorf("failed to flush observability: %s", err.Error())
+	}
+}
+
 // loadServerTLS builds the TLS configuration shared by the gRPC listener and the HTTP gateway from
 // the configured certificate/key pair, pinning a TLS 1.2 minimum. Go's current default server
 // minimum is already TLS 1.2, but pinning it makes the floor explicit and immune to a future
 // default change, keeping weak legacy protocol versions off both listeners.
-func loadServerTLS(certFile string, keyFile string) (*tls.Config, error) {
+//
+// clientCAFile turns on the other direction. Every outbound connection this project makes carries a
+// certFile/keyFile pair for mutual TLS - opensearch.tls, transfer.tls, callbacks.tls, the MCP
+// bridge, the hippo CLI and the event-source bridges, six implementations of one block - and until
+// this existed no listener here ever asked for a client certificate, so all six could only be used
+// against somebody else's terminator. Presenting a client certificate to a server that never
+// requests one fails silently, in the sense that nothing fails: the handshake completes, the
+// certificate is not sent, and the operator believes they have mutual TLS.
+//
+// It composes with the JWT auth rather than replacing it, and the two answer different questions: a
+// certificate says which PROCESS is connecting, a token says which client it is acting as and at
+// what tier. Nothing here derives an identity, a tier or a group scope from the certificate - the
+// authorisation model has one source, and a second one that silently outranked it would be worse
+// than none.
+func loadServerTLS(certFile string, keyFile string, clientCAFile string, requireClientCert bool) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, err
 	}
 
-	return &tls.Config{
+	conf := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
-	}, nil
+	}
+
+	if clientCAFile == "" {
+		// Refused rather than honoured, because Go verifies against the system roots when ClientCAs
+		// is nil: requiring a client certificate with no CA of your own admits every certificate any
+		// public CA has ever issued, which is not the restriction the key reads as.
+		if requireClientCert {
+			return nil, fmt.Errorf("tls.requireClientCert is set without tls.clientCaFile: a client certificate can only be required against a CA bundle you nominate")
+		}
+
+		return conf, nil
+	}
+
+	pem, err := os.ReadFile(clientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading tls.clientCaFile: %w", err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("tls.clientCaFile %q contains no PEM certificates", clientCAFile)
+	}
+
+	conf.ClientCAs = pool
+
+	// The two modes are a genuine choice rather than a strictness dial. Requiring a certificate is
+	// the one an operator usually wants, but it locks out every client that has not been issued one
+	// - including a browser reaching the console - so the default verifies a certificate when one is
+	// offered and admits a connection without one, which is what makes the key safe to turn on
+	// before the clients have been rolled out.
+	conf.ClientAuth = tls.VerifyClientCertIfGiven
+
+	if requireClientCert {
+		conf.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	return conf, nil
 }
 
 // maxRequestBytesMiddleware caps the request body the gateway will read, so an oversized (or
@@ -1963,7 +2091,44 @@ func configProblems() []error {
 		problems = append(problems, err)
 	}
 
+	if err := validateMetricsEndpoint(); err != nil {
+		problems = append(problems, err)
+	}
+
 	return problems
+}
+
+// validateMetricsEndpoint checks the Prometheus scrape endpoint's settings.
+//
+// Every failure here has the same shape, and it is the one a metrics endpoint is worst at
+// reporting: the process starts, the configuration looks enabled, and nothing is ever scraped. A
+// scraper's own view of that is an instance that is simply down, which sends an operator to look at
+// the service rather than at the four lines of configuration that describe where it is listening.
+// So refuse each of them at startup, where the message can name the key.
+func validateMetricsEndpoint() error {
+	if !viper.GetBool("observability.prometheus.enabled") {
+		return nil
+	}
+
+	if port := viper.GetInt("observability.prometheus.port"); port <= 0 || port > 65535 {
+		return fmt.Errorf("observability.prometheus.port must be between 1 and 65535 when observability.prometheus.enabled is set, got %d", port)
+	}
+
+	if path := viper.GetString("observability.prometheus.path"); !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("observability.prometheus.path must begin with '/', got %q", path)
+	}
+
+	// A port collision is refused rather than left to the listener, because only one of the two
+	// binds fails and which one depends on the order they are started in. The gRPC port is the one
+	// that would win here, so the message an operator would otherwise get is about the metrics
+	// listener when the mistake is as likely to be in the other key.
+	for key, port := range map[string]int{"port": viper.GetInt("port"), "gateway.port": viper.GetInt("gateway.port")} {
+		if port > 0 && port == viper.GetInt("observability.prometheus.port") {
+			return fmt.Errorf("observability.prometheus.port is %d, which %s is already using: the scrape endpoint needs a listener of its own", port, key)
+		}
+	}
+
+	return nil
 }
 
 // validateCallbackConfig checks the outbound callback settings.

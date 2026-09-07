@@ -119,11 +119,53 @@ requires MySQL 8.0.20+.
 
 ## Observability
 
-Both configs have OTEL off. To ship metrics/traces to a collector, set
+Metrics reach a backend by either of two routes, and the overlays ship with the **pull** one on
+because it is the one a cluster is most likely already able to use.
+
+### Scraping (on by default)
+
+Both overlays set `observability.prometheus.enabled: true`, so each pod serves its metrics for
+Prometheus at `:9464/metrics` — on a listener of its own, never on the gateway, so the metrics are
+not exposed to whoever can reach the API. The pods carry the conventional
+`prometheus.io/scrape`/`port`/`path` annotations, which is all an annotation-based scrape config
+needs, and the `hippocampus` Service exposes a named `metrics` port for a prometheus-operator
+cluster:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: hippocampus
+  namespace: hippocampus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus
+  endpoints:
+    - port: metrics
+      interval: 30s
+```
+
+That is not applied here, because it is a CRD half the clusters this is meant to run on do not have
+and `kubectl apply -k` would fail on them. Add it yourself, along with the alert rules from
+[`deploy/observability/`](../observability/README.md), whose expressions are written against exactly
+the series this endpoint serves.
+
+Set `observability.prometheus.enabled: false` (or
+`HIPPOCAMPUS_OBSERVABILITY_PROMETHEUS_ENABLED=false`) to close the listener. There is no
+authentication on it, which is why it is a separate port: restrict it with a NetworkPolicy, or bind
+it to a single interface with `observability.prometheus.bindAddress`, if the pod network is not
+trusted.
+
+### Pushing to a collector
+
+Tracing is off in both configs, and the OTLP metric exporter with it. To ship metrics/traces to a
+collector instead of (or as well as) serving them for scraping, set
 `observability.metrics.enabled`/`observability.tracing.enabled` to `true` and
 `observability.otlp.endpoint` to your collector's OTLP/gRPC address (e.g.
 `otel-collector.observability.svc:4317`) in the overlay's `config.json`, or as
-`HIPPOCAMPUS_OBSERVABILITY_*` env vars.
+`HIPPOCAMPUS_OBSERVABILITY_*` env vars. Traces have no scrape equivalent, so a deployment that wants
+them needs a collector whichever way its metrics travel.
 
 ## Security posture
 

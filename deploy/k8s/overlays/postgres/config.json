@@ -28,6 +28,12 @@
     "otlp": {
       "endpoint": "",
       "insecure": true
+    },
+    "prometheus": {
+      "enabled": true,
+      "port": 9464,
+      "bindAddress": "",
+      "path": "/metrics"
     }
   },
   "storage": {

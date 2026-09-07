@@ -48,6 +48,18 @@ type Config struct {
 	OTLPEndpoint           string
 	OTLPInsecure           bool
 
+	// PrometheusEnabled installs a Prometheus scrape reader alongside (or instead of) the OTLP
+	// push exporter, published by PrometheusHandler for a caller to mount on a listener.
+	//
+	// It is independent of MetricsEnabled in both directions, and deliberately so: the two are not
+	// alternative encodings of one decision but two different collection models. A deployment on a
+	// collector pushes; a deployment on kube-prometheus-stack - which is the overwhelmingly common
+	// cluster observability stack, and which scrapes - would otherwise have to run an OTel
+	// collector purely as a protocol adapter in front of this process. Enabling both is a
+	// legitimate migration state, and the instruments, attributes and alert expressions are
+	// identical either way: this adds a reader, not an instrumentation path.
+	PrometheusEnabled bool
+
 	// ServiceName names the component in the telemetry (semconv service.name): "hippocampus" for
 	// the service itself, "hippocampus-ingestor", "hippocampus-nats-bridge", and so on. Empty
 	// falls back to "hippocampus", preserving the service's own resource attributes exactly.
@@ -71,7 +83,9 @@ func (c Config) serviceName() string {
 }
 
 // Init installs the global OTEL tracer and meter providers according to the configuration and
-// returns a shutdown function that flushes and stops them. Spans are exported over OTLP/gRPC and
+// returns a shutdown function that flushes and stops them. Metrics reach a backend by either or
+// both of two readers - an OTLP/gRPC push exporter (MetricsEnabled) and a Prometheus scrape
+// endpoint (PrometheusEnabled, served by the caller from PrometheusHandler). Spans are exported over OTLP/gRPC and
 // sampled with a parent-based trace-ID ratio sampler, so the sampling ratio applies to locally
 // started traces while honouring sampling decisions made by callers. An empty endpoint leaves the
 // exporter's own default in place (the OTEL_EXPORTER_OTLP_* environment variables, falling back to
@@ -95,7 +109,11 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		return err
 	}
 
-	if !cfg.TracingEnabled && !cfg.MetricsEnabled {
+	// Reset before the early return, so a process that re-initialises with the scrape reader off
+	// (which in practice means a test) does not keep serving the previous registry.
+	scrapeHandler.Store(nil)
+
+	if !cfg.TracingEnabled && !cfg.MetricsEnabled && !cfg.PrometheusEnabled {
 		log.Debug("observability disabled")
 
 		return shutdown, nil
@@ -146,31 +164,53 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		log.Infof("tracing enabled with sampling ratio %0.3f", cfg.TracingSamplingRatio)
 	}
 
-	if cfg.MetricsEnabled {
-		opts := []otlpmetricgrpc.Option{}
-		if cfg.OTLPEndpoint != "" {
-			opts = append(opts, otlpmetricgrpc.WithEndpoint(cfg.OTLPEndpoint))
-		}
-		if cfg.OTLPInsecure {
-			opts = append(opts, otlpmetricgrpc.WithInsecure())
+	// One meter provider carries both readers. They are collected independently - the periodic
+	// reader pushes on its interval, the scrape reader is pulled when Prometheus asks - so a
+	// deployment migrating from one to the other can run both without the instruments being
+	// declared or recorded twice.
+	if cfg.MetricsEnabled || cfg.PrometheusEnabled {
+		providerOpts := []sdkmetric.Option{sdkmetric.WithResource(res)}
+
+		if cfg.MetricsEnabled {
+			opts := []otlpmetricgrpc.Option{}
+			if cfg.OTLPEndpoint != "" {
+				opts = append(opts, otlpmetricgrpc.WithEndpoint(cfg.OTLPEndpoint))
+			}
+			if cfg.OTLPInsecure {
+				opts = append(opts, otlpmetricgrpc.WithInsecure())
+			}
+
+			exporter, err := otlpmetricgrpc.New(ctx, opts...)
+			if err != nil {
+				log.Errorf("failed to create OTLP metric exporter: %s", err.Error())
+
+				return shutdown, fmt.Errorf("failed to create OTLP metric exporter")
+			}
+
+			readerOpts := []sdkmetric.PeriodicReaderOption{}
+			if cfg.MetricsIntervalSeconds > 0 {
+				readerOpts = append(readerOpts, sdkmetric.WithInterval(time.Duration(cfg.MetricsIntervalSeconds)*time.Second))
+			}
+
+			providerOpts = append(providerOpts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter, readerOpts...)))
 		}
 
-		exporter, err := otlpmetricgrpc.New(ctx, opts...)
-		if err != nil {
-			log.Errorf("failed to create OTLP metric exporter: %s", err.Error())
+		if cfg.PrometheusEnabled {
+			reader, handler, err := newScrapeReader()
+			if err != nil {
+				log.Errorf("failed to create Prometheus metric reader: %s", err.Error())
 
-			return shutdown, fmt.Errorf("failed to create OTLP metric exporter")
+				return shutdown, fmt.Errorf("failed to create Prometheus metric reader")
+			}
+
+			providerOpts = append(providerOpts, sdkmetric.WithReader(reader))
+
+			// Published only once the reader is on the provider that is about to be installed, so
+			// PrometheusHandler never hands back an endpoint that would answer with nothing.
+			scrapeHandler.Store(&handler)
 		}
 
-		readerOpts := []sdkmetric.PeriodicReaderOption{}
-		if cfg.MetricsIntervalSeconds > 0 {
-			readerOpts = append(readerOpts, sdkmetric.WithInterval(time.Duration(cfg.MetricsIntervalSeconds)*time.Second))
-		}
-
-		mp := sdkmetric.NewMeterProvider(
-			sdkmetric.WithResource(res),
-			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter, readerOpts...)),
-		)
+		mp := sdkmetric.NewMeterProvider(providerOpts...)
 		shutdowns = append(shutdowns, mp.Shutdown)
 
 		otel.SetMeterProvider(mp)
@@ -180,7 +220,13 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		// registration attached to a provider that is about to be replaced.
 		registerRuntimeMetrics()
 
-		log.Info("metrics enabled")
+		if cfg.MetricsEnabled {
+			log.Info("metrics enabled")
+		}
+
+		if cfg.PrometheusEnabled {
+			log.Info("Prometheus scrape reader enabled")
+		}
 	}
 
 	return shutdown, nil

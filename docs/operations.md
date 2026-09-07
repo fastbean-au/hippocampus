@@ -985,8 +985,39 @@ legitimately needs longer to finish.
 
 ## Observability
 
-OpenTelemetry tracing and metrics are optional and exported over OTLP/gRPC (see
-[Observability](configuration.md#observability)).
+OpenTelemetry tracing and metrics are optional (see
+[Observability](configuration.md#observability)). Traces are exported over OTLP/gRPC. Metrics reach
+a backend by either or both of two routes — pushed over OTLP/gRPC, or served for a Prometheus to
+scrape — and which of them you use changes nothing else on this page: the instruments, their
+attributes, and every alert expression below are identical either way.
+
+### Getting the metrics out: push or scrape
+
+- **`observability.metrics.enabled`** installs the OTLP/gRPC exporter, which pushes to the collector
+  at `observability.otlp.endpoint` on `observability.metrics.exportIntervalSeconds`. This is the
+  route the bundled `grafana/otel-lgtm` profile uses, and the one to take if you already run an
+  OpenTelemetry collector.
+- **`observability.prometheus.enabled`** serves the same metrics in the Prometheus text format at
+  `observability.prometheus.path` (default `/metrics`) on `observability.prometheus.port` (default
+  **9464**), for Prometheus to pull. Take this route on a cluster running kube-prometheus-stack, or
+  anywhere a Prometheus already exists: without it that deployment has to run an OpenTelemetry
+  collector purely as a protocol adapter. The Kubernetes overlays under `deploy/k8s/` ship with it
+  on, annotated for scraping.
+
+The endpoint is on a **listener of its own**, not the gateway, and that is a deliberate constraint
+rather than an implementation detail. The gateway is the public surface — the JSON API, the console,
+the OpenAPI document — and frequently what an ingress exposes; a scrape endpoint there would hand
+every API caller the store's size, its capacity pressure and its RPC rates, while putting it behind
+a token instead would put it out of reach of most scrapers. `observability.prometheus.bindAddress`
+restricts the interface it binds, which is what to set on an instance reachable from outside its own
+network. Scrapes never appear in `hippocampus.rpc.*` for the same reason the probes do not: they do
+not pass through the gateway at all.
+
+Traces have no scrape equivalent, so a deployment that wants them needs a collector however its
+metrics travel.
+
+The [client-side components](#client-side-components) take the same choice as a `--prometheus` flag
+and serve `/metrics` on the `--health-port` they already listen on, rather than a port of their own.
 
 ### Request metrics (RED)
 
@@ -1028,6 +1059,12 @@ Prometheus rule file covering the failures below, ready to load with `rule_files
 prometheus-operator `PrometheusRule` `spec:`, or `mimirtool rules load`. Sixteen rules in two
 groups, each with a `description` saying what to do about it and a `runbook_url` back into this
 document.
+
+Every expression is written against the series names the OTLP-to-Prometheus translation produces,
+which is what the scrape endpoint above serves as well — a collector in between is optional, not
+assumed. (The exporter's translation strategy is pinned rather than left to its default, since the
+default follows a global setting in `prometheus/common` that would otherwise leave the dots in the
+instrument names; `TestScrapeNamesMatchTheAlertRules` holds the two together.)
 
 `hippocampus` is the service: server error rate, request latency, sleep-cycle failures, no
 consolidator at all, capacity pressure, over capacity, retention consuming the capacity target,
@@ -1176,9 +1213,14 @@ and not a smooth line.
 
 The [ingestor](ingestor.md#observability) and the [broker bridges](eventsource.md#observability) are
 separate processes that dial a Hippocampus instance, and they are instrumented on the same model:
-`--metrics` exports over OTLP/gRPC, and `--health-port` (**8090 by default**) serves `/healthz`
-(liveness) and `/readyz` (whether the instance they write to can actually serve). Both surfaces are
-documented in full on those pages; three things are worth knowing at the operations level.
+`--metrics` exports over OTLP/gRPC, `--prometheus` serves the same metrics for scraping, and
+`--health-port` (**8090 by default**) serves `/healthz` (liveness) and `/readyz` (whether the
+instance they write to can actually serve). The scrape endpoint rides on that same health port at
+`/metrics` rather than taking one of its own — these are processes already asking for one
+operational port they did not previously need, and everything served there is the same kind of
+thing. Turning `--health-port 0` off therefore takes the metrics with it, which is logged. Both
+surfaces are documented in full on those pages; three things are worth knowing at the operations
+level.
 
 - **`hippocampus.client.rpc.requests` / `.duration`** are the client-side RED metrics, emitted by
   every component that dials the service, with an `endpoint` attribute (`source`/`target` for the

@@ -21,6 +21,11 @@ func TestRegisterCommonFlags(t *testing.T) {
 		// Empty, so a bridge that does not set it behaves exactly as it did before the flag
 		// existed - the subject reaches the memory only through the group, as it always has.
 		"subject-metadata-key": "",
+
+		// Off, so a bridge that does not ask for it opens no endpoint it did not open before.
+		// Independent of --metrics: the two are different collection models, not one setting.
+		"prometheus": "false",
+		"metrics":    "false",
 	}
 
 	for name, want := range wantDefaults {

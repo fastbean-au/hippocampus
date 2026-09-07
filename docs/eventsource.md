@@ -611,10 +611,20 @@ Every bridge serves `/healthz` and `/readyz` on `--health-port` (**8090 by defau
 | `--otlp-insecure`            | `true`                           | connect to the collector without TLS       |
 | `--metrics-interval-seconds` | `0`                              | export interval; 0 takes the SDK default   |
 | `--metrics-group`            | `--group`                        | tenancy label, per process — see below     |
+| `--prometheus`               | `false`                          | serve `/metrics` for Prometheus to scrape  |
 
 Both exports are off by default, matching the service, so a bridge with no collector logs no export
 failures. The probe listener is the exception and is **on**: a bridge that cannot be probed is a
 bridge whose stalling is invisible.
+
+`--metrics` and `--prometheus` are independent and either can stand alone: the first pushes to a
+collector, the second waits to be scraped, and the instruments and their attributes are identical
+either way. Take `--prometheus` where a Prometheus already exists and a collector does not.
+
+The scrape endpoint is served on the **health port**, at `/metrics`, rather than on one of its own —
+a bridge is already asking for one operational port, and this is the same kind of surface. So
+`--health-port 0` turns the metrics off with the probes, which the bridge logs at startup rather than
+leaving to be discovered by a scraper reporting the process as down.
 
 `/healthz` is process liveness and never fails while the process runs; `/readyz` reports whether the
 Hippocampus instance the bridge writes to can actually serve:

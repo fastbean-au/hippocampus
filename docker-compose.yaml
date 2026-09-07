@@ -22,6 +22,7 @@ services:
     ports:
       - "50051:50051" # gRPC
       - "8080:8080" # HTTP/JSON gateway (+ /healthz)
+      - "9464:9464" # Prometheus scrape endpoint (only listening when PROMETHEUS=true)
     volumes:
       - hippocampus-data:/data
     environment:
@@ -29,6 +30,11 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_TRACING_ENABLED: "${OBSERVABILITY:-false}"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_ENDPOINT: "otel-lgtm:4317"
       HIPPOCAMPUS_OBSERVABILITY_OTLP_INSECURE: "true"
+      # The scrape endpoint, the pull half of the same metrics. Separate from OBSERVABILITY
+      # because it needs no collector at all: PROMETHEUS=true publishes them on :9464 for a
+      # Prometheus (or a curl) to read, which is what the rule files in
+      # deploy/observability/ are written against.
+      HIPPOCAMPUS_OBSERVABILITY_PROMETHEUS_ENABLED: "${PROMETHEUS:-false}"
       # Embedded-LLM summarisation (optional). Off unless OLLAMA=true, which also requires the
       # `ollama` profile (below). When on, SummariseMemories and (with OLLAMA_AUTOSUMMARISE=true)
       # the sleep cycle condense an event's memories via the ollama service. Pull the model first:

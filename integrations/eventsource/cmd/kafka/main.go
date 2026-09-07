@@ -225,6 +225,7 @@ func runtimeConfig() bridge.RuntimeConfig {
 			MetricsIntervalSeconds: viper.GetInt("metrics-interval-seconds"),
 			OTLPEndpoint:           viper.GetString("otlp-endpoint"),
 			OTLPInsecure:           viper.GetBool("otlp-insecure"),
+			PrometheusEnabled:      viper.GetBool("prometheus"),
 			Group:                  group,
 		},
 		HealthPort:        viper.GetInt("health-port"),

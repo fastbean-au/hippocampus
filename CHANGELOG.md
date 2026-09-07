@@ -223,6 +223,68 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   keeping up. Discarding deliveries is deliberately not offered: an abandoned delivery is a
   notification nobody will ever receive, which is an act for a terminal.
 
+- **A Prometheus scrape endpoint.** `observability.prometheus.enabled` serves the metrics for a
+  Prometheus to **pull**, at `observability.prometheus.path` (`/metrics`) on
+  `observability.prometheus.port` (**9464**), instead of only pushing them over OTLP/gRPC to a
+  collector. The event-source bridges and the ingestor take the same option as `--prometheus`, and
+  serve it on the `--health-port` they already listen on.
+
+  This repository has shipped twenty-two Prometheus alert rules since 0.42.0 and nothing that could
+  get the series to a Prometheus. The rule file is documented as something to load with
+  `rule_files:` or lift into a `PrometheusRule`, both of which presuppose a Prometheus that already
+  has the metrics; `deploy/k8s/README.md` told the reader to name "your collector's OTLP/gRPC
+  address", which is an assumption about their cluster rather than a deployment. The overwhelmingly
+  common cluster observability stack is kube-prometheus-stack, which scrapes — so a deployment on it
+  had to run an OpenTelemetry collector purely as a protocol adapter in front of this service. The
+  one place it worked was the demo, because `grafana/otel-lgtm` bundles a collector, which is why
+  the gap was never felt here.
+
+  It is a second metric **reader**, not a second instrumentation path: every instrument, attribute
+  and alert expression is unchanged, and push and scrape are independent in both directions — a
+  scrape-only deployment need not name a collector it does not have, and running both is a
+  legitimate migration state. The exporter's name-translation strategy is pinned rather than left to
+  its default, which follows a global setting in `prometheus/common` that would otherwise leave the
+  dots in the instrument names on some builds; a test holds the served names against the shipped
+  alert expressions.
+
+  The endpoint gets a **listener of its own** and is never on the gateway. The gateway is the public
+  surface and frequently what an ingress exposes, so a scrape endpoint there would hand every API
+  caller the store's size, its capacity pressure and its RPC rates, while putting it behind a token
+  instead would put it out of reach of most scrapers. It is unauthenticated by design and carries no
+  ids, no group names and no memory content — but it is still operational, so
+  `observability.prometheus.bindAddress` restricts the interface it binds. Keeping it off the
+  gateway also settles the other requirement for free: a scrape never reaches
+  `httpMetricsMiddleware`, so it cannot appear in `hippocampus.rpc.*`'s own request rate, the same
+  exclusion the probes and console assets already had.
+
+  Both Kubernetes overlays ship with it **on** and annotated for scraping, with a named `metrics`
+  port on the Service for a prometheus-operator `ServiceMonitor` (given in `deploy/k8s/README.md`,
+  not applied — it is a CRD half the target clusters do not have). Every compose stack publishes
+  `9464` and takes `PROMETHEUS=true`.
+
+- **Mutual TLS on both listeners.** `tls.clientCaFile` names a CA bundle to verify **client**
+  certificates against, and `tls.requireClientCert` makes offering one mandatory. Both default off,
+  so nothing changes for a deployment that does not ask.
+
+  Every outbound connection this project makes has carried a `certFile`/`keyFile` pair for mutual
+  TLS — `opensearch.tls`, `transfer.tls`, `callbacks.tls`, the MCP bridge, the `hippo` CLI and the
+  event-source bridges, six implementations of one block — while `loadServerTLS` set only
+  `Certificates` and `MinVersion`. No listener here ever requested a client certificate, so all six
+  could only be used against somebody else's terminator, and the way that fails is silent: a client
+  configured to present a certificate to a server that never asks completes the handshake and simply
+  never sends it.
+
+  It **composes with** the bearer-token authentication rather than replacing it. A certificate says
+  which *process* is connecting; a token says which client it is acting as and at what tier. Nothing
+  is derived from the certificate — no client id, no role, no group scope — because authorisation
+  having a second source that silently outranked the first would be worse than having none.
+
+  Two refusals worth knowing. `tls.requireClientCert` without `tls.clientCaFile` is rejected at
+  startup: with no bundle nominated Go verifies against the system roots, so "required" would admit
+  any certificate any public CA has ever issued. And requiring a certificate covers the gateway's
+  `/healthz` and `/readyz` too, since the handshake precedes the request — the service warns about
+  it, and an orchestrator's probe needs a certificate or TLS terminated ahead of the listener.
+
 ### Fixed
 
 - **`time_end_max` matched every event that had not ended.** An open event stores `time_end` of `0`

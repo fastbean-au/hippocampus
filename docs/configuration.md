@@ -62,6 +62,12 @@ OpenTelemetry tracing and metrics are optional and independently enabled through
     "otlp": {
         "endpoint": "localhost:4317",
         "insecure": true
+    },
+    "prometheus": {
+        "enabled": false,
+        "port": 9464,
+        "bindAddress": "",
+        "path": "/metrics"
     }
 }
 ```
@@ -73,6 +79,44 @@ OpenTelemetry tracing and metrics are optional and independently enabled through
 - `otlp.endpoint` — the OTLP/gRPC collector endpoint. When empty, the standard
   `OTEL_EXPORTER_OTLP_*` environment variables apply, falling back to `localhost:4317`.
 - `otlp.insecure` — use plaintext instead of TLS when connecting to the collector.
+
+#### Prometheus scrape endpoint
+
+`observability.prometheus.enabled` serves the same metrics in the Prometheus text format, for a
+Prometheus to **pull**, instead of (or as well as) pushing them over OTLP. It is a second metric
+reader on the same meter provider, not a second instrumentation path: every instrument, attribute
+and alert expression is identical either way, and the series names are the ones the
+OTLP-to-Prometheus translation produces — which is what the rule files under
+[`deploy/observability/`](../deploy/observability/README.md) are written against.
+
+It exists because the two are different collection models rather than two encodings of one setting.
+A deployment with an OpenTelemetry collector pushes; a cluster running kube-prometheus-stack — the
+overwhelmingly common cluster observability stack — scrapes, and without this would have to run a
+collector purely as a protocol adapter in front of the service. Enabling both is a legitimate
+migration state.
+
+- `prometheus.enabled` — off by default. It works with `metrics.enabled` off, so a scrape-only
+  deployment need not name a collector it does not have.
+- `prometheus.port` — the listener's own port, **9464** by default (the conventional port for the
+  OpenTelemetry Prometheus exporter). It must differ from `port` and `gateway.port`; the service
+  refuses a collision at startup rather than letting whichever listener binds second fail.
+- `prometheus.bindAddress` — empty binds every interface. This is the setting that makes the
+  endpoint safe to enable: a scrape endpoint enumerates every instrument the process publishes —
+  store size, capacity pressure, RPC rates — so on an instance reachable from outside, bind it to
+  the interface the scraper is on.
+- `prometheus.path` — `/metrics` by default.
+
+The endpoint is deliberately **not** on the gateway. The gateway is the public surface, frequently
+what an ingress exposes; a scrape endpoint there would be an information disclosure available to
+every API caller, and putting it behind a token instead would put it out of reach of most scrapers.
+A separate, separately bindable port is what lets it be open to the scraper and closed to everybody
+else. It also keeps scrapes out of the `hippocampus.rpc.*` request rate, the same exclusion the
+probes and the console assets already have.
+
+The client-side daemons — the [event-source bridges](eventsource.md) and the
+[ingestor](ingestor.md) — take the same option as a `--prometheus` flag, and serve it at `/metrics`
+on the `--health-port` they already listen on rather than on a port of their own. Turning
+`--health-port 0` off takes the metrics with it, which is logged.
 
 Every RPC is traced (via the `otelgrpc` stats handler, which also records the standard
 low-cardinality RPC metrics), and each sleep cycle produces its own trace with span events
@@ -1248,7 +1292,9 @@ legacy protocol versions are refused):
 "tls": {
     "enabled": false,
     "certFile": "",
-    "keyFile": ""
+    "keyFile": "",
+    "clientCaFile": "",
+    "requireClientCert": false
 }
 ```
 
@@ -1256,6 +1302,35 @@ Enabling authentication without `tls.enabled` logs a startup warning rather than
 start — bearer tokens sent over plaintext are sniffable in transit, but some deployments
 terminate TLS upstream (a reverse proxy or service mesh) rather than in the service itself, which
 is a legitimate topology this doesn't try to prevent.
+
+#### Mutual TLS
+
+`tls.clientCaFile` names a PEM bundle of certificate authorities to verify **client** certificates
+against, which turns on mutual TLS for both listeners. It is what the `certFile`/`keyFile` halves of
+every client-side TLS block in this project — `opensearch.tls`, `transfer.tls`, `callbacks.tls`, the
+MCP bridge, the `hippo` CLI, the event-source bridges — are for. Leave it empty (the default, and
+what every release before this one did) and neither listener asks for a client certificate at all:
+a client that offers one simply never sends it, and the handshake succeeds either way, which is the
+failure mode this closes.
+
+- `tls.clientCaFile` — the CA bundle. With it set, a client certificate that *is* offered must
+  verify against this bundle or the connection is refused. A client that offers none is still
+  admitted, so the key is safe to turn on before every client has been issued a certificate.
+- `tls.requireClientCert` — additionally refuse a connection that offers no certificate. It requires
+  `tls.clientCaFile`: with no bundle nominated, Go verifies against the system roots, so "required"
+  would admit any certificate any public CA has ever issued. The service refuses that combination at
+  startup rather than accepting it.
+
+Mutual TLS **composes with** the bearer-token authentication rather than replacing it, and the two
+answer different questions: a certificate says which *process* is connecting, a token says which
+client it is acting as and at what tier. Nothing is derived from the certificate — no client id, no
+role, no group scope — so [Authentication](#authentication) remains the single source of a caller's
+authorisation.
+
+One consequence worth planning for: `tls.requireClientCert` applies to the gateway's `/healthz` and
+`/readyz` as well, because the handshake happens before the request has a path. An orchestrator's
+probe must therefore carry a client certificate, or TLS must be terminated ahead of this listener.
+The service logs a warning at startup when the two are combined.
 
 ### Storage
 

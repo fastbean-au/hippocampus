@@ -59,11 +59,15 @@ func StartRuntime(ctx context.Context, cfg RuntimeConfig, conn *grpc.ClientConn)
 		return nil, fmt.Errorf("initialising observability: %w", err)
 	}
 
+	// The scrape endpoint rides on the probe listener, so a bridge that is already being probed is
+	// scraped on the same port and needs no second one. PrometheusHandler is nil unless Init
+	// installed the reader, which mounts no route at all.
 	health := observability.NewHealthServer(observability.HealthConfig{
-		Port:        cfg.HealthPort,
-		BindAddress: cfg.HealthBindAddress,
-		Version:     cfg.Version,
-		Component:   component,
+		Port:           cfg.HealthPort,
+		BindAddress:    cfg.HealthBindAddress,
+		Version:        cfg.Version,
+		Component:      component,
+		MetricsHandler: observability.PrometheusHandler(),
 		Checks: map[string]observability.Check{
 			"hippocampus": observability.GRPCHealthCheck(conn),
 		},

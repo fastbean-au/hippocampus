@@ -21,6 +21,13 @@ spec:
       app.kubernetes.io/component: consolidator
   template:
     metadata:
+      annotations:
+        # Picked up by the annotation-based scrape config most Prometheus installations ship with.
+        # A prometheus-operator cluster uses a ServiceMonitor instead (see deploy/k8s/README.md);
+        # the annotations are inert there, so both are declared once and neither has to be chosen.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+        prometheus.io/path: /metrics
       labels:
         app.kubernetes.io/name: hippocampus
         app.kubernetes.io/part-of: hippocampus
@@ -62,6 +69,8 @@ spec:
               containerPort: 50051
             - name: http
               containerPort: 8080
+            - name: metrics
+              containerPort: 9464
           env:
             # consolidation.enabled: true → this instance takes the lock and runs the sleep cycle.
             - name: HIPPOCAMPUS_CONSOLIDATION_ENABLED

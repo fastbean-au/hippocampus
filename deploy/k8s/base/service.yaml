@@ -22,3 +22,10 @@ spec:
       port: 8080
       targetPort: http
       protocol: TCP
+    # The Prometheus scrape endpoint, on a listener of its own rather than the gateway - see
+    # docs/configuration.md. Named here so a prometheus-operator ServiceMonitor can select it by
+    # name; a scrape config using the pod annotations instead needs nothing from this Service.
+    - name: metrics
+      port: 9464
+      targetPort: metrics
+      protocol: TCP
