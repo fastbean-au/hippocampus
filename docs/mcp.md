@@ -46,12 +46,29 @@ The surface is the per-item memory-and-event operations a model needs to give, r
 forget memories. The administrative, destructive, and bulk data-movement RPCs (`Purge`, `Sleep`,
 `Export`/`Import`/`Transfer`/`Clear`, event deletion/merge, and `SummariseMemories` — which deletes
 an event's memories, replacing them with an LLM-generated summary) are **not** exposed, so a model
-cannot wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`, `update_memory`,
-`delete_memories`, `link_memories`, `unlink_memories`, `create_event`, `end_event`) are all `writer`-tier; what a given token may actually do is
+cannot wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`,
+`update_memory`, `delete_memories`, `link_memories`, `unlink_memories`, `create_event`,
+`update_event`, `end_event`, `link_events`, `unlink_events`) are all `writer`-tier; what a given
+token may actually do is
 enforced by the service's [role tiers](configuration.md#authorisation), so a `reader`-scoped token is
 refused every mutation regardless of which tools are registered here. `delete_memories` is a by-id
 scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear`,
 which stay `admin`-tier and off this surface.
+
+**The four introspection tools are `reader`, and none of them enumerates.** `whoami` describes the
+connection; `consolidation_status` names no record at all; `significance_levels` reports the scale
+rather than anything ranked on it; and `explain_consolidation` answers only about ids the caller
+supplies and could already read in full through `list_memories`. Between them they let a model ask
+the question this store exists to answer — *is this memory about to go, and how long has it got?* —
+which none of the others can. `PreviewConsolidation` is the one that does enumerate, and it stays
+`admin` and off this surface.
+
+**Call `whoami` first.** `search_memories` offers `semantic` and `hybrid`, and whether a deployment
+can serve either depends on its storage driver and on whether OpenSearch and an embedding model are
+configured. `whoami` reports the modes that work here, using the same names the `mode` input takes,
+so a model can adapt rather than discover an unavailable mode by having a search rejected. It also
+reports `consolidation_enabled`, which is `false` on a replica — where nothing is forgetting and the
+decay tools have no schedule to report.
 
 **Bound the model's reach as well as its verbs.** The tier decides what a model may do; a
 [group scope](configuration.md#group-scoping) decides which records it may do it to. Giving the
@@ -73,9 +90,18 @@ so it need not (and cannot) choose where its memories are filed. Note this is a 
 | `get_memory_links`             | `GetMemoryLinks`             | List what a memory is linked to and its total link significance; `direction` narrows to outbound or inbound. Read-only.                                                                                                                      |
 | `list_memories`                | `GetMemories`                | Read-only browse by group, significance, and `metadata` labels; `recalled: false` finds memories never recalled. `order_by`/`order_dir` sort the page. Does **not** reinforce.                                                               |
 | `create_event`                 | `StoreEvent`                 | A named time span memories can be grouped under; takes `metadata` labels like a memory.                                                                                                                                                      |
+| `update_event`                 | `UpdateEvent`                | Revise an event by id; only fields you set change. `metadata` **replaces** the stored labels wholesale, and `clear_metadata`/`clear_group` remove them — the same semantics `update_memory` has, for the same reason.                        |
 | `end_event`                    | `EndEvent`                   | Close an event, defaulting to now. An event never ended stores an end time of 0, which sorts it as the oldest-ended rather than the most recent; its memories are untouched.                                                                  |
-| `list_events`                  | `GetEvents`                  | Read-only browse of events, filterable by `metadata` labels and sortable via `order_by`/`order_dir`.                                                                                                                                         |
+| `get_event`                    | `GetEventById`               | Fetch one event — what the `event_id` on a memory actually refers to. Returns its memory count, optionally its links, and never its memories: page those with `list_memories`.                                                               |
+| `list_events`                  | `GetEvents`                  | Read-only browse of events, filterable by `metadata` labels, `name_contains`, `ended` and `linked_to`, and sortable via `order_by`/`order_dir`.                                                                                              |
+| `link_events`                  | `LinkEvents`                 | Associate one event with others. An event's links raise the effective significance of every memory under it, so this is the coarser of the two levers over what survives.                                                                    |
+| `unlink_events`                | `UnlinkEvents`               | Remove links between one event and the events named, in either direction. Unknown targets are ignored.                                                                                                                                       |
+| `get_event_links`              | `GetEventLinks`              | List what an event is linked to and its total link significance; `direction` narrows to outbound or inbound. Read-only.                                                                                                                      |
 | `get_summarisation_candidates` | `GetSummarisationCandidates` | Events the last consolidation cycle flagged as worth condensing.                                                                                                                                                                             |
+| `significance_levels`          | `GetSignificanceLevels`      | The significance values this store actually uses, ascending — read it before choosing one, so a new item is ranked against the existing scale rather than an invented number.                                                                |
+| `explain_consolidation`        | `ExplainConsolidation`       | Where the memories you name stand: value against threshold, days since the decay clock reset, whether a cycle now would forget them, and days left. This is how a model learns a memory is about to go, in time to recall it.                |
+| `consolidation_status`         | `GetConsolidationStatus`     | Whether this instance forgets at all, when the next cycle is due, and what the last one removed. Names no record; reports `consolidation_enabled: false` on a replica.                                                                       |
+| `whoami`                       | `WhoAmI`                     | What this connection can do: role, group scope, service version, and which `search_memories` modes the deployment serves. Call it before using semantic or hybrid search rather than discovering an unavailable mode by being rejected.       |
 
 Memories and events are returned as plain JSON objects (the read-only fields — `id`, `time_stamp`,
 `recall_count`, `is_summary`, and so on — included) so the model can reason about them and feed ids

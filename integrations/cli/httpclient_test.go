@@ -371,3 +371,57 @@ func TestHTTPClientGetTopology(t *testing.T) {
 		t.Fatalf("probe interval = %d, want 30", resp.GetProbeIntervalSeconds())
 	}
 }
+
+// TestHTTPClientUpdateEvent pins the one route in the gateway map that differs from a neighbour by
+// verb alone: GET, DELETE and PATCH on /v1/events/{id} are three different RPCs.
+func TestHTTPClientUpdateEvent(t *testing.T) {
+	client, captured := newTestHTTPClient(t, http.StatusOK, &contract.GeneralResponse{Ok: true})
+
+	resp, err := client.UpdateEvent(context.Background(), &contract.Event{Id: "e 1", Name: "renamed"})
+	if err != nil {
+		t.Fatalf("UpdateEvent: %s", err)
+	}
+
+	if !resp.GetOk() {
+		t.Error("ok = false, want true")
+	}
+
+	if captured.method != http.MethodPatch {
+		t.Errorf("method = %s, want PATCH", captured.method)
+	}
+
+	// The id travels as ONE percent-encoded path segment - ids are caller-chosen and routinely carry
+	// characters a path would otherwise split on. The server decodes it, so what arrives is the id.
+	if captured.path != "/v1/events/e 1" {
+		t.Errorf("path = %q, want /v1/events/e 1 (escaped id decoded by the server)", captured.path)
+	}
+}
+
+func TestHTTPClientGetSignificanceLevels(t *testing.T) {
+	client, captured := newTestHTTPClient(t, http.StatusOK, &contract.GetSignificanceLevelsResponse{
+		Significances: []int32{3, 5},
+		TotalCount:    2,
+	})
+
+	resp, err := client.GetSignificanceLevels(context.Background(), &contract.GetSignificanceLevelsRequest{
+		SignificanceMin: 3,
+		Limit:           50,
+	})
+	if err != nil {
+		t.Fatalf("GetSignificanceLevels: %s", err)
+	}
+
+	if len(resp.GetSignificances()) != 2 {
+		t.Errorf("significances = %v, want two values", resp.GetSignificances())
+	}
+
+	if captured.method != http.MethodGet || captured.path != "/v1/significance/levels" {
+		t.Errorf("%s %s, want GET /v1/significance/levels", captured.method, captured.path)
+	}
+
+	// A GET carries its fields as query parameters, so the bounds must survive the protojson→query
+	// conversion rather than being dropped into a body no GET sends.
+	if captured.query.Get("significanceMin") != "3" || captured.query.Get("limit") != "50" {
+		t.Errorf("query = %v, want the bounds carried as parameters", captured.query)
+	}
+}

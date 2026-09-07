@@ -55,7 +55,73 @@ type fakeClient struct {
 	linksReq  *contract.GetMemoryLinksRequest
 	linksRes  *contract.GetLinksResponse
 
+	updateEventReq *contract.Event
+	getEventReq    *contract.GetEventByIdRequest
+	getEventRes    *contract.GetEventResponse
+
+	eventLinkReq   *contract.LinkEventsRequest
+	eventUnlinkReq *contract.UnlinkEventsRequest
+	eventLinksReq  *contract.GetEventLinksRequest
+	eventLinksRes  *contract.GetLinksResponse
+
+	whoAmIRes  *contract.WhoAmIResponse
+	statusRes  *contract.GetConsolidationStatusResponse
+	explainReq *contract.ExplainConsolidationRequest
+	explainRes *contract.ExplainConsolidationResponse
+	levelsReq  *contract.GetSignificanceLevelsRequest
+	levelsRes  *contract.GetSignificanceLevelsResponse
+
 	err error
+}
+
+func (f *fakeClient) UpdateEvent(_ context.Context, in *contract.Event, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.updateEventReq = in
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) GetEventById(_ context.Context, in *contract.GetEventByIdRequest, _ ...grpc.CallOption) (*contract.GetEventResponse, error) {
+	f.getEventReq = in
+
+	return f.getEventRes, f.err
+}
+
+func (f *fakeClient) LinkEvents(_ context.Context, in *contract.LinkEventsRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.eventLinkReq = in
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) UnlinkEvents(_ context.Context, in *contract.UnlinkEventsRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.eventUnlinkReq = in
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) GetEventLinks(_ context.Context, in *contract.GetEventLinksRequest, _ ...grpc.CallOption) (*contract.GetLinksResponse, error) {
+	f.eventLinksReq = in
+
+	return f.eventLinksRes, f.err
+}
+
+func (f *fakeClient) WhoAmI(_ context.Context, _ *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.WhoAmIResponse, error) {
+	return f.whoAmIRes, f.err
+}
+
+func (f *fakeClient) GetConsolidationStatus(_ context.Context, _ *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetConsolidationStatusResponse, error) {
+	return f.statusRes, f.err
+}
+
+func (f *fakeClient) ExplainConsolidation(_ context.Context, in *contract.ExplainConsolidationRequest, _ ...grpc.CallOption) (*contract.ExplainConsolidationResponse, error) {
+	f.explainReq = in
+
+	return f.explainRes, f.err
+}
+
+func (f *fakeClient) GetSignificanceLevels(_ context.Context, in *contract.GetSignificanceLevelsRequest, _ ...grpc.CallOption) (*contract.GetSignificanceLevelsResponse, error) {
+	f.levelsReq = in
+
+	return f.levelsRes, f.err
 }
 
 func (f *fakeClient) LinkMemories(_ context.Context, in *contract.LinkMemoriesRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
@@ -176,6 +242,42 @@ func TestHandlers_PropagateRPCError(t *testing.T) {
 
 	if _, _, err := b.getSummarisationCandidates(ctx, nil, struct{}{}); err == nil {
 		t.Error("getSummarisationCandidates should propagate the RPC error")
+	}
+
+	if _, _, err := b.updateEvent(ctx, nil, updateEventInput{Id: "e1", Name: "x"}); err == nil {
+		t.Error("updateEvent should propagate the RPC error")
+	}
+
+	if _, _, err := b.getEvent(ctx, nil, getEventInput{Id: "e1"}); err == nil {
+		t.Error("getEvent should propagate the RPC error")
+	}
+
+	if _, _, err := b.linkEvents(ctx, nil, linkEventsInput{Id: "e1", Links: []linkViewInput{{Id: "e2"}}}); err == nil {
+		t.Error("linkEvents should propagate the RPC error")
+	}
+
+	if _, _, err := b.unlinkEvents(ctx, nil, unlinkEventsInput{Id: "e1", Ids: []string{"e2"}}); err == nil {
+		t.Error("unlinkEvents should propagate the RPC error")
+	}
+
+	if _, _, err := b.getEventLinks(ctx, nil, getEventLinksInput{Id: "e1"}); err == nil {
+		t.Error("getEventLinks should propagate the RPC error")
+	}
+
+	if _, _, err := b.significanceLevels(ctx, nil, significanceLevelsInput{}); err == nil {
+		t.Error("significanceLevels should propagate the RPC error")
+	}
+
+	if _, _, err := b.explainConsolidation(ctx, nil, explainConsolidationInput{Ids: []string{"m1"}}); err == nil {
+		t.Error("explainConsolidation should propagate the RPC error")
+	}
+
+	if _, _, err := b.consolidationStatus(ctx, nil, struct{}{}); err == nil {
+		t.Error("consolidationStatus should propagate the RPC error")
+	}
+
+	if _, _, err := b.whoAmI(ctx, nil, struct{}{}); err == nil {
+		t.Error("whoAmI should propagate the RPC error")
 	}
 }
 
@@ -560,9 +662,18 @@ func TestServer_EndToEnd(t *testing.T) {
 		"unlink_memories":              false,
 		"get_memory_links":             false,
 		"create_event":                 false,
+		"update_event":                 false,
 		"end_event":                    false,
+		"get_event":                    false,
 		"list_events":                  false,
+		"link_events":                  false,
+		"unlink_events":                false,
+		"get_event_links":              false,
 		"get_summarisation_candidates": false,
+		"significance_levels":          false,
+		"explain_consolidation":        false,
+		"consolidation_status":         false,
+		"whoami":                       false,
 	}
 
 	for _, v := range tools.Tools {

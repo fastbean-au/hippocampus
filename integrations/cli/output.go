@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,13 +74,24 @@ func (r *renderer) renderText(msg proto.Message) error {
 		// which of two addresses is the consolidator, and whether this one records what it forgets,
 		// are questions an operator asks of a running deployment, and asking them by watching an RPC
 		// be refused is the thing whoami exists to avoid.
+		r.line("version:       %s", orNone(m.GetVersion()))
 		r.line("consolidating: %t", m.GetConsolidationEnabled())
 		r.line("forgotten log: %t", m.GetTombstonesEnabled())
+		r.line("callbacks:     %t", m.GetCallbacksEnabled())
 		r.line("summariser:    %t", m.GetSummariserEnabled())
 		r.line("search modes:  %s", orNone(strings.Join(searchModeNames(m.GetSearchModes()), ", ")))
 
 	case *contract.GetTopologyResponse:
 		r.renderTopology(m)
+
+	// One line rather than one per value: the point of the list is to be READ as a scale, and
+	// adjacent values - which is what a placement has to open a gap between - are only visible
+	// beside one another.
+	case *contract.GetSignificanceLevelsResponse:
+		r.line("%d value(s) (of %d matching): %s",
+			len(m.GetSignificances()),
+			m.GetTotalCount(),
+			orNone(joinInts(m.GetSignificances())))
 
 	case *contract.StoreMemoryResponse:
 		if m.GetRejected() {
@@ -546,6 +558,17 @@ func searchModeNames(modes []contract.SearchMode) []string {
 	sort.Strings(out)
 
 	return out
+}
+
+// joinInts renders a significance list on one line.
+func joinInts(values []int32) string {
+	parts := make([]string, len(values))
+
+	for i, v := range values {
+		parts[i] = strconv.Itoa(int(v))
+	}
+
+	return strings.Join(parts, ", ")
 }
 
 func orNone(value string) string {

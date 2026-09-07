@@ -47,6 +47,14 @@
           class="pill meta hidden"
           title="this token is restricted to these groups"
         ></span>
+        <!-- The build this console is talking to. It is on the Deployment tab's self node too, but
+         that view is optional, tier-configurable and refused to a group-scoped caller - so on most
+         deployments this is the only place a visitor can see which version they are looking at. -->
+        <span
+          id="version-pill"
+          class="pill meta hidden"
+          title="the service build this console is connected to"
+        ></span>
         <!-- Sign out is the only auth control in the header; signing *in* happens on the gate below,
          which is what stands here when there is no session. -->
         <button id="logout-btn" class="btn ghost small hidden">Sign out</button>
@@ -677,6 +685,25 @@
                 <label for="ef-group">Group</label>
                 <input id="ef-group" placeholder="exact group label" />
               </div>
+              <!-- The only way to find an event by what it is called. Neither search backend indexes
+                   events at all, so an event's name and description are reachable by this filter and
+                   nothing else - which in a store whose events are named after their content (a
+                   thread named from its opening post, an hourly event named per service) is the
+                   difference between finding one and paging every event there is. -->
+              <div class="field">
+                <label for="ef-name">Name contains</label>
+                <input id="ef-name" placeholder="case-insensitive substring" />
+              </div>
+              <!-- Tri-state, because an event that has not ended stores an end time of 0 and 0 is
+                   also every bound's "no bound": no time filter can ask this. -->
+              <div class="field">
+                <label for="ef-ended">State</label>
+                <select id="ef-ended" data-change="load-events">
+                  <option value="">Any</option>
+                  <option value="FALSE">Still running</option>
+                  <option value="TRUE">Ended</option>
+                </select>
+              </div>
             </div>
             <!-- GetEventsRequest.metadata has always existed server-side; the console simply never
            offered it. Full width, like the memories filter's, for the same reason. -->
@@ -979,6 +1006,53 @@
           </p>
           <div id="topology-components">
             <div class="empty">Nothing loaded yet.</div>
+          </div>
+        </div>
+
+        <!-- The callback queue. It sits on this tab rather than with the forgotten log because it
+             describes a DEPENDENCY of the deployment - the receiver, and whether it is keeping up -
+             rather than anything about the store's contents. A backlog here means an endpoint is
+             down, which is the same class of fact as a red node in the diagram above.
+
+             Gated twice. .admin-only, because GetCallbackQueue is admin and refused to a group-scoped
+             caller (a delivery batches memories across groups, so there is nothing to scope BY).
+             .callbacks-only, because the RPC answers rather than refuses when no sink is configured -
+             an empty page that reads exactly like a queue that is keeping up. -->
+        <div class="card admin-only callbacks-only">
+          <h2>Outbound callbacks</h2>
+          <p class="muted pull-up">
+            Deliveries waiting to be sent, oldest first. A queue that is not
+            draining means the receiver is down or refusing: the dispatcher
+            retries with backoff and abandons a delivery once it has tried too
+            long, and an abandoned delivery is a notification nobody will ever
+            get. Payloads are never shown here — a delivery can carry memory
+            bodies, and this is a view of a backlog rather than a second way to
+            read the store.
+          </p>
+
+          <div id="callback-summary" class="muted fs-12"></div>
+
+          <div id="callback-queue">
+            <div class="empty">Nothing loaded yet.</div>
+          </div>
+
+          <div class="actions gap-top">
+            <button class="btn ghost" data-act="load-callbacks">Refresh</button>
+            <div class="field">
+              <label for="cb-kind">Kind</label>
+              <select id="cb-kind" data-change="load-callbacks">
+                <option value="">Every kind</option>
+                <option value="CALLBACK_KIND_MEMORY_FORGOTTEN">
+                  Memory forgotten
+                </option>
+                <option value="CALLBACK_KIND_EVENT_FORGOTTEN">
+                  Event forgotten
+                </option>
+                <option value="CALLBACK_KIND_SLEEP_COMPLETED">
+                  Sleep completed
+                </option>
+              </select>
+            </div>
           </div>
         </div>
       </section>

@@ -31,6 +31,15 @@ type hippoClient interface {
 	LinkMemories(ctx context.Context, in *contract.LinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
 	UnlinkMemories(ctx context.Context, in *contract.UnlinkMemoriesRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
 	GetMemoryLinks(ctx context.Context, in *contract.GetMemoryLinksRequest, opts ...grpc.CallOption) (*contract.GetLinksResponse, error)
+	UpdateEvent(ctx context.Context, in *contract.Event, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
+	GetEventById(ctx context.Context, in *contract.GetEventByIdRequest, opts ...grpc.CallOption) (*contract.GetEventResponse, error)
+	LinkEvents(ctx context.Context, in *contract.LinkEventsRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
+	UnlinkEvents(ctx context.Context, in *contract.UnlinkEventsRequest, opts ...grpc.CallOption) (*contract.GeneralResponse, error)
+	GetEventLinks(ctx context.Context, in *contract.GetEventLinksRequest, opts ...grpc.CallOption) (*contract.GetLinksResponse, error)
+	WhoAmI(ctx context.Context, in *contract.EmptyRequest, opts ...grpc.CallOption) (*contract.WhoAmIResponse, error)
+	GetConsolidationStatus(ctx context.Context, in *contract.EmptyRequest, opts ...grpc.CallOption) (*contract.GetConsolidationStatusResponse, error)
+	ExplainConsolidation(ctx context.Context, in *contract.ExplainConsolidationRequest, opts ...grpc.CallOption) (*contract.ExplainConsolidationResponse, error)
+	GetSignificanceLevels(ctx context.Context, in *contract.GetSignificanceLevelsRequest, opts ...grpc.CallOption) (*contract.GetSignificanceLevelsResponse, error)
 }
 
 // bridge holds the gRPC client every tool handler dispatches through, plus the per-call timeout
@@ -60,6 +69,16 @@ func (b *bridge) callContext(ctx context.Context) (context.Context, context.Canc
 // exposed, so a model cannot wipe or exfiltrate a store through this bridge. What a given token may
 // actually do is enforced by the service's role tiers (reader/writer/admin): a reader-scoped token
 // is refused every mutation regardless of which tools are registered here.
+//
+// The three introspection tools at the end are the newest, and their inclusion follows the same
+// rule rather than bending it. whoami is the FEATURE-DETECTION RPC and its absence was already
+// costing this bridge: search_memories offers semantic and hybrid modes and could only discover
+// that a deployment serves neither by having a search rejected, which is exactly what search_modes
+// exists to prevent. explain_consolidation and consolidation_status are both reader tier and
+// neither enumerates: the first answers only about ids the caller supplies and could already read
+// in full through list_memories, and the second names no record at all. Between them they let an
+// agent ask the one question this store exists to answer - is this memory about to go, and how long
+// has it got - which none of the other twenty tools can.
 func newServer(b *bridge, serverVersion string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "hippocampus",
@@ -155,10 +174,51 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 	}, b.endEvent)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name: "update_event",
+		Description: "Revise an existing event by id: only the fields you set are changed (name, " +
+			"description, significance, group, metadata, start/end times) and omitted fields keep " +
+			"their stored values. Metadata REPLACES the stored labels wholesale rather than merging, " +
+			"and because an omitted field means 'leave unchanged', removing labels or a group needs " +
+			"clear_metadata/clear_group. Use this to correct an event's name or enrich its labels " +
+			"rather than creating a second event for the same span. An unknown id is reported as not " +
+			"found; no event is created.",
+	}, b.updateEvent)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_event",
+		Description: "Fetch a single event by id, with its memory count and optionally its links. " +
+			"Use this when a memory names an event_id and you need what that event actually is - its " +
+			"name, description and span. It does NOT return the event's memories: ask list_memories " +
+			"with that event_id, which pages them instead of putting every body in one reply.",
+	}, b.getEvent)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_events",
-		Description: "List events filtered by group and significance range, with paging. Ordered by " +
-			"timestamp (most recently started first) unless order_by says otherwise.",
+		Description: "List events filtered by group, significance range, name substring, open/ended " +
+			"state and link neighbourhood, with paging. Ordered by timestamp (most recently started " +
+			"first) unless order_by says otherwise. Set ended=false to find the events still running.",
 	}, b.listEvents)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "link_events",
+		Description: "Associate one event with others, each link carrying a significance. Event links " +
+			"work exactly as memory links do and feed the same decay maths: an event's links raise " +
+			"the effective significance of every memory under it, so linking two events slows both " +
+			"sets of memories' decay. Both events must already exist.",
+	}, b.linkEvents)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "unlink_events",
+		Description: "Remove the links between one event and the events you name, in either " +
+			"direction. Unknown targets are silently ignored. The events themselves are untouched.",
+	}, b.unlinkEvents)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_event_links",
+		Description: "List what an event is linked to, and its total link significance. By default " +
+			"both directions are returned; narrow with direction=outbound or inbound. A read-only " +
+			"browse that reinforces nothing.",
+	}, b.getEventLinks)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_summarisation_candidates",
@@ -166,6 +226,41 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 			"worth condensing into a single summary. Identified by the most recent consolidation " +
 			"cycle; empty unless the service is configured to scan for them.",
 	}, b.getSummarisationCandidates)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "significance_levels",
+		Description: "List the significance values currently in use in this store, ascending. Read " +
+			"this before choosing a significance for a new memory or event: it shows the scale this " +
+			"store actually uses, so a new item can be ranked against what is already there instead " +
+			"of against a number you invented. Two adjacent values have no room between them.",
+	}, b.significanceLevels)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "explain_consolidation",
+		Description: "Ask where specific memories stand against the forgetting rules: each one's " +
+			"computed value, the threshold it is measured against, how many days since its decay " +
+			"clock last reset, whether a cycle running now would forget it, and how many days it has " +
+			"left (-1 means not due within the projected horizon). This is how you find out that a " +
+			"memory is about to go - recall_memories on it resets its clock and keeps it. Reads only " +
+			"the ids you name; at most 200 per call.",
+	}, b.explainConsolidation)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "consolidation_status",
+		Description: "Report whether this instance forgets anything at all, when the next cycle is " +
+			"due, and what the last one removed. Names no individual memory. Use it to tell 'nothing " +
+			"has been forgotten' apart from 'nothing is doing the forgetting' - a replica reports " +
+			"consolidation_enabled=false and never runs a cycle.",
+	}, b.consolidationStatus)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "whoami",
+		Description: "Report what this connection can do: the caller's role (reader/writer/admin) " +
+			"and group scope, and what the deployment can serve - which search_memories modes work " +
+			"here, whether the service summarises, whether it consolidates, and its version. Call " +
+			"this before using semantic or hybrid search rather than discovering an unavailable mode " +
+			"by having the search rejected.",
+	}, b.whoAmI)
 
 	return server
 }
@@ -620,6 +715,111 @@ func (b *bridge) createEvent(ctx context.Context, _ *mcp.CallToolRequest, in cre
 	return nil, createEventOutput{Id: res.GetId(), Rejected: res.GetRejected()}, nil
 }
 
+// --- update_event ---
+
+type updateEventInput struct {
+	Id           string `json:"id" jsonschema:"id of the event to update (required); an unknown id is reported as not found"`
+	Name         string `json:"name,omitempty" jsonschema:"new name; omit to leave it unchanged"`
+	Description  string `json:"description,omitempty" jsonschema:"new description; omit to leave it unchanged"`
+	Significance int32  `json:"significance,omitempty" jsonschema:"new significance; 0 leaves the existing significance unchanged"`
+	Group        string `json:"group,omitempty" jsonschema:"new group label; omit to leave it unchanged, or set clear_group to remove it"`
+	TimeStart    string `json:"time_start,omitempty" jsonschema:"new start time as an RFC3339 timestamp (e.g. 2026-08-19T14:30:00Z); omit to leave it unchanged"`
+	TimeEnd      string `json:"time_end,omitempty" jsonschema:"new end time as an RFC3339 timestamp; omit to leave it unchanged (use end_event to close an event at the current time)"`
+
+	Metadata      map[string]string `json:"metadata,omitempty" jsonschema:"replacement labels; a non-empty map REPLACES the stored labels wholesale rather than merging, and an empty or omitted map leaves them unchanged"`
+	ClearMetadata bool              `json:"clear_metadata,omitempty" jsonschema:"remove all of the event's metadata; needed because an empty metadata map means 'leave unchanged'"`
+	ClearGroup    bool              `json:"clear_group,omitempty" jsonschema:"reset the event's group to empty; needed because an empty group means 'leave unchanged'"`
+}
+
+func (b *bridge) updateEvent(ctx context.Context, _ *mcp.CallToolRequest, in updateEventInput) (*mcp.CallToolResult, okOutput, error) {
+	if in.Id == "" {
+		return nil, okOutput{}, fmt.Errorf("id is required")
+	}
+
+	timeStart, err := parseToolTime(in.TimeStart, "time_start")
+	if err != nil {
+		return nil, okOutput{}, err
+	}
+
+	timeEnd, err := parseToolTime(in.TimeEnd, "time_end")
+	if err != nil {
+		return nil, okOutput{}, err
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.UpdateEvent(callCtx, &contract.Event{
+		Id:            in.Id,
+		Name:          in.Name,
+		Description:   in.Description,
+		Significance:  in.Significance,
+		Group:         in.Group,
+		TimeStart:     timeStart,
+		TimeEnd:       timeEnd,
+		Metadata:      in.Metadata,
+		ClearMetadata: in.ClearMetadata,
+		ClearGroup:    in.ClearGroup,
+	})
+	if err != nil {
+		return nil, okOutput{}, fmt.Errorf("UpdateEvent failed: %w", err)
+	}
+
+	return nil, okOutput{Ok: res.GetOk()}, nil
+}
+
+// --- get_event ---
+
+type getEventInput struct {
+	Id    string `json:"id" jsonschema:"id of the event to fetch (required)"`
+	Links bool   `json:"links,omitempty" jsonschema:"also return the links this event declared to other events"`
+}
+
+// getEventOutput carries the event plus, optionally, its links. The memories are deliberately NOT
+// available here: GetEventById can return them all in one message, which is the shape that puts
+// every body of a large event into a model's context at once. list_memories with event_id pages
+// them instead.
+type getEventOutput struct {
+	Event eventView      `json:"event"`
+	Links []linkEdgeView `json:"links,omitempty"`
+}
+
+func (b *bridge) getEvent(ctx context.Context, _ *mcp.CallToolRequest, in getEventInput) (*mcp.CallToolResult, getEventOutput, error) {
+	if in.Id == "" {
+		return nil, getEventOutput{}, fmt.Errorf("id is required")
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.GetEventById(callCtx, &contract.GetEventByIdRequest{
+		Id:    in.Id,
+		Links: in.Links,
+
+		// Asked for unconditionally, for the reason list_events asks for it: how much an event holds
+		// is most of what decides whether a model should open it, and the count reads no bodies.
+		MemoryCounts: true,
+	})
+	if err != nil {
+		return nil, getEventOutput{}, fmt.Errorf("GetEventById failed: %w", err)
+	}
+
+	out := getEventOutput{Event: toEventView(res.GetEvent())}
+
+	for _, l := range res.GetEvent().GetLinks() {
+		out.Links = append(out.Links, linkEdgeView{
+			Id:           l.GetId(),
+			Significance: l.GetSignificance(),
+
+			// Event.links carries the OUTBOUND edges only (see the contract), so there is nothing to
+			// read a direction from - get_event_links is what answers both directions.
+			Direction: "outbound",
+		})
+	}
+
+	return nil, out, nil
+}
+
 // --- end_event ---
 
 type endEventInput struct {
@@ -685,8 +885,12 @@ type listEventsInput struct {
 
 	StartedAfter  string `json:"started_after,omitempty" jsonschema:"optional: only events starting at or after this RFC3339 timestamp (e.g. 2026-08-12T00:00:00Z)"`
 	StartedBefore string `json:"started_before,omitempty" jsonschema:"optional: only events starting at or before this RFC3339 timestamp"`
-	EndedAfter    string `json:"ended_after,omitempty" jsonschema:"optional: only events ending at or after this RFC3339 timestamp. An event that has not been ended stores an end time of 0, so any value here also excludes the events still open"`
-	EndedBefore   string `json:"ended_before,omitempty" jsonschema:"optional: only events ending at or before this RFC3339 timestamp"`
+	EndedAfter    string `json:"ended_after,omitempty" jsonschema:"optional: only events that have ENDED, at or after this RFC3339 timestamp; an event still open never matches either end bound"`
+	EndedBefore   string `json:"ended_before,omitempty" jsonschema:"optional: only events that have ENDED, at or before this RFC3339 timestamp; use ended=false to ask about the ones still open"`
+
+	Ended        *bool  `json:"ended,omitempty" jsonschema:"optional: true for events that have ended, false for those still running; omit for both. This is the only way to ask for open events - they store an end time of 0, which the two bounds above read as no bound"`
+	NameContains string `json:"name_contains,omitempty" jsonschema:"optional: only events whose name contains this text, matched case-insensitively. A substring match, not a content search - event names and descriptions are in no search index"`
+	LinkedTo     string `json:"linked_to,omitempty" jsonschema:"optional: only the events one hop from this event id, in either direction. Errors if that event does not exist"`
 
 	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict to events carrying ALL of these key/value labels exactly"`
 }
@@ -729,6 +933,9 @@ func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in list
 		Limit:           in.Limit,
 		Offset:          in.Offset,
 		Metadata:        metadataFilterPairs(in.Metadata),
+		Ended:           triStateFilter(in.Ended),
+		NameContains:    in.NameContains,
+		LinkedTo:        in.LinkedTo,
 
 		// Always asked for, never exposed as an input: how much an event holds is most of what
 		// decides whether a model should open it, and the count costs one aggregate that reads no
@@ -810,23 +1017,51 @@ type linkViewInput struct {
 	Significance int32  `json:"significance" jsonschema:"how strong the association is, 0 to 1000000; higher slows both memories' decay more"`
 }
 
-func (b *bridge) linkMemories(ctx context.Context, _ *mcp.CallToolRequest, in linkMemoriesInput) (*mcp.CallToolResult, okOutput, error) {
-	if in.Id == "" {
-		return nil, okOutput{}, fmt.Errorf("id is required")
+// linkTargets validates a link tool's input and converts it to the wire type. Memories and events
+// take the identical shape - the two link surfaces differ only in which RPC they call - so the
+// checking lives here rather than twice.
+func linkTargets(id string, in []linkViewInput) ([]*contract.Link, error) {
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
 
-	if len(in.Links) == 0 {
-		return nil, okOutput{}, fmt.Errorf("links is required")
+	if len(in) == 0 {
+		return nil, fmt.Errorf("links is required")
 	}
 
-	links := make([]*contract.Link, 0, len(in.Links))
+	links := make([]*contract.Link, 0, len(in))
 
-	for _, l := range in.Links {
+	for _, l := range in {
 		if l.Id == "" {
-			return nil, okOutput{}, fmt.Errorf("every link needs an id")
+			return nil, fmt.Errorf("every link needs an id")
 		}
 
 		links = append(links, &contract.Link{Id: l.Id, Significance: l.Significance})
+	}
+
+	return links, nil
+}
+
+// toLinksOutput projects a GetLinks response, shared by get_memory_links and get_event_links.
+func toLinksOutput(res *contract.GetLinksResponse) linksOutput {
+	links := make([]linkEdgeView, 0, len(res.GetLinks()))
+
+	for _, edge := range res.GetLinks() {
+		links = append(links, linkEdgeView{
+			Id:           edge.GetId(),
+			Significance: edge.GetSignificance(),
+			Direction:    linkDirectionName(edge.GetDirection()),
+			Created:      edge.GetCreated(),
+		})
+	}
+
+	return linksOutput{Links: links, LinkSignificance: res.GetLinkSignificance()}
+}
+
+func (b *bridge) linkMemories(ctx context.Context, _ *mcp.CallToolRequest, in linkMemoriesInput) (*mcp.CallToolResult, okOutput, error) {
+	links, err := linkTargets(in.Id, in.Links)
+	if err != nil {
+		return nil, okOutput{}, err
 	}
 
 	callCtx, cancel := b.callContext(ctx)
@@ -912,18 +1147,87 @@ func (b *bridge) getMemoryLinks(ctx context.Context, _ *mcp.CallToolRequest, in 
 		return nil, linksOutput{}, fmt.Errorf("GetMemoryLinks failed: %w", err)
 	}
 
-	links := make([]linkEdgeView, 0, len(res.GetLinks()))
+	return nil, toLinksOutput(res), nil
+}
 
-	for _, edge := range res.GetLinks() {
-		links = append(links, linkEdgeView{
-			Id:           edge.GetId(),
-			Significance: edge.GetSignificance(),
-			Direction:    linkDirectionName(edge.GetDirection()),
-			Created:      edge.GetCreated(),
-		})
+// --- link_events / unlink_events / get_event_links ---
+//
+// The event half of the graph, which the bridge carried for memories only. The asymmetry was worth
+// closing for the reason event links exist at all: an event's links raise the effective
+// significance of every memory under it, so this is the coarser of the two levers a model has over
+// what the store keeps.
+
+type linkEventsInput struct {
+	Id    string          `json:"id" jsonschema:"the event the links start from (required); it must already exist"`
+	Links []linkViewInput `json:"links" jsonschema:"the events to link to and how strongly (required); each target must already exist"`
+}
+
+func (b *bridge) linkEvents(ctx context.Context, _ *mcp.CallToolRequest, in linkEventsInput) (*mcp.CallToolResult, okOutput, error) {
+	links, err := linkTargets(in.Id, in.Links)
+	if err != nil {
+		return nil, okOutput{}, err
 	}
 
-	return nil, linksOutput{Links: links, LinkSignificance: res.GetLinkSignificance()}, nil
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.LinkEvents(callCtx, &contract.LinkEventsRequest{Id: in.Id, Links: links})
+	if err != nil {
+		return nil, okOutput{}, fmt.Errorf("LinkEvents failed: %w", err)
+	}
+
+	return nil, okOutput{Ok: res.GetOk()}, nil
+}
+
+type unlinkEventsInput struct {
+	Id  string   `json:"id" jsonschema:"the event the links start from (required)"`
+	Ids []string `json:"ids" jsonschema:"the events to unlink from it (required); unknown ids are ignored"`
+}
+
+func (b *bridge) unlinkEvents(ctx context.Context, _ *mcp.CallToolRequest, in unlinkEventsInput) (*mcp.CallToolResult, okOutput, error) {
+	if in.Id == "" {
+		return nil, okOutput{}, fmt.Errorf("id is required")
+	}
+
+	if len(in.Ids) == 0 {
+		return nil, okOutput{}, fmt.Errorf("ids is required")
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.UnlinkEvents(callCtx, &contract.UnlinkEventsRequest{Id: in.Id, Ids: in.Ids})
+	if err != nil {
+		return nil, okOutput{}, fmt.Errorf("UnlinkEvents failed: %w", err)
+	}
+
+	return nil, okOutput{Ok: res.GetOk()}, nil
+}
+
+type getEventLinksInput struct {
+	Id        string `json:"id" jsonschema:"the event whose links to list (required)"`
+	Direction string `json:"direction,omitempty" jsonschema:"which links to return: both (the default), outbound (links this event declared), or inbound (links others declared to it)"`
+}
+
+func (b *bridge) getEventLinks(ctx context.Context, _ *mcp.CallToolRequest, in getEventLinksInput) (*mcp.CallToolResult, linksOutput, error) {
+	if in.Id == "" {
+		return nil, linksOutput{}, fmt.Errorf("id is required")
+	}
+
+	direction, ok := linkDirections[strings.ToLower(in.Direction)]
+	if !ok {
+		return nil, linksOutput{}, fmt.Errorf("unknown direction %q (want both, outbound or inbound)", in.Direction)
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.GetEventLinks(callCtx, &contract.GetEventLinksRequest{Id: in.Id, Direction: direction})
+	if err != nil {
+		return nil, linksOutput{}, fmt.Errorf("GetEventLinks failed: %w", err)
+	}
+
+	return nil, toLinksOutput(res), nil
 }
 
 func linkDirectionName(d contract.LinkDirection) string {
@@ -939,4 +1243,219 @@ func linkDirectionName(d contract.LinkDirection) string {
 		return "both"
 
 	}
+}
+
+// --- significance_levels ---
+//
+// The scale, not the records ranked on it. A model choosing a significance for a new memory was
+// otherwise inventing a number against a store whose scheme it could not see, which is the same
+// problem SignificancePlacement has and the reason this RPC exists.
+
+type significanceLevelsInput struct {
+	SignificanceMin int32 `json:"significance_min,omitempty" jsonschema:"optional inclusive lower bound; 0 means no bound"`
+	SignificanceMax int32 `json:"significance_max,omitempty" jsonschema:"optional inclusive upper bound; 0 means no bound"`
+	Limit           int32 `json:"limit,omitempty" jsonschema:"page size; 0 selects the service default (200), capped at 1000"`
+	Offset          int32 `json:"offset,omitempty" jsonschema:"values to skip for paging"`
+}
+
+type significanceLevelsOutput struct {
+	Significances []int32 `json:"significances" jsonschema:"the distinct significance values in use, ascending; two adjacent values have no room between them"`
+	TotalCount    int32   `json:"total_count" jsonschema:"values matching the bounds, ignoring paging"`
+}
+
+func (b *bridge) significanceLevels(ctx context.Context, _ *mcp.CallToolRequest, in significanceLevelsInput) (*mcp.CallToolResult, significanceLevelsOutput, error) {
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.GetSignificanceLevels(callCtx, &contract.GetSignificanceLevelsRequest{
+		SignificanceMin: in.SignificanceMin,
+		SignificanceMax: in.SignificanceMax,
+		Limit:           in.Limit,
+		Offset:          in.Offset,
+	})
+	if err != nil {
+		return nil, significanceLevelsOutput{}, fmt.Errorf("GetSignificanceLevels failed: %w", err)
+	}
+
+	return nil, significanceLevelsOutput{
+		Significances: res.GetSignificances(),
+		TotalCount:    res.GetTotalCount(),
+	}, nil
+}
+
+// --- explain_consolidation ---
+
+type explainConsolidationInput struct {
+	Ids []string `json:"ids" jsonschema:"the memories to value (required); at most 200 per call"`
+}
+
+// memoryValuationView is the projection of one memory's standing. It carries the fields an agent
+// can act on and drops the decomposition of effective significance (the four link terms), which
+// explains a number rather than changing what to do about it - the console renders those, a model
+// does not need them in its context.
+type memoryValuationView struct {
+	Id                    string  `json:"id"`
+	EventId               string  `json:"event_id,omitempty"`
+	Significance          int32   `json:"significance" jsonschema:"the memory's own stored significance"`
+	EffectiveSignificance float64 `json:"effective_significance" jsonschema:"what the decay acts on: the memory's significance plus its event's, its links' damped contribution, and its recall count"`
+	Value                 float64 `json:"value" jsonschema:"the computed decayed value"`
+	Threshold             float64 `json:"threshold" jsonschema:"the threshold value is compared against, already scaled by how full the store is"`
+	AgeDays               float64 `json:"age_days" jsonschema:"days since the decay clock last reset - creation, or the most recent recall"`
+	RecallCount           int32   `json:"recall_count"`
+	WouldConsolidate      bool    `json:"would_consolidate" jsonschema:"a cycle running now would forget this memory"`
+	Retained              bool    `json:"retained" jsonschema:"inside the store's hard retention window, so nothing may take it whatever its value"`
+	BelowMinimumAge       bool    `json:"below_minimum_age" jsonschema:"too young for value-based consolidation, whatever its value"`
+	DaysUntilForgotten    float64 `json:"days_until_forgotten" jsonschema:"projected days left, holding today's threshold and assuming no further recall; 0 means already due, -1 means not due within the projected horizon"`
+}
+
+type explainConsolidationOutput struct {
+	Valuations []memoryValuationView `json:"valuations"`
+
+	DeletionThreshold float64 `json:"deletion_threshold" jsonschema:"the threshold in force, scaled by capacity pressure"`
+	CapacityPressure  float64 `json:"capacity_pressure" jsonschema:"multiplier applied to the threshold by how full the store is; 1.0 means no effect"`
+	MemoryCount       int32   `json:"memory_count" jsonschema:"memories currently stored"`
+}
+
+func (b *bridge) explainConsolidation(ctx context.Context, _ *mcp.CallToolRequest, in explainConsolidationInput) (*mcp.CallToolResult, explainConsolidationOutput, error) {
+	if len(in.Ids) == 0 {
+		return nil, explainConsolidationOutput{}, fmt.Errorf("ids is required")
+	}
+
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	// The curve is deliberately not requested. It describes the CONFIGURATION rather than any
+	// memory, and it is up to 500 points of it - a shape to draw, which is the console's job, not
+	// something an agent acts on.
+	res, err := b.client.ExplainConsolidation(callCtx, &contract.ExplainConsolidationRequest{MemoryIds: in.Ids})
+	if err != nil {
+		return nil, explainConsolidationOutput{}, fmt.Errorf("ExplainConsolidation failed: %w", err)
+	}
+
+	out := explainConsolidationOutput{
+		DeletionThreshold: res.GetDeletionThreshold(),
+		CapacityPressure:  res.GetCapacityPressure(),
+		MemoryCount:       res.GetMemoryCount(),
+		Valuations:        make([]memoryValuationView, 0, len(res.GetValuations())),
+	}
+
+	for _, v := range res.GetValuations() {
+		out.Valuations = append(out.Valuations, memoryValuationView{
+			Id:                    v.GetId(),
+			EventId:               v.GetEventId(),
+			Significance:          v.GetSignificance(),
+			EffectiveSignificance: v.GetEffectiveSignificance(),
+			Value:                 v.GetValue(),
+			Threshold:             v.GetThreshold(),
+			AgeDays:               v.GetAgeDays(),
+			RecallCount:           v.GetRecallCount(),
+			WouldConsolidate:      v.GetWouldConsolidate(),
+			Retained:              v.GetRetained(),
+			BelowMinimumAge:       v.GetBelowMinimumAge(),
+			DaysUntilForgotten:    v.GetDaysUntilForgotten(),
+		})
+	}
+
+	return nil, out, nil
+}
+
+// --- consolidation_status ---
+
+type consolidationStatusOutput struct {
+	ConsolidationEnabled bool  `json:"consolidation_enabled" jsonschema:"false on a replica, which never runs a cycle - its store is consolidated by another instance"`
+	PeriodSeconds        int64 `json:"period_seconds" jsonschema:"how often a cycle runs; 0 means no timed cycle at all"`
+	NextSleepAt          int64 `json:"next_sleep_at" jsonschema:"UnixNano the next timed cycle is due; 0 when none is scheduled"`
+	SleepInProgress      bool  `json:"sleep_in_progress"`
+
+	LastCycleAt           int64 `json:"last_cycle_at,omitempty" jsonschema:"UnixNano the last completed cycle began; 0 if none has run in this process"`
+	MemoriesConsolidated  int32 `json:"memories_consolidated" jsonschema:"memories the last cycle forgot for low value"`
+	MemoriesEvicted       int32 `json:"memories_evicted" jsonschema:"memories the last cycle forgot to stay under its capacity target"`
+	EventsConsolidated    int32 `json:"events_consolidated"`
+	LastCycleSucceeded    bool  `json:"last_cycle_succeeded"`
+	SummarisationCandidat int32 `json:"summarisation_candidates" jsonschema:"events the last cycle flagged as worth condensing"`
+}
+
+func (b *bridge) consolidationStatus(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, consolidationStatusOutput, error) {
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.GetConsolidationStatus(callCtx, &contract.EmptyRequest{})
+	if err != nil {
+		return nil, consolidationStatusOutput{}, fmt.Errorf("GetConsolidationStatus failed: %w", err)
+	}
+
+	last := res.GetLastCycle()
+
+	return nil, consolidationStatusOutput{
+		ConsolidationEnabled:  res.GetConsolidationEnabled(),
+		PeriodSeconds:         res.GetPeriodSeconds(),
+		NextSleepAt:           res.GetNextSleepAt(),
+		SleepInProgress:       res.GetSleepInProgress(),
+		LastCycleAt:           last.GetStartedAt(),
+		MemoriesConsolidated:  last.GetMemoriesConsolidated(),
+		MemoriesEvicted:       last.GetMemoriesEvicted(),
+		EventsConsolidated:    last.GetEventsConsolidated(),
+		LastCycleSucceeded:    last.GetSuccess(),
+		SummarisationCandidat: last.GetSummarisationCandidates(),
+	}, nil
+}
+
+// --- whoami ---
+
+type whoAmIOutput struct {
+	Role        string   `json:"role" jsonschema:"the caller's effective tier: reader, writer or admin"`
+	ClientId    string   `json:"client_id,omitempty"`
+	AuthEnabled bool     `json:"auth_enabled"`
+	Groups      []string `json:"groups,omitempty" jsonschema:"the group labels this token may reach"`
+	GroupScoped bool     `json:"group_scoped" jsonschema:"true when a scope is in force; read THIS rather than whether groups is empty, since empty means the whole store"`
+
+	Version              string   `json:"version,omitempty" jsonschema:"the service build this bridge is talking to"`
+	SearchModes          []string `json:"search_modes" jsonschema:"the search_memories modes this deployment can serve; an empty list means content search is unavailable entirely"`
+	SummariserEnabled    bool     `json:"summariser_enabled"`
+	ConsolidationEnabled bool     `json:"consolidation_enabled" jsonschema:"false on a replica, where nothing is forgetting and the decay tools report no schedule"`
+}
+
+// searchModeNames renders the search-mode enum as the strings search_memories' mode input takes, so
+// what whoami reports can be passed straight back in rather than translated.
+func searchModeNames(in []contract.SearchMode) []string {
+	out := make([]string, 0, len(in))
+
+	for _, mode := range in {
+		switch mode {
+
+		case contract.SearchMode_SEARCH_MODE_KEYWORD:
+			out = append(out, "keyword")
+
+		case contract.SearchMode_SEARCH_MODE_SEMANTIC:
+			out = append(out, "semantic")
+
+		case contract.SearchMode_SEARCH_MODE_HYBRID:
+			out = append(out, "hybrid")
+
+		}
+	}
+
+	return out
+}
+
+func (b *bridge) whoAmI(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, whoAmIOutput, error) {
+	callCtx, cancel := b.callContext(ctx)
+	defer cancel()
+
+	res, err := b.client.WhoAmI(callCtx, &contract.EmptyRequest{})
+	if err != nil {
+		return nil, whoAmIOutput{}, fmt.Errorf("WhoAmI failed: %w", err)
+	}
+
+	return nil, whoAmIOutput{
+		Role:                 res.GetRole(),
+		ClientId:             res.GetClientId(),
+		AuthEnabled:          res.GetAuthEnabled(),
+		Groups:               res.GetGroups(),
+		GroupScoped:          res.GetGroupScoped(),
+		Version:              res.GetVersion(),
+		SearchModes:          searchModeNames(res.GetSearchModes()),
+		SummariserEnabled:    res.GetSummariserEnabled(),
+		ConsolidationEnabled: res.GetConsolidationEnabled(),
+	}, nil
 }

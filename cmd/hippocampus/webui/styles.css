@@ -647,6 +647,14 @@ body:not(.consolidating) .consolidation-only {
 body:not(.tombstones) .tombstones-only {
   display: none !important;
 }
+/* And the callback queue, which is .tombstones-only's situation in its sharper form: on a
+     deployment with no sink GetCallbackQueue does not refuse, it answers with an empty page and
+     enabled:false - identical on screen to a queue that is simply keeping up. A card that cannot
+     tell those apart is worse than no card, since a backlog and a switched-off feature are the two
+     readings and only one of them wants acting on. */
+body:not(.callbacks) .callbacks-only {
+  display: none !important;
+}
 /* And once more for the deployment view. Two gates fold into this one class (see topologyVisible in
      lib.js): the tier this deployment requires of GetTopology, which is configurable, and the fact
      that the RPC is scopeUnbound - so a group-scoped caller is refused it whatever tier they hold,

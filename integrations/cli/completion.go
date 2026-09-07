@@ -37,6 +37,7 @@ var enumFlagValues = map[string][]string{
 	"summary":   {"true", "false"},
 	"binary":    {"true", "false"},
 	"has-event": {"true", "false"},
+	"ended":     {"true", "false"},
 }
 
 // commandEnumFlagValues overrides enumFlagValues for a flag whose candidates depend on which command

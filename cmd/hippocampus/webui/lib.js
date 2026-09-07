@@ -306,6 +306,13 @@ export function capsFromWhoAmI(who) {
     summariser: !!who.summariserEnabled,
     consolidation: !!who.consolidationEnabled,
     tombstones: !!who.tombstonesEnabled,
+    // Reported for tombstones' reason exactly: GetCallbackQueue on a deployment with no sink
+    // returns the same empty page as one whose queue is simply drained, so a card rendered without
+    // this flag would say "nothing pending" about a feature that is switched off.
+    callbacks: !!who.callbacksEnabled,
+    // The build this console is talking to. Not a capability - nothing is gated on it - but it
+    // arrives on the same response and belongs with the other deployment facts.
+    version: who.version || "",
     // The topology view needs two things resolved together, which is why it is not a single flag
     // from the server: the tier the DEPLOYMENT requires (reported, like its neighbours above), and
     // whether this caller clears it. An empty topologyTier means the view is switched off here,
@@ -349,6 +356,8 @@ export function capsWhenRefused(status) {
     summariser: false,
     consolidation: false,
     tombstones: false,
+    callbacks: false,
+    version: "",
     topologyTier: "",
     topology: false,
     groups: [],
@@ -368,6 +377,7 @@ export const GATING_CLASSES = [
   "summariser",
   "consolidating",
   "tombstones",
+  "callbacks",
   "topology",
 ];
 
@@ -385,6 +395,7 @@ export function bodyClassesFor(caps) {
   if (caps.summariser) classes.add("summariser");
   if (caps.consolidation) classes.add("consolidating");
   if (caps.tombstones) classes.add("tombstones");
+  if (caps.callbacks) classes.add("callbacks");
   if (caps.topology) classes.add("topology");
 
   return classes;
@@ -570,6 +581,59 @@ export const TRIGGER_LABELS = {
   manual: "run by hand",
   wal: "triggered by the write-ahead log",
 };
+
+// ----------------------------------------------------------------- callbacks
+
+// CALLBACK_KIND_LABELS name what a queued delivery is about, in the words a person reads rather
+// than the wire enum.
+export const CALLBACK_KIND_LABELS = {
+  CALLBACK_KIND_MEMORY_FORGOTTEN: "memory forgotten",
+  CALLBACK_KIND_EVENT_FORGOTTEN: "event forgotten",
+  CALLBACK_KIND_SLEEP_COMPLETED: "sleep completed",
+};
+
+export function callbackKindLabel(kind) {
+  return CALLBACK_KIND_LABELS[kind] || "unknown";
+}
+
+// callbackQueueSummary is the one line above the table, and it exists because the numbers only mean
+// something together. A depth of 400 is a backlog or a busy cycle depending on how old the oldest
+// delivery is, and a delivery on its ninth attempt is a receiver that is refusing rather than one
+// that is slow - so depth, age and the worst attempt count are read as one sentence.
+//
+// Pure and clock-injected for ageLabel's reason: the boundaries are what wants testing, not
+// whatever Date.now() happens to be.
+export function callbackQueueSummary(data, now) {
+  if (!data || !data.enabled) {
+    return "Callbacks are not configured on this instance, so nothing is being queued or sent.";
+  }
+
+  const depth = Number(data.depth || 0);
+
+  if (!depth) return "Nothing is waiting to be delivered.";
+
+  const parts = [
+    `${depth.toLocaleString()} ${depth === 1 ? "delivery" : "deliveries"} waiting`,
+  ];
+
+  if (data.oldestQueuedAt && data.oldestQueuedAt !== "0") {
+    parts.push(`oldest queued ${ageLabel(now, data.oldestQueuedAt)}`);
+  }
+
+  // The worst attempt count on the page, not on the queue: this reads what was served. It is still
+  // the number worth surfacing, since the page is oldest-first and the oldest deliveries are the
+  // ones that have been retried most.
+  const attempts = (data.deliveries || []).reduce(
+    (worst, d) => Math.max(worst, Number(d.attempts || 0)),
+    0,
+  );
+
+  if (attempts > 1) {
+    parts.push(`up to ${attempts} attempts so far`);
+  }
+
+  return parts.join(", ") + ".";
+}
 
 // ------------------------------------------------------------------ topology
 

@@ -159,12 +159,13 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `event unlink`       | remove links between an event and others (`--id`, `--target` repeatable or positional)                                                         |
 | `event links`        | list an event's links (`--id`, `--direction both\|outbound\|inbound`)                                                                          |
 | `event create`       | create an event (`--name`, `--description`, `--significance`, `--group`, `--metadata k=v`, `--time-start`, `--time-end`, `--link eventID:sig`) |
+| `event update`       | apply a partial update to an event (`--id` plus any create field, `--clear-metadata`, `--clear-group`)                                         |
 | `event end`          | set an event's end time (`--id`, `--time-end`)                                                                                                 |
 | `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                                         |
 | `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                                  |
 | `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                                                |
-| `event get`          | fetch a single event (`--id`, `--memories`, `--memory-counts`)                                                                                 |
-| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--memories`, `--memory-counts`)   |
+| `event get`          | fetch a single event (`--id`, `--memories`, `--memory-counts`, `--links`)                                                                      |
+| `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--ended`, `--name-contains`, `--linked-to`, `--links`, `--memories`, `--memory-counts`) |
 
 ### Summarisation
 
@@ -182,6 +183,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `topology`        | report the deployment this instance is part of, and each component's health (`--all`)          |
 | `sleep`           | trigger a consolidation cycle now, or preview one (`--dry-run`)                                |
 | `status`          | when the next cycle is due, and what the last one forgot                                       |
+| `significance levels` | the significance values in use — the anchors a placement can name (`--significance-min/-max`) |
 | `forgotten list`  | list memories a cycle forgot, and why (`--memory-id`, `--group`, `--rule`, `--since`)          |
 | `forgotten clear` | delete records from the forgotten log (`--before` or `--all`)                                  |
 | `callbacks queue` | show the outbound callback queue: depth, ages, attempt counts (`--kind`, `--limit`)            |
@@ -277,6 +279,9 @@ rather than failing, `export` and `clear` included, so a scoped `export` is a pe
   placement flags: `--place-mode above|below|between`, `--place-anchor`/`--place-anchor-id`, and
   (for `between`) `--place-upper`/`--place-upper-id`. See
   [SignificancePlacement](../contract/hippocampus.proto).
+- `hippo significance levels` lists the values those anchors can name — the significance registry,
+  which one shared scale ranks memories and events on. Two **adjacent** values in that list have no
+  room between them, which is exactly the situation `--place-mode between` opens a gap for.
 
 ## Examples
 

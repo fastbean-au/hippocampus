@@ -8,6 +8,8 @@ import {
   ageLabel,
   b64url,
   bodyClassesFor,
+  callbackKindLabel,
+  callbackQueueSummary,
   capacityMeter,
   capsFromWhoAmI,
   capsWhenRefused,
@@ -241,6 +243,11 @@ let caps = {
   // applyCaps has run.
   consolidation: false,
   tombstones: false,
+  // False for the same reason: the callback card is hidden by .callbacks-only until whoami says
+  // otherwise, and startTopologyPolling reads this before fetching the queue - so an optimistic
+  // default would spend an admin RPC on every deployment that has no sink.
+  callbacks: false,
+  version: "",
   groups: [],
   groupScoped: false,
   status: 0,
@@ -354,6 +361,13 @@ function applyCaps() {
   // Sign out is offered only where there is a session to end: a deployment with authentication on
   // and a role resolved for this caller.
   $("logout-btn").classList.toggle("hidden", !(caps.authEnabled && caps.role));
+
+  // The build, when the service reports one. A binary built without module information reports
+  // nothing, and an empty pill saying "version:" would be worse than no pill.
+  const version = $("version-pill");
+
+  version.classList.toggle("hidden", !caps.version);
+  version.textContent = caps.version;
 
   const pill = $("role-pill");
 
@@ -780,6 +794,7 @@ const ACTIONS = {
 
   // --- Deployment tab
   "load-topology": () => loadTopology(),
+  "load-callbacks": () => loadCallbacks(),
   "topology-filter": () => renderTopology(),
   "topology-select": (el) => selectTopologyNode(el.dataset.node),
 };
@@ -3522,6 +3537,14 @@ async function fetchEvents() {
   const group = strOrUndef("ef-group");
   if (group) params.set("group", group);
 
+  const nameContains = strOrUndef("ef-name");
+  if (nameContains) params.set("name_contains", nameContains);
+
+  // The tri-state travels as its enum name, so "FALSE" is expressible - which is the whole reason
+  // the field is one. An empty select is no restriction.
+  const ended = $("ef-ended").value;
+  if (ended) params.set("ended", ended);
+
   // One parameter per pair (append, not set), exactly as the memories filter does: the filter is a
   // conjunction and the gateway parses a repeated field as repeated parameters.
   parseMetadataPairs($("ef-metadata").value, ",").forEach((pair) =>
@@ -3567,9 +3590,10 @@ function updateEventsPager(count, total) {
 }
 
 function clearEventFilter() {
-  ["ef-sigmin", "ef-sigmax", "ef-group", "ef-metadata"].forEach(
+  ["ef-sigmin", "ef-sigmax", "ef-group", "ef-metadata", "ef-name"].forEach(
     (id) => ($(id).value = ""),
   );
+  $("ef-ended").value = "";
   $("ef-extremum").value = "";
   $("ef-memories").checked = false;
   $("ef-sort").value = "significance";
@@ -3579,29 +3603,31 @@ function clearEventFilter() {
 
 async function saveEvent() {
   const id = $("ev-id").value;
+  const metadata = metadataFromForm("ev-metadata");
+  const body = {
+    name: $("ev-name").value,
+    description: $("ev-desc").value,
+    significance: intOrUndef("ev-sig"),
+    group: strOrUndef("ev-group"),
+    metadata: metadata,
+    time_start: localToNano($("ev-start").value),
+    time_end: localToNano($("ev-end").value),
+  };
 
+  // One PATCH for every field, which is what UpdateEvent made possible. Before it existed this
+  // branch could only send significance and end-time, and the other four inputs on the form were
+  // populated from the event and then silently discarded - the form said "edit" and meant "edit two
+  // of these".
   if (id) {
-    // The gateway only exposes significance and end-time updates for an existing event.
-    const sig = intOrUndef("ev-sig");
+    // Emptying the textarea on an edit means "remove the labels", exactly as it does on a memory:
+    // an absent map and an empty one are the same on the wire, so clear_metadata carries the intent.
+    if (metadata === undefined) body.clear_metadata = true;
 
     try {
-      if (sig !== undefined) {
-        await api(
-          "PATCH",
-          "/v1/events/" + encodeURIComponent(id) + "/significance",
-          { id, significance: sig },
-        );
-      }
-
-      const end = localToNano($("ev-end").value);
-
-      if (end) {
-        await api("POST", "/v1/events/" + encodeURIComponent(id) + "/end", {
-          id,
-          time_end: end,
-        });
-      }
-
+      await api("PATCH", "/v1/events/" + encodeURIComponent(id), {
+        ...body,
+        id,
+      });
       ok("Event updated", id);
       resetEventForm();
       loadEvents();
@@ -3611,16 +3637,6 @@ async function saveEvent() {
 
     return;
   }
-
-  const body = {
-    name: $("ev-name").value,
-    description: $("ev-desc").value,
-    significance: intOrUndef("ev-sig"),
-    group: strOrUndef("ev-group"),
-    metadata: metadataFromForm("ev-metadata"),
-    time_start: localToNano($("ev-start").value),
-    time_end: localToNano($("ev-end").value),
-  };
 
   try {
     const res = await api("POST", "/v1/events", body);
@@ -3658,7 +3674,7 @@ function editEvent(e) {
   $("ev-save").textContent = "Update";
   const hint = $("ev-edit-hint");
   hint.classList.remove("hidden");
-  hint.textContent = "Only significance and end-time are updatable via the API";
+  hint.textContent = "Editing existing event (partial update)";
   document.querySelector('nav button[data-tab="events"]').click();
   window.scrollTo({ top: 0, behavior: scrollBehaviour() });
 }
@@ -3745,6 +3761,15 @@ function startTopologyPolling() {
   stopTopologyPolling();
 
   loadTopology();
+
+  // The callback queue is fetched once per arrival, not polled: it is admin-gated and answers from
+  // a table rather than from a prober's snapshot, so re-reading it on the topology's cadence would
+  // be a query per component-probe interval for a number that changes when a cycle runs. Refresh is
+  // beside it for the operator watching a backlog drain.
+  //
+  // Guarded on the capability, so a deployment with no sink - where the card is hidden by CSS -
+  // does not spend an admin RPC per visit to the tab discovering that.
+  if (caps.callbacks && caps.isAdmin) loadCallbacks();
 }
 
 function stopTopologyPolling() {
@@ -3771,6 +3796,71 @@ function topologyVisibleNow() {
     document.visibilityState === "visible" &&
     $("tab-deployment").classList.contains("active")
   );
+}
+
+// --- the callback queue -------------------------------------------------------------------------
+//
+// The dispatcher's backlog, on the Deployment tab because it describes a DEPENDENCY - the receiver,
+// and whether it is keeping up - rather than anything about the store's contents. A queue that is
+// not draining means an endpoint is down, which is the same class of fact as a red node above it.
+//
+// It is one page and no pagination. An operator asking this question wants to know whether the
+// queue is draining, not to read four hundred deliveries; the CLI (`hippo callbacks queue`) is
+// where the whole queue is walked, and the Clear button deliberately is not here at all - it
+// discards notifications nobody will ever get, which is an act for a terminal and a confirmation
+// rather than a button beside a refresh.
+async function loadCallbacks() {
+  const params = new URLSearchParams();
+  const kind = $("cb-kind").value;
+
+  if (kind) params.set("kind", kind);
+
+  try {
+    const data = await api(
+      "GET",
+      "/v1/callbacks/queue" + (params.toString() ? "?" + params : ""),
+    );
+
+    renderCallbacks(data);
+  } catch (e) {
+    $("callback-summary").textContent = "";
+    $("callback-queue").innerHTML =
+      '<div class="empty">The callback queue could not be read.</div>';
+
+    fail("Callback queue", e);
+  }
+}
+
+function renderCallbacks(data) {
+  $("callback-summary").textContent = callbackQueueSummary(data, Date.now());
+
+  const deliveries = data.deliveries || [];
+
+  if (!deliveries.length) {
+    // Which of the two empties this is has already been said in the summary line above, so the
+    // table says only that there is nothing in it.
+    $("callback-queue").innerHTML =
+      '<div class="empty">Nothing pending.</div>';
+
+    return;
+  }
+
+  const rows = deliveries
+    .map(
+      (d) => `<tr>
+    <td>${esc(callbackKindLabel(d.kind))}</td>
+    <td>${esc(Number(d.itemCount || 0).toLocaleString())}</td>
+    <td>${ageCell(d.queuedAt)}</td>
+    <td>${esc(Number(d.attempts || 0))}</td>
+    <td>${ageCell(d.nextAttemptAt)}</td>
+  </tr>`,
+    )
+    .join("");
+
+  $("callback-queue").innerHTML = `<div class="tablewrap"><table>
+     <thead><tr><th>Kind</th><th>Items</th><th>Queued</th><th>Attempts</th><th>Next try</th></tr></thead>
+     <tbody>${rows}</tbody>
+   </table></div>`;
 }
 
 async function loadTopology() {

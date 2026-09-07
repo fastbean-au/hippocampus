@@ -233,7 +233,12 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   (`GetConsolidationStatus`), a capacity meter, and a feed off the forgotten log — and its **Decay**
   tab is the client side of `ExplainConsolidation`: a per-row value column in the memory/search
   tables, the current capacity pressure and threshold, an inline-SVG decay curve, and an
-  `admin`-gated dry-run panel over `PreviewConsolidation`. It computes **no** decay maths of its own
+  `admin`-gated dry-run panel over `PreviewConsolidation`. The **Deployment** tab also carries the
+  outbound callback queue (item 102.2) - depth, oldest delivery, worst attempt count - gated on
+  `admin` AND on `WhoAmI.callbacks_enabled`, because with no sink configured `GetCallbackQueue`
+  answers with an empty page rather than refusing, which on screen is a queue that is keeping up;
+  there is deliberately no Clear button, an abandoned delivery being a notification nobody will
+  ever receive. It computes **no** decay maths of its own
   — every number and every curve point is served — which is the whole reason those RPCs report what
   they do. A **guided tour** (item 93; `TOUR_STEPS`/`tourSteps`/`tourPlacement` in `lib.js`, the DOM
   layer at the foot of `app.js`) walks a first-time reader through the RELATIONSHIPS between those
@@ -1085,9 +1090,19 @@ github.com/fastbean-au/hippocampus => ../..`, so the modelcontextprotocol/go-sdk
   (`--transport http`). The tool surface is the per-item memory/event operations — `store_memory`,
   `update_memory`, `delete_memories` (a by-id scalpel), `recall_memories`, `search_memories`,
   `list_memories`, `link_memories`, `unlink_memories`, `get_memory_links`, `create_event`,
-  `end_event`, `list_events`, `get_summarisation_candidates` — deliberately
+  `update_event`, `end_event`, `get_event`, `list_events`, `link_events`, `unlink_events`,
+  `get_event_links`, `get_summarisation_candidates` — plus four **introspection** tools
+  (`significance_levels`, `explain_consolidation`, `consolidation_status`, `whoami`), deliberately
   excluding the admin/destructive and bulk data-movement RPCs (Purge, Sleep,
   Export/Import/Transfer/Clear, event delete/merge) so a model can't wipe or exfiltrate a store.
+  The four are reader-tier and none of them **enumerates**, which is the line that keeps
+  `PreviewConsolidation` off the surface while `ExplainConsolidation` is on it: the preview lists
+  ids from across the store, whereas explain answers only about ids the caller supplied and could
+  already read in full through `list_memories`. They exist because without them a model using this
+  as its memory could not ask the one question the store exists to answer — is this memory about to
+  go, and how long has it got — and because `whoami` is the FEATURE-DETECTION RPC whose absence was
+  already costing the bridge: `search_memories` offers semantic and hybrid and could only discover
+  that a deployment serves neither by having a search rejected (TODO-2 item 100.3).
   That set is now held exact in both directions by `TestServer_EndToEnd`, and to the
   table in `docs/mcp.md` by `TestEveryToolIsDocumented` — the registered set is a security
   statement, so a tool arriving unremarked is what wants noticing. The listing tools take RFC3339

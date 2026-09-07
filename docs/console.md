@@ -88,6 +88,21 @@ sparse diagram reads as "nothing declared" rather than "nothing running". The ta
 when the instance does not serve the view (`topology.enabled` false) and when the caller's tier is
 below `topology.minimumTier` — a control that would always be refused is worse than no control.
 
+It also carries the **outbound callback queue** (`admin`, and only where a sink is configured):
+depth, the age of the oldest delivery, and how many times the worst one has been retried. It sits
+here rather than beside the forgotten log because it describes a *dependency* — whether the receiver
+is keeping up — which is the same class of fact as a red node in the diagram above. It is one page
+and no pagination: the question is whether the queue is draining, and
+[`hippo callbacks queue`](cli.md) is where the whole queue is walked. Discarding deliveries is
+deliberately not offered here at all, since an abandoned delivery is a notification nobody will ever
+receive.
+
+The gate is two conditions rather than one, and the second is the interesting one. `GetCallbackQueue`
+is `admin` and refused to a group-scoped caller — a delivery batches memories across groups, so there
+is nothing to scope by. But on a deployment with **no sink configured** it does not refuse: it
+answers with an empty page, which on screen is indistinguishable from a queue that is simply keeping
+up. `WhoAmI`'s `callbacks_enabled` is what tells the two apart, and the card is hidden without it.
+
 ## Three things worth knowing
 
 - **The console computes no decay maths of its own.** Every value, threshold, projection and curve
@@ -96,7 +111,11 @@ below `topology.minimumTier` — a control that would always be refused is worse
   and the tab whose whole purpose is to be trusted is the wrong place for an approximation.
 - **Its filters are a deliberate subset of the RPCs'.** The Memories tab does not offer
   `is_summary`, `is_binary` or recall-count bounds: it is a browse, and those are questions asked
-  from a script. [`hippo memory list`](cli.md) has all of them.
+  from a script. [`hippo memory list`](cli.md) has all of them. The Events tab does offer
+  **Name contains** and **State**, which are not a browse convenience: neither search backend indexes
+  events, so a name substring is the only way to find an event by what it is called, and an event
+  that has not ended stores an end time of `0` — which every time bound reads as "no bound" — so no
+  date filter can ask which events are still running.
 - **It is not covered by the version number.** Like the demo stack and the Grafana dashboard, the
   console is excluded from the compatibility promises in [CHANGELOG.md](../CHANGELOG.md) — the RPCs
   it calls are not.

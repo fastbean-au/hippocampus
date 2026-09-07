@@ -20,6 +20,8 @@ import {
   cycleSummary,
   TRIGGER_LABELS,
   bodyClassesFor,
+  callbackKindLabel,
+  callbackQueueSummary,
   capsFromWhoAmI,
   capsWhenRefused,
   compactAge,
@@ -62,6 +64,7 @@ const whoami = (over = {}) => ({
   summariserEnabled: false,
   consolidationEnabled: true,
   tombstonesEnabled: false,
+  callbacksEnabled: false,
   ...over,
 });
 
@@ -182,6 +185,18 @@ test("bodyClassesFor covers the deployment x token matrix", () => {
       name: "admin on a replica",
       who: whoami({ role: "admin", consolidationEnabled: false }),
       want: ["admin", "unbound-admin"],
+    },
+    {
+      // The callback card needs BOTH: the queue's RPCs are admin, and on a deployment with no sink
+      // they answer with an empty page rather than refusing - which reads as a drained queue.
+      name: "admin with callbacks configured",
+      who: whoami({ role: "admin", callbacksEnabled: true }),
+      want: ["admin", "unbound-admin", "consolidating", "callbacks"],
+    },
+    {
+      name: "reader with callbacks configured",
+      who: whoami({ role: "reader", callbacksEnabled: true }),
+      want: ["readonly", "consolidating", "callbacks"],
     },
   ];
 
@@ -1582,4 +1597,71 @@ test("tourPlacement centres when the step points at nothing", () => {
   assert.equal(at.placement, "centre");
   assert.equal(at.top, 300);
   assert.equal(at.left, 320);
+});
+
+// --------------------------------------------------------------------- callbacks
+//
+// The queue's summary line is the whole reading of the card: depth alone says nothing (400 waiting
+// is a backlog or a busy cycle), and the difference is the age of the oldest one and how many times
+// it has been tried.
+
+test("callbackQueueSummary distinguishes a disabled feature from an empty queue", () => {
+  assert.match(
+    callbackQueueSummary({ enabled: false, depth: 0 }, 0),
+    /not configured/,
+  );
+
+  assert.equal(
+    callbackQueueSummary({ enabled: true, depth: 0 }, 0),
+    "Nothing is waiting to be delivered.",
+  );
+});
+
+test("callbackQueueSummary reads depth, age and attempts as one sentence", () => {
+  const now = 1_000_000; // ms
+  const queued = String(BigInt(now - 90_000) * 1_000_000n); // 90s earlier, in nanos
+
+  const summary = callbackQueueSummary(
+    {
+      enabled: true,
+      depth: 402,
+      oldestQueuedAt: queued,
+      deliveries: [{ attempts: 1 }, { attempts: 9 }],
+    },
+    now,
+  );
+
+  assert.match(summary, /402 deliveries waiting/);
+  assert.match(summary, /oldest queued/);
+
+  // A receiver that is refusing looks different from one that is slow, and only the attempt count
+  // says which.
+  assert.match(summary, /up to 9 attempts/);
+});
+
+test("callbackQueueSummary says 'delivery' for one", () => {
+  assert.match(
+    callbackQueueSummary({ enabled: true, depth: 1 }, 0),
+    /1 delivery waiting/,
+  );
+});
+
+// A single attempt is the normal case and adds nothing, so it is left off rather than reported as
+// "up to 1 attempts".
+test("callbackQueueSummary omits the attempt count when nothing has been retried", () => {
+  const summary = callbackQueueSummary(
+    { enabled: true, depth: 3, deliveries: [{ attempts: 1 }] },
+    0,
+  );
+
+  assert.doesNotMatch(summary, /attempts/);
+});
+
+test("callbackKindLabel names the kinds, and does not invent one", () => {
+  assert.equal(
+    callbackKindLabel("CALLBACK_KIND_MEMORY_FORGOTTEN"),
+    "memory forgotten",
+  );
+  assert.equal(callbackKindLabel("CALLBACK_KIND_SOMETHING_NEW"), "unknown");
+  assert.equal(callbackKindLabel(undefined), "unknown");
 });

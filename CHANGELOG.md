@@ -128,6 +128,48 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   deployment with no sink returns the same empty page as one whose queue is simply drained, and only
   the first is worth hiding a control for.
 
+- **The clients caught up with the contract, in one sweep.** Batch A above added RPCs; this is the
+  half that makes them reachable, together with two gaps the clients had of their own.
+
+  **`hippo`** gains `event update` (the full partial update, with `--clear-group`/`--clear-metadata`)
+  and `significance levels`, plus `--ended`, `--name-contains`, `--linked-to` and `--links` on
+  `event list` and `--links` on `event get`. `hippo whoami` now prints the service's version and
+  whether callbacks are configured. Shell completion picks all of it up from the same registry, so
+  nothing had to be told twice.
+
+  **The MCP bridge** gains nine tools and goes from thirteen to twenty-two. Four are the event
+  surface it never had — `update_event`, `get_event`, and the three event-link tools, while all
+  three memory-link tools were already registered — and `list_events` gains `ended`,
+  `name_contains` and `linked_to`. The other four are introspection: `significance_levels`,
+  `explain_consolidation`, `consolidation_status` and `whoami`.
+
+  Those four are the point. An LLM host using this as its memory had **no way to ask the one
+  question the store exists to answer**: is this memory about to go, and how long has it got?
+  `explain_consolidation` answers it per memory, in time to `recall_memories` on what matters. The
+  inclusion follows the curated surface's existing rule rather than bending it — all four are
+  `reader` and none of them *enumerates*, which is exactly what still keeps `PreviewConsolidation`
+  off the bridge. And `whoami` was already being missed: `search_memories` offers `semantic` and
+  `hybrid`, and without `search_modes` a model could only discover that a deployment serves neither
+  by having a search rejected — which is what that field exists to prevent.
+
+  **The console** can now edit an event. Its form had four inputs it populated from the event and
+  then silently discarded, under a hint reading "Only significance and end-time are updatable via
+  the API"; `UpdateEvent` retires both. The Events filter gains **Name contains** and **State**, and
+  the header shows the service version.
+
+- **A callback-queue card on the console's Deployment tab.** `GetCallbackQueue` was in the contract,
+  the CLI and the Grafana dashboard, and nowhere in the operator window that has a Now tab, a Decay
+  tab and a Deployment tab. It shows depth, the age of the oldest delivery and the worst attempt
+  count — read as one sentence, because depth alone says nothing: 400 waiting is a backlog or a busy
+  cycle depending on how old the oldest one is, and a delivery on its ninth attempt is a receiver
+  refusing rather than one that is slow.
+
+  It sits on the Deployment tab because it describes a *dependency* rather than the store's
+  contents, and it is gated on `callbacks_enabled` as well as `admin` — with no sink configured the
+  RPC answers with an empty page rather than refusing, which reads exactly like a queue that is
+  keeping up. Discarding deliveries is deliberately not offered: an abandoned delivery is a
+  notification nobody will ever receive, which is an act for a terminal.
+
 ### Fixed
 
 - **`time_end_max` matched every event that had not ended.** An open event stores `time_end` of `0`

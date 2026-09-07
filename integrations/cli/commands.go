@@ -132,6 +132,16 @@ func commands() map[string]command {
 			flags:   eventWriteFlags,
 			run:     runEventCreate,
 		},
+		"event update": {
+			summary: "apply a partial update to an existing event",
+			hint:    "--id ID [--name N] [--description D] [--significance N] [--group G] [--metadata k=v] [--clear-metadata]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.String("id", "", "id of the event to update (required)")
+				eventContentFlags(fs)
+				addPlacementFlags(fs)
+			},
+			run: runEventUpdate,
+		},
 		"event end": {
 			summary: "set an event's end time",
 			hint:    "--id ID [--time-end RFC3339]",
@@ -198,17 +208,18 @@ func commands() map[string]command {
 		},
 		"event get": {
 			summary: "fetch a single event by id",
-			hint:    "--id ID [--memories|--memory-counts]",
+			hint:    "--id ID [--memories|--memory-counts] [--links]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("id", "", "id of the event to fetch (required)")
 				fs.Bool("memories", false, "also load the event's memories")
 				fs.Bool("memory-counts", false, "report how many memories the event holds, without transferring them")
+				fs.Bool("links", false, "also load the event's outbound links")
 			},
 			run: runEventGet,
 		},
 		"event list": {
 			summary: "list events with optional filters",
-			hint:    "[--group G] [--significance-min N] [--limit N] [--memories|--memory-counts]",
+			hint:    "[--group G] [--ended false] [--name-contains T] [--linked-to ID] [--limit N] [--memories|--memory-counts]",
 			flags:   eventFilterFlags,
 			run:     runEventList,
 		},
@@ -216,6 +227,17 @@ func commands() map[string]command {
 			summary: "report the caller's identity and effective tier",
 			flags:   func(*pflag.FlagSet) {},
 			run:     runWhoAmI,
+		},
+		"significance levels": {
+			summary: "list the significance values in use (the anchors a placement can name)",
+			hint:    "[--significance-min N] [--significance-max N] [--limit N]",
+			flags: func(fs *pflag.FlagSet) {
+				fs.Int32("significance-min", 0, "inclusive lower bound (0 = no bound)")
+				fs.Int32("significance-max", 0, "inclusive upper bound (0 = no bound)")
+				fs.Int32("limit", 0, "page size (0 selects the server default of 200; capped at 1000)")
+				fs.Int32("offset", 0, "values to skip for pagination")
+			},
+			run: runSignificanceLevels,
 		},
 		"status": {
 			summary: "report the consolidation cycle's schedule and its last result",
@@ -384,16 +406,25 @@ func memoryWriteFlags(fs *pflag.FlagSet) {
 	addPlacementFlags(fs)
 }
 
-// eventWriteFlags is the event-create flag set.
-func eventWriteFlags(fs *pflag.FlagSet) {
-	fs.String("id", "", "event id (auto-generated UUID when omitted)")
-	fs.String("name", "", "event name (required)")
+// eventContentFlags is the set of event fields a create and an update both take, split out for the
+// reason memoryContentFlags is: the two commands share every field, and the pair of clearing flags
+// is meaningful only on the update - exactly as it is for memories, where StoreMemory ignores them.
+func eventContentFlags(fs *pflag.FlagSet) {
+	fs.String("name", "", "event name (required on create)")
 	fs.String("description", "", "event description")
-	fs.Int32("significance", 0, "significance; 0 leaves it unranked")
+	fs.Int32("significance", 0, "significance; 0 leaves it unranked (or unchanged on update)")
 	fs.String("group", "", "freeform grouping/context label")
-	fs.String("time-start", "", "start time as RFC3339 (defaults to now)")
+	fs.String("time-start", "", "start time as RFC3339 (defaults to now on create)")
 	fs.String("time-end", "", "end time as RFC3339 (0/unset means not ended)")
 	fs.StringSlice("metadata", nil, "metadata label as 'key=value' (repeatable)")
+	fs.Bool("clear-metadata", false, "on update, remove all metadata (an empty --metadata means 'leave unchanged')")
+	fs.Bool("clear-group", false, "on update, reset the group to empty (an empty --group means 'leave unchanged')")
+}
+
+// eventWriteFlags is the event-create flag set: content plus id, links, and placement.
+func eventWriteFlags(fs *pflag.FlagSet) {
+	fs.String("id", "", "event id (auto-generated UUID when omitted)")
+	eventContentFlags(fs)
 	fs.StringSlice("link", nil, "linked event as 'eventID:significance' (repeatable)")
 	addPlacementFlags(fs)
 }
@@ -454,6 +485,10 @@ func eventFilterFlags(fs *pflag.FlagSet) {
 	fs.Bool("memory-counts", false, "report how many memories each event holds, without transferring them")
 	fs.String("extremum", "", "'highest' or 'lowest' significance tie (ignores the significance range)")
 	fs.StringSlice("metadata", nil, "restrict to events carrying this 'key=value' label (repeatable; all must match)")
+	fs.String("ended", "", "'true' for events that have ended, 'false' for those still running")
+	fs.String("name-contains", "", "restrict to events whose name contains this substring (case-insensitive)")
+	fs.String("linked-to", "", "restrict to the events one hop from this event id, in either direction")
+	fs.Bool("links", false, "include each event's outbound links")
 }
 
 // addPlacementFlags registers the shared significance-placement flags.
@@ -845,17 +880,11 @@ func runMemorySearch(ctx context.Context, client contract.HippocampusClient, fs 
 }
 
 func runEventCreate(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
-	name := str(fs, "name")
-	if name == "" {
+	if str(fs, "name") == "" {
 		return fmt.Errorf("--name is required")
 	}
 
-	timeStart, err := parseTime(fs, "time-start")
-	if err != nil {
-		return err
-	}
-
-	timeEnd, err := parseTime(fs, "time-end")
+	event, err := eventFromFlags(fs, str(fs, "id"))
 	if err != nil {
 		return err
 	}
@@ -865,30 +894,31 @@ func runEventCreate(ctx context.Context, client contract.HippocampusClient, fs *
 		return err
 	}
 
-	place, err := placementFromFlags(fs)
-	if err != nil {
-		return err
-	}
-
-	metadata, err := parseMetadata(strs(fs, "metadata"))
-	if err != nil {
-		return err
-	}
-
-	event := &contract.Event{
-		Id:           str(fs, "id"),
-		Name:         name,
-		Description:  str(fs, "description"),
-		Significance: i32(fs, "significance"),
-		Group:        str(fs, "group"),
-		TimeStart:    timeStart,
-		TimeEnd:      timeEnd,
-		Links:        links,
-		Placement:    place,
-		Metadata:     metadata,
-	}
+	event.Links = links
 
 	resp, err := client.StoreEvent(ctx, event)
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runEventUpdate is runMemoryUpdate's counterpart, and the reason `event end` and
+// `event significance` are not enough: those two reach one field each, and every other field an
+// event carries was unreachable from any client until UpdateEvent landed.
+func runEventUpdate(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	id := str(fs, "id")
+	if id == "" {
+		return fmt.Errorf("--id is required")
+	}
+
+	event, err := eventFromFlags(fs, id)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.UpdateEvent(ctx, event)
 	if err != nil {
 		return err
 	}
@@ -980,6 +1010,7 @@ func runEventGet(ctx context.Context, client contract.HippocampusClient, fs *pfl
 		Id:           id,
 		Memories:     b(fs, "memories"),
 		MemoryCounts: b(fs, "memory-counts"),
+		Links:        b(fs, "links"),
 	})
 	if err != nil {
 		return err
@@ -1019,6 +1050,11 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 		return err
 	}
 
+	ended, err := triStateFromFlag(fs, "ended")
+	if err != nil {
+		return err
+	}
+
 	req := &contract.GetEventsRequest{
 		TimeStartMin:         tsStartMin,
 		TimeStartMax:         tsStartMax,
@@ -1035,6 +1071,10 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 		MemoryCounts:         b(fs, "memory-counts"),
 		SignificanceExtremum: ext,
 		Metadata:             strs(fs, "metadata"),
+		Ended:                ended,
+		NameContains:         str(fs, "name-contains"),
+		LinkedTo:             str(fs, "linked-to"),
+		Links:                b(fs, "links"),
 	}
 
 	resp, err := client.GetEvents(ctx, req)
@@ -1047,6 +1087,25 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 
 func runWhoAmI(ctx context.Context, client contract.HippocampusClient, _ *pflag.FlagSet, r *renderer) error {
 	resp, err := client.WhoAmI(ctx, &contract.EmptyRequest{})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runSignificanceLevels lists the significance values in use. It is the anchor list the placement
+// flags position against: --place-anchor names a value, and until this existed the only way to know
+// which values existed was to have chosen them.
+func runSignificanceLevels(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	req := &contract.GetSignificanceLevelsRequest{
+		SignificanceMin: i32(fs, "significance-min"),
+		SignificanceMax: i32(fs, "significance-max"),
+		Limit:           i32(fs, "limit"),
+		Offset:          i32(fs, "offset"),
+	}
+
+	resp, err := client.GetSignificanceLevels(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -1459,6 +1518,45 @@ func memoryFromFlags(fs *pflag.FlagSet, id string) (*contract.Memory, error) {
 		EventId:       str(fs, "event-id"),
 		Group:         str(fs, "group"),
 		TimeStamp:     timestamp,
+		Placement:     place,
+		Metadata:      metadata,
+		ClearMetadata: b(fs, "clear-metadata"),
+		ClearGroup:    b(fs, "clear-group"),
+	}, nil
+}
+
+// eventFromFlags builds an Event from the shared content flags, for the create and the update
+// alike. Links are deliberately not read here: they are a create-only input (the update ignores
+// them, since LinkEvents/UnlinkEvents is where the graph is edited), so the caller adds them.
+func eventFromFlags(fs *pflag.FlagSet, id string) (*contract.Event, error) {
+	timeStart, err := parseTime(fs, "time-start")
+	if err != nil {
+		return nil, err
+	}
+
+	timeEnd, err := parseTime(fs, "time-end")
+	if err != nil {
+		return nil, err
+	}
+
+	place, err := placementFromFlags(fs)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata, err := parseMetadata(strs(fs, "metadata"))
+	if err != nil {
+		return nil, err
+	}
+
+	return &contract.Event{
+		Id:            id,
+		Name:          str(fs, "name"),
+		Description:   str(fs, "description"),
+		Significance:  i32(fs, "significance"),
+		Group:         str(fs, "group"),
+		TimeStart:     timeStart,
+		TimeEnd:       timeEnd,
 		Placement:     place,
 		Metadata:      metadata,
 		ClearMetadata: b(fs, "clear-metadata"),
