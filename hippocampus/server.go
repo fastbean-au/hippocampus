@@ -226,6 +226,11 @@ type Server struct {
 	// cycle run under configuration that may since have changed.
 	lastCycle atomic.Pointer[cycleReport]
 
+	// version is the build identification main.go derived and handed in (Dependencies.Version). It
+	// is reported by WhoAmI and on GetTopology's self node - the same string, since a client asking
+	// either question is asking about this process.
+	version string
+
 	sleepReset                chan bool
 	minimumEventSignificance  int32
 	minimumMemorySignificance int32
@@ -587,7 +592,8 @@ func New(deps Dependencies) *Server {
 	// Built last, so the specs describe the server as it finally is - the search backend in
 	// particular is only decided by the dependency that was handed in, and the reconcile interval is
 	// resolved a few lines above this.
-	s.topology = topologyFromViper(deps.Version)
+	s.version = deps.Version
+	s.topology = topologyFromViper(s.version)
 	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
 
 	s.startTopologyProber()

@@ -106,6 +106,13 @@ var policies = map[string]rpcPolicy{
 	"SearchMemories":             {TierReader, http.MethodPost, "/v1/memories/search"},
 	"GetSummarisationCandidates": {TierReader, http.MethodGet, "/v1/summarisation/candidates"},
 
+	// The significance registry: the distinct values in use, and nothing about who carries them.
+	// Reader because it enumerates no record at all - one shared registry ranks memories and events
+	// alike, so a value is a property of the scale rather than of the store's contents - and because
+	// a client that cannot see it is choosing SignificancePlacement anchors blind, which is the whole
+	// reason the RPC exists.
+	"GetSignificanceLevels": {TierReader, http.MethodGet, "/v1/significance/levels"},
+
 	// Reading an item's links is a read of that item's associations, at the same tier as reading the
 	// item itself: it returns ids the caller could already reach through GetMemories/GetEvents, and
 	// nothing about their content.
@@ -150,6 +157,7 @@ var policies = map[string]rpcPolicy{
 	// writes
 	"StoreEvent":                 {TierWriter, http.MethodPost, "/v1/events"},
 	"EndEvent":                   {TierWriter, http.MethodPost, "/v1/events/*/end"},
+	"UpdateEvent":                {TierWriter, http.MethodPatch, "/v1/events/*"},
 	"UpdateEventSignificance":    {TierWriter, http.MethodPatch, "/v1/events/*/significance"},
 	"MergeEvents":                {TierWriter, http.MethodPost, "/v1/events/merge"},
 	"DeleteEvent":                {TierWriter, http.MethodDelete, "/v1/events/*"},

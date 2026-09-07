@@ -130,3 +130,46 @@ func TestWhoAmI_Authenticated(t *testing.T) {
 		t.Fatalf("expected auth_enabled=true role=reader client_id=console-1, got %+v", res)
 	}
 }
+
+// TestWhoAmI_VersionAndCallbacks covers the two fields item 103 added: the build, which no other
+// gRPC-reachable RPC reports unconditionally, and the callback capability flag, which exists for
+// tombstones_enabled's reason - an empty queue and a disabled feature render identically.
+//
+// Both are properties of the DEPLOYMENT, so both must be reported on the unauthenticated path as
+// well; that is the half this asserts twice.
+func TestWhoAmI_VersionAndCallbacks(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		version   string
+		callbacks bool
+	}{
+		{"a stamped build with callbacks on", "v1.2.3", true},
+		{"a stamped build with callbacks off", "v1.2.3", false},
+		{"no build information", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer(t)
+
+			s.version = tc.version
+			s.callbacksEnabled = tc.callbacks
+
+			for _, ctx := range []context.Context{
+				context.Background(),
+				auth.ContextWithTier(context.Background(), auth.TierReader),
+			} {
+				res, err := s.WhoAmI(ctx, &contract.EmptyRequest{})
+				if err != nil {
+					t.Fatalf("WhoAmI: %s", err)
+				}
+
+				if res.GetVersion() != tc.version {
+					t.Errorf("version = %q, want %q", res.GetVersion(), tc.version)
+				}
+
+				if res.GetCallbacksEnabled() != tc.callbacks {
+					t.Errorf("callbacks_enabled = %v, want %v", res.GetCallbacksEnabled(), tc.callbacks)
+				}
+			}
+		})
+	}
+}

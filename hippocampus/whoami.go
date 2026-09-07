@@ -28,6 +28,14 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 	summariser := s.summariser().Enabled()
 	consolidating := s.consolidationEnabled
 	tombstones := s.consolidation.tombstones
+	callbacks := s.callbacksEnabled
+
+	// The build, reported here because this is the only RPC that can be relied on to carry it. It is
+	// on the self node of GetTopology too, but that view is optional, tier-configurable and refused
+	// outright to a group-scoped caller, so a client asking what it is talking to had three ways to
+	// be told nothing. Every other place the version appears - --version, the startup log, /healthz -
+	// is unreachable from a gRPC client.
+	version := s.version
 
 	// The topology tier is reported the same way and for the same reason - it is what this
 	// deployment requires of anyone asking, not what this caller happens to hold - so a client
@@ -54,6 +62,8 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 			ConsolidationEnabled: consolidating,
 			TombstonesEnabled:    tombstones,
 			TopologyTier:         topologyTier,
+			CallbacksEnabled:     callbacks,
+			Version:              version,
 		}, nil
 	}
 
@@ -68,6 +78,8 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 		ConsolidationEnabled: consolidating,
 		TombstonesEnabled:    tombstones,
 		TopologyTier:         topologyTier,
+		CallbacksEnabled:     callbacks,
+		Version:              version,
 	}, nil
 }
 

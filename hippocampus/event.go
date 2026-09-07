@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/types"
@@ -122,6 +123,80 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 		}
 		res.MemoryCount = int32(c)
 	}
+
+	return &res, nil
+}
+
+// UpdateEvent applies a partial update to an existing event: only the fields carrying a value
+// (time_start, time_end, significance, name, description, group, metadata) overwrite the stored
+// row, with clear_group/clear_metadata to unset the two whose own zero value cannot say it. Nested
+// memories and links are not updatable here - memories are a StoreEvent input, links are edited
+// through LinkEvents/UnlinkEvents. An unknown id returns NotFound rather than creating a phantom
+// event.
+//
+// It is UpdateMemory's counterpart in every respect that matters, including the scope rules, and
+// the storage half (db.UpdateEvent) was written as that mirror from the start - the contract simply
+// exposed two fields of it, through EndEvent and UpdateEventSignificance, and nothing reached the
+// other five. Both of those remain: each carries semantics this RPC does not (a defaulted end time,
+// a placement-only significance change) and both are already in every client.
+func (s *Server) UpdateEvent(ctx context.Context, in *contract.Event) (*contract.GeneralResponse, error) {
+	var res contract.GeneralResponse
+
+	if in.GetId() == "" {
+		return &res, status.Error(codes.InvalidArgument, "id must be provided")
+	}
+
+	event := types.EventFromProto(in)
+
+	// Validated as an update, so an absent name/time_start is "leave unchanged" rather than a
+	// missing required field. SetDefaults is deliberately NOT called: it would stamp a new
+	// time_start on every partial update.
+	if err := event.Validate(true); err != nil {
+		tel.eventsRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+		return &res, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// The event being updated must be in the caller's scope.
+	if err := s.scopeEventIds(ctx, []string{in.GetId()}); err != nil {
+		return &res, err
+	}
+
+	// A group on an update MOVES the event, so it is checked against the scope rather than
+	// defaulted, exactly as UpdateMemory reasons through it: a scoped caller may re-file a record
+	// within its own partition but must not be able to push one out of it. This RPC is what makes
+	// that possible for events at all - before it, an event could not be re-filed by anybody.
+	if groups, bound := s.scopedGroups(ctx); bound {
+		if event.Group != "" && !auth.GroupInScope(groups, event.Group) {
+			return &res, status.Errorf(codes.PermissionDenied, "group %q is outside this token's scope", event.Group)
+		}
+
+		if event.ClearGroup {
+			return &res, status.Error(codes.PermissionDenied, "a group-scoped token cannot clear a record's group, which would move it outside its own scope")
+		}
+	}
+
+	// A placement is resolved to a level id here; an absolute significance is resolved by the store,
+	// and neither leaves the event's significance unchanged - the same three-way split UpdateMemory
+	// and UpdateEventSignificance both use.
+	if err := s.resolveEventSignificance(ctx, in.GetSignificance(), in.GetPlacement(), &event); err != nil {
+		if errors.Is(err, db.ErrInvalidPlacement) {
+			return &res, status.Error(codes.InvalidArgument, err.Error())
+		}
+
+		return &res, mapError(err)
+	}
+
+	ok, err := s.db.UpdateEvent(ctx, event)
+	if err != nil {
+		return &res, mapError(err)
+	}
+
+	if !ok {
+		return &res, status.Errorf(codes.NotFound, "event '%s' not found", in.GetId())
+	}
+
+	res.Ok = true
 
 	return &res, nil
 }
@@ -332,6 +407,14 @@ func (s *Server) GetEventById(ctx context.Context, in *contract.GetEventByIdRequ
 		res.Event.MemoryCount = int32(counts[eid])
 	}
 
+	// Attached from the store rather than derived from anything already read: an event's links are
+	// rows in their own table, and the read above deliberately does not join to them.
+	if in.GetLinks() {
+		attached := []types.Event{*event}
+		s.attachEventLinks(ctx, attached)
+		res.Event.Links = types.LinksToProto(attached[0].Links)
+	}
+
 	if in.GetMemories() {
 		memories, err := s.db.GetMemoriesByEventId(ctx, eid)
 		if err != nil {
@@ -455,11 +538,46 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		Limit:                limit,
 		Offset:               offset,
 
-		Metadata: metadata,
+		Metadata:     metadata,
+		Ended:        triState(in.GetEnded()),
+		NameContains: in.GetNameContains(),
 	}
 
 	// The caller's group scope, as a predicate so it narrows before the LIMIT and the total count.
 	filter.Groups, _ = s.scopedGroups(ctx)
+
+	// linked_to narrows the listing to one event's direct neighbours, resolved to ids and passed
+	// down as a filter so it composes with every other filter and with pagination - the same shape
+	// GetMemories' linked_to has, including its short-circuit on an empty neighbourhood.
+	if linkedTo := in.GetLinkedTo(); linkedTo != "" {
+		// The anchor must be one the caller can see; its neighbours are then narrowed by the scope
+		// predicate on the filter, so a link reaching out of the partition contributes nothing.
+		if err := s.scopeEventIds(ctx, []string{linkedTo}); err != nil {
+			return &res, err
+		}
+
+		missing, err := s.db.MissingEventIds(ctx, []string{linkedTo})
+		if err != nil {
+			return &res, mapError(err)
+		}
+
+		if len(missing) > 0 {
+			return &res, status.Errorf(codes.NotFound, "no such event: %s", linkedTo)
+		}
+
+		linked, err := s.db.LinkedEventIds(ctx, []string{linkedTo})
+		if err != nil {
+			return &res, mapError(err)
+		}
+
+		// No neighbours is an empty page, not an unrestricted one: an empty id set left on the
+		// filter would read as "no id restriction" and return the whole store.
+		if len(linked) == 0 {
+			return &res, nil
+		}
+
+		filter.Ids = linked
+	}
 
 	events, err := s.db.GetEvents(ctx, filter)
 	if err != nil {
@@ -482,6 +600,11 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 	case filter.Offset > 0:
 		total = filter.Offset + len(*events)
 
+	}
+
+	// Before the proto conversion, since ToProto is what carries the links across.
+	if in.GetLinks() {
+		s.attachEventLinks(ctx, *events)
 	}
 
 	es := make([]*contract.Event, len(*events))

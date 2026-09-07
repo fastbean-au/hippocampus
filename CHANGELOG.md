@@ -70,7 +70,83 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   some other file. The deployment topology view reports which backend is in use and probes the
   directory like any other dependency.
 
+- **`UpdateEvent`: an event's name, description, group and metadata are editable at last.** The
+  storage layer has always carried a full partial update for events, written as `db.UpdateMemory`'s
+  mirror and commented as one. The contract exposed **two** of its seven fields, through `EndEvent`
+  and `UpdateEventSignificance`, and nothing reached the other five — so an event created with a
+  typo'd name kept it until it was forgotten, metadata could be attached only at creation, and a
+  group-scoped caller had no way to re-file an event at all while `UpdateMemory` let them re-file a
+  memory.
+
+  That this was an oversight rather than a boundary is written into the contract itself:
+  `Event.clear_metadata` and `Event.clear_group` are documented as "on UpdateEvent, ...", and
+  `Event.metadata` as having "replace-wholesale semantics on update" — three field comments naming a
+  method that did not exist. The console had written an apology for it, populating four editable
+  fields and then silently discarding them.
+
+  `PATCH /v1/events/{id}` takes an `Event` and is shaped exactly like `UpdateMemory`, including that
+  a `group` on an update **moves** the record and is checked against a scoped caller's scope rather
+  than defaulted. `EndEvent` and `UpdateEventSignificance` stay: each carries semantics this does
+  not (a defaulted end time, a placement-only change), and both are already in every client.
+
+- **Four filters that bring the event listing level with the memory one.** `GetEvents` gains
+  `ended`, `name_contains`, `linked_to` and `links`, and `GetEventById` gains `links`.
+
+  `ended` is the tri-state `Bool` that answers "what is still running?", which no bound could:
+  an open event stores `time_end` of `0`, and `0` is every numeric bound's "no bound" value. It is
+  the pairing `recalled` and `time_recalled_max` already have on the memory side, arriving with the
+  fix below for the same reason they did.
+
+  `name_contains` closes a real retrieval hole. `EventFilter` carried time, significance, group and
+  metadata and **no name predicate of any kind**, while both search backends index memories only —
+  so in a store whose events are routinely named after their content (a thread named from its
+  opening post, an hourly event named per service, a chapter), the only way to find "the thread
+  about the election" was to page every event there was. It is a substring match, case-insensitive
+  on all three drivers and unindexed exactly as `group` and `metadata` are; full-text over event
+  names is a much larger piece of work and is not started here.
+
+  `linked_to` and `links` mirror `GetMemories`' two link parameters, closing the last gap the link
+  graph left: the event half had no listing-level read.
+
+- **`GetSignificanceLevels`: the significance registry can be read.** `SignificancePlacement` lets a
+  client rank an item _between_ two existing values, and `significance_extremum` lets it ask for the
+  highest or lowest — but nothing listed the values in use, so a client using placement was choosing
+  anchors it could not see. `GET /v1/significance/levels` returns them ascending, bounded and paged;
+  two **adjacent** values in the list are the situation placement exists to open a gap for.
+
+  It is `reader` tier and answered in full to a group-scoped caller. One registry ranks memories and
+  events alike, so a value names no record and there is no per-group scale to partition — and the
+  decay maths a scoped caller's memories are subject to runs on this one.
+
+- **`WhoAmI` reports the service's version and whether callbacks are configured.** `--version`
+  prints the build, the startup log names it and `/healthz` returns it, and every one of those is
+  unreachable from a gRPC client: the CLI, the MCP bridge, the five broker bridges and the ingestor
+  could learn it only from `GetTopology`'s `self` node, which is optional, tier-configurable and
+  refused outright to a group-scoped caller. `version` on `WhoAmI` is none of those things.
+
+  `callbacks_enabled` joins it for `tombstones_enabled`'s argument exactly: `GetCallbackQueue` on a
+  deployment with no sink returns the same empty page as one whose queue is simply drained, and only
+  the first is worth hiding a control for.
+
 ### Fixed
+
+- **`time_end_max` matched every event that had not ended.** An open event stores `time_end` of `0`
+  and the filter applied a plain `time_end <= ?`, so "events that ended before Friday" returned
+  everything still running as well. The memory side treats the identical situation as a trap and
+  guards it twice over — `time_recalled_max` excludes the never-recalled, and `recalled` is the
+  tri-state that asks about them instead — and `GetEventsRequest.order_by` already warned about the
+  same zero for the `time_end` ordering, so the value had been reasoned about for the sort and not
+  for the filter.
+
+  Both `time_end` bounds now ask only about events that have ended. **This changes what an existing
+  filter returns**: a caller passing `time_end_max` today gets open events back and will stop. It is
+  filed here rather than under **Breaking** because no caller can be relying on "ended before X"
+  meaning "ended before X, or not at all" — but it is a behaviour change to a shipped field, and
+  `ended: FALSE` is what now asks the question the old behaviour answered by accident.
+
+- **`UpdateMemory`'s contract comment omitted `metadata`.** It listed the fields an update writes as
+  "significance, body, event_id, group, time_stamp"; `metadata` is written too, and `clear_metadata`
+  honoured, as both the CLI and the MCP bridge already expose.
 
 - **`deploy/observability/README.md` had drifted by six alert rules.** It said sixteen rules in two
   groups, ten of them about the service; twenty-two ship, sixteen of them about the service. The six

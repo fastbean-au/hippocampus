@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -720,4 +721,104 @@ func (d *DB) CompactSignificanceLevels(ctx context.Context) error {
 	}
 
 	return tx.Commit()
+}
+
+// SignificanceLevelFilter bounds a read of the registry (GetSignificanceLevels). A zero bound means
+// no bound, per the package's usual rule; Limit/Offset page the result exactly as the listings do.
+type SignificanceLevelFilter struct {
+	SignificanceMin int32
+	SignificanceMax int32
+	Limit           int
+	Offset          int
+}
+
+// significanceLevelConditions builds the shared WHERE clause for the two readers below, so the page
+// and its total count stay in lock-step over the same predicate - the same arrangement
+// eventFilterConditions has with CountEventsFiltered.
+//
+// The registry holds ranks, not the unranked state: an item with no significance carries a NULL
+// level id and is not a row here, so there is no zero to exclude.
+func significanceLevelConditions(filter SignificanceLevelFilter) (string, []any) {
+	query := ` WHERE 1=1`
+	var args []any
+
+	if filter.SignificanceMin > 0 {
+		query += ` AND level_rank >= ?`
+		args = append(args, filter.SignificanceMin)
+	}
+
+	if filter.SignificanceMax > 0 {
+		query += ` AND level_rank <= ?`
+		args = append(args, filter.SignificanceMax)
+	}
+
+	return query, args
+}
+
+// SignificanceLevels returns the distinct significance values in use, ascending. It is the read
+// behind GetSignificanceLevels: a client using SignificancePlacement positions relative to these
+// values, and until this existed it had to know them already.
+//
+// It reads only the registry - one row per distinct value, never the items carrying them - so it
+// costs nothing proportional to the store's size and touches neither memories nor events.
+func (d *DB) SignificanceLevels(ctx context.Context, filter SignificanceLevelFilter) ([]int32, error) {
+	log.Trace("func() db.SignificanceLevels")
+
+	where, args := significanceLevelConditions(filter)
+
+	query := `SELECT level_rank FROM ` + significanceLevelsTable + where + ` ORDER BY level_rank ASC`
+
+	if filter.Limit > 0 {
+		query += ` LIMIT ` + strconv.Itoa(filter.Limit)
+	}
+
+	if filter.Offset > 0 {
+		query += ` OFFSET ` + strconv.Itoa(filter.Offset)
+	}
+
+	ctx, cancel := d.opContext(ctx)
+	defer cancel()
+
+	rows, err := d.query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ranks []int32
+
+	for rows.Next() {
+		var rank int32
+
+		if err := rows.Scan(&rank); err != nil {
+			return nil, err
+		}
+
+		ranks = append(ranks, rank)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return ranks, nil
+}
+
+// CountSignificanceLevels returns how many levels match the filter, ignoring Limit/Offset so the
+// caller can size pagination.
+func (d *DB) CountSignificanceLevels(ctx context.Context, filter SignificanceLevelFilter) (int, error) {
+	log.Trace("func() db.CountSignificanceLevels")
+
+	where, args := significanceLevelConditions(filter)
+
+	ctx, cancel := d.opContext(ctx)
+	defer cancel()
+
+	var count int
+
+	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+significanceLevelsTable+where, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }

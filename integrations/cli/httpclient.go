@@ -50,6 +50,12 @@ func (c *httpClient) WhoAmI(ctx context.Context, in *contract.EmptyRequest, _ ..
 	return out, c.do(ctx, http.MethodGet, "/v1/whoami", nil, nil, out)
 }
 
+func (c *httpClient) GetSignificanceLevels(ctx context.Context, in *contract.GetSignificanceLevelsRequest, _ ...grpc.CallOption) (*contract.GetSignificanceLevelsResponse, error) {
+	out := &contract.GetSignificanceLevelsResponse{}
+
+	return out, c.doQuery(ctx, http.MethodGet, "/v1/significance/levels", in, nil, out)
+}
+
 func (c *httpClient) GetTopology(ctx context.Context, in *contract.EmptyRequest, _ ...grpc.CallOption) (*contract.GetTopologyResponse, error) {
 	out := &contract.GetTopologyResponse{}
 
@@ -66,6 +72,12 @@ func (c *httpClient) StoreEvent(ctx context.Context, in *contract.Event, _ ...gr
 	out := &contract.StoreEventResponse{}
 
 	return out, c.do(ctx, http.MethodPost, "/v1/events", nil, in, out)
+}
+
+func (c *httpClient) UpdateEvent(ctx context.Context, in *contract.Event, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	out := &contract.GeneralResponse{}
+
+	return out, c.do(ctx, http.MethodPatch, "/v1/events/"+pathSegment(in.GetId()), nil, in, out)
 }
 
 func (c *httpClient) EndEvent(ctx context.Context, in *contract.EndEventRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {

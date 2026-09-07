@@ -96,6 +96,7 @@ var scopes = map[string]scopeMode{
 	// Addressed by id: checked against the scope before use, NotFound if outside it.
 	"ExplainConsolidation":       scopeIds,
 	"EndEvent":                   scopeIds,
+	"UpdateEvent":                scopeIds,
 	"UpdateEventSignificance":    scopeIds,
 	"MergeEvents":                scopeIds,
 	"DeleteEvent":                scopeIds,
@@ -144,6 +145,19 @@ var scopes = map[string]scopeMode{
 
 	// WhoAmI describes the caller to itself and reads no stored record.
 	"WhoAmI": scopeNone,
+
+	// GetSignificanceLevels reads the significance registry - the distinct values in use - and no
+	// item ranked by one. There is a single registry behind both memories and events, so a level is
+	// store-global and names nobody; it is not scopeUnbound for the same reason
+	// GetConsolidationStatus is not, and more strongly, since it enumerates nothing about the store's
+	// contents at all.
+	//
+	// A scoped caller is answered in full rather than shown only the values their own records carry.
+	// That would be a per-group scale, which does not exist: placement anchors against the whole
+	// registry, and handing a bound caller a filtered list would leave them positioning against
+	// values they had not been told about. It is the same argument that shows a scoped caller
+	// ExplainConsolidation's store-global threshold.
+	"GetSignificanceLevels": scopeNone,
 
 	// GetConsolidationStatus reports the sleep cycle's schedule and the aggregate counts of the last
 	// one. It names no record - no ids, no groups, no bodies - so there is nothing to scope, which

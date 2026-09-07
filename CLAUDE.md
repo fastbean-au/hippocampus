@@ -766,8 +766,20 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   when the next cycle is due plus what the last one did — the last of these being the only one that
   answers "when", and the only one that does NOT refuse on a replica, since reporting
   `consolidation_enabled: false` is the answer there), `WhoAmI` (reports the caller's
-  effective authorisation tier, so the web console can adapt), and the transfer/archive surface
-  (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). Each RPC carries a
+  effective authorisation tier plus the deployment's capability flags and its `version` — the only
+  gRPC-reachable place the build is reported, since `--version`, the startup log and `/healthz` are
+  all unreachable from a gRPC client and `GetTopology` is optional, tier-configurable and refused to
+  a scoped caller), `GetSignificanceLevels` (the distinct significance values in use: the registry
+  `SignificancePlacement` positions against, which a client had no way to see - `reader`,
+  `scopeNone`, and answered in full to a group-scoped caller because there is no per-group scale),
+  and the transfer/archive surface
+  (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). The event surface mirrors the memory one
+  since item 94: `UpdateEvent` is `UpdateMemory`'s counterpart (`patch /v1/events/{id}`, the full
+  partial update `db.UpdateEvent` always carried, with `EndEvent`/`UpdateEventSignificance` kept as
+  the convenience routes), and `GetEvents` carries `ended`, `name_contains`, `linked_to` and `links`
+  beside `GetEventById.links`. `ended` arrived with the fix to `time_end_max`, which matched every
+  open event because an open event stores `time_end = 0` - the same pairing, and the same reasoning,
+  as `recalled` and `time_recalled_max`. Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see
   [Configurability](docs/configuration.md#configurability) for the full mapping); `go generate
 ./contract` (directive in `generate.go`) turns those into `hippocampus.pb.gw.go` (the gateway)

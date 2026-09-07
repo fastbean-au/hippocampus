@@ -56,6 +56,33 @@ func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
+// likeEscape is the escape character the package's LIKE predicates declare. It is '#' rather than
+// the customary backslash because a backslash inside a SQL string literal is itself dialect
+// business - MySQL treats it as an escape unless NO_BACKSLASH_ESCAPES is set - and a clause that
+// has to be spelled differently per dialect is a clause that belongs in dialect.go. This one does
+// not need to be.
+const likeEscape = '#'
+
+// escapeLikePattern neutralises the LIKE wildcards in caller-supplied text, so a substring filter
+// asks for the characters the caller typed rather than for a pattern they did not write. The
+// escape character is escaped first, or escaping the wildcards would produce sequences this then
+// escapes a second time.
+func escapeLikePattern(in string) string {
+	var out strings.Builder
+
+	out.Grow(len(in))
+
+	for _, r := range in {
+		if r == likeEscape || r == '%' || r == '_' {
+			out.WriteRune(likeEscape)
+		}
+
+		out.WriteRune(r)
+	}
+
+	return out.String()
+}
+
 func scanMemory(rows *sql.Rows) (types.Memory, error) {
 	var m types.Memory
 	var body []byte

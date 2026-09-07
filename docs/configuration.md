@@ -231,6 +231,7 @@ a JSON body:
 | `GetEvents`                  | GET    | `/v1/events`                      |
 | `GetEventById`               | GET    | `/v1/events/{id}`                 |
 | `DeleteEvent`                | DELETE | `/v1/events/{id}`                 |
+| `UpdateEvent`                | PATCH  | `/v1/events/{id}`                 |
 | `EndEvent`                   | POST   | `/v1/events/{id}/end`             |
 | `UpdateEventSignificance`    | PATCH  | `/v1/events/{id}/significance`    |
 | `MergeEvents`                | POST   | `/v1/events/merge`                |
@@ -248,6 +249,7 @@ a JSON body:
 | `UnlinkEvents`               | POST   | `/v1/events/{id}/links/delete`    |
 | `GetEventLinks`              | GET    | `/v1/events/{id}/links`           |
 | `GetSummarisationCandidates` | GET    | `/v1/summarisation/candidates`    |
+| `GetSignificanceLevels`      | GET    | `/v1/significance/levels`         |
 | `SummariseMemories`          | POST   | `/v1/events/{event_id}/summarise` |
 | `Export`                     | POST   | `/v1/export`                      |
 | `Import`                     | POST   | `/v1/import`                      |
@@ -349,6 +351,67 @@ GET /v1/memories?recalled=FALSE&order_by=significance
 never-recalled memory has `time_recalled` of `0`, so an upper bound would otherwise sweep in every
 memory that was never recalled at all — "recalled before Tuesday" answering with memories that were
 never recalled would be a trap rather than a filter.
+
+#### Event filters
+
+`GetEvents` carries the same shape of filter for the questions events raise:
+
+| Parameter                             | Meaning                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `ended`                               | `FALSE` for events that have not ended, `TRUE` for those that have                        |
+| `time_end_min` / `time_end_max`       | inclusive UnixNano bounds on the end time; both ask only about events that **have** ended |
+| `name_contains`                       | restrict to events whose name contains this substring, case-insensitively                 |
+| `linked_to`                           | restrict to the events one hop from this event id, in either direction                    |
+| `links`                               | when true, populate each returned event's outbound links                                  |
+
+`ended` is the tri-state `Bool`, for the reason `recalled` is one on the memory side: an event that
+has not ended stores `time_end` of `0`, which is also every numeric bound's "no bound" value, so one
+field cannot ask both questions.
+
+`time_end_max` **excludes open events**, which is the same treatment `time_recalled_max` gives the
+never-recalled and a **change in behaviour** from releases before 0.42.0, where "ended before
+Friday" returned every event still running. Use `ended: FALSE` to ask about those.
+
+`name_contains` is a substring match, not a content search: neither search backend indexes events at
+all (see [Content search](#content-search)), so an event's `name` and `description` are reachable
+only through this filter. It is matched case-insensitively on every driver, and `%` and `_` in the
+value are literal characters rather than wildcards. Like `group` and `metadata` it is
+**unindexed**, so on a large store it is best combined with a time range or a page size.
+
+`linked_to` and `links` mirror `GetMemories`' two link parameters exactly, including that `links`
+lists an event's **outbound** edges only — ask `GetEventLinks` for both directions.
+
+#### Editing an event
+
+`UpdateEvent` (`PATCH /v1/events/{id}`) applies a partial update: every field carrying a value —
+`time_start`, `time_end`, `significance`/`placement`, `name`, `description`, `group`, `metadata` —
+overwrites the stored row, with `clear_group` and `clear_metadata` to unset the two whose own zero
+value cannot say it. An unknown id is `NotFound` rather than a create. Nested `memories` and `links`
+are ignored: memories are a `StoreEvent` input, and links are edited through
+`LinkEvents`/`UnlinkEvents`, which report what became of each one.
+
+`EndEvent` and `UpdateEventSignificance` remain, and are the shorter route where they fit:
+`EndEvent` defaults `time_end` to now, and `UpdateEventSignificance` is the significance change on
+its own.
+
+A `group` on an update **moves** the event, exactly as it does on `UpdateMemory` — see
+[Group scoping](#group-scoping) for what that means for a scoped caller.
+
+#### The significance registry
+
+`GetSignificanceLevels` (`GET /v1/significance/levels`) lists the distinct significance values
+currently in use, ascending, bounded by `significance_min`/`significance_max` and paged by
+`limit`/`offset` (default 200, capped at 1,000).
+
+It exists for `SignificancePlacement`: positioning a new item "just above the 5s" or "between 5 and
+6" means naming anchors, and until this RPC there was no way to see what the anchors were. Two
+**adjacent** values in the list have no room between them, which is precisely the situation
+placement opens a gap for.
+
+One registry ranks memories and events alike, so a value says nothing about which records carry it —
+which is why it is `reader` tier and why a group-scoped caller is answered in full rather than shown
+a partition. There is no per-group significance scale, and the decay maths a scoped caller's
+memories are subject to runs on this one.
 
 ### Server reflection
 
@@ -626,6 +689,12 @@ time, so it identifies the exact commit even for a `go build` from a working tre
 is logged at startup, reported in the `/healthz` body, and set as the OTEL `service.version`
 resource attribute when observability is enabled. The Docker image also carries an
 `org.opencontainers.image.version` label (`--build-arg VERSION=<tag>`).
+
+A client is told the same string by **`WhoAmI`**, in its `version` field. Everything above is
+either a command line, a log, or an HTTP probe, so a gRPC-only client — the CLI, the MCP bridge, the
+broker bridges, the ingestor — had no way to ask what it was talking to: `GetTopology`'s `self` node
+carries it, but that view is optional (`topology.enabled`), tier-configurable, and refused outright
+to a group-scoped caller. `WhoAmI` is reader-tier and always available.
 
 ### Deployment topology
 
@@ -970,8 +1039,8 @@ everything a lower one can:
 
 | Tier     | May call                                                                                                                                                                                                                                     |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `WhoAmI`, `GetTopology`¹ |
-| `writer` | everything `reader` can, plus `StoreEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `GetSignificanceLevels`, `WhoAmI`, `GetTopology`¹ |
+| `writer` | everything `reader` can, plus `StoreEvent`, `UpdateEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
 | `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                    |
 
 The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and
@@ -1884,6 +1953,11 @@ a deleted delivery is a notification that will never be sent.
 
 Both are `admin` and both are refused to a group-scoped caller; see
 [Authorisation](#authorisation) for why.
+
+`WhoAmI` reports **`callbacks_enabled`** alongside its other deployment flags, so a client can tell
+the two states an empty queue has: nothing waiting to be delivered, and nothing that will ever be
+delivered. They render identically otherwise, which is the same argument `tombstones_enabled` was
+added for.
 
 #### Where it runs
 

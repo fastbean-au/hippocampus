@@ -675,6 +675,14 @@ func (d *DB) LinkedMemoryIds(ctx context.Context, ids []string) ([]string, error
 	return d.linkedIds(ctx, memoryGraph, ids)
 }
 
+// LinkedEventIds is LinkedMemoryIds for the event graph, backing the GetEvents linked_to filter.
+// One hop, in either direction, for the same reason.
+func (d *DB) LinkedEventIds(ctx context.Context, ids []string) ([]string, error) {
+	log.Trace("func() db.LinkedEventIds")
+
+	return d.linkedIds(ctx, eventGraph, ids)
+}
+
 func (d *DB) linkedIds(ctx context.Context, graph linkGraph, ids []string) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil

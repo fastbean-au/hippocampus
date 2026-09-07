@@ -202,7 +202,7 @@
     },
     "/v1/events": {
       "get": {
-        "summary": "GetEvents lists events filtered by time range, significance range, group, and metadata,\npaginated by limit/offset (see GetEventsRequest). significance_extremum swaps the\nsignificance_min/max range for \"only events tied at the highest (or lowest) significance\nvalue\" instead. order_by/order_dir choose the sort field and direction.",
+        "summary": "GetEvents lists events filtered by time range, significance range, group, metadata, name\nsubstring, open/ended state and link neighbourhood, paginated by limit/offset (see\nGetEventsRequest). significance_extremum swaps the significance_min/max range for \"only events\ntied at the highest (or lowest) significance value\" instead. order_by/order_dir choose the\nsort field and direction.",
         "operationId": "Hippocampus_GetEvents",
         "responses": {
           "200": {
@@ -347,6 +347,40 @@
               "SORT_DIRECTION_DESC"
             ],
             "default": "SORT_DIRECTION_UNSPECIFIED"
+          },
+          {
+            "name": "ended",
+            "description": "optional: FALSE returns only events that have not ended (time_end = 0), TRUE only those that have; UNSPECIFIED (default) applies no restriction. This is what answers \"what is still running?\" - time_end_min cannot, because 0 there means no bound. The events' counterpart to GetMemoriesRequest.recalled, and there for the same reason\n\n - UNSPECIFIED: not set; on Memory.is_binary the server treats this the same as FALSE, on a filter it applies no restriction\n - FALSE: explicitly false\n - TRUE: explicitly true",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "UNSPECIFIED",
+              "FALSE",
+              "TRUE"
+            ],
+            "default": "UNSPECIFIED"
+          },
+          {
+            "name": "nameContains",
+            "description": "optional: restrict to events whose name contains this substring, case-insensitively. Unindexed, exactly as the group and metadata filters are, and a substring match rather than a content search - an event's name and description are in no search index. Empty (the default) applies no restriction",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "links",
+            "description": "when true, populate each returned event's links (outbound only, like Event.links - ask GetEventLinks for both directions)",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "linkedTo",
+            "description": "optional: restrict to events linked to this event id, in either direction (one hop). NotFound if that event does not exist. The events' counterpart to GetMemoriesRequest.linked_to",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -536,6 +570,13 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          },
+          {
+            "name": "links",
+            "description": "true also loads the event's outbound links into the response (see Event.links); GetEventLinks reads both directions",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -572,6 +613,45 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      },
+      "patch": {
+        "summary": "UpdateEvent applies a partial update to an existing event: only the fields carrying a value\n(time_start, time_end, significance, name, description, group, metadata) overwrite the stored\nrow, with clear_group/clear_metadata to unset the two whose own zero value cannot say it.\nmemories and links are NOT updatable here - nested memories are a StoreEvent input, and links\nare edited through LinkEvents/UnlinkEvents, which can report what became of each one and\nreject a target that does not exist. An unknown id returns NotFound (no event is created).",
+        "description": "EndEvent and UpdateEventSignificance remain the convenience routes for the two fields they\nname - EndEvent defaults time_end to now, UpdateEventSignificance carries a placement - and\nboth fields are also settable here, placement included, so editing several at once is one call\nrather than three.",
+        "operationId": "Hippocampus_UpdateEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GeneralResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "auto-generated UUID if omitted on create; max 128 characters",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HippocampusUpdateEventBody"
+            }
           }
         ],
         "tags": [
@@ -1372,7 +1452,7 @@
     },
     "/v1/memories/{id}": {
       "patch": {
-        "summary": "UpdateMemory applies a partial update to an existing memory: only the fields carrying a value\n(significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and\nis_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary\n- so any updated content must stay consistent with the memory's existing is_binary/is_summary:\na non-binary memory is re-indexed for content search, so its new body must remain valid text,\nand a summary memory should keep summary-appropriate content. An unknown id returns NotFound\n(no memory is created).",
+        "summary": "UpdateMemory applies a partial update to an existing memory: only the fields carrying a value\n(significance, body, event_id, group, time_stamp, metadata) overwrite the stored row. is_binary and\nis_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary\n- so any updated content must stay consistent with the memory's existing is_binary/is_summary:\na non-binary memory is re-indexed for content search, so its new body must remain valid text,\nand a summary memory should keep summary-appropriate content. An unknown id returns NotFound\n(no memory is created).",
         "operationId": "Hippocampus_UpdateMemory",
         "responses": {
           "200": {
@@ -1552,6 +1632,64 @@
             }
           }
         },
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/significance/levels": {
+      "get": {
+        "summary": "GetSignificanceLevels lists the distinct significance values currently in use - the\nsignificance registry, which is the scale SignificancePlacement positions against. Without it\na client using placement is choosing anchors it cannot see, and a client choosing an absolute\nsignificance is guessing at the scheme a store already uses.",
+        "description": "It names no stored record: one shared registry ranks memories and events alike, so a value is\nstore-global and says nothing about who carries it. That is why it is reader tier and why a\ngroup-scoped caller is answered in full rather than refused - there is nothing here to\npartition.",
+        "operationId": "Hippocampus_GetSignificanceLevels",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetSignificanceLevelsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "significanceMin",
+            "description": "inclusive lower bound; 0 (the default) means no lower bound, NOT a literal significance-of-zero filter",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "significanceMax",
+            "description": "inclusive upper bound; 0 (the default) means no upper bound",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "limit",
+            "description": "page size; a value \u003c= 0 selects the server default (200); values above the server cap (1000) are silently clamped down to it",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "offset",
+            "description": "rows to skip for pagination; negative values are clamped to 0; no upper bound",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
         "tags": [
           "Hippocampus"
         ]
@@ -1795,6 +1933,88 @@
           "title": "targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target"
         }
       }
+    },
+    "HippocampusUpdateEventBody": {
+      "type": "object",
+      "properties": {
+        "timeStart": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; defaults to the current time when unset (0) on create; required (\u003e 0) once defaulted"
+        },
+        "timeEnd": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano; 0 means the event has not ended yet (see EndEvent); when set, must not be before time_start"
+        },
+        "significance": {
+          "type": "integer",
+          "format": "int32",
+          "title": "0 = unranked (rank it later via UpdateEventSignificance/placement); must be \u003e= 0; higher ranks more significant"
+        },
+        "name": {
+          "type": "string",
+          "title": "required (non-empty) on create; max 256 characters"
+        },
+        "description": {
+          "type": "string",
+          "title": "optional; max 1024 characters"
+        },
+        "memoriesConsolidated": {
+          "type": "boolean",
+          "title": "read-only: true once a sleep cycle has deleted (consolidated) some of this event's memories; ignored on write"
+        },
+        "linkSignificance": {
+          "type": "string",
+          "format": "int64",
+          "title": "read-only: sum of this event's links' significance values, inbound and outbound, calculated by the server; ignored on write"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Link"
+          },
+          "title": "links this event declares to other events, weighted into its memories' value (see consolidation.linkSignificanceWeight). Outbound only, like Memory.links - ask GetEventLinks for both directions"
+        },
+        "memories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Memory"
+          },
+          "title": "populated on read only when requested (GetEventById/GetEvents); write-only input on StoreEvent, stored via the same rules as StoreMemory"
+        },
+        "group": {
+          "type": "string",
+          "title": "optional freeform grouping/context label (system, subsystem, owner, ...); max 128 characters"
+        },
+        "placement": {
+          "$ref": "#/definitions/v1SignificancePlacement",
+          "title": "write-only: rank relative to existing values (see SignificancePlacement)"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "optional multi-dimensional classification, exactly as Memory.metadata: same key charset, same 32-key/512-byte-value/4096-byte bounds, same replace-wholesale semantics on update, same opacity to the server"
+        },
+        "clearMetadata": {
+          "type": "boolean",
+          "title": "write-only: on UpdateEvent, remove all metadata (see Memory.clear_metadata for why the empty map cannot say it)"
+        },
+        "clearGroup": {
+          "type": "boolean",
+          "title": "write-only: on UpdateEvent, reset group to empty (see Memory.clear_group)"
+        },
+        "memoryCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "read-only: memories currently attached to this event, populated only when asked for (GetEventsRequest.memory_counts, GetEventByIdRequest.memory_counts - see there for why it is opt-in); 0 otherwise, which is indistinguishable from an event holding none, so ask for the count if you need to tell them apart. Counted within the caller's group scope, exactly as the nested memories are filtered. Ignored on write"
+        }
+      },
+      "description": "Event is a named time span with its own significance, optionally carrying links to\nother events and/or nested memories. memories/links are populated on read only when\nrequested (GetEventById, GetEvents); on StoreEvent nested memories are write-only input, each\nstored via the same rules as StoreMemory."
     },
     "HippocampusUpdateEventSignificanceBody": {
       "type": "object",
@@ -2654,6 +2874,25 @@
         }
       }
     },
+    "v1GetSignificanceLevelsResponse": {
+      "type": "object",
+      "properties": {
+        "significances": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": "the distinct significance values in use, ascending. Two ADJACENT values have no room between them - that is what SignificancePlacement exists to open, and what makes this list the set of anchors a placement can name"
+        },
+        "totalCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "values matching the bounds, ignoring limit/offset - for pagination"
+        }
+      },
+      "description": "GetSignificanceLevelsResponse lists the significance values in use, ascending."
+    },
     "v1GetSummarisationCandidatesResponse": {
       "type": "object",
       "properties": {
@@ -3221,7 +3460,7 @@
           "title": "BETWEEN only: the upper bound by an existing item's id; that item must already be ranked (significance \u003e 0)"
         }
       },
-      "description": "SignificancePlacement positions an item's significance relative to existing values instead of\ntaking the absolute `significance` field. It exists because significance is a dense integer with\nno room between adjacent values: this lets a client say \"just above the 5s\" or \"between 5 and 6\"\nand have the server open a gap for it. Write-only on StoreEvent/StoreMemory/UpdateMemory and\nUpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the\nabsolute `significance` value is used as-is (0 meaning unranked)."
+      "description": "SignificancePlacement positions an item's significance relative to existing values instead of\ntaking the absolute `significance` field. It exists because significance is a dense integer with\nno room between adjacent values: this lets a client say \"just above the 5s\" or \"between 5 and 6\"\nand have the server open a gap for it. Write-only on StoreEvent/StoreMemory/UpdateMemory/\nUpdateEvent and UpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the\nabsolute `significance` value is used as-is (0 meaning unranked)."
     },
     "v1SortDirection": {
       "type": "string",
@@ -3504,6 +3743,14 @@
         "topologyTier": {
           "type": "string",
           "description": "topology_tier is the minimum authorization tier GetTopology requires on this deployment\n(topology.minimumTier), as a tier name. It is reported rather than resolved to a bool because\nit belongs with its neighbours above, which are all properties of the DEPLOYMENT and never of\nthe caller; a client compares it against the role it was told in this same response, which is\nwhere it already decides what to offer.\n\nEmpty means the RPC is unavailable here (topology.enabled false), which is not the same as\nbeing refused it - so a client can leave the view out entirely rather than offer a control\ncertain to fail."
+        },
+        "version": {
+          "type": "string",
+          "description": "version is the build this instance is running, in the form --version prints and /healthz\nreturns. It is here because those two are the only other places it appears, and neither is\nreachable by a gRPC client: the CLI, the MCP bridge, the broker bridges and the ingestor could\npreviously learn it only from GetTopology's self node, which is optional (topology.enabled),\ntier-configurable, and refused outright to a group-scoped caller - so a client that wanted to\ncheck what it was talking to had three ways to be told nothing.\n\nEmpty when the build carries no identification at all, which is what a binary built without\nmodule information reports."
+        },
+        "callbacksEnabled": {
+          "type": "boolean",
+          "description": "callbacks_enabled reports whether outbound callbacks are configured here\n(callbacks.url, and this instance running the dispatcher). It is a deployment property like\nits neighbours above, and it is here for tombstones_enabled's argument exactly: an empty\nqueue and a disabled feature render identically, so a client shown GetCallbackQueue's empty\npage cannot tell \"nothing is waiting to be delivered\" from \"nothing will ever be delivered\"."
         }
       },
       "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."

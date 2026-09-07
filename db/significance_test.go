@@ -596,3 +596,78 @@ func TestMigrateSignificanceToLevels(t *testing.T) {
 
 	assertMigratedRegistry(t, d)
 }
+
+// TestSignificanceLevels covers the registry read behind GetSignificanceLevels: the distinct values
+// in use, ascending, bounded and paged. It is the one read in the package that answers about the
+// SCALE rather than about anything ranked on it, which is why a memory and an event sharing a value
+// contribute one entry between them.
+func TestSignificanceLevels(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	for _, e := range []types.Event{
+		{Id: "e1", Name: "a", TimeStart: 100, Significance: 3},
+		{Id: "e2", Name: "b", TimeStart: 100, Significance: 7},
+	} {
+		if _, err := d.CreateEvent(ctx, e); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", e.Id, err)
+		}
+	}
+
+	for _, m := range []types.Memory{
+		// 3 is already a level; this must not produce a second entry for it.
+		{Id: "m1", Body: "x", TimeStamp: 100, Significance: 3},
+		{Id: "m2", Body: "x", TimeStamp: 100, Significance: 5},
+
+		// Unranked, so it is not a level at all - there is no zero row to exclude.
+		{Id: "m3", Body: "x", TimeStamp: 100},
+	} {
+		if _, err := d.CreateMemory(ctx, m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	all, err := d.SignificanceLevels(ctx, SignificanceLevelFilter{})
+	if err != nil {
+		t.Fatalf("SignificanceLevels: %s", err)
+	}
+
+	want := []int32{3, 5, 7}
+
+	if len(all) != len(want) {
+		t.Fatalf("SignificanceLevels returned %v, want %v", all, want)
+	}
+
+	for i, rank := range want {
+		if all[i] != rank {
+			t.Fatalf("SignificanceLevels returned %v, want %v (ascending)", all, want)
+		}
+	}
+
+	count, err := d.CountSignificanceLevels(ctx, SignificanceLevelFilter{})
+	if err != nil {
+		t.Fatalf("CountSignificanceLevels: %s", err)
+	}
+
+	if count != len(want) {
+		t.Errorf("CountSignificanceLevels = %d, want %d", count, len(want))
+	}
+
+	bounded, err := d.SignificanceLevels(ctx, SignificanceLevelFilter{SignificanceMin: 4, SignificanceMax: 6})
+	if err != nil {
+		t.Fatalf("SignificanceLevels(bounded): %s", err)
+	}
+
+	if len(bounded) != 1 || bounded[0] != 5 {
+		t.Errorf("SignificanceLevels(4..6) = %v, want [5]", bounded)
+	}
+
+	paged, err := d.SignificanceLevels(ctx, SignificanceLevelFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatalf("SignificanceLevels(paged): %s", err)
+	}
+
+	if len(paged) != 1 || paged[0] != 5 {
+		t.Errorf("SignificanceLevels(limit 1, offset 1) = %v, want [5]", paged)
+	}
+}

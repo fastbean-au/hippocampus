@@ -431,6 +431,26 @@ type EventFilter struct {
 	// Group, which is the filter the client asked for. See that field for why empty means the whole
 	// store.
 	Groups []string
+
+	// Ids restricts the result to these events, exactly as MemoryFilter.Ids does for memories, and
+	// for the same caller: the linked-to filter resolves an event's neighbours and passes them here
+	// so traversal composes with the other filters and with pagination. Empty means unrestricted.
+	Ids []string
+
+	// NameContains restricts the result to events whose name contains this substring, matched
+	// case-insensitively. Empty means unrestricted. It is unindexed, exactly as Group and Metadata
+	// are, and it is a substring match rather than a content search - an event's name and
+	// description are in neither search backend, both of which index memories only.
+	NameContains string
+
+	// Ended is tri-state for the reason MemoryFilter.Recalled is: an event that has not ended
+	// stores time_end = 0, so a Go bool could not distinguish "only the ones still running" from
+	// "no restriction", and still-running is the question this filter exists to answer.
+	//
+	// It is the other half of the fix TimeEndMax carries. That bound now excludes time_end = 0
+	// rather than matching it, so "ended before X" no longer answers with every open event in the
+	// store; this is what asks about those events instead.
+	Ended TriState
 }
 
 // SignificanceExtremum mirrors contract.SignificanceExtremum without the db package depending on
@@ -552,6 +572,12 @@ type Store interface {
 	// inflated toward the int32 ceiling; a best-effort maintenance step run from the sleep cycle.
 	CompactSignificanceLevels(ctx context.Context) error
 
+	// SignificanceLevels/CountSignificanceLevels read the registry itself - the distinct significance
+	// values in use - which is what a client positioning with SignificancePlacement needs to see its
+	// anchors. Both read only the registry, never the items ranked by it.
+	SignificanceLevels(ctx context.Context, filter SignificanceLevelFilter) ([]int32, error)
+	CountSignificanceLevels(ctx context.Context, filter SignificanceLevelFilter) (int, error)
+
 	BeginCallbackCycle(cycleId int64)
 	EndCallbackCycle() (memoryIds []string, eventIds []string, memoryMore int, eventMore int)
 	QueueCallbacks(ctx context.Context, deliveries []CallbackDelivery) error
@@ -617,6 +643,11 @@ type Store interface {
 	// advances a decay clock and deliberately leaves recall_count alone.
 	LinkedMemoryIds(ctx context.Context, ids []string) ([]string, error)
 	ReinforceLinkedMemories(ctx context.Context, ids []string, fraction float64) error
+
+	// LinkedEventIds is the same one hop over the event graph, backing the GetEvents linked_to
+	// filter. There is no event counterpart to spreading activation - decay values events, not
+	// their neighbours' recall clocks - so it appears alone.
+	LinkedEventIds(ctx context.Context, ids []string) ([]string, error)
 
 	// ImportMemoryLinks/ImportEventLinks are the import's second pass, applied once every row in the
 	// batch exists so a link's target may legitimately appear after the item declaring it. They

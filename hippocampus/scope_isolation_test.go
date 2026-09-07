@@ -309,6 +309,29 @@ func TestGroupScopeIsolation_Reads(t *testing.T) {
 
 		assertNoLeak(t, "GetConsolidationStatus", res.String())
 	})
+
+	// The significance registry is scopeNone for the same reason, and one step further: a level is a
+	// value on a store-global scale, carrying no id, group or body to leak. What is asserted is that
+	// the answer is COMPLETE - the seed ranks group b's records too, so a filtered reply would hide
+	// anchors a bound caller's own placements have to position against.
+	t.Run("GetSignificanceLevels answers a scoped caller in full", func(t *testing.T) {
+		res, err := s.GetSignificanceLevels(ctx, &contract.GetSignificanceLevelsRequest{})
+		if err != nil {
+			t.Fatalf("GetSignificanceLevels: %s", err)
+		}
+
+		assertNoLeak(t, "GetSignificanceLevels", res.String())
+
+		unscoped, err := s.GetSignificanceLevels(context.Background(), &contract.GetSignificanceLevelsRequest{})
+		if err != nil {
+			t.Fatalf("GetSignificanceLevels (unscoped): %s", err)
+		}
+
+		if len(res.GetSignificances()) != len(unscoped.GetSignificances()) {
+			t.Errorf("a scoped caller saw %d levels, an unscoped one %d - the registry is store-global and must not be partitioned",
+				len(res.GetSignificances()), len(unscoped.GetSignificances()))
+		}
+	})
 }
 
 // TestGroupScopeIsolation_Writes drives every mutating RPC as a caller scoped to group "a".
@@ -403,6 +426,34 @@ func TestGroupScopeIsolation_Writes(t *testing.T) {
 	t.Run("EndEvent", func(t *testing.T) {
 		_, err := s.EndEvent(ctx, &contract.EndEventRequest{Id: "e-b", TimeEnd: 999})
 		assertNotFound(t, "EndEvent", err)
+	})
+
+	t.Run("UpdateEvent", func(t *testing.T) {
+		_, err := s.UpdateEvent(ctx, &contract.Event{Id: "e-b", Name: "overwritten"})
+		assertNotFound(t, "UpdateEvent", err)
+
+		stored, err := s.db.GetEvent(context.Background(), "e-b")
+		if err != nil {
+			t.Fatalf("reading back e-b: %s", err)
+		}
+
+		if stored.Name == "overwritten" {
+			t.Error("UpdateEvent mutated another group's event despite returning an error")
+		}
+	})
+
+	t.Run("UpdateEvent cannot push a record out of scope", func(t *testing.T) {
+		_, err := s.UpdateEvent(ctx, &contract.Event{Id: "e-a", Group: "b"})
+
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("UpdateEvent(group=b) = %v, want PermissionDenied", err)
+		}
+
+		_, err = s.UpdateEvent(ctx, &contract.Event{Id: "e-a", ClearGroup: true})
+
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("UpdateEvent(clear_group) = %v, want PermissionDenied", err)
+		}
 	})
 
 	t.Run("UpdateEventSignificance", func(t *testing.T) {
@@ -780,6 +831,7 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"GetSummarisationCandidates": true,
 		"WhoAmI":                     true,
 		"GetConsolidationStatus":     true,
+		"GetSignificanceLevels":      true,
 
 		// TestGroupScopeIsolation_Writes
 		"StoreMemory":                true,
@@ -787,6 +839,7 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		"UpdateMemory":               true,
 		"DeleteMemories":             true,
 		"EndEvent":                   true,
+		"UpdateEvent":                true,
 		"UpdateEventSignificance":    true,
 		"DeleteEvent":                true,
 		"MergeEvents":                true,

@@ -445,14 +445,54 @@ func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 		args = append(args, filter.TimeEndMin)
 	}
 
+	// Both bounds are asked only of events that have actually ended, exactly as memoryFilterConditions
+	// asks its time_recalled pair only of memories that have been recalled - and for the identical
+	// reason. An event that has not ended stores time_end = 0, so the lower bound excludes it
+	// naturally while a plain upper bound would sweep in every open event in the store: "events that
+	// ended before Friday" answering with everything still running. The explicit > 0 makes the two
+	// symmetric, and Ended below is what asks about the open ones.
 	if filter.TimeEndMax > 0 {
-		query += ` AND time_end <= ?`
+		query += ` AND time_end > 0 AND time_end <= ?`
 		args = append(args, filter.TimeEndMax)
+	}
+
+	// An open event stores time_end = 0 rather than NULL (see the schema), so both arms compare
+	// against 0 and neither needs a NULL special case.
+	switch filter.Ended {
+
+	case TriStateFalse:
+		query += ` AND time_end = 0`
+
+	case TriStateTrue:
+		query += ` AND time_end > 0`
+
 	}
 
 	if filter.Group != "" {
 		query += ` AND group_name = ?`
 		args = append(args, filter.Group)
+	}
+
+	// Ids restricts the result to a known set - the linked-to filter resolves an event's neighbours
+	// and passes them here, exactly as memoryFilterConditions does. An empty (nil) slice is no
+	// restriction; a caller holding an empty set must short-circuit rather than ask for "in nothing".
+	if len(filter.Ids) > 0 {
+		query += ` AND id IN (` + placeholders(len(filter.Ids)) + `)`
+
+		for _, id := range filter.Ids {
+			args = append(args, id)
+		}
+	}
+
+	// A case-insensitive substring match over the name, LOWER() on both sides rather than relying on
+	// the column's collation: SQLite's LIKE folds ASCII case, Postgres' does not, and MySQL's follows
+	// whatever collation the column carries - three answers to the same query is not a filter anyone
+	// can use. The escape character is '#' rather than the customary backslash because writing a
+	// backslash in a string literal is itself dialect-specific (MySQL doubles it unless
+	// NO_BACKSLASH_ESCAPES is set), and this way the clause is byte-identical on all three.
+	if filter.NameContains != "" {
+		query += ` AND LOWER(name) LIKE LOWER(?) ESCAPE '` + string(likeEscape) + `'`
+		args = append(args, "%"+escapeLikePattern(filter.NameContains)+"%")
 	}
 
 	// The caller's group scope, conjoined with the Group filter above (see MemoryFilter.Groups).

@@ -30,7 +30,9 @@ const (
 	Hippocampus_DeleteCallbackQueue_FullMethodName        = "/hippocampus.v1.Hippocampus/DeleteCallbackQueue"
 	Hippocampus_WhoAmI_FullMethodName                     = "/hippocampus.v1.Hippocampus/WhoAmI"
 	Hippocampus_GetTopology_FullMethodName                = "/hippocampus.v1.Hippocampus/GetTopology"
+	Hippocampus_GetSignificanceLevels_FullMethodName      = "/hippocampus.v1.Hippocampus/GetSignificanceLevels"
 	Hippocampus_StoreEvent_FullMethodName                 = "/hippocampus.v1.Hippocampus/StoreEvent"
+	Hippocampus_UpdateEvent_FullMethodName                = "/hippocampus.v1.Hippocampus/UpdateEvent"
 	Hippocampus_EndEvent_FullMethodName                   = "/hippocampus.v1.Hippocampus/EndEvent"
 	Hippocampus_UpdateEventSignificance_FullMethodName    = "/hippocampus.v1.Hippocampus/UpdateEventSignificance"
 	Hippocampus_MergeEvents_FullMethodName                = "/hippocampus.v1.Hippocampus/MergeEvents"
@@ -175,11 +177,33 @@ type HippocampusClient interface {
 	// database/bucket name; DSN credentials, signing keys, and passwords are never included, in any
 	// tier, for any caller.
 	GetTopology(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetTopologyResponse, error)
+	// GetSignificanceLevels lists the distinct significance values currently in use - the
+	// significance registry, which is the scale SignificancePlacement positions against. Without it
+	// a client using placement is choosing anchors it cannot see, and a client choosing an absolute
+	// significance is guessing at the scheme a store already uses.
+	//
+	// It names no stored record: one shared registry ranks memories and events alike, so a value is
+	// store-global and says nothing about who carries it. That is why it is reader tier and why a
+	// group-scoped caller is answered in full rather than refused - there is nothing here to
+	// partition.
+	GetSignificanceLevels(ctx context.Context, in *GetSignificanceLevelsRequest, opts ...grpc.CallOption) (*GetSignificanceLevelsResponse, error)
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
 	// StoreEventResponse.
 	StoreEvent(ctx context.Context, in *Event, opts ...grpc.CallOption) (*StoreEventResponse, error)
+	// UpdateEvent applies a partial update to an existing event: only the fields carrying a value
+	// (time_start, time_end, significance, name, description, group, metadata) overwrite the stored
+	// row, with clear_group/clear_metadata to unset the two whose own zero value cannot say it.
+	// memories and links are NOT updatable here - nested memories are a StoreEvent input, and links
+	// are edited through LinkEvents/UnlinkEvents, which can report what became of each one and
+	// reject a target that does not exist. An unknown id returns NotFound (no event is created).
+	//
+	// EndEvent and UpdateEventSignificance remain the convenience routes for the two fields they
+	// name - EndEvent defaults time_end to now, UpdateEventSignificance carries a placement - and
+	// both fields are also settable here, placement included, so editing several at once is one call
+	// rather than three.
+	UpdateEvent(ctx context.Context, in *Event, opts ...grpc.CallOption) (*GeneralResponse, error)
 	// EndEvent sets an event's time_end (defaults to now when unset). NotFound if the event does
 	// not exist.
 	EndEvent(ctx context.Context, in *EndEventRequest, opts ...grpc.CallOption) (*GeneralResponse, error)
@@ -195,17 +219,18 @@ type HippocampusClient interface {
 	// GetEventById fetches a single event by id; set memories to also load its nested memories.
 	// NotFound if the event does not exist.
 	GetEventById(ctx context.Context, in *GetEventByIdRequest, opts ...grpc.CallOption) (*GetEventResponse, error)
-	// GetEvents lists events filtered by time range, significance range, group, and metadata,
-	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
-	// significance_min/max range for "only events tied at the highest (or lowest) significance
-	// value" instead. order_by/order_dir choose the sort field and direction.
+	// GetEvents lists events filtered by time range, significance range, group, metadata, name
+	// substring, open/ended state and link neighbourhood, paginated by limit/offset (see
+	// GetEventsRequest). significance_extremum swaps the significance_min/max range for "only events
+	// tied at the highest (or lowest) significance value" instead. order_by/order_dir choose the
+	// sort field and direction.
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
 	// see StoreMemoryResponse.
 	StoreMemory(ctx context.Context, in *Memory, opts ...grpc.CallOption) (*StoreMemoryResponse, error)
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
-	// (significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and
+	// (significance, body, event_id, group, time_stamp, metadata) overwrite the stored row. is_binary and
 	// is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
 	// - so any updated content must stay consistent with the memory's existing is_binary/is_summary:
 	// a non-binary memory is re-indexed for content search, so its new body must remain valid text,
@@ -400,10 +425,30 @@ func (c *hippocampusClient) GetTopology(ctx context.Context, in *EmptyRequest, o
 	return out, nil
 }
 
+func (c *hippocampusClient) GetSignificanceLevels(ctx context.Context, in *GetSignificanceLevelsRequest, opts ...grpc.CallOption) (*GetSignificanceLevelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSignificanceLevelsResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_GetSignificanceLevels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *hippocampusClient) StoreEvent(ctx context.Context, in *Event, opts ...grpc.CallOption) (*StoreEventResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StoreEventResponse)
 	err := c.cc.Invoke(ctx, Hippocampus_StoreEvent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) UpdateEvent(ctx context.Context, in *Event, opts ...grpc.CallOption) (*GeneralResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GeneralResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_UpdateEvent_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -786,11 +831,33 @@ type HippocampusServer interface {
 	// database/bucket name; DSN credentials, signing keys, and passwords are never included, in any
 	// tier, for any caller.
 	GetTopology(context.Context, *EmptyRequest) (*GetTopologyResponse, error)
+	// GetSignificanceLevels lists the distinct significance values currently in use - the
+	// significance registry, which is the scale SignificancePlacement positions against. Without it
+	// a client using placement is choosing anchors it cannot see, and a client choosing an absolute
+	// significance is guessing at the scheme a store already uses.
+	//
+	// It names no stored record: one shared registry ranks memories and events alike, so a value is
+	// store-global and says nothing about who carries it. That is why it is reader tier and why a
+	// group-scoped caller is answered in full rather than refused - there is nothing here to
+	// partition.
+	GetSignificanceLevels(context.Context, *GetSignificanceLevelsRequest) (*GetSignificanceLevelsResponse, error)
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
 	// StoreEventResponse.
 	StoreEvent(context.Context, *Event) (*StoreEventResponse, error)
+	// UpdateEvent applies a partial update to an existing event: only the fields carrying a value
+	// (time_start, time_end, significance, name, description, group, metadata) overwrite the stored
+	// row, with clear_group/clear_metadata to unset the two whose own zero value cannot say it.
+	// memories and links are NOT updatable here - nested memories are a StoreEvent input, and links
+	// are edited through LinkEvents/UnlinkEvents, which can report what became of each one and
+	// reject a target that does not exist. An unknown id returns NotFound (no event is created).
+	//
+	// EndEvent and UpdateEventSignificance remain the convenience routes for the two fields they
+	// name - EndEvent defaults time_end to now, UpdateEventSignificance carries a placement - and
+	// both fields are also settable here, placement included, so editing several at once is one call
+	// rather than three.
+	UpdateEvent(context.Context, *Event) (*GeneralResponse, error)
 	// EndEvent sets an event's time_end (defaults to now when unset). NotFound if the event does
 	// not exist.
 	EndEvent(context.Context, *EndEventRequest) (*GeneralResponse, error)
@@ -806,17 +873,18 @@ type HippocampusServer interface {
 	// GetEventById fetches a single event by id; set memories to also load its nested memories.
 	// NotFound if the event does not exist.
 	GetEventById(context.Context, *GetEventByIdRequest) (*GetEventResponse, error)
-	// GetEvents lists events filtered by time range, significance range, group, and metadata,
-	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
-	// significance_min/max range for "only events tied at the highest (or lowest) significance
-	// value" instead. order_by/order_dir choose the sort field and direction.
+	// GetEvents lists events filtered by time range, significance range, group, metadata, name
+	// substring, open/ended state and link neighbourhood, paginated by limit/offset (see
+	// GetEventsRequest). significance_extremum swaps the significance_min/max range for "only events
+	// tied at the highest (or lowest) significance value" instead. order_by/order_dir choose the
+	// sort field and direction.
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
 	// Memories
 	// StoreMemory creates a memory. A memory below memory.minimumSignificance is quietly dropped -
 	// see StoreMemoryResponse.
 	StoreMemory(context.Context, *Memory) (*StoreMemoryResponse, error)
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
-	// (significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and
+	// (significance, body, event_id, group, time_stamp, metadata) overwrite the stored row. is_binary and
 	// is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
 	// - so any updated content must stay consistent with the memory's existing is_binary/is_summary:
 	// a non-binary memory is re-indexed for content search, so its new body must remain valid text,
@@ -934,8 +1002,14 @@ func (UnimplementedHippocampusServer) WhoAmI(context.Context, *EmptyRequest) (*W
 func (UnimplementedHippocampusServer) GetTopology(context.Context, *EmptyRequest) (*GetTopologyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTopology not implemented")
 }
+func (UnimplementedHippocampusServer) GetSignificanceLevels(context.Context, *GetSignificanceLevelsRequest) (*GetSignificanceLevelsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSignificanceLevels not implemented")
+}
 func (UnimplementedHippocampusServer) StoreEvent(context.Context, *Event) (*StoreEventResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StoreEvent not implemented")
+}
+func (UnimplementedHippocampusServer) UpdateEvent(context.Context, *Event) (*GeneralResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateEvent not implemented")
 }
 func (UnimplementedHippocampusServer) EndEvent(context.Context, *EndEventRequest) (*GeneralResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method EndEvent not implemented")
@@ -1234,6 +1308,24 @@ func _Hippocampus_GetTopology_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Hippocampus_GetSignificanceLevels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSignificanceLevelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).GetSignificanceLevels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_GetSignificanceLevels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).GetSignificanceLevels(ctx, req.(*GetSignificanceLevelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Hippocampus_StoreEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Event)
 	if err := dec(in); err != nil {
@@ -1248,6 +1340,24 @@ func _Hippocampus_StoreEvent_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HippocampusServer).StoreEvent(ctx, req.(*Event))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_UpdateEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Event)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).UpdateEvent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_UpdateEvent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).UpdateEvent(ctx, req.(*Event))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1772,8 +1882,16 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Hippocampus_GetTopology_Handler,
 		},
 		{
+			MethodName: "GetSignificanceLevels",
+			Handler:    _Hippocampus_GetSignificanceLevels_Handler,
+		},
+		{
 			MethodName: "StoreEvent",
 			Handler:    _Hippocampus_StoreEvent_Handler,
+		},
+		{
+			MethodName: "UpdateEvent",
+			Handler:    _Hippocampus_UpdateEvent_Handler,
 		},
 		{
 			MethodName: "EndEvent",

@@ -354,6 +354,12 @@ func TestGatewayMiddlewareEndToEnd(t *testing.T) {
 	capture := req{http.MethodGet, "/v1/events/some-id"}         // GetEventById, reader
 	explain := req{http.MethodPost, "/v1/consolidation/explain"} // ExplainConsolidation, reader
 
+	// UpdateEvent shares its path with GetEventById and DeleteEvent and differs only by verb, and it
+	// sits one segment above UpdateEventSignificance's PATCH - so it is the route most able to be
+	// normalised onto somebody else's policy.
+	editEvent := req{http.MethodPatch, "/v1/events/some-id"}
+	levels := req{http.MethodGet, "/v1/significance/levels"}
+
 	cases := []struct {
 		role       string
 		r          req
@@ -365,8 +371,12 @@ func TestGatewayMiddlewareEndToEnd(t *testing.T) {
 		// which does - so this pair pins the boundary between the two, and the policy's path with it.
 		{"reader", explain, false},
 		{"reader", req{http.MethodGet, "/v1/sleep/preview"}, true},
+		{"reader", levels, false},
+		{"reader", editEvent, true},
 		{"reader", writes, true},
 		{"reader", admin, true},
+		{"writer", editEvent, false},
+		{"writer", req{http.MethodPatch, "/v1/events/some-id/significance"}, false},
 		{"writer", writes, false},
 		{"writer", admin, true},
 		{"admin", admin, false},

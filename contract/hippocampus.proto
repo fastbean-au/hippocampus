@@ -204,6 +204,21 @@ service Hippocampus {
 		};
 	}
 
+	// GetSignificanceLevels lists the distinct significance values currently in use - the
+	// significance registry, which is the scale SignificancePlacement positions against. Without it
+	// a client using placement is choosing anchors it cannot see, and a client choosing an absolute
+	// significance is guessing at the scheme a store already uses.
+	//
+	// It names no stored record: one shared registry ranks memories and events alike, so a value is
+	// store-global and says nothing about who carries it. That is why it is reader tier and why a
+	// group-scoped caller is answered in full rather than refused - there is nothing here to
+	// partition.
+	rpc GetSignificanceLevels(GetSignificanceLevelsRequest) returns (GetSignificanceLevelsResponse) {
+		option (google.api.http) = {
+			get: "/v1/significance/levels"
+		};
+	}
+
 	// Events
 	// StoreEvent creates an event, optionally with nested memories (each defaulted to the new
 	// event's id when unset). An event below event.minimumSignificance is quietly dropped - see
@@ -211,6 +226,24 @@ service Hippocampus {
 	rpc StoreEvent(Event) returns (StoreEventResponse) {
 		option (google.api.http) = {
 			post: "/v1/events"
+			body: "*"
+		};
+	}
+
+	// UpdateEvent applies a partial update to an existing event: only the fields carrying a value
+	// (time_start, time_end, significance, name, description, group, metadata) overwrite the stored
+	// row, with clear_group/clear_metadata to unset the two whose own zero value cannot say it.
+	// memories and links are NOT updatable here - nested memories are a StoreEvent input, and links
+	// are edited through LinkEvents/UnlinkEvents, which can report what became of each one and
+	// reject a target that does not exist. An unknown id returns NotFound (no event is created).
+	//
+	// EndEvent and UpdateEventSignificance remain the convenience routes for the two fields they
+	// name - EndEvent defaults time_end to now, UpdateEventSignificance carries a placement - and
+	// both fields are also settable here, placement included, so editing several at once is one call
+	// rather than three.
+	rpc UpdateEvent(Event) returns (GeneralResponse) {
+		option (google.api.http) = {
+			patch: "/v1/events/{id}"
 			body: "*"
 		};
 	}
@@ -258,10 +291,11 @@ service Hippocampus {
 		};
 	}
 
-	// GetEvents lists events filtered by time range, significance range, group, and metadata,
-	// paginated by limit/offset (see GetEventsRequest). significance_extremum swaps the
-	// significance_min/max range for "only events tied at the highest (or lowest) significance
-	// value" instead. order_by/order_dir choose the sort field and direction.
+	// GetEvents lists events filtered by time range, significance range, group, metadata, name
+	// substring, open/ended state and link neighbourhood, paginated by limit/offset (see
+	// GetEventsRequest). significance_extremum swaps the significance_min/max range for "only events
+	// tied at the highest (or lowest) significance value" instead. order_by/order_dir choose the
+	// sort field and direction.
 	rpc GetEvents(GetEventsRequest) returns (GetEventsResponse) {
 		option (google.api.http) = {
 			get: "/v1/events"
@@ -279,7 +313,7 @@ service Hippocampus {
 	}
 
 	// UpdateMemory applies a partial update to an existing memory: only the fields carrying a value
-	// (significance, body, event_id, group, time_stamp) overwrite the stored row. is_binary and
+	// (significance, body, event_id, group, time_stamp, metadata) overwrite the stored row. is_binary and
 	// is_summary are NOT updatable here - they are set at creation and by ReplaceMemoriesWithSummary
 	// - so any updated content must stay consistent with the memory's existing is_binary/is_summary:
 	// a non-binary memory is re-indexed for content search, so its new body must remain valid text,
@@ -512,8 +546,8 @@ enum SortDirection {
 // SignificancePlacement positions an item's significance relative to existing values instead of
 // taking the absolute `significance` field. It exists because significance is a dense integer with
 // no room between adjacent values: this lets a client say "just above the 5s" or "between 5 and 6"
-// and have the server open a gap for it. Write-only on StoreEvent/StoreMemory/UpdateMemory and
-// UpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the
+// and have the server open a gap for it. Write-only on StoreEvent/StoreMemory/UpdateMemory/
+// UpdateEvent and UpdateEventSignificance; it is never populated on read responses. When mode is UNSPECIFIED the
 // absolute `significance` value is used as-is (0 meaning unranked).
 message SignificancePlacement {
 	enum Mode {
@@ -527,6 +561,23 @@ message SignificancePlacement {
 	string                       anchor_id                           = 3; // anchor by an existing item's id, whose significance is looked up; that item must already be ranked (significance > 0)
 	int32                        upper                               = 4; // BETWEEN only: the upper bound significance; must be >= 1 (and greater than anchor) unless upper_id is set
 	string                       upper_id                            = 5; // BETWEEN only: the upper bound by an existing item's id; that item must already be ranked (significance > 0)
+}
+
+// GetSignificanceLevelsRequest bounds a read of the significance registry (see
+// GetSignificanceLevels). It is paginated like the listings and for the same reason: the registry
+// holds one row per DISTINCT significance value in the store, which is small in every deployment
+// anyone has run and is not bounded by anything the service enforces.
+message GetSignificanceLevelsRequest {
+	int32                                  significance_min          = 1; // inclusive lower bound; 0 (the default) means no lower bound, NOT a literal significance-of-zero filter
+	int32                                  significance_max          = 2; // inclusive upper bound; 0 (the default) means no upper bound
+	int32                                  limit                     = 3; // page size; a value <= 0 selects the server default (200); values above the server cap (1000) are silently clamped down to it
+	int32                                  offset                    = 4; // rows to skip for pagination; negative values are clamped to 0; no upper bound
+}
+
+// GetSignificanceLevelsResponse lists the significance values in use, ascending.
+message GetSignificanceLevelsResponse {
+	repeated int32                         significances             = 1; // the distinct significance values in use, ascending. Two ADJACENT values have no room between them - that is what SignificancePlacement exists to open, and what makes this list the set of anchors a placement can name
+	int32                                  total_count               = 2; // values matching the bounds, ignoring limit/offset - for pagination
 }
 
 // Event is a named time span with its own significance, optionally carrying links to
@@ -628,6 +679,7 @@ message GetEventByIdRequest {
 	string                                 id                        = 1; // the event to fetch
 	bool                                   memories                  = 2; // true also loads the event's memories into the response
 	bool                                   memory_counts             = 3; // true populates memory_count, exactly as GetEventsRequest.memory_counts does (and for the same reason: it reports how many memories the event holds without transferring any of them)
+	bool                                   links                     = 4; // true also loads the event's outbound links into the response (see Event.links); GetEventLinks reads both directions
 }
 
 message GetEventResponse {
@@ -650,6 +702,10 @@ message GetEventsRequest {
 	repeated string                        metadata                  = 13; // optional: restrict to events whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata
 	bool                                   memory_counts             = 14; // when true, populate each returned event's memory_count. Separate from `memories` and opt-in because it is a second query per page: it reports how many memories an event holds without transferring any of them, which is what a listing wants and what `memories` is far too expensive for
 	SortDirection                          order_dir                 = 15; // optional: reverse order_by's sort direction; UNSPECIFIED (the default) uses that field's natural direction. Applies to the whole ordering, tiebreakers included, so ASC returns exactly the reverse of DESC
+	Bool                                   ended                     = 16; // optional: FALSE returns only events that have not ended (time_end = 0), TRUE only those that have; UNSPECIFIED (default) applies no restriction. This is what answers "what is still running?" - time_end_min cannot, because 0 there means no bound. The events' counterpart to GetMemoriesRequest.recalled, and there for the same reason
+	string                                 name_contains             = 17; // optional: restrict to events whose name contains this substring, case-insensitively. Unindexed, exactly as the group and metadata filters are, and a substring match rather than a content search - an event's name and description are in no search index. Empty (the default) applies no restriction
+	bool                                   links                     = 18; // when true, populate each returned event's links (outbound only, like Event.links - ask GetEventLinks for both directions)
+	string                                 linked_to                 = 19; // optional: restrict to events linked to this event id, in either direction (one hop). NotFound if that event does not exist. The events' counterpart to GetMemoriesRequest.linked_to
 }
 
 message GetEventsResponse {
@@ -1355,6 +1411,24 @@ message WhoAmIResponse {
 	// being refused it - so a client can leave the view out entirely rather than offer a control
 	// certain to fail.
 	string                                 topology_tier             = 10;
+
+	// version is the build this instance is running, in the form --version prints and /healthz
+	// returns. It is here because those two are the only other places it appears, and neither is
+	// reachable by a gRPC client: the CLI, the MCP bridge, the broker bridges and the ingestor could
+	// previously learn it only from GetTopology's self node, which is optional (topology.enabled),
+	// tier-configurable, and refused outright to a group-scoped caller - so a client that wanted to
+	// check what it was talking to had three ways to be told nothing.
+	//
+	// Empty when the build carries no identification at all, which is what a binary built without
+	// module information reports.
+	string                                 version                   = 11;
+
+	// callbacks_enabled reports whether outbound callbacks are configured here
+	// (callbacks.url, and this instance running the dispatcher). It is a deployment property like
+	// its neighbours above, and it is here for tombstones_enabled's argument exactly: an empty
+	// queue and a disabled feature render identically, so a client shown GetCallbackQueue's empty
+	// page cannot tell "nothing is waiting to be delivered" from "nothing will ever be delivered".
+	bool                                   callbacks_enabled         = 12;
 }
 
 // TopologyNodeKind names what a component in the deployment graph IS. It is deliberately coarse:

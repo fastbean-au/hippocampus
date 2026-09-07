@@ -103,6 +103,18 @@ func (f *fakeClient) StoreEvent(_ context.Context, in *contract.Event, _ ...grpc
 	return &contract.StoreEventResponse{Id: "e-new"}, f.err
 }
 
+func (f *fakeClient) UpdateEvent(_ context.Context, in *contract.Event, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
+	f.capture(in)
+
+	return &contract.GeneralResponse{Ok: true}, f.err
+}
+
+func (f *fakeClient) GetSignificanceLevels(_ context.Context, in *contract.GetSignificanceLevelsRequest, _ ...grpc.CallOption) (*contract.GetSignificanceLevelsResponse, error) {
+	f.capture(in)
+
+	return &contract.GetSignificanceLevelsResponse{}, f.err
+}
+
 func (f *fakeClient) EndEvent(_ context.Context, in *contract.EndEventRequest, _ ...grpc.CallOption) (*contract.GeneralResponse, error) {
 	f.capture(in)
 

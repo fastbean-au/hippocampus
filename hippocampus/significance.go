@@ -3,6 +3,10 @@ package hippocampus
 import (
 	"context"
 
+	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/types"
@@ -105,4 +109,85 @@ func (s *Server) resolveEventSignificance(ctx context.Context, value int32, plac
 		func(id *int64) { event.SignificanceLevelID = id },
 		func(rank int32) { event.Significance = rank },
 	)
+}
+
+// Page-size bounds for the significance registry listing, in the same shape as the memory and event
+// listings: an unset (0) limit selects the default, and anything larger than the cap is clamped.
+//
+// The cap is higher than theirs because a level is one int32 rather than a row - a thousand of them
+// is four kilobytes, where a thousand memories is a message nothing should be sending - and because
+// the whole point of the RPC is to show a client the scale it is ranking against, which a page of
+// twenty-five would not.
+const (
+	defaultSignificanceLevelPageSize = 200
+	maxSignificanceLevelPageSize     = 1000
+)
+
+// GetSignificanceLevels lists the distinct significance values in use - the registry
+// SignificancePlacement positions against.
+//
+// It names no stored record: one shared registry ranks memories and events alike, so a value says
+// nothing about who carries it. That is why it is reader tier and scopeNone, and why a group-scoped
+// caller is answered in full rather than refused - there is no per-group significance scale to
+// partition, and the decay maths a scoped caller's memories are subject to runs on this one.
+func (s *Server) GetSignificanceLevels(ctx context.Context, in *contract.GetSignificanceLevelsRequest) (*contract.GetSignificanceLevelsResponse, error) {
+	log.Trace("func() GetSignificanceLevels")
+
+	var res contract.GetSignificanceLevelsResponse
+
+	if in.GetSignificanceMax() > 0 && in.GetSignificanceMin() > 0 && in.GetSignificanceMax() < in.GetSignificanceMin() {
+		return &res, status.Error(codes.InvalidArgument, "SignificanceMax must be greater than or equal to SignificanceMin")
+	}
+
+	limit := int(in.GetLimit())
+
+	if limit <= 0 {
+		limit = defaultSignificanceLevelPageSize
+	}
+
+	if limit > maxSignificanceLevelPageSize {
+		limit = maxSignificanceLevelPageSize
+	}
+
+	offset := int(in.GetOffset())
+
+	if offset < 0 {
+		offset = 0
+	}
+
+	filter := db.SignificanceLevelFilter{
+		SignificanceMin: in.GetSignificanceMin(),
+		SignificanceMax: in.GetSignificanceMax(),
+		Limit:           limit,
+		Offset:          offset,
+	}
+
+	levels, err := s.db.SignificanceLevels(ctx, filter)
+	if err != nil {
+		return &res, mapError(err)
+	}
+
+	// The total is derived from a short page exactly as the two listings derive theirs, and for the
+	// same reason - it is a second unbounded pass, and a page that ran off the end has already
+	// answered it. See GetMemories for why both forms are exact and why the positive-offset one
+	// needs a non-empty page.
+	total := len(levels)
+
+	switch {
+
+	case len(levels) >= filter.Limit, filter.Offset > 0 && len(levels) == 0:
+		total, err = s.db.CountSignificanceLevels(ctx, filter)
+		if err != nil {
+			return &res, mapError(err)
+		}
+
+	case filter.Offset > 0:
+		total = filter.Offset + len(levels)
+
+	}
+
+	res.Significances = levels
+	res.TotalCount = int32(total)
+
+	return &res, nil
 }
