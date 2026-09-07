@@ -5,20 +5,21 @@ import (
 	"errors"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	log "github.com/sirupsen/logrus"
 )
 
-// ErrContentSearchUnavailable is returned by SearchMemoryIds when this database cannot answer
-// content searches - every driver but SQLite, and a read-only tool open. Callers map it to a
-// FailedPrecondition rather than an empty result, so an operator who expected search to work is
-// told it is not available on their driver instead of concluding their store is empty.
+// ErrContentSearchUnavailable is returned by SearchMemoryHits when this database cannot answer
+// content searches - a read-only tool open, or a dialect carrying no index of its own. Callers map
+// it to a FailedPrecondition rather than an empty result, so an operator who expected search to
+// work is told it is not available instead of concluding their store is empty.
 var ErrContentSearchUnavailable = errors.New("content search is not available on this storage driver")
 
-// Content search lets SearchMemories work without an OpenSearch cluster. It is a secondary index
-// like the OpenSearch one - the memories table stays the sole system of record, and callers
-// re-read every hit from it - but it differs from that one in two ways worth being precise about,
-// because they change what can go wrong:
+// Content search lets SearchMemories work without an OpenSearch cluster, on every dialect. It is a
+// secondary index like the OpenSearch one - the memories table stays the sole system of record, and
+// callers re-read every hit from it - but it differs from that one in two ways worth being precise
+// about, because they change what can go wrong:
 //
 //   - It is maintained SYNCHRONOUSLY, on the same connection as the write it belongs to. There is
 //     no queue, so there is no overflow to drop operations, and no worker, so there is no
@@ -26,55 +27,40 @@ var ErrContentSearchUnavailable = errors.New("content search is not available on
 //     after the memories INSERT/UPDATE rather than inside it, so a failure between the two leaves
 //     a memory that is not findable by content. That is logged and never fails the write - the
 //     index is rebuildable (--backfill-search) and the primary row is what matters.
-//   - Deletes ARE transactional, and cost nothing at any call site, because they are handled by an
-//     AFTER DELETE trigger on memories keyed on the rowid. That one trigger covers every deletion
-//     path there is - consolidation, eviction, DeleteMemories, DeleteEventMemories, Purge, Clear,
-//     and an import that replaces a row - so unlike the OpenSearch index, which needs a delete
-//     observer plus RPC-layer hooks to stay in step, this one cannot drift on deletion at all.
+//   - Deletes ARE transactional, and cost nothing at any call site, because no call site performs
+//     them: the storage engine does. On the embedded dialect that is an AFTER DELETE trigger keyed
+//     on the memories rowid; on the server dialects it is a foreign key with ON DELETE CASCADE.
+//     Either way one declaration covers every deletion path there is - consolidation, eviction,
+//     DeleteMemories, DeleteEventMemories, Purge, Clear, and an import that replaces a row - so
+//     unlike the OpenSearch index, which needs a delete observer plus RPC-layer hooks to stay in
+//     step, this one cannot drift on deletion at all.
 //
-// SQLite only, for now. The virtual table is FTS5, which modernc.org/sqlite is built with
-// (SQLITE_ENABLE_FTS5), so this adds no dependency and does not need cgo. Postgres (tsvector) and
-// MySQL (FULLTEXT) are deliberately not implemented yet: ContentSearchAvailable reports false on
-// them and the RPC surfaces that as a clear FailedPrecondition rather than silently returning
-// nothing. See TODO item 56.1.
+// The three dialects' index shapes and query languages are in search_dialect.go, which is the only
+// part of this that knows which dialect it is on. Everything below is shared: what gets indexed
+// (the plain body, from inside the storage boundary and before compressBody ever sees it), when,
+// the backfill, and the scan.
 //
-// The index is CONTENTLESS (content='', contentless_delete=1): it holds the inverted index and
-// not a second copy of the body. That is deliberate and not merely a size optimisation - storing
-// the text again would give back much of what body compression was added to save, on a product
-// whose whole purpose is managing a finite store. It also rules out the obvious alternative, an
-// external-content table over memories.body, for a harder reason: since compression landed, that
-// column can hold a gzip stream, so an index reading it directly would tokenise binary. Every
-// write below therefore feeds the index the PLAIN body, from inside the storage boundary and
-// before compressBody ever sees it.
+// Nothing here indexes an event: only memory bodies are searchable by content, on every backend.
 
-// contentSearchTable is the FTS5 virtual table backing content search, and contentSearchTrigger
-// the AFTER DELETE trigger that keeps it in step with the memories table. The virtual table's
-// rowid is the memories row's own rowid, which is what lets the trigger work on OLD.rowid alone
-// and never need the body.
+// contentSearchTable is the content-search index, and contentSearchTrigger the AFTER DELETE trigger
+// the embedded dialect keeps it in step with. The server dialects need no trigger - their index
+// table's foreign key cascades - so that constant is theirs alone.
 const (
 	contentSearchTable   = "memories_fts"
 	contentSearchTrigger = "memories_fts_delete"
 )
 
-// contentSearchDDL creates the FTS5 index and its delete trigger. Both are IF NOT EXISTS, so this
-// runs on every startup and only does work the first time - the same shape as the rest of
-// initSchema.
+// contentIndexMaxBytes bounds the text handed to the index, on every dialect.
 //
-// An existing store gains an EMPTY index here: the virtual table is created but holds nothing for
-// the memories already in the table, so those memories are not findable by content until the
-// index is populated. initSchema calls backfillContentSearch immediately after this for exactly
-// that reason.
-const contentSearchDDL = `
-CREATE VIRTUAL TABLE IF NOT EXISTS ` + contentSearchTable + ` USING fts5(
-	body,
-	content='',
-	contentless_delete=1
-);
-
-CREATE TRIGGER IF NOT EXISTS ` + contentSearchTrigger + ` AFTER DELETE ON memories BEGIN
-	DELETE FROM ` + contentSearchTable + ` WHERE rowid = OLD.rowid;
-END;
-`
+// It exists for one dialect and is applied on all three. Postgres's tsvector has a hard ceiling of
+// one megabyte, and exceeding it is an ERROR rather than a truncation - so an unbounded body would
+// not be partly searchable, it would fail to index at all, and would do so on exactly one backend.
+// Capping every dialect at the same figure is what keeps "which memories are findable" a property
+// of the store rather than of the driver it happens to run on.
+//
+// Half a megabyte of text is some eighty thousand words; a body that long is a document rather than
+// a memory, and its opening is what a keyword search will find it by in any case.
+const contentIndexMaxBytes = 512 << 10
 
 // ContentQuery carries the parameters of one content search. Text is required; EventId and Group
 // restrict matches when non-empty. It mirrors search.Query, but is declared here so the db package
@@ -97,16 +83,17 @@ type ContentQuery struct {
 	Groups []string
 }
 
-// ContentHit is one match: the memory's id and its relevance, with the sign flipped from FTS5's
-// convention so that higher is more relevant (see SearchMemoryHits).
+// ContentHit is one match: the memory's id and its relevance, in the convention every backend
+// settles on at its own boundary - higher is a better match. The magnitudes are not comparable
+// between dialects (a bm25, a ts_rank and an InnoDB relevance are three different numbers); the
+// ORDER is what a caller may rely on.
 type ContentHit struct {
 	Id    string
 	Score float64
 }
 
-// ContentSearchAvailable reports whether this database can answer content searches. Only a dialect
-// carrying the FTS5 index can, and only when it is not a read-only tool open (which never runs the
-// DDL that creates the index).
+// ContentSearchAvailable reports whether this database can answer content searches. Every dialect
+// carries an index, but a read-only tool open never runs the DDL that creates it.
 func (d *DB) ContentSearchAvailable() bool {
 	return d.dialect().contentSearch && !d.readOnly
 }
@@ -121,9 +108,7 @@ func (d *DB) initContentSearch() error {
 		return nil
 	}
 
-	if _, err := d.sql.Exec(contentSearchDDL); err != nil {
-		log.Errorf("failed to initialise the content search index: %s", err.Error())
-
+	if err := d.createContentIndex(); err != nil {
 		return err
 	}
 
@@ -133,7 +118,7 @@ func (d *DB) initContentSearch() error {
 // backfillContentSearch populates the content-search index from the memories table when the index
 // is empty and the table is not. It is deliberately narrow: it does nothing at all on a store
 // whose index already has rows, so an ordinary restart pays one COUNT and moves on, and it never
-// tries to repair a partially populated index (--backfill-search --reindex is the tool for that).
+// tries to repair a partially populated index (--backfill-search is the tool for that).
 //
 // The guard is "index is empty", not "index is smaller than the table", because those two are
 // legitimately different: binary memories are never indexed, so a healthy index is always smaller
@@ -155,7 +140,7 @@ func (d *DB) backfillContentSearch() error {
 
 	var stored int
 
-	if err := d.sql.QueryRow(`SELECT count(*) FROM memories WHERE is_binary = 0`).Scan(&stored); err != nil {
+	if err := d.sql.QueryRow(`SELECT count(*) FROM memories WHERE NOT is_binary`).Scan(&stored); err != nil {
 		log.Errorf("failed to count indexable memories: %s", err.Error())
 
 		return err
@@ -177,8 +162,8 @@ func (d *DB) backfillContentSearch() error {
 }
 
 // RebuildContentSearch empties the content-search index and repopulates it from the memories
-// table. It is what --backfill-search runs on the SQLite driver, and what initContentSearch uses
-// to populate a newly created index on an existing store.
+// table. It is what --backfill-search runs when there is no OpenSearch cluster, and what
+// initContentSearch uses to populate a newly created index on an existing store.
 //
 // Bodies are read (and so decompressed) a page at a time rather than all at once, because the
 // whole point of this store is that it may hold more memories than fit comfortably in memory.
@@ -222,9 +207,9 @@ func (d *DB) RebuildContentSearch(ctx context.Context) error {
 // indexMemoryContent adds a memory's body to the content-search index. It is called by the write
 // helpers with the plain body, before compression.
 //
-// The rowid is resolved by the INSERT ... SELECT itself rather than by LastInsertId, so this works
-// unchanged for a create (where the row was just inserted), an update, and an import upsert -
-// none of which need to tell it which of those they are.
+// The write is an add-or-replace on every dialect (see writeContentIndexEntry), so this works
+// unchanged for a create, an update, and an import upsert - none of which need to tell it which of
+// those they are.
 //
 // A binary memory is never indexed: its body is client-encoded and opaque, exactly as on the
 // OpenSearch path. That is a skip, not an error.
@@ -233,34 +218,28 @@ func (d *DB) indexMemoryContent(ctx context.Context, id string, body string, isB
 		return nil
 	}
 
-	_, err := d.exec(ctx,
-		`INSERT INTO `+contentSearchTable+` (rowid, body) SELECT rowid, ? FROM memories WHERE id = ?`,
-		body,
-		id,
-	)
-	if err != nil {
+	if err := d.writeContentIndexEntry(ctx, id, truncateForIndex(body)); err != nil {
 		log.Errorf("failed to index the body of memory '%s' for content search: %s", id, err.Error())
+
+		return err
 	}
 
-	return err
+	return nil
 }
 
 // reindexMemoryContent replaces a memory's entry in the content-search index after its body
-// changes. FTS5 has no update for a contentless table, so this is a delete followed by an insert.
+// changes.
 //
 // The delete is unconditional, and runs even for a binary memory: a memory whose body is replaced
 // must not keep matching on its old text, and the cheapest way to be sure of that is not to
-// special-case it.
+// special-case it. It is redundant where the write above is an upsert and necessary where it is
+// not, which is not worth branching on.
 func (d *DB) reindexMemoryContent(ctx context.Context, id string, body string, isBinary bool) error {
 	if !d.ContentSearchAvailable() {
 		return nil
 	}
 
-	_, err := d.exec(ctx,
-		`DELETE FROM `+contentSearchTable+` WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)`,
-		id,
-	)
-	if err != nil {
+	if err := d.deleteContentIndexEntry(ctx, id); err != nil {
 		log.Errorf("failed to clear the content search entry for memory '%s': %s", id, err.Error())
 
 		return err
@@ -273,11 +252,11 @@ func (d *DB) reindexMemoryContent(ctx context.Context, id string, body string, i
 // the OpenSearch path it returns ids and relevance only, never bodies: the caller re-reads the
 // rows from the primary store, which is what keeps the store authoritative.
 //
-// Ranking is FTS5's bm25, the same family as the OpenSearch index's, so result order is comparable
-// between the two backends rather than arbitrarily different. The score's SIGN is flipped here:
-// FTS5's rank is negative and more negative is better, which is the opposite of every other
-// scoring convention including OpenSearch's, so the backend boundary is the right place to settle
-// it once (see search.Hit).
+// The shape of the query is one shared statement - the memories table joined to the index, filtered,
+// ordered by relevance and limited - into which the active dialect supplies its join, its match
+// predicate and its scoring expression. Ranking is each engine's own relevance measure, all of them
+// bm25-descended and all normalised here to higher-is-better, so result order is comparable with
+// the OpenSearch backend's rather than arbitrarily different.
 func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]ContentHit, error) {
 	log.Trace("func() db.SearchMemoryHits")
 
@@ -285,17 +264,21 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 		return nil, ErrContentSearchUnavailable
 	}
 
-	match := ftsMatchExpression(query.Text)
+	match := d.contentMatchExpression(contentTokens(query.Text))
 
 	// Every token was punctuation or otherwise dropped by the tokeniser, so there is nothing that
-	// could match. Returning empty is right, and it avoids handing FTS5 an empty MATCH, which is a
-	// syntax error rather than an empty result.
+	// could match. Returning empty is right, and it avoids handing an engine an empty query, which
+	// on at least one of them is a syntax error rather than an empty result.
 	if match == "" {
 		return nil, nil
 	}
 
-	clauses := []string{contentSearchTable + ` MATCH ?`}
-	args := []any{match}
+	terms := d.contentSearchTerms(match)
+
+	clauses := []string{terms.predicate}
+
+	args := append([]any{}, terms.scoreArgs...)
+	args = append(args, terms.predicateArgs...)
 
 	if query.EventId != "" {
 		clauses = append(clauses, `m.event_id = ?`)
@@ -315,9 +298,8 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 	}
 
 	// Metadata narrows the candidates inside the query rather than filtering the results, so the
-	// LIMIT below still returns a full page when one exists. This path is SQLite-only (FTS5), but
-	// the predicate goes through the shared builder anyway so the two backends cannot drift on what
-	// a filter means.
+	// LIMIT below still returns a full page when one exists. Through the shared builder so the two
+	// backends cannot drift on what a filter means.
 	metadataClauses, metadataArgs := d.metadataConditions("m.", query.Metadata)
 	clauses = append(clauses, metadataClauses...)
 	args = append(args, metadataArgs...)
@@ -330,10 +312,10 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 	args = append(args, limit)
 
 	rows, err := d.query(ctx,
-		`SELECT m.id, `+contentSearchTable+`.rank FROM `+contentSearchTable+`
-		JOIN memories m ON m.rowid = `+contentSearchTable+`.rowid
+		`SELECT m.id, `+terms.score+` AS score FROM memories m
+		JOIN `+terms.join+`
 		WHERE `+strings.Join(clauses, " AND ")+`
-		ORDER BY `+contentSearchTable+`.rank
+		ORDER BY score DESC
 		LIMIT ?`,
 		args...,
 	)
@@ -348,15 +330,12 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 
 	for rows.Next() {
 		var hit ContentHit
-		var rank float64
 
-		if err := rows.Scan(&hit.Id, &rank); err != nil {
+		if err := rows.Scan(&hit.Id, &hit.Score); err != nil {
 			log.Errorf("failed to scan a content search result: %s", err.Error())
 
 			return nil, err
 		}
-
-		hit.Score = -rank
 
 		hits = append(hits, hit)
 	}
@@ -370,34 +349,40 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 	return hits, nil
 }
 
-// ftsMatchExpression turns a user's raw query text into an FTS5 MATCH expression.
+// contentTokens splits a user's raw query text into the bare tokens every dialect's query language
+// is then assembled from.
 //
-// It does NOT pass the text through. FTS5's MATCH argument is a query language - it has operators
-// (AND, OR, NOT, NEAR), prefix stars, column filters, and quoting - so raw input can be a syntax
-// error ("cats AND", an unbalanced quote) or can reach past the caller's intent into the query's
-// structure. Neither is acceptable from an RPC argument, and a search that returns an error
-// because someone typed a hyphen is not a search.
+// It does NOT pass the text through, on any backend. Each engine's match argument is a query
+// language of its own - FTS5 has AND/OR/NOT/NEAR, prefix stars and column filters, tsquery has
+// &/|/!/<->, MySQL's boolean mode has +/-/*/~/() - so raw input can be a syntax error (an
+// unbalanced quote, a trailing operator) or can reach past the caller's intent into the query's
+// structure. Neither is acceptable from an RPC argument, and a search that returns an error because
+// someone typed a hyphen is not a search.
 //
-// So the text is split into bare alphanumeric tokens and reassembled as quoted phrases joined by
-// OR. Quoting makes each token a literal, which is what disarms the operators; OR is not an
-// arbitrary choice but the semantics of the OpenSearch backend's "match" query, so the two
-// backends agree on which memories match and not just on how they are ranked. Documents matching
-// more of the tokens still rank higher, which is bm25 doing the work that AND would otherwise be
-// approximating.
-func ftsMatchExpression(text string) string {
-	fields := strings.FieldsFunc(text, func(r rune) bool {
+// Splitting on anything that is not a letter or a number is what disarms all three at once: not one
+// operator character survives it. What each dialect then does with the tokens is
+// contentMatchExpression's business.
+func contentTokens(text string) []string {
+	return strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 	})
+}
 
-	if len(fields) == 0 {
-		return ""
+// truncateForIndex bounds a body to contentIndexMaxBytes, cutting on a rune boundary.
+//
+// The boundary matters: a body is a proto3 string and so valid UTF-8, and half a rune is not - it
+// would be rejected on the wire by one driver and stored as replacement characters by another. The
+// same cut the embedding path already makes for the same reason.
+func truncateForIndex(body string) string {
+	if len(body) <= contentIndexMaxBytes {
+		return body
 	}
 
-	quoted := make([]string, 0, len(fields))
+	cut := contentIndexMaxBytes
 
-	for _, field := range fields {
-		quoted = append(quoted, `"`+field+`"`)
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
 	}
 
-	return strings.Join(quoted, " OR ")
+	return body[:cut]
 }

@@ -92,7 +92,7 @@ type schemaMigration struct {
 // these steps arrived across seventeen releases, several of them are already the accumulated result
 // of earlier ones, and no store anywhere is at an intermediate point between them - every store in
 // existence has either seen all of them or is about to. What the ledger needs to be honest about is
-// the future, and it is: version 13 is where this list ends today, and a store recording 14 was
+// the future, and it is: version 14 is where this list ends today, and a store recording 15 was
 // written by something this build has not met.
 func (d *DB) migrations() []schemaMigration {
 	return []schemaMigration{
@@ -173,23 +173,58 @@ func (d *DB) migrations() []schemaMigration {
 			// column and index above it already in place.
 			version: 12,
 			name:    "content_search",
-			when:    func(dialect *dialect) bool { return dialect.contentSearch },
-			apply:   (*DB).initContentSearch,
+			when: func(dialect *dialect) bool {
+				return dialect.contentSearch && !dialect.contentIndexCascades
+			},
+			apply: (*DB).initContentSearch,
 		},
 		{
 			version: 13,
 			name:    "callback_queue",
 			apply:   (*DB).initCallbackQueue,
 		},
+		{
+			// The server dialects' content index, which arrived long after the embedded one's - so
+			// the same step, applied to a different index shape, takes its own version rather than
+			// widening 12's gate. A store must record which of the two it actually has: an older
+			// build meeting a store with this index would go on writing memories and never write to
+			// it, and the drift that leaves is silent (a search returns fewer memories, not an
+			// error), which is exactly what the version gate exists to refuse.
+			//
+			// Reads memory bodies to populate itself, like 12, so it sits after every column
+			// migration.
+			version: 14,
+			name:    "content_search_sql",
+			when: func(dialect *dialect) bool {
+				return dialect.contentSearch && dialect.contentIndexCascades
+			},
+			apply: (*DB).initContentSearch,
+		},
 	}
 }
 
-// schemaVersion is the newest migration this build declares - the version a store is left at, and
-// the ceiling the version gate compares against.
+// schemaVersion is the newest migration this build declares FOR THE ACTIVE DIALECT - the version a
+// store is left at, and the ceiling the version gate compares against.
+//
+// Per dialect rather than the last entry in the list, because the newest migration is not
+// necessarily one every dialect runs. A capability-gated step is neither applied nor recorded where
+// it does not apply, so reading the ceiling off the end of the list would leave a store that is
+// entirely current sitting one version below it forever - which initSchema reports as an upgrade on
+// every single startup, and which a --schema-version report would call pending work.
 func (d *DB) schemaVersion() int {
-	migrations := d.migrations()
+	newest := 0
 
-	return migrations[len(migrations)-1].version
+	for _, migration := range d.migrations() {
+		if migration.when != nil && !migration.when(d.dialect()) {
+			continue
+		}
+
+		if migration.version > newest {
+			newest = migration.version
+		}
+	}
+
+	return newest
 }
 
 // initSchema brings a store's schema up to date and leaves its version recorded. The single

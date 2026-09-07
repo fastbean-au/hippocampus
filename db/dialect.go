@@ -151,9 +151,19 @@ type dialect struct {
 	// consolidation.walTriggerBytes needs.
 	walFile bool
 
-	// contentSearch is set where the FTS5 content index is available - the embedded dialect only,
-	// since it is a SQLite virtual table rather than anything portable.
+	// contentSearch is set where this dialect keeps a content-search index of its own, so that
+	// SearchMemories works without an OpenSearch cluster beside it. All three do; the field stays
+	// because it is what ContentSearchAvailable reads, and a fourth dialect arriving without a full
+	// text search of its own is the ordinary case rather than an unthinkable one.
 	contentSearch bool
+
+	// contentIndexCascades is set where that index is an ORDINARY table kept in step with memories
+	// by a foreign key, rather than a virtual table kept in step by a trigger. It is the one
+	// structural difference between the two shapes, and it decides three things: how the index is
+	// created, how a row is addressed in it (by memory id rather than by rowid), and which
+	// migration creates it - the embedded dialect's index shipped in v0.23.0 and the server
+	// dialects' long after, so a store records whichever one applies to it. See search_dialect.go.
+	contentIndexCascades bool
 
 	// instanceRegistry is set where the peer registry table is kept. Deliberately off for the
 	// embedded dialect: it is single-instance by construction, so the table would have exactly one
@@ -204,6 +214,7 @@ var dialects = map[driver]*dialect{
 		compacts:             true,
 		walFile:              true,
 		contentSearch:        true,
+		contentIndexCascades: false,
 		instanceRegistry:     false,
 		countsChangedRows:    false,
 		idCollationMigration: false,
@@ -233,7 +244,8 @@ var dialects = map[driver]*dialect{
 		pageAccounting:       false,
 		compacts:             false,
 		walFile:              false,
-		contentSearch:        false,
+		contentSearch:        true,
+		contentIndexCascades: true,
 		instanceRegistry:     true,
 		countsChangedRows:    false,
 		idCollationMigration: false,
@@ -267,7 +279,8 @@ var dialects = map[driver]*dialect{
 		pageAccounting:       false,
 		compacts:             false,
 		walFile:              false,
-		contentSearch:        false,
+		contentSearch:        true,
+		contentIndexCascades: true,
 		instanceRegistry:     true,
 		countsChangedRows:    true,
 		idCollationMigration: true,
@@ -692,6 +705,14 @@ func (d *DB) coreColumnMigrations() []coreColumn {
 // which is what keeps that true.
 var dialectFiles = map[string]bool{
 	"dialect.go": true,
+
+	// Content search, whose three implementations are three QUERY LANGUAGES over three index
+	// shapes: an FTS5 virtual table matched with MATCH, a tsvector table matched with @@, and a
+	// FULLTEXT index matched with AGAINST. None of that reduces to a fragment - each dialect needs
+	// its own DDL, its own sanitiser, and its own scoring expression - and each is inseparable from
+	// the reasoning about what it costs. The shared flow (when to index, what to index, the
+	// backfill, the scan) stays in search.go, which knows nothing about which dialect it is on.
+	"search_dialect.go": true,
 
 	// The JSON accessors and the metadata byte-length expression. They live apart from the table
 	// because neither is a single token: each is an expression whose shape differs per dialect, and

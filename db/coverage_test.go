@@ -35,9 +35,7 @@ func TestCheckReadOnlyTables(t *testing.T) {
 		t.Fatalf("expected an initialised store to pass, got %s", err)
 	}
 
-	if _, err := db.sql.Exec(`DROP TABLE memories`); err != nil {
-		t.Fatalf("DROP TABLE memories: %s", err)
-	}
+	dropMemoriesTable(t, db)
 
 	if err := db.checkReadOnlyTables(); err == nil {
 		t.Fatal("expected an error once the memories table is missing")

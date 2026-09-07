@@ -8,38 +8,180 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-// --- the non-SQLite early returns. Content search is an FTS5 feature, so every entry point has to
-// stand down on the server drivers rather than issue SQL no other dialect understands. A bare DB
-// with no handle at all is the assertion: any statement would panic. ---
+// --- the server dialects' DDL and index statements, over a mock rather than a server. The shapes
+// these pin are the ones a live server would reject loudly and a test with no server would never
+// reach at all: the cascade that IS the delete story, and the tsvector/FULLTEXT halves of the write.
+// The behavioural cover is in search_test.go, which runs under HIPPOCAMPUS_TEST_DIALECT. ---
 
-func TestContentSearch_NonSQLiteEntryPointsAreNoOps(t *testing.T) {
-	for _, drv := range []driver{driverPostgres, driverMySQL} {
-		d := &DB{driver: drv}
+// TestCreateContentIndex_ServerDialectDDL pins the two server dialects' index creation, and in
+// particular the foreign key: it is what makes every deletion path retire its index entry without a
+// single call site knowing the index exists, so a CREATE TABLE that lost it would leave the index
+// growing forever and answering with memories the store no longer holds.
+func TestCreateContentIndex_ServerDialectDDL(t *testing.T) {
+	t.Run("postgres", func(t *testing.T) {
+		d, mock := newMockDB(t, driverPostgres)
 
-		if err := d.initContentSearch(); err != nil {
-			t.Errorf("initContentSearch on %v = %v; want nil", drv, err)
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories_fts[\s\S]*REFERENCES memories\(id\) ON DELETE CASCADE`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`CREATE INDEX IF NOT EXISTS memories_fts_body ON memories_fts USING GIN \(body_search\)`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		if err := d.createContentIndex(); err != nil {
+			t.Fatalf("createContentIndex: %v", err)
 		}
 
-		if err := d.RebuildContentSearch(context.Background()); err != nil {
-			t.Errorf("RebuildContentSearch on %v = %v; want nil", drv, err)
+		expectationsMet(t, mock)
+	})
+
+	t.Run("mysql", func(t *testing.T) {
+		d, mock := newMockDB(t, driverMySQL)
+
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories_fts[\s\S]*REFERENCES memories\(id\) ON DELETE CASCADE`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		// No CREATE FULLTEXT INDEX IF NOT EXISTS on this dialect, so it probes first - and probes
+		// on every startup, which is what lets an index somebody dropped come back.
+		mock.ExpectQuery(`FROM information_schema.statistics`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		mock.ExpectExec(`ALTER TABLE memories_fts ADD FULLTEXT INDEX memories_fts_body \(body\)`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		if err := d.createContentIndex(); err != nil {
+			t.Fatalf("createContentIndex: %v", err)
 		}
 
-		if d.ContentSearchAvailable() {
-			t.Errorf("expected ContentSearchAvailable to be false on %v", drv)
+		expectationsMet(t, mock)
+	})
+
+	t.Run("mysql leaves an existing index alone", func(t *testing.T) {
+		d, mock := newMockDB(t, driverMySQL)
+
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS memories_fts`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery(`FROM information_schema.statistics`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+		if err := d.createContentIndex(); err != nil {
+			t.Fatalf("createContentIndex: %v", err)
 		}
 
-		// The write hooks share the same guard, and are called on every write on every driver.
-		if err := d.indexMemoryContent(context.Background(), "m1", "body", false); err != nil {
-			t.Errorf("indexMemoryContent on %v = %v; want nil", drv, err)
-		}
+		expectationsMet(t, mock)
+	})
+}
 
-		if err := d.reindexMemoryContent(context.Background(), "m1", "body", false); err != nil {
-			t.Errorf("reindexMemoryContent on %v = %v; want nil", drv, err)
-		}
+// TestWriteContentIndexEntry_DialectStatements pins that each dialect writes through its own
+// index's shape - and that the two server dialects UPSERT, which is what lets one call site serve a
+// create, an update and an import upsert alike.
+func TestWriteContentIndexEntry_DialectStatements(t *testing.T) {
+	tests := []struct {
+		name      string
+		driver    driver
+		statement string
+	}{
+		{
+			name:      "sqlite resolves the rowid in the insert",
+			driver:    driverSQLite,
+			statement: `INSERT INTO memories_fts \(rowid, body\) SELECT rowid, \? FROM memories WHERE id = \?`,
+		},
+		{
+			name:      "postgres stores a tsvector",
+			driver:    driverPostgres,
+			statement: `to_tsvector\('simple', \$2\)\)\s*ON CONFLICT \(memory_id\) DO UPDATE SET body_search = excluded.body_search`,
+		},
+		{
+			name:      "mysql stores the text",
+			driver:    driverMySQL,
+			statement: `ON DUPLICATE KEY UPDATE body = new.body`,
+		},
+	}
 
-		if _, err := d.SearchMemoryHits(context.Background(), ContentQuery{Text: "x"}); !errors.Is(err, ErrContentSearchUnavailable) {
-			t.Errorf("SearchMemoryHits on %v = %v; want ErrContentSearchUnavailable", drv, err)
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			d, mock := newMockDB(t, test.driver)
+
+			mock.ExpectExec(test.statement).WillReturnResult(sqlmock.NewResult(0, 1))
+
+			if err := d.writeContentIndexEntry(context.Background(), "m1", "a body"); err != nil {
+				t.Fatalf("writeContentIndexEntry: %v", err)
+			}
+
+			expectationsMet(t, mock)
+		})
+	}
+}
+
+// TestDeleteContentIndexEntry_DialectStatements is the reindex path's half: the embedded dialect
+// addresses a row by the memories rowid, the server dialects by the memory id.
+func TestDeleteContentIndexEntry_DialectStatements(t *testing.T) {
+	tests := []struct {
+		name      string
+		driver    driver
+		statement string
+	}{
+		{
+			name:      "sqlite deletes by rowid",
+			driver:    driverSQLite,
+			statement: `DELETE FROM memories_fts WHERE rowid = \(SELECT rowid FROM memories WHERE id = \?\)`,
+		},
+		{
+			name:      "postgres deletes by memory id",
+			driver:    driverPostgres,
+			statement: `DELETE FROM memories_fts WHERE memory_id = \$1`,
+		},
+		{
+			name:      "mysql deletes by memory id",
+			driver:    driverMySQL,
+			statement: `DELETE FROM memories_fts WHERE memory_id = \?`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			d, mock := newMockDB(t, test.driver)
+
+			mock.ExpectExec(test.statement).WillReturnResult(sqlmock.NewResult(0, 1))
+
+			if err := d.deleteContentIndexEntry(context.Background(), "m1"); err != nil {
+				t.Fatalf("deleteContentIndexEntry: %v", err)
+			}
+
+			expectationsMet(t, mock)
+		})
+	}
+}
+
+// TestContentSearchTerms_ScoreDirection is the rule the whole search surface rests on: whichever
+// engine answered, a higher score is a better match. Two of the three say so natively; the third's
+// bm25 runs backwards and has its sign flipped here rather than anywhere above.
+func TestContentSearchTerms_ScoreDirection(t *testing.T) {
+	tests := []struct {
+		driver driver
+		score  string
+		args   int
+	}{
+		{driver: driverSQLite, score: `-memories_fts.rank`, args: 0},
+		{driver: driverPostgres, score: `ts_rank(f.body_search, to_tsquery('simple', ?))`, args: 1},
+		{driver: driverMySQL, score: `MATCH(f.body) AGAINST (? IN BOOLEAN MODE)`, args: 1},
+	}
+
+	for _, test := range tests {
+		d := &DB{driver: test.driver}
+
+		t.Run(d.dialect().name, func(t *testing.T) {
+			terms := d.contentSearchTerms("x")
+
+			if terms.score != test.score {
+				t.Errorf("score = %q, want %q", terms.score, test.score)
+			}
+
+			if len(terms.scoreArgs) != test.args {
+				t.Errorf("score consumes %d arguments, want %d", len(terms.scoreArgs), test.args)
+			}
+
+			if terms.predicate == "" || len(terms.predicateArgs) != 1 {
+				t.Errorf("predicate = %q with %d arguments, want one of each",
+					terms.predicate, len(terms.predicateArgs))
+			}
+		})
 	}
 }
 
@@ -88,7 +230,7 @@ func TestBackfillContentSearch_CountErrorsPropagate(t *testing.T) {
 
 		mock.ExpectQuery(`SELECT count\(\*\) FROM memories_fts`).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-		mock.ExpectQuery(`SELECT count\(\*\) FROM memories WHERE is_binary = 0`).
+		mock.ExpectQuery(`SELECT count\(\*\) FROM memories WHERE NOT is_binary`).
 			WillReturnError(errors.New("boom"))
 
 		if err := d.backfillContentSearch(); err == nil {
@@ -122,7 +264,7 @@ func TestBackfillContentSearch_RebuildErrorPropagates(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT count\(\*\) FROM memories_fts`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM memories WHERE is_binary = 0`).
+	mock.ExpectQuery(`SELECT count\(\*\) FROM memories WHERE NOT is_binary`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
 	mock.ExpectExec(`DELETE FROM memories_fts`).WillReturnError(errors.New("boom"))
 
@@ -206,7 +348,7 @@ func TestSearchMemoryHits_Failures(t *testing.T) {
 	t.Run("query", func(t *testing.T) {
 		d, mock := newMockDB(t, driverSQLite)
 
-		mock.ExpectQuery(`FROM memories_fts`).WillReturnError(errors.New("boom"))
+		mock.ExpectQuery(`JOIN memories_fts`).WillReturnError(errors.New("boom"))
 
 		if _, err := d.SearchMemoryHits(context.Background(), ContentQuery{Text: "hello"}); err == nil {
 			t.Fatal("expected the query failure to propagate")
@@ -218,8 +360,8 @@ func TestSearchMemoryHits_Failures(t *testing.T) {
 	t.Run("scan", func(t *testing.T) {
 		d, mock := newMockDB(t, driverSQLite)
 
-		mock.ExpectQuery(`FROM memories_fts`).
-			WillReturnRows(sqlmock.NewRows([]string{"id", "rank"}).AddRow(nil, -1.5))
+		mock.ExpectQuery(`JOIN memories_fts`).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "score"}).AddRow(nil, -1.5))
 
 		if _, err := d.SearchMemoryHits(context.Background(), ContentQuery{Text: "hello"}); err == nil {
 			t.Fatal("expected the scan failure to propagate")
@@ -231,8 +373,8 @@ func TestSearchMemoryHits_Failures(t *testing.T) {
 	t.Run("row error", func(t *testing.T) {
 		d, mock := newMockDB(t, driverSQLite)
 
-		mock.ExpectQuery(`FROM memories_fts`).
-			WillReturnRows(sqlmock.NewRows([]string{"id", "rank"}).
+		mock.ExpectQuery(`JOIN memories_fts`).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "score"}).
 				AddRow("m1", -1.5).RowError(1, errors.New("boom")).AddRow("m2", -1.0))
 
 		if _, err := d.SearchMemoryHits(context.Background(), ContentQuery{Text: "hello"}); err == nil {

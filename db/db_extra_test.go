@@ -318,9 +318,7 @@ func TestPurge_RollsBackWhenMemoriesDeleteFails(t *testing.T) {
 		t.Fatalf("CreateEvent: %s", err)
 	}
 
-	if _, err := db.sql.Exec(`DROP TABLE memories`); err != nil {
-		t.Fatalf("DROP TABLE memories: %s", err)
-	}
+	dropMemoriesTable(t, db)
 
 	if err := db.Purge(context.Background()); err == nil {
 		t.Fatal("expected Purge to fail once the memories delete errors")

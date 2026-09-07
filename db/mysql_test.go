@@ -452,7 +452,7 @@ func TestMySQL_UpdateNoOpValueReportsExists(t *testing.T) {
 func TestMySQL_ReadOnlyOpenFailsFastWithoutTables(t *testing.T) {
 	database := newMySQLTestDB(t)
 
-	if _, err := database.sql.Exec(`DROP TABLE IF EXISTS memories, events`); err != nil {
+	if _, err := database.sql.Exec(`DROP TABLE IF EXISTS memories_fts, memories, events`); err != nil {
 		t.Fatalf("drop tables: %s", err)
 	}
 
@@ -780,6 +780,7 @@ func TestMySQL_MigrateSignificanceToLevels(t *testing.T) {
 	d := newMySQLTestDB(t)
 
 	old := []string{
+		`DROP TABLE IF EXISTS memories_fts`,
 		`DROP TABLE IF EXISTS memories`,
 		`DROP TABLE IF EXISTS events`,
 		`DROP TABLE IF EXISTS significance_levels`,

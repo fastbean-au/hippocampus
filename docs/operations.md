@@ -519,8 +519,10 @@ One thing runs the other way. On **SQLite** the [content search](configuration.m
 index (`memories_fts`) lives in the same database file and page accounting counts it, so the same
 `capacityBytes` holds fewer memories and eviction starts sooner than it would with search unused.
 The index is contentless — an inverted index, not a second copy of the bodies — so the overhead is a
-fraction of the text, but it is real and it is inside the target. The server drivers' live-row
-estimate does not see it at all.
+fraction of the text, but it is real and it is inside the target. The server drivers keep the same
+index and the same table name, but their live-row estimate does not see it at all: it is disk to
+size for, not capacity pressure. On **MySQL** size for rather more of it than the other two, since a
+`FULLTEXT` index is an index on a column and so holds an uncompressed copy of every indexed body.
 
 ### MySQL: size the InnoDB buffer pool to the working set
 

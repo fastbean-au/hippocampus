@@ -2205,6 +2205,14 @@ function validate() {
     );
   }
 
+  if (driver === "mysql" && !val("opensearch.enabled")) {
+    add(
+      "info",
+      "storage",
+      "Content search on the mysql driver is a FULLTEXT index, which indexes a column \u2014 so its index table holds a second, uncompressed copy of every indexed memory body. It is excluded from consolidation.capacityBytes but not from the disk, so size the volume for the capacity plus roughly the uncompressed size of your bodies again. The sqlite and postgres indexes do not do this.",
+    );
+  }
+
   if (gatewayPort > 0 && gatewayPort === Number(val("port"))) {
     add(
       "error",

@@ -56,8 +56,9 @@ each is a consequence of what the store is for, and each has a place to read fur
   content.
 - **Content search is a secondary index.** Primary reads are strictly consistent. The optional
   OpenSearch index is asynchronous and best-effort, though hits are always re-read from the primary
-  store so stale entries drop out; the built-in SQLite index is maintained inside the write itself
-  and is not subject to that. See [Content search](configuration.md#content-search).
+  store so stale entries drop out; the store's own index, which every driver has, is maintained
+  inside the write itself and is not subject to that. See
+  [Content search](configuration.md#content-search).
 - **A shared store is a shared trust domain.** Group scoping is a _soft_ partition: records are
   scoped, but the decay dynamics stay store-global, so a busy group influences what a quiet one
   forgets. Hard isolation is one instance per tenant — read

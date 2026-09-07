@@ -101,8 +101,9 @@ first. Never point a service at one of these files. The server fixtures have the
 different shape: each is replayed into a scratch database that is dropped when the subtest ends.
 
 Two dialect-specific notes. `v0.23.0` and `v0.25.0` are identical on the server drivers, because
-what separates them is the FTS content index, which is SQLite-only; both are kept so the tag set is
-the same across all three. And no released MySQL schema predates
+what separates them is the content index, which at that point was SQLite-only (the server dialects
+gained one much later, and no released server schema carries it — so every fixture here exercises
+its backfill); both are kept so the tag set is the same across all three. And no released MySQL schema predates
 `setMySQLColumnCollationIfNeeded` — the binary collation was pinned before `v0.1.0` — so no fixture
 can drive that migration. What the fixtures pin instead is the property it exists to guarantee, on
 every released schema: `TestSchemaUpgradeMySQLIdsStayCaseSensitive` stores two ids differing only in

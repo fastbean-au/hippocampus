@@ -266,6 +266,9 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 		"callback_queue": func(mock sqlmock.Sqlmock, _ driver) {
 			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS callback_queue`).WillReturnError(errors.New("boom"))
 		},
+		"content_search_sql": func(mock sqlmock.Sqlmock, _ driver) {
+			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + contentSearchTable).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, dialect := range serverDialects {

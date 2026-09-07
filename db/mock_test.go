@@ -888,6 +888,14 @@ func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name str
 	case "callback_queue":
 		expectCallbackQueue(mock, d)
 
+	case "content_search_sql":
+		// The index table, then the index over its searchable column, then the backfill's first
+		// count - which on a store whose index already has rows is the whole of it.
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + contentSearchTable).WillReturnResult(sqlmock.NewResult(0, 0))
+		expectIndexPresent(mock, d)
+		mock.ExpectQuery(`count\(\*\) FROM ` + contentSearchTable).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
 	default:
 		t.Fatalf("expectFreshMigration has no script for migration %q", name)
 

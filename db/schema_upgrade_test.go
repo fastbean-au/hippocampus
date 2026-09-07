@@ -452,6 +452,12 @@ var schemaFixtureTags = map[string]string{
 	"content_search":            "v0.23.0",
 	"callback_queue":            notReleasedBefore,
 
+	// The server dialects' content index. Every released server schema predates it, so the newest
+	// fixture is the one that exercises it - and it exercises the part that matters, which is not
+	// the CREATE TABLE but the backfill: a store upgraded into this index and left empty answers
+	// every search with nothing, which reads exactly like a store holding no match.
+	"content_search_sql": "v0.38.3",
+
 	// The two indexes are rebuilt from whatever columns exist rather than migrating data, so every
 	// fixture exercises them; the oldest is named because it is the one that proves the covering
 	// index survives being rebuilt onto significance_level_id.

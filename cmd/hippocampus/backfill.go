@@ -29,7 +29,8 @@ type backfillConfig struct {
 }
 
 // rebuildContentSearch rebuilds the primary store's own content-search index - the --backfill-search
-// mode when OpenSearch is not configured.
+// mode when OpenSearch is not configured. Every driver has one of these now, so this is no longer
+// the embedded driver's private path.
 //
 // Unlike backfillSearch below, this one is rarely needed, and saying so is more useful than
 // offering it silently: the store's index is maintained inside the writes themselves and is
@@ -40,20 +41,49 @@ type backfillConfig struct {
 //
 // It differs from backfillSearch in one way that matters operationally: it WRITES to the service's
 // own database, so unlike the OpenSearch backfill it must not be run beside a live instance. The
-// database is opened read-write for that reason, and the warning below says so.
-func rebuildContentSearch(storageDriver string, storageDirectory string) {
-	if storageDriver != "sqlite" {
-		log.Fatalf(
-			"--backfill-search has nothing to rebuild: storage.driver '%s' has no built-in content search, and opensearch.enabled is false",
-			storageDriver,
-		)
-	}
-
+// database is opened read-write for that reason, and the warning below says so. On the embedded
+// driver that is enforced anyway (the storage lock refuses a second process); on the server drivers
+// it is not, and the consequence is not corruption but a window in which the index has been emptied
+// and not yet refilled, during which a live instance answers searches with less than it holds.
+//
+// The server opens are deliberately NOT consolidating ones: the single-consolidator lock exists to
+// keep two decay schedules apart, and taking it here would make this tool fail against a healthy
+// deployment for a reason that has nothing to do with what it is about to write.
+func rebuildContentSearch(cfg backfillConfig) {
 	log.Warn("rebuilding the content search index writes to the database - stop the service first if it is running")
 
-	database, err := db.New(storageDirectory)
+	var (
+		database *db.DB
+		err      error
+	)
+
+	switch cfg.StorageDriver {
+
+	case "sqlite":
+		database, err = db.New(cfg.StorageDirectory)
+
+	case "postgres":
+		database, err = db.NewPostgres(cfg.PostgresDSN, false)
+
+	case "mysql":
+		database, err = db.NewMySQL(cfg.MySQLDSN, false)
+
+	default:
+		log.Fatalf("unknown storage.driver '%s' (expected 'sqlite', 'postgres', or 'mysql')", cfg.StorageDriver)
+
+	}
+
 	if err != nil {
 		log.Fatalf("failed to open database: %s", err.Error())
+	}
+
+	if !database.ContentSearchAvailable() {
+		_ = database.Close()
+
+		log.Fatalf(
+			"--backfill-search has nothing to rebuild: storage.driver '%s' has no built-in content search, and opensearch.enabled is false",
+			cfg.StorageDriver,
+		)
 	}
 
 	started := time.Now()

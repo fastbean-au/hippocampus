@@ -1397,19 +1397,26 @@ Recall is normally by id, event, or time/significance range. `SearchMemories`
 (`POST /v1/memories/search`) adds one more read path: it finds memories whose body matches a query,
 most relevant first, optionally restricted to one event and/or one `group` label.
 
-There are two backends, and **you get one without configuring anything**:
+There are two backends, and **you get one without configuring anything, on every driver**:
 
-| Backend     | When it is used                          | Drivers       | Modes                                                                                        |
-| ----------- | ---------------------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
-| Store index | `opensearch.enabled` false (the default) | `sqlite` only | Keyword. An FTS5 index inside the same database file — no cluster, no configuration.         |
-| OpenSearch  | `opensearch.enabled` true                | all           | Keyword, plus [semantic and hybrid](#semantic-search) when an embedding model is configured. |
+| Backend     | When it is used                          | Drivers | Modes                                                                                        |
+| ----------- | ---------------------------------------- | ------- | -------------------------------------------------------------------------------------------- |
+| Store index | `opensearch.enabled` false (the default) | all     | Keyword. An index inside the same database — no cluster, no configuration.                   |
+| OpenSearch  | `opensearch.enabled` true                | all     | Keyword, plus [semantic and hybrid](#semantic-search) when an embedding model is configured. |
 
-On the `postgres` and `mysql` drivers with OpenSearch disabled there is no content search at all,
-and `SearchMemories` returns `FAILED_PRECONDITION` saying so. A log line at startup reports which
-backend was selected.
+A log line at startup reports which backend was selected. `SearchMemories` returns
+`FAILED_PRECONDITION` only where neither is available, and `WhoAmI.search_modes` reports what a
+deployment can actually serve, so a client can feature-detect rather than search-and-fail.
 
 Both backends are strictly **secondary**: the primary store remains the system of record, results
-are always re-read from it, and binary memories (`is_binary`) are never indexed by either.
+are always re-read from it, and binary memories (`is_binary`) are never indexed by either. The index
+is created and, on an existing store, populated at startup — upgrading needs no manual step.
+
+On the server drivers it sits outside the [capacity target](consolidation.md#capacity-target), like the
+forgotten log: it is derived data, and letting the record of what is searchable raise capacity
+pressure would evict live memories to make room for it. On `sqlite` it cannot — page accounting
+cannot exclude a table in the same file — so the index is inside `capacityBytes` there, and search
+makes the same target hold fewer memories. Either way it is disk to size for.
 
 #### Semantic search
 
@@ -1417,10 +1424,12 @@ Keyword search finds memories that used your words. Semantic search finds memori
 you meant — a search for "deployment problem" surfaces one that only ever said "the rollout broke".
 
 It needs two things keyword search does not, and **neither implies the other**: an embedding model
-to turn text into vectors, and OpenSearch's k-NN index to store and search them. There is no
-embedded equivalent — the SQLite backend is a keyword index, and giving it vectors would mean
-either a cgo extension (costing the pure-Go build every deployment target depends on) or a scan
-whose cost grows with the store. Semantic search is therefore an OpenSearch capability, on every
+to turn text into vectors, and OpenSearch's k-NN index to store and search them. The store's own
+index has no equivalent on any driver — on `sqlite`, giving it vectors would mean either a cgo
+extension (costing the pure-Go build every deployment target depends on) or a scan whose cost grows
+with the store; on `postgres`, `pgvector` could do it, but vectors would then have to live in the
+primary store, reversing a deliberate capacity decision, so it is a separate question rather than
+part of the keyword work. Semantic search is therefore an OpenSearch capability today, on every
 driver.
 
 ```json
@@ -1521,29 +1530,56 @@ A **reinforcing** search (`reinforce: true`) reinforces exactly the memories it 
 wider candidate set — the extra candidates are read but never recalled, so searching does not reset
 the decay clock on memories you were not shown.
 
-#### The store's own index (SQLite)
+#### The store's own index
 
-The default. Ranking is FTS5's bm25, and matching is an OR over the query's words — the same
-semantics as the OpenSearch backend's, so moving between the two changes scale, not results.
+The default, on **every** driver. Matching is an OR over the query's words — the same semantics as
+the OpenSearch backend's, so moving between the two changes scale, not results.
 
-Query text is treated as **words, not as a query language**: FTS5 operators (`AND`, `NEAR`, `*`,
-`column:`) and quotes are neutralised rather than honoured, so no input is a syntax error and none
-can reach into the query's structure. Ranking still favours memories matching more of the words.
+It is one feature with three implementations, and the differences are worth knowing before choosing
+a driver:
+
+| Driver     | Index                               | Second copy of the body? | Notes                                                                                                     |
+| ---------- | ----------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- -|
+| `sqlite`   | FTS5 virtual table, contentless     | No                       | No cgo and no extra dependency: `modernc.org/sqlite` is built with FTS5.                                  |
+| `postgres` | `tsvector` table under a GIN index  | No                       | Text search configuration `simple`: no stemming, no stopwords.                                            |
+| `mysql`    | `FULLTEXT` index over a text column | **Yes**                  | A `FULLTEXT` index indexes a column, so the index table holds an uncompressed copy of every indexed body. |
+
+Two MySQL server settings show through and have no counterpart on the other two: a token shorter
+than [`innodb_ft_min_token_size`](https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html)
+(3 by default) matches nothing, and InnoDB's built-in stopword list drops about three dozen common
+English words. Both are server-level settings rather than anything this schema states.
+
+Query text is treated as **words, not as a query language**, on every driver: it is split into bare
+alphanumeric tokens, each quoted as a literal, and the tokens OR-ed. So FTS5's operators (`AND`,
+`NEAR`, `*`, `column:`), `tsquery`'s (`&`, `|`, `!`) and MySQL's boolean-mode ones (`+`, `-`, `~`)
+are all neutralised rather than honoured: no input is a syntax error and none can reach into the
+query's structure. Ranking still favours memories matching more of the words.
+
+Relevance is each engine's own measure (bm25, `ts_rank`, InnoDB's boolean relevance), normalised so
+that a higher score is always a better match. The **order** is comparable between drivers; the
+magnitudes are not.
+
+Only the first 512 KiB of a body is indexed, on every driver — a limit one of them enforces natively,
+applied to all three so that what is findable is a property of the store rather than of the driver
+it happens to run on.
 
 What differs from OpenSearch, and mostly in this backend's favour:
 
 - **It cannot go stale.** The index is maintained inside the write itself, not by an asynchronous
   worker, so there is no propagation queue to overflow and no reconciliation sweep to wait for. A
   memory is findable as soon as `StoreMemory` returns.
-- **Deletes cannot drift.** They are handled by a database trigger, so every path that removes a
-  memory — consolidation, eviction, purge, summary replacement — is covered by construction.
-- **No second copy of your content.** The index is contentless: it holds the inverted index and
-  not the bodies, so unlike an OpenSearch deployment it neither duplicates your text nor gives
-  back the storage [body compression](#body-compression) saves.
-- **Upgrades populate it automatically.** A database written before this existed gains the index
-  on the next startup, and it is filled from the memories already stored — no backfill step.
-- It is bounded by the single SQLite instance, where OpenSearch scales independently and serves
-  the `postgres`/`mysql` deployments as well.
+- **Deletes cannot drift.** They are handled by the storage engine — a trigger on `sqlite`, a
+  cascading foreign key on the server drivers — so every path that removes a memory (consolidation,
+  eviction, purge, summary replacement) is covered by construction, in the same transaction.
+- **No second copy of your content**, on two of the three, and none of it outside the primary store.
+  `sqlite` and `postgres` hold an inverted index — the words, without their order or punctuation —
+  rather than the bodies, so unlike an OpenSearch deployment there is no second system holding your
+  text. Size is a weaker claim than it sounds: for short bodies a `tsvector` is not much smaller
+  than the text it came from, so budget disk for the index on any driver.
+- **Upgrades populate it automatically.** A database written before this existed gains the index on
+  the next startup, and it is filled from the memories already stored — no backfill step.
+- It has no [semantic search](#semantic-search), which needs vectors and an engine that can search
+  them, and on `sqlite` it is bounded by the single instance where OpenSearch scales independently.
 
 The one drift it can suffer is an index write that failed and was logged rather than failing its
 memory, leaving a memory stored but unfindable.
@@ -1620,9 +1656,8 @@ for every existence, consolidation, and recall decision:
   resetting their decay clocks and raising their effective significance, exactly as
   `RecallMemories` does.
 - Binary memories (`is_binary`) are never indexed; their bodies are opaque.
-- With `opensearch.enabled` false (the default) the `sqlite` driver falls back to
-  [the store's own index](#the-stores-own-index-sqlite); `postgres` and `mysql` have no content
-  search, and `SearchMemories` fails with `FAILED_PRECONDITION`.
+- With `opensearch.enabled` false (the default) every driver falls back to
+  [the store's own index](#the-stores-own-index), which is keyword-only.
 
 The index is fully rebuildable from the primary store (re-storing memories re-indexes them), so
 losing it costs search availability, nothing more.
@@ -1758,14 +1793,17 @@ deletion propagated, leaving a stale document — harmless for reads (results ar
 against the primary store) and cleared by the next `--reindex` run.
 
 **Without OpenSearch**, the same flag rebuilds
-[the store's own index](#the-stores-own-index-sqlite) instead, and behaves differently in two ways
-that matter. It is rarely needed — that index is populated automatically at startup and maintained
-inside every write — so reach for it only when a memory is stored but not findable, which means an
-index write failed and was logged. And it **writes to the service's own database**, so unlike the
-OpenSearch backfill it must not be run beside a live instance: stop the service first — on the
-`sqlite` driver it opens read-write and so takes [the storage
-lock](operations.md#the-sqlite-storage-lock), refusing to start while a service holds it. `--reindex`
-and `--backfill-batch-size` do not apply; the rebuild always clears and repopulates.
+[the store's own index](#the-stores-own-index) instead — on every driver — and behaves differently
+in two ways that matter. It is rarely needed: that index is populated automatically at startup and
+maintained inside every write, so reach for it only when a memory is stored but not findable, which
+means an index write failed and was logged. And it **writes to the service's own database**, so
+unlike the OpenSearch backfill it must not be run beside a live instance: stop the service first. On
+the `sqlite` driver that is enforced — it opens read-write and so takes [the storage
+lock](operations.md#the-sqlite-storage-lock), refusing to start while a service holds it. On the
+server drivers it is not, and the consequence is not corruption but a window in which the index has
+been emptied and not yet refilled, during which a live instance answers searches with less than it
+holds. `--reindex` and `--backfill-batch-size` do not apply; the rebuild always clears and
+repopulates.
 
 ### Summarisation (embedded LLM / Ollama)
 

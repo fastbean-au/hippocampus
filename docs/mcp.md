@@ -224,11 +224,11 @@ put it behind auth/TLS (or a proxy that terminates them) before exposing it beyo
   `list_memories` can therefore race — the store commits, but the list may run first and not see it.
   This is host batching behaviour, not a consistency gap in the store; a subsequent list reflects
   the write.
-- `search_memories` needs the service to have a content-search backend. On the default `sqlite`
-  driver there is one built in and nothing else is required; on `postgres`/`mysql` it needs
-  `opensearch.enabled`, and without it the tool returns a `FAILED_PRECONDITION` error, surfaced to
-  the model as a tool error. `semantic`/`hybrid` modes need OpenSearch plus an embedding model on
-  every driver.
+- `search_memories` needs the service to have a content-search backend. Every storage driver has
+  one built in, so nothing else is required for keyword search; where none is available the tool
+  returns a `FAILED_PRECONDITION` error, surfaced to the model as a tool error. `semantic`/`hybrid`
+  modes need OpenSearch plus an embedding model, on every driver — `whoami` reports which modes a
+  deployment serves, so a model can ask rather than find out by being refused.
 - The listing tools take their time bounds as RFC3339 timestamps (`stored_after`,
   `started_before`, …) while the memories they return carry UnixNano `time_stamp` fields, which is
   the service's own representation. The asymmetry is deliberate: a model can write a date but

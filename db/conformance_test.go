@@ -192,6 +192,22 @@ func resetTestSequences(t *testing.T, d *DB) {
 	}
 }
 
+// dropMemoriesTable removes the memories table, for the tests that simulate a store the service has
+// never initialised. The content index goes first and is what makes this a helper rather than one
+// statement: it references memories, so on the dialects that enforce a foreign key the drop is
+// refused outright and the test fails on its own setup.
+func dropMemoriesTable(t *testing.T, d *DB) {
+	t.Helper()
+
+	if _, err := d.sql.Exec(`DROP TABLE IF EXISTS ` + contentSearchTable); err != nil {
+		t.Fatalf("DROP TABLE %s: %s", contentSearchTable, err)
+	}
+
+	if _, err := d.sql.Exec(`DROP TABLE memories`); err != nil {
+		t.Fatalf("DROP TABLE memories: %s", err)
+	}
+}
+
 // requireSQLite skips a test that is legitimately SQLite-only rather than dialect-agnostic: the
 // FTS5 content search, the WAL file, the storage-directory lock, Preserve's compaction, and
 // UsedBytes' page accounting all describe things the server drivers deliberately do differently or

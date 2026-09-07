@@ -461,7 +461,7 @@ func TestPostgres_ReadOnlyOpenFailsFastWithoutTables(t *testing.T) {
 	database := newPostgresTestDB(t)
 
 	// Simulate a database the service has never initialised.
-	if _, err := database.sql.Exec(`DROP TABLE IF EXISTS memories, events`); err != nil {
+	if _, err := database.sql.Exec(`DROP TABLE IF EXISTS memories_fts, memories, events`); err != nil {
 		t.Fatalf("drop tables: %s", err)
 	}
 
@@ -729,6 +729,7 @@ func TestPostgres_MigrateSignificanceToLevels(t *testing.T) {
 
 	old := []string{
 		`DROP INDEX IF EXISTS idx_memories_consolidation`,
+		`DROP TABLE IF EXISTS memories_fts`,
 		`DROP TABLE IF EXISTS memories`,
 		`DROP TABLE IF EXISTS events`,
 		`DROP TABLE IF EXISTS significance_levels`,

@@ -277,7 +277,12 @@ func execute(args []string) {
 		// with different constraints (it writes to the service's own database), so it has its own
 		// entry point rather than a flag inside this one.
 		if !viper.GetBool("opensearch.enabled") {
-			rebuildContentSearch(viper.GetString("storage.driver"), viper.GetString("storage.directory"))
+			rebuildContentSearch(backfillConfig{
+				StorageDriver:    viper.GetString("storage.driver"),
+				StorageDirectory: viper.GetString("storage.directory"),
+				PostgresDSN:      viper.GetString("storage.postgres.dsn"),
+				MySQLDSN:         viper.GetString("storage.mysql.dsn"),
+			})
 
 			return
 		}
@@ -585,9 +590,9 @@ func run(ctx context.Context, version versionInfo) error {
 
 	// initialise the secondary content-search index. OpenSearch when it is configured; otherwise
 	// the store's own index, which needs no configuration and no cluster, so SearchMemories works
-	// out of the box. Only a driver with neither leaves the no-op in place, and that is logged
-	// rather than left to be discovered through an empty search result. Construction of the
-	// OpenSearch client only fails on unusable configuration (e.g. a malformed address) - an
+	// out of the box on every driver. A store that cannot carry one leaves the no-op in place, and
+	// that is logged rather than left to be discovered through an empty search result. Construction
+	// of the OpenSearch client only fails on unusable configuration (e.g. a malformed address) - an
 	// unreachable cluster must not prevent startup, since that index is best-effort by design.
 	searchIndex := search.NewNoop()
 

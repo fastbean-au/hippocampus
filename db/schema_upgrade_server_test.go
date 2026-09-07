@@ -31,6 +31,10 @@ import (
 //
 // Both skip unless HIPPOCAMPUS_TEST_POSTGRES_DSN / HIPPOCAMPUS_TEST_MYSQL_DSN name a disposable
 // server, exactly as postgres_test.go and mysql_test.go already do. CI sets both.
+//
+// Every released server schema predates the content index, so these fixtures are also the only
+// thing that exercises its backfill on these dialects - a store upgraded into the index and left
+// empty answers every search with nothing, which reads exactly like a store holding no match.
 
 const (
 	postgresTestAdminDSNEnv = "HIPPOCAMPUS_TEST_POSTGRES_ADMIN_DSN"
@@ -46,6 +50,7 @@ func TestSchemaUpgradePostgres(t *testing.T) {
 
 			assertSeededRowsReadBack(t, database, fixture.tag, fixture.migrations)
 			assertMetadataFilterIsSafe(t, database, fixture.tag, fixture.migrations)
+			assertContentSearchBackfilled(t, database, fixture.tag, fixture.migrations)
 			assertStoreIsConsolidatable(t, database, fixture.tag, fixture.migrations)
 		})
 	}
@@ -61,6 +66,7 @@ func TestSchemaUpgradeMySQL(t *testing.T) {
 
 			assertSeededRowsReadBack(t, database, fixture.tag, fixture.migrations)
 			assertMetadataFilterIsSafe(t, database, fixture.tag, fixture.migrations)
+			assertContentSearchBackfilled(t, database, fixture.tag, fixture.migrations)
 			assertStoreIsConsolidatable(t, database, fixture.tag, fixture.migrations)
 		})
 	}

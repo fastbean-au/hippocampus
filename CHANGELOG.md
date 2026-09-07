@@ -46,6 +46,59 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ### Added
 
+- **Content search on `postgres` and `mysql`.** `SearchMemories` now works without an OpenSearch
+  cluster on every storage driver, not just `sqlite`. There is nothing to configure and nothing to
+  run alongside: the index lives in the same database as the memories, is created at startup, and is
+  populated from what is already stored — so an existing store gains a working search on the first
+  restart after upgrading, with no backfill step.
+
+  This closes a defect in a deployment recipe this repository ships. `deploy/k8s/overlays/postgres`
+  and `deploy/compose/docker-compose.postgres.yaml` are what the documentation points a production
+  reader at, and both produce an instance whose `SearchMemories` failed `FAILED_PRECONDITION` —
+  precisely the fault the store's own index was added to fix in 0.36.0, moved one deployment model
+  along. The 2026-08-05 decision that recorded OpenSearch as a reasonable prerequisite for a
+  centralised deployment said to revisit it if such a deployment turned up that would not run
+  OpenSearch. One had, in this repository.
+
+  What each driver uses, and the one asymmetry worth knowing before choosing: `sqlite` keeps its
+  FTS5 index unchanged, `postgres` keeps a `tsvector` table under a GIN index, and `mysql` keeps a
+  `FULLTEXT` index — which, because a `FULLTEXT` index indexes a **column**, means the MySQL index
+  holds a second, uncompressed copy of every indexed body. The other two hold only an inverted
+  index — a privacy property more than a size one, since for short bodies a `tsvector` is about as
+  large as the text it came from. On the server drivers the index sits outside
+  `consolidation.capacityBytes`, like the forgotten log: it is derived data, and letting the record
+  of what is searchable raise capacity pressure would evict live memories to make room for it. On
+  `sqlite` it is inside the target, as it always has been — page accounting cannot exclude a table
+  in the same file.
+
+  Two MySQL server settings show through and have no counterpart on the other two: a token shorter
+  than `innodb_ft_min_token_size` (3 by default) matches nothing, and InnoDB's stopword list drops
+  about three dozen common English words.
+
+  Deletion cannot drift on any driver, because no call site performs it: the SQLite index is kept in
+  step by a trigger and the server indexes by a foreign key with `ON DELETE CASCADE`, so
+  consolidation, eviction, `Purge` and the rest retire an index entry in the same transaction that
+  removes the memory. Query text is still never passed through to the engine — it is split into bare
+  alphanumeric tokens, each quoted as a literal and the tokens OR-ed, so all three of these query
+  languages are disarmed the same way. Relevance is each engine's own measure, normalised so a
+  higher score is always a better match; the order is comparable between drivers, the magnitudes are
+  not. Only the first 512 KiB of a body is indexed, on every driver — one of them enforces such a
+  limit natively, and applying it to all three keeps what is findable a property of the store rather
+  than of the driver.
+
+  `--backfill-search` without OpenSearch now rebuilds the index on any driver rather than refusing
+  on two of them. `WhoAmI.search_modes` needed no change and already reports the truth.
+
+  The server drivers' index is schema migration 14, so a `postgres` or `mysql` store opened by this
+  release records a version an earlier build does not understand and that build will refuse to open
+  it — the ordinary no-downgrade rule, stated here because the migration is the first one those
+  drivers have gained since the version gate landed. Nothing is required to upgrade.
+
+  Semantic search is unchanged and still needs OpenSearch on every driver. `pgvector` would give a
+  Postgres deployment semantic search with no cluster beside it, but the vectors would have to live
+  in the primary store, which reverses a deliberate capacity decision — a separate question, argued
+  separately.
+
 - **A filesystem object store for `Export`/`Import`.** The archive format is the only thing that
   preserves a store's full state — timestamps, recall history, groups, summary flags and links —
   and until now the only way to reach it was S3: `main.go` built an object store only when

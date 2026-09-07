@@ -30,6 +30,7 @@ func TestMigrationVersionsAreStable(t *testing.T) {
 		11: "instance_registry",
 		12: "content_search",
 		13: "callback_queue",
+		14: "content_search_sql",
 	}
 
 	migrations := (&DB{driver: driverSQLite}).migrations()
@@ -84,14 +85,52 @@ func TestEveryMigrationHasAnApply(t *testing.T) {
 	}
 }
 
-// TestSchemaVersionIsTheNewestMigration pins what the version gate compares against.
+// TestSchemaVersionIsTheNewestMigration pins what the version gate compares against: the newest
+// migration THIS DIALECT runs, which is not necessarily the last entry in the list.
+//
+// The difference is not academic. A capability-gated step is neither applied nor recorded where it
+// does not apply, so a ceiling read off the end of the list would leave a store that is entirely
+// current sitting one version below it - reported as an upgrade on every startup, and as pending
+// work by --schema-version, forever.
 func TestSchemaVersionIsTheNewestMigration(t *testing.T) {
-	d := &DB{driver: driverSQLite}
+	for _, dialect := range []driver{driverSQLite, driverPostgres, driverMySQL} {
+		d := &DB{driver: dialect}
 
-	migrations := d.migrations()
+		t.Run(d.dialect().name, func(t *testing.T) {
+			want := 0
 
-	if got, want := d.schemaVersion(), migrations[len(migrations)-1].version; got != want {
-		t.Errorf("schemaVersion = %d, want the newest migration's %d", got, want)
+			for _, migration := range d.migrations() {
+				if migration.when != nil && !migration.when(d.dialect()) {
+					continue
+				}
+
+				want = migration.version
+			}
+
+			if got := d.schemaVersion(); got != want {
+				t.Errorf("schemaVersion = %d, want the newest migration this dialect runs, %d", got, want)
+			}
+		})
+	}
+}
+
+// TestSchemaVersionLeavesNothingPending is the property the one above exists for, stated directly:
+// after initSchema, a store's recorded version equals the ceiling, so nothing reports an upgrade
+// that is never going to happen. Asserted on the dialect that does NOT run the newest migration,
+// which is the only one that can get this wrong.
+func TestSchemaVersionLeavesNothingPending(t *testing.T) {
+	requireSQLite(t)
+
+	d := newTestDB(t)
+
+	applied, err := d.appliedMigrations()
+	if err != nil {
+		t.Fatalf("reading the ledger: %s", err)
+	}
+
+	if got := newestVersion(applied); got != d.schemaVersion() {
+		t.Errorf("a freshly initialised store records version %d against a ceiling of %d - the "+
+			"difference is logged as an upgrade on every startup", got, d.schemaVersion())
 	}
 }
 

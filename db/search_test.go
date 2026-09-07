@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/fastbean-au/hippocampus/types"
 )
@@ -49,20 +50,22 @@ func searchIds(t *testing.T, d *DB, query ContentQuery) []string {
 	return ids
 }
 
-// newContentSearchDB is newTestDB for this file: the FTS5 content index is a SQLite-only feature
-// (see ContentSearchAvailable), so every test here is about SQLite specifically rather than about
-// behaviour the three dialects must agree on, and skips under the shared suite's other dialects.
+// newContentSearchDB is newTestDB for this file. It is a plain alias rather than a SQLite-gated
+// open: every dialect keeps a content index now, and what these tests describe - which memories a
+// search finds, what a filter narrows, what an update retires, and which delete paths take an entry
+// with them - is behaviour all three must agree on, whatever the three query languages underneath
+// look like. The genuinely per-dialect pieces (the FTS5 virtual table's own DDL, a read-only open)
+// say so with requireSQLite where they appear.
 func newContentSearchDB(t *testing.T) *DB {
 	t.Helper()
-
-	requireSQLite(t)
 
 	return newTestDB(t)
 }
 
-// ftsRowCount reports how many rows the FTS index holds, so tests can assert on the index itself
-// rather than only on what search returns through it.
-func ftsRowCount(t *testing.T, d *DB) int {
+// contentIndexRowCount reports how many rows the content index holds, so tests can assert on the
+// index itself rather than only on what search returns through it. The table is named the same on
+// every dialect, which is what lets this be one query.
+func contentIndexRowCount(t *testing.T, d *DB) int {
 	t.Helper()
 
 	var n int
@@ -79,7 +82,7 @@ func TestContentSearchFindsAndFilters(t *testing.T) {
 	defer func() { _ = d.Close() }()
 
 	if !d.ContentSearchAvailable() {
-		t.Fatal("content search should be available on the SQLite driver")
+		t.Fatal("content search should be available on every driver")
 	}
 
 	storeMemory(t, d, "m1", "the deployment failed on the staging cluster", "ops")
@@ -208,7 +211,7 @@ func TestContentSearchSkipsBinaryMemories(t *testing.T) {
 		t.Errorf("binary memory was indexed: got %v, want none", ids)
 	}
 
-	if n := ftsRowCount(t, d); n != 0 {
+	if n := contentIndexRowCount(t, d); n != 0 {
 		t.Errorf("index holds %d rows for a binary-only store, want 0", n)
 	}
 }
@@ -267,7 +270,7 @@ func TestContentSearchReindexesOnUpdate(t *testing.T) {
 	}
 
 	// One row, not two: the reindex must replace rather than accumulate.
-	if n := ftsRowCount(t, d); n != 1 {
+	if n := contentIndexRowCount(t, d); n != 1 {
 		t.Errorf("index holds %d rows after an update, want 1", n)
 	}
 }
@@ -306,14 +309,15 @@ func TestContentSearchUpdateOfAbsentMemoryIndexesNothing(t *testing.T) {
 		t.Fatal("UpdateMemory reported a nonexistent memory as present")
 	}
 
-	if n := ftsRowCount(t, d); n != 1 {
+	if n := contentIndexRowCount(t, d); n != 1 {
 		t.Errorf("index holds %d rows, want only the one real memory's", n)
 	}
 }
 
-// Deletion is handled by a trigger rather than by any call site, so it must hold for every path
-// that removes a memory - including the consolidation/eviction path, which never goes near the
-// index maintenance helpers.
+// Deletion is handled by the storage engine rather than by any call site - a trigger on one
+// dialect, a cascading foreign key on the other two - so it must hold for every path that removes a
+// memory, including the consolidation/eviction path, which never goes near the index maintenance
+// helpers.
 func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 	ctx := context.Background()
 
@@ -327,7 +331,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 			t.Fatalf("DeleteMemories: %s", err)
 		}
 
-		if n := ftsRowCount(t, d); n != 0 {
+		if n := contentIndexRowCount(t, d); n != 0 {
 			t.Errorf("index holds %d rows after a delete, want 0", n)
 		}
 	})
@@ -342,7 +346,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 			t.Fatalf("Purge: %s", err)
 		}
 
-		if n := ftsRowCount(t, d); n != 0 {
+		if n := contentIndexRowCount(t, d); n != 0 {
 			t.Errorf("index holds %d rows after a purge, want 0", n)
 		}
 	})
@@ -357,7 +361,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 			t.Fatalf("ConsolidateMemories: %s", err)
 		}
 
-		if n := ftsRowCount(t, d); n != 0 {
+		if n := contentIndexRowCount(t, d); n != 0 {
 			t.Errorf("index holds %d rows after consolidation, want 0", n)
 		}
 	})
@@ -379,7 +383,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 			t.Fatalf("DeleteEventMemories: %s", err)
 		}
 
-		if n := ftsRowCount(t, d); n != 0 {
+		if n := contentIndexRowCount(t, d); n != 0 {
 			t.Errorf("index holds %d rows after deleting an event's memories, want 0", n)
 		}
 	})
@@ -441,14 +445,22 @@ func TestContentSearchFollowsImport(t *testing.T) {
 		t.Errorf("the imported body does not match: got %v, want [m1]", ids)
 	}
 
-	if n := ftsRowCount(t, d); n != 1 {
+	if n := contentIndexRowCount(t, d); n != 1 {
 		t.Errorf("index holds %d rows after an upsert, want 1", n)
 	}
 }
 
 // A store written before content search existed gains an empty index on the upgrade startup. It
 // must be populated then, or every pre-existing memory is silently unfindable.
+//
+// SQLite-only because it reaches for the virtual table and trigger by name to simulate the older
+// store, and because it needs two independent opens of the same database. The server dialects'
+// half of this is the released-fixture suite (TestSchemaUpgradePostgres / TestSchemaUpgradeMySQL,
+// which run assertContentSearchBackfilled over a real pre-index dump), which is the stronger test
+// of the two - it replays a schema that was actually shipped rather than one this test built.
 func TestContentSearchPopulatesOnUpgrade(t *testing.T) {
+	requireSQLite(t)
+
 	ctx := context.Background()
 	dir := t.TempDir()
 
@@ -486,7 +498,7 @@ func TestContentSearchPopulatesOnUpgrade(t *testing.T) {
 		t.Fatalf("RebuildContentSearch: %s", err)
 	}
 
-	if n := ftsRowCount(t, reopened); n != 1 {
+	if n := contentIndexRowCount(t, reopened); n != 1 {
 		t.Errorf("index holds %d rows after a rebuild, want 1", n)
 	}
 }
@@ -502,8 +514,10 @@ func TestRebuildContentSearchRepairsAGap(t *testing.T) {
 	storeMemory(t, d, "m1", "findable content", "ops")
 	storeMemory(t, d, "m2", "also findable content", "ops")
 
-	// Punch a hole in the index the way a failed index write would.
-	if _, err := d.sql.Exec(`DELETE FROM ` + contentSearchTable + ` WHERE rowid = (SELECT rowid FROM memories WHERE id = 'm1')`); err != nil {
+	// Punch a hole in the index the way a failed index write would. Through the package's own
+	// helper, because how a row is addressed in the index is exactly what differs between the
+	// dialects - by rowid on one, by memory id on the other two.
+	if err := d.deleteContentIndexEntry(ctx, "m1"); err != nil {
 		t.Fatalf("removing an index entry: %s", err)
 	}
 
@@ -576,34 +590,112 @@ func TestContentSearchOrsItsTokens(t *testing.T) {
 	}
 }
 
-func TestFtsMatchExpression(t *testing.T) {
+// The tokeniser is what disarms all three query languages at once, so it is tested on its own: not
+// one operator character of any of them survives it.
+func TestContentTokens(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
-		want string
+		want []string
 	}{
-		{name: "single word", in: "deployment", want: `"deployment"`},
-		{name: "two words", in: "deployment failed", want: `"deployment" OR "failed"`},
-		{name: "operators are neutralised", in: "a AND b", want: `"a" OR "AND" OR "b"`},
-		{name: "punctuation is dropped", in: "it's a co-operative!", want: `"it" OR "s" OR "a" OR "co" OR "operative"`},
-		{name: "digits are kept", in: "error 500", want: `"error" OR "500"`},
-		{name: "quotes cannot escape", in: `he said "hi"`, want: `"he" OR "said" OR "hi"`},
-		{name: "empty", in: "", want: ""},
-		{name: "punctuation only", in: "-*-", want: ""},
+		{name: "single word", in: "deployment", want: []string{"deployment"}},
+		{name: "two words", in: "deployment failed", want: []string{"deployment", "failed"}},
+		{name: "operators are neutralised", in: "a AND b", want: []string{"a", "AND", "b"}},
+		{name: "punctuation is dropped", in: "it's a co-operative!", want: []string{"it", "s", "a", "co", "operative"}},
+		{name: "digits are kept", in: "error 500", want: []string{"error", "500"}},
+		{name: "quotes cannot escape", in: `he said "hi"`, want: []string{"he", "said", "hi"}},
+		{name: "tsquery operators are dropped", in: "cats & dogs | !birds", want: []string{"cats", "dogs", "birds"}},
+		{name: "boolean mode operators are dropped", in: "+cats -dogs *bir@ds~", want: []string{"cats", "dogs", "bir", "ds"}},
+		{name: "empty", in: "", want: nil},
+		{name: "punctuation only", in: "-*-", want: nil},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := ftsMatchExpression(test.in); got != test.want {
-				t.Errorf("ftsMatchExpression(%q) = %q, want %q", test.in, got, test.want)
+			got := contentTokens(test.in)
+
+			if len(got) != len(test.want) {
+				t.Fatalf("contentTokens(%q) = %v, want %v", test.in, got, test.want)
+			}
+
+			for i, token := range got {
+				if token != test.want[i] {
+					t.Errorf("contentTokens(%q)[%d] = %q, want %q", test.in, i, token, test.want[i])
+				}
 			}
 		})
 	}
 }
 
+// Each dialect renders those tokens into its own query language. All three are tested from one
+// place because the property that matters is shared: every token is a quoted literal and the tokens
+// are OR-ed, so what a caller typed can never become part of the query's structure and the three
+// backends agree on which memories match.
+func TestContentMatchExpression(t *testing.T) {
+	tests := []struct {
+		driver driver
+		tokens []string
+		want   string
+	}{
+		{driver: driverSQLite, tokens: []string{"deployment"}, want: `"deployment"`},
+		{driver: driverSQLite, tokens: []string{"deployment", "failed"}, want: `"deployment" OR "failed"`},
+		{driver: driverSQLite, tokens: nil, want: ""},
+
+		{driver: driverPostgres, tokens: []string{"deployment"}, want: `'deployment'`},
+		{driver: driverPostgres, tokens: []string{"deployment", "failed"}, want: `'deployment' | 'failed'`},
+		{driver: driverPostgres, tokens: nil, want: ""},
+
+		{driver: driverMySQL, tokens: []string{"deployment"}, want: `"deployment"`},
+		{driver: driverMySQL, tokens: []string{"deployment", "failed"}, want: `"deployment" "failed"`},
+		{driver: driverMySQL, tokens: nil, want: ""},
+	}
+
+	for _, test := range tests {
+		d := &DB{driver: test.driver}
+
+		t.Run(d.dialect().name+"/"+strings.Join(test.tokens, "-"), func(t *testing.T) {
+			if got := d.contentMatchExpression(test.tokens); got != test.want {
+				t.Errorf("contentMatchExpression(%v) on %s = %q, want %q",
+					test.tokens, d.dialect().name, got, test.want)
+			}
+		})
+	}
+}
+
+// A body longer than the index accepts is truncated rather than dropped, and truncated on a rune
+// boundary: a body is a proto3 string and so valid UTF-8, and half a rune is not.
+func TestTruncateForIndex(t *testing.T) {
+	short := "a short body"
+
+	if got := truncateForIndex(short); got != short {
+		t.Errorf("truncateForIndex left a short body as %q, want it untouched", got)
+	}
+
+	// Three-byte runes, so the cap lands mid-rune however it is reached.
+	long := strings.Repeat("\u3053", contentIndexMaxBytes)
+
+	got := truncateForIndex(long)
+
+	if len(got) > contentIndexMaxBytes {
+		t.Errorf("truncateForIndex returned %d bytes, want at most %d", len(got), contentIndexMaxBytes)
+	}
+
+	if !utf8.ValidString(got) {
+		t.Error("truncateForIndex cut a rune in half")
+	}
+
+	if len(got) < contentIndexMaxBytes-utf8.UTFMax {
+		t.Errorf("truncateForIndex returned %d bytes, want it to fill the cap to within one rune", len(got))
+	}
+}
+
 // A read-only open never runs the DDL that creates the index, so it must report the capability as
-// absent rather than fail at query time with a missing-table error.
+// absent rather than fail at query time with a missing-table error. SQLite-only for the mechanism
+// (a file-backed store opened twice), not for the rule, which holds on every driver's read-only
+// constructor.
 func TestContentSearchUnavailableOnReadOnlyOpen(t *testing.T) {
+	requireSQLite(t)
+
 	dir := t.TempDir()
 
 	d, err := New(dir)

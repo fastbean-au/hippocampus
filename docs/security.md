@@ -191,9 +191,12 @@ each is a decision to let content out:
   [Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
 - **The OpenSearch index holds a copy of every indexed body**, so the cluster is a second store of
   the same data and needs the same access control — authentication, TLS
-  ([`opensearch.tls`](configuration.md#content-search)), and network isolation. The built-in SQLite
-  FTS5 backend does not: it is a **contentless** index, holding the inverted index and not a second
-  copy of the text. Choosing the embedded backend is therefore one fewer place your data lives.
+  ([`opensearch.tls`](configuration.md#content-search)), and network isolation. The store's own
+  index needs none of that, for the simpler reason that it is **inside the primary store**: it is
+  reachable by exactly whoever can already read the memories, so it is not another place your data
+  lives. Do not read "inverted index" as "unreadable", though — on `sqlite` and `postgres` it holds
+  the words of every indexed body without their order or punctuation, and on `mysql` a `FULLTEXT`
+  index indexes a column, so the index table holds the bodies verbatim.
 - **Export, Transfer and the object store** write full bodies into an archive. Anyone who can read an
   archive can read the memories in it; S3 credentials come from the standard AWS chain, and
   `Transfer` sends the archive to another instance under `transfer.token`.
