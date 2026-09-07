@@ -653,17 +653,41 @@ func (s *Server) embedderNodeSpec() topologyNodeSpec {
 	return spec
 }
 
+// localObjectStore is the optional interface the filesystem backend satisfies, in the mould of
+// topologyPinger: archive.ObjectStore says nothing about where an object lands, and widening it to
+// say so would put a meaningless method on S3 and on every test fake.
+type localObjectStore interface {
+	Directory() string
+}
+
 func (s *Server) objectStoreNodeSpec() topologyNodeSpec {
 	spec := topologyNodeSpec{
 		id:     topologyNodeObjects,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_OBJECT_STORE,
-		name:   "S3 archive",
+		name:   "archive",
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
 	}
 
 	if s.objects == nil {
 		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
-		spec.attributes = []topologyAttribute{{key: "enable_with", value: "s3.bucket"}}
+		spec.attributes = []topologyAttribute{{key: "enable_with", value: "s3.bucket or archive.directory"}}
+
+		return spec
+	}
+
+	spec.probe = true
+
+	// Which backend is in use is a property of the store the Server holds, not of the configuration
+	// - reading the keys back would describe what main.go was asked for rather than what it built,
+	// and those differ on any startup where the two were both set.
+	if directory, local := s.objects.(localObjectStore); local {
+		spec.name = "local archive"
+		spec.detail = directory.Directory()
+		spec.attributes = []topologyAttribute{
+			{key: "backend", value: "filesystem"},
+			{key: "directory", value: directory.Directory()},
+			{key: "key_prefix", value: s.transfer.keyPrefix},
+		}
 
 		return spec
 	}
@@ -673,9 +697,10 @@ func (s *Server) objectStoreNodeSpec() topologyNodeSpec {
 		endpoint = "aws"
 	}
 
-	spec.probe = true
+	spec.name = "S3 archive"
 	spec.detail = endpoint + "/" + viper.GetString("s3.bucket")
 	spec.attributes = []topologyAttribute{
+		{key: "backend", value: "s3"},
 		{key: "bucket", value: viper.GetString("s3.bucket")},
 		{key: "region", value: viper.GetString("s3.region")},
 		{key: "key_prefix", value: s.transfer.keyPrefix},

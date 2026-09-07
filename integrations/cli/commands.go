@@ -315,7 +315,7 @@ func commands() map[string]command {
 			run: runSummarise,
 		},
 		"export": {
-			summary: "snapshot the store into an S3 archive object",
+			summary: "snapshot the store into an archive object",
 			hint:    "[--clear]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.Bool("clear", false, "delete the captured records after a successful upload")
@@ -323,7 +323,7 @@ func commands() map[string]command {
 			run: runExport,
 		},
 		"import": {
-			summary: "import an archive object from S3",
+			summary: "import an archive object",
 			hint:    "--object-key KEY",
 			flags:   func(fs *pflag.FlagSet) { fs.String("object-key", "", "S3 object key of the archive (required)") },
 			run:     runImport,

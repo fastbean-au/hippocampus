@@ -685,13 +685,19 @@ func run(ctx context.Context, version versionInfo) error {
 		log.Infof("semantic search enabled, embedding with model '%s'", embedder.Model())
 	}
 
-	// initialise the optional S3 object store backing the Export/Import RPCs. Nil when no bucket
+	// initialise the optional object store backing the Export/Import RPCs. Nil when neither backend
 	// is configured, which makes those RPCs fail with FAILED_PRECONDITION rather than at startup:
-	// most deployments never touch the archive surface. Credentials come from the standard AWS
-	// chain; s3.endpoint and s3.usePathStyle exist for S3-compatible stores such as MinIO.
+	// most deployments never touch the archive surface.
+	//
+	// s3.bucket takes precedence where both are somehow set, but configProblems refuses that pair
+	// outright, so this is a tie-break that should never be reached rather than a policy.
 	var objects archive.ObjectStore
 
-	if viper.GetString("s3.bucket") != "" {
+	switch {
+
+	case viper.GetString("s3.bucket") != "":
+		// Credentials come from the standard AWS chain; s3.endpoint and s3.usePathStyle exist for
+		// S3-compatible stores such as MinIO.
 		log.Debug("initialising s3 object store")
 
 		store, err := archive.NewS3Store(context.Background(), archive.S3Config{
@@ -707,6 +713,23 @@ func run(ctx context.Context, version versionInfo) error {
 		objects = store
 
 		log.Debug("s3 object store initialised")
+
+	case viper.GetString("archive.directory") != "":
+		// The filesystem backend, for the deployment this product is actually shaped like: one
+		// binary and a directory. It exists because the archive format is the only representation
+		// that preserves a store's full state, and requiring a bucket to reach it put the offline
+		// backup of a store that is designed to forget behind infrastructure.
+		log.Debug("initialising filesystem object store")
+
+		store, err := archive.NewFileStore(viper.GetString("archive.directory"))
+		if err != nil {
+			return fmt.Errorf("failed to initialise the filesystem object store: %w", err)
+		}
+
+		objects = store
+
+		log.Infof("archiving to the local directory '%s'", store.Directory())
+
 	}
 
 	// initialise the optional outbound callback sink. The no-op unless callbacks.enabled, and the
@@ -1899,6 +1922,14 @@ func configProblems() []error {
 	// keys, not storage.directory.
 	if viper.GetString("storage.driver") == "sqlite" && viper.GetString("storage.directory") == "" {
 		problems = append(problems, fmt.Errorf("storage.directory must be set for storage.driver 'sqlite' (an empty directory selects the test-only in-memory database)"))
+	}
+
+	// Two object-store backends both configured. Only one can back Export/Import, so this is a
+	// configuration whose author believes something the service does not do - and it is worth
+	// refusing rather than resolving, because the two disagree about where the archives went, which
+	// is the sort of thing found out when one is needed.
+	if viper.GetString("s3.bucket") != "" && viper.GetString("archive.directory") != "" {
+		problems = append(problems, fmt.Errorf("s3.bucket and archive.directory are both set: configure exactly one object store for Export/Import"))
 	}
 
 	// The forgotten log's bounds. A negative value is meaningless (0 disables that bound), and

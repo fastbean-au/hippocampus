@@ -297,7 +297,7 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 	var res contract.ExportResponse
 
 	if s.objects == nil {
-		return &res, status.Error(codes.FailedPrecondition, "no object store is configured (s3.bucket)")
+		return &res, status.Error(codes.FailedPrecondition, "no object store is configured (set archive.directory or s3.bucket)")
 	}
 
 	manifestShort := uuid.New().String()[:8]
@@ -427,7 +427,7 @@ func (s *Server) Import(ctx context.Context, in *contract.ImportRequest) (*contr
 	var res contract.ImportResponse
 
 	if s.objects == nil {
-		return &res, status.Error(codes.FailedPrecondition, "no object store is configured (s3.bucket)")
+		return &res, status.Error(codes.FailedPrecondition, "no object store is configured (set archive.directory or s3.bucket)")
 	}
 
 	if in.GetObjectKey() == "" {

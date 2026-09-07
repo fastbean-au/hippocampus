@@ -348,7 +348,13 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   names a metric no instrument declares (matching the queried series name back to the instrument
   through the OTLP `_total`/`_bucket`/`_seconds` suffixes), or if a Grafana rule's wiring is wrong in
   a way that provisions cleanly and then fails every evaluation (dangling `condition`, wrong
-  datasource uid, a query window narrower than its own range selector). Two decisions carry the
+  datasource uid, a query window narrower than its own range selector). There is a **third** copy —
+  `deploy/observability/README.md`, the page an operator reads before deploying the rules, which
+  tables every rule and states the counts in prose — and the same guard now holds it too: a rule
+  with no row, a row naming no rule, a severity that disagrees, an order that does not match the
+  file, or a stale count all fail. It was added because that page had drifted by six rules, which
+  is what a documentation table that copies a table in the code does when nothing executes it. Two
+  decisions carry the
   pair: the comparison lives in the **PromQL** on both sides (Grafana adds only a `gt 0` threshold
   over an instant query, hence `noDataState: OK` on every rule), so the two engines behave
   identically; and absence — a consolidator that has exited publishes no counter to alert on — is
@@ -927,8 +933,22 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `ReplaceMemoriesWithSummary`).
 - `archive/` — the export/import wire format and object storage:
   protodelim+gzip codec over `ArchiveRecord` protos (versioned header first) and the
-  `ObjectStore` interface (Put/Get) with an aws-sdk-go-v2 S3 implementation
-  (`s3.endpoint`/`s3.usePathStyle` for MinIO; credentials from the standard AWS chain). The
+  `ObjectStore` interface (Put/Get) with **two** implementations, selected in `main.go` and
+  mutually exclusive (`configProblems` refuses both being set): an aws-sdk-go-v2 S3 one
+  (`s3.bucket`; `s3.endpoint`/`s3.usePathStyle` for MinIO; credentials from the standard AWS chain)
+  and a filesystem one (`archive.directory`, `archive/file.go`). The filesystem backend exists
+  because the archive format is the only representation preserving a store's full state
+  (timestamps, recall history, groups, summary flags, links) and requiring a bucket put the offline
+  backup of a store that is _designed to forget_ behind infrastructure a one-binary-and-a-directory
+  deployment does not otherwise need. Two things carry it. `Put` writes to a temporary file beside
+  its destination and **renames it into place**, so an interrupted export leaves nothing rather than
+  a truncated file — which `Import` would accept as an archive and fail part way through, having
+  already upserted what it read. And a key is **refused, not sanitised**: `Import` takes its
+  `object_key` straight from the request, so over a filesystem it is a caller-supplied path, and
+  anchoring-and-cleaning (the usual trick) would answer a request for `../../etc/passwd` with some
+  other file rather than with an error — `resolve` therefore rejects an absolute key and any
+  `.`/`..`/empty segment, which also keeps the two backends naming the same object for any key
+  either accepts. Containment is lexical, so the directory is assumed server-owned. The
   transfer RPCs live in `hippocampus/transfer.go`: `Transfer` dials `transfer.targetAddress` with
   credentials from `Transfer.clientCredentials`, which honours the same TLS trust-option block as
   `opensearch.tls` (`transfer.tls.{caCertFile,certFile,keyFile,insecureSkipVerify}`); TLS is

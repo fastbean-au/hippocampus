@@ -11,21 +11,34 @@ rule_files:
   - /etc/prometheus/hippocampus-alerts.yaml
 ```
 
-Sixteen rules in two groups. `hippocampus` is the service itself — ten rules covering what actually
-goes wrong:
+Twenty-two rules in two groups. `hippocampus` is the service itself — sixteen rules covering what
+actually goes wrong:
 
-| Alert                              | Fires when                                                   | Severity |
-| ---------------------------------- | ------------------------------------------------------------ | -------- |
-| `HippocampusServerErrorRateHigh`   | >1% of RPCs return a server-fault code for 10m               | critical |
-| `HippocampusRequestLatencyHigh`    | p95 of the interactive RPCs is above 1s for 15m              | warning  |
-| `HippocampusSleepCycleFailing`     | sleep cycles have been failing for 15m                       | critical |
-| `HippocampusConsolidatorAbsent`    | no successful sleep cycle anywhere for an hour               | critical |
-| `HippocampusCapacityPressureHigh`  | capacity pressure sustained near or above the target for 30m | warning  |
-| `HippocampusStoreOverCapacity`     | used bytes above `capacityBytes` for an hour                 | warning  |
-| `HippocampusRetentionNearCapacity` | retained bytes exceed 90% of `capacityBytes` for 30m         | critical |
-| `HippocampusRateLimitRejecting`    | a rate limit is refusing >1 request/second for 10m           | warning  |
-| `HippocampusSearchIndexDropping`   | index operations are being dropped for 10m                   | warning  |
-| `HippocampusPanicsRecovered`       | a handler panicked and was recovered                         | warning  |
+| Alert                                  | Fires when                                                                 | Severity |
+| -------------------------------------- | -------------------------------------------------------------------------- | -------- |
+| `HippocampusServerErrorRateHigh`       | >1% of RPCs return a server-fault code for 10m                             | critical |
+| `HippocampusRequestLatencyHigh`        | p95 of the interactive RPCs is above 1s for 15m                            | warning  |
+| `HippocampusSleepCycleFailing`         | sleep cycles have been failing for 15m                                     | critical |
+| `HippocampusConsolidatorAbsent`        | no successful sleep cycle anywhere for an hour                             | critical |
+| `HippocampusStoreGrowing`              | memories arrive faster than consolidation and eviction remove them, for 6h | warning  |
+| `HippocampusCapacityPressureHigh`      | capacity pressure sustained near or above the target for 30m               | warning  |
+| `HippocampusStoreOverCapacity`         | used bytes above `capacityBytes` for an hour                               | warning  |
+| `HippocampusRetentionNearCapacity`     | retained bytes exceed 90% of `capacityBytes` for 30m                       | critical |
+| `HippocampusRateLimitRejecting`        | a rate limit is refusing >1 request/second for 10m                         | warning  |
+| `HippocampusSearchIndexDropping`       | index operations are being dropped for 10m                                 | warning  |
+| `HippocampusSearchOutboxBacklog`       | queued index deletions exceed 10,000 for 30m                               | warning  |
+| `HippocampusCallbackQueueBacklog`      | queued callback deliveries exceed 10,000 for 30m                           | warning  |
+| `HippocampusCallbackDeliveriesFailing` | the callback receiver is refusing deliveries for 15m                       | warning  |
+| `HippocampusCallbacksAbandoning`       | the callback queue's caps are discarding undelivered notifications         | critical |
+| `HippocampusSearchOutboxAbandoning`    | the outbox's caps are discarding queued index deletions                    | critical |
+| `HippocampusPanicsRecovered`           | a handler panicked and was recovered                                       | warning  |
+
+The last five of those are the two durable queues — the search delete outbox and the callback
+queue — and they come in pairs by design: a backlog rule that fires while nothing is yet lost, and
+an abandoning rule that fires once the queue's caps have started discarding. The outbox's discards
+are recoverable by the reconciliation sweep and the callback queue's are not, which is why one pair
+escalates to critical over an index that is knowingly wrong and the other over notifications
+nobody will ever receive.
 
 `hippocampus-clients` is the six rules for the components that _dial_ a Hippocampus instance — the
 [broker bridges](../../docs/eventsource.md) and the [ingestor](../../docs/ingestor.md), separate
@@ -72,14 +85,18 @@ Four properties worth knowing before you deploy them:
 
 ## The Grafana copy
 
-`../compose/observability/alerting-rules.yaml` is the same eighteen rules as Grafana-managed rules,
+`../compose/observability/alerting-rules.yaml` is the same twenty-two rules as Grafana-managed rules,
 provisioned into the bundled `grafana/otel-lgtm` stack (every compose file's `observability` profile,
 and `demo/run.sh`) so the demo stack alerts as well as draws. It exists as a second file only
 because Grafana provisions its own rule format and cannot read a Prometheus rule file.
 
 The PromQL and the `for:` durations are byte-identical between the two files, and
 `cmd/hippocampus/alerts_test.go` fails if they drift — or if either file names a metric no
-instrument in this repo declares, the integrations' included.
+instrument in this repo declares, the integrations' included. **The tables above are held to the
+rule files by the same guard**: a rule that ships without a row here, a row naming a rule that does
+not ship, a severity that disagrees with the file, or a count in the prose that no longer matches,
+all fail that test. This page had drifted by six rules before it was added, which is what a
+documentation table that is a second copy of a table in the code does when nothing executes it.
 
 One consequence of the Grafana copy is worth knowing before writing a rule: each of its rules is an
 instant query thresholded at `gt 0`, so **an expression must return a positive number while it

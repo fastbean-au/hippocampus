@@ -183,6 +183,48 @@ func TestExecute_CheckConfigReportsEveryProblem(t *testing.T) {
 	}
 }
 
+// TestConfigProblems_TwoObjectStores pins the one rule --check-config gained with the filesystem
+// archive backend. Only one object store can back Export/Import, and a configuration naming both is
+// one whose author believes something the service does not do - so it is refused rather than
+// resolved by precedence, which would leave the two disagreeing about where the archives went until
+// somebody needed one.
+func TestConfigProblems_TwoObjectStores(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+	viper.Set("storage.directory", t.TempDir())
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected the defaults alone to be valid, got %v", problems)
+	}
+
+	viper.Set("archive.directory", t.TempDir())
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected archive.directory alone to be valid, got %v", problems)
+	}
+
+	viper.Set("s3.bucket", "an-archive-bucket")
+
+	problems := configProblems()
+	if len(problems) != 1 {
+		t.Fatalf("expected exactly one problem for two object stores, got %v", problems)
+	}
+
+	for _, want := range []string{"s3.bucket", "archive.directory"} {
+		if !strings.Contains(problems[0].Error(), want) {
+			t.Errorf("the problem does not name %s: %s", want, problems[0].Error())
+		}
+	}
+
+	viper.Set("archive.directory", "")
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected s3.bucket alone to be valid, got %v", problems)
+	}
+}
+
 // TestExecute_CheckConfigJSONStaysParseableWithNoConfigFile is why the dispatch sits ABOVE the
 // "no configuration file" warning rather than below it, where every other CLI mode's went. That
 // warning is logged at Warn, this binary logs to stdout, and --output json makes stdout a data

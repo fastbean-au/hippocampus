@@ -262,8 +262,8 @@ rather than failing, `export` and `clear` included, so a scoped `export` is a pe
 
 | Command        | Purpose                                                                                |
 | -------------- | -------------------------------------------------------------------------------------- |
-| `export`       | snapshot the store into an S3 archive object (`--clear`)                               |
-| `import`       | import an archive object from S3 (`--object-key`)                                      |
+| `export`       | snapshot the store into an archive object (`--clear`)                                  |
+| `import`       | import an archive object (`--object-key`)                                              |
 | `import-batch` | upsert full-state rows from a JSON `ImportBatchRequest` file (`--file`, `-` for stdin) |
 | `transfer`     | stream the whole store into a centralised instance (`--clear`)                         |
 | `clear`        | delete exactly the records captured by an export/transfer run (`--manifest-id`)        |

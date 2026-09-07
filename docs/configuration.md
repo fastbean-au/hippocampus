@@ -1946,6 +1946,9 @@ itself is the watermark.
   next run.
 
 ```json
+"archive": {
+    "directory": ""
+},
 "s3": {
     "bucket": "my-archive-bucket",
     "region": "ap-southeast-2",
@@ -1969,10 +1972,27 @@ itself is the watermark.
 }
 ```
 
+`Export`/`Import` need an object store, and there are two: a local directory
+(`archive.directory`) or S3 (`s3.bucket`). **Configure one, not both** — the service refuses to
+start with both set, since the two disagree about where the archives went and that is discovered
+when one is needed.
+
+`archive.directory` is the simpler of the two, and exists because the archive format is the only
+representation that preserves a store's full state — timestamps, recall history, groups, summary
+flags, links — and requiring a bucket put the offline backup of a store that is _designed to
+forget_ behind infrastructure it does not otherwise need. The directory is created if it is
+missing; each archive is written to a temporary file and renamed into place, so an export
+interrupted half way leaves nothing rather than a truncated file that `Import` would accept and
+then fail part way through. `Import`'s `object_key` is validated against the directory: a key that
+is absolute, or that carries a `..` segment, is refused rather than reinterpreted. Point it at a
+directory a backup takes, or at a mounted volume — nothing prunes it, so the archives accumulate
+until something else removes them.
+
 S3 credentials come from the standard AWS chain (environment variables, shared config, instance
-roles); `s3.endpoint` and `s3.usePathStyle` support S3-compatible stores such as MinIO. With no
-`s3.bucket` configured, `Export`/`Import` fail with `FAILED_PRECONDITION`; with no
-`transfer.targetAddress`, so does `Transfer`. `transfer.token` is sent as the bearer token to
+roles); `s3.endpoint` and `s3.usePathStyle` support S3-compatible stores such as MinIO. With
+neither `archive.directory` nor `s3.bucket` configured, `Export`/`Import` fail with
+`FAILED_PRECONDITION`; with no `transfer.targetAddress`, so does `Transfer`. `s3.keyPrefix` applies
+to both backends — under a directory it is a subdirectory. `transfer.token` is sent as the bearer token to
 the centralised instance when its [authentication](#authentication) is enabled, and
 `transfer.tls.enabled` dials it over TLS. `transfer.batchSize` sets both the pagination page size and
 the archive/ImportBatch batch size.

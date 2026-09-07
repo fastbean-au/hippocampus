@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -158,6 +159,57 @@ func seedTransferFixture(t *testing.T, s *Server) {
 	// Give m1 recall history that must survive the round trip.
 	if _, err := s.db.RecallMemories(context.Background(), []string{"m1"}); err != nil {
 		t.Fatalf("RecallMemories: %s", err)
+	}
+}
+
+// TestExportImportRoundTripOverAFileStore runs the same path over the filesystem backend, which is
+// the one every default deployment gets. It is a separate test rather than a table over the two
+// stores because the thing worth proving here is the part the fake cannot have: a real key prefix
+// becoming a real subdirectory, a real file on disk afterwards, and the archive reading back
+// through the same key the export returned.
+func TestExportImportRoundTripOverAFileStore(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "archives")
+
+	objects, err := archive.NewFileStore(directory)
+	if err != nil {
+		t.Fatalf("NewFileStore: %s", err)
+	}
+
+	source := newTransferTestServer(t, nil)
+	source.objects = objects
+	source.transfer.keyPrefix = "hippocampus/"
+
+	seedTransferFixture(t, source)
+
+	exported, err := source.Export(context.Background(), &contract.ExportRequest{})
+	if err != nil {
+		t.Fatalf("Export: %s", err)
+	}
+
+	if !strings.HasPrefix(exported.GetObjectKey(), "hippocampus/") {
+		t.Errorf("expected the key prefix to be applied, got %q", exported.GetObjectKey())
+	}
+
+	if _, err := os.Stat(filepath.Join(directory, filepath.FromSlash(exported.GetObjectKey()))); err != nil {
+		t.Fatalf("expected the archive on disk: %s", err)
+	}
+
+	target := newTransferTestServer(t, nil)
+	target.objects = objects
+
+	imported, err := target.Import(context.Background(), &contract.ImportRequest{ObjectKey: exported.GetObjectKey()})
+	if err != nil {
+		t.Fatalf("Import: %s", err)
+	}
+
+	if imported.GetEventsImported() != 2 || imported.GetMemoriesImported() != 3 {
+		t.Errorf("expected 2 events and 3 memories imported, got %v", imported)
+	}
+
+	// A key naming something outside the archive directory must be refused rather than answered
+	// about some other file: Import takes its object_key straight from the request.
+	if _, err := target.Import(context.Background(), &contract.ImportRequest{ObjectKey: "../../etc/passwd"}); err == nil {
+		t.Error("expected Import to refuse an object key that leaves the archive directory")
 	}
 }
 

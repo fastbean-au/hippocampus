@@ -1757,10 +1757,17 @@ const STEPS = [
         ],
       },
       {
-        title: "S3 archive",
+        title: "Archive object store",
         blurb:
-          "Export and Import stream a gzip archive through an object store. Credentials come from the standard AWS chain, not from this file.",
+          "Export and Import stream a gzip archive through an object store: either a local directory or S3. Configure one, not both. S3 credentials come from the standard AWS chain, not from this file.",
         fields: [
+          {
+            key: "archive.directory",
+            label: "Archive directory",
+            type: "text",
+            def: "",
+            help: "A local directory to write archives into. The simplest backup for a single-binary deployment; leave empty to use S3 instead.",
+          },
           { key: "s3.bucket", label: "Bucket", type: "text", def: "" },
           {
             key: "s3.region",
@@ -2378,6 +2385,14 @@ function validate() {
       "warn",
       "extras",
       "Automatic summarisation has nothing to work on: consolidation.summarisationMinMemories is 0, so the candidate scan never runs.",
+    );
+  }
+
+  if (val("s3.bucket") && val("archive.directory")) {
+    add(
+      "error",
+      "transfer",
+      "s3.bucket and archive.directory are both set: only one object store can back Export/Import, and the service refuses to start with both.",
     );
   }
 
@@ -4277,6 +4292,7 @@ function summaryItems() {
           : null,
         val("transfer.targetAddress") ? "transfer" : null,
         val("s3.bucket") ? "S3 archive" : null,
+        val("archive.directory") ? "local archive" : null,
       ]
         .filter(Boolean)
         .join(", ") || "none",

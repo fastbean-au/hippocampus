@@ -646,3 +646,213 @@ func sortedKeys(in map[string]bool) []string {
 
 	return out
 }
+
+// --- The README ----------------------------------------------------------------------------
+
+// The rule files have a third copy: deploy/observability/README.md, which lists every rule in a
+// table and states how many there are in prose. It is the copy an operator reads before deploying
+// the rules, and the only one of the three that nothing held to anything - so it drifted by six
+// rules (the two durable queues' four, plus HippocampusStoreGrowing and
+// HippocampusSearchOutboxAbandoning) while the paragraph above it explained why drift guards exist.
+//
+// The tests below close that. They ask the four things the README can be wrong about while still
+// reading as correct: a rule with no row, a row for a rule that does not ship, a severity that
+// disagrees with the file, and a count in the prose that no longer matches. What they deliberately
+// do not check is the "Fires when" column - a prose gloss of an expression cannot be derived from
+// it, and a guard that could only compare it to itself would be theatre.
+
+const alertsReadmePath = "../../deploy/observability/README.md"
+
+var (
+	// readmeRowPattern matches a table row whose first cell is an alert name in backticks, and
+	// captures the name and the last cell - the severity.
+	readmeRowPattern = regexp.MustCompile("(?m)^\\|\\s*`(Hippocampus[A-Za-z]+)`\\s*\\|.*\\|\\s*([a-z]+)\\s*\\|\\s*$")
+
+	// readmeAlertMentionPattern finds every alert name the README names anywhere, table or prose,
+	// so a rule that has been renamed cannot leave the old name behind in a sentence.
+	readmeAlertMentionPattern = regexp.MustCompile("`(Hippocampus[A-Za-z]+)`")
+)
+
+// ruleSummary is the pair the README and the rule files must agree on, in the order both list
+// them: which alert, and how loudly it shouts.
+type ruleSummary struct {
+	name     string
+	severity string
+}
+
+// prometheusAlertOrder returns the shipped rules in file order. readPrometheusAlerts returns a map,
+// which is the right shape for comparing two files rule by rule and the wrong one for comparing a
+// file against a table meant to be read down beside it.
+func prometheusAlertOrder(t *testing.T) []ruleSummary {
+	t.Helper()
+
+	source, err := os.ReadFile(prometheusAlertsPath)
+	if err != nil {
+		t.Fatalf("failed to read the prometheus alert rules: %s", err.Error())
+	}
+
+	var file prometheusRuleFile
+	if err := yaml.Unmarshal(source, &file); err != nil {
+		t.Fatalf("failed to parse the prometheus alert rules: %s", err.Error())
+	}
+
+	rules := make([]ruleSummary, 0)
+
+	for _, group := range file.Groups {
+		for _, rule := range group.Rules {
+			rules = append(rules, ruleSummary{
+				name:     rule.Alert,
+				severity: rule.Labels["severity"],
+			})
+		}
+	}
+
+	if len(rules) == 0 {
+		t.Fatal("found no alerts in the prometheus rules - the file no longer parses as expected")
+	}
+
+	return rules
+}
+
+// readmeRows returns the alert rows of the README's tables, in the order they appear, with the
+// severity each claims.
+func readmeRows(t *testing.T) []ruleSummary {
+	t.Helper()
+
+	source, err := os.ReadFile(alertsReadmePath)
+	if err != nil {
+		t.Fatalf("failed to read the alert rules README: %s", err.Error())
+	}
+
+	rows := make([]ruleSummary, 0)
+
+	for _, match := range readmeRowPattern.FindAllStringSubmatch(string(source), -1) {
+		rows = append(rows, ruleSummary{
+			name:     match[1],
+			severity: match[2],
+		})
+	}
+
+	if len(rows) == 0 {
+		t.Fatal("found no alert rows in the README - the table no longer parses as expected")
+	}
+
+	return rows
+}
+
+// TestAlertRulesAreDocumented holds the README's tables to the rules that actually ship: every rule
+// has a row, every row names a rule, each agrees on the severity, and the two are in the same
+// order, so the table can be read down beside the file.
+func TestAlertRulesAreDocumented(t *testing.T) {
+	shipped := prometheusAlertOrder(t)
+	documented := readmeRows(t)
+
+	shippedSeverities := make(map[string]string, len(shipped))
+
+	for _, rule := range shipped {
+		shippedSeverities[rule.name] = rule.severity
+	}
+
+	documentedSeverities := make(map[string]string, len(documented))
+
+	for _, row := range documented {
+		if _, duplicate := documentedSeverities[row.name]; duplicate {
+			t.Errorf("alert '%s' has two rows in the README", row.name)
+		}
+
+		documentedSeverities[row.name] = row.severity
+	}
+
+	for _, rule := range shipped {
+		severity, found := documentedSeverities[rule.name]
+		if !found {
+			t.Errorf("alert '%s' ships but has no row in %s - an operator reading that page would not know it exists",
+				rule.name,
+				alertsReadmePath,
+			)
+
+			continue
+		}
+
+		if severity != rule.severity {
+			t.Errorf("alert '%s' is severity '%s' in the rules and '%s' in the README", rule.name, rule.severity, severity)
+		}
+	}
+
+	for _, row := range documented {
+		if _, found := shippedSeverities[row.name]; !found {
+			t.Errorf("the README documents alert '%s', which no rule file declares", row.name)
+		}
+	}
+
+	// Order is checked only once both sets agree, since a missing rule would otherwise report every
+	// row after it as misplaced as well.
+	if t.Failed() {
+		return
+	}
+
+	for i, rule := range shipped {
+		if documented[i].name != rule.name {
+			t.Errorf("the README lists '%s' where the rule files have '%s' (row %d): the tables are meant to read down beside the file",
+				documented[i].name,
+				rule.name,
+				i+1,
+			)
+		}
+	}
+}
+
+// TestReadmeMentionsOnlyShippedAlerts catches the rename that leaves its old name behind in a
+// sentence rather than in a row - the prose around the tables names individual rules, and a name
+// nothing declares reads as a rule an operator cannot find.
+func TestReadmeMentionsOnlyShippedAlerts(t *testing.T) {
+	source, err := os.ReadFile(alertsReadmePath)
+	if err != nil {
+		t.Fatalf("failed to read the alert rules README: %s", err.Error())
+	}
+
+	shipped := readPrometheusAlerts(t)
+
+	for _, match := range readmeAlertMentionPattern.FindAllStringSubmatch(string(source), -1) {
+		if _, found := shipped[match[1]]; !found {
+			t.Errorf("the README names alert '%s', which no rule file declares", match[1])
+		}
+	}
+}
+
+// TestReadmeRuleCountsAreCurrent holds the counts the README states in prose, the same way
+// TestClaudeMdRuleCountIsCurrent holds CLAUDE.md's. There are three of them here: the total, each
+// group's share, and the total again where the Grafana copy is introduced.
+func TestReadmeRuleCountsAreCurrent(t *testing.T) {
+	source, err := os.ReadFile(alertsReadmePath)
+	if err != nil {
+		t.Fatalf("failed to read the alert rules README: %s", err.Error())
+	}
+
+	readme := string(source)
+
+	total, clients := ruleCounts(t)
+	totalWord := numberWord(t, total)
+	serviceWord := numberWord(t, total-clients)
+	clientsWord := numberWord(t, clients)
+
+	// Quoted with enough of their surroundings that only the real sentence can match: a bare number
+	// word appears all over this page, and a guard that cannot fail is the failure this file exists
+	// to avoid.
+	for _, want := range []string{
+		capitalise(totalWord) + " rules in two groups.",
+		"the service itself — " + serviceWord + " rules",
+		"`hippocampus-clients` is the " + clientsWord + " rules",
+		"is the same " + totalWord + " rules as Grafana-managed rules",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("%s does not say %q, but %d rules ship, %d of them in the %s group",
+				alertsReadmePath,
+				want,
+				total,
+				clients,
+				clientsGroupName,
+			)
+		}
+	}
+}

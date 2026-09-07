@@ -44,6 +44,48 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
 
 ## [Unreleased]
 
+### Added
+
+- **A filesystem object store for `Export`/`Import`.** The archive format is the only thing that
+  preserves a store's full state — timestamps, recall history, groups, summary flags and links —
+  and until now the only way to reach it was S3: `main.go` built an object store only when
+  `s3.bucket` was set, so on every other deployment `Export` and `Import` failed
+  `FAILED_PRECONDITION`. That put the offline backup, the air-gapped move, and the archive somebody
+  keeps _because the store is designed to forget_ behind standing up a bucket or a MinIO, on a
+  product whose default deployment is one static binary and a directory.
+
+  Set **`archive.directory`** and archives are written there instead. The directory is created if
+  it is missing, and `s3.keyPrefix` still applies — under a directory it is a subdirectory.
+  `s3.bucket` and `archive.directory` are mutually exclusive: a configuration setting both is
+  refused at startup (and by `--check-config`) rather than resolved by precedence, since the two
+  disagree about where the archives went and that is found out when one is needed.
+
+  Two things it does that S3 gave for free. A write is atomic — the archive streams into a
+  temporary file and is renamed into place, so an export interrupted half way leaves nothing rather
+  than a truncated file, which `Import` would otherwise accept as an archive and fail part way
+  through having already upserted what it read. And an object key is validated rather than
+  sanitised: `Import` takes its `object_key` straight from the request, so over a filesystem it is
+  a caller-supplied path, and a key that is absolute or carries a `..` segment is **refused** — the
+  usual anchor-and-clean would instead answer a request for `../../etc/passwd` with the contents of
+  some other file. The deployment topology view reports which backend is in use and probes the
+  directory like any other dependency.
+
+### Fixed
+
+- **`deploy/observability/README.md` had drifted by six alert rules.** It said sixteen rules in two
+  groups, ten of them about the service; twenty-two ship, sixteen of them about the service. The six
+  missing from its table arrived with the delete outbox and the callback queue
+  (`HippocampusStoreGrowing`, `HippocampusSearchOutboxBacklog`, `HippocampusSearchOutboxAbandoning`,
+  `HippocampusCallbackQueueBacklog`, `HippocampusCallbackDeliveriesFailing`,
+  `HippocampusCallbacksAbandoning`) — so the page an operator reads before deploying the rules did
+  not mention the alerts covering the two queues that can discard data.
+
+  The rules themselves were never wrong; the guard that holds the two rule files to each other
+  simply had no opinion about the README. It does now: a rule that ships without a row, a row naming
+  a rule that does not ship, a severity that disagrees with the rule file, an order that no longer
+  matches it, or a count stated in the prose that has gone stale all fail
+  `cmd/hippocampus/alerts_test.go`.
+
 ## [0.42.0] - 2026-09-06
 
 ### Added

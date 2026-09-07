@@ -248,6 +248,60 @@ func TestRun_S3ConfigError(t *testing.T) {
 	}
 }
 
+// TestRun_ArchiveDirectoryConfigured covers the archive.directory branch: the filesystem object
+// store is the one backend a deployment can reach with nothing else running, so run must start with
+// it wired in and must have created the directory it was pointed at.
+func TestRun_ArchiveDirectoryConfigured(t *testing.T) {
+	_, gwBase := baseRunConfig(t)
+
+	directory := filepath.Join(t.TempDir(), "archives")
+	viper.Set("archive.directory", directory)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, versionInfo{}) }()
+
+	waitForOK(t, http.DefaultClient, gwBase+"/healthz")
+
+	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
+		t.Errorf("expected the archive directory to have been created: %v", err)
+	}
+
+	cancel()
+
+	select {
+
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned an error: %v", err)
+		}
+
+	case <-time.After(20 * time.Second):
+		t.Fatal("run did not return after cancellation")
+
+	}
+}
+
+// TestRun_ArchiveDirectoryError covers the archive.directory error branch: a path that exists as a
+// file cannot become the archive directory, and that has to stop the process rather than surface on
+// somebody's first export.
+func TestRun_ArchiveDirectoryError(t *testing.T) {
+	baseRunConfig(t)
+
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("failed to write the fixture: %s", err)
+	}
+
+	viper.Set("archive.directory", path)
+
+	if err := run(context.Background(), versionInfo{}); err == nil {
+		t.Fatal("expected run to fail when the archive directory cannot be created")
+	}
+}
+
 // TestRun_AuthEnabledLegacyAlias covers the deprecated auth.enabled boolean: when auth.method is
 // unset, auth.enabled=true must still select the hmac verifier (with a warning logged), preserving
 // behaviour for configs written before auth.method existed.
