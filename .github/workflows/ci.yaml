@@ -606,6 +606,66 @@ jobs:
           /tmp/wheel-check/bin/pip install --quiet dist/*.whl
           cd /tmp && /tmp/wheel-check/bin/python -c "import hippocampus; print(hippocampus.__version__)"
 
+  # The LlamaIndex adapter, over the published client. The matrix dimension is llama-index-core
+  # rather than the interpreter: what this package implements is one upstream base class, and the
+  # floor it declares is the release that first exported it - a floor nothing installs is a floor
+  # that is wrong, which is the same reasoning python-client applies to its interpreter floor.
+  llamaindex-adapter:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared in pyproject.toml, and whatever is current.
+        llama-index-core: ["0.12.36", ""]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The client is installed from this repository rather than from PyPI, and the adapter with
+      # --no-deps, because both packages publish from the same tag: the client release this one
+      # declares a floor against does not exist on the index until the release that also uploads
+      # this package. Resolving the floor against the local 0.0.0.dev0 would fail every run.
+      - name: Install the client from this repository
+        working-directory: integrations/python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Install the adapter and its test dependencies
+        working-directory: integrations/llamaindex
+        run: |
+          python -m pip install pytest pytest-asyncio build
+          python -m pip install "llama-index-core${LLAMA_INDEX_CORE:+==$LLAMA_INDEX_CORE}"
+          python -m pip install -e . --no-deps
+        env:
+          LLAMA_INDEX_CORE: ${{ matrix.llama-index-core }}
+
+      - name: Test
+        working-directory: integrations/llamaindex
+        run: python -m pytest -q
+
+      - name: Build the distributions
+        working-directory: integrations/llamaindex
+        run: python -m build
+
+      # The failure this package can ship is a wheel that installs and then shadows or misses the
+      # llama_index namespace, which no test on the source tree can see. --no-deps keeps the check
+      # to that question rather than to whether the client is on the index yet.
+      - name: Install the built wheel into a clean environment and import it
+        working-directory: integrations/llamaindex
+        run: |
+          python -m venv /tmp/adapter-check
+          /tmp/adapter-check/bin/pip install --quiet llama-index-core ../python
+          /tmp/adapter-check/bin/pip install --quiet --no-deps dist/*.whl
+          cd /tmp && /tmp/adapter-check/bin/python -c \
+            "from llama_index.memory.hippocampus import HippocampusMemoryBlock, __version__; \
+             from llama_index.core.memory import Memory; print(__version__)"
+
   # The embedded console is ~2,800 lines of JavaScript that no Go job can exercise. Its pure logic
   # lives in cmd/hippocampus/webui/lib.js — the capability matrix that decides which controls a
   # caller sees, the decay-curve geometry, the escaping, the age and metadata parsing — and this

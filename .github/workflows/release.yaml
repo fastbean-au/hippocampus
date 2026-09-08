@@ -360,7 +360,10 @@ jobs:
 
           sed -i "s/^__version__ = \"0\.0\.0\.dev0\"$/__version__ = \"${version}\"/" src/hippocampus/_version.py
 
-          stamped="$(python -c 'import sys; sys.path.insert(0, "src"); import hippocampus._version as v; print(v.__version__)')"
+          # Read back with sed rather than by importing: importing hippocampus._version runs the
+          # package's __init__, which imports grpc, and nothing has installed the dependencies at
+          # this point in the job. The question here is only what the file now says.
+          stamped="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/hippocampus/_version.py)"
 
           if [ "${stamped}" != "${version}" ]; then
             echo "::error::_version.py still reads '${stamped}' after stamping '${version}'"
@@ -419,6 +422,116 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${RELEASE_TAG}" integrations/python/dist/* --clobber
+
+  # The LlamaIndex adapter, published from the same tag as the client it sits on. It needs
+  # publish-python only for ordering: this package declares a floor against `hippocampus-client`,
+  # so uploading it before the client is on the index would put a distribution there that nothing
+  # can resolve for as long as the client job takes.
+  #
+  # To turn it on: configure a trusted publisher for llama-index-memory-hippocampus on PyPI (this
+  # repository, workflow release.yaml, no environment) and set PUBLISH_PYPI to "true" - the same
+  # variable that gates the client, since the two publish together or not at all.
+  publish-llamaindex:
+    needs: [release, publish-python]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # attach the built distributions to the GitHub release
+      id-token: write # PyPI trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Stamped exactly as the client's is, and asserted the same way: the tag is the version, and
+      # a placeholder that survived would publish 0.0.0.dev0 - a version PyPI accepts and nobody
+      # can install as the release they asked for.
+      - name: Stamp the release version
+        working-directory: integrations/llamaindex
+        run: |
+          set -euo pipefail
+
+          tag="${RELEASE_TAG}"
+          version="${tag#v}"
+
+          if ! printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([._-]?(a|b|rc|alpha|beta|post|dev)[0-9]*)?$'; then
+            echo "::error::release tag '${tag}' is not a PEP 440 version - refusing to publish"
+            exit 1
+          fi
+
+          sed -i "s/^__version__ = \"0\.0\.0\.dev0\"$/__version__ = \"${version}\"/" \
+            src/llama_index/memory/hippocampus/_version.py
+
+          # sed rather than an import, for the reason publish-python's own read-back gives.
+          stamped="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' \
+            src/llama_index/memory/hippocampus/_version.py)"
+
+          if [ "${stamped}" != "${version}" ]; then
+            echo "::error::_version.py still reads '${stamped}' after stamping '${version}'"
+            exit 1
+          fi
+
+          echo "PACKAGE_VERSION=${version}" >> "${GITHUB_ENV}"
+          echo "Stamped llama-index-memory-hippocampus ${version}"
+
+      - name: Build the distributions
+        working-directory: integrations/llamaindex
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      # The client is installed from this checkout rather than the index: publish-python has just
+      # uploaded it, and PyPI needs a moment to make a new release resolvable. What is being
+      # verified here is this wheel's own layout - that it merges into the llama_index namespace
+      # rather than shadowing it - which is invisible to every test, since they run on the source
+      # tree.
+      - name: Verify the built wheel imports
+        working-directory: integrations/llamaindex
+        run: |
+          set -euo pipefail
+
+          python -m venv /tmp/adapter-check
+          /tmp/adapter-check/bin/pip install --quiet llama-index-core ../python
+          /tmp/adapter-check/bin/pip install --quiet --no-deps dist/*.whl
+
+          reported="$(cd /tmp && /tmp/adapter-check/bin/python -c 'from llama_index.memory.hippocampus import __version__; print(__version__)')"
+
+          if [ "${reported}" != "${PACKAGE_VERSION}" ]; then
+            echo "::error::the built wheel reports version '${reported}', expected '${PACKAGE_VERSION}'"
+            exit 1
+          fi
+
+          cd /tmp && /tmp/adapter-check/bin/python -c \
+            "from llama_index.memory.hippocampus import HippocampusMemoryBlock, hippocampus_memory; \
+             from llama_index.core.memory import Memory, VectorMemoryBlock"
+
+      - name: Check whether publishing is enabled
+        id: gate
+        run: |
+          if [ "${{ vars.PUBLISH_PYPI }}" = "true" ]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::PUBLISH_PYPI is not set to true - built and verified the distributions, skipping the PyPI upload."
+          fi
+
+      - name: Publish to PyPI
+        if: steps.gate.outputs.enabled == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: integrations/llamaindex/dist
+          skip-existing: true
+
+      - name: Attach the distributions to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${RELEASE_TAG}" integrations/llamaindex/dist/* --clobber
 
   # Build and push the container image to GitHub Container Registry, gated behind the release job
   # so a failing test suite or coverage run publishes nothing. Auth is the built-in GITHUB_TOKEN

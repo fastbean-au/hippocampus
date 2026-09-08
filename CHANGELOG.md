@@ -43,8 +43,9 @@ What each version number covers:
 
 Not covered: the embedded web console, the demo stack, the Grafana dashboard, and anything under
 `docs/`. Each integration under `integrations/` (the MCP bridge, the `hippo` CLI, the event-source
-bridges, the ingestor, the OTEL collector exporter, and the `hippocampus-client` Python package) is
-released from this same tag and tracks the service; the Obsidian plugin has its own `obsidian-v*`
+bridges, the ingestor, the OTEL collector exporter, the `hippocampus-client` Python package and the
+`llama-index-memory-hippocampus` adapter over it) is released from this same tag and tracks the
+service; the Obsidian plugin has its own `obsidian-v*`
 tags and its own version line. For the Python package that coupling is stronger than convention —
 its stubs are generated from the contract during the build, and its version is stamped from the
 tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by construction.
@@ -87,6 +88,38 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   `ModuleNotFoundError` on first import. Stripping the option before generating is the fix.
 
   See `docs/python.md`. Item 64, and item 100.4's sharpening of why it matters.
+- **A LlamaIndex adapter: `pip install llama-index-memory-hippocampus`.** The client's other half.
+  Being callable from Python is not the same as being an agent's memory, and the distance between
+  the two is one framework adapter — `HippocampusMemoryBlock`, a long-term memory block that writes
+  each turn to a store and retrieves from it by relevance.
+
+  **Retrieval recalls what it returns**, and a recall here is a write: it resets the memory's decay
+  clock and raises its effective significance. So a fact the agent keeps reaching for is reinforced
+  by the act of being used, and one it never retrieves decays out. That is the whole retention
+  policy — the adapter carries no eviction, no cap and no TTL of its own, because the store already
+  has all three and they are now driven by what the agent actually did.
+
+  LlamaIndex was chosen over the OpenAI Agents SDK's `Session` and over LangChain, and not on
+  audience. **A conversation transcript has a structural invariant a forgetting store breaks**: the
+  item list handed back to the model must be well-formed, a tool call needs its matching tool
+  result, those are two memories with two significances, and a consolidation cycle will eventually
+  take one of them. It is fixable by pinning a turn into one event and leaning on
+  `minimumRetentionInDays` — but the fix is precisely a constraint on forgetting, so the adapter
+  would have demonstrated the thesis by suppressing it. A long-term memory block has no such
+  invariant: facts folded into a prompt by relevance are _supposed_ to thin out, and nothing is
+  corrupted when a low-value one goes.
+
+  Two decisions in it are specific to this store rather than to the framework. The role and session
+  id go in **metadata, never the body** — a body is what the content index tokenises, so the
+  framework's own `<message role='user'>` wrapper would put `message`, `role` and `user` into the
+  index for every memory, three terms that match everything and rank nothing. And the search mode
+  is **resolved once from `who_am_i()`**, richest first, because a mode with no backend is refused
+  per call: a block configured for one would fail every retrieval for the life of the process while
+  looking like a retrieval bug.
+
+  The block holds a four-call protocol rather than the whole client, which is what keeps an agent's
+  memory away from `Purge` and `Clear` — the same line the event-source bridges draw, and held at
+  four by a test. See `docs/llamaindex.md`. Item 108.2.
 - **`StoreMemories`: a validated batch write.** A producer holding a batch of unrelated memories had
   two options and both were wrong. Loop `StoreMemory` and spend a round trip, an interceptor chain,
   a rate-limit token and a transaction on every record — which is what the broker bridges and the

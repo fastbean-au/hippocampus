@@ -64,5 +64,6 @@ properties that shape what you can build on this.
 | 🚦 **[Ingestor](docs/ingestor.md)**             | Stage data at the edge and promote completed events into a central store under CEL rules.         |
 | 💻 **[CLI](docs/cli.md)**                       | Drive a running service from the shell over either transport.                                     |
 | 🐍 **[Python Client](docs/python.md)**          | `pip install hippocampus-client` — the published client, covering the full RPC surface.           |
+| 🦙 **[LlamaIndex](docs/llamaindex.md)**         | `pip install llama-index-memory-hippocampus` — an agent's long-term memory, reinforced by use.    |
 | 🧬 **[Clients & Codegen](docs/clients.md)**     | Generate a TypeScript, Java, Rust, or any-language client from the proto or OpenAPI document.     |
 | 📓 **[Obsidian Integration](docs/obsidian.md)** | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge.         |
