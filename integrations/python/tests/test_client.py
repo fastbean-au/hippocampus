@@ -97,6 +97,54 @@ def test_metadata_travels_as_pairs(client, service):
     ]
 
 
+def test_a_predicate_delete_encodes_the_same_filter_as_the_listing(client, service):
+    """The dry run only means anything if the two send the same predicate.
+
+    The service builds one filter for both, so this asserts the client's half: every selecting
+    argument that reaches GetMemoriesRequest reaches DeleteMemoriesByFilterRequest identically.
+    """
+
+    kwargs = dict(
+        group="acme",
+        metadata={"source": "slack"},
+        recalled=False,
+        is_summary=True,
+        binary=False,
+        significance_max=20,
+        recall_count_max=3,
+    )
+
+    client.get_memories(**kwargs)
+    client.delete_memories_by_filter(**kwargs)
+
+    listed = service.requests["GetMemories"]
+    deleted = service.requests["DeleteMemoriesByFilter"]
+
+    for field in (
+        "group",
+        "metadata",
+        "recalled",
+        "is_summary",
+        "is_binary",
+        "significance_max",
+        "recall_count_max",
+    ):
+        assert getattr(listed, field) == getattr(deleted, field), field
+
+
+def test_a_predicate_delete_sends_its_own_two_flags(client, service):
+    client.delete_memories_by_filter(group="g", max_deletions=10, delete_empty_events=True)
+    client.delete_events_by_filter(group="g", max_deletions=5, delete_memories=True)
+
+    memories = service.requests["DeleteMemoriesByFilter"]
+    events = service.requests["DeleteEventsByFilter"]
+
+    assert memories.max_deletions == 10
+    assert memories.delete_empty_events is True
+    assert events.max_deletions == 5
+    assert events.delete_memories is True
+
+
 def test_metadata_on_a_record_is_a_map(client, service):
     client.store_memory("x", significance=50, metadata={"source": "slack"})
 
@@ -385,6 +433,14 @@ def test_every_client_method_reaches_its_rpc(client, service):
         (lambda: client.store_memories([hp.Memory("x", 50)]), "StoreMemories"),
         (lambda: client.update_memory(hp.Memory(id="m-1")), "UpdateMemory"),
         (lambda: client.delete_memories(["m-1"]), "DeleteMemories"),
+        (
+            lambda: client.delete_memories_by_filter(group="g"),
+            "DeleteMemoriesByFilter",
+        ),
+        (
+            lambda: client.delete_events_by_filter(group="g"),
+            "DeleteEventsByFilter",
+        ),
         (lambda: client.get_memories(), "GetMemories"),
         (lambda: client.recall_memories(["m-1"]), "RecallMemories"),
         (lambda: client.search_memories("x"), "SearchMemories"),

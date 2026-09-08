@@ -86,6 +86,14 @@ var scopes = map[string]scopeMode{
 	// summarised for anyone.
 	"GetSummarisationCandidates": scopeFilter,
 
+	// Deletion by predicate carries the scope as a predicate, exactly as the listing that is its dry
+	// run does - so a group-bound caller deletes within its own partition and a filter naming a group
+	// outside the scope matches nothing. That is deliberately NOT scopeUnbound like Purge: draining
+	// one partition is precisely the operation a bound token should be able to perform, and the
+	// predicate is what confines it.
+	"DeleteMemoriesByFilter": scopeFilter,
+	"DeleteEventsByFilter":   scopeFilter,
+
 	// The data-movement RPCs walk the store through GetMemoriesPage/GetEventsPage, which take the
 	// scope. Export and Transfer therefore move exactly the caller's partition - which is also the
 	// useful per-group export - and Clear deletes only what such a walk captured in its manifest.

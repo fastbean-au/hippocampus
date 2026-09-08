@@ -421,6 +421,41 @@
         ]
       }
     },
+    "/v1/events/delete-by-filter": {
+      "post": {
+        "summary": "DeleteEventsByFilter deletes every event matching the filter - the same selection the\nGetEvents listing takes - rather than one event by id, and is the events' half of what\noffboarding a group needs. Like its memory counterpart it refuses an empty filter, and\nGetEvents with the same fields is the dry run.",
+        "description": "delete_memories decides what happens to each event's memories, exactly as DeleteEvent's\nmemories flag does: set, they go with their event; unset, they survive with no event.",
+        "operationId": "Hippocampus_DeleteEventsByFilter",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteEventsByFilterResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "DeleteEventsByFilterRequest selects the events to delete. Every field means what the same field\nmeans on GetEventsRequest; order_by/order_dir/limit/offset, memories, memory_counts, links and\nlinked_to are absent for the reasons DeleteMemoriesByFilterRequest gives.\n\nAt least one selecting field must be set, delete_memories excepted - it says what to do with\nwhat is selected, not what to select, so a request carrying only delete_memories is still\nrefused.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1DeleteEventsByFilterRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
     "/v1/events/merge": {
       "post": {
         "summary": "MergeEvents re-points every memory of merge_from onto merge_to. merge_to must already exist;\nmerge_from need not - an absent one simply matches no memories.",
@@ -1286,6 +1321,41 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/v1DeleteMemoriesRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Hippocampus"
+        ]
+      }
+    },
+    "/v1/memories/delete-by-filter": {
+      "post": {
+        "summary": "DeleteMemoriesByFilter deletes every memory matching the filter - the same selection the\nGetMemories listing takes - rather than a list of ids. It is what offboarding a group, or\nanswering an erasure request, actually needs: the alternative is paging GetMemories and\ndeleting by id while the store changes underneath, which is not safer than this, only more\nwork.",
+        "description": "A request carrying no filter at all is refused with INVALID_ARGUMENT: \"delete everything\" is\nPurge, and must not be reachable by leaving a field unset. To see what a call would remove,\nsend the same fields to GetMemories and read total_count - the two build the same predicate,\nwhich is a tested property rather than a convention.\n\nDeletion is permanent, and is the ordinary one: links are pruned and the search index is\nupdated in the same transaction the rows go in, exactly as DeleteMemories does. Like\nDeleteMemories it writes no forgotten-log tombstone - that log records what a decay cycle\ntook, and a caller that asked for a deletion already knows.",
+        "operationId": "Hippocampus_DeleteMemoriesByFilter",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteMemoriesByFilterResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "DeleteMemoriesByFilterRequest selects the memories to delete. Every field below means exactly\nwhat the same field means on GetMemoriesRequest, so the listing is the dry run for the deletion.\n\nWhat is deliberately NOT here, and why:\n\n  - order_by/order_dir/limit/offset. There is no page to order or skip; the call deletes\n    everything the predicate matches. max_deletions below bounds one call's work instead.\n  - links. There is no memory in the response to attach them to.\n  - linked_to. Deleting a memory removes its edges, so that predicate narrows as a consequence of\n    its own deletions: what the listing showed the caller and what the call would remove are not\n    the same set, and no amount of care on the caller's part could make them agree.\n\nAt least one selecting field must be set. A request with none is refused rather than read as\n\"everything\" - that operation exists, is called Purge, and is not something a defaulted field\nshould be able to reach.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1DeleteMemoriesByFilterRequest"
             }
           }
         ],
@@ -2382,6 +2452,98 @@
       "default": "DELETE_CAUSE_UNSPECIFIED",
       "description": "DeleteCause is why the records a delivery describes were deleted. The two decay causes are the\nonly ones reported unless callbacks.allDeletions widens the feed."
     },
+    "v1DeleteEventsByFilterRequest": {
+      "type": "object",
+      "properties": {
+        "timeStartMin": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound"
+        },
+        "timeStartMax": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive upper bound on time_start; 0 (the default) means no upper bound"
+        },
+        "timeEndMin": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive lower bound on time_end; 0 (the default) means no lower bound"
+        },
+        "timeEndMax": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive upper bound on time_end; 0 (the default) means no upper bound. Open events store time_end = 0 and are excluded rather than matched - use ended for those"
+        },
+        "significanceMin": {
+          "type": "integer",
+          "format": "int32",
+          "title": "inclusive lower bound on significance; 0 (the default) means no bound"
+        },
+        "significanceMax": {
+          "type": "integer",
+          "format": "int32",
+          "title": "inclusive upper bound on significance; 0 (the default) means no bound"
+        },
+        "group": {
+          "type": "string",
+          "title": "restrict to events carrying this group label"
+        },
+        "significanceExtremum": {
+          "$ref": "#/definitions/v1SignificanceExtremum",
+          "title": "when set, ignore significance_min/significance_max and delete only the events tied at that significance value among the other filters"
+        },
+        "metadata": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "restrict to events whose metadata carries every one of these \"key=value\" pairs (AND, exact match)"
+        },
+        "ended": {
+          "$ref": "#/definitions/v1Bool",
+          "title": "FALSE selects only events that have not ended, TRUE only those that have; UNSPECIFIED (default) applies no restriction"
+        },
+        "nameContains": {
+          "type": "string",
+          "title": "restrict to events whose name contains this substring, case-insensitively"
+        },
+        "maxDeletions": {
+          "type": "string",
+          "format": "int64",
+          "title": "stop after deleting this many events; 0 (the default) means no bound. complete on the response reports which happened"
+        },
+        "deleteMemories": {
+          "type": "boolean",
+          "title": "delete each event's memories with it. Unset, they survive with their event_id cleared - the same choice DeleteEvent's memories flag makes, named unambiguously here because the listing's `memories` field means something else entirely"
+        }
+      },
+      "description": "DeleteEventsByFilterRequest selects the events to delete. Every field means what the same field\nmeans on GetEventsRequest; order_by/order_dir/limit/offset, memories, memory_counts, links and\nlinked_to are absent for the reasons DeleteMemoriesByFilterRequest gives.\n\nAt least one selecting field must be set, delete_memories excepted - it says what to do with\nwhat is selected, not what to select, so a request carrying only delete_memories is still\nrefused."
+    },
+    "v1DeleteEventsByFilterResponse": {
+      "type": "object",
+      "properties": {
+        "eventsDeleted": {
+          "type": "string",
+          "format": "int64"
+        },
+        "memoriesDeleted": {
+          "type": "string",
+          "format": "int64",
+          "title": "memories deleted with their event; always 0 unless delete_memories was set"
+        },
+        "memoriesOrphaned": {
+          "type": "string",
+          "format": "int64",
+          "title": "memories that outlived their event with event_id cleared; always 0 when delete_memories was set"
+        },
+        "complete": {
+          "type": "boolean",
+          "title": "true when the filter matched nothing more; false when max_deletions stopped the call"
+        }
+      },
+      "description": "DeleteEventsByFilterResponse reports what actually went, on the same terms as\nDeleteMemoriesByFilterResponse."
+    },
     "v1DeleteForgottenMemoriesRequest": {
       "type": "object",
       "properties": {
@@ -2405,6 +2567,115 @@
           "format": "int64"
         }
       }
+    },
+    "v1DeleteMemoriesByFilterRequest": {
+      "type": "object",
+      "properties": {
+        "timestampMin": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive lower bound on time_stamp; 0 (the default) means no lower bound"
+        },
+        "timestampMax": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive upper bound on time_stamp; 0 (the default) means no upper bound"
+        },
+        "significanceMin": {
+          "type": "integer",
+          "format": "int32",
+          "title": "inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter"
+        },
+        "significanceMax": {
+          "type": "integer",
+          "format": "int32",
+          "title": "inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter"
+        },
+        "group": {
+          "type": "string",
+          "title": "restrict to memories carrying this group label - the field that makes offboarding a group one call"
+        },
+        "significanceExtremum": {
+          "$ref": "#/definitions/v1SignificanceExtremum",
+          "title": "when set, ignore significance_min/significance_max and delete only the memories tied at that significance value among the other filters; 0 (default) applies no extremum"
+        },
+        "metadata": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "restrict to memories whose metadata carries every one of these \"key=value\" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata"
+        },
+        "recalled": {
+          "$ref": "#/definitions/v1Bool",
+          "title": "FALSE selects only never-recalled memories, TRUE only those recalled at least once; UNSPECIFIED (default) applies no restriction"
+        },
+        "recallCountMin": {
+          "type": "integer",
+          "format": "int32",
+          "title": "inclusive lower bound on recall_count; 0 (the default) means no bound"
+        },
+        "recallCountMax": {
+          "type": "integer",
+          "format": "int32",
+          "title": "inclusive upper bound on recall_count; 0 (the default) means no bound"
+        },
+        "timeRecalledMin": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive lower bound on time_recalled; 0 means no bound. Like GetMemoriesRequest's, both bounds ask only about memories that HAVE been recalled"
+        },
+        "timeRecalledMax": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano inclusive upper bound on time_recalled; 0 means no bound. Never-recalled memories are excluded rather than matched - use recalled for those"
+        },
+        "isSummary": {
+          "$ref": "#/definitions/v1Bool",
+          "title": "TRUE selects only summary memories, FALSE only non-summaries; UNSPECIFIED (default) applies no restriction"
+        },
+        "isBinary": {
+          "$ref": "#/definitions/v1Bool",
+          "title": "TRUE selects only binary memories, FALSE only non-binary; UNSPECIFIED (default) applies no restriction"
+        },
+        "eventId": {
+          "type": "string",
+          "title": "restrict to one event's memories. Empty (the default) applies no restriction rather than matching the event-less; use has_event for those"
+        },
+        "hasEvent": {
+          "$ref": "#/definitions/v1Bool",
+          "title": "FALSE selects only memories associated with no event, TRUE only those associated with one; UNSPECIFIED (default) applies no restriction"
+        },
+        "maxDeletions": {
+          "type": "string",
+          "format": "int64",
+          "title": "stop after deleting this many memories; 0 (the default) means no bound, so the call runs until the filter matches nothing. complete on the response reports which happened"
+        },
+        "deleteEmptyEvents": {
+          "type": "boolean",
+          "title": "also delete each event that the deletion left with no memories at all, exactly as Clear does. An event that still holds a memory is never touched"
+        }
+      },
+      "description": "DeleteMemoriesByFilterRequest selects the memories to delete. Every field below means exactly\nwhat the same field means on GetMemoriesRequest, so the listing is the dry run for the deletion.\n\nWhat is deliberately NOT here, and why:\n\n  - order_by/order_dir/limit/offset. There is no page to order or skip; the call deletes\n    everything the predicate matches. max_deletions below bounds one call's work instead.\n  - links. There is no memory in the response to attach them to.\n  - linked_to. Deleting a memory removes its edges, so that predicate narrows as a consequence of\n    its own deletions: what the listing showed the caller and what the call would remove are not\n    the same set, and no amount of care on the caller's part could make them agree.\n\nAt least one selecting field must be set. A request with none is refused rather than read as\n\"everything\" - that operation exists, is called Purge, and is not something a defaulted field\nshould be able to reach."
+    },
+    "v1DeleteMemoriesByFilterResponse": {
+      "type": "object",
+      "properties": {
+        "memoriesDeleted": {
+          "type": "string",
+          "format": "int64"
+        },
+        "eventsDeleted": {
+          "type": "string",
+          "format": "int64",
+          "title": "events removed because the deletion left them empty; always 0 unless delete_empty_events was set"
+        },
+        "complete": {
+          "type": "boolean",
+          "title": "true when the filter matched nothing more; false when max_deletions stopped the call with matches still standing, so the same request can be sent again"
+        }
+      },
+      "description": "DeleteMemoriesByFilterResponse reports what actually went. The counts are what this call\ndeleted, not what the filter matched: a concurrent write can add a matching memory while the\ncall runs, and it will be deleted too if the call has not finished."
     },
     "v1DeleteMemoriesRequest": {
       "type": "object",

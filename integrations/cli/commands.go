@@ -66,6 +66,12 @@ func commands() map[string]command {
 			},
 			run: runMemoryDelete,
 		},
+		"memory delete-by-filter": {
+			summary: "delete every memory matching a filter (destructive)",
+			hint:    "--yes [--group G] [--metadata k=v] [--significance-max N] [--max-deletions N] [--delete-empty-events]",
+			flags:   memoryDeleteFilterFlags,
+			run:     runMemoryDeleteByFilter,
+		},
 		"memory list": {
 			summary: "list memories with optional filters",
 			hint:    "[--group G] [--metadata k=v] [--recalled false] [--significance-min N] [--limit N]",
@@ -224,6 +230,12 @@ func commands() map[string]command {
 				fs.Bool("links", false, "also load the event's outbound links")
 			},
 			run: runEventGet,
+		},
+		"event delete-by-filter": {
+			summary: "delete every event matching a filter (destructive)",
+			hint:    "--yes [--group G] [--ended true] [--name-contains S] [--max-deletions N] [--delete-memories]",
+			flags:   eventDeleteFilterFlags,
+			run:     runEventDeleteByFilter,
 		},
 		"event list": {
 			summary: "list events with optional filters",
@@ -475,6 +487,49 @@ func memoryFilterFlags(fs *pflag.FlagSet) {
 	fs.String("recalled-before", "", "inclusive upper bound on time_recalled (RFC3339); never-recalled memories are excluded")
 	fs.String("event", "", "restrict to one event's memories (the paged way to read them)")
 	fs.String("has-event", "", "'true' for memories associated with an event, 'false' for those with none")
+}
+
+// memoryDeleteFilterFlags and eventDeleteFilterFlags are the listing filters minus everything that
+// only shapes a page - order-by, order-dir, limit, offset, links - plus the two flags a deletion
+// has of its own. They are separate registrars rather than the listing's, because reusing it would
+// offer a --limit that looks like a bound on the deletion and is not one.
+func memoryDeleteFilterFlags(fs *pflag.FlagSet) {
+	fs.Bool("yes", false, "confirm the irreversible deletion")
+	fs.String("timestamp-min", "", "inclusive lower bound on time_stamp (RFC3339)")
+	fs.String("timestamp-max", "", "inclusive upper bound on time_stamp (RFC3339)")
+	fs.Int32("significance-min", 0, "inclusive lower bound on significance (0 = no bound)")
+	fs.Int32("significance-max", 0, "inclusive upper bound on significance (0 = no bound)")
+	fs.String("group", "", "restrict to a group label")
+	fs.String("extremum", "", "'highest' or 'lowest' significance tie (ignores the significance range)")
+	fs.StringSlice("metadata", nil, "restrict to memories carrying this 'key=value' label (repeatable; all must match)")
+	fs.String("recalled", "", "'true' for memories recalled at least once, 'false' for those never recalled")
+	fs.String("summary", "", "'true' for summary memories only, 'false' to exclude them")
+	fs.String("binary", "", "'true' for binary memories only, 'false' to exclude them")
+	fs.Int32("recall-count-min", 0, "inclusive lower bound on recall_count (0 = no bound)")
+	fs.Int32("recall-count-max", 0, "inclusive upper bound on recall_count (0 = no bound)")
+	fs.String("recalled-after", "", "inclusive lower bound on time_recalled (RFC3339); never-recalled memories are excluded")
+	fs.String("recalled-before", "", "inclusive upper bound on time_recalled (RFC3339); never-recalled memories are excluded")
+	fs.String("event", "", "restrict to one event's memories")
+	fs.String("has-event", "", "'true' for memories associated with an event, 'false' for those with none")
+	fs.Int64("max-deletions", 0, "stop after deleting this many memories (0 = no bound)")
+	fs.Bool("delete-empty-events", false, "also delete each event the deletion leaves with no memories")
+}
+
+func eventDeleteFilterFlags(fs *pflag.FlagSet) {
+	fs.Bool("yes", false, "confirm the irreversible deletion")
+	fs.String("time-start-min", "", "inclusive lower bound on time_start (RFC3339)")
+	fs.String("time-start-max", "", "inclusive upper bound on time_start (RFC3339)")
+	fs.String("time-end-min", "", "inclusive lower bound on time_end (RFC3339)")
+	fs.String("time-end-max", "", "inclusive upper bound on time_end (RFC3339)")
+	fs.Int32("significance-min", 0, "inclusive lower bound on significance (0 = no bound)")
+	fs.Int32("significance-max", 0, "inclusive upper bound on significance (0 = no bound)")
+	fs.String("group", "", "restrict to a group label")
+	fs.String("extremum", "", "'highest' or 'lowest' significance tie (ignores the significance range)")
+	fs.StringSlice("metadata", nil, "restrict to events carrying this 'key=value' label (repeatable; all must match)")
+	fs.String("ended", "", "'true' for events that have ended, 'false' for those still running")
+	fs.String("name-contains", "", "restrict to events whose name contains this substring (case-insensitive)")
+	fs.Int64("max-deletions", 0, "stop after deleting this many events (0 = no bound)")
+	fs.Bool("delete-memories", false, "delete each event's memories with it; without this they survive with no event")
 }
 
 func eventFilterFlags(fs *pflag.FlagSet) {
@@ -849,6 +904,146 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 	}
 
 	resp, err := client.GetMemories(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runMemoryDeleteByFilter deletes by predicate. --yes is required for the reason purge requires it:
+// the request is not a list of ids the operator has read, so a mistyped filter is not visible in
+// the command itself. `hippo memory list` with the same filter flags is the dry run - the service
+// builds one predicate for both.
+func runMemoryDeleteByFilter(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	if !b(fs, "yes") {
+		return fmt.Errorf("deleting by filter is irreversible; run 'hippo memory list' with the same filters to see what matches, then re-run with --yes")
+	}
+
+	tsMin, err := parseTime(fs, "timestamp-min")
+	if err != nil {
+		return err
+	}
+
+	tsMax, err := parseTime(fs, "timestamp-max")
+	if err != nil {
+		return err
+	}
+
+	ext, err := extremumFromFlags(fs)
+	if err != nil {
+		return err
+	}
+
+	recalledAfter, err := parseTime(fs, "recalled-after")
+	if err != nil {
+		return err
+	}
+
+	recalledBefore, err := parseTime(fs, "recalled-before")
+	if err != nil {
+		return err
+	}
+
+	recalled, err := triStateFromFlag(fs, "recalled")
+	if err != nil {
+		return err
+	}
+
+	isSummary, err := triStateFromFlag(fs, "summary")
+	if err != nil {
+		return err
+	}
+
+	isBinary, err := triStateFromFlag(fs, "binary")
+	if err != nil {
+		return err
+	}
+
+	hasEvent, err := triStateFromFlag(fs, "has-event")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.DeleteMemoriesByFilter(ctx, &contract.DeleteMemoriesByFilterRequest{
+		TimestampMin:         tsMin,
+		TimestampMax:         tsMax,
+		SignificanceMin:      i32(fs, "significance-min"),
+		SignificanceMax:      i32(fs, "significance-max"),
+		Group:                str(fs, "group"),
+		SignificanceExtremum: ext,
+		Metadata:             strs(fs, "metadata"),
+		Recalled:             recalled,
+		RecallCountMin:       i32(fs, "recall-count-min"),
+		RecallCountMax:       i32(fs, "recall-count-max"),
+		TimeRecalledMin:      recalledAfter,
+		TimeRecalledMax:      recalledBefore,
+		IsSummary:            isSummary,
+		IsBinary:             isBinary,
+		EventId:              str(fs, "event"),
+		HasEvent:             hasEvent,
+		MaxDeletions:         i64(fs, "max-deletions"),
+		DeleteEmptyEvents:    b(fs, "delete-empty-events"),
+	})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// runEventDeleteByFilter is the events' half; `hippo event list` with the same filters is its dry
+// run.
+func runEventDeleteByFilter(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
+	if !b(fs, "yes") {
+		return fmt.Errorf("deleting by filter is irreversible; run 'hippo event list' with the same filters to see what matches, then re-run with --yes")
+	}
+
+	tsStartMin, err := parseTime(fs, "time-start-min")
+	if err != nil {
+		return err
+	}
+
+	tsStartMax, err := parseTime(fs, "time-start-max")
+	if err != nil {
+		return err
+	}
+
+	tsEndMin, err := parseTime(fs, "time-end-min")
+	if err != nil {
+		return err
+	}
+
+	tsEndMax, err := parseTime(fs, "time-end-max")
+	if err != nil {
+		return err
+	}
+
+	ext, err := extremumFromFlags(fs)
+	if err != nil {
+		return err
+	}
+
+	ended, err := triStateFromFlag(fs, "ended")
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.DeleteEventsByFilter(ctx, &contract.DeleteEventsByFilterRequest{
+		TimeStartMin:         tsStartMin,
+		TimeStartMax:         tsStartMax,
+		TimeEndMin:           tsEndMin,
+		TimeEndMax:           tsEndMax,
+		SignificanceMin:      i32(fs, "significance-min"),
+		SignificanceMax:      i32(fs, "significance-max"),
+		Group:                str(fs, "group"),
+		SignificanceExtremum: ext,
+		Metadata:             strs(fs, "metadata"),
+		Ended:                ended,
+		NameContains:         str(fs, "name-contains"),
+		MaxDeletions:         i64(fs, "max-deletions"),
+		DeleteMemories:       b(fs, "delete-memories"),
+	})
 	if err != nil {
 		return err
 	}

@@ -925,6 +925,12 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 		// Import takes an archive body; the group stamping it shares with ImportBatch is in
 		// ingestMemories/ingestEvents, exercised above.
 		"Import": true,
+
+		// The two predicate deletions are covered by TestGroupScopeIsolation_DeleteByFilter in
+		// predicate_test.go, which seeds its own fixture per subtest - each of them empties the
+		// partition it runs against, which the shared fixture above is read by later subtests.
+		"DeleteMemoriesByFilter": true,
+		"DeleteEventsByFilter":   true,
 	}
 
 	for _, m := range contract.Hippocampus_ServiceDesc.Methods {

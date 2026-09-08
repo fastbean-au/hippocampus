@@ -140,6 +140,18 @@ func (c *httpClient) DeleteMemories(ctx context.Context, in *contract.DeleteMemo
 	return out, c.do(ctx, http.MethodPost, "/v1/memories/delete", nil, in, out)
 }
 
+func (c *httpClient) DeleteMemoriesByFilter(ctx context.Context, in *contract.DeleteMemoriesByFilterRequest, _ ...grpc.CallOption) (*contract.DeleteMemoriesByFilterResponse, error) {
+	out := &contract.DeleteMemoriesByFilterResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/memories/delete-by-filter", nil, in, out)
+}
+
+func (c *httpClient) DeleteEventsByFilter(ctx context.Context, in *contract.DeleteEventsByFilterRequest, _ ...grpc.CallOption) (*contract.DeleteEventsByFilterResponse, error) {
+	out := &contract.DeleteEventsByFilterResponse{}
+
+	return out, c.do(ctx, http.MethodPost, "/v1/events/delete-by-filter", nil, in, out)
+}
+
 func (c *httpClient) GetMemories(ctx context.Context, in *contract.GetMemoriesRequest, _ ...grpc.CallOption) (*contract.GetMemoriesResponse, error) {
 	out := &contract.GetMemoriesResponse{}
 

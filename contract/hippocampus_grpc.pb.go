@@ -60,6 +60,8 @@ const (
 	Hippocampus_ImportBatch_FullMethodName                = "/hippocampus.v1.Hippocampus/ImportBatch"
 	Hippocampus_Transfer_FullMethodName                   = "/hippocampus.v1.Hippocampus/Transfer"
 	Hippocampus_Clear_FullMethodName                      = "/hippocampus.v1.Hippocampus/Clear"
+	Hippocampus_DeleteMemoriesByFilter_FullMethodName     = "/hippocampus.v1.Hippocampus/DeleteMemoriesByFilter"
+	Hippocampus_DeleteEventsByFilter_FullMethodName       = "/hippocampus.v1.Hippocampus/DeleteEventsByFilter"
 )
 
 // HippocampusClient is the client API for Hippocampus service.
@@ -319,6 +321,30 @@ type HippocampusClient interface {
 	// manifest. Memories recalled (or re-created) since the capture survive, as do events that
 	// still have memories.
 	Clear(ctx context.Context, in *ClearRequest, opts ...grpc.CallOption) (*ClearResponse, error)
+	// DeleteMemoriesByFilter deletes every memory matching the filter - the same selection the
+	// GetMemories listing takes - rather than a list of ids. It is what offboarding a group, or
+	// answering an erasure request, actually needs: the alternative is paging GetMemories and
+	// deleting by id while the store changes underneath, which is not safer than this, only more
+	// work.
+	//
+	// A request carrying no filter at all is refused with INVALID_ARGUMENT: "delete everything" is
+	// Purge, and must not be reachable by leaving a field unset. To see what a call would remove,
+	// send the same fields to GetMemories and read total_count - the two build the same predicate,
+	// which is a tested property rather than a convention.
+	//
+	// Deletion is permanent, and is the ordinary one: links are pruned and the search index is
+	// updated in the same transaction the rows go in, exactly as DeleteMemories does. Like
+	// DeleteMemories it writes no forgotten-log tombstone - that log records what a decay cycle
+	// took, and a caller that asked for a deletion already knows.
+	DeleteMemoriesByFilter(ctx context.Context, in *DeleteMemoriesByFilterRequest, opts ...grpc.CallOption) (*DeleteMemoriesByFilterResponse, error)
+	// DeleteEventsByFilter deletes every event matching the filter - the same selection the
+	// GetEvents listing takes - rather than one event by id, and is the events' half of what
+	// offboarding a group needs. Like its memory counterpart it refuses an empty filter, and
+	// GetEvents with the same fields is the dry run.
+	//
+	// delete_memories decides what happens to each event's memories, exactly as DeleteEvent's
+	// memories flag does: set, they go with their event; unset, they survive with no event.
+	DeleteEventsByFilter(ctx context.Context, in *DeleteEventsByFilterRequest, opts ...grpc.CallOption) (*DeleteEventsByFilterResponse, error)
 }
 
 type hippocampusClient struct {
@@ -739,6 +765,26 @@ func (c *hippocampusClient) Clear(ctx context.Context, in *ClearRequest, opts ..
 	return out, nil
 }
 
+func (c *hippocampusClient) DeleteMemoriesByFilter(ctx context.Context, in *DeleteMemoriesByFilterRequest, opts ...grpc.CallOption) (*DeleteMemoriesByFilterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteMemoriesByFilterResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_DeleteMemoriesByFilter_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hippocampusClient) DeleteEventsByFilter(ctx context.Context, in *DeleteEventsByFilterRequest, opts ...grpc.CallOption) (*DeleteEventsByFilterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteEventsByFilterResponse)
+	err := c.cc.Invoke(ctx, Hippocampus_DeleteEventsByFilter_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HippocampusServer is the server API for Hippocampus service.
 // All implementations must embed UnimplementedHippocampusServer
 // for forward compatibility.
@@ -996,6 +1042,30 @@ type HippocampusServer interface {
 	// manifest. Memories recalled (or re-created) since the capture survive, as do events that
 	// still have memories.
 	Clear(context.Context, *ClearRequest) (*ClearResponse, error)
+	// DeleteMemoriesByFilter deletes every memory matching the filter - the same selection the
+	// GetMemories listing takes - rather than a list of ids. It is what offboarding a group, or
+	// answering an erasure request, actually needs: the alternative is paging GetMemories and
+	// deleting by id while the store changes underneath, which is not safer than this, only more
+	// work.
+	//
+	// A request carrying no filter at all is refused with INVALID_ARGUMENT: "delete everything" is
+	// Purge, and must not be reachable by leaving a field unset. To see what a call would remove,
+	// send the same fields to GetMemories and read total_count - the two build the same predicate,
+	// which is a tested property rather than a convention.
+	//
+	// Deletion is permanent, and is the ordinary one: links are pruned and the search index is
+	// updated in the same transaction the rows go in, exactly as DeleteMemories does. Like
+	// DeleteMemories it writes no forgotten-log tombstone - that log records what a decay cycle
+	// took, and a caller that asked for a deletion already knows.
+	DeleteMemoriesByFilter(context.Context, *DeleteMemoriesByFilterRequest) (*DeleteMemoriesByFilterResponse, error)
+	// DeleteEventsByFilter deletes every event matching the filter - the same selection the
+	// GetEvents listing takes - rather than one event by id, and is the events' half of what
+	// offboarding a group needs. Like its memory counterpart it refuses an empty filter, and
+	// GetEvents with the same fields is the dry run.
+	//
+	// delete_memories decides what happens to each event's memories, exactly as DeleteEvent's
+	// memories flag does: set, they go with their event; unset, they survive with no event.
+	DeleteEventsByFilter(context.Context, *DeleteEventsByFilterRequest) (*DeleteEventsByFilterResponse, error)
 	mustEmbedUnimplementedHippocampusServer()
 }
 
@@ -1128,6 +1198,12 @@ func (UnimplementedHippocampusServer) Transfer(context.Context, *TransferRequest
 }
 func (UnimplementedHippocampusServer) Clear(context.Context, *ClearRequest) (*ClearResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Clear not implemented")
+}
+func (UnimplementedHippocampusServer) DeleteMemoriesByFilter(context.Context, *DeleteMemoriesByFilterRequest) (*DeleteMemoriesByFilterResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteMemoriesByFilter not implemented")
+}
+func (UnimplementedHippocampusServer) DeleteEventsByFilter(context.Context, *DeleteEventsByFilterRequest) (*DeleteEventsByFilterResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteEventsByFilter not implemented")
 }
 func (UnimplementedHippocampusServer) mustEmbedUnimplementedHippocampusServer() {}
 func (UnimplementedHippocampusServer) testEmbeddedByValue()                     {}
@@ -1888,6 +1964,42 @@ func _Hippocampus_Clear_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Hippocampus_DeleteMemoriesByFilter_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteMemoriesByFilterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).DeleteMemoriesByFilter(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_DeleteMemoriesByFilter_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).DeleteMemoriesByFilter(ctx, req.(*DeleteMemoriesByFilterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Hippocampus_DeleteEventsByFilter_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteEventsByFilterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HippocampusServer).DeleteEventsByFilter(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Hippocampus_DeleteEventsByFilter_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HippocampusServer).DeleteEventsByFilter(ctx, req.(*DeleteEventsByFilterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Hippocampus_ServiceDesc is the grpc.ServiceDesc for Hippocampus service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2058,6 +2170,14 @@ var Hippocampus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Clear",
 			Handler:    _Hippocampus_Clear_Handler,
+		},
+		{
+			MethodName: "DeleteMemoriesByFilter",
+			Handler:    _Hippocampus_DeleteMemoriesByFilter_Handler,
+		},
+		{
+			MethodName: "DeleteEventsByFilter",
+			Handler:    _Hippocampus_DeleteEventsByFilter_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

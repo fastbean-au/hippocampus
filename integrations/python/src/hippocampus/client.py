@@ -281,6 +281,65 @@ class Hippocampus:
 
         return self._call(self.stub.DeleteMemories, request, timeout).ok
 
+    def delete_memories_by_filter(
+        self,
+        *,
+        timestamp_min: _convert.Timestamp = None,
+        timestamp_max: _convert.Timestamp = None,
+        significance_min: int = 0,
+        significance_max: int = 0,
+        significance_extremum: Optional[SignificanceExtremum] = None,
+        group: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        event_id: Optional[str] = None,
+        has_event: Optional[bool] = None,
+        recalled: Optional[bool] = None,
+        recall_count_min: int = 0,
+        recall_count_max: int = 0,
+        time_recalled_min: _convert.Timestamp = None,
+        time_recalled_max: _convert.Timestamp = None,
+        is_summary: Optional[bool] = None,
+        binary: Optional[bool] = None,
+        max_deletions: int = 0,
+        delete_empty_events: bool = False,
+        timeout: Optional[float] = None,
+    ) -> pb.DeleteMemoriesByFilterResponse:
+        """Delete every memory a filter matches. Admin tier, and irreversible.
+
+        The keyword arguments are `get_memories`' selecting ones, so the listing is the dry run:
+        run `get_memories` with the same arguments and read `Page.total` to see what this would
+        remove. A call carrying no filter at all is refused with INVALID_ARGUMENT - deleting
+        everything is `purge`.
+
+        `max_deletions` bounds one call; the response's `complete` says whether anything still
+        matches.
+        """
+
+        request = pb.DeleteMemoriesByFilterRequest(
+            timestamp_min=_convert.to_nanos(timestamp_min),
+            timestamp_max=_convert.to_nanos(timestamp_max),
+            significance_min=significance_min,
+            significance_max=significance_max,
+            group=group or "",
+            metadata=_convert.metadata_to_pairs(metadata),
+            event_id=event_id or "",
+            has_event=_convert.to_tristate(has_event),
+            recalled=_convert.to_tristate(recalled),
+            recall_count_min=recall_count_min,
+            recall_count_max=recall_count_max,
+            time_recalled_min=_convert.to_nanos(time_recalled_min),
+            time_recalled_max=_convert.to_nanos(time_recalled_max),
+            is_summary=_convert.to_tristate(is_summary),
+            is_binary=_convert.to_tristate(binary),
+            max_deletions=max_deletions,
+            delete_empty_events=delete_empty_events,
+        )
+
+        if significance_extremum is not None:
+            request.significance_extremum = int(significance_extremum)
+
+        return self._call(self.stub.DeleteMemoriesByFilter, request, timeout)
+
     def get_memories(
         self,
         *,
@@ -601,6 +660,54 @@ class Hippocampus:
         return Event.from_proto(
             self._call(self.stub.GetEventById, request, timeout).event
         )
+
+    def delete_events_by_filter(
+        self,
+        *,
+        time_start_min: _convert.Timestamp = None,
+        time_start_max: _convert.Timestamp = None,
+        time_end_min: _convert.Timestamp = None,
+        time_end_max: _convert.Timestamp = None,
+        significance_min: int = 0,
+        significance_max: int = 0,
+        significance_extremum: Optional[SignificanceExtremum] = None,
+        group: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        ended: Optional[bool] = None,
+        name_contains: Optional[str] = None,
+        max_deletions: int = 0,
+        delete_memories: bool = False,
+        timeout: Optional[float] = None,
+    ) -> pb.DeleteEventsByFilterResponse:
+        """Delete every event a filter matches. Admin tier, and irreversible.
+
+        `get_events` with the same arguments is the dry run, exactly as `get_memories` is for
+        `delete_memories_by_filter`, and an empty filter is refused for the same reason.
+
+        `delete_memories` says what happens to each event's memories: set, they go with it; left
+        alone, they survive with no event. It says what to do with the selection rather than what to
+        select, so a call carrying only that flag is still an empty filter.
+        """
+
+        request = pb.DeleteEventsByFilterRequest(
+            time_start_min=_convert.to_nanos(time_start_min),
+            time_start_max=_convert.to_nanos(time_start_max),
+            time_end_min=_convert.to_nanos(time_end_min),
+            time_end_max=_convert.to_nanos(time_end_max),
+            significance_min=significance_min,
+            significance_max=significance_max,
+            group=group or "",
+            metadata=_convert.metadata_to_pairs(metadata),
+            ended=_convert.to_tristate(ended),
+            name_contains=name_contains or "",
+            max_deletions=max_deletions,
+            delete_memories=delete_memories,
+        )
+
+        if significance_extremum is not None:
+            request.significance_extremum = int(significance_extremum)
+
+        return self._call(self.stub.DeleteEventsByFilter, request, timeout)
 
     def get_events(
         self,

@@ -25,6 +25,8 @@ COVERAGE = {
     "StoreMemories": "store_memories",
     "UpdateMemory": "update_memory",
     "DeleteMemories": "delete_memories",
+    "DeleteMemoriesByFilter": "delete_memories_by_filter",
+    "DeleteEventsByFilter": "delete_events_by_filter",
     "GetMemories": "get_memories",
     "RecallMemories": "recall_memories",
     "SearchMemories": "search_memories",

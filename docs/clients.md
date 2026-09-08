@@ -426,6 +426,12 @@ suggests:
   indistinguishable without it.
 - **A purge blocks everything.** While `Purge` runs, every other RPC is rejected with `Unavailable`
   (`503`). It is brief; retry.
+- **The predicate deletions have a dry run, and it is the listing.**
+  `DeleteMemoriesByFilter`/`DeleteEventsByFilter` take the selecting fields of
+  `GetMemories`/`GetEvents` and the server builds one predicate for both, so sending the same fields
+  to the listing shows exactly what the deletion would remove and `totalCount` says how much. Both
+  refuse a request carrying **no** selecting field — deleting everything is `Purge` — and both bound
+  one call with `maxDeletions`, reporting `complete` when the filter is exhausted.
 - **Set deadlines.** The service bounds its own storage operations
   (`storage.queryTimeoutSeconds`, 60s by default) but imposes no deadline on an RPC, and
   consolidation and export are long operations — so the wait is the client's to bound.

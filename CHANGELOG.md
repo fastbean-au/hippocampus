@@ -54,6 +54,38 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ### Added
 
+- **Deletion by predicate: `DeleteMemoriesByFilter` and `DeleteEventsByFilter`.** The deletion
+  surface was `DeleteMemories` (by id), `DeleteEvent` (one event), `Purge` (everything, refused to a
+  group-scoped caller) and `Clear` (exactly what a prior `Export`/`Transfer` captured) — there was no
+  predicate anywhere. Removing one group's records therefore meant exporting it to an object store
+  with `clear`, or transferring it to a second live instance with `clear`, or paging `GetMemories`
+  and deleting by id while the store changed underneath, and then deleting the emptied events one at
+  a time because nothing deleted events by predicate at all. Group scoping is the documented
+  soft-partition story for a tenant, and "hard isolation is one instance per tenant" answers
+  isolation rather than deletion; the deployments that took the soft partition still have to remove a
+  partition eventually.
+
+  Both take the selecting fields of the listing beside them (`GetMemories`/`GetEvents`) — not
+  ordering, not pagination — and **the service builds one predicate for the pair**, so the listing is
+  the dry run and its `total_count` is what the deletion removes. Both are `admin` tier and both are
+  scoped, so a group-bound admin token drains its own partition and reaches no further. A request
+  carrying **no filter is refused** rather than read as "everything": that operation is `Purge`.
+  `max_deletions` bounds one call and the response's `complete` reports whether anything still
+  matches. `DeleteMemoriesByFilter.delete_empty_events` also removes the events a deletion left with
+  no memories at all; `DeleteEventsByFilter.delete_memories` decides whether an event's memories go
+  with it or survive with no event, exactly as `DeleteEvent.memories` does.
+
+  There is deliberately no `dry_run` flag — authorisation is per-RPC, so a flag on a destructive call
+  could never be tiered apart from it, which is the reasoning that made `PreviewConsolidation` its
+  own RPC rather than a flag on `Sleep`. The dry run is the listing, at `reader` tier. Reaching the
+  storage layer, the deletion is the ordinary one: ids are resolved in batches and deleted through
+  the existing by-id chokepoint, so links are pruned, the search index's delete is queued in the same
+  transaction, and callbacks behave exactly as they do for `DeleteMemories`. New in the `hippo` CLI
+  as `memory delete-by-filter`/`event delete-by-filter` (both requiring `--yes`) and in the Python
+  client as `delete_memories_by_filter`/`delete_events_by_filter`; deliberately **not** on the MCP
+  tool surface, which lets a model act on records it can name and never on a set it can only
+  describe.
+
 - **A published Python client: `pip install hippocampus-client`.** Every language other than Go
   generated its own client, and `docs/clients.md` opened by saying so and then spent a page on how
   to do it — the right document to have and the wrong thing to need. The product's thesis is agent

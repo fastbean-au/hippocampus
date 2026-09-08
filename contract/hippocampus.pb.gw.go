@@ -1438,6 +1438,60 @@ func local_request_Hippocampus_Clear_0(ctx context.Context, marshaler runtime.Ma
 	return msg, metadata, err
 }
 
+func request_Hippocampus_DeleteMemoriesByFilter_0(ctx context.Context, marshaler runtime.Marshaler, client HippocampusClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DeleteMemoriesByFilterRequest
+		metadata runtime.ServerMetadata
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	msg, err := client.DeleteMemoriesByFilter(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_Hippocampus_DeleteMemoriesByFilter_0(ctx context.Context, marshaler runtime.Marshaler, server HippocampusServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DeleteMemoriesByFilterRequest
+		metadata runtime.ServerMetadata
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	msg, err := server.DeleteMemoriesByFilter(ctx, &protoReq)
+	return msg, metadata, err
+}
+
+func request_Hippocampus_DeleteEventsByFilter_0(ctx context.Context, marshaler runtime.Marshaler, client HippocampusClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DeleteEventsByFilterRequest
+		metadata runtime.ServerMetadata
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	msg, err := client.DeleteEventsByFilter(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_Hippocampus_DeleteEventsByFilter_0(ctx context.Context, marshaler runtime.Marshaler, server HippocampusServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DeleteEventsByFilterRequest
+		metadata runtime.ServerMetadata
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	msg, err := server.DeleteEventsByFilter(ctx, &protoReq)
+	return msg, metadata, err
+}
+
 // RegisterHippocampusHandlerServer registers the http handlers for service Hippocampus to "mux".
 // UnaryRPC     :call HippocampusServer directly.
 // StreamingRPC :currently unsupported pending https://github.com/grpc/grpc-go/issues/906.
@@ -2264,6 +2318,46 @@ func RegisterHippocampusHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_Hippocampus_Clear_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodPost, pattern_Hippocampus_DeleteMemoriesByFilter_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteMemoriesByFilter", runtime.WithHTTPPathPattern("/v1/memories/delete-by-filter"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Hippocampus_DeleteMemoriesByFilter_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_DeleteMemoriesByFilter_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_Hippocampus_DeleteEventsByFilter_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteEventsByFilter", runtime.WithHTTPPathPattern("/v1/events/delete-by-filter"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_Hippocampus_DeleteEventsByFilter_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_DeleteEventsByFilter_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 
 	return nil
 }
@@ -3001,6 +3095,40 @@ func RegisterHippocampusHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_Hippocampus_Clear_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodPost, pattern_Hippocampus_DeleteMemoriesByFilter_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteMemoriesByFilter", runtime.WithHTTPPathPattern("/v1/memories/delete-by-filter"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Hippocampus_DeleteMemoriesByFilter_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_DeleteMemoriesByFilter_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_Hippocampus_DeleteEventsByFilter_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/hippocampus.v1.Hippocampus/DeleteEventsByFilter", runtime.WithHTTPPathPattern("/v1/events/delete-by-filter"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Hippocampus_DeleteEventsByFilter_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_Hippocampus_DeleteEventsByFilter_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	return nil
 }
 
@@ -3046,6 +3174,8 @@ var (
 	pattern_Hippocampus_ImportBatch_0                = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "import", "batch"}, ""))
 	pattern_Hippocampus_Transfer_0                   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "transfer"}, ""))
 	pattern_Hippocampus_Clear_0                      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "clear"}, ""))
+	pattern_Hippocampus_DeleteMemoriesByFilter_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "memories", "delete-by-filter"}, ""))
+	pattern_Hippocampus_DeleteEventsByFilter_0       = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "events", "delete-by-filter"}, ""))
 )
 
 var (
@@ -3090,4 +3220,6 @@ var (
 	forward_Hippocampus_ImportBatch_0                = runtime.ForwardResponseMessage
 	forward_Hippocampus_Transfer_0                   = runtime.ForwardResponseMessage
 	forward_Hippocampus_Clear_0                      = runtime.ForwardResponseMessage
+	forward_Hippocampus_DeleteMemoriesByFilter_0     = runtime.ForwardResponseMessage
+	forward_Hippocampus_DeleteEventsByFilter_0       = runtime.ForwardResponseMessage
 )

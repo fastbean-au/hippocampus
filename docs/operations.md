@@ -1425,6 +1425,36 @@ forgets. Hard isolation is one instance per tenant.
 Which of the two you need, and the four specific things soft partitioning does not give you, are in
 **[Security · Group scoping and the trust boundary](security.md#group-scoping-and-the-trust-boundary)**.
 
+### Removing a group's records
+
+`DeleteMemoriesByFilter` and `DeleteEventsByFilter` (`hippo memory delete-by-filter` /
+`hippo event delete-by-filter`) delete by predicate rather than by id, which is what offboarding a
+group needs — the alternative is paging the listing and deleting by id while the store changes
+underneath, and then deleting the emptied events one at a time.
+
+Both take the same filters their listings take, and the service builds **one** predicate for the
+pair, so the listing is the dry run:
+
+```bash
+hippo memory list --group acme --limit 1                                  # total_count is what would go
+hippo memory delete-by-filter --group acme --delete-empty-events --yes
+hippo event delete-by-filter --group acme --delete-memories --yes
+```
+
+Four things worth knowing:
+
+- **An empty filter is refused**, not read as "everything". That operation is `Purge`, which is a
+  different RPC and is refused to a group-scoped token entirely.
+- **`--max-deletions` bounds one call**, and the response's `complete` says whether anything still
+  matches — so a large partition can be worked through in steps, checking after each.
+- **The deletion is the ordinary one**: links are pruned, the search index is updated in the same
+  transaction the rows go in, and callbacks fire exactly as they do for a delete by id. It writes no
+  forgotten-log tombstone, for the same reason `DeleteMemories` does not — a client that asked for a
+  deletion already knows.
+- **Emptied events are opt-in.** Without `--delete-empty-events` an event whose memories all went
+  stays until a decay cycle collects it; an event that still holds a memory is never touched either
+  way.
+
 ## Security
 
 Authentication, TLS and rate limiting are **off by default**, and nothing here turns itself on — so

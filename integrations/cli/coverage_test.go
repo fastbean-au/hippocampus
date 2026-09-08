@@ -88,6 +88,16 @@ func TestHTTPClientAllMethods(t *testing.T) {
 
 			return err
 		}},
+		{"DeleteMemoriesByFilter", func() error {
+			_, err := c.DeleteMemoriesByFilter(ctx, &contract.DeleteMemoriesByFilterRequest{Group: "g"})
+
+			return err
+		}},
+		{"DeleteEventsByFilter", func() error {
+			_, err := c.DeleteEventsByFilter(ctx, &contract.DeleteEventsByFilterRequest{Group: "g"})
+
+			return err
+		}},
 		{"GetMemories", func() error { _, err := c.GetMemories(ctx, &contract.GetMemoriesRequest{Limit: 5}); return err }},
 		{"RecallMemories", func() error {
 			_, err := c.RecallMemories(ctx, &contract.RecallMemoriesRequest{Ids: []string{"m"}})

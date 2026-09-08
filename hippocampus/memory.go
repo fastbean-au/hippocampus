@@ -647,45 +647,11 @@ func (s *Server) countMemories(ctx context.Context, filter db.MemoryFilter) (int
 func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesRequest) (*contract.GetMemoriesResponse, error) {
 	var res contract.GetMemoriesResponse
 
-	// Validate request
-	if in.GetSignificanceMax() > 0 && in.GetSignificanceMin() > 0 && in.GetSignificanceMax() < in.GetSignificanceMin() {
-		return &res, fmt.Errorf("SignificanceMax must be greater than or equal to SignificanceMin")
-	}
-
-	if in.GetTimestampMax() > 0 && in.GetTimestampMin() > 0 && in.GetTimestampMax() < in.GetTimestampMin() {
-		return &res, fmt.Errorf("TimestampMax must be greater than or equal to TimestampMin")
-	}
-
-	if in.GetRecallCountMax() > 0 && in.GetRecallCountMin() > 0 && in.GetRecallCountMax() < in.GetRecallCountMin() {
-		return &res, fmt.Errorf("RecallCountMax must be greater than or equal to RecallCountMin")
-	}
-
-	if in.GetTimeRecalledMax() > 0 && in.GetTimeRecalledMin() > 0 && in.GetTimeRecalledMax() < in.GetTimeRecalledMin() {
-		return &res, fmt.Errorf("TimeRecalledMax must be greater than or equal to TimeRecalledMin")
-	}
-
-	// Filter keys are validated here, not only at the db layer, because an unvalidated key reaches
-	// the driver as part of a JSON path: MySQL's JSON_EXTRACT raises ER_INVALID_JSON_PATH on a
-	// malformed one, which would surface as Internal rather than as the caller's mistake.
-	metadata, err := types.ParseMetadataFilters(in.GetMetadata())
+	// The selecting fields, validated and turned into a predicate by the builder DeleteMemoriesByFilter
+	// shares - which is what makes this listing the dry run for that deletion. See selection.go.
+	filter, err := memorySelectionFilter(in)
 	if err != nil {
-		return &res, status.Error(codes.InvalidArgument, err.Error())
-	}
-
-	extremum := db.SignificanceExtremumNone
-
-	switch in.GetSignificanceExtremum() {
-
-	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST:
-		extremum = db.SignificanceExtremumHighest
-
-	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST:
-		extremum = db.SignificanceExtremumLowest
-
-	}
-
-	if extremum != db.SignificanceExtremumNone && (in.GetSignificanceMin() > 0 || in.GetSignificanceMax() > 0) {
-		return &res, fmt.Errorf("SignificanceExtremum cannot be combined with SignificanceMin/SignificanceMax")
+		return &res, err
 	}
 
 	orderBy := in.GetOrderBy()
@@ -715,30 +681,10 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		offset = 0
 	}
 
-	filter := db.MemoryFilter{
-		TimeStampMin:         in.GetTimestampMin(),
-		TimeStampMax:         in.GetTimestampMax(),
-		SignificanceMin:      in.GetSignificanceMin(),
-		SignificanceMax:      in.GetSignificanceMax(),
-		SignificanceExtremum: extremum,
-		Group:                in.GetGroup(),
-		OrderBy:              orderBy,
-		OrderDirection:       sortDirection(in.GetOrderDir()),
-		Limit:                limit,
-		Offset:               offset,
-
-		EventId: in.GetEventId(),
-
-		Metadata:        metadata,
-		Recalled:        triState(in.GetRecalled()),
-		HasEvent:        triState(in.GetHasEvent()),
-		IsSummary:       triState(in.GetIsSummary()),
-		IsBinary:        triState(in.GetIsBinary()),
-		RecallCountMin:  in.GetRecallCountMin(),
-		RecallCountMax:  in.GetRecallCountMax(),
-		TimeRecalledMin: in.GetTimeRecalledMin(),
-		TimeRecalledMax: in.GetTimeRecalledMax(),
-	}
+	filter.OrderBy = orderBy
+	filter.OrderDirection = sortDirection(in.GetOrderDir())
+	filter.Limit = limit
+	filter.Offset = offset
 
 	// The caller's group scope, applied as a predicate so it narrows the candidates before the
 	// LIMIT and the total count - both of which would otherwise report on records the caller cannot

@@ -285,6 +285,8 @@ a JSON body:
 | `UpdateMemory`               | PATCH  | `/v1/memories/{id}`               |
 | `GetMemories`                | GET    | `/v1/memories`                    |
 | `DeleteMemories`             | POST   | `/v1/memories/delete`             |
+| `DeleteMemoriesByFilter`     | POST   | `/v1/memories/delete-by-filter`   |
+| `DeleteEventsByFilter`       | POST   | `/v1/events/delete-by-filter`     |
 | `RecallMemories`             | POST   | `/v1/memories/recall`             |
 | `SearchMemories`             | POST   | `/v1/memories/search`             |
 | `LinkMemories`               | POST   | `/v1/memories/{id}/links`         |
@@ -1093,7 +1095,7 @@ everything a lower one can:
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `GetSignificanceLevels`, `WhoAmI`, `GetTopology`¹                                                                 |
 | `writer` | everything `reader` can, plus `StoreEvent`, `UpdateEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `StoreMemories`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                                                                                                                  |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteMemoriesByFilter`, `DeleteEventsByFilter`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                                                                                                                  |
 
 The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and
 `GetForgottenMemories` — are all `reader`, while the dry run beside them is `admin`. What separates

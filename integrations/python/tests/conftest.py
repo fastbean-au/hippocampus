@@ -72,6 +72,16 @@ class FakeService(rpc.HippocampusServicer):
     def DeleteMemories(self, request, context):
         return self._record("DeleteMemories", request, context, pb.GeneralResponse(ok=True))
 
+    def DeleteMemoriesByFilter(self, request, context):
+        return self._record(
+            "DeleteMemoriesByFilter", request, context, pb.DeleteMemoriesByFilterResponse()
+        )
+
+    def DeleteEventsByFilter(self, request, context):
+        return self._record(
+            "DeleteEventsByFilter", request, context, pb.DeleteEventsByFilterResponse()
+        )
+
     def GetMemories(self, request, context):
         return self._record("GetMemories", request, context, pb.GetMemoriesResponse())
 

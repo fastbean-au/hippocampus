@@ -523,6 +523,42 @@ service Hippocampus {
 			body: "*"
 		};
 	}
+
+	// DeleteMemoriesByFilter deletes every memory matching the filter - the same selection the
+	// GetMemories listing takes - rather than a list of ids. It is what offboarding a group, or
+	// answering an erasure request, actually needs: the alternative is paging GetMemories and
+	// deleting by id while the store changes underneath, which is not safer than this, only more
+	// work.
+	//
+	// A request carrying no filter at all is refused with INVALID_ARGUMENT: "delete everything" is
+	// Purge, and must not be reachable by leaving a field unset. To see what a call would remove,
+	// send the same fields to GetMemories and read total_count - the two build the same predicate,
+	// which is a tested property rather than a convention.
+	//
+	// Deletion is permanent, and is the ordinary one: links are pruned and the search index is
+	// updated in the same transaction the rows go in, exactly as DeleteMemories does. Like
+	// DeleteMemories it writes no forgotten-log tombstone - that log records what a decay cycle
+	// took, and a caller that asked for a deletion already knows.
+	rpc DeleteMemoriesByFilter(DeleteMemoriesByFilterRequest) returns (DeleteMemoriesByFilterResponse) {
+		option (google.api.http) = {
+			post: "/v1/memories/delete-by-filter"
+			body: "*"
+		};
+	}
+
+	// DeleteEventsByFilter deletes every event matching the filter - the same selection the
+	// GetEvents listing takes - rather than one event by id, and is the events' half of what
+	// offboarding a group needs. Like its memory counterpart it refuses an empty filter, and
+	// GetEvents with the same fields is the dry run.
+	//
+	// delete_memories decides what happens to each event's memories, exactly as DeleteEvent's
+	// memories flag does: set, they go with their event; unset, they survive with no event.
+	rpc DeleteEventsByFilter(DeleteEventsByFilterRequest) returns (DeleteEventsByFilterResponse) {
+		option (google.api.http) = {
+			post: "/v1/events/delete-by-filter"
+			body: "*"
+		};
+	}
 }
 
 // Bool is a tri-state boolean (rather than proto3's inherent bool) so a caller can distinguish an
@@ -1029,6 +1065,83 @@ message ClearRequest {
 message ClearResponse {
 	int32                                  memories_cleared          = 1;
 	int32                                  events_cleared            = 2;
+}
+
+// DeleteMemoriesByFilterRequest selects the memories to delete. Every field below means exactly
+// what the same field means on GetMemoriesRequest, so the listing is the dry run for the deletion.
+//
+// What is deliberately NOT here, and why:
+//
+//   - order_by/order_dir/limit/offset. There is no page to order or skip; the call deletes
+//     everything the predicate matches. max_deletions below bounds one call's work instead.
+//   - links. There is no memory in the response to attach them to.
+//   - linked_to. Deleting a memory removes its edges, so that predicate narrows as a consequence of
+//     its own deletions: what the listing showed the caller and what the call would remove are not
+//     the same set, and no amount of care on the caller's part could make them agree.
+//
+// At least one selecting field must be set. A request with none is refused rather than read as
+// "everything" - that operation exists, is called Purge, and is not something a defaulted field
+// should be able to reach.
+message DeleteMemoriesByFilterRequest {
+	int64                                  timestamp_min             = 1;  // UnixNano inclusive lower bound on time_stamp; 0 (the default) means no lower bound
+	int64                                  timestamp_max             = 2;  // UnixNano inclusive upper bound on time_stamp; 0 (the default) means no upper bound
+	int32                                  significance_min          = 3;  // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	int32                                  significance_max          = 4;  // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
+	string                                 group                     = 5;  // restrict to memories carrying this group label - the field that makes offboarding a group one call
+	SignificanceExtremum                   significance_extremum     = 6;  // when set, ignore significance_min/significance_max and delete only the memories tied at that significance value among the other filters; 0 (default) applies no extremum
+	repeated string                        metadata                  = 7;  // restrict to memories whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata
+	Bool                                   recalled                  = 8;  // FALSE selects only never-recalled memories, TRUE only those recalled at least once; UNSPECIFIED (default) applies no restriction
+	int32                                  recall_count_min          = 9;  // inclusive lower bound on recall_count; 0 (the default) means no bound
+	int32                                  recall_count_max          = 10; // inclusive upper bound on recall_count; 0 (the default) means no bound
+	int64                                  time_recalled_min         = 11; // UnixNano inclusive lower bound on time_recalled; 0 means no bound. Like GetMemoriesRequest's, both bounds ask only about memories that HAVE been recalled
+	int64                                  time_recalled_max         = 12; // UnixNano inclusive upper bound on time_recalled; 0 means no bound. Never-recalled memories are excluded rather than matched - use recalled for those
+	Bool                                   is_summary                = 13; // TRUE selects only summary memories, FALSE only non-summaries; UNSPECIFIED (default) applies no restriction
+	Bool                                   is_binary                 = 14; // TRUE selects only binary memories, FALSE only non-binary; UNSPECIFIED (default) applies no restriction
+	string                                 event_id                  = 15; // restrict to one event's memories. Empty (the default) applies no restriction rather than matching the event-less; use has_event for those
+	Bool                                   has_event                 = 16; // FALSE selects only memories associated with no event, TRUE only those associated with one; UNSPECIFIED (default) applies no restriction
+	int64                                  max_deletions             = 17; // stop after deleting this many memories; 0 (the default) means no bound, so the call runs until the filter matches nothing. complete on the response reports which happened
+	bool                                   delete_empty_events       = 18; // also delete each event that the deletion left with no memories at all, exactly as Clear does. An event that still holds a memory is never touched
+}
+
+// DeleteMemoriesByFilterResponse reports what actually went. The counts are what this call
+// deleted, not what the filter matched: a concurrent write can add a matching memory while the
+// call runs, and it will be deleted too if the call has not finished.
+message DeleteMemoriesByFilterResponse {
+	int64                                  memories_deleted          = 1;
+	int64                                  events_deleted            = 2; // events removed because the deletion left them empty; always 0 unless delete_empty_events was set
+	bool                                   complete                  = 3; // true when the filter matched nothing more; false when max_deletions stopped the call with matches still standing, so the same request can be sent again
+}
+
+// DeleteEventsByFilterRequest selects the events to delete. Every field means what the same field
+// means on GetEventsRequest; order_by/order_dir/limit/offset, memories, memory_counts, links and
+// linked_to are absent for the reasons DeleteMemoriesByFilterRequest gives.
+//
+// At least one selecting field must be set, delete_memories excepted - it says what to do with
+// what is selected, not what to select, so a request carrying only delete_memories is still
+// refused.
+message DeleteEventsByFilterRequest {
+	int64                                  time_start_min            = 1;  // UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound
+	int64                                  time_start_max            = 2;  // UnixNano inclusive upper bound on time_start; 0 (the default) means no upper bound
+	int64                                  time_end_min              = 3;  // UnixNano inclusive lower bound on time_end; 0 (the default) means no lower bound
+	int64                                  time_end_max              = 4;  // UnixNano inclusive upper bound on time_end; 0 (the default) means no upper bound. Open events store time_end = 0 and are excluded rather than matched - use ended for those
+	int32                                  significance_min          = 5;  // inclusive lower bound on significance; 0 (the default) means no bound
+	int32                                  significance_max          = 6;  // inclusive upper bound on significance; 0 (the default) means no bound
+	string                                 group                     = 7;  // restrict to events carrying this group label
+	SignificanceExtremum                   significance_extremum     = 8;  // when set, ignore significance_min/significance_max and delete only the events tied at that significance value among the other filters
+	repeated string                        metadata                  = 9;  // restrict to events whose metadata carries every one of these "key=value" pairs (AND, exact match)
+	Bool                                   ended                     = 10; // FALSE selects only events that have not ended, TRUE only those that have; UNSPECIFIED (default) applies no restriction
+	string                                 name_contains             = 11; // restrict to events whose name contains this substring, case-insensitively
+	int64                                  max_deletions             = 12; // stop after deleting this many events; 0 (the default) means no bound. complete on the response reports which happened
+	bool                                   delete_memories           = 13; // delete each event's memories with it. Unset, they survive with their event_id cleared - the same choice DeleteEvent's memories flag makes, named unambiguously here because the listing's `memories` field means something else entirely
+}
+
+// DeleteEventsByFilterResponse reports what actually went, on the same terms as
+// DeleteMemoriesByFilterResponse.
+message DeleteEventsByFilterResponse {
+	int64                                  events_deleted            = 1;
+	int64                                  memories_deleted          = 2; // memories deleted with their event; always 0 unless delete_memories was set
+	int64                                  memories_orphaned         = 3; // memories that outlived their event with event_id cleared; always 0 when delete_memories was set
+	bool                                   complete                  = 4; // true when the filter matched nothing more; false when max_deletions stopped the call
 }
 
 message GeneralResponse {

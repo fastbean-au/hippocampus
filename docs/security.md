@@ -111,6 +111,26 @@ What it does **not** give you, because the partition is soft:
 - **Operators still need unscoped tokens** for `Purge`, `Sleep`, `PreviewConsolidation`, the
   `MergeEvents` dangling-reference heal, and the `--backfill-search` CLI mode.
 
+**Offboarding a group.** Removing a partition is `DeleteMemoriesByFilter` and `DeleteEventsByFilter`
+— predicate deletions taking the same filters the listings take, both `admin` tier and both scoped,
+so a group-bound admin token drains its own partition and can reach no further. Run the matching
+listing first: the service builds one predicate for the pair, so `GetMemories` with those fields is
+the dry run and its `total_count` is what the deletion removes. A request carrying **no filter** is
+refused — deleting everything is `Purge`.
+
+```bash
+hippo memory list --group acme --limit 1                                  # how many
+hippo memory delete-by-filter --group acme --delete-empty-events --yes
+hippo event delete-by-filter --group acme --delete-memories --yes
+```
+
+Two things to know before relying on it for an erasure request. The **forgotten log**, when enabled,
+keeps a tombstone per memory a decay cycle deleted — id, group, size and significance, never a body
+— so empty it too (`hippo forgotten clear`, which is itself scoped); a client-initiated deletion
+writes no tombstone, but a memory a cycle forgot earlier may already have one. And an **archive
+already written** is a copy outside the store: `Export` preserves full state by design, so an
+offboarding that matters has to account for the object store as well.
+
 **Hard isolation — one instance per tenant.** Where bleed-through is unacceptable, or a tenant needs
 its own capacity and decay tuning, run a separate instance and a separate store. It isolates the
 memory dynamics perfectly, gives each tenant its own auth secrets, backup and restore, and makes

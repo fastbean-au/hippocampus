@@ -549,15 +549,19 @@ type Store interface {
 	GetMemoriesByIds(ctx context.Context, ids []string) (*[]types.Memory, error)
 	CountMemories(ctx context.Context) (int, int)
 	CountMemoriesFiltered(ctx context.Context, filter MemoryFilter) (int, error)
+	MemoryIdsMatching(ctx context.Context, filter MemoryFilter) ([]string, error)
+	EventIdsForMemories(ctx context.Context, ids []string) ([]string, error)
 
 	CreateEvent(ctx context.Context, event types.Event) (string, error)
 	UpdateEvent(ctx context.Context, event types.Event) (bool, error)
 	DeleteEvent(ctx context.Context, id string) (bool, error)
+	DeleteEvents(ctx context.Context, ids []string) (int, error)
 	EventExists(ctx context.Context, id string) (bool, error)
 	GetEvent(ctx context.Context, id string) (*types.Event, error)
 	GetEvents(ctx context.Context, filter EventFilter) (*[]types.Event, error)
 	CountEvents(ctx context.Context) int
 	CountEventsFiltered(ctx context.Context, filter EventFilter) (int, error)
+	EventIdsMatching(ctx context.Context, filter EventFilter) ([]string, error)
 	MergeEventMemories(ctx context.Context, toEventId string, fromEventId string) error
 	DeleteEventMemories(ctx context.Context, eventId string) (int, error)
 	UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error)

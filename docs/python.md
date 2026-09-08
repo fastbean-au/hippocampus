@@ -116,6 +116,23 @@ That RPC is `reader` tier and enumerates nothing — it answers only about ids y
 effective significance. `get_memories` is the read. Reinforcing a search recalls **only the page
 returned**, never the wider candidate set the ranking considered.
 
+### Deleting by predicate
+
+`delete_memories_by_filter` and `delete_events_by_filter` take the selecting arguments of
+`get_memories`/`get_events`, so the listing is the dry run — the service builds one predicate for
+both, and `Page.total` says how much the deletion would remove:
+
+```python
+matching = client.get_memories(group="acme", limit=1).total
+result = client.delete_memories_by_filter(group="acme", delete_empty_events=True)
+
+assert result.memories_deleted == matching  # barring concurrent writes
+```
+
+Both are `admin` tier, both are irreversible, and both **refuse a call carrying no filter** —
+deleting everything is `purge`. `max_deletions` bounds one call and the response's `complete` says
+whether anything still matches, so a cautious caller can work through a large partition in steps.
+
 ## Feature-detect with `who_am_i()`
 
 Which search modes a deployment serves, whether it has an embedded summariser, whether it

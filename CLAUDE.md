@@ -638,6 +638,34 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     here, and behind the authoriser it would never appear. It is the one part of the view written on
     the request path, so the registry is an RWMutex taken only to insert plus atomics per entry,
     rather than a snapshot pointer like the prober's and the heartbeat's. TODO 75, phases 1-4.
+  - **Deletion by predicate** (`hippocampus/predicate.go` + `hippocampus/selection.go` +
+    `db/predicate.go`, TODO 98.2) is `DeleteMemoriesByFilter`/`DeleteEventsByFilter`: what
+    offboarding a group actually needs, the deletion surface having been by-id, one-event,
+    everything (`Purge`) or whatever-a-manifest-captured (`Clear`) with no predicate anywhere. Five
+    things carry it. (1) **The storage layer refuses to offer a `DELETE ... WHERE`**: every memory
+    deletion here has to prune the link graph, queue the search index's delete inside the same
+    transaction, capture a callback delivery from columns readable only while the rows exist, and
+    record a tombstone - a predicate DELETE reaches none of that and the divergence is silent. So the
+    RPC resolves the filter to ids in batches (`MemoryIdsMatching`) and feeds the existing by-id
+    chokepoint; the deletion of a batch is what makes the next selection return the next one, which
+    is exactly what a client-side page-and-delete loop cannot do while the store moves under it.
+    (2) **An empty filter is refused**, on `DeleteForgottenMemories`' precedent - "everything" is
+    `Purge`, and no defaulted field should reach it - and the check is `reflect.DeepEqual` against the
+    BUILT filter's zero value, so a selecting field added later is covered without anybody extending
+    a list. (3) **The listing is the dry run, provably**: `selection.go`'s `memorySelectionFilter`/
+    `eventSelectionFilter` build the predicate for the deletion AND for `GetMemories`/`GetEvents`,
+    off `memorySelector`/`eventSelector` interfaces both proto messages satisfy because the fields
+    are named identically. There is deliberately no `dry_run` FLAG, on the reasoning that made
+    `PreviewConsolidation` a separate RPC rather than a flag on `Sleep` - authorisation is per-RPC, so
+    a flag could never be tiered apart from the destructive call it rode on. (4) **`linked_to` is
+    absent** from both requests although the listings carry it: deleting a memory removes its edges,
+    so that predicate narrows as a consequence of its own deletions and no care on the caller's part
+    could make the listing and the deletion agree. (5) **`admin` and `scopeFilter`**, not
+    `scopeUnbound` like `Purge` - draining one partition is precisely what a bound token should be
+    able to do, and the predicate is what confines it. `max_deletions` bounds one call and `complete`
+    reports whether the filter is exhausted; `delete_empty_events` reuses `DeleteEventIfEmpty` so an
+    event that still holds a memory is never taken. Off the MCP surface, which lets a model act on
+    records it can name and never on a set it can only describe.
   - `Purge` deletes everything; while it runs, `InterceptorBlockWhenPurgeInProgress` (registered in
     main.go, `codes.Unavailable`) rejects all Hippocampus RPCs on gRPC, and its HTTP counterpart
     `HTTPMiddlewareBlockWhenPurgeInProgress` (503) rejects them on the gateway.
@@ -812,8 +840,9 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   a scoped caller), `GetSignificanceLevels` (the distinct significance values in use: the registry
   `SignificancePlacement` positions against, which a client had no way to see - `reader`,
   `scopeNone`, and answered in full to a group-scoped caller because there is no per-group scale),
-  and the transfer/archive surface
-  (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`). The event surface mirrors the memory one
+  the transfer/archive surface
+  (`Export`, `Import`, `ImportBatch`, `Transfer`, `Clear`), and the predicate deletions
+  (`DeleteMemoriesByFilter`/`DeleteEventsByFilter` - see `hippocampus/predicate.go`). The event surface mirrors the memory one
   since item 94: `UpdateEvent` is `UpdateMemory`'s counterpart (`patch /v1/events/{id}`, the full
   partial update `db.UpdateEvent` always carried, with `EndEvent`/`UpdateEventSignificance` kept as
   the convenience routes), and `GetEvents` carries `ended`, `name_contains`, `linked_to` and `links`

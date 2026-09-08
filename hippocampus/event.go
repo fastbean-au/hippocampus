@@ -457,47 +457,11 @@ func (s *Server) countEvents(ctx context.Context, filter db.EventFilter) (int, e
 func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (*contract.GetEventsResponse, error) {
 	var res contract.GetEventsResponse
 
-	// Validate request
-	if in.GetSignificanceMax() > 0 && in.GetSignificanceMin() > 0 && in.GetSignificanceMax() < in.GetSignificanceMin() {
-		return &res, fmt.Errorf("SignificanceMax must be greater than or equal to SignificanceMin")
-	}
-
-	if in.GetTimeStartMax() > 0 && in.GetTimeStartMin() > 0 && in.GetTimeStartMax() < in.GetTimeStartMin() {
-		return &res, fmt.Errorf("TimeStartMax must be greater than or equal to TimeStartMin")
-	}
-
-	if in.GetTimeEndMax() > 0 && in.GetTimeEndMin() > 0 && in.GetTimeEndMax() < in.GetTimeEndMin() {
-		return &res, fmt.Errorf("TimeEndMax must be greater than or equal to TimeEndMin")
-	}
-
-	if in.GetTimeStartMin() > 0 && in.GetTimeEndMin() > 0 && in.GetTimeEndMin() < in.GetTimeStartMin() {
-		return &res, fmt.Errorf("TimeEndMin must be greater than or equal to TimeStartMin")
-	}
-
-	if in.GetTimeStartMax() > 0 && in.GetTimeEndMax() > 0 && in.GetTimeEndMax() < in.GetTimeStartMax() {
-		return &res, fmt.Errorf("TimeEndMax must be greater than or equal to TimeStartMax")
-	}
-
-	// See GetMemories for why filter keys are validated here rather than only at the db layer.
-	metadata, err := types.ParseMetadataFilters(in.GetMetadata())
+	// The selecting fields, validated and turned into a predicate by the builder DeleteEventsByFilter
+	// shares - which is what makes this listing the dry run for that deletion. See selection.go.
+	filter, err := eventSelectionFilter(in)
 	if err != nil {
-		return &res, status.Error(codes.InvalidArgument, err.Error())
-	}
-
-	extremum := db.SignificanceExtremumNone
-
-	switch in.GetSignificanceExtremum() {
-
-	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST:
-		extremum = db.SignificanceExtremumHighest
-
-	case contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST:
-		extremum = db.SignificanceExtremumLowest
-
-	}
-
-	if extremum != db.SignificanceExtremumNone && (in.GetSignificanceMin() > 0 || in.GetSignificanceMax() > 0) {
-		return &res, fmt.Errorf("SignificanceExtremum cannot be combined with SignificanceMin/SignificanceMax")
+		return &res, err
 	}
 
 	orderBy := in.GetOrderBy()
@@ -524,24 +488,10 @@ func (s *Server) GetEvents(ctx context.Context, in *contract.GetEventsRequest) (
 		offset = 0
 	}
 
-	filter := db.EventFilter{
-		TimeStartMin:         in.GetTimeStartMin(),
-		TimeStartMax:         in.GetTimeStartMax(),
-		TimeEndMin:           in.GetTimeEndMin(),
-		TimeEndMax:           in.GetTimeEndMax(),
-		SignificanceMin:      in.GetSignificanceMin(),
-		SignificanceMax:      in.GetSignificanceMax(),
-		SignificanceExtremum: extremum,
-		Group:                in.GetGroup(),
-		OrderBy:              orderBy,
-		OrderDirection:       sortDirection(in.GetOrderDir()),
-		Limit:                limit,
-		Offset:               offset,
-
-		Metadata:     metadata,
-		Ended:        triState(in.GetEnded()),
-		NameContains: in.GetNameContains(),
-	}
+	filter.OrderBy = orderBy
+	filter.OrderDirection = sortDirection(in.GetOrderDir())
+	filter.Limit = limit
+	filter.Offset = offset
 
 	// The caller's group scope, as a predicate so it narrows before the LIMIT and the total count.
 	filter.Groups, _ = s.scopedGroups(ctx)

@@ -180,6 +180,18 @@ func (f *fakeClient) DeleteMemories(_ context.Context, in *contract.DeleteMemori
 	return &contract.GeneralResponse{Ok: true}, f.err
 }
 
+func (f *fakeClient) DeleteMemoriesByFilter(_ context.Context, in *contract.DeleteMemoriesByFilterRequest, _ ...grpc.CallOption) (*contract.DeleteMemoriesByFilterResponse, error) {
+	f.capture(in)
+
+	return &contract.DeleteMemoriesByFilterResponse{MemoriesDeleted: 1, Complete: true}, f.err
+}
+
+func (f *fakeClient) DeleteEventsByFilter(_ context.Context, in *contract.DeleteEventsByFilterRequest, _ ...grpc.CallOption) (*contract.DeleteEventsByFilterResponse, error) {
+	f.capture(in)
+
+	return &contract.DeleteEventsByFilterResponse{EventsDeleted: 1, Complete: true}, f.err
+}
+
 func (f *fakeClient) GetMemories(_ context.Context, in *contract.GetMemoriesRequest, _ ...grpc.CallOption) (*contract.GetMemoriesResponse, error) {
 	f.capture(in)
 

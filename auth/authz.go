@@ -203,6 +203,13 @@ var policies = map[string]rpcPolicy{
 	"GetCallbackQueue":    {TierAdmin, http.MethodGet, "/v1/callbacks/queue"},
 	"DeleteCallbackQueue": {TierAdmin, http.MethodPost, "/v1/callbacks/queue/delete"},
 
+	// Deletion by predicate is admin, not writer, and the distinction is the point: a writer may
+	// delete records it can name, an admin may delete records it can only describe. Both are scoped,
+	// so a group-bound admin token drains its own partition and no further - which is what makes
+	// offboarding a tenant an operation the tenant's own operator can perform.
+	"DeleteMemoriesByFilter": {TierAdmin, http.MethodPost, "/v1/memories/delete-by-filter"},
+	"DeleteEventsByFilter":   {TierAdmin, http.MethodPost, "/v1/events/delete-by-filter"},
+
 	"Export":   {TierAdmin, http.MethodPost, "/v1/export"},
 	"Transfer": {TierAdmin, http.MethodPost, "/v1/transfer"},
 	"Clear":    {TierAdmin, http.MethodPost, "/v1/clear"},

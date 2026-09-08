@@ -44,7 +44,8 @@ docker pull ghcr.io/fastbean-au/hippocampus-mcp:latest
 
 The surface is the per-item memory-and-event operations a model needs to give, retrieve, revise, and
 forget memories. The administrative, destructive, and bulk data-movement RPCs (`Purge`, `Sleep`,
-`Export`/`Import`/`Transfer`/`Clear`, event deletion/merge, and `SummariseMemories` — which deletes
+`Export`/`Import`/`Transfer`/`Clear`, `DeleteMemoriesByFilter`/`DeleteEventsByFilter`, event
+deletion/merge, and `SummariseMemories` — which deletes
 an event's memories, replacing them with an LLM-generated summary) are **not** exposed, so a model
 cannot wipe or exfiltrate a store through this bridge. The mutating tools (`store_memory`,
 `update_memory`, `delete_memories`, `link_memories`, `unlink_memories`, `create_event`,
@@ -52,8 +53,10 @@ cannot wipe or exfiltrate a store through this bridge. The mutating tools (`stor
 token may actually do is
 enforced by the service's [role tiers](configuration.md#authorisation), so a `reader`-scoped token is
 refused every mutation regardless of which tools are registered here. `delete_memories` is a by-id
-scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear`,
-which stay `admin`-tier and off this surface.
+scalpel — it can only remove memories the caller explicitly names — not the bulk `Purge`/`Clear` or
+the predicate deletions, which stay `admin`-tier and off this surface. That is the same line the
+introspection tools are drawn on: a model may act on records it can name, never on a set it can only
+describe.
 
 **The four introspection tools are `reader`, and none of them enumerates.** `whoami` describes the
 connection; `consolidation_status` names no record at all; `significance_levels` reports the scale

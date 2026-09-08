@@ -139,6 +139,7 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 | `memory store-batch` | store many memories in one call from a JSON `StoreMemoriesRequest` file (`--file`, `-` for stdin); each is validated and written independently, so one bad record does not fail the rest      |
 | `memory update`  | partial update of an existing memory (`--id` plus any content fields)                                                                                                                                                                                                       |
 | `memory delete`  | delete memories by id (`--id` repeatable, or positional ids)                                                                                                                                                                                                                |
+| `memory delete-by-filter` | delete every memory a filter matches (requires `--yes`; the `memory list` filters, plus `--max-deletions`, `--delete-empty-events`) |
 | `memory list`    | list memories with filters (`--group`, `--metadata k=v`, `--recalled`, `--summary`, `--binary`, `--recall-count-min/-max`, `--recalled-after/-before`, `--significance-min/-max`, `--timestamp-min/-max`, `--order-by`, `--order-dir`, `--limit`, `--offset`, `--extremum`) |
 | `memory recall`  | recall memories by id (reinforces them; `--include-linked` also returns their neighbours, unreinforced)                                                                                                                                                                                                                                   |
 | `memory link`    | link a memory to others (`--id`, `--link memoryID:sig` repeatable)                                                                                                                                                                                                          |
@@ -146,6 +147,19 @@ Run `hippo --help` for the list and `hippo <command> --help` for a single comman
 | `memory links`   | list a memory's links (`--id`, `--direction both\|outbound\|inbound`)                                                                                                                                                                                                       |
 | `memory search`  | content-search the index (`--query`, `--mode keyword\|semantic\|hybrid`, `--limit`, `--event-id`, `--group`, `--metadata k=v`, `--reinforce`, `--include-linked`)                                                                                                                               |
 | `memory explain` | where memories stand against consolidation (`--id` repeatable or positional, `--curve-significance`, `--curve-days`, `--curve-points`)                                                                                                                                      |
+
+The two `delete-by-filter` commands are how a group is offboarded, and each is the destructive twin
+of a listing: `memory list` and `event list` with the same filter flags are the dry run, and the
+service builds one predicate for the pair, so what the listing shows is what the deletion removes.
+Both refuse a request carrying no filter — deleting everything is `purge` — and both require
+`--yes`, because the command line itself does not show what it is about to delete. `--max-deletions`
+bounds one call, and the response's `complete` says whether anything still matches:
+
+```bash
+hippo memory list --group acme --limit 1              # how many, without deleting
+hippo memory delete-by-filter --group acme --delete-empty-events --yes
+hippo event delete-by-filter --group acme --delete-memories --yes
+```
 
 `memory explain` reports each memory's computed value, the threshold it is measured against, and how
 long it has before it is forgotten; with `--curve-significance` it also returns the decay curve of
@@ -165,6 +179,7 @@ configuration does. See [Where a memory stands](operations.md#where-a-memory-sta
 | `event significance` | change an event's significance (`--id`, `--significance` or placement)                                                                         |
 | `event merge`        | re-point one event's memories onto another (`--from`, `--to`)                                                                                  |
 | `event delete`       | delete an event, optionally its memories (`--id`, `--memories`)                                                                                |
+| `event delete-by-filter` | delete every event a filter matches (requires `--yes`; the `event list` filters, plus `--max-deletions`, `--delete-memories`) |
 | `event get`          | fetch a single event (`--id`, `--memories`, `--memory-counts`, `--links`)                                                                      |
 | `event list`         | list events with filters (same shape as `memory list`, plus `--time-start-min/-max`, `--time-end-min/-max`, `--ended`, `--name-contains`, `--linked-to`, `--links`, `--memories`, `--memory-counts`) |
 
