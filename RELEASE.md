@@ -37,6 +37,18 @@ pre-flight plus the one command that starts all of that.
   fork or a repo without the tap configured is unaffected. If the tap's `main` is branch-protected to
   require PRs, exempt this credential or the direct push will fail.
 
+- **`PUBLISH_PYPI` repository variable** — set it to `true` to have the `publish-python` job upload
+  the `hippocampus-client` package to PyPI. Authentication is **trusted publishing** (OIDC), so
+  there is no API token to store: configure the publisher on PyPI first (project
+  `hippocampus-client`, owner `fastbean-au`, repository `hippocampus`, workflow `release.yaml`, **no
+  environment** — the workflow declares none, and PyPI requires the two to agree), then set the
+  variable under **Settings → Secrets and variables → Actions → Variables**.
+
+  **Optional**, and the gate is a variable rather than something self-detecting because nothing in
+  the runner can tell whether PyPI has been configured — with `id-token` permission the OIDC
+  variables are always present, so the job would simply fail at the upload. With it unset the job
+  still stamps the version, builds both distributions, verifies the wheel imports, and attaches them
+  to the GitHub release; only the upload is skipped.
 - **Git hooks** — point git at the tracked hooks once per clone: `git config core.hooksPath hooks`.
 - GHCR publishing needs no secret: the workflow authenticates with the built-in `GITHUB_TOKEN`.
 
@@ -242,6 +254,17 @@ while the work is in flight — that is what stands the contract gate down (see
    absent (so the release still succeeds). The parallel `publish-otel-collector` and
    `publish-eventsource-bridges` jobs (also gated on `release`) publish the collector and the four
    per-broker bridge images to GHCR.
+
+5. **`publish-python` job** (gated on `release`) — publishes the `hippocampus-client` Python
+   package. The tag is stamped into `integrations/python/src/hippocampus/_version.py` (PEP 440 has
+   no leading `v`, so it is stripped, and a tag that is not a valid version stops the job), both
+   distributions are built, and **the wheel is installed into a clean environment and imported
+   before anything is uploaded**. That last step is not ceremony: the gRPC stubs are generated from
+   the contract at build time rather than committed, so the one failure this package can ship is a
+   wheel with no stubs in it — which installs cleanly, raises `ModuleNotFoundError` on first import,
+   and passes every test in the suite, because the tests run against the source tree. The upload is
+   gated on the `PUBLISH_PYPI` variable above; the distributions are attached to the GitHub release
+   either way.
 
 ## After the release
 

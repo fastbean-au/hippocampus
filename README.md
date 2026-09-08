@@ -63,5 +63,6 @@ properties that shape what you can build on this.
 | 🔌 **[Event Sourcing](docs/eventsource.md)**    | Bridge NATS, MQTT, RabbitMQ, Kafka, or the Bluesky firehose in, storing each message as a memory. |
 | 🚦 **[Ingestor](docs/ingestor.md)**             | Stage data at the edge and promote completed events into a central store under CEL rules.         |
 | 💻 **[CLI](docs/cli.md)**                       | Drive a running service from the shell over either transport.                                     |
-| 🧬 **[Clients & Codegen](docs/clients.md)**     | Generate a Python, TypeScript, or any-language client from the proto or OpenAPI document.         |
+| 🐍 **[Python Client](docs/python.md)**          | `pip install hippocampus-client` — the published client, covering the full RPC surface.           |
+| 🧬 **[Clients & Codegen](docs/clients.md)**     | Generate a TypeScript, Java, Rust, or any-language client from the proto or OpenAPI document.     |
 | 📓 **[Obsidian Integration](docs/obsidian.md)** | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge.         |

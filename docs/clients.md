@@ -1,10 +1,19 @@
 # Clients in other languages
 
-Go stubs ship in the repository (`contract/`), so a Go program imports
-`contract.NewHippocampusClient` and is done. **Every other language generates its own client** —
-nothing is published to PyPI, npm, Maven or NuGet yet. This page is the generation recipe: how to
-turn the contract into a working client in a few minutes, and the handful of things about
-Hippocampus's API that are worth knowing before you do.
+Two languages need no generation. Go stubs ship in the repository (`contract/`), so a Go program
+imports `contract.NewHippocampusClient` and is done, and **Python has a published package**:
+
+```sh
+pip install hippocampus-client
+```
+
+See [The Python client](python.md) — it covers the full RPC surface, ships from the same tag the
+contract does, and removes the encoding traps described [below](#json-encoding-notes) rather than
+leaving each caller to meet them. Nothing is published to npm, Maven or NuGet.
+
+**Every other language generates its own client.** This page is that recipe: how to turn the
+contract into a working client in a few minutes, and the handful of things about Hippocampus's API
+that are worth knowing before you do.
 
 If you want access without writing a client at all, the [`hippo` CLI](cli.md) exposes the full RPC
 surface from a shell and the [MCP bridge](mcp.md) exposes it to an LLM host.
@@ -39,6 +48,17 @@ deployment to add one.
   gateway and OpenAPI generators — so a generator that ignores them still produces a correct client,
   and a toolchain that cannot resolve them at all can strip the two `import` lines and the
   `openapiv2_swagger` option without changing a single message or method.
+
+  Resolving them at generation time is not always the end of it, though, and one language makes
+  that concrete. **Some generators emit a runtime import for every annotation proto**, so the
+  generated code needs a package supplying it: `google/api` has one nearly everywhere
+  (`googleapis-common-protos` for Python, and so on), but **protoc-gen-openapiv2's annotations have
+  no published runtime counterpart in any language** — they exist only as generator input. Python is
+  where this bites, because `protoc` writes `from protoc_gen_openapiv2.options import
+  annotations_pb2` into the generated module and it raises on first import. Stripping the option is
+  the fix, and it is what
+  [`integrations/python/scripts/generate_stubs.py`](../integrations/python/scripts/generate_stubs.py)
+  does. Check your generated module's imports before assuming otherwise.
 
 ### Discovering it from a running instance
 
@@ -109,6 +129,12 @@ plugins for your language's from the [plugin directory](https://buf.build/plugin
 ## Recipe 2 — the language's own toolchain
 
 ### Python
+
+**You almost certainly want [`hippocampus-client`](python.md) instead** — it is this recipe plus the
+ergonomics, published from the same tag as the contract. Generate your own only if you need a stub
+this repository does not ship. Note the openapiv2 caveat [above](#the-contract): the generated
+module imports an annotation package that does not exist on PyPI, so strip that option or the
+import fails.
 
 ```sh
 pip install grpcio grpcio-tools googleapis-common-protos

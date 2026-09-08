@@ -1,0 +1,8 @@
+# The stubs are generated from ../../contract/hippocampus.proto at build time.
+_proto/
+
+# Build output.
+dist/
+build/
+*.egg-info/
+.pytest_cache/

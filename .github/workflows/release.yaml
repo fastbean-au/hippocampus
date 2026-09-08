@@ -306,6 +306,120 @@ jobs:
           git commit -am "hippocampus ${VERSION}"
           git push
 
+  # Publish the Python client to PyPI, from the same tag the contract ships from. That coupling is
+  # the whole point (item 64): the stubs are generated from contract/hippocampus.proto during the
+  # build, so a package published from any other commit would be a second copy of the contract free
+  # to drift from it. It is gated behind the release job so a failing test suite publishes nothing.
+  #
+  # Authentication is PyPI trusted publishing (OIDC), which is why there is an id-token permission
+  # and no API token secret. The upload is gated on the PUBLISH_PYPI repository variable rather than
+  # on anything self-detecting: with id-token permission the OIDC variables are always present, so
+  # there is nothing in the runner that can tell whether the publisher has been configured on the
+  # PyPI side - the job would simply fail at the upload. Everything up to that point still runs, so
+  # a release with the variable unset still builds, verifies and attaches the distributions.
+  #
+  # To turn it on: configure a trusted publisher for hippocampus-client on PyPI (this repository,
+  # workflow release.yaml, no environment) and set the PUBLISH_PYPI repository variable to "true".
+  publish-python:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # attach the built distributions to the GitHub release
+      id-token: write # PyPI trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The tag IS the version, so it is stamped into _version.py rather than maintained by hand -
+      # a hand-maintained number is what would let the package and the contract claim different
+      # versions of one release. PEP 440 has no leading `v`, so the tag's is stripped.
+      #
+      # Both halves are asserted. A tag that is not vX.Y.Z stops here rather than uploading a
+      # release named after a branch, and the stamp is read back because a placeholder that
+      # survived would publish 0.0.0.dev0 - a version PyPI accepts and nobody can ever install as
+      # the release they asked for.
+      - name: Stamp the release version
+        working-directory: integrations/python
+        run: |
+          set -euo pipefail
+
+          tag="${RELEASE_TAG}"
+          version="${tag#v}"
+
+          if ! printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([._-]?(a|b|rc|alpha|beta|post|dev)[0-9]*)?$'; then
+            echo "::error::release tag '${tag}' is not a PEP 440 version - refusing to publish"
+            exit 1
+          fi
+
+          sed -i "s/^__version__ = \"0\.0\.0\.dev0\"$/__version__ = \"${version}\"/" src/hippocampus/_version.py
+
+          stamped="$(python -c 'import sys; sys.path.insert(0, "src"); import hippocampus._version as v; print(v.__version__)')"
+
+          if [ "${stamped}" != "${version}" ]; then
+            echo "::error::_version.py still reads '${stamped}' after stamping '${version}'"
+            exit 1
+          fi
+
+          echo "PACKAGE_VERSION=${version}" >> "${GITHUB_ENV}"
+          echo "Stamped hippocampus-client ${version}"
+
+      - name: Build the distributions
+        working-directory: integrations/python
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      # The wheel is imported out of a clean environment before anything is uploaded, because the
+      # one failure this package can ship is a wheel with no stubs in it - which installs cleanly
+      # and raises ModuleNotFoundError on first import. Every test in the suite passes in that
+      # state, since they run against the source tree.
+      - name: Verify the built wheel imports
+        working-directory: integrations/python
+        run: |
+          set -euo pipefail
+
+          python -m venv /tmp/wheel-check
+          /tmp/wheel-check/bin/pip install --quiet dist/*.whl
+
+          reported="$(cd /tmp && /tmp/wheel-check/bin/python -c 'import hippocampus; print(hippocampus.__version__)')"
+
+          if [ "${reported}" != "${PACKAGE_VERSION}" ]; then
+            echo "::error::the built wheel reports version '${reported}', expected '${PACKAGE_VERSION}'"
+            exit 1
+          fi
+
+          cd /tmp && /tmp/wheel-check/bin/python -c "from hippocampus import Hippocampus, Memory, SearchMode"
+
+      - name: Check whether publishing is enabled
+        id: gate
+        run: |
+          if [ "${{ vars.PUBLISH_PYPI }}" = "true" ]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::PUBLISH_PYPI is not set to true - built and verified the distributions, skipping the PyPI upload."
+          fi
+
+      - name: Publish to PyPI
+        if: steps.gate.outputs.enabled == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: integrations/python/dist
+          skip-existing: true
+
+      - name: Attach the distributions to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${RELEASE_TAG}" integrations/python/dist/* --clobber
+
   # Build and push the container image to GitHub Container Registry, gated behind the release job
   # so a failing test suite or coverage run publishes nothing. Auth is the built-in GITHUB_TOKEN
   # (no extra secrets); the image name is ghcr.io/<owner>/<repo>. The tag is passed as VERSION so

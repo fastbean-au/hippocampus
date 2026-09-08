@@ -1,0 +1,93 @@
+# The distribution is `hippocampus-client` because `hippocampus` on PyPI is an unrelated sqlite
+# memoisation library that has been there since long before this project. The import name is still
+# `hippocampus`, which is what a caller types.
+[build-system]
+requires = ["hatchling>=1.21", "grpcio-tools>=1.63"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hippocampus-client"
+dynamic = ["version"]
+description = "Client for Hippocampus, a memory service that forgets what stops mattering."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "fastbean-au" }]
+keywords = ["hippocampus", "memory", "agent", "grpc", "llm"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database :: Front-Ends",
+    "Typing :: Typed",
+]
+
+# protobuf's floor is not a preference: the generated stubs open with a
+# ValidateProtobufRuntimeVersion call naming the version of grpcio-tools that wrote them, and an
+# older runtime raises at import. tests/test_packaging.py holds this floor to what the stubs in the
+# tree actually demand, so regenerating with a newer toolchain cannot leave it stale.
+# The interpreter floor is not a preference either: protobuf 7.x and current grpcio both declare
+# >=3.10, so a package claiming 3.9 would carry an unresolvable dependency set on the one
+# interpreter it had gone out of its way to promise.
+dependencies = [
+    "grpcio>=1.63",
+    "protobuf>=7.35.1",
+    "googleapis-common-protos>=1.56",
+]
+
+# grpcio-tools is here as well as in build-system.requires, and both are load-bearing: the build
+# backend gets its own isolated environment, so a build hook's dependency is invisible to an
+# EDITABLE install, which is the one case with no build to hook and therefore the one case that has
+# to run scripts/generate_stubs.py by hand.
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "build>=1.0",
+    "grpcio-tools>=1.63",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.urls]
+Homepage = "https://github.com/fastbean-au/hippocampus"
+Documentation = "https://github.com/fastbean-au/hippocampus/blob/main/docs/python.md"
+Source = "https://github.com/fastbean-au/hippocampus"
+Changelog = "https://github.com/fastbean-au/hippocampus/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/hippocampus/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hippocampus"]
+
+# The sdist carries the generated stubs rather than the contract, so building from it needs no
+# protoc and no access to the repository: hatch_build.py regenerates before either target is built,
+# and force-include puts the result into both. The contract itself is two directories up, outside
+# any build root, which is the other reason the proto cannot simply be packaged.
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "scripts", "hatch_build.py", "README.md", "LICENSE", "pyproject.toml"]
+
+# force-include rather than plain inclusion because the generated stubs are gitignored, and
+# hatchling honours .gitignore when deciding what to package. Without this the sdist ships without
+# them and a wheel built from that sdist has no contract to regenerate from - which is exactly the
+# path `pip install` from the index takes.
+#
+# The two destinations differ because the two layouts do: the sdist preserves the source tree, so
+# that this very block still resolves when the wheel is built out of it, while the wheel is the
+# installed package and drops the src/ prefix.
+[tool.hatch.build.targets.sdist.force-include]
+"src/hippocampus/_proto" = "src/hippocampus/_proto"
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/hippocampus/_proto" = "hippocampus/_proto"
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -550,6 +550,62 @@ jobs:
           npm run build
           npm test
 
+  # The Python client under integrations/python is not a Go module at all, so no Go job reaches it.
+  # It is built and tested on the OLDEST interpreter it claims support for and the newest, because
+  # the failure this catches is a syntax or typing feature that works on the developer's Python and
+  # not on the floor declared in pyproject.toml - which surfaces at a user's `pip install`, not here.
+  #
+  # The stubs are generated from contract/hippocampus.proto rather than committed, so this job is
+  # also what proves that generation still works against the current contract: a proto reformatted
+  # past what scripts/generate_stubs.py matches fails here rather than in a release.
+  python-client:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the package and its test dependencies
+        working-directory: integrations/python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      # The editable install runs the build hook, so the stubs already exist by here - regenerating
+      # explicitly is what makes a failure point at the contract rather than at packaging.
+      - name: Regenerate the stubs from the contract
+        working-directory: integrations/python
+        run: python scripts/generate_stubs.py
+
+      - name: Test
+        working-directory: integrations/python
+        run: python -m pytest -q
+
+      # Building both distributions is not redundant with the test run: the wheel is built from the
+      # sdist, which is the path `pip install hippocampus-client` takes, and that path has no
+      # contract to generate from. A missing force-include passes every test and ships a wheel with
+      # no stubs in it.
+      - name: Build the distributions
+        working-directory: integrations/python
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Install the built wheel into a clean environment and import it
+        working-directory: integrations/python
+        run: |
+          python -m venv /tmp/wheel-check
+          /tmp/wheel-check/bin/pip install --quiet dist/*.whl
+          cd /tmp && /tmp/wheel-check/bin/python -c "import hippocampus; print(hippocampus.__version__)"
+
   # The embedded console is ~2,800 lines of JavaScript that no Go job can exercise. Its pure logic
   # lives in cmd/hippocampus/webui/lib.js — the capability matrix that decides which controls a
   # caller sees, the decay-curve geometry, the escaping, the age and metadata parsing — and this
