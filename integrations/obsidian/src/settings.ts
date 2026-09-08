@@ -35,6 +35,18 @@ export interface HippocampusSettings {
   syncFolder: string;
   syncDebounceSeconds: number;
 
+  // Mirror the vault's [[wikilinks]] onto the memory link graph. On by default, because a synced
+  // vault whose links are dropped is a store of isolated memories - and the link graph is the one
+  // thing Obsidian has that the decay model most wants, since a link raises the effective
+  // significance of both ends. It costs one extra read per synced note plus a write when the links
+  // have changed, which is why it can be turned off.
+  syncLinks: boolean;
+
+  // The weight each wikilink carries. A wikilink has no weight in Obsidian, so one number stands
+  // for all of them; it is summed across an item's links and then log1p-damped by the service, so
+  // raising it has a much smaller effect than it looks like it should.
+  linkSignificance: number;
+
   // Persisted note-path -> memory-id map (not shown in the settings UI). Kept here so it rides
   // along in the plugin's single saved-data blob.
   pathToId: Record<string, string>;
@@ -56,5 +68,7 @@ export const DEFAULT_SETTINGS: HippocampusSettings = {
   autoSync: false,
   syncFolder: "",
   syncDebounceSeconds: 5,
+  syncLinks: true,
+  linkSignificance: 5,
   pathToId: {},
 };

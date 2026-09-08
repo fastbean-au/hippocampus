@@ -750,6 +750,14 @@ The log above, the dry run and the status RPC are all things a client has to **a
 memories or events and when a sleep cycle finishes, so a system downstream of the store learns about
 a deletion instead of discovering it by asking for a record and finding nothing.
 
+There is a fourth kind, `memories_at_risk`, which is the only one that speaks **before** the fact:
+raised at the top of a cycle, it names what that cycle is about to forget, so a receiver can act
+while the memories are still there. It is off by default because it is the only kind that costs a
+scan — enabling `callbacks.events.memoriesAtRisk` runs a consolidation preview on every cycle,
+roughly doubling what a cycle costs — and `callbacks.atRiskMargin` is what buys a receiver enough
+notice to be worth having. See [Being told _before_ a memory
+goes](configuration.md#being-told-before-a-memory-goes).
+
 Operationally the thing to know is that it is backed by a **persisted queue**, not a fire-and-forget
 call. A delivery is written in the same transaction as the deletion that produced it, so a receiver
 that is down becomes a backlog rather than a silent loss, and a restart mid-backlog replays. Delivery

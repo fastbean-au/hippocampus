@@ -2,7 +2,12 @@
 // free of any Obsidian import so it can be unit-tested directly. The gateway emits camelCase field
 // names, int64 fields as JSON *strings*, and enums as their string names.
 
-import type { EventView, MemoryView, SummarisationCandidate } from "./types";
+import type {
+	EventView,
+	LinkEdge,
+	MemoryView,
+	SummarisationCandidate,
+} from "./types";
 
 // toNumber parses the gateway's string-encoded int64 fields (and tolerates already-numeric input).
 export function toNumber(value: unknown): number {
@@ -69,6 +74,23 @@ export function candidatesFrom(json: Record<string, unknown>): SummarisationCand
 			eventId: String(c.eventId ?? ""),
 			eventName: String(c.eventName ?? ""),
 			memoryCount: toNumber(c.memoryCount),
+		};
+	});
+}
+
+// linksFrom normalises a GetLinksResponse. direction is an enum on the wire and only OUTBOUND means
+// this end declared the link; anything else - INBOUND, BOTH, or an unset value - is read as not
+// ours, which is the safe reading, since the delta only ever removes an edge it believes it owns.
+export function linksFrom(json: Record<string, unknown>): LinkEdge[] {
+	const rows = Array.isArray(json.links) ? json.links : [];
+
+	return rows.map((row) => {
+		const edge = row as Record<string, unknown>;
+
+		return {
+			id: String(edge.id ?? ""),
+			significance: toNumber(edge.significance),
+			outbound: edge.direction === "LINK_DIRECTION_OUTBOUND" || edge.direction === 2,
 		};
 	});
 }

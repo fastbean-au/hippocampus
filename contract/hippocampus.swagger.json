@@ -46,7 +46,8 @@
               "CALLBACK_KIND_UNSPECIFIED",
               "CALLBACK_KIND_MEMORY_FORGOTTEN",
               "CALLBACK_KIND_EVENT_FORGOTTEN",
-              "CALLBACK_KIND_SLEEP_COMPLETED"
+              "CALLBACK_KIND_SLEEP_COMPLETED",
+              "CALLBACK_KIND_MEMORIES_AT_RISK"
             ],
             "default": "CALLBACK_KIND_UNSPECIFIED"
           },
@@ -2198,10 +2199,11 @@
         "CALLBACK_KIND_UNSPECIFIED",
         "CALLBACK_KIND_MEMORY_FORGOTTEN",
         "CALLBACK_KIND_EVENT_FORGOTTEN",
-        "CALLBACK_KIND_SLEEP_COMPLETED"
+        "CALLBACK_KIND_SLEEP_COMPLETED",
+        "CALLBACK_KIND_MEMORIES_AT_RISK"
       ],
       "default": "CALLBACK_KIND_UNSPECIFIED",
-      "description": "CallbackKind is what a queued delivery is about."
+      "description": "CallbackKind is what a queued delivery is about.\n\nMEMORIES_AT_RISK is the only one that is not about something that has already happened: it is\nraised at the top of a sleep cycle, from the same scan PreviewConsolidation runs, and describes\nwhat the store is about to forget. It is off by default because it costs that scan per cycle."
     },
     "v1ClearRequest": {
       "type": "object",

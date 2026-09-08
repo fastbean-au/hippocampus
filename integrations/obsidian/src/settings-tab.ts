@@ -226,5 +226,34 @@ export class HippocampusSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
+
+    new Setting(containerEl)
+      .setName("Mirror wikilinks")
+      .setDesc(
+        "Link a note's memory to the memories of the notes it links to. A link raises the " +
+          "effective significance of both ends, so a heavily-linked note is kept longer. Links to " +
+          "notes that do not exist, or have not been synced, are ignored.",
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(s.syncLinks).onChange(async (value) => {
+          s.syncLinks = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Link weight")
+      .setDesc(
+        "The significance each wikilink carries. Summed across a note's links and then damped, so " +
+          "raising it has less effect than it looks like it should.",
+      )
+      .addText((text) =>
+        text.setValue(String(s.linkSignificance)).onChange(async (value) => {
+          const n = Number(value);
+          s.linkSignificance =
+            Number.isFinite(n) && n >= 0 && n <= 1000000 ? Math.floor(n) : 5;
+          await this.plugin.saveSettings();
+        }),
+      );
   }
 }

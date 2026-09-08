@@ -326,12 +326,46 @@ func TestCallbackKindOf(t *testing.T) {
 		contract.CallbackKind_CALLBACK_KIND_MEMORY_FORGOTTEN: db.CallbackKindMemoryForgotten,
 		contract.CallbackKind_CALLBACK_KIND_EVENT_FORGOTTEN:  db.CallbackKindEventForgotten,
 		contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED:  db.CallbackKindSleepCompleted,
+		contract.CallbackKind_CALLBACK_KIND_MEMORIES_AT_RISK: db.CallbackKindMemoriesAtRisk,
 		contract.CallbackKind(99):                            db.CallbackKindNone,
 	}
 
 	for in, want := range cases {
 		if got := callbackKindOf(in); got != want {
 			t.Errorf("callbackKindOf(%v) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// TestEveryCallbackKindIsProjected holds the kind set together across the three places that spell
+// it: the contract enum, the storage layer's integer, and the notify package's wire string.
+//
+// A kind is added in one of them and forgotten in another exactly the way any enum spread over three
+// packages drifts, and the failure is quiet on both sides - a kind with no entry in callbackKinds
+// reaches an operator's queue listing as UNSPECIFIED, and one with no notifyKind is POSTed to a
+// receiver with an empty "kind", which is neither an error nor something anybody notices until they
+// are looking for it.
+func TestEveryCallbackKindIsProjected(t *testing.T) {
+	for value, name := range contract.CallbackKind_name {
+		kind := contract.CallbackKind(value)
+
+		if kind == contract.CallbackKind_CALLBACK_KIND_UNSPECIFIED {
+			continue
+		}
+
+		stored := callbackKindOf(kind)
+		if stored == db.CallbackKindNone {
+			t.Errorf("%s has no callbackKindOf case, so the queue listing cannot filter on it", name)
+
+			continue
+		}
+
+		if callbackKinds[stored] != kind {
+			t.Errorf("%s does not round-trip through callbackKinds: got %v", name, callbackKinds[stored])
+		}
+
+		if notifyKind(stored) == "" {
+			t.Errorf("%s has no notifyKind spelling, so a receiver would be sent an empty kind", name)
 		}
 	}
 }

@@ -169,6 +169,7 @@ var (
 		db.CallbackKindMemoryForgotten: contract.CallbackKind_CALLBACK_KIND_MEMORY_FORGOTTEN,
 		db.CallbackKindEventForgotten:  contract.CallbackKind_CALLBACK_KIND_EVENT_FORGOTTEN,
 		db.CallbackKindSleepCompleted:  contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED,
+		db.CallbackKindMemoriesAtRisk:  contract.CallbackKind_CALLBACK_KIND_MEMORIES_AT_RISK,
 	}
 
 	deleteCauses = map[db.DeleteCause]contract.DeleteCause{
@@ -196,6 +197,9 @@ func callbackKindOf(kind contract.CallbackKind) db.CallbackKind {
 
 	case contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED:
 		return db.CallbackKindSleepCompleted
+
+	case contract.CallbackKind_CALLBACK_KIND_MEMORIES_AT_RISK:
+		return db.CallbackKindMemoriesAtRisk
 
 	}
 

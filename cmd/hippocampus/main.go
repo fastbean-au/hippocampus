@@ -496,9 +496,11 @@ func setStartupDefaults() {
 	// the forgotten log above: turning it on gets a queue that is already bounded rather than one
 	// that grows until a receiver's outage fills the disk. An explicit 0 on either cap disables it.
 	//
-	// The three event toggles default ON because the feature as a whole is off: an operator who has
-	// configured a URL wants the callbacks, and having to then enable them individually would be a
-	// second switch for the same decision.
+	// The three deletion toggles default ON because the feature as a whole is off: an operator who
+	// has configured a URL wants the callbacks, and having to then enable them individually would be
+	// a second switch for the same decision. The fourth - memoriesAtRisk - defaults OFF against that
+	// grain, because it is the only kind that costs a scan rather than riding on work already being
+	// done: raising it runs a preview at the top of every cycle.
 	viper.SetDefault("callbacks.timeoutSeconds", 10)
 	viper.SetDefault("callbacks.maxBodyBytes", 65536)
 	viper.SetDefault("callbacks.maxIdsPerDelivery", 500)
@@ -510,6 +512,9 @@ func setStartupDefaults() {
 	viper.SetDefault("callbacks.events.memoryForgotten", true)
 	viper.SetDefault("callbacks.events.eventForgotten", true)
 	viper.SetDefault("callbacks.events.sleepCompleted", true)
+	viper.SetDefault("callbacks.events.memoriesAtRisk", false)
+	viper.SetDefault("callbacks.atRiskLimit", 1000)
+	viper.SetDefault("callbacks.atRiskMargin", 0)
 
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
@@ -2362,6 +2367,7 @@ func validateCallbackConfig() error {
 		"callbacks.batchSize":               viper.GetInt("callbacks.batchSize"),
 		"callbacks.retryBaseBackoffSeconds": viper.GetInt("callbacks.retryBaseBackoffSeconds"),
 		"callbacks.retryMaxBackoffSeconds":  viper.GetInt("callbacks.retryMaxBackoffSeconds"),
+		"callbacks.atRiskLimit":             viper.GetInt("callbacks.atRiskLimit"),
 	}
 
 	for key, value := range bounds {
@@ -2377,6 +2383,25 @@ func validateCallbackConfig() error {
 		log.Warn(
 			"callbacks.includeBodies is set with no callbacks.maxBodyBytes, so a single large " +
 				"memory can be carried whole into the queue and the delivery",
+		)
+	}
+
+	// A negative margin would lower the bar below the one in force, so the delivery would leave out
+	// memories the cycle is about to take - a warning that is silent about exactly what it exists to
+	// warn about, which is worse than no warning at all.
+	if viper.GetFloat64("callbacks.atRiskMargin") < 0 {
+		return fmt.Errorf(
+			"callbacks.atRiskMargin must not be negative, got %v: it raises the threshold the at-risk scan selects on, and lowering it would omit memories the next cycle will delete",
+			viper.GetFloat64("callbacks.atRiskMargin"),
+		)
+	}
+
+	// Warned about rather than refused: it is the one callback that costs a full scan per cycle, and
+	// an operator who wants it on a store consolidating every few seconds is entitled to say so.
+	if viper.GetBool("callbacks.events.memoriesAtRisk") {
+		log.Info(
+			"callbacks.events.memoriesAtRisk is set: every sleep cycle runs an extra consolidation " +
+				"preview to build the warning, which costs roughly what the cycle itself does",
 		)
 	}
 

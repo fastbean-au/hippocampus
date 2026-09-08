@@ -44,9 +44,17 @@ short:
   idempotently (one memory per note path, updated in place, re-created if consolidation has since
   forgotten it). This is what lets the sleep cycle prune the noise: notes you keep touching are
   reinforced and survive; notes you never revisit fade.
+- **Mirror the vault's `[[wikilinks]]`** — a synced note's links become links between the memories,
+  in both the manual and automatic paths. On by default. A link to a note that does not exist yet is
+  ignored (that is ordinary Obsidian), embeds count as links, and deleting a wikilink removes the
+  edge unless the note at the other end declares it too.
 
 ### Why the shape fits
 
+- **The link graph is the same idea on both sides** — Obsidian's entire model is `[[wikilinks]]`,
+  and Hippocampus raises the effective significance of **both** ends of a link (`log1p`-damped, so a
+  hub note cannot become unforgettable by being linked a thousand times). A well-connected note is
+  therefore kept for the reason it deserves to be, without anybody assigning it a significance.
 - **Reinforcement through recall** — when you (or an assistant) repeatedly reference an old project
   note, recalling it resets its decay clock and raises its effective significance, so it survives.
 - **Sleep & consolidation** — instead of an ever-growing vector index full of trivial daily logs,

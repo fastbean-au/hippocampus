@@ -1,8 +1,16 @@
 import { requestUrl } from "obsidian";
 
-import { candidatesFrom, eventsFrom, memoriesFrom, toNumber } from "./parse";
+import {
+  candidatesFrom,
+  eventsFrom,
+  linksFrom,
+  memoriesFrom,
+  toNumber,
+} from "./parse";
 import type {
   EventView,
+  LinkEdge,
+  LinkInput,
   ListInput,
   MemoryView,
   SearchMemoriesInput,
@@ -145,6 +153,50 @@ export class HippocampusClient {
     }
 
     await this.request("POST", "/v1/memories/delete", { ids });
+  }
+
+  // linkMemories adds or re-weights links from one memory to others. It is an upsert per pair, so
+  // re-declaring a link already held overwrites its weight rather than duplicating it, which is what
+  // makes a re-sync of an unchanged note cost nothing but the request.
+  //
+  // Every target must exist: the service refuses the whole request if one does not, so callers
+  // resolve targets against what they know is stored before calling.
+  async linkMemories(id: string, links: LinkInput[]): Promise<void> {
+    if (links.length === 0) {
+      return;
+    }
+
+    await this.request("POST", "/v1/memories/" + encodeURIComponent(id) + "/links", {
+      id,
+      links,
+    });
+  }
+
+  // unlinkMemories removes the edges between one memory and the named targets. Unknown ids are
+  // ignored, and the removal covers BOTH directions between the pair - which is why callers must
+  // decide what they own before asking for one.
+  async unlinkMemories(id: string, ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+
+    await this.request(
+      "POST",
+      "/v1/memories/" + encodeURIComponent(id) + "/links/delete",
+      { id, ids },
+    );
+  }
+
+  // getMemoryLinks reads a memory's edges in both directions. Both are asked for deliberately: the
+  // inbound half is what tells a caller which of its outbound edges another note also declares, and
+  // so must survive a removal.
+  async getMemoryLinks(id: string): Promise<LinkEdge[]> {
+    const json = await this.request(
+      "GET",
+      "/v1/memories/" + encodeURIComponent(id) + "/links",
+    );
+
+    return linksFrom(json);
   }
 
   async searchMemories(input: SearchMemoriesInput): Promise<MemoryView[]> {

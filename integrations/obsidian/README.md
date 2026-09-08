@@ -83,6 +83,7 @@ Open _Settings → Hippocampus Memory_:
 - **Strip frontmatter from body** — drop a note's leading YAML before storing it.
 - **Search** — result limit and whether searching also _reinforces_ (recalls) the matches.
 - **Auto-sync** — see below.
+- **Mirror wikilinks** and **link weight** — see [Wikilinks](#wikilinks).
 
 Use **Test connection** to confirm the URL/token reach a live gateway.
 
@@ -108,6 +109,40 @@ already forgotten a note's memory, the next sync re-creates it.
 
 This lets the decay cycle do its job: reinforced/important notes persist, while notes you never
 touch again fade under the store's capacity budget.
+
+## Wikilinks
+
+A synced note's `[[wikilinks]]` become links between the memories, which is the part of the mapping
+that actually matters to how long a note is kept: Hippocampus raises the effective significance of
+**both** ends of a link, `log1p`-damped, so a heavily-linked note is exactly the note the decay model
+should hold on to. Without this a synced vault is a set of isolated memories decaying as though the
+vault had no structure at all.
+
+It is **on by default** and costs one extra read per synced note, plus a write only when the links
+have changed. Turn off **Mirror wikilinks** if you would rather not pay that.
+
+What to expect:
+
+- **A link to a note that does not exist yet is ignored**, silently. Writing `[[Some Idea]]` before
+  the note exists is ordinary Obsidian, not an error — the edge appears once that note is synced.
+- **Embeds count.** `![[Note]]` is the strongest statement one note makes about another, and
+  Obsidian's own graph draws it.
+- Aliases and subpaths do not change which note is linked: `[[Note|as shown]]`, `[[Note#Section]]`
+  and `[[Note#^block]]` all link `Note`. A link within the same note (`[[#Section]]`) is not a link.
+- **Resolution is Obsidian's own**, so shortest-path names, relative paths and folder notes behave
+  exactly as they do in the editor, and a wikilink inside a code fence is not a link.
+- **Deleting a wikilink removes the edge** — otherwise the graph only ever grows, and a note nothing
+  links to any more stays propped up by edges describing a vault that no longer exists. The one
+  exception: if the note at the other end links back, the edge stays, because it is still that note's
+  to declare.
+- **Link weight** is the significance each edge carries (5 by default). It is summed across a note's
+  links and then damped, so raising it moves the needle far less than the number suggests.
+- The service caps an item at **128 links in either direction**. A hub note past that has its extra
+  links dropped, keeping the ones written first; a note whose _inbound_ links alone exceed the cap
+  has its link writes refused, which the plugin logs to the developer console and otherwise ignores.
+
+**Sync folder now** does this in two passes — every note is stored, then every note's links are
+resolved — because a vault always contains a link whose target is written later.
 
 ## TLS / localhost note
 

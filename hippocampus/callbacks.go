@@ -63,6 +63,9 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 	s.callbackMaxBack = time.Duration(viper.GetInt("callbacks.retryMaxBackoffSeconds")) * time.Second
 	s.callbackChunkIds = viper.GetInt("callbacks.maxIdsPerDelivery")
 	s.callbackSleepEvents = viper.GetBool("callbacks.events.sleepCompleted")
+	s.callbackAtRiskEvents = viper.GetBool("callbacks.events.memoriesAtRisk")
+	s.callbackAtRiskLimit = viper.GetInt("callbacks.atRiskLimit")
+	s.callbackAtRiskMargin = viper.GetFloat64("callbacks.atRiskMargin")
 
 	if s.callbackMaxRows <= 0 {
 		s.callbackMaxRows = defaultCallbackMaxRows
@@ -86,6 +89,17 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 
 	if s.callbackChunkIds <= 0 {
 		s.callbackChunkIds = defaultCallbackMaxIdsPerChunk
+	}
+
+	// Left to db.PreviewLimit to normalise, which is what keeps this bound meaning the same thing
+	// as the RPC's: a non-positive value takes the preview's own default and anything above its cap
+	// is clamped to it.
+	s.callbackAtRiskLimit = db.PreviewLimit(s.callbackAtRiskLimit)
+
+	// A negative margin would lower the bar below the one in force, so the delivery would omit
+	// memories the cycle is about to take - the one thing this kind must never do.
+	if s.callbackAtRiskMargin < 0 {
+		s.callbackAtRiskMargin = 0
 	}
 
 	if notifier == nil || !notifier.Enabled() {
@@ -248,6 +262,7 @@ func (s *Server) deliverOne(ctx context.Context, notifier notify.Notifier, entry
 		Chunks:   entry.Chunks,
 		Items:    notifyItems(entry.Payload.Items),
 		Cycle:    notifyCycle(entry.Payload.Cycle),
+		AtRisk:   notifyAtRisk(entry.Payload.AtRisk),
 	})
 
 	outcome := "ok"
@@ -453,6 +468,9 @@ func notifyKind(kind db.CallbackKind) notify.Kind {
 	case db.CallbackKindSleepCompleted:
 		return notify.KindSleepCompleted
 
+	case db.CallbackKindMemoriesAtRisk:
+		return notify.KindMemoriesAtRisk
+
 	}
 
 	return ""
@@ -501,12 +519,30 @@ func notifyItems(items []db.CallbackItem) []notify.Item {
 			Group:        in.Group,
 			Significance: in.Significance,
 			Bytes:        in.Bytes,
+			Value:        in.Value,
 			Body:         in.Body,
 			BodyOmitted:  in.BodyOmitted,
 		})
 	}
 
 	return out
+}
+
+func notifyAtRisk(in *db.CallbackAtRisk) *notify.AtRisk {
+	if in == nil {
+		return nil
+	}
+
+	return &notify.AtRisk{
+		Consolidating:    in.Consolidating,
+		Evicting:         in.Evicting,
+		Events:           in.Events,
+		Bytes:            in.Bytes,
+		Threshold:        in.Threshold,
+		AtRiskThreshold:  in.AtRiskThreshold,
+		CapacityPressure: in.CapacityPressure,
+		Truncated:        in.Truncated,
+	}
 }
 
 func notifyCycle(in *db.CallbackCycle) *notify.Cycle {

@@ -66,6 +66,10 @@ const (
 
 	// CallbackKindSleepCompleted reports that a sleep cycle has finished.
 	CallbackKindSleepCompleted
+
+	// CallbackKindMemoriesAtRisk reports what a cycle is about to forget, raised at the top of that
+	// cycle. It is the only kind that is not about something that has already happened.
+	CallbackKindMemoriesAtRisk
 )
 
 // DeleteCause names why records were deleted.
@@ -175,14 +179,22 @@ func (d *DB) SetCallbackPolicy(policy CallbackPolicy) {
 }
 
 // CallbackItem is one record a delivery is about, as the store holds it.
+//
+// Value is the memory's computed decay value, and is carried only by an at-risk item: it is what
+// makes that kind actionable, since a receiver deciding whether to reinforce a memory needs to know
+// how far under the bar it is rather than merely that it is. The three deletion kinds leave it
+// empty deliberately: their items are captured by a primary-key lookup over the rows a delete chunk
+// is about to remove rather than by a decision, and where the value a pass computed is worth keeping
+// it is already kept - with the threshold then in force - by the forgotten log.
 type CallbackItem struct {
-	Id           string `json:"id"`
-	EventId      string `json:"event_id,omitempty"`
-	Group        string `json:"group,omitempty"`
-	Significance int32  `json:"significance,omitempty"`
-	Bytes        int64  `json:"bytes,omitempty"`
-	Body         string `json:"body,omitempty"`
-	BodyOmitted  bool   `json:"body_omitted,omitempty"`
+	Id           string  `json:"id"`
+	EventId      string  `json:"event_id,omitempty"`
+	Group        string  `json:"group,omitempty"`
+	Significance int32   `json:"significance,omitempty"`
+	Bytes        int64   `json:"bytes,omitempty"`
+	Value        float64 `json:"value,omitempty"`
+	Body         string  `json:"body,omitempty"`
+	BodyOmitted  bool    `json:"body_omitted,omitempty"`
 }
 
 // CallbackCycle is the sleep-cycle summary a completion delivery carries.
@@ -200,12 +212,33 @@ type CallbackCycle struct {
 	Failure                 string `json:"failure,omitempty"`
 }
 
+// CallbackAtRisk is the summary a pre-reap delivery carries: what the store would forget at the
+// at-risk threshold, alongside the two thresholds themselves.
+//
+// Both thresholds are reported because they are what separates the two populations in the delivery.
+// Threshold is the bar in force, so an item whose Value is under it is going in the cycle now
+// starting; AtRiskThreshold is the raised bar the scan actually selected on, so an item between the
+// two is a warning with time left on it. With callbacks.atRiskMargin at its default of 0 the two are
+// equal and every item is going now.
+type CallbackAtRisk struct {
+	Consolidating    int     `json:"consolidating"`
+	Evicting         int     `json:"evicting"`
+	Events           int     `json:"events"`
+	Bytes            int64   `json:"bytes"`
+	Threshold        float64 `json:"threshold"`
+	AtRiskThreshold  float64 `json:"at_risk_threshold"`
+	CapacityPressure float64 `json:"capacity_pressure"`
+	Truncated        bool    `json:"truncated,omitempty"`
+}
+
 // CallbackPayload is what a row's blob decodes to: everything the sink needs that the typed columns
 // do not carry. Keeping it as one encoded blob is what lets the queue hold a body-carrying batch
-// without the schema growing a column per field the notify package might one day want.
+// without the schema growing a column per field the notify package might one day want - which is
+// what made the at-risk summary free, needing no migration.
 type CallbackPayload struct {
-	Items []CallbackItem `json:"items,omitempty"`
-	Cycle *CallbackCycle `json:"cycle,omitempty"`
+	Items  []CallbackItem  `json:"items,omitempty"`
+	Cycle  *CallbackCycle  `json:"cycle,omitempty"`
+	AtRisk *CallbackAtRisk `json:"at_risk,omitempty"`
 }
 
 // CallbackDelivery is one queued delivery, as claimed by the drain worker or listed by the RPC.

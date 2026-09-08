@@ -41,6 +41,11 @@ func (s *Server) sleep(trigger string) error {
 
 	s.db.BeginCallbackCycle(cycleId)
 
+	// The pre-reap warning, before anything is deleted and under the same cycle id as the deliveries
+	// that follow, so a receiver can match what it was told was going against what actually went. Off
+	// by default and a no-op then, because it costs a preview scan; never allowed to fail the cycle.
+	s.queueAtRiskCallback(ctx, cycleId)
+
 	e1 := s.consolidate(ctx, report)
 
 	s.scanSummarisationCandidates(ctx, report)

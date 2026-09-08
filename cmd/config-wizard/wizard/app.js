@@ -1271,15 +1271,47 @@ const STEPS = [
             help: "One delivery per cycle carrying the counts and the ids it forgot, chunked so a large cycle never becomes one unbounded request.",
           },
           {
+            key: "callbacks.events.memoriesAtRisk",
+            label: "Warn before forgetting",
+            type: "bool",
+            def: false,
+            svc: false,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "The only callback that speaks before the fact: what the next cycle is about to forget, raised at the top of it. Off by default because it is also the only one that costs a scan — every cycle runs an extra consolidation preview to build it.",
+          },
+          {
+            key: "callbacks.atRiskLimit",
+            label: "Warn about at most (memories)",
+            type: "int",
+            def: 1000,
+            svc: 1000,
+            when: (s) =>
+              value(s, "callbacks.enabled") &&
+              value(s, "callbacks.events.memoriesAtRisk"),
+            help: "The lowest-valued memories are reported first, so a truncated warning is still the ones closest to going. Capped at 1000, which is the preview's own bound.",
+          },
+          {
+            key: "callbacks.atRiskMargin",
+            label: "Warn this far above the threshold",
+            type: "float",
+            def: 0,
+            svc: 0,
+            when: (s) =>
+              value(s, "callbacks.enabled") &&
+              value(s, "callbacks.events.memoriesAtRisk"),
+            help: "0 warns about exactly what the cycle now starting will take — which arrives as it is being taken. 0.25 raises the bar a quarter, so the warning also covers memories a cycle or more short of it, which is what gives a receiver time to act.",
+          },
+          {
             key: "callbacks.maxIdsPerDelivery",
-            label: "Ids per sleep-cycle delivery",
+            label: "Ids per cycle delivery",
             type: "int",
             def: 500,
             svc: 500,
             when: (s) =>
               value(s, "callbacks.enabled") &&
-              value(s, "callbacks.events.sleepCompleted"),
-            help: "A cycle forgetting more than this is split into several numbered deliveries sharing one cycle id.",
+              (value(s, "callbacks.events.sleepCompleted") ||
+                value(s, "callbacks.events.memoriesAtRisk")),
+            help: "A cycle reporting more ids than this — forgotten, or about to be — is split into several numbered deliveries sharing one cycle id.",
           },
           {
             key: "callbacks.maxRows",

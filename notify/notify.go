@@ -1,5 +1,6 @@
 // Package notify provides the optional outbound callback sink: the component that tells an
-// external system that Hippocampus has forgotten something, or that a sleep cycle has finished.
+// external system that Hippocampus has forgotten something, that a sleep cycle has finished, or -
+// the one kind that speaks before the fact - that a cycle is about to forget something.
 //
 // Everything the service has built for forgetting transparency so far is PULL - PreviewConsolidation
 // asks what would go, ExplainConsolidation where a memory stands, GetConsolidationStatus when the
@@ -41,6 +42,10 @@ const (
 
 	// KindSleepCompleted reports that a sleep cycle has finished, with what it forgot.
 	KindSleepCompleted Kind = "sleep_completed"
+
+	// KindMemoriesAtRisk reports what a cycle is about to forget, raised at the top of that cycle.
+	// It is the only kind that is not about something that has already happened.
+	KindMemoriesAtRisk Kind = "memories_at_risk"
 )
 
 // Cause names why records were deleted. Unlike Kind this is not a decay judgement - it separates
@@ -78,14 +83,24 @@ const (
 // callbacks.maxBodyBytes. An oversized body is reported as BodyOmitted with Body empty rather than
 // truncated: a truncated body is worse than none, because a receiver cannot tell it is looking at
 // part of one.
+//
+// Value is the memory's computed decay value and is carried only by a KindMemoriesAtRisk item,
+// where it is what makes the delivery actionable: it says how far under the bar a memory is, not
+// merely that it is under one. It is absent from the three deletion kinds, whose items describe
+// records that have already gone.
+//
+// An at-risk item never carries a Body whatever callbacks.includeBodies says, because the scan
+// behind it deliberately never reads one - and it does not need to, the memory still being there
+// for a receiver to fetch.
 type Item struct {
-	Id           string `json:"id"`
-	EventId      string `json:"event_id,omitempty"`
-	Group        string `json:"group,omitempty"`
-	Significance int32  `json:"significance,omitempty"`
-	Bytes        int64  `json:"bytes,omitempty"`
-	Body         string `json:"body,omitempty"`
-	BodyOmitted  bool   `json:"body_omitted,omitempty"`
+	Id           string  `json:"id"`
+	EventId      string  `json:"event_id,omitempty"`
+	Group        string  `json:"group,omitempty"`
+	Significance int32   `json:"significance,omitempty"`
+	Bytes        int64   `json:"bytes,omitempty"`
+	Value        float64 `json:"value,omitempty"`
+	Body         string  `json:"body,omitempty"`
+	BodyOmitted  bool    `json:"body_omitted,omitempty"`
 }
 
 // Cycle is the sleep-cycle summary carried by a KindSleepCompleted delivery. It repeats the counts
@@ -103,6 +118,24 @@ type Cycle struct {
 	SummarisationCandidates int    `json:"summarisation_candidates"`
 	Success                 bool   `json:"success"`
 	Failure                 string `json:"failure,omitempty"`
+}
+
+// AtRisk is the summary carried by a KindMemoriesAtRisk delivery: what the store would forget at
+// the at-risk threshold, and the two thresholds that separate the delivery's two populations.
+//
+// Threshold is the bar in force, so an item under it is going in the cycle now starting.
+// AtRiskThreshold is the raised bar the scan selected on, so an item between the two is a warning
+// with time left on it. With callbacks.atRiskMargin at its default of 0 the two are equal and every
+// item is going now.
+type AtRisk struct {
+	Consolidating    int     `json:"consolidating"`
+	Evicting         int     `json:"evicting"`
+	Events           int     `json:"events"`
+	Bytes            int64   `json:"bytes"`
+	Threshold        float64 `json:"threshold"`
+	AtRiskThreshold  float64 `json:"at_risk_threshold"`
+	CapacityPressure float64 `json:"capacity_pressure"`
+	Truncated        bool    `json:"truncated,omitempty"`
 }
 
 // Delivery is one callback: the unit the queue stores and the sink posts.
@@ -128,8 +161,9 @@ type Delivery struct {
 	Chunk  int `json:"chunk,omitempty"`
 	Chunks int `json:"chunks,omitempty"`
 
-	Items []Item `json:"items,omitempty"`
-	Cycle *Cycle `json:"cycle,omitempty"`
+	Items  []Item  `json:"items,omitempty"`
+	Cycle  *Cycle  `json:"cycle,omitempty"`
+	AtRisk *AtRisk `json:"at_risk,omitempty"`
 }
 
 // Notifier delivers a callback to whatever is configured to receive one. It is optional: the no-op

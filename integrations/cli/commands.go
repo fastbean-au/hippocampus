@@ -296,7 +296,7 @@ func commands() map[string]command {
 		"callbacks queue": {
 			summary: "show the outbound callback queue",
 			flags: func(fs *pflag.FlagSet) {
-				fs.String("kind", "", "only this kind: memory-forgotten, event-forgotten or sleep-completed")
+				fs.String("kind", "", "only this kind: memory-forgotten, event-forgotten, sleep-completed or memories-at-risk")
 				fs.Int64("after-seq", 0, "pagination: the next_seq reported by the previous page")
 				fs.Int32("limit", 0, "deliveries to return (default 100, max 1000)")
 			},
@@ -1328,9 +1328,15 @@ func callbackKindFromFlag(fs *pflag.FlagSet, name string) (contract.CallbackKind
 	case "sleep-completed", "sleep":
 		return contract.CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED, nil
 
+	case "memories-at-risk", "at-risk":
+		return contract.CallbackKind_CALLBACK_KIND_MEMORIES_AT_RISK, nil
+
 	}
 
-	return 0, fmt.Errorf("--%s must be memory-forgotten, event-forgotten or sleep-completed", name)
+	return 0, fmt.Errorf(
+		"--%s must be memory-forgotten, event-forgotten, sleep-completed or memories-at-risk",
+		name,
+	)
 }
 
 // runForgottenClear empties the log. It requires --before or --all for the same reason the RPC

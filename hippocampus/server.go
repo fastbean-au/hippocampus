@@ -341,6 +341,13 @@ type Server struct {
 	// live on the store's CallbackPolicy for the same reason.
 	callbackSleepEvents bool
 
+	// The pre-reap callback (callbacks.events.memoriesAtRisk and its two bounds), resolved at
+	// startup for the same reason. Unlike the three deletion toggles this one defaults OFF, because
+	// it is the only kind that costs a scan: raising it runs a preview at the top of every cycle.
+	callbackAtRiskEvents bool
+	callbackAtRiskLimit  int
+	callbackAtRiskMargin float64
+
 	stopCallbacks    chan struct{}
 	callbacksStopped chan struct{}
 

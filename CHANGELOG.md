@@ -471,6 +471,65 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   is free not to implement, so a 404 there reports healthy rather than claiming a fault nobody can
   fix.
 
+- **A callback that speaks before a memory goes: `memories_at_risk`.** Every other thing the callback
+  surface reports has already happened, and `memory_forgotten` is the one that matters: by the time a
+  receiver reads it, the memory it might have wanted to summarise, archive elsewhere or recall is
+  gone. The new kind is raised at the **top** of a sleep cycle, from the same scan
+  `PreviewConsolidation` runs, and describes what the store is about to lose — the push counterpart to
+  `GetSummarisationCandidates`, which has always done exactly this for events. It shares the cycle's
+  id with the `memory_forgotten` and `sleep_completed` deliveries that follow, so a receiver can match
+  what it was warned about against what actually went.
+
+  `callbacks.atRiskMargin` is what makes it actionable rather than merely earlier, and is the part
+  worth setting deliberately. At its default of `0` the warning covers exactly what the cycle now
+  starting will take — which arrives while that cycle is taking it. A margin raises the bar the scan
+  selects on, so the delivery also carries memories still *above* the threshold and approaching it: at
+  `0.25`, everything within a quarter of the bar, which is a cycle or more of notice. Both thresholds
+  are reported and each item carries its computed `value`, so the two populations are told apart by
+  comparison rather than by guessing.
+
+  It is **off by default**, against the grain of the other three kinds, and for one reason: it is the
+  only one that costs a scan rather than riding on work already being done. Turning it on runs a
+  consolidation preview at the top of every cycle, which is roughly what the cycle itself pays.
+
+  Two things it deliberately is not. It carries **no bodies**, whatever `includeBodies` says — the
+  scan behind it never reads one, and does not need to, the memory still being there to fetch. And it
+  is **not a veto**: acting on it by recalling a memory races the pass about to delete it, and that
+  race is already safe in your favour, because the delete re-checks the recall clock inside its own
+  transaction. That is a property worth knowing rather than a guarantee — a receiver that was down
+  misses the window, and nothing waits for one. A cycle with nothing at risk sends nothing; the
+  per-cycle heartbeat is still `sleep_completed`.
+
+  Deliveries are grouped by `cause` and chunked within each group, so a receiver reassembles on
+  `(cycle_id, cause)`. That grouping is not cosmetic: a memory going to `consolidation` has decayed
+  past the bar and a recall will save it, while one going to `eviction` is still above the bar and is
+  being taken to make room — which a recall may not save, and which an operator fixes by raising the
+  capacity. Visible in `hippo callbacks queue --kind memories-at-risk` and in the console's callback
+  card. Item 28, open since the beginning, and item 102.1.
+- **The Obsidian plugin mirrors the vault's `[[wikilinks]]`.** It called memories, events and
+  summarisation candidates and never `/v1/memories/{id}/links`, so a synced vault became a set of
+  **isolated** memories. That is not a missing feature so much as a mismatch of premises: Obsidian's
+  entire model is wikilinks, and Hippocampus raises the effective significance of **both** ends of a
+  link — so a heavily-linked note is exactly the note the decay model should keep, and the plugin was
+  throwing away the one signal the vault had that the store most wanted.
+
+  A synced note's links now become links between the memories, on the manual command as well as the
+  automatic sync, and **Sync folder now** does it in two passes — store every note, then resolve
+  every note's links — because a vault always contains a link whose target is written later. Link
+  resolution is Obsidian's own, so shortest-path names, relative paths and folder notes behave as
+  they do in the editor, embeds count, and a wikilink inside a code fence does not. A link to a note
+  that does not exist yet is ignored silently, that being ordinary Obsidian rather than an error.
+
+  Deleting a wikilink **removes** the edge, or the graph would only ever grow and a note nothing
+  links to any more would stay propped up by edges describing a vault that no longer exists. The one
+  exception is an edge the note at the other end also declares: unlinking removes a pair in both
+  directions, so removing it would silently delete somebody else's link until that note happened to
+  be synced again.
+
+  On by default, costing one read per synced note and a write only when the links have changed; the
+  weight each edge carries is configurable and damped by the service, so raising it does far less
+  than it looks like it should. Item 100.2.
+
 ### Changed
 
 - **The `ollama.*` configuration block is now `llm.*`.** Key for key, with no change in meaning. It

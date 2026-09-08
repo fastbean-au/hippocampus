@@ -30,6 +30,7 @@ var enumFlagValues = map[string][]string{
 	"extremum":   {"highest", "lowest"},
 	"order-dir":  {"asc", "desc"},
 	"direction":  {"both", "outbound", "inbound"},
+	"kind":       {"memory-forgotten", "event-forgotten", "sleep-completed", "memories-at-risk"},
 
 	// The tri-state list filters. They are string flags rather than pflag bools precisely so
 	// "false" is expressible, so both values are worth offering.

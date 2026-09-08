@@ -1167,11 +1167,16 @@ message DeleteForgottenMemoriesResponse {
 }
 
 // CallbackKind is what a queued delivery is about.
+//
+// MEMORIES_AT_RISK is the only one that is not about something that has already happened: it is
+// raised at the top of a sleep cycle, from the same scan PreviewConsolidation runs, and describes
+// what the store is about to forget. It is off by default because it costs that scan per cycle.
 enum CallbackKind {
 	CALLBACK_KIND_UNSPECIFIED = 0;
 	CALLBACK_KIND_MEMORY_FORGOTTEN = 1;
 	CALLBACK_KIND_EVENT_FORGOTTEN = 2;
 	CALLBACK_KIND_SLEEP_COMPLETED = 3;
+	CALLBACK_KIND_MEMORIES_AT_RISK = 4;
 }
 
 // DeleteCause is why the records a delivery describes were deleted. The two decay causes are the

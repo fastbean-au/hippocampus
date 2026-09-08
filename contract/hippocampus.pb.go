@@ -359,6 +359,10 @@ func (ForgetRule) EnumDescriptor() ([]byte, []int) {
 }
 
 // CallbackKind is what a queued delivery is about.
+//
+// MEMORIES_AT_RISK is the only one that is not about something that has already happened: it is
+// raised at the top of a sleep cycle, from the same scan PreviewConsolidation runs, and describes
+// what the store is about to forget. It is off by default because it costs that scan per cycle.
 type CallbackKind int32
 
 const (
@@ -366,6 +370,7 @@ const (
 	CallbackKind_CALLBACK_KIND_MEMORY_FORGOTTEN CallbackKind = 1
 	CallbackKind_CALLBACK_KIND_EVENT_FORGOTTEN  CallbackKind = 2
 	CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED  CallbackKind = 3
+	CallbackKind_CALLBACK_KIND_MEMORIES_AT_RISK CallbackKind = 4
 )
 
 // Enum value maps for CallbackKind.
@@ -375,12 +380,14 @@ var (
 		1: "CALLBACK_KIND_MEMORY_FORGOTTEN",
 		2: "CALLBACK_KIND_EVENT_FORGOTTEN",
 		3: "CALLBACK_KIND_SLEEP_COMPLETED",
+		4: "CALLBACK_KIND_MEMORIES_AT_RISK",
 	}
 	CallbackKind_value = map[string]int32{
 		"CALLBACK_KIND_UNSPECIFIED":      0,
 		"CALLBACK_KIND_MEMORY_FORGOTTEN": 1,
 		"CALLBACK_KIND_EVENT_FORGOTTEN":  2,
 		"CALLBACK_KIND_SLEEP_COMPLETED":  3,
+		"CALLBACK_KIND_MEMORIES_AT_RISK": 4,
 	}
 )
 
@@ -7309,12 +7316,13 @@ const file_hippocampus_proto_rawDesc = "" +
 	"ForgetRule\x12\x1b\n" +
 	"\x17FORGET_RULE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19FORGET_RULE_CONSOLIDATION\x10\x01\x12\x18\n" +
-	"\x14FORGET_RULE_EVICTION\x10\x02*\x97\x01\n" +
+	"\x14FORGET_RULE_EVICTION\x10\x02*\xbb\x01\n" +
 	"\fCallbackKind\x12\x1d\n" +
 	"\x19CALLBACK_KIND_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eCALLBACK_KIND_MEMORY_FORGOTTEN\x10\x01\x12!\n" +
 	"\x1dCALLBACK_KIND_EVENT_FORGOTTEN\x10\x02\x12!\n" +
-	"\x1dCALLBACK_KIND_SLEEP_COMPLETED\x10\x03*\xeb\x01\n" +
+	"\x1dCALLBACK_KIND_SLEEP_COMPLETED\x10\x03\x12\"\n" +
+	"\x1eCALLBACK_KIND_MEMORIES_AT_RISK\x10\x04*\xeb\x01\n" +
 	"\vDeleteCause\x12\x1c\n" +
 	"\x18DELETE_CAUSE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aDELETE_CAUSE_CONSOLIDATION\x10\x01\x12\x19\n" +

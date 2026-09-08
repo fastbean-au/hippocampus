@@ -169,10 +169,13 @@
     "maxIdsPerDelivery": 500,
     "maxRows": 1000000,
     "maxAgeHours": 24,
+    "atRiskLimit": 1000,
+    "atRiskMargin": 0,
     "events": {
       "memoryForgotten": true,
       "eventForgotten": true,
-      "sleepCompleted": true
+      "sleepCompleted": true,
+      "memoriesAtRisk": false
     },
     "tls": {
       "enabled": false,

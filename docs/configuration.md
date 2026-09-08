@@ -2059,10 +2059,11 @@ request, not five hundred:
 }
 ```
 
-`kind` is one of `memory_forgotten`, `event_forgotten` or `sleep_completed`. `cause` is why:
-`consolidation` or `eviction` (the two decay paths), or — only with `allDeletions` — `client`,
-`clear`, `cascade`, `summary_replace` or `purge`. `cycle_id` groups every delivery one sleep cycle
-produced, including its completion, so a receiver can assemble a whole cycle without keeping state.
+`kind` is one of `memory_forgotten`, `event_forgotten`, `sleep_completed` or `memories_at_risk`.
+`cause` is why: `consolidation` or `eviction` (the two decay paths), or — only with `allDeletions` —
+`client`, `clear`, `cascade`, `summary_replace` or `purge`. `cycle_id` groups every delivery one sleep
+cycle produced, including its warning and its completion, so a receiver can assemble a whole cycle
+without keeping state.
 
 A `sleep_completed` delivery adds a `cycle` object (the trigger, the counts, the bytes freed, whether
 it succeeded) and carries the ids the cycle forgot, **chunked** at `maxIdsPerDelivery` with `chunk`
@@ -2070,6 +2071,75 @@ and `chunks` numbering them from 1 — a cycle that forgets ten thousand memorie
 unbounded request. Every chunk repeats the `cycle` summary, so a receiver that misses one still knows
 what the cycle did. An item whose `id` and `event_id` are the same names an event rather than a
 memory.
+
+#### Being told *before* a memory goes
+
+`memory_forgotten` arrives too late to act on: by the time a receiver reads it, the memory it might
+have wanted to summarise, archive elsewhere or recall is gone. `memories_at_risk` is the kind that
+speaks first. It is raised at the **top** of a sleep cycle, from the same scan `PreviewConsolidation`
+runs, and describes what the store is about to lose — the push counterpart to
+`GetSummarisationCandidates`, which does exactly this for events.
+
+```json
+{
+  "kind": "memories_at_risk",
+  "cause": "consolidation",
+  "queued_at": 1788476468760678000,
+  "cycle_id": 1788476468000000000,
+  "chunk": 1,
+  "chunks": 1,
+  "at_risk": {
+    "consolidating": 412,
+    "evicting": 0,
+    "events": 7,
+    "bytes": 918273,
+    "threshold": 0.31,
+    "at_risk_threshold": 0.3875,
+    "capacity_pressure": 1.03
+  },
+  "items": [
+    {
+      "id": "m-1",
+      "event_id": "e-1",
+      "group": "svc-a",
+      "significance": 3,
+      "bytes": 118,
+      "value": 0.12
+    }
+  ]
+}
+```
+
+It is **off by default** (`callbacks.events.memoriesAtRisk`), against the grain of the other three,
+and for one reason: it is the only kind that costs a scan rather than riding on work already being
+done. Turning it on runs a consolidation preview at the top of every cycle — a used-bytes reading, a
+memory count and a full pass over the memories table with a sort, which is roughly what the cycle
+itself pays.
+
+`callbacks.atRiskMargin` is what makes it **actionable rather than merely earlier**. At its default
+of 0 the warning covers exactly what the cycle now starting will take — which arrives while that
+cycle is taking it, and the queue drains asynchronously afterwards. A margin raises the bar the scan
+selects on, so the delivery also carries memories that are still *above* the threshold and
+approaching it: at `0.25` a receiver hears about everything within a quarter of the bar, which is a
+cycle or more of notice. The delivery reports **both** thresholds and each item its `value`, so the
+two populations are told apart by comparison rather than by guessing — an item under `threshold` is
+going now, one between `threshold` and `at_risk_threshold` is a warning with time left on it.
+
+Items are ordered **lowest value first**, so a list truncated at `callbacks.atRiskLimit` (1000, the
+preview's own cap) is still the memories closest to going; `at_risk.truncated` says when that
+happened. Deliveries are grouped by `cause` and chunked at `maxIdsPerDelivery` within each group, so
+a receiver reassembles on `(cycle_id, cause)`. The grouping is not cosmetic: a memory going to
+`consolidation` has decayed past the bar and a recall will save it, while one going to `eviction` is
+still above the bar and is being taken to make room — which a recall may not save, and which an
+operator fixes by raising the capacity.
+
+Two things it deliberately is not. It carries **no bodies**, whatever `includeBodies` says, because
+the scan behind it never reads one and does not need to — the memory is still there to fetch. And it
+is **not a veto**. Acting on it by recalling a memory races the pass that is about to delete it, and
+that race is already safe in your favour: the delete re-checks the recall clock inside its own
+transaction, so a recall landing mid-cycle protects its memory. That is a property worth knowing, not
+a guarantee — a receiver that was down misses the window entirely, and nothing waits for one. A cycle
+with nothing at risk sends nothing at all; the per-cycle heartbeat is `sleep_completed`.
 
 #### Which deletions speak
 
@@ -2160,30 +2230,33 @@ drains it.
 
 #### Every key
 
-| Key                                 | Default   | What it does                                                                               |
-| ----------------------------------- | --------- | ------------------------------------------------------------------------------------------ |
-| `callbacks.enabled`                 | `false`   | The feature switch. Off, nothing is queued and nothing is sent.                            |
-| `callbacks.url`                     | —         | The endpoint each delivery is POSTed to. Required when enabled; startup fails without it.  |
-| `callbacks.token`                   | `""`      | Sent as `Authorization: Bearer`. Secret.                                                   |
-| `callbacks.signingSecret`           | `""`      | Keys the HMAC signature header. Secret; use at least 32 random bytes.                      |
-| `callbacks.timeoutSeconds`          | `10`      | Bounds one delivery attempt.                                                               |
-| `callbacks.allDeletions`            | `false`   | Widen the feed from the two decay paths to every deletion.                                 |
-| `callbacks.includeBodies`           | `false`   | Carry each memory's body. Costs a body read per forgotten memory and space in the queue.   |
-| `callbacks.maxBodyBytes`            | `65536`   | Caps one carried body; over it the body is omitted and flagged. 0 removes the cap.         |
-| `callbacks.maxIdsPerDelivery`       | `500`     | Bounds one sleep-cycle chunk.                                                              |
-| `callbacks.events.memoryForgotten`  | `true`    | Record memory-deletion callbacks.                                                          |
-| `callbacks.events.eventForgotten`   | `true`    | Record event-deletion callbacks.                                                           |
-| `callbacks.events.sleepCompleted`   | `true`    | Record sleep-cycle completion callbacks.                                                   |
-| `callbacks.maxRows`                 | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound. |
-| `callbacks.maxAgeHours`             | `24`      | Queue age cap, applied alongside the row cap. 0 removes the bound.                         |
-| `callbacks.batchSize`               | `100`     | How many deliveries one dispatch pass claims.                                              |
-| `callbacks.retryBaseBackoffSeconds` | `1`       | First retry delay; doubles per attempt, jittered.                                          |
-| `callbacks.retryMaxBackoffSeconds`  | `300`     | Ceiling on that backoff.                                                                   |
-| `callbacks.tls.enabled`             | `false`   | Customise TLS for an `https://` receiver.                                                  |
-| `callbacks.tls.caCertFile`          | `""`      | PEM CA bundle trusted in place of the system pool.                                         |
-| `callbacks.tls.certFile`            | `""`      | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither.            |
-| `callbacks.tls.keyFile`             | `""`      | The matching key.                                                                          |
-| `callbacks.tls.insecureSkipVerify`  | `false`   | Dev-only: disables certificate verification.                                               |
+| Key                                 | Default   | What it does                                                                                 |
+| ----------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| `callbacks.enabled`                 | `false`   | The feature switch. Off, nothing is queued and nothing is sent.                              |
+| `callbacks.url`                     | —         | The endpoint each delivery is POSTed to. Required when enabled; startup fails without it.    |
+| `callbacks.token`                   | `""`      | Sent as `Authorization: Bearer`. Secret.                                                     |
+| `callbacks.signingSecret`           | `""`      | Keys the HMAC signature header. Secret; use at least 32 random bytes.                        |
+| `callbacks.timeoutSeconds`          | `10`      | Bounds one delivery attempt.                                                                 |
+| `callbacks.allDeletions`            | `false`   | Widen the feed from the two decay paths to every deletion.                                   |
+| `callbacks.includeBodies`           | `false`   | Carry each memory's body. Costs a body read per forgotten memory and space in the queue.     |
+| `callbacks.maxBodyBytes`            | `65536`   | Caps one carried body; over it the body is omitted and flagged. 0 removes the cap.           |
+| `callbacks.maxIdsPerDelivery`       | `500`     | Bounds one chunk of a cycle delivery, at-risk or completed.                                  |
+| `callbacks.events.memoryForgotten`  | `true`    | Record memory-deletion callbacks.                                                            |
+| `callbacks.events.eventForgotten`   | `true`    | Record event-deletion callbacks.                                                             |
+| `callbacks.events.sleepCompleted`   | `true`    | Record sleep-cycle completion callbacks.                                                     |
+| `callbacks.events.memoriesAtRisk`   | `false`   | Warn at the top of a cycle about what it is about to forget. Costs a preview scan per cycle. |
+| `callbacks.atRiskLimit`             | `1000`    | How many at-risk memories one cycle reports, lowest value first. Capped at 1000.             |
+| `callbacks.atRiskMargin`            | `0`       | Raises the threshold the at-risk scan selects on, so the warning arrives with notice on it.  |
+| `callbacks.maxRows`                 | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound.   |
+| `callbacks.maxAgeHours`             | `24`      | Queue age cap, applied alongside the row cap. 0 removes the bound.                           |
+| `callbacks.batchSize`               | `100`     | How many deliveries one dispatch pass claims.                                                |
+| `callbacks.retryBaseBackoffSeconds` | `1`       | First retry delay; doubles per attempt, jittered.                                            |
+| `callbacks.retryMaxBackoffSeconds`  | `300`     | Ceiling on that backoff.                                                                     |
+| `callbacks.tls.enabled`             | `false`   | Customise TLS for an `https://` receiver.                                                    |
+| `callbacks.tls.caCertFile`          | `""`      | PEM CA bundle trusted in place of the system pool.                                           |
+| `callbacks.tls.certFile`            | `""`      | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither.              |
+| `callbacks.tls.keyFile`             | `""`      | The matching key.                                                                            |
+| `callbacks.tls.insecureSkipVerify`  | `false`   | Dev-only: disables certificate verification.                                                 |
 
 ### Transfer and archive
 

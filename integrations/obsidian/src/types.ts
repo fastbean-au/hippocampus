@@ -33,6 +33,15 @@ export interface StoreResult {
   rejected: boolean;
 }
 
+// LinkEdge is one edge of the link graph, as GetMemoryLinks reports it. direction is an enum on the
+// wire ("OUTBOUND"/"INBOUND"); the client flattens it to a boolean, which is all the plugin needs -
+// whether this end declared the link.
+export interface LinkEdge {
+  id: string;
+  significance: number;
+  outbound: boolean;
+}
+
 export interface SummarisationCandidate {
   eventId: string;
   eventName: string;
@@ -65,6 +74,13 @@ export interface ListInput {
   orderBy?: string;
   limit?: number;
   offset?: number;
+}
+
+// LinkInput is one link to write: a target and the weight the edge carries. The weight is a plain
+// number rather than part of the significance registry, so it is never ranked against a memory's.
+export interface LinkInput {
+  id: string;
+  significance: number;
 }
 
 export interface StoreEventInput {
