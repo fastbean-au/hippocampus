@@ -41,6 +41,11 @@ func checkConfig(cfg checkConfigConfig) {
 		Defaulted:  cfg.ConfigMissing,
 		Driver:     cfg.Driver,
 		Problems:   problemStrings(configProblems()),
+		Deprecated: cfg.Deprecated,
+	}
+
+	if report.Deprecated == nil {
+		report.Deprecated = []string{}
 	}
 
 	report.Status = checkConfigStatusValid
@@ -73,6 +78,13 @@ type checkConfigConfig struct {
 	ConfigMissing bool
 	Driver        string
 
+	// Deprecated names the legacy configuration keys still in use, which the startup path resolved
+	// onto their replacements. They are reported separately from Problems and do not affect the
+	// exit status: the configuration is valid, and staying silent about it here would leave the
+	// pre-flight tool unable to answer the one question a deprecation raises - whether this
+	// deployment is affected - until the release that stops honouring them.
+	Deprecated []string
+
 	// JSON selects the machine-readable rendering.
 	JSON bool
 }
@@ -95,6 +107,7 @@ type checkConfigReport struct {
 	Defaulted  bool     `json:"defaulted"`
 	Driver     string   `json:"driver"`
 	Problems   []string `json:"problems"`
+	Deprecated []string `json:"deprecated"`
 }
 
 // problemStrings renders the problems for the report. Always a non-nil slice, so the JSON carries
@@ -122,6 +135,10 @@ func printCheckConfig(w io.Writer, report checkConfigReport) {
 	}
 
 	_, _ = fmt.Fprintf(w, "driver:  %s\n", report.Driver)
+
+	for _, key := range report.Deprecated {
+		_, _ = fmt.Fprintf(w, "warning: '%s' is deprecated and was read into its replacement\n", key)
+	}
 
 	if report.Status == checkConfigStatusValid {
 		_, _ = fmt.Fprintf(w, "status:  valid\n")

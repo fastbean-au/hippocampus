@@ -29,7 +29,11 @@ What each version number covers:
   instead. There is no mechanical gate for this the way `proto-breaking` gates the contract; the
   release pre-flight asks the question instead (see
   [RELEASE.md](RELEASE.md#local-pre-flight)), and `hippocampus --check-config` is how a deployment
-  can answer it for its own configuration before the upgrade rather than during it.
+  can answer it for its own configuration before the upgrade rather than during it. A key being
+  **renamed with the old name still read** is not a break while both work — the release that stops
+  honouring the old name is, and it is that release which lists it under **Breaking**.
+  `--check-config` reports the deprecated keys a configuration still uses, so the deployments a
+  future removal will affect can be found before it happens rather than after.
 - **The stored database.** Schema additions are migrated in place on startup, so a store written by
   an older version opens on a newer one. Downgrading is not supported, and since 0.39.0 that is
   enforced rather than merely stated: a store records its schema version, and a build that does not
@@ -269,7 +273,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   question the store exists to answer**: is this memory about to go, and how long has it got?
   `explain_consolidation` answers it per memory, in time to `recall_memories` on what matters. The
   inclusion follows the curated surface's existing rule rather than bending it — all four are
-  `reader` and none of them *enumerates*, which is exactly what still keeps `PreviewConsolidation`
+  `reader` and none of them _enumerates_, which is exactly what still keeps `PreviewConsolidation`
   off the bridge. And `whoami` was already being missed: `search_memories` offers `semantic` and
   `hybrid`, and without `search_modes` a model could only discover that a deployment serves neither
   by having a search rejected — which is what that field exists to prevent.
@@ -286,7 +290,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   cycle depending on how old the oldest one is, and a delivery on its ninth attempt is a receiver
   refusing rather than one that is slow.
 
-  It sits on the Deployment tab because it describes a *dependency* rather than the store's
+  It sits on the Deployment tab because it describes a _dependency_ rather than the store's
   contents, and it is gated on `callbacks_enabled` as well as `admin` — with no sink configured the
   RPC answers with an empty page rather than refusing, which reads exactly like a queue that is
   keeping up. Discarding deliveries is deliberately not offered: an abandoned delivery is a
@@ -344,7 +348,7 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   never sends it.
 
   It **composes with** the bearer-token authentication rather than replacing it. A certificate says
-  which *process* is connecting; a token says which client it is acting as and at what tier. Nothing
+  which _process_ is connecting; a token says which client it is acting as and at what tier. Nothing
   is derived from the certificate — no client id, no role, no group scope — because authorisation
   having a second source that silently outranked the first would be worse than having none.
 
@@ -353,6 +357,70 @@ Obsidian plugin has its own `obsidian-v*` tags and its own version line.
   any certificate any public CA has ever issued. And requiring a certificate covers the gateway's
   `/healthz` and `/readyz` too, since the handshake precedes the request — the service warns about
   it, and an orchestrator's probe needs a certificate or TLS terminated ahead of the listener.
+
+- **Generation and embedding against any OpenAI-compatible endpoint.** `summarise.Summariser` and
+  `embed.Embedder` were clean interfaces with one implementation each, and both were hardwired to
+  Ollama's _native_ API — `POST {address}/api/generate` and `POST {address}/api/embed`, neither
+  sending a credential, with no key for one in the configuration. The consequence was not "you must
+  run Ollama": it was that **a deployment that already had an LLM could not use it**. OpenAI, Azure
+  OpenAI, vLLM, llama.cpp's server, LiteLLM, OpenRouter, a Bedrock or Anthropic gateway, and any
+  corporate gateway fronting a model with a key and an audit trail were all out — so an organisation
+  with a sanctioned endpoint would have had to stand up a second, unsanctioned inference server
+  beside the memory store to use `SummariseMemories` or semantic search at all.
+
+  `llm.provider` and `llm.embedding.provider` now select the client: `ollama` (the default,
+  unchanged) or `openai`, which speaks `POST {address}/chat/completions` and
+  `POST {address}/embeddings` and covers every endpoint above — including Ollama, which serves `/v1`
+  as well. `llm.apiKey`/`llm.embedding.apiKey` are sent as a bearer token, injectable as
+  `HIPPOCAMPUS_LLM_APIKEY`/`HIPPOCAMPUS_LLM_EMBEDDING_APIKEY`, and are honoured by the `ollama`
+  provider too rather than ignored there — an Ollama behind an authenticating proxy is a real
+  deployment, and dropping the key would have presented as an unexplained 401.
+
+  The two halves stay independent: nothing requires the summariser and the embedder to share a
+  provider, an address or a key, and generating against a hosted model while embedding against a
+  local Ollama is both reasonable and much cheaper.
+
+  Four details worth knowing. `address` is taken **exactly as given** under the `openai` provider,
+  so it normally ends in the version path (`https://api.openai.com/v1`) — that is the `base_url`
+  convention every OpenAI SDK uses, and guessing a `/v1` here would break every gateway that mounts
+  the API elsewhere; startup **refuses** an `openai` provider still on the Ollama default address,
+  which would otherwise answer 404 to every call and read as a model server that is up and refusing.
+  The prompt bounds (`maxMemories`, `promptCharLimit`) and the embedding truncation are shared by
+  both clients rather than reimplemented per provider, because how much of the store leaves the
+  process is a property of the service and not of whichever client is configured. A zero
+  `temperature` is now **omitted** from the request rather than sent as `0`, which the models that
+  reject an explicit temperature require. And `llm.embedding.dimensions` is additionally _sent_ as
+  the API's optional `dimensions` parameter, which the Matryoshka-trained models honour by
+  truncating — so an index created at 768 can be matched without changing model, while a model that
+  ignores it returns its native width and the existing mismatch check catches it.
+
+  A rejected API key is reported as an outright failure naming the setting rather than as a degraded
+  dependency, in both the call path and the topology probe: it will fail every call, and it is the
+  single most likely thing to be wrong about a hosted endpoint. The probe is otherwise more
+  forgiving than the Ollama one — `/models` is the part of the OpenAI surface a compatible endpoint
+  is free not to implement, so a 404 there reports healthy rather than claiming a fault nobody can
+  fix.
+
+### Changed
+
+- **The `ollama.*` configuration block is now `llm.*`.** Key for key, with no change in meaning. It
+  was renamed because it had stopped being about Ollama: `ollama.address` naming an Azure endpoint
+  reads as a mistake, and an operator looking for how to point the service at their own gateway would
+  not have thought to look under it.
+
+  **The old names still work.** Each is copied onto its replacement at startup, so an existing
+  `config.json` needs no edit; an explicit `llm.*` value always wins over the legacy one, so the two
+  can be set together while a deployment migrates. Using any of them logs one `WARN` naming every
+  legacy key still in force, and `hippocampus --check-config` reports them in a new `deprecated`
+  field (which does **not** affect its exit status — the configuration is valid). They are
+  deprecated and will be removed in a later release.
+
+  The affected keys are `enabled`, `address`, `model`, `timeoutSeconds`, `maxMemories`,
+  `promptCharLimit`, `systemPrompt`, `temperature`, `autoSummarise`, and the whole `embedding.*`
+  sub-block — `ollama.embedding.model` becomes `llm.embedding.model`, and so on.
+
+  The deployment topology view names the configured provider rather than always saying "Ollama", and
+  carries it as a new `provider` attribute on both model-server nodes.
 
 ### Fixed
 

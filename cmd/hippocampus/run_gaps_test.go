@@ -19,7 +19,7 @@ import (
 // improve.
 func TestRun_EmbeddingWithoutOpenSearchIsRefused(t *testing.T) {
 	baseRunConfig(t)
-	viper.Set("ollama.embedding.enabled", true)
+	viper.Set("llm.embedding.enabled", true)
 	viper.Set("opensearch.enabled", false)
 
 	err := run(context.Background(), versionInfo{})
@@ -39,9 +39,9 @@ func TestRun_EmbeddingInitErrorIsReported(t *testing.T) {
 	baseRunConfig(t)
 	viper.Set("opensearch.enabled", true)
 	viper.Set("opensearch.addresses", []string{"http://127.0.0.1:1"})
-	viper.Set("ollama.embedding.enabled", true)
-	viper.Set("ollama.embedding.address", "http://127.0.0.1:1")
-	viper.Set("ollama.embedding.model", "")
+	viper.Set("llm.embedding.enabled", true)
+	viper.Set("llm.embedding.address", "http://127.0.0.1:1")
+	viper.Set("llm.embedding.model", "")
 
 	err := run(context.Background(), versionInfo{})
 	if err == nil {
@@ -60,11 +60,11 @@ func TestRun_EmbeddingEnabledSucceeds(t *testing.T) {
 	_, gwBase := baseRunConfig(t)
 	viper.Set("opensearch.enabled", true)
 	viper.Set("opensearch.addresses", []string{"http://127.0.0.1:1"})
-	viper.Set("ollama.embedding.enabled", true)
-	viper.Set("ollama.embedding.address", "http://127.0.0.1:1")
-	viper.Set("ollama.embedding.model", "nomic-embed-text")
-	viper.Set("ollama.embedding.timeoutSeconds", 5)
-	viper.Set("ollama.embedding.dimensions", 8)
+	viper.Set("llm.embedding.enabled", true)
+	viper.Set("llm.embedding.address", "http://127.0.0.1:1")
+	viper.Set("llm.embedding.model", "nomic-embed-text")
+	viper.Set("llm.embedding.timeoutSeconds", 5)
+	viper.Set("llm.embedding.dimensions", 8)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

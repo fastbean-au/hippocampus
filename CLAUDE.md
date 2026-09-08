@@ -202,9 +202,9 @@ reinforces it: the decay clock resets and each recall raises its effective signi
 cycle can also identify events worth condensing into a single **summary** memory
 (`GetSummarisationCandidates`); by default the service has no visibility into memory content, so a
 client performs the actual replacement (`ReplaceMemoriesWithSummary`). An optional embedded LLM
-(Ollama, `ollama.enabled`, off by default — the `summarise` package) lets the service author the
+(`llm.enabled`, off by default — the `summarise` package) lets the service author the
 summary itself: the `SummariseMemories` RPC generates and replaces in one call, and
-`ollama.autoSummarise` does it automatically for the scan's candidates during sleep. Every RPC is
+`llm.autoSummarise` does it automatically for the scan's candidates during sleep. Every RPC is
 also reachable as a
 JSON/HTTP endpoint under `/v1` via an in-process grpc-gateway (`gateway.port`, 0 disables). Both
 transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`idp`) and TLS
@@ -908,7 +908,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
     and does real ANN, but the vectors would have to live in the primary store, which reverses item
     56's capacity decision — a separate argument, not part of the keyword work. The two halves are independent and
     neither implies the other: the `embed` package produces vectors, OpenSearch's k-NN index stores
-    and searches them; `main.go` **fails startup** if `ollama.embedding.enabled` is set without
+    and searches them; `main.go` **fails startup** if `llm.embedding.enabled` is set without
     `opensearch.enabled`. `search.Query` carries either `Text` or `Vector` (the RPC layer embeds the
     query and passes it down, so `search/` never learns about an embedder), and `search.Doc` carries
     the vector. Vectors live **only in the index, never the primary store** — ~3 KiB per memory
@@ -921,7 +921,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
     is why that sweep now re-embeds and is much more expensive); `index.knn` is a **static** setting,
     so an index predating semantic search cannot gain the field in place (`checkVectorField` detects
     it at startup and names `--backfill-search --reindex` as the fix); and the k-NN dimension is
-    fixed at index creation, so `ollama.embedding.dimensions` is validated in `embed/ollama.go`
+    fixed at index creation, so `llm.embedding.dimensions` is validated in `embed/ollama.go`
     against what the model actually returns. `WhoAmI` reports `search_modes` so clients feature-detect
     rather than probe-and-fail.
   - The OpenSearch backend (`opensearch.enabled`, off by default) is unchanged by any of the above.
@@ -985,7 +985,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
     `Preserve` a no-op — so it never writes DDL or checkpoints the database the service owns),
     Postgres/MySQL via `db.NewPostgresReadOnly`/`NewMySQLReadOnly` (skipping the instance lock). Integration tests skip unless `HIPPOCAMPUS_TEST_OPENSEARCH_URL` is set;
     `deploy/compose/docker-compose.opensearch.yaml` runs the full stack.
-- `summarise/` — the optional embedded-LLM summariser (`ollama.enabled`, off by default;
+- `summarise/` — the optional embedded-LLM summariser (`llm.enabled`, off by default;
   `summarise.Summariser` interface with a no-op and an `Ollama` implementation). The `Ollama`
   impl is a small hand-rolled HTTP client to Ollama's `POST /api/generate` (`stream:false`, no new
   module dependency), bounding the prompt by body count and total characters and never sending
@@ -993,9 +993,25 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   `hippocampus.Server` via the `summarise.Summariser` field (nil-safe through `summariser()`, like
   `searchIdx()`): the `SummariseMemories` RPC reads an event's memories, generates a summary, and
   replaces them through the same `insertSummary` path `ReplaceMemoriesWithSummary` uses; the sleep
-  cycle's `autoSummariseCandidates` (gated on `ollama.autoSummarise`, off by default) does the same
+  cycle's `autoSummariseCandidates` (gated on `llm.autoSummarise`, off by default) does the same
   for the scan's candidates, best-effort. All viper reads stay in main.go, which builds the no-op or
-  `Ollama` from the `ollama.*` keys. An optional `ollama` compose profile ships it alongside the
+  `Ollama` or `OpenAI` from the `llm.*` keys. **Both packages carry two clients** since item 97: the
+  native Ollama API, and an `openai` one speaking `POST {base}/chat/completions` /
+  `POST {base}/embeddings`, which covers OpenAI, Azure, vLLM, llama.cpp, LiteLLM, OpenRouter, a
+  corporate gateway - and Ollama's own `/v1`. Four things carry that. `llm.provider` and
+  `llm.embedding.provider` are **independent**, because nothing requires the two halves to share an
+  endpoint. The prompt bounding (`summarise.buildPrompt`) and the embedding truncation
+  (`embed.truncate`) are **package functions rather than methods**, so how much of the store leaves
+  the process cannot become a per-provider accident. `address` is taken **exactly as given** under
+  `openai` (so it normally ends in `/v1`, the `base_url` convention every SDK uses), and
+  `configProblems` refuses an `openai` provider still on the Ollama default, which would 404 every
+  call and read as a server that is up and refusing. And the OpenAI embedder **places vectors by the
+  response's `index`**, not by arrival order - that API does not promise order, and appending would
+  mis-assign every vector in a batch silently. The `ollama.*` keys are a deprecated alias block
+  resolved by `resolveLLMAliases` in `main.go` **before `setStartupDefaults`** (viper's `IsSet`
+  answers true for a defaulted key, so afterwards there is no way left to ask whether an operator
+  set one), reported by `--check-config`'s `deprecated` field and held by
+  `TestLLMAliasesCoverEveryKey`. An optional `ollama` compose profile ships it alongside the
   service. Deliberately off the MCP tool surface (it deletes memories, like the omitted
   `ReplaceMemoriesWithSummary`).
 - `archive/` — the export/import wire format and object storage:

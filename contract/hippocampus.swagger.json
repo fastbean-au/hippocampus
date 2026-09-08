@@ -455,7 +455,7 @@
     },
     "/v1/events/{eventId}/summarise": {
       "post": {
-        "summary": "SummariseMemories condenses an event's memories into a single summary using the optional\nembedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary\ndoes - so the service generates the summary the caller would otherwise have to supply. Fails\nwith FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.",
+        "summary": "SummariseMemories condenses an event's memories into a single summary using the optional\nembedded LLM (llm.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary\ndoes - so the service generates the summary the caller would otherwise have to supply. Fails\nwith FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.",
         "operationId": "Hippocampus_SummariseMemories",
         "responses": {
           "200": {
@@ -1943,7 +1943,7 @@
           "title": "optional: rank the summary relative to existing values (see SignificancePlacement); takes precedence over significance when set"
         }
       },
-      "description": "SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the\nembedded LLM (ollama.enabled) and replace them with it in one transaction, like\nReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are\nexcluded from the LLM prompt (their bodies are opaque, not text)."
+      "description": "SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the\nembedded LLM (llm.enabled) and replace them with it in one transaction, like\nReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are\nexcluded from the LLM prompt (their bodies are opaque, not text)."
     },
     "HippocampusUnlinkEventsBody": {
       "type": "object",
@@ -3830,7 +3830,7 @@
         },
         "summariserEnabled": {
           "type": "boolean",
-          "description": "summariser_enabled reports whether this deployment has the embedded LLM configured\n(ollama.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as\nsearch_modes and with the same properties: it is a property of the deployment rather than the\ncaller, so a client can offer service-authored summarisation only where it exists instead of\ndiscovering its absence through a FAILED_PRECONDITION. It says nothing about\nReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary."
+          "description": "summariser_enabled reports whether this deployment has the embedded LLM configured\n(llm.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as\nsearch_modes and with the same properties: it is a property of the deployment rather than the\ncaller, so a client can offer service-authored summarisation only where it exists instead of\ndiscovering its absence through a FAILED_PRECONDITION. It says nothing about\nReplaceMemoriesWithSummary, which needs no summariser - the caller writes that summary."
         },
         "consolidationEnabled": {
           "type": "boolean",

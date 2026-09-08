@@ -23,6 +23,14 @@ The frequency is set by `sleep.periodSeconds`. Setting it to `0` (or any non-pos
 
 ## Percentile
 
+A memory with no event still needs an event significance to be valued, so one is supplied. Two keys
+decide it, and the second overrides the first:
+
+| Key                                                | Default | Meaning                                                                                                                                                     |
+| -------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `consolidation.defaultEventSignificanceValue`      | `0`     | A fixed significance standing in for the event an event-less memory does not have.                                                                          |
+| `consolidation.defaultEventSignificancePercentile` | `0`     | When non-zero (0–100), the value is instead recomputed each sleep cycle as this percentile of the existing event significances, overriding the fixed value. |
+
 The percentile should not be used initially as it requires there to be a collection of events to calculate a value, and, a larger number of events for that value to be meaningful. This value will be calculated at the beginning of every sleep cycle, and may be different every time a sleep cycle is run. While the store has no events the percentile cannot be calculated and the sleep cycle retains the current value (the configured fixed value, or the last successfully calculated percentile).
 
 ## Consolidation algorithms
@@ -703,29 +711,37 @@ default; when disabled the service behaves exactly as above.
   client can offer it only where it will serve rather than discovering its absence through a
   `FAILED_PRECONDITION` — which is how the console decides whether to show its **Summarise with the
   LLM** button.
-- **Automatic summarisation during sleep** (`ollama.autoSummarise`, off by default) makes the sleep
+- **Automatic summarisation during sleep** (`llm.autoSummarise`, off by default) makes the sleep
   cycle summarise the candidates the scan just identified, instead of only surfacing them for a
   client. It is best-effort: a per-event failure (unreachable model, an event that changed since
   the scan) is logged and skipped without failing the cycle, and a summarised event is dropped from
-  the candidate list. It has effect only when both a summariser is configured (`ollama.enabled`)
+  the candidate list. It has effect only when both a summariser is configured (`llm.enabled`)
   and the candidate scan is enabled (`consolidation.summarisationMinMemories > 0`). It is off by
   default so enabling the LLM does not silently start rewriting stored memories — turn it on
   deliberately.
 
-Configuration (`ollama.*`):
+Configuration (`llm.*` — renamed from `ollama.*` in v0.42.0, which is still read; see
+[Model providers](configuration.md#model-providers)):
 
-| Key                      | Default                  | Meaning                                                                                                                          |
-| ------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `ollama.enabled`         | `false`                  | Enable the embedded summariser. When false, `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. |
-| `ollama.address`         | `http://localhost:11434` | Base URL of the Ollama server.                                                                                                   |
-| `ollama.model`           | `llama3.2`               | Ollama model tag used for generation.                                                                                            |
-| `ollama.autoSummarise`   | `false`                  | Summarise scan candidates automatically during the sleep cycle.                                                                  |
-| `ollama.timeoutSeconds`  | `120`                    | Per-call timeout for one summarisation request.                                                                                  |
-| `ollama.maxMemories`     | `200`                    | Cap on how many memory bodies go into one prompt.                                                                                |
-| `ollama.promptCharLimit` | `32000`                  | Cap on the total characters of memory bodies in one prompt.                                                                      |
-| `ollama.systemPrompt`    | built-in                 | Override the instruction sent to the model.                                                                                      |
-| `ollama.temperature`     | model default            | Sampling temperature; a low value keeps summaries faithful.                                                                      |
+| Key                   | Default                  | Meaning                                                                                                                          |
+| --------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `llm.enabled`         | `false`                  | Enable the embedded summariser. When false, `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. |
+| `llm.provider`        | `ollama`                 | `ollama` (native `/api/generate`) or `openai` (any OpenAI chat-completions endpoint).                                            |
+| `llm.address`         | `http://localhost:11434` | Base URL of the model server. Under `openai` it normally ends in `/v1` and is taken exactly as given.                            |
+| `llm.apiKey`          | none                     | Bearer token, sent by both providers when set. Injectable as `HIPPOCAMPUS_LLM_APIKEY`.                                           |
+| `llm.model`           | `llama3.2`               | Model tag or id used for generation.                                                                                             |
+| `llm.autoSummarise`   | `false`                  | Summarise scan candidates automatically during the sleep cycle.                                                                  |
+| `llm.timeoutSeconds`  | `120`                    | Per-call timeout for one summarisation request.                                                                                  |
+| `llm.maxMemories`     | `200`                    | Cap on how many memory bodies go into one prompt.                                                                                |
+| `llm.promptCharLimit` | `32000`                  | Cap on the total characters of memory bodies in one prompt.                                                                      |
+| `llm.systemPrompt`    | built-in                 | Override the instruction sent to the model.                                                                                      |
+| `llm.temperature`     | model default            | Sampling temperature; a low value keeps summaries faithful. Zero omits the parameter entirely.                                   |
+
+The last four bound and shape the prompt, and they apply to **both** providers: how much of the
+store leaves the process is a property of the service rather than of whichever client is configured.
 
 Deploy Ollama alongside the service with the optional `ollama` compose profile (see the comments
 in `docker-compose.yaml`); it must have the configured model pulled
-(`docker compose exec ollama ollama pull <model>`).
+(`docker compose exec ollama ollama pull <model>`). To use a model endpoint you already have
+instead, set `llm.provider` to `openai` — see
+[Model providers](configuration.md#model-providers).

@@ -188,7 +188,7 @@ at `/v1/openapi.json`. Set it to `false` to serve nothing at that path; a client
 **It is served without a token, even when authentication is on.** That is deliberate, and it
 reverses earlier behaviour. The document is generated from a proto published with the source, so
 requiring a token to read it protected a file anybody can fetch from the repository — while breaking
-every standard OpenAPI tool, none of which can authenticate the *initial* spec fetch. Schema
+every standard OpenAPI tool, none of which can authenticate the _initial_ spec fetch. Schema
 confidentiality was never the property being defended; if you want nothing served there, the honest
 request is the key above rather than an authentication check that stops only well-behaved clients.
 
@@ -363,14 +363,14 @@ scan, and is best combined with a time range or a page size.
 
 `GetMemories` also filters on the columns the store already maintained but never exposed:
 
-| Parameter                                 | Meaning                                                                      |
-| ----------------------------------------- | ---------------------------------------------------------------------------- |
-| `recalled`                                | `FALSE` for memories never recalled, `TRUE` for those recalled at least once |
-| `recall_count_min` / `recall_count_max`   | inclusive bounds on the recall count; `0` means no bound                     |
-| `time_recalled_min` / `time_recalled_max` | inclusive UnixNano bounds on the last recall                                 |
-| `is_summary`                              | `TRUE` for summary memories only, `FALSE` to exclude them                    |
-| `is_binary`                               | `TRUE` for binary memories only, `FALSE` to exclude them                     |
-| `event_id`                                | restrict to one event's memories; empty means no restriction                 |
+| Parameter                                 | Meaning                                                                       |
+| ----------------------------------------- | ----------------------------------------------------------------------------- |
+| `recalled`                                | `FALSE` for memories never recalled, `TRUE` for those recalled at least once  |
+| `recall_count_min` / `recall_count_max`   | inclusive bounds on the recall count; `0` means no bound                      |
+| `time_recalled_min` / `time_recalled_max` | inclusive UnixNano bounds on the last recall                                  |
+| `is_summary`                              | `TRUE` for summary memories only, `FALSE` to exclude them                     |
+| `is_binary`                               | `TRUE` for binary memories only, `FALSE` to exclude them                      |
+| `event_id`                                | restrict to one event's memories; empty means no restriction                  |
 | `has_event`                               | `FALSE` for memories belonging to no event, `TRUE` for those belonging to one |
 
 `event_id` is the **paged** way to read an event's memories. `GetEventById` with `memories: true`
@@ -401,13 +401,13 @@ never recalled would be a trap rather than a filter.
 
 `GetEvents` carries the same shape of filter for the questions events raise:
 
-| Parameter                             | Meaning                                                                                   |
-| ------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `ended`                               | `FALSE` for events that have not ended, `TRUE` for those that have                        |
-| `time_end_min` / `time_end_max`       | inclusive UnixNano bounds on the end time; both ask only about events that **have** ended |
-| `name_contains`                       | restrict to events whose name contains this substring, case-insensitively                 |
-| `linked_to`                           | restrict to the events one hop from this event id, in either direction                    |
-| `links`                               | when true, populate each returned event's outbound links                                  |
+| Parameter                       | Meaning                                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `ended`                         | `FALSE` for events that have not ended, `TRUE` for those that have                        |
+| `time_end_min` / `time_end_max` | inclusive UnixNano bounds on the end time; both ask only about events that **have** ended |
+| `name_contains`                 | restrict to events whose name contains this substring, case-insensitively                 |
+| `linked_to`                     | restrict to the events one hop from this event id, in either direction                    |
+| `links`                         | when true, populate each returned event's outbound links                                  |
 
 `ended` is the tri-state `Bool`, for the reason `recalled` is one on the memory side: an event that
 has not ended stores `time_end` of `0`, which is also every numeric bound's "no bound" value, so one
@@ -508,17 +508,17 @@ the unauthenticated surface without making the API any less discoverable.
 `order_dir` (`SORT_DIRECTION_ASC`/`SORT_DIRECTION_DESC`) reversing it. Both default to
 `timestamp`, descending — most recent first, and the one ordering an index can serve (see below).
 
-| `order_by`          | `GetMemories`                | `GetEvents`             | Natural direction |
-| ------------------- | ---------------------------- | ----------------------- | ----------------- |
-| `significance`      | yes                          | yes                     | descending        |
+| `order_by`          | `GetMemories`                           | `GetEvents`                            | Natural direction |
+| ------------------- | --------------------------------------- | -------------------------------------- | ----------------- |
+| `significance`      | yes                                     | yes                                    | descending        |
 | `timestamp`         | the memory's `time_stamp` (the default) | the event's `time_start` (the default) | descending        |
-| `time_recalled`     | yes                          | —                       | descending        |
-| `recall_count`      | yes                          | —                       | descending        |
-| `time_end`          | —                            | yes                     | descending        |
-| `name`              | —                            | yes                     | ascending         |
-| `link_significance` | yes                          | yes                     | descending        |
-| `group`             | yes                          | yes                     | ascending         |
-| `id`                | yes                          | yes                     | ascending         |
+| `time_recalled`     | yes                                     | —                                      | descending        |
+| `recall_count`      | yes                                     | —                                      | descending        |
+| `time_end`          | —                                       | yes                                    | descending        |
+| `name`              | —                                       | yes                                    | ascending         |
+| `link_significance` | yes                                     | yes                                    | descending        |
+| `group`             | yes                                     | yes                                    | ascending         |
+| `id`                | yes                                     | yes                                    | ascending         |
 
 An omitted `order_dir` means each field's **natural** direction rather than ascending: the magnitude
 and time fields read most-significant/most-recent first, which is what a listing is nearly always
@@ -702,7 +702,7 @@ caller being throttled is by definition the most recent, so it is never the one 
 A **request** is the unit, not a record: one `StoreMemories` or `ImportBatch` call spends one token
 however many memories it carries. That is deliberate — the limiter exists to bound request rate and
 concurrency, and the size of a call is already bounded by `maxRecvMsgBytes` and, for the batch
-write, by its 500-memory cap. A deployment that needs to bound ingest *volume* wants
+write, by its 500-memory cap. A deployment that needs to bound ingest _volume_ wants
 `consolidation.capacityBytes` and the decay cycle, which is what actually decides how much this
 store keeps.
 
@@ -782,7 +782,7 @@ it. A sparse diagram means nothing has been declared, not that nothing is runnin
 **Peers on a shared store are discovered, not declared** (`postgres`/`mysql` only). Every instance
 writes one row into an `instances` table every `heartbeatSeconds` (default 30, `0` disables both
 halves) saying who it is, what it is running, and whether it consolidates; the same statement prunes
-rows nobody has refreshed for four of *their own* intervals. Every instance reads that table, so a
+rows nobody has refreshed for four of _their own_ intervals. Every instance reads that table, so a
 [horizontally scaled](operations.md#horizontal-scaling-with-replicas) deployment can finally name its own peers — with each
 peer's version, its capability flags (search index, summariser, embedder, gateway), and how long
 ago it last checked in. A peer's id is `hostname:port` and therefore deterministic, so a restart
@@ -797,7 +797,7 @@ response (shown above the diagram in the console, and above the listing in `hipp
 - **No instance is consolidating.** Every instance came up with `consolidation.enabled: false`, so
   nothing is forgetting, evicting or summarising and the store simply grows — while each instance
   individually reports itself perfectly healthy, because it is. There is no component to show as
-  red here: the fault *is* the absent one. It is held back for the first minute of an instance's
+  red here: the fault _is_ the absent one. It is held back for the first minute of an instance's
   life, since a replica routinely starts before the consolidator during a rolling deployment.
 - **More than one instance is consolidating.** The single-consolidator lock has been circumvented,
   or two tiers are pointed at different databases and each believes it is alone. The duplicates are
@@ -834,7 +834,7 @@ registration, and removing the entry removes it entirely.
 each component presenting a verified token is added to the response under the `client_id` it
 authenticated with, sourced `observed`. There is nothing to set: it is on wherever the view and
 authentication both are. It reports the roles the token carried, whether it is group-scoped (never
-*which* groups — the view is reader-visible by default, and a group name is frequently a customer's),
+_which_ groups — the view is reader-visible by default, and a group name is frequently a customer's),
 how many calls it has made and when it last made one.
 
 Four limits are deliberate, and each is the reason this source is listed last:
@@ -878,7 +878,7 @@ instance on a timer, using the same credentials and TLS trust options a real tra
 
 **Components that are switched off are included**, with a status of "not configured" and an
 attribute naming the key that enables them. That is what answers "why is semantic search returning
-nothing" — a greyed-out embedder reading `enable_with: ollama.embedding.enabled` — and nothing
+nothing" — a greyed-out embedder reading `enable_with: llm.embedding.enabled` — and nothing
 else
 the service says answers it. The console hides them behind a toggle; `hippo topology --all` shows
 them.
@@ -1089,11 +1089,11 @@ When authentication is enabled, each RPC also requires a minimum **role tier**, 
 token's `roles` claim. The tiers nest — `reader` ⊂ `writer` ⊂ `admin` — so a higher tier can do
 everything a lower one can:
 
-| Tier     | May call                                                                                                                                                                                                                                     |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `GetSignificanceLevels`, `WhoAmI`, `GetTopology`¹ |
+| Tier     | May call                                                                                                                                                                                                                                                                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `GetSignificanceLevels`, `WhoAmI`, `GetTopology`¹                                                                 |
 | `writer` | everything `reader` can, plus `StoreEvent`, `UpdateEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `StoreMemories`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                    |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                                                                                                                  |
 
 The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and
 `GetForgottenMemories` — are all `reader`, while the dry run beside them is `admin`. What separates
@@ -1236,7 +1236,7 @@ hippocampus --mint-token --client-id sales-agent --role writer --group sales --t
 change, no migration, and a token with no `groups` claim behaves exactly as every token did before.
 
 **An empty scope means the whole store.** That is the single most important thing to know about it —
-an unscoped token is the *most* privileged shape a token has, not the least. `auth.requireGroupScope`
+an unscoped token is the _most_ privileged shape a token has, not the least. `auth.requireGroupScope`
 turns the absence of a scope into a rejection, which is worth setting once a store is partitioned: an
 identity provider misconfigured to stop emitting the claim would otherwise hand every caller
 everything, and every request would succeed while doing it. Under `idp`, set `auth.groupsClaim` too
@@ -1245,16 +1245,16 @@ exactly as `auth.roleClaim` does).
 
 What changes for a scoped caller:
 
-| Behaviour             | Effect                                                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------- |
+| Behaviour             | Effect                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Listing and searching | Narrowed to the scope, including `total_count`. Filtering by a group outside it returns an empty page, not an error. |
-| Reads/writes by id    | A record outside the scope reports `NotFound` — never `PermissionDenied`, which would confirm it exists. |
+| Reads/writes by id    | A record outside the scope reports `NotFound` — never `PermissionDenied`, which would confirm it exists.             |
 | Writes                | Stamped with the caller's group. A token holding several groups must name one; a token holding one has it filled in. |
-| Moving a record       | A write may re-file within the scope but cannot push a record out of it (`clear_group` is refused). |
-| Links                 | Both ends must be in scope. Edges reaching outside are dropped from responses rather than refused. |
-| Export/Transfer/Clear | Walk only the caller's partition — which is also a useful per-group export.                    |
-| Forgotten log         | Filtered by the scope, so a bound caller reads and clears only its own partition's losses.     |
-| Purge/Sleep/Preview   | Refused. All three act on the whole store; see below.                                          |
+| Moving a record       | A write may re-file within the scope but cannot push a record out of it (`clear_group` is refused).                  |
+| Links                 | Both ends must be in scope. Edges reaching outside are dropped from responses rather than refused.                   |
+| Export/Transfer/Clear | Walk only the caller's partition — which is also a useful per-group export.                                          |
+| Forgotten log         | Filtered by the scope, so a bound caller reads and clears only its own partition's losses.                           |
+| Purge/Sleep/Preview   | Refused. All three act on the whole store; see below.                                                                |
 
 `WhoAmI` reports `groups` and `group_scoped`, so a client can adapt — read `group_scoped`, never
 `len(groups)`, since an empty list means unscoped rather than scoped to nothing. The embedded console
@@ -1321,7 +1321,7 @@ what every release before this one did) and neither listener asks for a client c
 a client that offers one simply never sends it, and the handshake succeeds either way, which is the
 failure mode this closes.
 
-- `tls.clientCaFile` — the CA bundle. With it set, a client certificate that *is* offered must
+- `tls.clientCaFile` — the CA bundle. With it set, a client certificate that _is_ offered must
   verify against this bundle or the connection is refused. A client that offers none is still
   admitted, so the key is safe to turn on before every client has been issued a certificate.
 - `tls.requireClientCert` — additionally refuse a connection that offers no certificate. It requires
@@ -1330,7 +1330,7 @@ failure mode this closes.
   startup rather than accepting it.
 
 Mutual TLS **composes with** the bearer-token authentication rather than replacing it, and the two
-answer different questions: a certificate says which *process* is connecting, a token says which
+answer different questions: a certificate says which _process_ is connecting, a token says which
 client it is acting as and at what tier. Nothing is derived from the certificate — no client id, no
 role, no group scope — so [Authentication](#authentication) remains the single source of a caller's
 authorisation.
@@ -1516,10 +1516,12 @@ part of the keyword work. Semantic search is therefore an OpenSearch capability 
 driver.
 
 ```json
-"ollama": {
+"llm": {
     "embedding": {
         "enabled": false,
+        "provider": "ollama",
         "address": "http://localhost:11434",
+        "apiKey": "",
         "model": "nomic-embed-text",
         "dimensions": 768,
         "timeoutSeconds": 30,
@@ -1528,18 +1530,35 @@ driver.
 }
 ```
 
-- `ollama.embedding.enabled` — off by default. Startup **fails** if this is on without
+- `llm.embedding.enabled` — off by default. Startup **fails** if this is on without
   `opensearch.enabled`: the vectors would have nowhere to go, so every write would pay for an
   embedding nothing could ever search.
-- `ollama.embedding.model` — must be an embedding model, not a generation model. It may share a
-  server with the [summariser](#summarisation-embedded-llm--ollama).
-- `ollama.embedding.dimensions` — must match the model (`nomic-embed-text` 768, `all-minilm` 384,
-  `mxbai-embed-large` 1024). A mismatch is rejected with both numbers named.
-- `ollama.embedding.maxTextBytes` — how much of a body is embedded, defaulted rather than unbounded
+- `llm.embedding.provider` — `ollama` (the default, Ollama's native `/api/embed`) or `openai` (any
+  endpoint speaking the OpenAI embeddings API). It is **separate from `llm.provider`**: nothing
+  requires the two halves to share an endpoint, and generating against a hosted model while
+  embedding against a local Ollama is both reasonable and much cheaper. See
+  [Model providers](#model-providers).
+- `llm.embedding.address` — the base URL. Under the `openai` provider it is taken exactly as given
+  and normally ends in the version path (`https://api.openai.com/v1`); startup refuses an `openai`
+  provider still pointing at the Ollama default.
+- `llm.embedding.apiKey` — sent as a bearer token when set. Injectable as
+  `HIPPOCAMPUS_LLM_EMBEDDING_APIKEY`, and it should be: see [Environment variable overrides](#environment-variable-overrides).
+- `llm.embedding.model` — must be an embedding model, not a generation model. It may share a
+  server with the [summariser](#summarisation-embedded-llm).
+- `llm.embedding.dimensions` — must match the model (`nomic-embed-text` 768, `all-minilm` 384,
+  `mxbai-embed-large` 1024, `text-embedding-3-small` 1536). A mismatch is rejected with both numbers
+  named. Under the `openai` provider it is also **sent** as the API's optional `dimensions`
+  parameter, which the Matryoshka-trained models honour by truncating their output — so an index
+  created at 768 can be matched without changing model. A model that ignores the parameter returns
+  its native width and the mismatch check catches it.
+- `llm.embedding.maxTextBytes` — how much of a body is embedded, defaulted rather than unbounded
   because an embedding model has a context window and a long body would otherwise be refused by it.
   A longer body is truncated on a rune boundary, so **only its opening is searchable by meaning**
   while all of it stays searchable by keyword. Raise it for a store of long documents, within
   whatever the model accepts.
+- `llm.embedding.timeoutSeconds` / `llm.embedding.batchSize` — bound one call and how many texts go
+  in it. Batching matters for `--backfill-search`, where one request per memory would be dominated
+  by round trips.
 
 Choose a mode per search with `SearchMemories`' `mode` field — `keyword` (the default, so existing
 callers are unchanged), `semantic`, or `hybrid`. **`WhoAmI` reports which modes the deployment can
@@ -1621,11 +1640,11 @@ the OpenSearch backend's, so moving between the two changes scale, not results.
 It is one feature with three implementations, and the differences are worth knowing before choosing
 a driver:
 
-| Driver     | Index                               | Second copy of the body? | Notes                                                                                                     |
+| Driver | Index | Second copy of the body? | Notes |
 | ---------- | ----------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- -|
-| `sqlite`   | FTS5 virtual table, contentless     | No                       | No cgo and no extra dependency: `modernc.org/sqlite` is built with FTS5.                                  |
-| `postgres` | `tsvector` table under a GIN index  | No                       | Text search configuration `simple`: no stemming, no stopwords.                                            |
-| `mysql`    | `FULLTEXT` index over a text column | **Yes**                  | A `FULLTEXT` index indexes a column, so the index table holds an uncompressed copy of every indexed body. |
+| `sqlite` | FTS5 virtual table, contentless | No | No cgo and no extra dependency: `modernc.org/sqlite` is built with FTS5. |
+| `postgres` | `tsvector` table under a GIN index | No | Text search configuration `simple`: no stemming, no stopwords. |
+| `mysql` | `FULLTEXT` index over a text column | **Yes** | A `FULLTEXT` index indexes a column, so the index table holds an uncompressed copy of every indexed body. |
 
 Two MySQL server settings show through and have no counterpart on the other two: a token shorter
 than [`innodb_ft_min_token_size`](https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html)
@@ -1888,22 +1907,24 @@ been emptied and not yet refilled, during which a live instance answers searches
 holds. `--reindex` and `--backfill-batch-size` do not apply; the rebuild always clears and
 repopulates.
 
-### Summarisation (embedded LLM / Ollama)
+### Summarisation (embedded LLM)
 
 By default summaries are authored by the client (`ReplaceMemoriesWithSummary`, see
-[Summarisation](consolidation.md#summarisation)). Enabling the optional embedded LLM — an
-[Ollama](https://github.com/ollama/ollama) server — lets the service author them itself: the
-`SummariseMemories` RPC (`POST /v1/events/{event_id}/summarise`) reads an event's memories,
-generates a summary via the model, and replaces them with it; and `ollama.autoSummarise` makes the
-sleep cycle do the same for each scan candidate. Off by default; when disabled `SummariseMemories`
-returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. The summariser is the one component
-that reads memory content, and it sends memory bodies to the Ollama server — see the
+[Summarisation](consolidation.md#summarisation)). Enabling the optional embedded LLM lets the
+service author them itself: the `SummariseMemories` RPC (`POST /v1/events/{event_id}/summarise`)
+reads an event's memories, generates a summary via the model, and replaces them with it; and
+`llm.autoSummarise` makes the sleep cycle do the same for each scan candidate. Off by default; when
+disabled `SummariseMemories` returns `FAILED_PRECONDITION` and auto-summarisation is a no-op. The
+summariser is the one component that reads memory content, and it sends memory bodies to whichever
+model server is configured — see the
 [security guide](security.md#where-memory-content-can-leave-the-process).
 
 ```json
-"ollama": {
+"llm": {
     "enabled": false,
+    "provider": "ollama",
     "address": "http://localhost:11434",
+    "apiKey": "",
     "model": "llama3.2",
     "autoSummarise": false,
     "timeoutSeconds": 120,
@@ -1914,13 +1935,56 @@ that reads memory content, and it sends memory bodies to the Ollama server — s
 }
 ```
 
-`enabled`/`address`/`model` are the core settings; the rest have sensible defaults (`maxMemories`
-and `promptCharLimit` bound the prompt so a large event cannot overrun a small model's context;
-`systemPrompt` empty uses a built-in memory-consolidation instruction; `temperature` 0 uses the
-model default). Binary memories are excluded from the prompt (their bodies are opaque). Deploy
+`enabled`/`provider`/`address`/`model` are the core settings; the rest have sensible defaults
+(`maxMemories` and `promptCharLimit` bound the prompt so a large event cannot overrun a small model's
+context; `systemPrompt` empty uses a built-in memory-consolidation instruction; `temperature` 0 uses
+the model default and is omitted from the request entirely, which the models that reject an explicit
+temperature require). Binary memories are excluded from the prompt (their bodies are opaque). Deploy
 Ollama with the optional `ollama` compose profile (see `docker-compose.yaml`), with the configured
 model pulled (`docker compose exec ollama ollama pull <model>`). For the full behaviour, see
 [Summarisation → Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
+
+#### Model providers
+
+`llm.provider` and `llm.embedding.provider` select which client is built. They are independent, and
+each defaults to `ollama`.
+
+| Provider | Endpoint                                             | Use it for                                                                                                                                                  |
+| -------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ollama` | `{address}/api/generate`, `{address}/api/embed`      | A local [Ollama](https://github.com/ollama/ollama), the default                                                                                             |
+| `openai` | `{address}/chat/completions`, `{address}/embeddings` | OpenAI, Azure OpenAI, vLLM, llama.cpp's server, LiteLLM, OpenRouter, a Bedrock or Anthropic gateway, a corporate proxy — and Ollama, which serves `/v1` too |
+
+The `openai` provider exists because the constraint is not "you must run Ollama": it is that **a
+deployment that already has a sanctioned model endpoint could not use it**, and would have had to
+stand up a second, unsanctioned inference server beside the memory store to summarise anything. That
+is the case `deploy/compose/docker-compose.corporate.yaml` is otherwise written for.
+
+Three things to know about `address` under the `openai` provider:
+
+- **It is taken exactly as given**, so it normally ends in the version path —
+  `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`, `http://localhost:11434/v1` for
+  Ollama's own compatible API. That is the `base_url` convention every OpenAI SDK uses, which is what
+  an operator already has to hand; a `/v1` guessed on the end here would break every gateway that
+  mounts the API somewhere else.
+- **Startup refuses an `openai` provider left on the Ollama default address.** The defaults describe
+  the default provider, so an unfilled address would point at an Ollama port and answer 404 to every
+  call — which reads as a model server that is up and refusing rather than as a setting nobody
+  filled in.
+- **`apiKey` is sent as a bearer token, and is honoured by the `ollama` provider too** rather than
+  ignored there, because an Ollama behind an authenticating proxy is a real deployment. A rejected
+  key is reported as an outright failure naming the setting, not as a degraded dependency: it will
+  fail every call.
+
+Both keys are secrets and belong in the environment rather than the file —
+`HIPPOCAMPUS_LLM_APIKEY` and `HIPPOCAMPUS_LLM_EMBEDDING_APIKEY`, see [Environment variable overrides](#environment-variable-overrides).
+
+> **Renamed in v0.42.0.** This block was `ollama.*`; it is now `llm.*`, key for key. The old names
+> are still read — each is copied onto its replacement at startup, with one `WARN` naming every
+> legacy key still in use, and `--check-config` reports them too — but they are deprecated and will
+> be removed. An explicit `llm.*` value always wins over the legacy one, so the two can be set
+> together while a deployment migrates. The block was renamed because it stopped being about Ollama:
+> `ollama.address` naming an Azure endpoint reads as a mistake, and an operator looking for how to
+> point the service at their own gateway would not have thought to look under it.
 
 ### Outbound callbacks
 
@@ -1984,7 +2048,13 @@ request, not five hundred:
   "queued_at": 1788476468760678000,
   "cycle_id": 1788476468000000000,
   "items": [
-    { "id": "m-1", "event_id": "e-1", "group": "svc-a", "significance": 3, "bytes": 118 }
+    {
+      "id": "m-1",
+      "event_id": "e-1",
+      "group": "svc-a",
+      "significance": 3,
+      "bytes": 118
+    }
   ]
 }
 ```
@@ -2090,30 +2160,30 @@ drains it.
 
 #### Every key
 
-| Key | Default | What it does |
-| --- | --- | --- |
-| `callbacks.enabled` | `false` | The feature switch. Off, nothing is queued and nothing is sent. |
-| `callbacks.url` | — | The endpoint each delivery is POSTed to. Required when enabled; startup fails without it. |
-| `callbacks.token` | `""` | Sent as `Authorization: Bearer`. Secret. |
-| `callbacks.signingSecret` | `""` | Keys the HMAC signature header. Secret; use at least 32 random bytes. |
-| `callbacks.timeoutSeconds` | `10` | Bounds one delivery attempt. |
-| `callbacks.allDeletions` | `false` | Widen the feed from the two decay paths to every deletion. |
-| `callbacks.includeBodies` | `false` | Carry each memory's body. Costs a body read per forgotten memory and space in the queue. |
-| `callbacks.maxBodyBytes` | `65536` | Caps one carried body; over it the body is omitted and flagged. 0 removes the cap. |
-| `callbacks.maxIdsPerDelivery` | `500` | Bounds one sleep-cycle chunk. |
-| `callbacks.events.memoryForgotten` | `true` | Record memory-deletion callbacks. |
-| `callbacks.events.eventForgotten` | `true` | Record event-deletion callbacks. |
-| `callbacks.events.sleepCompleted` | `true` | Record sleep-cycle completion callbacks. |
-| `callbacks.maxRows` | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound. |
-| `callbacks.maxAgeHours` | `24` | Queue age cap, applied alongside the row cap. 0 removes the bound. |
-| `callbacks.batchSize` | `100` | How many deliveries one dispatch pass claims. |
-| `callbacks.retryBaseBackoffSeconds` | `1` | First retry delay; doubles per attempt, jittered. |
-| `callbacks.retryMaxBackoffSeconds` | `300` | Ceiling on that backoff. |
-| `callbacks.tls.enabled` | `false` | Customise TLS for an `https://` receiver. |
-| `callbacks.tls.caCertFile` | `""` | PEM CA bundle trusted in place of the system pool. |
-| `callbacks.tls.certFile` | `""` | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither. |
-| `callbacks.tls.keyFile` | `""` | The matching key. |
-| `callbacks.tls.insecureSkipVerify` | `false` | Dev-only: disables certificate verification. |
+| Key                                 | Default   | What it does                                                                               |
+| ----------------------------------- | --------- | ------------------------------------------------------------------------------------------ |
+| `callbacks.enabled`                 | `false`   | The feature switch. Off, nothing is queued and nothing is sent.                            |
+| `callbacks.url`                     | —         | The endpoint each delivery is POSTed to. Required when enabled; startup fails without it.  |
+| `callbacks.token`                   | `""`      | Sent as `Authorization: Bearer`. Secret.                                                   |
+| `callbacks.signingSecret`           | `""`      | Keys the HMAC signature header. Secret; use at least 32 random bytes.                      |
+| `callbacks.timeoutSeconds`          | `10`      | Bounds one delivery attempt.                                                               |
+| `callbacks.allDeletions`            | `false`   | Widen the feed from the two decay paths to every deletion.                                 |
+| `callbacks.includeBodies`           | `false`   | Carry each memory's body. Costs a body read per forgotten memory and space in the queue.   |
+| `callbacks.maxBodyBytes`            | `65536`   | Caps one carried body; over it the body is omitted and flagged. 0 removes the cap.         |
+| `callbacks.maxIdsPerDelivery`       | `500`     | Bounds one sleep-cycle chunk.                                                              |
+| `callbacks.events.memoryForgotten`  | `true`    | Record memory-deletion callbacks.                                                          |
+| `callbacks.events.eventForgotten`   | `true`    | Record event-deletion callbacks.                                                           |
+| `callbacks.events.sleepCompleted`   | `true`    | Record sleep-cycle completion callbacks.                                                   |
+| `callbacks.maxRows`                 | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound. |
+| `callbacks.maxAgeHours`             | `24`      | Queue age cap, applied alongside the row cap. 0 removes the bound.                         |
+| `callbacks.batchSize`               | `100`     | How many deliveries one dispatch pass claims.                                              |
+| `callbacks.retryBaseBackoffSeconds` | `1`       | First retry delay; doubles per attempt, jittered.                                          |
+| `callbacks.retryMaxBackoffSeconds`  | `300`     | Ceiling on that backoff.                                                                   |
+| `callbacks.tls.enabled`             | `false`   | Customise TLS for an `https://` receiver.                                                  |
+| `callbacks.tls.caCertFile`          | `""`      | PEM CA bundle trusted in place of the system pool.                                         |
+| `callbacks.tls.certFile`            | `""`      | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither.            |
+| `callbacks.tls.keyFile`             | `""`      | The matching key.                                                                          |
+| `callbacks.tls.insecureSkipVerify`  | `false`   | Dev-only: disables certificate verification.                                               |
 
 ### Transfer and archive
 

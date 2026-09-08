@@ -164,9 +164,9 @@ func TestRun_OpenSearchInitError(t *testing.T) {
 // start and serve normally with the summariser wired in.
 func TestRun_OllamaEnabled(t *testing.T) {
 	_, gwBase := baseRunConfig(t)
-	viper.Set("ollama.enabled", true)
-	viper.Set("ollama.address", "http://127.0.0.1:1")
-	viper.Set("ollama.model", "test-model")
+	viper.Set("llm.enabled", true)
+	viper.Set("llm.address", "http://127.0.0.1:1")
+	viper.Set("llm.model", "test-model")
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -194,9 +194,9 @@ func TestRun_OllamaEnabled(t *testing.T) {
 // construction synchronously, so run must return that error before starting the server.
 func TestRun_OllamaInitError(t *testing.T) {
 	baseRunConfig(t)
-	viper.Set("ollama.enabled", true)
-	viper.Set("ollama.address", "http://127.0.0.1:11434")
-	viper.Set("ollama.model", "")
+	viper.Set("llm.enabled", true)
+	viper.Set("llm.address", "http://127.0.0.1:11434")
+	viper.Set("llm.model", "")
 
 	if err := run(context.Background(), versionInfo{}); err == nil {
 		t.Fatal("expected run to fail on an ollama configuration with no model")

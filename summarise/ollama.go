@@ -58,8 +58,14 @@ type Config struct {
 	SystemPrompt string
 
 	// Temperature is passed to the model's sampling options; a low value keeps summaries
-	// deterministic and faithful. 0 lets Ollama use the model default.
+	// deterministic and faithful. 0 lets the model server use its own default.
 	Temperature float64
+
+	// APIKey is sent as an "Authorization: Bearer" header when set. It is required by every hosted
+	// OpenAI-compatible endpoint and by most corporate gateways, and it is honoured by the Ollama
+	// client too rather than ignored there: an Ollama behind an authenticating proxy is a real
+	// deployment, and silently dropping the key would present as an unexplained 401.
+	APIKey string
 }
 
 // Ollama is a Summariser backed by a running Ollama server, reached over its /api/generate HTTP
@@ -68,6 +74,7 @@ type Config struct {
 type Ollama struct {
 	address         string
 	model           string
+	apiKey          string
 	systemPrompt    string
 	maxBodies       int
 	promptCharLimit int
@@ -101,11 +108,11 @@ func NewOllama(cfg Config) (*Ollama, error) {
 	address := strings.TrimRight(strings.TrimSpace(cfg.Address), "/")
 
 	if address == "" {
-		return nil, fmt.Errorf("ollama.address must be set when ollama.enabled is true")
+		return nil, fmt.Errorf("llm.address must be set when llm.enabled is true")
 	}
 
 	if strings.TrimSpace(cfg.Model) == "" {
-		return nil, fmt.Errorf("ollama.model must be set when ollama.enabled is true")
+		return nil, fmt.Errorf("llm.model must be set when llm.enabled is true")
 	}
 
 	timeout := cfg.Timeout
@@ -131,6 +138,7 @@ func NewOllama(cfg Config) (*Ollama, error) {
 	o := &Ollama{
 		address:         address,
 		model:           strings.TrimSpace(cfg.Model),
+		apiKey:          strings.TrimSpace(cfg.APIKey),
 		systemPrompt:    systemPrompt,
 		maxBodies:       maxBodies,
 		promptCharLimit: promptCharLimit,
@@ -150,7 +158,7 @@ func (o *Ollama) Summarise(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("no memory bodies to summarise")
 	}
 
-	prompt := o.buildPrompt(req)
+	prompt := buildPrompt(req, o.maxBodies, o.promptCharLimit)
 
 	body := generateRequest{
 		Model:  o.model,
@@ -174,6 +182,7 @@ func (o *Ollama) Summarise(ctx context.Context, req Request) (string, error) {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	setBearer(httpReq, o.apiKey)
 
 	resp, err := o.client.Do(httpReq)
 	if err != nil {
@@ -210,7 +219,11 @@ func (o *Ollama) Summarise(ctx context.Context, req Request) (string, error) {
 
 // buildPrompt lays the request's bodies out as a numbered list under a light context header,
 // respecting maxBodies and promptCharLimit. It is deterministic given the same request.
-func (o *Ollama) buildPrompt(req Request) string {
+//
+// A package function rather than a method because the prompt is the one thing every provider must
+// agree on: it is what bounds how much of the store's contents leave the process, and a second
+// provider composing its own would make that limit a per-provider accident.
+func buildPrompt(req Request, maxBodies int, promptCharLimit int) string {
 	var b strings.Builder
 
 	if req.EventName != "" {
@@ -226,11 +239,11 @@ func (o *Ollama) buildPrompt(req Request) string {
 	used := 0
 
 	for i, body := range req.Bodies {
-		if i >= o.maxBodies {
+		if i >= maxBodies {
 			break
 		}
 
-		if used+len(body) > o.promptCharLimit {
+		if used+len(body) > promptCharLimit {
 			break
 		}
 
@@ -268,6 +281,8 @@ func (o *Ollama) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to build the request: %w", err)
 	}
+
+	setBearer(req, o.apiKey)
 
 	res, err := o.client.Do(req)
 	if err != nil {

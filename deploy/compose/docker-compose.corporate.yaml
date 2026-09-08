@@ -39,13 +39,25 @@ services:
       # Prometheus (or a curl) to read, which is what the rule files in
       # deploy/observability/ are written against.
       HIPPOCAMPUS_OBSERVABILITY_PROMETHEUS_ENABLED: "${PROMETHEUS:-false}"
-      # Embedded-LLM summarisation (optional). Off unless OLLAMA=true and the `ollama` profile is
-      # active. Pull the model once the stack is up:
-      #   docker compose -f deploy/compose/docker-compose.corporate.yaml exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"
-      HIPPOCAMPUS_OLLAMA_ENABLED: "${OLLAMA:-false}"
-      HIPPOCAMPUS_OLLAMA_ADDRESS: "http://ollama:11434"
-      HIPPOCAMPUS_OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
-      HIPPOCAMPUS_OLLAMA_AUTOSUMMARISE: "${OLLAMA_AUTOSUMMARISE:-false}"
+      # Embedded-LLM summarisation (optional). Off unless LLM=true.
+      #
+      # Two ways to run it, and on a corporate network the second is usually the point. Either start
+      # the bundled Ollama with the `ollama` profile and pull the model once the stack is up:
+      #   docker compose -f deploy/compose/docker-compose.corporate.yaml exec ollama ollama pull "${LLM_MODEL:-llama3.2}"
+      # or point it at a model endpoint the organisation already sanctions - anything speaking the
+      # OpenAI API, which is every gateway worth the name - and run no inference server here at all:
+      #   LLM=true LLM_PROVIDER=openai LLM_ADDRESS=https://gateway.internal/v1 \
+      #     LLM_MODEL=gpt-4o-mini HIPPOCAMPUS_LLM_APIKEY=... docker compose ... up
+      # The summariser is the one component that reads memory content, so which endpoint this names
+      # is a data-handling decision - see docs/security.md.
+      HIPPOCAMPUS_LLM_ENABLED: "${LLM:-false}"
+      HIPPOCAMPUS_LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      HIPPOCAMPUS_LLM_ADDRESS: "${LLM_ADDRESS:-http://ollama:11434}"
+      HIPPOCAMPUS_LLM_MODEL: "${LLM_MODEL:-llama3.2}"
+      HIPPOCAMPUS_LLM_AUTOSUMMARISE: "${LLM_AUTOSUMMARISE:-false}"
+      # Injected from the environment, never written here: a key in a committed compose file is a
+      # committed secret.
+      HIPPOCAMPUS_LLM_APIKEY: "${HIPPOCAMPUS_LLM_APIKEY:-}"
 
   postgres:
     image: postgres:17-alpine
@@ -101,9 +113,10 @@ services:
       - ./observability/alerting-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/hippocampus.yaml:ro
 
   # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
-  # (and OLLAMA=true so the service uses it):
+  # (and LLM=true so the service uses it). Not needed at all under LLM_PROVIDER=openai, which points
+  # the service at an endpoint you already run:
   #
-  #   OLLAMA=true docker compose -f deploy/compose/docker-compose.corporate.yaml --profile ollama up --build
+  #   LLM=true docker compose -f deploy/compose/docker-compose.corporate.yaml --profile ollama up --build
   #   docker compose -f deploy/compose/docker-compose.corporate.yaml exec ollama ollama pull llama3.2
   ollama:
     image: ollama/ollama:latest

@@ -59,6 +59,10 @@ type Config struct {
 	// instead of a cluster rejecting every document for a reason the operator has to work out.
 	// Zero disables the check.
 	Dimensions int
+
+	// APIKey is sent as an "Authorization: Bearer" header when set. Required by every hosted
+	// OpenAI-compatible endpoint, and honoured by the Ollama client too - see summarise.Config.
+	APIKey string
 }
 
 // Ollama is an Embedder backed by a running Ollama server, reached over its /api/embed endpoint.
@@ -71,6 +75,7 @@ type Config struct {
 type Ollama struct {
 	address      string
 	model        string
+	apiKey       string
 	batchSize    int
 	maxTextBytes int
 	dimensions   int
@@ -101,13 +106,13 @@ func NewOllama(cfg Config) (*Ollama, error) {
 	address := strings.TrimRight(strings.TrimSpace(cfg.Address), "/")
 
 	if address == "" {
-		return nil, fmt.Errorf("ollama.embedding.address must be set when embedding is enabled")
+		return nil, fmt.Errorf("llm.embedding.address must be set when embedding is enabled")
 	}
 
 	model := strings.TrimSpace(cfg.Model)
 
 	if model == "" {
-		return nil, fmt.Errorf("ollama.embedding.model must be set when embedding is enabled")
+		return nil, fmt.Errorf("llm.embedding.model must be set when embedding is enabled")
 	}
 
 	timeout := cfg.Timeout
@@ -128,6 +133,7 @@ func NewOllama(cfg Config) (*Ollama, error) {
 	o := &Ollama{
 		address:      address,
 		model:        model,
+		apiKey:       strings.TrimSpace(cfg.APIKey),
 		batchSize:    batchSize,
 		maxTextBytes: maxTextBytes,
 		dimensions:   cfg.Dimensions,
@@ -169,7 +175,7 @@ func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([]Vector, erro
 	input := make([]string, 0, len(texts))
 
 	for _, text := range texts {
-		input = append(input, o.truncate(text))
+		input = append(input, truncate(text, o.maxTextBytes))
 	}
 
 	buf, err := json.Marshal(embedRequest{Model: o.model, Input: input})
@@ -183,6 +189,7 @@ func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([]Vector, erro
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	setBearer(httpReq, o.apiKey)
 
 	resp, err := o.client.Do(httpReq)
 	if err != nil {
@@ -240,12 +247,15 @@ func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([]Vector, erro
 // truncate caps one text at maxTextBytes, cutting on a rune boundary so the request stays valid
 // UTF-8 - a body split mid-rune would be rejected by json.Marshal's replacement behaviour or
 // tokenise as garbage.
-func (o *Ollama) truncate(text string) string {
-	if len(text) <= o.maxTextBytes {
+//
+// A package function rather than a method for the reason summarise.buildPrompt gives: how much of a
+// memory leaves the process is a property of the service, not of whichever provider is configured.
+func truncate(text string, maxTextBytes int) string {
+	if len(text) <= maxTextBytes {
 		return text
 	}
 
-	cut := o.maxTextBytes
+	cut := maxTextBytes
 
 	for cut > 0 && !utf8RuneStart(text[cut]) {
 		cut--
@@ -293,6 +303,8 @@ func (o *Ollama) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to build the request: %w", err)
 	}
+
+	setBearer(req, o.apiKey)
 
 	res, err := o.client.Do(req)
 	if err != nil {

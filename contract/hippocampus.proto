@@ -465,7 +465,7 @@ service Hippocampus {
 	}
 
 	// SummariseMemories condenses an event's memories into a single summary using the optional
-	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
+	// embedded LLM (llm.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
 	// does - so the service generates the summary the caller would otherwise have to supply. Fails
 	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
 	rpc SummariseMemories(SummariseMemoriesRequest) returns (SummariseMemoriesResponse) {
@@ -932,7 +932,7 @@ message GetSummarisationCandidatesResponse {
 }
 
 // SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the
-// embedded LLM (ollama.enabled) and replace them with it in one transaction, like
+// embedded LLM (llm.enabled) and replace them with it in one transaction, like
 // ReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are
 // excluded from the LLM prompt (their bodies are opaque, not text).
 message SummariseMemoriesRequest {
@@ -1425,7 +1425,7 @@ message WhoAmIResponse {
 	bool                                   group_scoped              = 6;
 
 	// summariser_enabled reports whether this deployment has the embedded LLM configured
-	// (ollama.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as
+	// (llm.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as
 	// search_modes and with the same properties: it is a property of the deployment rather than the
 	// caller, so a client can offer service-authored summarisation only where it exists instead of
 	// discovering its absence through a FAILED_PRECONDITION. It says nothing about

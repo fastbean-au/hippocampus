@@ -148,16 +148,12 @@ func TestOllamaSummarise_NoBodies(t *testing.T) {
 
 // TestBuildPrompt_RespectsLimits verifies maxBodies and promptCharLimit both bound the prompt.
 func TestBuildPrompt_RespectsLimits(t *testing.T) {
-	o, _ := NewOllama(Config{Address: "http://x", Model: "m", MaxBodies: 2})
-
-	prompt := o.buildPrompt(Request{Bodies: []string{"a", "b", "c", "d"}})
+	prompt := buildPrompt(Request{Bodies: []string{"a", "b", "c", "d"}}, 2, defaultPromptCharLimit)
 	if strings.Contains(prompt, "3. c") {
 		t.Errorf("maxBodies not respected: %q", prompt)
 	}
 
-	o2, _ := NewOllama(Config{Address: "http://x", Model: "m", PromptCharLimit: 3})
-
-	prompt2 := o2.buildPrompt(Request{Bodies: []string{"aa", "bb"}})
+	prompt2 := buildPrompt(Request{Bodies: []string{"aa", "bb"}}, defaultMaxBodies, 3)
 	if strings.Contains(prompt2, "bb") {
 		t.Errorf("promptCharLimit not respected: %q", prompt2)
 	}

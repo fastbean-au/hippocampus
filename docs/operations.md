@@ -323,8 +323,11 @@ Three opt-in Compose profiles layer onto them, all off by default:
   the same variable, so nothing is exported (and no export failure is logged) unless the collector
   is up: `OBSERVABILITY=true docker compose --profile observability up --build`.
 - **`ollama`** — the embedded [LLM summariser](consolidation.md#embedded-llm-ollama) beside the
-  service: `OLLAMA=true docker compose --profile ollama up --build`, then
-  `docker compose exec ollama ollama pull llama3.2` once to fetch a model.
+  service: `LLM=true docker compose --profile ollama up --build`, then
+  `docker compose exec ollama ollama pull llama3.2` once to fetch a model. Only needed for the
+  default `ollama` provider — `LLM=true LLM_PROVIDER=openai LLM_ADDRESS=https://…/v1` points the
+  service at a model endpoint you already run and needs no profile at all (see
+  [Model providers](configuration.md#model-providers)).
 - **`mcp`** (SQLite stack only) — an [MCP-over-HTTP endpoint](mcp.md) on `:8090` that dials the
   service over the Compose network: `docker compose --profile mcp up --build`. It is
   unauthenticated, like the rest of that demo stack; the common local pattern is instead the stdio

@@ -543,7 +543,7 @@ func New(deps Dependencies) *Server {
 			summarisationMinMemories:           viper.GetInt("consolidation.summarisationMinMemories"),
 			summarisationMinAgeInDays:          viper.GetInt("consolidation.summarisationMinAgeInDays"),
 			summarisationMaxCandidates:         viper.GetInt("consolidation.summarisationMaxCandidates"),
-			autoSummarise:                      viper.GetBool("ollama.autoSummarise"),
+			autoSummarise:                      viper.GetBool("llm.autoSummarise"),
 			tombstones:                         viper.GetBool("consolidation.tombstones.enabled"),
 		},
 	}

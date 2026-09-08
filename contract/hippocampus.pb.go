@@ -3370,7 +3370,7 @@ func (x *GetSummarisationCandidatesResponse) GetScanEnabled() bool {
 }
 
 // SummariseMemoriesRequest asks the service to generate a summary of an event's memories with the
-// embedded LLM (ollama.enabled) and replace them with it in one transaction, like
+// embedded LLM (llm.enabled) and replace them with it in one transaction, like
 // ReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are
 // excluded from the LLM prompt (their bodies are opaque, not text).
 type SummariseMemoriesRequest struct {
@@ -6220,7 +6220,7 @@ type WhoAmIResponse struct {
 	// store rather than leave it looking like data loss.
 	GroupScoped bool `protobuf:"varint,6,opt,name=group_scoped,json=groupScoped,proto3" json:"group_scoped,omitempty"`
 	// summariser_enabled reports whether this deployment has the embedded LLM configured
-	// (ollama.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as
+	// (llm.enabled), i.e. whether SummariseMemories can serve. Reported for the same reason as
 	// search_modes and with the same properties: it is a property of the deployment rather than the
 	// caller, so a client can offer service-authored summarisation only where it exists instead of
 	// discovering its absence through a FAILED_PRECONDITION. It says nothing about

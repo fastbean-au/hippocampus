@@ -602,24 +602,27 @@ func (s *Server) searchNodeSpec() topologyNodeSpec {
 }
 
 func (s *Server) summariserNodeSpec() topologyNodeSpec {
+	provider := viper.GetString("llm.provider")
+
 	spec := topologyNodeSpec{
 		id:     topologyNodeSummariser,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_SUMMARISER,
-		name:   "Ollama (summarisation)",
+		name:   providerDisplayName(provider) + " (summarisation)",
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
 	}
 
 	if !s.summariser().Enabled() {
 		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
-		spec.attributes = []topologyAttribute{{key: "enable_with", value: "ollama.enabled"}}
+		spec.attributes = []topologyAttribute{{key: "enable_with", value: "llm.enabled"}}
 
 		return spec
 	}
 
 	spec.probe = true
-	spec.detail = redactEndpoint(viper.GetString("ollama.address"))
+	spec.detail = redactEndpoint(viper.GetString("llm.address"))
 	spec.attributes = []topologyAttribute{
-		{key: "model", value: viper.GetString("ollama.model")},
+		{key: "provider", value: provider},
+		{key: "model", value: viper.GetString("llm.model")},
 		{key: "auto_summarise", value: enabledDescription(s.consolidation.autoSummarise)},
 	}
 
@@ -627,10 +630,12 @@ func (s *Server) summariserNodeSpec() topologyNodeSpec {
 }
 
 func (s *Server) embedderNodeSpec() topologyNodeSpec {
+	provider := viper.GetString("llm.embedding.provider")
+
 	spec := topologyNodeSpec{
 		id:     topologyNodeEmbedder,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_EMBEDDER,
-		name:   "Ollama (embeddings)",
+		name:   providerDisplayName(provider) + " (embeddings)",
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
 	}
 
@@ -638,19 +643,41 @@ func (s *Server) embedderNodeSpec() topologyNodeSpec {
 
 	if !embedder.Enabled() {
 		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
-		spec.attributes = []topologyAttribute{{key: "enable_with", value: "ollama.embedding.enabled"}}
+		spec.attributes = []topologyAttribute{{key: "enable_with", value: "llm.embedding.enabled"}}
 
 		return spec
 	}
 
 	spec.probe = true
-	spec.detail = redactEndpoint(viper.GetString("ollama.embedding.address"))
+	spec.detail = redactEndpoint(viper.GetString("llm.embedding.address"))
 	spec.attributes = []topologyAttribute{
+		{key: "provider", value: provider},
 		{key: "model", value: embedder.Model()},
-		{key: "dimensions", value: countDescription(int64(viper.GetInt("ollama.embedding.dimensions")))},
+		{key: "dimensions", value: countDescription(int64(viper.GetInt("llm.embedding.dimensions")))},
 	}
 
 	return spec
+}
+
+// providerDisplayName renders a configured provider for the topology view. The two halves are
+// configured separately and need not agree, so each node names its own rather than the deployment
+// carrying one "the model server" label that would be wrong for one of them.
+//
+// An unrecognised value is shown as-is rather than mapped to a fallback: configProblems refuses one
+// at startup, so anything reaching here came from a code path that skipped validation, and showing
+// what is actually configured is more useful there than hiding it behind a default.
+func providerDisplayName(provider string) string {
+	switch provider {
+
+	case "openai":
+		return "OpenAI-compatible"
+
+	case "ollama", "":
+		return "Ollama"
+
+	}
+
+	return provider
 }
 
 // localObjectStore is the optional interface the filesystem backend satisfies, in the mould of

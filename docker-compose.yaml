@@ -35,14 +35,21 @@ services:
       # Prometheus (or a curl) to read, which is what the rule files in
       # deploy/observability/ are written against.
       HIPPOCAMPUS_OBSERVABILITY_PROMETHEUS_ENABLED: "${PROMETHEUS:-false}"
-      # Embedded-LLM summarisation (optional). Off unless OLLAMA=true, which also requires the
-      # `ollama` profile (below). When on, SummariseMemories and (with OLLAMA_AUTOSUMMARISE=true)
-      # the sleep cycle condense an event's memories via the ollama service. Pull the model first:
-      #   docker compose exec ollama ollama pull "${OLLAMA_MODEL:-llama3.2}"
-      HIPPOCAMPUS_OLLAMA_ENABLED: "${OLLAMA:-false}"
-      HIPPOCAMPUS_OLLAMA_ADDRESS: "http://ollama:11434"
-      HIPPOCAMPUS_OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
-      HIPPOCAMPUS_OLLAMA_AUTOSUMMARISE: "${OLLAMA_AUTOSUMMARISE:-false}"
+      # Embedded-LLM summarisation (optional). Off unless LLM=true, which with the default provider
+      # also requires the `ollama` profile (below). When on, SummariseMemories and (with
+      # LLM_AUTOSUMMARISE=true) the sleep cycle condense an event's memories via the model server.
+      # Pull the model first:
+      #   docker compose exec ollama ollama pull "${LLM_MODEL:-llama3.2}"
+      # Set LLM_PROVIDER=openai with an LLM_ADDRESS ending in /v1 to use an endpoint you already
+      # have instead, and skip the ollama profile entirely.
+      HIPPOCAMPUS_LLM_ENABLED: "${LLM:-false}"
+      HIPPOCAMPUS_LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      HIPPOCAMPUS_LLM_ADDRESS: "${LLM_ADDRESS:-http://ollama:11434}"
+      HIPPOCAMPUS_LLM_MODEL: "${LLM_MODEL:-llama3.2}"
+      HIPPOCAMPUS_LLM_AUTOSUMMARISE: "${LLM_AUTOSUMMARISE:-false}"
+      # Injected from the environment, never written here: a key in a committed compose file is a
+      # committed secret.
+      HIPPOCAMPUS_LLM_APIKEY: "${HIPPOCAMPUS_LLM_APIKEY:-}"
       # Lets the swagger-ui container below (a different origin) call /v1 from the browser. It is
       # set unconditionally because it costs nothing while that profile is down: CORS headers are
       # only ever sent in response to a request carrying this exact Origin, and with no swagger-ui
@@ -116,9 +123,9 @@ services:
       - ./deploy/compose/observability/alerting-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/hippocampus.yaml:ro
 
   # Optional embedded LLM for summarisation. Off by default; started only with `--profile ollama`
-  # (and set OLLAMA=true so the service actually uses it):
+  # (and set LLM=true so the service actually uses it). Not needed under LLM_PROVIDER=openai:
   #
-  #   OLLAMA=true docker compose --profile ollama up --build
+  #   LLM=true docker compose --profile ollama up --build
   #   docker compose exec ollama ollama pull llama3.2   # one-time model pull
   #
   # Runs on CPU by default; for GPU acceleration add a `deploy.resources.reservations.devices`

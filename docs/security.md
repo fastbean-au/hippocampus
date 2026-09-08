@@ -14,17 +14,17 @@ can leave the process, and what the service deliberately does not do. The exhaus
 
 ## The defaults, and what to turn on
 
-| Control                | Key                                                       | Default    | Turn it on when                                                    |
-| :--------------------- | :-------------------------------------------------------- | :--------- | :------------------------------------------------------------------ |
-| Authentication         | [`auth.method`](configuration.md#authentication)          | `none`     | Anything reachable beyond localhost.                                |
-| Authorisation (tiers)  | [`auth.roleMapping`](configuration.md#authorisation)      | —          | Automatically, once auth is on: it is **default-closed**.           |
-| Group scoping          | [`auth.requireGroupScope`](configuration.md#group-scoping) | off        | Several teams or systems share one store.                           |
-| TLS                    | [`tls.enabled`](configuration.md#tls)                     | off        | Always, unless a proxy or mesh terminates it for you.               |
-| Rate limiting          | [`rateLimit.enabled`](configuration.md#rate-limiting)     | off        | Any caller you do not control. Set at least a global ceiling.       |
-| Gateway body cap       | `gateway.maxRequestBytes`                                 | unset      | The HTTP gateway is reachable by untrusted callers.                 |
-| gRPC stream/keepalive  | `maxConcurrentStreams`, `keepalive.*`                     | grpc-go's  | The gRPC port is exposed beyond trusted callers.                    |
-| Listener binding       | `bindAddress`, `gateway.bindAddress`                      | all        | A sidecar or mesh fronts the service — bind loopback only.          |
-| Server reflection      | [`reflection.enabled`](configuration.md#server-reflection) | follows `auth.method` | Already handled: on without auth, off with it. Set it off explicitly if an unauthenticated port is reachable at all. |
+| Control               | Key                                                        | Default               | Turn it on when                                                                                                      |
+| :-------------------- | :--------------------------------------------------------- | :-------------------- | :------------------------------------------------------------------------------------------------------------------- |
+| Authentication        | [`auth.method`](configuration.md#authentication)           | `none`                | Anything reachable beyond localhost.                                                                                 |
+| Authorisation (tiers) | [`auth.roleMapping`](configuration.md#authorisation)       | —                     | Automatically, once auth is on: it is **default-closed**.                                                            |
+| Group scoping         | [`auth.requireGroupScope`](configuration.md#group-scoping) | off                   | Several teams or systems share one store.                                                                            |
+| TLS                   | [`tls.enabled`](configuration.md#tls)                      | off                   | Always, unless a proxy or mesh terminates it for you.                                                                |
+| Rate limiting         | [`rateLimit.enabled`](configuration.md#rate-limiting)      | off                   | Any caller you do not control. Set at least a global ceiling.                                                        |
+| Gateway body cap      | `gateway.maxRequestBytes`                                  | unset                 | The HTTP gateway is reachable by untrusted callers.                                                                  |
+| gRPC stream/keepalive | `maxConcurrentStreams`, `keepalive.*`                      | grpc-go's             | The gRPC port is exposed beyond trusted callers.                                                                     |
+| Listener binding      | `bindAddress`, `gateway.bindAddress`                       | all                   | A sidecar or mesh fronts the service — bind loopback only.                                                           |
+| Server reflection     | [`reflection.enabled`](configuration.md#server-reflection) | follows `auth.method` | Already handled: on without auth, off with it. Set it off explicitly if an unauthenticated port is reachable at all. |
 
 Authentication and authorisation are one decision, not two: the authoriser is built only when auth is
 enabled, and a token whose roles resolve to no tier is denied every RPC.
@@ -42,7 +42,7 @@ enabled, and a token whose roles resolve to no tier is denied every RPC.
   refuses under `idp`, because the provider issues tokens.
 
   **Set `auth.audience`.** `iss` and `aud` are enforced only when configured, so a deployment naming
-  just a JWKS URL accepts *every* token that provider signed — including one minted for a different
+  just a JWKS URL accepts _every_ token that provider signed — including one minted for a different
   application in the same tenant. Behind one corporate IdP that is any employee's token for any
   service, with this service's tier then resolved from whatever `roles` claim it happens to carry.
   Setting `auth.audience` to this service's own identifier is what makes a token mean "for
@@ -145,7 +145,7 @@ pair for this purpose (`opensearch.tls`, `transfer.tls`, `callbacks.tls`, the MC
 CLI, the event-source bridges), so if you have configured one of those, this is the other half.
 
 It is a **second, independent** control and not a substitute for authentication. A certificate says
-which *process* is connecting; a token says which client it is acting as and at what tier. Nothing
+which _process_ is connecting; a token says which client it is acting as and at what tier. Nothing
 here derives a client id, a role or a group scope from the certificate — authorisation has one
 source, and a second one that silently outranked it would be worse than none. Use mutual TLS to
 decide who may open a connection at all, and tokens to decide what they may do with it.
@@ -220,12 +220,18 @@ The service is deliberately blind to memory bodies — it never reads one during
 the covering index exists partly so the decay scans cannot. Four features are the exceptions, and
 each is a decision to let content out:
 
-- **The embedded LLM summariser** (`ollama.enabled`, off by default) is the one component that reads
-  memory content, and it sends the text bodies of an event's memories to the configured Ollama
-  server. Run Ollama on the same host or a private network (`http://localhost:11434`), not a shared
-  or third-party endpoint, and reach it over TLS if it is remote. `ollama.autoSummarise` rewrites
-  stored memories automatically during sleep, so leave it off unless that is intended. See
-  [Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama).
+- **The embedded LLM summariser** (`llm.enabled`, off by default) is the one component that reads
+  memory content, and it sends the text bodies of an event's memories to the configured model
+  server. Under the default `ollama` provider, run it on the same host or a private network
+  (`http://localhost:11434`), not a shared or third-party endpoint, and reach it over TLS if it is
+  remote. Under the `openai` provider **memory bodies leave your infrastructure entirely** unless the
+  endpoint is one you run, so the choice of `llm.address` is a data-handling decision and not only a
+  connectivity one — a corporate gateway with an audit trail is the case this provider exists for,
+  and a public API is a very different one. `llm.apiKey` belongs in the environment
+  (`HIPPOCAMPUS_LLM_APIKEY`), not in a committed config. `llm.autoSummarise` rewrites stored
+  memories automatically during sleep, so leave it off unless that is intended. See
+  [Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama) and
+  [Model providers](configuration.md#model-providers).
 - **The OpenSearch index holds a copy of every indexed body**, so the cluster is a second store of
   the same data and needs the same access control — authentication, TLS
   ([`opensearch.tls`](configuration.md#content-search)), and network isolation. The store's own
@@ -253,13 +259,13 @@ Any config key can be supplied as an environment variable (`HIPPOCAMPUS_<KEY>` w
 underscores), and **that is the recommended way to supply secrets** — inject them as Docker or
 Kubernetes secrets rather than committing them to `config.json`. The ones that matter:
 
-| Secret                    | Env override                       |
-| :------------------------ | :--------------------------------- |
-| HMAC signing secret       | `HIPPOCAMPUS_AUTH_SIGNINGSECRET`   |
+| Secret                           | Env override                                         |
+| :------------------------------- | :--------------------------------------------------- |
+| HMAC signing secret              | `HIPPOCAMPUS_AUTH_SIGNINGSECRET`                     |
 | Database DSN (with its password) | `HIPPOCAMPUS_STORAGE_POSTGRES_DSN` / `..._MYSQL_DSN` |
-| OpenSearch password       | `HIPPOCAMPUS_OPENSEARCH_PASSWORD`  |
-| Transfer token            | `HIPPOCAMPUS_TRANSFER_TOKEN`       |
-| OAuth2 client secret      | `HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET` |
+| OpenSearch password              | `HIPPOCAMPUS_OPENSEARCH_PASSWORD`                    |
+| Transfer token                   | `HIPPOCAMPUS_TRANSFER_TOKEN`                         |
+| OAuth2 client secret             | `HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET`               |
 
 `auth.signingKeys` is a structured list and so is config-file-only — it cannot be injected through a
 single environment variable, so a deployment rotating keys needs a mounted config file.

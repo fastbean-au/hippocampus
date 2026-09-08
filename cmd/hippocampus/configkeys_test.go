@@ -27,7 +27,7 @@ import (
 var (
 	// The reads that make up the surface. SetDefault is included: defaulting a key is as much a
 	// declaration that it exists as reading one.
-	configKeyPattern = regexp.MustCompile(`viper\.(?:Get[A-Za-z]*|IsSet|Sub|UnmarshalKey|SetDefault)\("([^"]+)"`)
+	configKeyPattern = regexp.MustCompile(`viper\.(?:Get[A-Za-z0-9]*|IsSet|Sub|UnmarshalKey|SetDefault)\("([^"]+)"`)
 
 	// Command-line flags reach viper through BindPFlags, so they answer to GetString like a config
 	// key while belonging to the CLI rather than to config.json.

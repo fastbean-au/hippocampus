@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
 	"os"
 	"regexp"
@@ -35,9 +38,20 @@ func serviceDefaults(t *testing.T) map[string]string {
 	}
 
 	defaults := make(map[string]string)
+	constants := stringConstants(t, "../hippocampus/main.go")
 
 	for _, match := range setDefaultPattern.FindAllStringSubmatch(string(source), -1) {
-		defaults[match[1]] = normaliseLiteral(match[2])
+		value := normaliseLiteral(match[2])
+
+		// A default given as a named constant is still a value the wizard has to match. Resolving it
+		// is what lets the service name the ones it also compares against elsewhere - the model
+		// providers and the Ollama address - instead of repeating a literal here to satisfy a test
+		// and then having the two drift.
+		if resolved, named := constants[value]; named {
+			value = resolved
+		}
+
+		defaults[match[1]] = value
 	}
 
 	if len(defaults) == 0 {
@@ -45,6 +59,46 @@ func serviceDefaults(t *testing.T) map[string]string {
 	}
 
 	return defaults
+}
+
+// stringConstants returns every top-level string constant a file declares, so a viper.SetDefault
+// written against one can be compared by value.
+//
+// Parsed rather than pattern-matched, unlike everything else here: an identifier is only resolvable
+// against the real declaration, and a regex for `NAME = "literal"` would also match struct fields,
+// map entries and anything else of that shape.
+func stringConstants(t *testing.T, path string) map[string]string {
+	t.Helper()
+
+	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatalf("failed to parse %s: %s", path, err.Error())
+	}
+
+	constants := make(map[string]string)
+
+	for _, decl := range parsed.Decls {
+		general, isGeneral := decl.(*ast.GenDecl)
+		if !isGeneral || general.Tok != token.CONST {
+			continue
+		}
+
+		for _, spec := range general.Specs {
+			values, isValues := spec.(*ast.ValueSpec)
+			if !isValues || len(values.Names) != 1 || len(values.Values) != 1 {
+				continue
+			}
+
+			literal, isLiteral := values.Values[0].(*ast.BasicLit)
+			if !isLiteral || literal.Kind != token.STRING {
+				continue
+			}
+
+			constants[values.Names[0].Name] = strings.Trim(literal.Value, `"`)
+		}
+	}
+
+	return constants
 }
 
 // wizardFields returns each field the wizard schema declares, mapped to the service default it

@@ -30,10 +30,10 @@ func TestBackfillEmbedderFromViper_Enabled(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
-	viper.Set("ollama.embedding.enabled", true)
-	viper.Set("ollama.embedding.address", "http://127.0.0.1:11434")
-	viper.Set("ollama.embedding.model", "nomic-embed-text")
-	viper.Set("ollama.embedding.dimensions", 768)
+	viper.Set("llm.embedding.enabled", true)
+	viper.Set("llm.embedding.address", "http://127.0.0.1:11434")
+	viper.Set("llm.embedding.model", "nomic-embed-text")
+	viper.Set("llm.embedding.dimensions", 768)
 
 	embedder := backfillEmbedderFromViper()
 

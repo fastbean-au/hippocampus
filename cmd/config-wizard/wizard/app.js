@@ -1239,7 +1239,8 @@ const STEPS = [
             def: 65536,
             svc: 65536,
             when: (s) =>
-              value(s, "callbacks.enabled") && value(s, "callbacks.includeBodies"),
+              value(s, "callbacks.enabled") &&
+              value(s, "callbacks.includeBodies"),
             help: "A body over this is omitted and flagged, never truncated — a receiver cannot tell a truncated body from a whole one. 0 removes the cap.",
           },
           {
@@ -1312,7 +1313,8 @@ const STEPS = [
             type: "text",
             def: "",
             when: (s) =>
-              value(s, "callbacks.enabled") && value(s, "callbacks.tls.enabled"),
+              value(s, "callbacks.enabled") &&
+              value(s, "callbacks.tls.enabled"),
             help: "A PEM bundle trusted in place of the system pool, for a receiver serving a private-CA certificate.",
           },
         ],
@@ -1329,7 +1331,7 @@ const STEPS = [
           "Finds memories by meaning rather than by the words they happen to use, so a search for 'deployment problem' can surface a memory that only ever said 'the rollout broke'. It needs two things that keyword search does not: an embedding model to turn text into vectors, and OpenSearch to index and search them. Both halves are required — without OpenSearch there is nowhere to put the vectors, whatever the driver.",
         fields: [
           {
-            key: "ollama.embedding.enabled",
+            key: "llm.embedding.enabled",
             label: "Enable semantic search",
             type: "bool",
             def: false,
@@ -1339,56 +1341,78 @@ const STEPS = [
                 : "Requires OpenSearch, which is off above. Turn it on first, or leave semantic search disabled — keyword search is unaffected either way.",
           },
           {
-            key: "ollama.embedding.address",
+            key: "llm.embedding.address",
             label: "Model server address",
             type: "text",
             def: "http://localhost:11434",
             svc: "http://localhost:11434",
-            when: (s) => value(s, "ollama.embedding.enabled"),
-            help: "The Ollama server that produces the vectors. It may be the same one used for summarisation.",
+            when: (s) => value(s, "llm.embedding.enabled"),
+            help: "The model server that produces the vectors. It may be the same one used for summarisation. Under the openai provider this is the API base and normally ends in /v1 (https://api.openai.com/v1), and it is taken exactly as given.",
           },
           {
-            key: "ollama.embedding.model",
+            key: "llm.embedding.provider",
+            label: "Provider",
+            type: "select",
+            def: "ollama",
+            svc: "ollama",
+            when: (s) => value(s, "llm.embedding.enabled"),
+            options: [
+              ["ollama", "ollama — a local Ollama server"],
+              ["openai", "openai — any OpenAI-compatible endpoint"],
+            ],
+            help: "Set independently of the summariser's provider: nothing requires the two halves to share an endpoint, and generating against a hosted model while embedding against a local Ollama is both reasonable and much cheaper.",
+          },
+          {
+            key: "llm.embedding.apiKey",
+            label: "API key",
+            type: "text",
+            def: "",
+            secret: true,
+            when: (s) => value(s, "llm.embedding.enabled"),
+            help: "Sent as a bearer token. Leave it blank here and inject it as HIPPOCAMPUS_LLM_EMBEDDING_APIKEY.",
+          },
+          {
+            key: "llm.embedding.model",
             label: "Embedding model",
             type: "text",
             def: "nomic-embed-text",
             svc: "nomic-embed-text",
-            when: (s) => value(s, "ollama.embedding.enabled"),
+            when: (s) => value(s, "llm.embedding.enabled"),
             help: "Must be an embedding model, not a generation model. Changing it later invalidates every stored vector — they are not comparable across models and rarely even share a dimension count — so a change means re-embedding the store.",
           },
           {
-            key: "ollama.embedding.dimensions",
+            key: "llm.embedding.dimensions",
             label: "Vector dimensions",
             type: "int",
             def: 768,
             svc: 768,
-            when: (s) => value(s, "ollama.embedding.enabled"),
+            when: (s) => value(s, "llm.embedding.enabled"),
             help: "Must match the model: nomic-embed-text is 768, all-minilm 384, mxbai-embed-large 1024. The OpenSearch index fixes this at creation, so changing it later means rebuilding the index with --backfill-search --reindex.",
           },
           {
-            key: "ollama.embedding.timeoutSeconds",
+            key: "llm.embedding.timeoutSeconds",
             label: "Timeout (seconds)",
             type: "int",
             def: 30,
             svc: 30,
-            when: (s) => value(s, "ollama.embedding.enabled"),
+            when: (s) => value(s, "llm.embedding.enabled"),
             help: "Bounds one embedding call. Much tighter than summarisation's, because this one sits on the write path.",
           },
           {
-            key: "ollama.embedding.maxTextBytes",
+            key: "llm.embedding.maxTextBytes",
             label: "Maximum text embedded (bytes)",
             type: "int",
             def: 0,
             help: "0 uses the internal default. A body longer than this is truncated on a rune boundary before it is embedded, so only its opening is searchable by meaning — raise it for long documents.",
-            when: (s) => value(s, "ollama.embedding.enabled"),
+            when: (s) => value(s, "llm.embedding.enabled"),
           },
           {
-            key: "ollama.embedding.batchSize",
+            key: "llm.embedding.batchSize",
             label: "Batch size",
             type: "int",
             def: 32,
             svc: 32,
-            when: (s) => value(s, "ollama.embedding.enabled"),
+            when: (s) => value(s, "llm.embedding.enabled"),
             help: "Texts per request to the model server. Matters most for a backfill over a whole store, where one request per memory would be all round trip.",
           },
         ],
@@ -1519,71 +1543,93 @@ const STEPS = [
           "Lets the service author its own summaries. It is the one component that reads memory content, and it sends bodies to the Ollama server — keep that server inside your trust boundary.",
         fields: [
           {
-            key: "ollama.enabled",
+            key: "llm.enabled",
             label: "Enable the embedded LLM",
             type: "bool",
             def: false,
           },
           {
-            key: "ollama.address",
+            key: "llm.address",
             label: "Ollama address",
             type: "text",
             def: "http://localhost:11434",
             svc: "http://localhost:11434",
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
           },
           {
-            key: "ollama.model",
+            key: "llm.provider",
+            label: "Provider",
+            type: "select",
+            def: "ollama",
+            svc: "ollama",
+            when: (s) => value(s, "llm.enabled"),
+            options: [
+              ["ollama", "ollama — a local Ollama server"],
+              ["openai", "openai — any OpenAI-compatible endpoint"],
+            ],
+            help: "The openai option is not only OpenAI: it covers Azure OpenAI, vLLM, llama.cpp, LiteLLM, OpenRouter, a Bedrock or Anthropic gateway, a corporate proxy — and Ollama, which serves the OpenAI API at /v1 as well. Pick it whenever you already have a model endpoint rather than standing a second one up beside the store.",
+          },
+          {
+            key: "llm.apiKey",
+            label: "API key",
+            type: "text",
+            def: "",
+            secret: true,
+            when: (s) => value(s, "llm.enabled"),
+            help: "Sent as a bearer token. Required by every hosted endpoint, and honoured by the ollama provider too — an Ollama behind an authenticating proxy is a real deployment. Leave it blank here and inject it as HIPPOCAMPUS_LLM_APIKEY.",
+          },
+          {
+            key: "llm.model",
             label: "Model",
             type: "text",
             def: "llama3.2",
             svc: "llama3.2",
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
             help: "Pull it on the Ollama server before enabling this.",
           },
           {
-            key: "ollama.autoSummarise",
+            key: "llm.autoSummarise",
             label: "Summarise candidates automatically each sleep cycle",
             type: "bool",
             def: false,
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
           },
           {
-            key: "ollama.timeoutSeconds",
+            key: "llm.timeoutSeconds",
             label: "Generation timeout (seconds)",
             type: "int",
             def: 120,
             svc: 120,
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
           },
           {
-            key: "ollama.maxMemories",
+            key: "llm.maxMemories",
             label: "Maximum memories per prompt",
             type: "int",
             def: 200,
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
           },
           {
-            key: "ollama.promptCharLimit",
+            key: "llm.promptCharLimit",
             label: "Prompt character limit",
             type: "int",
             def: 32000,
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
           },
           {
-            key: "ollama.temperature",
+            key: "llm.temperature",
             label: "Temperature",
             type: "float",
             def: 0,
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
             help: "0 uses the model's own default.",
           },
           {
-            key: "ollama.systemPrompt",
+            key: "llm.systemPrompt",
             label: "System prompt",
             type: "text",
             def: "",
-            when: (s) => value(s, "ollama.enabled"),
+            when: (s) => value(s, "llm.enabled"),
             help: "Empty uses the built-in memory-consolidation instruction.",
           },
         ],
@@ -1912,6 +1958,13 @@ function value(s, key) {
 }
 
 const val = (key) => value(state, key);
+
+// Whether the generated stack should carry an Ollama sidecar. Enabling the LLM is not enough: under
+// the openai provider the endpoint is one the operator already has, and generating a container for a
+// model server they are not using would be a service that starts, pulls nothing, and is never called.
+const wantsOllamaSidecar = () =>
+  (val("llm.enabled") && val("llm.provider") !== "openai") ||
+  (val("llm.embedding.enabled") && val("llm.embedding.provider") !== "openai");
 
 function setValue(key, next) {
   const field = FIELDS.get(key);
@@ -2454,12 +2507,12 @@ function validate() {
     );
   }
 
-  if (val("ollama.enabled") && !val("ollama.address")) {
-    add("error", "extras", "The embedded summariser needs ollama.address.");
+  if (val("llm.enabled") && !val("llm.address")) {
+    add("error", "extras", "The embedded summariser needs llm.address.");
   }
 
   if (
-    val("ollama.autoSummarise") &&
+    val("llm.autoSummarise") &&
     Number(val("consolidation.summarisationMinMemories")) === 0
   ) {
     add(
@@ -2711,7 +2764,7 @@ function composeFile() {
     dependencies.push("opensearch");
   }
 
-  if (val("ollama.enabled")) {
+  if (wantsOllamaSidecar()) {
     dependencies.push("ollama");
   }
 
@@ -2785,10 +2838,10 @@ function composeFile() {
     );
   }
 
-  if (val("ollama.enabled")) {
+  if (wantsOllamaSidecar()) {
     lines.push(
       "",
-      `  # Pull the model once the stack is up: docker compose exec ollama ollama pull ${val("ollama.model")}`,
+      `  # Pull the model once the stack is up: docker compose exec ollama ollama pull ${val("llm.model")}`,
       "  ollama:",
       "    image: ollama/ollama:latest",
       "    restart: unless-stopped",
@@ -2815,7 +2868,7 @@ function composeFile() {
     volumes.push("opensearch-data");
   }
 
-  if (val("ollama.enabled")) {
+  if (wantsOllamaSidecar()) {
     volumes.push("ollama-models");
   }
 
@@ -3421,9 +3474,9 @@ function nextSteps() {
     );
   }
 
-  if (val("ollama.enabled")) {
+  if (val("llm.enabled")) {
     lines.push(
-      `Pull the summariser's model on the Ollama server before first use: \`ollama pull ${val("ollama.model")}\`.`,
+      `Pull the summariser's model on the Ollama server before first use: \`ollama pull ${val("llm.model")}\`.`,
       "",
     );
   }
@@ -4366,7 +4419,7 @@ function summaryItems() {
       "Extras",
       [
         val("opensearch.enabled") ? "content search" : null,
-        val("ollama.enabled") ? "embedded summariser" : null,
+        val("llm.enabled") ? "embedded summariser" : null,
         val("observability.metrics.enabled") ||
         val("observability.tracing.enabled")
           ? "OpenTelemetry"

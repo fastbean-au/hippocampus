@@ -296,7 +296,7 @@ type HippocampusClient interface {
 	// consolidation.summarisationMinMemories is configured.
 	GetSummarisationCandidates(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GetSummarisationCandidatesResponse, error)
 	// SummariseMemories condenses an event's memories into a single summary using the optional
-	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
+	// embedded LLM (llm.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
 	// does - so the service generates the summary the caller would otherwise have to supply. Fails
 	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
 	SummariseMemories(ctx context.Context, in *SummariseMemoriesRequest, opts ...grpc.CallOption) (*SummariseMemoriesResponse, error)
@@ -973,7 +973,7 @@ type HippocampusServer interface {
 	// consolidation.summarisationMinMemories is configured.
 	GetSummarisationCandidates(context.Context, *EmptyRequest) (*GetSummarisationCandidatesResponse, error)
 	// SummariseMemories condenses an event's memories into a single summary using the optional
-	// embedded LLM (ollama.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
+	// embedded LLM (llm.enabled), then replaces them with it exactly as ReplaceMemoriesWithSummary
 	// does - so the service generates the summary the caller would otherwise have to supply. Fails
 	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
 	SummariseMemories(context.Context, *SummariseMemoriesRequest) (*SummariseMemoriesResponse, error)
