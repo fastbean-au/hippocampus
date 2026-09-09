@@ -39,7 +39,7 @@ jobs:
         working-directory: integrations/obsidian
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Fail fast, before any build, if the tag and the committed plugin metadata disagree - a
       # mismatch here is exactly the silent breakage (updater can't match the release) that this
@@ -84,7 +84,7 @@ jobs:
           echo "PLUGIN_VERSION=$version" >> "$GITHUB_ENV"
           echo "Validated plugin version $version"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
