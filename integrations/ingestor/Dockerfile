@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
 # The ingestor is an outbound client only: it dials two Hippocampus instances and listens on no port,
 # so there is no EXPOSE and no HEALTHCHECK (nothing to probe). It also has no useful default CMD -
 # --rules and --target-address are required, and the rules file must be mounted in.
-FROM alpine:3.22
+FROM alpine:3.24
 
 # checkov:skip=CKV_DOCKER_2: the ingestor exposes no port or health endpoint; liveness is left to the
 # orchestrator (mirrors the eventsource bridge images and the root Dockerfile's mcp stage).

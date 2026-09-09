@@ -41,7 +41,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
 # so the absence of an EXPOSE is a default rather than a property of the design - publish that port
 # if you want to probe it. There is no useful default CMD: each broker requires its own flags
 # (--subject/--topic/--queue, or none at all for bluesky), passed after the image name.
-FROM alpine:3.22
+FROM alpine:3.24
 
 # checkov:skip=CKV_DOCKER_2: a bridge exposes no port or health endpoint; liveness is left to the
 # orchestrator (mirrors the root Dockerfile's mcp stage and the otel-collector image).
