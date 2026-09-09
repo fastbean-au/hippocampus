@@ -97,7 +97,8 @@ Use **Test connection** to confirm the URL/token reach a live gateway.
 | **Sync folder now**                    | Run the auto-sync pass once over the configured folder.                          |
 | **Test connection**                    | Ping `/healthz`.                                                                 |
 
-"Search" requires the service's optional content-search index (`opensearch.enabled`).
+"Search" runs a keyword search over the service's content index, which every storage driver
+carries by default — `opensearch.enabled` is not required for it.
 
 ## Auto-sync
 
