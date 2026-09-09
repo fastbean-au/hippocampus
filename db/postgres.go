@@ -23,7 +23,7 @@ const advisoryLockKey = int64(0x6869706f)
 // is skipped: the instance opens read/write but never consolidates, so it can run alongside the one
 // consolidating instance as a horizontally scaled replica. Exactly one instance in a
 // deployment must be started with consolidate true.
-func NewPostgres(dsn string, consolidate bool) (*DB, error) {
+func NewPostgres(dsn string, consolidate bool, opts ...Option) (*DB, error) {
 	log.Trace("func() NewPostgres")
 
 	sqlDB, err := sql.Open("pgx", dsn)
@@ -33,7 +33,7 @@ func NewPostgres(dsn string, consolidate bool) (*DB, error) {
 		return nil, err
 	}
 
-	return setupPostgres(sqlDB, consolidate)
+	return setupPostgres(sqlDB, consolidate, opts...)
 }
 
 // setupPostgres prepares an already-opened Postgres handle: it caps the pooled connection lifetime,
@@ -41,13 +41,15 @@ func NewPostgres(dsn string, consolidate bool) (*DB, error) {
 // starts the lock keepalive. It is split out from NewPostgres, which only turns a DSN into the
 // handle, so this preparation logic can be exercised against a mocked database/sql handle without a
 // live server.
-func setupPostgres(sqlDB *sql.DB, consolidate bool) (*DB, error) {
+func setupPostgres(sqlDB *sql.DB, consolidate bool, opts ...Option) (*DB, error) {
 	// Recycle pooled connections before a server-side idle timeout can close them under the pool
 	// (see serverConnMaxLifetime). The pinned lock connection is exempt (never returned while held)
 	// and is instead kept alive by the keepalive started below.
 	sqlDB.SetConnMaxLifetime(serverConnMaxLifetime)
 
 	d := &DB{sql: sqlDB, driver: driverPostgres}
+
+	applyOptions(d, opts)
 
 	if consolidate {
 		if err := d.acquireInstanceLock(); err != nil {

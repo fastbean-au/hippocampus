@@ -1490,17 +1490,30 @@ const STEPS = [
       {
         title: "Content search (OpenSearch)",
         blurb:
-          "A secondary index over memory bodies. On the SQLite driver keyword content search is built in and needs none of this; enable OpenSearch to scale it out, to get content search at all on PostgreSQL/MySQL, or to unlock semantic search — which needs OpenSearch's vector index on every driver. Either way it is strictly secondary: results are always re-read from the primary store, so a stale entry drops out rather than being served.",
+          "A secondary index over memory bodies. Every driver has keyword content search built in and needs none of this; enable OpenSearch to scale it out beyond one instance, or to unlock semantic search — which needs OpenSearch's vector index on every driver. Either way it is strictly secondary: results are always re-read from the primary store, so a stale entry drops out rather than being served.",
         fields: [
           {
             key: "opensearch.enabled",
-            label: "Enable content search",
+            label: "Enable OpenSearch",
             type: "bool",
             def: false,
+            help: "Optional on every driver — keyword search works without it. Turn it on to scale search out beyond one instance, or to add semantic search.",
+          },
+          {
+            key: "search.contentIndex.enabled",
+            label: "Keep the store's own content index",
+            type: "bool",
+            def: (s) => !value(s, "opensearch.enabled"),
+            // Always written out. Absent, this key is DERIVED from opensearch.enabled rather than
+            // read as a literal, so there is no single value whose omission means the same thing -
+            // and the case a minimal config would get wrong is the deliberate one: an operator
+            // turning the index off without OpenSearch would have their false dropped and the
+            // service would derive true.
+            always: true,
             help: (s) =>
-              value(s, "storage.driver") === "sqlite"
-                ? "Your driver already has keyword search built in, so this is optional — turn it on to scale search out beyond one instance, or to add semantic search."
-                : "Your driver has no built-in content search, so without this SearchMemories is rejected outright.",
+              value(s, "opensearch.enabled")
+                ? "OpenSearch answers every search, so this index would be written on every memory and read by nothing. It is the largest non-body cost the store carries — on MySQL a second uncompressed copy of every body — so leaving it off is the usual choice. Turn it on to keep a fallback for when the cluster is unreachable."
+                : "This is what answers SearchMemories without OpenSearch. Turning it off saves that storage and makes SearchMemories reject every call.",
           },
           {
             key: "opensearch.addresses",
@@ -1994,6 +2007,12 @@ const state = {
   values: {},
 };
 
+// value is a field's current answer: what the operator typed, or what the wizard suggests.
+//
+// A suggestion may be a function of the answers so far, exactly as `help` may. That is not
+// cosmetic: the service DERIVES a handful of keys from another key rather than defaulting them, and
+// a static suggestion could only ever match one side of the derivation - leaving the wizard to
+// propose, in the other case, the value the service would not have chosen.
 function value(s, key) {
   if (Object.prototype.hasOwnProperty.call(s.values, key)) {
     return s.values[key];
@@ -2001,7 +2020,11 @@ function value(s, key) {
 
   const field = FIELDS.get(key);
 
-  return field ? field.def : undefined;
+  if (!field) {
+    return undefined;
+  }
+
+  return typeof field.def === "function" ? field.def(s) : field.def;
 }
 
 const val = (key) => value(state, key);

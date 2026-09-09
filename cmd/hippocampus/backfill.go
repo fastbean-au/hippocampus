@@ -22,6 +22,15 @@ type backfillConfig struct {
 	Reindex          bool
 	BatchSize        int
 
+	// NoContentIndex suppresses the store's own content-search index, from contentIndexSetting. It
+	// reaches the constructor as a db.Option because rebuildContentSearch opens read-WRITE and so
+	// runs initSchema; the OpenSearch backfill below opens read-only and never consults it.
+	//
+	// Negative, so the zero value is the index this store has always kept. A field whose unset
+	// state silently dropped an index would be the wrong default for a struct every test builds by
+	// literal.
+	NoContentIndex bool
+
 	// Embed, when enabled, produces the vectors that make the rebuilt index searchable by meaning.
 	// A backfill that omitted them would produce a keyword-only index - silently, since a document
 	// without a vector is a perfectly valid document.
@@ -57,16 +66,18 @@ func rebuildContentSearch(cfg backfillConfig) {
 		err      error
 	)
 
+	opts := contentIndexOptions(!cfg.NoContentIndex)
+
 	switch cfg.StorageDriver {
 
 	case "sqlite":
-		database, err = db.New(cfg.StorageDirectory)
+		database, err = db.New(cfg.StorageDirectory, opts...)
 
 	case "postgres":
-		database, err = db.NewPostgres(cfg.PostgresDSN, false)
+		database, err = db.NewPostgres(cfg.PostgresDSN, false, opts...)
 
 	case "mysql":
-		database, err = db.NewMySQL(cfg.MySQLDSN, false)
+		database, err = db.NewMySQL(cfg.MySQLDSN, false, opts...)
 
 	default:
 		log.Fatalf("unknown storage.driver '%s' (expected 'sqlite', 'postgres', or 'mysql')", cfg.StorageDriver)
@@ -79,6 +90,10 @@ func rebuildContentSearch(cfg backfillConfig) {
 
 	if !database.ContentSearchAvailable() {
 		_ = database.Close()
+
+		if cfg.NoContentIndex {
+			log.Fatal("--backfill-search has nothing to rebuild: search.contentIndex.enabled is false, so this store keeps no content-search index, and opensearch.enabled is false")
+		}
 
 		log.Fatalf(
 			"--backfill-search has nothing to rebuild: storage.driver '%s' has no built-in content search, and opensearch.enabled is false",

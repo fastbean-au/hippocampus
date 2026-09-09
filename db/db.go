@@ -140,6 +140,50 @@ type DB struct {
 	// is_compressed flag — and is set once at startup via SetCompression, before serving, so it
 	// needs no lock.
 	compression compression
+
+	// contentIndexOff suppresses this store's own content-search index (see search.go). Unlike
+	// every policy field above it, it cannot be a setter: initContentSearch runs inside initSchema,
+	// so a decision arriving after the constructor would have created and populated the index
+	// before anything could say not to. It is a constructor Option for that reason alone.
+	contentIndexOff bool
+}
+
+// Option adjusts a store at construction, before its schema is brought up to date. It exists for
+// settings initSchema itself has to read; everything else a deployment configures arrives through a
+// Set* method after the constructor has returned.
+type Option func(*DB)
+
+// WithoutContentIndex suppresses this store's own content-search index: initContentSearch drops it
+// instead of creating it, ContentSearchAvailable reports false, and no write maintains it.
+//
+// It exists because that index is the largest non-body cost in the store on every dialect - at four
+// kilobyte bodies SQLite's is larger than the compressed bodies it indexes, and on MySQL, where a
+// FULLTEXT index is an index on a COLUMN, it holds a second uncompressed copy of every body - and a
+// deployment running OpenSearch reads none of it. Nothing above the db package need know: with the
+// index gone, search.NewSQL declines to build a backend and SearchMemories already answers
+// FailedPrecondition naming what to enable, which is the behaviour the read-only opens reach by
+// their own route.
+//
+// Reversible in both directions and on any startup: initContentSearch creates and repopulates an
+// index that is absent, which is the same path an upgrade from a build without content search
+// takes. What that costs on a large store is one full pass over memories during startup.
+func WithoutContentIndex() Option {
+	return func(d *DB) {
+		d.contentIndexOff = true
+	}
+}
+
+// applyOptions runs the constructor options against a freshly built store. Called after the DB is
+// constructed and before initSchema, which is the whole window an Option exists for; the read-only
+// opens take none, having no schema run to influence.
+func applyOptions(d *DB, opts []Option) {
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		opt(d)
+	}
 }
 
 // SetQueryTimeout sets the per-operation timeout (see the queryTimeout field). Called once at
@@ -718,7 +762,7 @@ var _ Store = (*DB)(nil)
 // process already holds it, so a second consolidating instance pointed at the same directory stops
 // at startup rather than running a second decay/eviction schedule against one store. The in-memory
 // database (an empty directory) has no file to guard and takes no lock.
-func New(directory string) (*DB, error) {
+func New(directory string, opts ...Option) (*DB, error) {
 	log.Trace("func() NewDB")
 
 	dsn := "file::memory:"
@@ -774,6 +818,8 @@ func New(directory string) (*DB, error) {
 	sqlDB.SetMaxIdleConns(1)
 
 	d := &DB{sql: sqlDB, walFilePath: walFilePath, lockFile: lockFile}
+
+	applyOptions(d, opts)
 
 	if err := d.initSchema(); err != nil {
 		_ = sqlDB.Close()

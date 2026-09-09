@@ -18,7 +18,7 @@ import (
 // instance as a horizontally scaled replica. Exactly one instance in a deployment must
 // be started with consolidate true. Requires MySQL 8.0.20+ (the upserts use the ON DUPLICATE KEY
 // UPDATE row alias) and a DSN that names a database schema.
-func NewMySQL(dsn string, consolidate bool) (*DB, error) {
+func NewMySQL(dsn string, consolidate bool, opts ...Option) (*DB, error) {
 	log.Trace("func() NewMySQL")
 
 	sqlDB, err := sql.Open("mysql", dsn)
@@ -28,7 +28,7 @@ func NewMySQL(dsn string, consolidate bool) (*DB, error) {
 		return nil, err
 	}
 
-	return setupMySQL(sqlDB, consolidate)
+	return setupMySQL(sqlDB, consolidate, opts...)
 }
 
 // setupMySQL prepares an already-opened MySQL handle: it caps the pooled connection lifetime, takes
@@ -36,13 +36,15 @@ func NewMySQL(dsn string, consolidate bool) (*DB, error) {
 // starts the lock keepalive. It is split out from NewMySQL, which only turns a DSN into the handle,
 // so this preparation logic can be exercised against a mocked database/sql handle without a live
 // server.
-func setupMySQL(sqlDB *sql.DB, consolidate bool) (*DB, error) {
+func setupMySQL(sqlDB *sql.DB, consolidate bool, opts ...Option) (*DB, error) {
 	// Recycle pooled connections before MySQL's wait_timeout can close them under the pool (see
 	// serverConnMaxLifetime; go-sql-driver's README recommends exactly this). The pinned lock
 	// connection is exempt (never returned while held) and is kept alive by the keepalive below.
 	sqlDB.SetConnMaxLifetime(serverConnMaxLifetime)
 
 	d := &DB{sql: sqlDB, driver: driverMySQL}
+
+	applyOptions(d, opts)
 
 	if consolidate {
 		if err := d.acquireMySQLInstanceLock(); err != nil {

@@ -1540,6 +1540,46 @@ pressure would evict live memories to make room for it. On `sqlite` it cannot �
 cannot exclude a table in the same file — so the index is inside `capacityBytes` there, and search
 makes the same target hold fewer memories. Either way it is disk to size for.
 
+#### Turning the store index off
+
+```json
+"search": {
+    "contentIndex": {
+        "enabled": true
+    }
+}
+```
+
+- `search.contentIndex.enabled` — whether this store keeps a content index of its own. **Derived
+  when unset**: on with `opensearch.enabled` false, off with it true. Set it to override the
+  derivation in either direction; a startup line reports the choice and its reason.
+
+The default is derived because the two backends are alternatives and only one is selected. With
+OpenSearch configured, the store's own index is written on every memory — inside the storage
+boundary, before compression sees the body — and then read by nothing for the life of the store.
+
+It is worth turning off because it is the **largest non-body cost the store carries**, on every
+driver. Measured over 20,000 memories of log-shaped JSON: on `sqlite` it is 43–59% of the payload,
+and at 4 KiB bodies the index is larger than the compressed bodies it indexes — the column gets
+gzip, the index gets the plain text. On `postgres` the `tsvector` table with its GIN index is 22 MiB
+against a 4.9 MiB payload. On `mysql`, where a `FULLTEXT` index is an index on a *column*, the table
+holds a second uncompressed copy of every body: 40 MiB against 19.5 MiB.
+
+Two things to know before setting it:
+
+- **Disabling drops the index; it does not merely stop maintaining it.** An index that stops being
+  written does not become empty, it becomes *wrong* — it would go on answering from a subset that
+  shrinks with every consolidation cycle, and a search silently returning some of the matches is
+  worse than one that refuses. With it dropped, `SearchMemories` answers `FAILED_PRECONDITION` and
+  `WhoAmI.search_modes` reports the absence, so a client feature-detects rather than search-and-fails.
+- **Re-enabling rebuilds it automatically**, on the next startup, by the same path a store written
+  before content search existed takes. On a large store that is one full pass over `memories` during
+  startup. `--backfill-search` is not needed.
+
+Turning it off with `opensearch.enabled` also false is a coherent choice — a store nobody searches
+by content — and is warned about at startup rather than refused, since `SearchMemories` will then
+reject every call.
+
 #### Semantic search
 
 Keyword search finds memories that used your words. Semantic search finds memories that meant what

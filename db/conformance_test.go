@@ -236,8 +236,14 @@ func requireSQLite(t *testing.T) {
 // Anything else opening its own store is opting out of two thirds of the coverage without saying
 // so, which is the state this whole harness exists to end.
 var sqliteOnlyTestFiles = map[string]bool{
-	"bench_test.go":          true,
-	"conformance_test.go":    true,
+	"bench_test.go":       true,
+	"conformance_test.go": true,
+
+	// Opens its own stores only because it must CLOSE AND REOPEN one: WithoutContentIndex is a
+	// constructor option, so both directions of the setting are observable only across a reopen,
+	// and the shared harness's in-memory store is a different database on every open. Its own
+	// opener resolves the dialect exactly as newTestDB does, so the file is not SQLite-only.
+	"content_index_test.go":  true,
 	"instances_test.go":      true,
 	"listing_index_test.go":  true,
 	"lock_test.go":           true,

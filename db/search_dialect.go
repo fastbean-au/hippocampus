@@ -154,6 +154,45 @@ func (d *DB) createContentIndex() error {
 	}
 }
 
+// dropContentIndex removes the content-search index for the active dialect, idempotently. The
+// counterpart to createContentIndex above, and the WithoutContentIndex path through
+// initContentSearch: an index nothing reads is the largest non-body cost this store carries, and
+// the way to stop paying it is to not have it.
+//
+// Idempotent in the same sense the creation is - IF EXISTS throughout - so it runs on every startup
+// while the key says so and does work only the first time.
+//
+// The embedded dialect's trigger goes FIRST and is not optional. SQLite resolves a trigger's body
+// when the trigger fires rather than when it is created, so a trigger left pointing at a dropped
+// table does not become inert: it turns every subsequent DELETE from memories into an error, which
+// is consolidation, eviction, Clear and Purge all failing at once. The server dialects need no such
+// care - their index is an ordinary table whose foreign key is dropped along with it.
+func (d *DB) dropContentIndex() error {
+	log.Trace("func() db.dropContentIndex")
+
+	statements := []string{`DROP TABLE IF EXISTS ` + contentSearchTable}
+
+	switch d.driver {
+
+	case driverPostgres, driverMySQL:
+		// Nothing else: the GIN and FULLTEXT indexes belong to the table and go with it.
+
+	default:
+		statements = append([]string{`DROP TRIGGER IF EXISTS ` + contentSearchTrigger}, statements...)
+
+	}
+
+	for _, statement := range statements {
+		if _, err := d.sql.Exec(statement); err != nil {
+			log.Errorf("failed to drop the content search index: %s", err.Error())
+
+			return err
+		}
+	}
+
+	return nil
+}
+
 // writeContentIndexEntry adds or replaces one memory's body in the index. The body arrives plain -
 // the caller reads it from inside the storage boundary, before compression - and already bounded
 // (see indexMemoryContent).

@@ -11,10 +11,11 @@ import (
 )
 
 // ErrContentSearchUnavailable is returned by SearchMemoryHits when this database cannot answer
-// content searches - a read-only tool open, or a dialect carrying no index of its own. Callers map
-// it to a FailedPrecondition rather than an empty result, so an operator who expected search to
-// work is told it is not available instead of concluding their store is empty.
-var ErrContentSearchUnavailable = errors.New("content search is not available on this storage driver")
+// content searches - a read-only tool open, a store opened WithoutContentIndex, or a dialect
+// carrying no index of its own. Callers map it to a FailedPrecondition rather than an empty result,
+// so an operator who expected search to work is told it is not available instead of concluding
+// their store is empty.
+var ErrContentSearchUnavailable = errors.New("content search is not available on this store")
 
 // Content search lets SearchMemories work without an OpenSearch cluster, on every dialect. It is a
 // secondary index like the OpenSearch one - the memories table stays the sole system of record, and
@@ -93,19 +94,40 @@ type ContentHit struct {
 }
 
 // ContentSearchAvailable reports whether this database can answer content searches. Every dialect
-// carries an index, but a read-only tool open never runs the DDL that creates it.
+// carries an index, but a read-only tool open never runs the DDL that creates it, and a store
+// opened WithoutContentIndex has had it dropped.
 func (d *DB) ContentSearchAvailable() bool {
-	return d.dialect().contentSearch && !d.readOnly
+	return d.dialect().contentSearch && !d.readOnly && !d.contentIndexOff
 }
 
-// initContentSearch creates the content-search index and populates it if it is empty but the store
-// is not - the upgrade case, where a database written by a version without content search gains
-// the index on this startup and would otherwise answer every search with nothing.
+// initContentSearch brings the content-search index into line with what this store is configured to
+// carry: it creates the index and populates it if it is empty but the store is not - the upgrade
+// case, where a database written by a version without content search gains the index on this
+// startup and would otherwise answer every search with nothing - or, under WithoutContentIndex,
+// drops it.
+//
+// It is the migration's apply function on two dialect gates (12 and 14), so it runs on every
+// startup and settles the index in whichever direction the configuration has since moved. Both
+// directions detect their own completion, which is what lets the key be changed on a live store and
+// what keeps the ledger honest: the step is recorded either way, because what it records is that
+// this build has HANDLED the content index, not that an index exists. Gating the migration itself
+// on the key would instead move the store's schema version up and down as the key changed, and a
+// build meeting the higher of the two would refuse to open a store it understands perfectly.
+//
+// Dropping rather than merely ceasing to write is the whole of the safety here. An index that stops
+// being maintained does not become empty, it becomes WRONG - it keeps answering, from a subset that
+// shrinks with every consolidation cycle - and a search that quietly returns some of the matches is
+// worse than one that refuses. Dropped, ContentSearchAvailable is false and SearchMemories already
+// answers FailedPrecondition naming what to enable.
 func (d *DB) initContentSearch() error {
 	log.Trace("func() db.initContentSearch")
 
 	if !d.dialect().contentSearch {
 		return nil
+	}
+
+	if d.contentIndexOff {
+		return d.dropContentIndex()
 	}
 
 	if err := d.createContentIndex(); err != nil {
@@ -172,6 +194,13 @@ func (d *DB) RebuildContentSearch(ctx context.Context) error {
 
 	if !d.dialect().contentSearch {
 		return nil
+	}
+
+	// A store opened WithoutContentIndex has no table to rebuild into, and the first statement below
+	// would fail against it with whichever "no such table" the dialect spells. Refusing by name
+	// instead is what lets --backfill-search say which setting is in the way.
+	if d.contentIndexOff {
+		return ErrContentSearchUnavailable
 	}
 
 	if _, err := d.exec(ctx, `DELETE FROM `+contentSearchTable); err != nil {

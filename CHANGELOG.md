@@ -52,6 +52,47 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ## [Unreleased]
 
+### Added
+
+- **The store's own content index can be turned off, and is by default where OpenSearch answers
+  every search.** `search.contentIndex.enabled` is **derived when unset** — on with
+  `opensearch.enabled` false, off with it true — and overridable in either direction, the same
+  treatment `reflection.enabled` gets. A startup line reports the choice and its reason.
+
+  It exists because that index was not optional. Only one search backend is ever selected, so on an
+  OpenSearch deployment the store's own index was written for every memory — inside the storage
+  boundary, before compression sees the body — and then read by nothing for the life of the store.
+  Measured over 20,000 memories of log-shaped JSON it is the **largest non-body cost the store
+  carries** on every driver: 43–59% of the payload on `sqlite`, where at 4 KiB bodies the index is
+  larger than the compressed bodies it indexes; 22 MiB against a 4.9 MiB payload on `postgres`; and
+  on `mysql`, where a `FULLTEXT` index is an index on a *column*, a second uncompressed copy of every
+  body — 40 MiB against 19.5 MiB.
+
+  Disabling **drops** the index rather than ceasing to maintain it. An index that stops being written
+  does not become empty, it becomes wrong — it would go on answering from a subset that shrinks with
+  every consolidation cycle, and a search that silently returns some of the matches is worse than one
+  that refuses. Dropped, `SearchMemories` answers `FAILED_PRECONDITION` and `WhoAmI.search_modes`
+  reports the absence, so a client feature-detects rather than search-and-fails. Re-enabling needs
+  nothing: the index is recreated and repopulated on the next startup by the same path a store
+  written before content search existed takes.
+
+  The setting deliberately does **not** gate the schema migration that carries the index, which is
+  recorded either way. Gating it would move a store's schema version up and down as the key changed,
+  and a build meeting the higher of the two would refuse — with `ErrSchemaTooNew` — to open a store it
+  understands perfectly.
+
+### Changed
+
+- **An OpenSearch deployment drops its store-side content index on the next startup**, following the
+  new derived default above. That is the reclaimed storage the change is for, and it is reversible by
+  setting `search.contentIndex.enabled` true. The shipped `docker-compose.opensearch*.yaml` stacks
+  are affected: they keep working, with search answered by OpenSearch as before.
+
+### Fixed
+
+- The configuration wizard described built-in keyword search as a SQLite-only feature. It has been
+  available on every driver since 0.42.0.
+
 ## [0.43.0] - 2026-09-09
 
 ### Added

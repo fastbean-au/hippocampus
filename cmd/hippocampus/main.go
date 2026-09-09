@@ -296,11 +296,18 @@ func execute(args []string) {
 		// with different constraints (it writes to the service's own database), so it has its own
 		// entry point rather than a flag inside this one.
 		if !viper.GetBool("opensearch.enabled") {
+			// The setting is passed through rather than left to default, because this mode opens
+			// the store read-WRITE and so runs initSchema: without it the tool would recreate,
+			// populate and leave behind the very index the service was configured to drop, and the
+			// next service start would drop it again.
+			contentIndex, _ := contentIndexSetting()
+
 			rebuildContentSearch(backfillConfig{
 				StorageDriver:    viper.GetString("storage.driver"),
 				StorageDirectory: viper.GetString("storage.directory"),
 				PostgresDSN:      viper.GetString("storage.postgres.dsn"),
 				MySQLDSN:         viper.GetString("storage.mysql.dsn"),
+				NoContentIndex:   !contentIndex,
 			})
 
 			return
@@ -653,12 +660,24 @@ func run(ctx context.Context, version versionInfo) error {
 		log.Warn("consolidation.enabled is false with storage.driver 'sqlite': SQLite cannot be shared between instances, so this instance simply never runs consolidation; horizontal scaling requires the postgres or mysql driver")
 	}
 
+	// Resolved before the store is opened rather than beside the search backend below, because it
+	// governs schema: initContentSearch runs inside the constructor, and creates or drops the index
+	// according to it.
+	contentIndex, contentIndexReason := contentIndexSetting()
+	contentIndexOpts := contentIndexOptions(contentIndex)
+
+	if contentIndex {
+		log.Infof("the store keeps its own content-search index (%s)", contentIndexReason)
+	} else {
+		log.Infof("the store keeps no content-search index of its own (%s)", contentIndexReason)
+	}
+
 	var database *db.DB
 
 	switch storageDriver := viper.GetString("storage.driver"); storageDriver {
 
 	case "sqlite":
-		database, err = db.New(viper.GetString("storage.directory"))
+		database, err = db.New(viper.GetString("storage.directory"), contentIndexOpts...)
 
 	case "postgres":
 		// WAL-triggered sleep is SQLite-specific (it exists to force a checkpoint when the
@@ -669,14 +688,14 @@ func run(ctx context.Context, version versionInfo) error {
 			return fmt.Errorf("consolidation.walTriggerBytes is not supported with storage.driver 'postgres'")
 		}
 
-		database, err = db.NewPostgres(viper.GetString("storage.postgres.dsn"), consolidate)
+		database, err = db.NewPostgres(viper.GetString("storage.postgres.dsn"), consolidate, contentIndexOpts...)
 
 	case "mysql":
 		if viper.GetInt64("consolidation.walTriggerBytes") > 0 {
 			return fmt.Errorf("consolidation.walTriggerBytes is not supported with storage.driver 'mysql'")
 		}
 
-		database, err = db.NewMySQL(viper.GetString("storage.mysql.dsn"), consolidate)
+		database, err = db.NewMySQL(viper.GetString("storage.mysql.dsn"), consolidate, contentIndexOpts...)
 
 	default:
 		return fmt.Errorf("unknown storage.driver '%s' (expected 'sqlite', 'postgres', or 'mysql')", storageDriver)
@@ -760,6 +779,19 @@ func run(ctx context.Context, version versionInfo) error {
 	default:
 		idx, err := search.NewSQL(database)
 		if err != nil {
+			// Two ways to arrive here, and they want different advice. One is a store that cannot
+			// carry the index; the other is an operator who turned it off and left OpenSearch off
+			// too, which is a coherent choice - a store nobody searches by content - but leaves
+			// SearchMemories refusing, so it is named rather than reported as a fault.
+			if !contentIndex {
+				log.Warnf(
+					"content search is unavailable, so SearchMemories will be rejected: the store keeps no content-search index (%s) and opensearch.enabled is false",
+					contentIndexReason,
+				)
+
+				break
+			}
+
 			log.Warnf(
 				"content search is unavailable, so SearchMemories will be rejected: %s (enable opensearch.enabled to add it)",
 				err.Error(),
@@ -1818,6 +1850,44 @@ func reflectionSetting(authMethod string) (bool, string) {
 	}
 
 	return false, "the default with auth.method '" + authMethod + "'"
+}
+
+// contentIndexSetting decides whether this store keeps its own content-search index, and returns
+// the reason alongside it so the startup line can say which of the two it took.
+//
+// Derived rather than fixed, on exactly the reflectionSetting precedent above: a capability whose
+// sensible default is a function of another key, and one that is cheaper to derive than to make an
+// operator discover. A deployment running OpenSearch has a second index answering every search, and
+// main selects one backend - so the store's own index is written on every memory, before
+// compression ever sees the body, and read by nothing for the life of the store. It is the largest
+// non-body cost the store carries on every dialect; on MySQL, where a FULLTEXT index is an index on
+// a COLUMN, it is a second uncompressed copy of every body beside the compressed one.
+//
+// viper.IsSet is what makes the derived default overridable in BOTH directions, which matters more
+// here than it does for reflection. Keeping the index alongside OpenSearch is a real choice - it is
+// what a deployment falls back to when the cluster is unreachable, and what makes turning OpenSearch
+// off again free - and a plain GetBool could only ever express "off".
+func contentIndexSetting() (bool, string) {
+	if viper.IsSet("search.contentIndex.enabled") {
+		return viper.GetBool("search.contentIndex.enabled"), "set by search.contentIndex.enabled"
+	}
+
+	if viper.GetBool("opensearch.enabled") {
+		return false, "the default with opensearch.enabled: that index answers every search, so this one would be written and never read"
+	}
+
+	return true, "the default with opensearch.enabled false"
+}
+
+// contentIndexOptions turns that decision into the constructor options the db package takes. A
+// slice rather than a bool because the decision has to reach initSchema, which runs inside the
+// constructor - see db.Option.
+func contentIndexOptions(enabled bool) []db.Option {
+	if enabled {
+		return nil
+	}
+
+	return []db.Option{db.WithoutContentIndex()}
 }
 
 // topologyTierOverride turns topology.minimumTier into the per-RPC tier override NewAuthoriser

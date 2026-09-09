@@ -862,6 +862,27 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   it did while OpenSearch was the only backend and, until item 96, what it still did on
   `postgres`/`mysql`. Only a store that can carry no index at all (a read-only tool open) leaves the
   no-op in place, logged at startup and surfaced as `FailedPrecondition`.
+  - **The store's own index is optional** (`search.contentIndex.enabled`, TODO-2 item 112.1),
+    **derived when unset** on the `reflection.enabled` precedent: on with `opensearch.enabled` false,
+    off with it true, overridable in either direction and logged with its reason. It exists because
+    only one backend is ever selected, so on an OpenSearch deployment the SQL index was written for
+    every memory - inside the storage boundary, before compression - and read by nothing for the life
+    of the store, while being the largest non-body cost the store carries on every dialect (measured:
+    43-59% of payload on SQLite, and on MySQL a second UNCOMPRESSED copy of every body, since a
+    `FULLTEXT` index is an index on a column). Four things carry it. (1) It **drops** the index rather
+    than ceasing to write it: an unmaintained index does not become empty, it becomes WRONG, answering
+    from a subset that shrinks with every cycle - and dropped, `ContentSearchAvailable` is already
+    false and `SearchMemories` already answers `FailedPrecondition`, the behaviour item 96 built for
+    the read-only opens reached by a second route. (2) It is a **constructor `db.Option`, not a
+    setter**, because `initContentSearch` runs inside `initSchema`; a decision arriving after the
+    constructor would have created and populated the index before anything could say not to.
+    (3) It does **not** gate the migration, which is recorded either way - gating it would move a
+    store's schema version up and down as the key changed, and a build meeting the higher of the two
+    would refuse `ErrSchemaTooNew` on a store it understands perfectly. (4) The SQLite **trigger goes
+    first** in the drop: a trigger's body is resolved when it fires, so one left pointing at a dropped
+    table turns every DELETE from `memories` into an error - consolidation, eviction, `Clear` and
+    `Purge` failing at once. `--backfill-search` passes the same setting through, since it opens
+    read-WRITE and would otherwise recreate the index the service was configured to drop.
   - `search/sql.go` — the store-backed backend. A thin adapter: `Search` delegates to
     `db.SearchMemoryHits`, and **every mutator is deliberately a no-op**, because the index is
     maintained inside the primary write rather than propagated to afterwards (wiring them up would
