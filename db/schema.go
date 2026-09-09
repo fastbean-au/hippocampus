@@ -92,7 +92,7 @@ type schemaMigration struct {
 // these steps arrived across seventeen releases, several of them are already the accumulated result
 // of earlier ones, and no store anywhere is at an intermediate point between them - every store in
 // existence has either seen all of them or is about to. What the ledger needs to be honest about is
-// the future, and it is: version 14 is where this list ends today, and a store recording 15 was
+// the future, and it is: version 15 is where this list ends today, and a store recording 16 was
 // written by something this build has not met.
 func (d *DB) migrations() []schemaMigration {
 	return []schemaMigration{
@@ -199,6 +199,22 @@ func (d *DB) migrations() []schemaMigration {
 				return dialect.contentSearch && dialect.contentIndexCascades
 			},
 			apply: (*DB).initContentSearch,
+		},
+		{
+			// The covering index gained memories.external_bytes, the external capacity axis. The
+			// column itself is migration 2's - it has to be, since 7 builds the index over it - so
+			// what is left for this step is the rebuild, which is why it runs the same function 7
+			// does rather than one of its own.
+			//
+			// It takes a version at all for exactly the reason 14 does beside 12: a store must
+			// record which shape of the index it actually has, because the drift an older build
+			// leaves is silent. That build creates the v2 index beside the v3 one, and - the half
+			// that matters - goes on writing memories while recording no external size for any of
+			// them. Nothing fails; the axis simply under-reports, on a store that is being sized by
+			// it.
+			version: 15,
+			name:    "covering_index_external",
+			apply:   (*DB).ensureCoveringIndex,
 		},
 	}
 }

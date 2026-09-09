@@ -83,7 +83,7 @@ func seedBenchStore(b *testing.B, d *DB, memories int) {
 		}
 
 		if _, err := insertMemory.Exec(
-			fmt.Sprintf("bench-memory-%08d", i), now, levelID[1+i%100], eventId, body, false, 0, 0, false, "", false, nil,
+			fmt.Sprintf("bench-memory-%08d", i), now, levelID[1+i%100], eventId, body, false, 0, 0, false, "", false, 0, nil,
 		); err != nil {
 			b.Fatalf("insert memory: %s", err)
 		}
@@ -236,7 +236,7 @@ func BenchmarkEvictMemories(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				_, _, _, _ = d.EvictMemories(context.Background(), server, 1)
+				_, _ = d.EvictMemories(context.Background(), server, EvictionTarget{Bytes: 1})
 			}
 		})
 	}
@@ -270,7 +270,7 @@ func seedDeletableMemories(b *testing.B, d *DB, n int) []memoryRecallSnapshot {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("del-%08d", i)
 
-		if _, err := insert.Exec(id, now, levelID[1], "", body, false, 0, 0, false, "", false, nil); err != nil {
+		if _, err := insert.Exec(id, now, levelID[1], "", body, false, 0, 0, false, "", false, 0, nil); err != nil {
 			b.Fatalf("insert: %s", err)
 		}
 

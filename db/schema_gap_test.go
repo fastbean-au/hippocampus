@@ -251,6 +251,10 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 			expectSupersededIndexDrop(mock, d)
 			expectIndexFails(mock, d)
 		},
+		"covering_index_external": func(mock sqlmock.Sqlmock, d driver) {
+			expectSupersededIndexDrop(mock, d)
+			expectIndexFails(mock, d)
+		},
 		"listing_index": func(mock sqlmock.Sqlmock, d driver) {
 			expectIndexFails(mock, d)
 		},

@@ -2184,13 +2184,32 @@ func configProblems() []error {
 	// capacityMemories deliberately does not rescue it. A row capacity only scales the pressure that
 	// scales the threshold, and scaling a non-positive threshold leaves it non-positive; nothing
 	// evicts on the row count, so that pairing really does forget nothing.
+	//
+	// consolidation.capacityExternalBytes rescues it on exactly the same terms, and for the same
+	// reason: it is a capacity target eviction runs against, so a store carrying one forgets on the
+	// capacity target alone whether or not it also bounds its own disk. A retention controller over
+	// storage held elsewhere is precisely that configuration.
 	if threshold := viper.GetFloat64("consolidation.deletionThreshold"); threshold <= 0 {
-		if capacityBytes := viper.GetInt64("consolidation.capacityBytes"); capacityBytes <= 0 {
+		capacityBytes := viper.GetInt64("consolidation.capacityBytes")
+		capacityExternalBytes := viper.GetInt64("consolidation.capacityExternalBytes")
+
+		if capacityBytes <= 0 && capacityExternalBytes <= 0 {
 			problems = append(problems, fmt.Errorf(
-				"consolidation.deletionThreshold must be greater than 0 (or set consolidation.capacityBytes to forget on the capacity target alone), got %v",
+				"consolidation.deletionThreshold must be greater than 0 (or set consolidation.capacityBytes or consolidation.capacityExternalBytes to forget on a capacity target alone), got %v",
 				threshold,
 			))
 		}
+	}
+
+	// The external capacity axis's two keys. A negative is meaningless on both (0 disables), and
+	// on the target it is worth catching rather than clamping: a mis-signed capacity would leave the
+	// axis inert while the configuration says it is bounded, which reads as an axis keeping up.
+	if capacityExternalBytes := viper.GetInt64("consolidation.capacityExternalBytes"); capacityExternalBytes < 0 {
+		problems = append(problems, fmt.Errorf("consolidation.capacityExternalBytes must not be negative, got %d", capacityExternalBytes))
+	}
+
+	if floor := viper.GetInt64("consolidation.capacityExternalBytesFloor"); floor < 0 {
+		problems = append(problems, fmt.Errorf("consolidation.capacityExternalBytesFloor must not be negative, got %d", floor))
 	}
 
 	// A negative retention window is meaningless (0 disables the floor). Catch it at startup rather

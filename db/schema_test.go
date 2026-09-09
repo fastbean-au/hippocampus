@@ -31,6 +31,7 @@ func TestMigrationVersionsAreStable(t *testing.T) {
 		12: "content_search",
 		13: "callback_queue",
 		14: "content_search_sql",
+		15: "covering_index_external",
 	}
 
 	migrations := (&DB{driver: driverSQLite}).migrations()

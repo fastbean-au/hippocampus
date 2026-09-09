@@ -592,6 +592,43 @@ enum (see [Observability](#observability)).
 Metadata round-trips through `Export`/`Import`/`Transfer`. It is stored as a nullable JSON column on
 all three drivers, added in place on first startup after an upgrade, so no migration step is needed.
 
+### External bytes
+
+A memory can carry `external_bytes`: the size of a payload it only **points at**, held in another
+system — a trace in a column store, a blob in a bucket, a document in another index. It is
+client-supplied and never interpreted here (the service does not fetch it, verify it, or know its
+address), and it exists so decay can govern storage this store does not hold. Whatever the far end
+is, it is the client's business; whether the payload is still worth keeping becomes this store's.
+
+It is the third capacity axis. `consolidation.capacityExternalBytes` is the target it is held under
+and `consolidation.capacityExternalBytesFloor` its hysteresis floor, read exactly as
+`capacityBytes`/`capacityBytesFloor` are; the sum feeds capacity pressure alongside the row count and
+the store's own bytes, and eviction reclaims against it as a second target. It is **never** folded
+into `used_bytes`, which bounds this store's own disk — see
+[the external capacity axis](consolidation.md#the-external-capacity-axis) for why that separation is
+load-bearing rather than tidy.
+
+Three properties at the API boundary:
+
+- **Must be `>= 0`**, on both `StoreMemory` and `UpdateMemory`. A negative would understate the
+  pressure every other row contributes to, since the axis is a sum across the store.
+- **`0` on an update leaves the stored value unchanged**, exactly as `significance` does, so a
+  partial update of any other field cannot silently zero it. There is deliberately no
+  `clear_external_bytes` beside `clear_group` and `clear_metadata`: those exist because a memory can
+  legitimately lose a label and keep its meaning, whereas a pointer-memory whose payload is gone is a
+  memory to delete.
+- **It is outside `memory.limit.sizeBytes`.** That limit bounds what this store holds, and this
+  number measures what it does not.
+
+It round-trips through `Export`/`Import`/`Transfer`, is reported per candidate by
+`PreviewConsolidation`, and is 0 on every memory written before the column existed — so an upgraded
+store behaves exactly as it did until something starts recording sizes.
+
+**Nothing is deleted out there.** The store decides what should go and forgets its own record of it;
+telling the far system to delete the payload is the `memory_forgotten`
+[callback](#outbound-callbacks), which is a best-effort notification rather than a guaranteed
+instruction. Until that gap is closed, leave the far end's own expiry configured as the outer bound.
+
 ### Listing totals
 
 `GetMemories` and `GetEvents` report a `total_count` beside the page. It is a second pass over the

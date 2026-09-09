@@ -82,13 +82,14 @@ the memory's effective significance. A weight of 0 disables the significance boo
 reset still applies).
 
 Forgetting also becomes more aggressive as the store fills. At the start of each sleep cycle
-utilisation is measured on two axes — the memory count against `consolidation.capacityMemories`
-and the store's used bytes against `consolidation.capacityBytes` (0 disables either axis; row
-count alone is a poor proxy for storage when bodies range from bytes to hundreds of kilobytes)
-— and the deletion threshold is multiplied by a pressure factor driven by whichever axis is
-fuller:
+utilisation is measured on three axes — the memory count against `consolidation.capacityMemories`,
+the store's used bytes against `consolidation.capacityBytes`, and the external payload its memories
+point at against `consolidation.capacityExternalBytes` (0 disables any axis; row count alone is a
+poor proxy for storage when bodies range from bytes to hundreds of kilobytes, and this store's own
+footprint is a poor proxy for a payload held somewhere else) — and the deletion threshold is
+multiplied by a pressure factor driven by whichever axis is fullest:
 
-$$ pressure = 1 + max \left( { count \over capacity_{count} }, { bytes \over capacity_{bytes} } \right) ^ p $$
+$$ pressure = 1 + max \left( { count \over capacity_{count} }, { bytes \over capacity_{bytes} }, { external \over capacity_{external} } \right) ^ p $$
 
 The exponent $p$ (`consolidation.capacityPressureExponent`) controls how sharply pressure ramps
 up: with a high exponent the pressure is negligible until the store approaches capacity, reaches
@@ -376,7 +377,7 @@ themselves.
 flowchart LR
   subgraph memories["One memories row"]
     direction TB
-    inputs["Decay inputs — the covering index<br/>event_id · timestamp · significance_level_id<br/>time_recalled · recall_count · link_significance"]
+    inputs["Decay inputs — the covering index<br/>event_id · timestamp · significance_level_id<br/>time_recalled · recall_count · link_significance<br/>external_bytes"]
     flags["Flags and labels<br/>group_name · is_binary · is_summary · is_compressed"]
     payload["Payload<br/>body (gzipped) · metadata"]
   end
@@ -398,6 +399,7 @@ flowchart LR
 | `time_recalled`         | decay input | yes            |
 | `recall_count`          | decay input | yes            |
 | `link_significance`     | decay input | yes            |
+| `external_bytes`        | decay input | yes            |
 | `group_name`            | label       | no             |
 | `is_binary`             | flag        | no             |
 | `is_summary`            | flag        | no             |
@@ -405,8 +407,8 @@ flowchart LR
 | `body`                  | payload     | no             |
 | `metadata`              | payload     | no             |
 
-**The scans stay in the index.** The two consolidation passes over memories select those six
-columns plus the id, and `idx_memories_consolidation_v2` carries all six, so a pass over the whole
+**The scans stay in the index.** The two consolidation passes over memories select six of those
+columns plus the id, and `idx_memories_consolidation_v3` carries all seven, so a pass over the whole
 store walks index entries and never visits a memory row. (The pass covering memories that _do_ have
 an event joins `events` for the event's half of the value, but takes nothing further from the
 memory itself.) That is why the cost of a cycle tracks the _number_ of memories and not their
@@ -421,6 +423,16 @@ them. Reading a rank would therefore mean a join per row — so instead each pas
 once, which is cheap because it holds one row per _distinct_ significance rather than one per
 memory, and translates ids to ranks in Go. The join never happens and the index stays covering.
 
+**`external_bytes` is in the index although no per-row decision reads it.** It is the size of the
+payload a memory _points at_ in another system (see
+[the external capacity axis](#the-external-capacity-axis)), and it participates in
+forgetting as an aggregate rather than per row: one `SUM(external_bytes)` over the whole table per
+cycle, feeding the third capacity-pressure utilisation, plus eviction's second accumulator. On the
+embedded dialect a row is stored inline, so summing that column off the base table would read every
+page holding a **body** — exactly the cost this index exists to avoid — once per cycle, forever. In
+the index the sum is an index-only scan. Where nothing sets it the column is 0 on every row and the
+sum is never taken at all, because the service only measures the axis when a target is configured.
+
 **`link_significance` is denormalised on purpose.** It is the summed significance of a memory's
 links, maintained in the row — and in the index — by the link graph, and it is the only reason a
 scan can price a memory's connectedness without joining `memory_links`. It is _recomputed_ for
@@ -429,8 +441,8 @@ and one place where every mutation funnels through. Adding it to the index cost 
 loose-memory scan, which is the trade being made — see [the link graph](performance.md#the-link-graph).
 
 **Eviction is the one pass that leaves the index**, because ranking by value is not sufficient
-there: it also needs the bytes each deletion would free, and it joins `events` for the event's half
-of the value. Even so it reads `length(body)` and the metadata's byte length, never the content —
+there: it also needs the bytes each deletion would free — on both axes — and it joins `events` for
+the event's half of the value. Even so it reads `length(body)` and the metadata's byte length, never the content —
 SQLite serves `length()` from the record header. The dry run
 ([`PreviewConsolidation`](operations.md#previewing-what-would-be-forgotten)) does the same, and
 returns no bodies at all.
@@ -604,6 +616,49 @@ its last memory is deleted along with it. Unlike consolidation, eviction ignores
 store is fresh. The one age-based protection eviction _does_ honour is the minimum retention
 floor below.
 
+## The external capacity axis
+
+A memory does not have to hold its payload to govern it. `Memory.external_bytes` is the size of
+something this store only **points at** — a trace in a column store, a blob in a bucket, a document
+in another index — supplied by the client and never interpreted here: the service does not fetch it,
+verify it, or know its address. `consolidation.capacityExternalBytes` (0, the default, disables the
+axis) is the target that payload is held under, and `consolidation.capacityExternalBytesFloor` is its
+hysteresis floor, read exactly as `capacityBytesFloor` is read against `capacityBytes`.
+
+It exists because capacity pressure is the one control an age-based expiry cannot express, and
+pressure measured on the wrong bytes is no control at all. A pointer-memory is a couple of hundred
+bytes; the payload behind it might be forty kilobytes. Ten million of them is about 2 GB here against
+about 400 GB there — off by more than two orders of magnitude, and _uncorrelated_, because the error
+is a function of pointer overhead rather than of payload. A tiered TTL (`if(has_error, 30, 3) DAY`)
+already covers per-record significance tiers and needs no daemon; what it cannot do is name a
+**budget** and tighten when a traffic spike threatens it. That is what this axis restores when the
+data being governed lives elsewhere.
+
+Three properties are worth knowing before configuring it.
+
+- **It is a third axis, never folded into `capacityBytes`.** That target bounds this store's own
+  disk, and eviction's byte estimate is its exact complement, so counting external volume there would
+  make eviction chase bytes that deleting a memory does not return to this disk — and would let a
+  payload the store does not hold evict memories to reclaim space it is not using. `used_bytes` and
+  `external_bytes` are reported separately everywhere, and neither is comparable with the other.
+- **Eviction changes what it counts, not how it ranks.** One pass serves both axes: it deletes
+  least-valuable-first until each target that is over has been brought back under its floor, so a
+  store under its byte target and over its external one still evicts. Ordering by value _per byte_ is
+  the tempting alternative and it is a different product — it changes forgetting from "the least
+  valuable goes first" to "the worst value density goes first" — so the accumulator changed and the
+  sort did not.
+- **Nothing is deleted out there.** This release adds the axis and the accounting: the store decides
+  what should go and forgets its own record of it. Telling the far system to delete the payload is
+  the [`memory_forgotten` callback](operations.md#callbacks), which is a best-effort notification
+  rather than a guaranteed instruction — so until that gap is closed, leave the far end's own expiry
+  configured as the outer bound.
+
+The axis costs nothing when it is off: `external_bytes` defaults to 0 on every memory, and the sum
+behind the utilisation is only measured when a target is configured. It is reported by
+`PreviewConsolidation`, `ExplainConsolidation` and the `hippocampus.external_bytes` /
+`hippocampus.capacity_external_bytes` / `hippocampus.retained_external_bytes` /
+`hippocampus.external_bytes.evicted` instruments.
+
 ## Minimum retention
 
 `consolidation.minimumRetentionInDays` (0, the default, disables it) is a hard floor that
@@ -629,9 +684,11 @@ created. An event holding even one retained memory is itself kept alive: evictio
 the retained memory toward the event's total, so the event is never seen as fully evicted and
 deleted out from under it.
 
-Retention is a floor, not a cap: it can hold the store above `capacityBytes` if enough recent,
-protected data accumulates. Size it against your write rate so the retained working set fits the
-capacity you have provisioned.
+Retention is a floor, not a cap: it can hold the store above `capacityBytes` — or above
+`capacityExternalBytes` — if enough recent, protected data accumulates. Size it against your write
+rate so the retained working set fits the capacity you have provisioned. `hippocampus.retained_bytes`
+and `hippocampus.retained_external_bytes` are what make that visible: each approaching its own target
+means eviction can no longer bring that axis back under it, and the service logs a warning saying so.
 
 ## Checkpoint-triggered eviction
 

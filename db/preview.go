@@ -58,16 +58,17 @@ const (
 // decision. Body content is deliberately absent: a preview reports what would be lost, and must
 // not become a way to read the store.
 type ForgetCandidate struct {
-	Id           string
-	EventId      string
-	Group        string
-	Significance int32
-	Value        float64
-	Bytes        int64
-	Rule         ForgetRule
-	TimeStamp    int64
-	TimeRecalled int64
-	RecallCount  int32
+	Id            string
+	EventId       string
+	Group         string
+	Significance  int32
+	Value         float64
+	Bytes         int64
+	ExternalBytes int64
+	Rule          ForgetRule
+	TimeStamp     int64
+	TimeRecalled  int64
+	RecallCount   int32
 }
 
 // ConsolidationPreview is what a cycle would do to the store. The counts and byte figures are
@@ -79,8 +80,15 @@ type ConsolidationPreview struct {
 	BytesFreed           int64
 	MemoriesRetained     int
 	RetainedBytes        int64
-	Candidates           []ForgetCandidate
-	Truncated            bool
+
+	// The external axis's counterparts (see contract.Memory.external_bytes). ExternalBytesFreed
+	// covers both paths, since a consolidated pointer releases its payload exactly as an evicted one
+	// does; RetainedExternalBytes is what the retention floor is holding onto out there.
+	ExternalBytesFreed    int64
+	RetainedExternalBytes int64
+
+	Candidates []ForgetCandidate
+	Truncated  bool
 }
 
 // PreviewOptions carries the decision inputs the server owns, so the preview evaluates against
@@ -90,21 +98,31 @@ type ConsolidationPreview struct {
 // UsedBytes is the store's current usage; eviction is previewed only when what remains after
 // consolidation still exceeds CapacityBytes, and then reclaims down to EvictionFloor - mirroring
 // Server.evict. A non-positive CapacityBytes disables the eviction half entirely.
+//
+// The External* trio is the same three figures on the external axis, and is read the same way: a
+// non-positive CapacityExternalBytes disables that half. Both halves are consulted, because
+// Server.evict runs one pass against both targets - so a store under its byte capacity and over its
+// external one still evicts, and the preview has to say so.
 type PreviewOptions struct {
 	Limit         int
 	UsedBytes     int64
 	CapacityBytes int64
 	EvictionFloor int64
+
+	ExternalBytes         int64
+	CapacityExternalBytes int64
+	ExternalEvictionFloor int64
 }
 
 // previewRow is one scanned memory, carrying both the decision inputs and the reporting detail.
 type previewRow struct {
-	candidate MemoryConsolidationCandidate
-	id        string
-	eventId   string
-	group     string
-	bytes     int64
-	value     float64
+	candidate     MemoryConsolidationCandidate
+	id            string
+	eventId       string
+	group         string
+	bytes         int64
+	externalBytes int64
+	value         float64
 }
 
 // PreviewConsolidation reports what a consolidation cycle would forget if one ran now, without
@@ -151,7 +169,7 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			m.group_name, e.significance_level_id, COALESCE(e.link_significance, 0),
 			m.link_significance, e.id,
-			length(m.body) + `+d.metadataBytesExpr("m.")+`
+			length(m.body) + `+d.metadataBytesExpr("m.")+`, m.external_bytes
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 	)
 	if err != nil {
@@ -188,6 +206,7 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 			&row.candidate.MemoryLinkSignificance,
 			&joinedEventId,
 			&bodyBytes,
+			&row.externalBytes,
 		); err != nil {
 			log.Errorf("failed to scan memory for preview: %s", err.Error())
 
@@ -223,6 +242,7 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 		if s.MemoryRetained(row.candidate) {
 			preview.MemoriesRetained++
 			preview.RetainedBytes += row.bytes
+			preview.RetainedExternalBytes += row.externalBytes
 
 			continue
 		}
@@ -240,12 +260,14 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 
 	preview.MemoriesConsolidated = len(consolidating)
 
-	var consolidatedBytes int64
+	var consolidatedBytes, consolidatedExternalBytes int64
+
 	for _, row := range consolidating {
 		consolidatedBytes += row.bytes
+		consolidatedExternalBytes += row.externalBytes
 	}
 
-	evicting := previewEvictions(evictable, consolidatedBytes, opts)
+	evicting := previewEvictions(evictable, consolidatedBytes, consolidatedExternalBytes, opts)
 
 	for _, row := range evicting {
 		if row.eventId != "" {
@@ -255,9 +277,11 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 
 	preview.MemoriesEvicted = len(evicting)
 	preview.BytesFreed = consolidatedBytes
+	preview.ExternalBytesFreed = consolidatedExternalBytes
 
 	for _, row := range evicting {
 		preview.BytesFreed += row.bytes
+		preview.ExternalBytesFreed += row.externalBytes
 	}
 
 	// An event goes when every memory it holds goes with it.
@@ -282,44 +306,69 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 }
 
 // previewEvictions returns the memories capacity eviction would delete after consolidation has
-// taken its share. It mirrors EvictMemories' selection: nothing at all unless a byte capacity is
+// taken its share. It mirrors EvictMemories' selection: nothing at all unless a capacity target is
 // configured and still exceeded, then least-valuable-first until the excess is reclaimed.
-func previewEvictions(evictable []previewRow, consolidatedBytes int64, opts PreviewOptions) []previewRow {
-	if opts.CapacityBytes <= 0 {
+//
+// Both axes are judged, and a pass runs when EITHER is over - which is what the real cycle does,
+// since it issues one EvictMemories call carrying a target per axis and that call stops only once
+// both are satisfied.
+func previewEvictions(
+	evictable []previewRow,
+	consolidatedBytes int64,
+	consolidatedExternalBytes int64,
+	opts PreviewOptions,
+) []previewRow {
+	target := EvictionTarget{
+		Bytes: previewExcess(
+			opts.UsedBytes-consolidatedBytes,
+			opts.CapacityBytes,
+			opts.EvictionFloor,
+		),
+		ExternalBytes: previewExcess(
+			opts.ExternalBytes-consolidatedExternalBytes,
+			opts.CapacityExternalBytes,
+			opts.ExternalEvictionFloor,
+		),
+	}
+
+	if target.empty() {
 		return nil
 	}
-
-	// What the cycle would find when it reaches eviction, consolidation having already run.
-	remaining := opts.UsedBytes - consolidatedBytes
-
-	if remaining <= opts.CapacityBytes {
-		return nil
-	}
-
-	floor := opts.EvictionFloor
-	if floor <= 0 || floor > opts.CapacityBytes {
-		floor = opts.CapacityBytes
-	}
-
-	excess := remaining - floor
 
 	sort.Slice(evictable, func(i int, j int) bool {
 		return evictable[i].value < evictable[j].value
 	})
 
-	var selected int64
+	var selected, selectedExternal int64
 	var evicting []previewRow
 
 	for _, row := range evictable {
-		if selected >= excess {
+		if target.satisfied(selected, selectedExternal) {
 			break
 		}
 
 		selected += row.bytes
+		selectedExternal += row.externalBytes
 		evicting = append(evicting, row)
 	}
 
 	return evicting
+}
+
+// previewExcess is what one axis would ask eviction to reclaim: nothing unless a capacity is
+// configured and what remains after consolidation still exceeds it, then down to the floor.
+// Mirrors Server.evictionFloor's treatment of an unset or invalid floor - it falls back to the
+// target itself, so a store with no hysteresis configured reclaims exactly its overshoot.
+func previewExcess(remaining int64, capacity int64, floor int64) int64 {
+	if capacity <= 0 || remaining <= capacity {
+		return 0
+	}
+
+	if floor <= 0 || floor > capacity {
+		floor = capacity
+	}
+
+	return remaining - floor
 }
 
 // previewSample merges the two sets into one list ordered by value ascending - least valuable
@@ -351,30 +400,41 @@ func previewSample(consolidating []previewRow, evicting []previewRow, limit int)
 // accounting figure.
 func (r previewRow) forgetCandidate(rule ForgetRule) ForgetCandidate {
 	return ForgetCandidate{
-		Id:           r.id,
-		EventId:      r.eventId,
-		Group:        r.group,
-		Significance: r.candidate.MemorySignificance,
-		Value:        r.value,
-		Bytes:        r.bytes - evictionRowOverheadBytes,
-		Rule:         rule,
-		TimeStamp:    r.candidate.Timestamp,
-		TimeRecalled: r.candidate.TimeRecalled,
-		RecallCount:  r.candidate.RecallCount,
+		Id:            r.id,
+		EventId:       r.eventId,
+		Group:         r.group,
+		Significance:  r.candidate.MemorySignificance,
+		Value:         r.value,
+		Bytes:         r.bytes - evictionRowOverheadBytes,
+		ExternalBytes: r.externalBytes,
+		Rule:          rule,
+		TimeStamp:     r.candidate.Timestamp,
+		TimeRecalled:  r.candidate.TimeRecalled,
+		RecallCount:   r.candidate.RecallCount,
 	}
 }
 
-// RetainedStats returns how many memories are inside the minimum retention window, and their
-// stored size. A memory is retained when its decay timestamp - the later of its creation and its
-// most recent recall, the same clock consolidation measures age from - is at or after cutoff.
+// RetentionStats is what the minimum retention floor is holding: how many memories are inside the
+// window, what they cost this store, and what they hold onto elsewhere. The two byte figures are
+// measured exactly as UsedBytes and ExternalBytes measure their axes, so each is comparable with the
+// capacity target it is read against - and neither is comparable with the other.
+type RetentionStats struct {
+	Memories      int
+	Bytes         int64
+	ExternalBytes int64
+}
+
+// RetainedStats returns what the minimum retention window is holding. A memory is retained when its
+// decay timestamp - the later of its creation and its most recent recall, the same clock
+// consolidation measures age from - is at or after cutoff.
 //
 // It exists as one aggregate query rather than as a by-product of the consolidation scans because
 // those deliberately stay on the covering index and never read body lengths; this is the cost of
-// the byte figure, which is the half that matters. Retained bytes approaching the byte capacity is
-// what tells an operator the capacity target has become unreachable, since retention overrides it
-// - so the caller (Server.evict) only asks when both a retention floor and a byte capacity are
-// configured, and nothing pays for it otherwise.
-func (d *DB) RetainedStats(ctx context.Context, cutoff int64) (int, int64, error) {
+// the byte figures, which are the half that matters. Retained bytes approaching a capacity target is
+// what tells an operator that target has become unreachable, since retention overrides it - so the
+// caller (Server.evict) only asks when both a retention floor and a capacity target are configured,
+// and nothing pays for it otherwise.
+func (d *DB) RetainedStats(ctx context.Context, cutoff int64) (RetentionStats, error) {
 	log.Trace("func() db.RetainedStats")
 
 	ctx, cancel := d.opContext(ctx)
@@ -383,24 +443,30 @@ func (d *DB) RetainedStats(ctx context.Context, cutoff int64) (int, int64, error
 	// The same decay clock consolidation ages from, so the figure is comparable. See DB.greatest.
 	greatest := d.greatest("timestamp", "time_recalled")
 
-	var count int
-	var bytes sql.NullInt64
+	var stats RetentionStats
+	var bytes, external sql.NullInt64
 
-	// COALESCE because SUM over no rows is NULL, which is the empty-store case rather than an error.
+	// The NullInt64s carry the empty-store case: SUM over no rows is NULL, which is not an error.
 	err := d.queryRow(
 		ctx,
-		`SELECT COUNT(*), COALESCE(SUM(length(body) + `+d.metadataBytesExpr("")+`), 0) FROM memories WHERE `+greatest+` >= ?`,
+		`SELECT COUNT(*), SUM(length(body) + `+d.metadataBytesExpr("")+`), SUM(external_bytes)
+		FROM memories WHERE `+greatest+` >= ?`,
 		cutoff,
-	).Scan(&count, &bytes)
+	).Scan(&stats.Memories, &bytes, &external)
 	if err != nil {
 		log.Errorf("failed to read retained stats: %s", err.Error())
 
-		return 0, 0, err
+		return RetentionStats{}, err
 	}
 
 	// The same per-row allowance EvictMemories and the preview add, so the figure is comparable
-	// with used bytes and the capacity target rather than being a bare sum of body lengths.
-	return count, bytes.Int64 + int64(count)*evictionRowOverheadBytes, nil
+	// with used bytes and the capacity target rather than being a bare sum of body lengths. The
+	// external figure takes no allowance: it measures bytes in another system, where this store's
+	// per-row overhead means nothing.
+	stats.Bytes = bytes.Int64 + int64(stats.Memories)*evictionRowOverheadBytes
+	stats.ExternalBytes = external.Int64
+
+	return stats, nil
 }
 
 // previewEmptyEventDeletions counts the events that hold no memories and have decayed past the

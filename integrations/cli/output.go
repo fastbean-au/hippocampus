@@ -221,7 +221,7 @@ func (r *renderer) renderPreview(preview *contract.PreviewConsolidationResponse)
 	)
 
 	r.line("  consolidated (decayed below the threshold): %d", preview.GetMemoriesConsolidated())
-	r.line("  evicted (over the byte capacity):           %d", preview.GetMemoriesEvicted())
+	r.line("  evicted (over a capacity target):           %d", preview.GetMemoriesEvicted())
 
 	// Flagged rather than merely reported: retention overrides the capacity target, so a retained
 	// set approaching the capacity is why a store can sit above its target indefinitely.
@@ -230,6 +230,17 @@ func (r *renderer) renderPreview(preview *contract.PreviewConsolidationResponse)
 			preview.GetMemoriesRetained(),
 			preview.GetRetainedBytes(),
 		)
+	}
+
+	// Shown only under a configured external capacity. On every other deployment these are three
+	// zeroes, and three zeroes on screen read as an axis that is keeping up rather than one nobody
+	// asked for.
+	if preview.GetCapacityExternalBytes() > 0 {
+		r.line("  external payload it would release:          %d bytes", preview.GetExternalBytesFreed())
+
+		if preview.GetRetainedExternalBytes() > 0 {
+			r.line("  external payload retention is holding:     %d bytes", preview.GetRetainedExternalBytes())
+		}
 	}
 
 	r.line("")
@@ -241,7 +252,16 @@ func (r *renderer) renderPreview(preview *contract.PreviewConsolidationResponse)
 	if preview.GetCapacityBytes() > 0 {
 		r.line("used / capacity:    %d / %d bytes", preview.GetUsedBytes(), preview.GetCapacityBytes())
 	} else {
-		r.line("used:               %d bytes (no byte capacity configured, so nothing is evicted)", preview.GetUsedBytes())
+		r.line("used:               %d bytes (no byte capacity configured)", preview.GetUsedBytes())
+	}
+
+	// The third axis, on its own line rather than folded into the one above: the two measure
+	// different resources on different disks and are never comparable with each other.
+	if preview.GetCapacityExternalBytes() > 0 {
+		r.line("external / capacity: %d / %d bytes (payload held elsewhere)",
+			preview.GetExternalBytes(),
+			preview.GetCapacityExternalBytes(),
+		)
 	}
 
 	if len(preview.GetCandidates()) == 0 {
@@ -336,6 +356,16 @@ func (r *renderer) renderExplanation(explanation *contract.ExplainConsolidationR
 		r.line("used / capacity:    %d / %d bytes", explanation.GetUsedBytes(), explanation.GetCapacityBytes())
 	} else {
 		r.line("used:               %d bytes (no byte capacity configured)", explanation.GetUsedBytes())
+	}
+
+	// The third pressure axis, shown only when it is configured - the pressure above is the greatest
+	// of three utilisations, so a reading this store's own size does not account for is otherwise
+	// unexplainable.
+	if explanation.GetCapacityExternalBytes() > 0 {
+		r.line("external / capacity: %d / %d bytes (payload held elsewhere)",
+			explanation.GetExternalBytes(),
+			explanation.GetCapacityExternalBytes(),
+		)
 	}
 
 	curve := explanation.GetCurve()

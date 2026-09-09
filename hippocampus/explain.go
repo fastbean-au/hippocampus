@@ -252,6 +252,8 @@ func (s *Server) explainResponse(
 		CapacityBytes:          s.consolidation.capacityBytes,
 		MemoryCount:            int32(state.memoryCount),
 		CapacityMemories:       int32(s.consolidation.capacityMemories),
+		ExternalBytes:          state.externalBytes,
+		CapacityExternalBytes:  s.consolidation.capacityExternalBytes,
 		Method:                 int32(s.consolidation.method),
 		Aggressiveness:         s.consolidation.aggressiveness,
 		UnitsOfAgeInDays:       s.consolidation.unitsOfAgeInDays,

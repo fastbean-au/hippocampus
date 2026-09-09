@@ -616,7 +616,7 @@ type retentionCountingStore struct {
 	cutoff int64
 }
 
-func (r *retentionCountingStore) RetainedStats(ctx context.Context, cutoff int64) (int, int64, error) {
+func (r *retentionCountingStore) RetainedStats(ctx context.Context, cutoff int64) (db.RetentionStats, error) {
 	r.calls++
 	r.cutoff = cutoff
 
@@ -692,6 +692,6 @@ type failingRetentionStore struct {
 	db.Store
 }
 
-func (f *failingRetentionStore) RetainedStats(context.Context, int64) (int, int64, error) {
-	return 0, 0, errors.New("boom")
+func (f *failingRetentionStore) RetainedStats(context.Context, int64) (db.RetentionStats, error) {
+	return db.RetentionStats{}, errors.New("boom")
 }

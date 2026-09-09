@@ -212,6 +212,12 @@ class Memory:
     links: List[Link] = field(default_factory=list)
     placement: Optional[Placement] = None
 
+    # The size of a payload this memory only POINTS AT, held in another system - a trace, a blob, a
+    # document. Never interpreted by the service: it feeds the external capacity axis
+    # (consolidation.capacityExternalBytes), so this store can decide the retention of storage it
+    # does not hold. 0 on an update leaves the stored value unchanged, exactly as significance does.
+    external_bytes: int = 0
+
     # Read-only.
     recalled_at: Optional[datetime.datetime] = None
     recall_count: int = 0
@@ -227,6 +233,7 @@ class Memory:
             body=self.body,
             is_binary=_convert.to_tristate(True) if self.binary else pb.Bool.UNSPECIFIED,
             group=self.group or "",
+            external_bytes=self.external_bytes,
             links=[link.to_proto() for link in self.links],
         )
 
@@ -249,6 +256,7 @@ class Memory:
             metadata=dict(message.metadata),
             timestamp=_convert.from_nanos(message.time_stamp),
             binary=_convert.from_tristate(message.is_binary),
+            external_bytes=message.external_bytes,
             links=[Link.from_proto(link) for link in message.links],
             recalled_at=_convert.from_nanos(message.time_recalled),
             recall_count=message.recall_count,

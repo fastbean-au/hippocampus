@@ -6,7 +6,8 @@
   },
   "tags": [
     {
-      "name": "Hippocampus"
+      "name": "Hippocampus",
+      "description": "HTTP annotations below map every RPC onto a REST-ish JSON endpoint under /v1, served by the\ngrpc-gateway alongside the native gRPC API. Path-bound fields (e.g. {id}) are taken from the\nURL; for GET/DELETE the remaining fields are taken from the query string, and for POST/PATCH\nthey are taken from the JSON body."
     }
   ],
   "consumes": [
@@ -2210,6 +2211,11 @@
         "clearGroup": {
           "type": "boolean",
           "title": "write-only: on UpdateMemory, reset group to empty, for the same reason clear_metadata exists - an empty group string otherwise means \"leave unchanged\". Ignored on StoreMemory; takes precedence over any group supplied alongside it"
+        },
+        "externalBytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "external_bytes is the size of a payload this memory POINTS AT rather than holds: the trace,\nblob or document that lives in another system and that this memory's forgetting is meant to\ngovern. It is client-supplied and never interpreted - the service does not fetch, verify or\neven know the address of whatever it measures - and it exists for one reason: capacity\npressure is the control this store has that an age-based expiry does not, and pressure\ncomputed over a couple of hundred bytes of pointer while the payload behind it is forty\nkilobytes is regulating a quantity with no relationship to the resource it exists to protect.\n\nIt is a THIRD capacity axis (consolidation.capacityExternalBytes), never folded into\nused_bytes: used_bytes is this store's own footprint and protects its own disk, and\nconflating the two would let external volume evict memories to reclaim space it is not using.\nEviction counts it toward what a pass has reclaimed, but the ordering is unchanged - least\nvaluable still goes first, not worst value density.\n\nMust be \u003e= 0. On UpdateMemory 0 leaves the stored value unchanged, exactly as significance\ndoes, so a partial update of other fields cannot silently zero it; a memory whose payload is\ngone is a memory to delete rather than one to set back to zero."
         }
       },
       "description": "Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to\nan event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective\nsignificance rises. is_binary controls whether the body is indexed for content search (see\nSearchMemories) - a binary body is never indexed."
@@ -2223,7 +2229,7 @@
         "BETWEEN"
       ],
       "default": "UNSPECIFIED",
-      "title": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
+      "description": "- UNSPECIFIED: ignore placement; use the absolute significance value\n - ABOVE: rank just above the anchor, below the next-higher value\n - BELOW: rank just below the anchor, above the next-lower value\n - BETWEEN: rank strictly between the anchor (lower) and upper bounds"
     },
     "protobufAny": {
       "type": "object",
@@ -2346,6 +2352,11 @@
         "trigger": {
           "type": "string",
           "description": "trigger names what STARTED this cycle: \"timer\" (the scheduled cycle), \"manual\" (the Sleep\nRPC) or \"wal\" (the write-ahead log grew past consolidation.walTriggerBytes). A caller that\njoined a cycle already in flight does not change it - this describes the cycle that ran, not\nthe call that observed it."
+        },
+        "externalBytesFreed": {
+          "type": "string",
+          "format": "int64",
+          "description": "external_bytes_freed is bytes_freed's counterpart on the external axis (see\nMemory.external_bytes): what the cycle released in whatever system holds the payloads its\nmemories pointed at. Estimated from the eviction pass, exactly as bytes_freed is - the\nconsolidation passes stay on the covering index and count rows rather than bytes - so a cycle\nthat consolidated without evicting reports 0 here whatever it released. 0 always on a\ndeployment that stores no external sizes."
         }
       },
       "description": "CycleReport is what one sleep cycle did: the counts the two decay paths deleted, what it cost,\nand whether it succeeded. Counts only - no ids, no groups, no bodies - which is what keeps this\naggregate rather than an enumeration, and so readable by the reader tier.\n\nThe counts come from the passes themselves rather than from the metrics instruments they also\nfeed, so a deployment exporting no telemetry still gets them."
@@ -2856,6 +2867,16 @@
         "curve": {
           "$ref": "#/definitions/v1DecayCurve",
           "title": "absent when none was requested"
+        },
+        "externalBytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "The third pressure axis (see Memory.external_bytes). Reported beside the other two because\ncapacity_pressure above is the greater of all three utilisations, so a client showing the\npressure without this cannot explain a reading the store's own size does not account for.\nBoth are 0 when no external capacity is configured, in which case the axis contributes nothing."
+        },
+        "capacityExternalBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "consolidation.capacityExternalBytes"
         }
       },
       "description": "ExplainConsolidationResponse carries the decision inputs, one valuation per memory found, and the\nrequested curve. The inputs are a snapshot: capacity pressure and used bytes are re-read\nperiodically rather than per call, so they may lag a cycle that has just run - by design, since\nthis is asked far more often than a preview and both readings cost a scan."
@@ -2945,6 +2966,11 @@
         "recallCount": {
           "type": "integer",
           "format": "int32"
+        },
+        "externalBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Memory.external_bytes: the payload elsewhere that forgetting this memory releases; 0 for a memory pointing at nothing"
         }
       },
       "description": "ForgetCandidate is one memory a cycle would delete, with the numbers behind the decision. value\nand threshold are the two sides of the comparison that decided it: a CONSOLIDATION candidate is\none whose value fell below the threshold. Bodies are never included - a preview reports what\nwould be lost, it is not a way to read the store."
@@ -3436,6 +3462,11 @@
         "clearGroup": {
           "type": "boolean",
           "title": "write-only: on UpdateMemory, reset group to empty, for the same reason clear_metadata exists - an empty group string otherwise means \"leave unchanged\". Ignored on StoreMemory; takes precedence over any group supplied alongside it"
+        },
+        "externalBytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "external_bytes is the size of a payload this memory POINTS AT rather than holds: the trace,\nblob or document that lives in another system and that this memory's forgetting is meant to\ngovern. It is client-supplied and never interpreted - the service does not fetch, verify or\neven know the address of whatever it measures - and it exists for one reason: capacity\npressure is the control this store has that an age-based expiry does not, and pressure\ncomputed over a couple of hundred bytes of pointer while the payload behind it is forty\nkilobytes is regulating a quantity with no relationship to the resource it exists to protect.\n\nIt is a THIRD capacity axis (consolidation.capacityExternalBytes), never folded into\nused_bytes: used_bytes is this store's own footprint and protects its own disk, and\nconflating the two would let external volume evict memories to reclaim space it is not using.\nEviction counts it toward what a pass has reclaimed, but the ordering is unchanged - least\nvaluable still goes first, not worst value density.\n\nMust be \u003e= 0. On UpdateMemory 0 leaves the stored value unchanged, exactly as significance\ndoes, so a partial update of other fields cannot silently zero it; a memory whose payload is\ngone is a memory to delete rather than one to set back to zero."
         }
       },
       "description": "Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to\nan event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective\nsignificance rises. is_binary controls whether the body is indexed for content search (see\nSearchMemories) - a binary body is never indexed."
@@ -3599,6 +3630,26 @@
         "truncated": {
           "type": "boolean",
           "title": "true when more memories would be forgotten than limit returned"
+        },
+        "externalBytesFreed": {
+          "type": "string",
+          "format": "int64",
+          "description": "The external axis (see Memory.external_bytes), reported on the same basis as the three fields\nabove it: what the candidates point at, what the store currently points at in total, and the\ntarget that decides whether eviction runs on that axis at all. external_bytes_freed is the sum\nover both paths, so it counts what consolidation would release as well as what eviction would.\nAll three are 0 on a deployment that stores no external sizes, which is every deployment that\nhas not asked for the feature."
+        },
+        "externalBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "the store's current total external bytes; 0 when no external capacity is configured, since it is not measured then"
+        },
+        "capacityExternalBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "consolidation.capacityExternalBytes; 0 when no external capacity is configured, in which case the external axis is inert"
+        },
+        "retainedExternalBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "the external bytes held by consolidation.minimumRetentionInDays, the counterpart of retained_bytes"
         }
       },
       "description": "PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are\nalways complete; candidates is a bounded sample of the individual memories, ordered by value\nascending so the least valuable - those furthest past the threshold - come first.\n\nThe preview accounts for the cycle's own ordering: consolidation runs first, so the memories it\nwould delete are excluded from the eviction pool and their bytes are already reclaimed before\neviction is considered at all. A memory therefore appears at most once, under the rule that\nwould actually claim it."

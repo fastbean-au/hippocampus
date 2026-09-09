@@ -620,6 +620,7 @@ func (d *DB) coreSchemaStatements() []string {
 			group_name            ` + label + `,
 			is_compressed         ` + boolean + `,
 			link_significance     ` + bigint + `,
+			external_bytes        ` + bigint + `,
 			body                  ` + dialect.blobType + ` NOT NULL` + dialect.blobDefaultEmpty + `,
 			metadata              ` + dialect.jsonType + `
 		)`,
@@ -689,6 +690,13 @@ func (d *DB) coreColumnMigrations() []coreColumn {
 		// predates links: it has none, and initLinkTables creates the graph empty.
 		{"memories", "link_significance", dialect.bigintType + ` NOT NULL DEFAULT 0`, "the link graph"},
 		{"events", "link_significance", dialect.bigintType + ` NOT NULL DEFAULT 0`, "the link graph"},
+
+		// The size of the payload a memory POINTS AT, in whatever system holds it (see
+		// contract.Memory.external_bytes). 0 is right for a database that predates it: every memory
+		// written before the column existed points at nothing this store was told about, and a
+		// zero contributes nothing to the external capacity axis - so an upgraded store behaves
+		// exactly as it did until something starts recording sizes.
+		{"memories", "external_bytes", dialect.bigintType + ` NOT NULL DEFAULT 0`, "the external capacity axis"},
 
 		// Metadata (see types/metadata.go) is deliberately NULL-able with no default, unlike
 		// group_name beside it, and must stay that way on every dialect: a JSON accessor raises

@@ -151,11 +151,28 @@ type Consolidation struct {
 	capacityPressure         float64
 	capacityBytes            int64
 	capacityBytesFloor       int64
+
+	// The external capacity axis: the total size of the payloads the store's memories POINT AT,
+	// held in whatever system holds them (see contract.Memory.external_bytes). It is a third
+	// utilisation feeding capacity pressure and a third target eviction reclaims against, and it is
+	// deliberately never folded into capacityBytes - that one bounds this store's own disk, and
+	// conflating them would let volume this store does not hold evict memories to reclaim space it
+	// is not using. Both zero (the default) leaves the axis inert and costs nothing: the sum is not
+	// even measured.
+	capacityExternalBytes      int64
+	capacityExternalBytesFloor int64
+
 	// lastUsedBytes caches the used-bytes reading eviction took at the end of the previous sleep
 	// cycle, so the next cycle's capacity-pressure calculation can reuse it instead of scanning the
 	// tables a second time. Written and read only from the sleep cycle, which
 	// singleflight serialises, so it needs no lock.
-	lastUsedBytes              int64
+	lastUsedBytes int64
+
+	// lastExternalBytes is the same for the external axis, taken in the same place and used the
+	// same way. 0 until the first cycle has measured, and permanently 0 where no external capacity
+	// is configured, since the axis is then not measured at all.
+	lastExternalBytes int64
+
 	walTriggerBytes            int64
 	summarisationMinMemories   int
 	summarisationMinAgeInDays  int
@@ -546,6 +563,8 @@ func New(deps Dependencies) *Server {
 			capacityPressure:                   1.0,
 			capacityBytes:                      viper.GetInt64("consolidation.capacityBytes"),
 			capacityBytesFloor:                 viper.GetInt64("consolidation.capacityBytesFloor"),
+			capacityExternalBytes:              viper.GetInt64("consolidation.capacityExternalBytes"),
+			capacityExternalBytesFloor:         viper.GetInt64("consolidation.capacityExternalBytesFloor"),
 			walTriggerBytes:                    viper.GetInt64("consolidation.walTriggerBytes"),
 			summarisationMinMemories:           viper.GetInt("consolidation.summarisationMinMemories"),
 			summarisationMinAgeInDays:          viper.GetInt("consolidation.summarisationMinAgeInDays"),
@@ -627,10 +646,30 @@ func New(deps Dependencies) *Server {
 func (s *Server) logForgettingMode() {
 	log.Trace("func() logForgettingMode()")
 
-	// Both axes disabled: nothing feeds the store's fullness back into the threshold, so the
+	// The external axis is reported first when it is on, because it changes what the store IS - a
+	// retention controller over storage held somewhere else - rather than how hard it forgets. It is
+	// named alongside whichever of the other modes applies rather than replacing it: the two byte
+	// axes are independent targets and a deployment may well carry both.
+	if s.consolidation.capacityExternalBytes > 0 {
+		if floor := s.externalEvictionFloor(); floor != s.consolidation.capacityExternalBytes {
+			log.Infof(
+				"external capacity target: eviction holds the payload this store points at (Memory.external_bytes) at or below %d bytes, reclaiming down to a floor of %d, and the same utilisation scales the deletion threshold",
+				s.consolidation.capacityExternalBytes,
+				floor,
+			)
+		} else {
+			log.Infof(
+				"external capacity target: eviction holds the payload this store points at (Memory.external_bytes) at or below %d bytes (no hysteresis floor set), and the same utilisation scales the deletion threshold",
+				s.consolidation.capacityExternalBytes,
+			)
+		}
+	}
+
+	// Every axis disabled: nothing feeds the store's fullness back into the threshold, so the
 	// threshold is exactly as configured for the life of the process and every memory's lifetime is
 	// determined by its own significance alone.
-	if s.consolidation.capacityBytes <= 0 && s.consolidation.capacityMemories <= 0 {
+	if s.consolidation.capacityBytes <= 0 && s.consolidation.capacityMemories <= 0 &&
+		s.consolidation.capacityExternalBytes <= 0 {
 		log.Infof(
 			"forgetting mode: decay-only - memories are forgotten on the deletion threshold alone (threshold %g, method %d, aggressiveness %g); the store's size is not bounded by configuration, so watch hippocampus.used_bytes",
 			s.consolidation.deletionThreshold,
@@ -646,6 +685,18 @@ func (s *Server) logForgettingMode() {
 	// and is not one; it is a control loop whose equilibrium is wherever the arrival rate meets the
 	// shortened lifetimes, not the number configured.
 	if s.consolidation.capacityBytes <= 0 {
+		if s.consolidation.capacityMemories <= 0 {
+
+			// Only the external axis is set. Eviction runs, and against a real bound - but this
+			// store's own size is not the thing being bounded, which is the sentence an operator
+			// reading "capacity target" would otherwise assume.
+			log.Info(
+				"forgetting mode: external capacity target only - nothing bounds this store's own size (consolidation.capacityBytes is unset), so watch hippocampus.used_bytes; eviction is driven by the external axis reported above",
+			)
+
+			return
+		}
+
 		log.Infof(
 			"forgetting mode: decay with row-capacity pressure - the deletion threshold is scaled by the memory count against consolidation.capacityMemories (%d), but nothing is evicted on the row count; set consolidation.capacityBytes for a hard bound",
 			s.consolidation.capacityMemories,

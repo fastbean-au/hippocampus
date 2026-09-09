@@ -161,6 +161,11 @@ func (d *DB) acquireInstanceLock() error {
 // octet_length (a LENGTH synonym on MySQL) reads a stored value's byte size without loading the
 // content, so the cost is one heap scan of the two tables per reading — and UsedBytes is only
 // consulted when a byte capacity is configured.
+//
+// memories.external_bytes is deliberately NOT summed here. It measures a payload in another system,
+// and this figure is what the store's own capacity target and its own eviction estimate are compared
+// against; adding it would make eviction chase bytes that deleting a memory does not return to this
+// disk. It is its own axis - see DB.ExternalBytes.
 func (d *DB) usedBytesLiveRows(ctx context.Context) (int64, error) {
 	log.Trace("func() db.usedBytesLiveRows")
 

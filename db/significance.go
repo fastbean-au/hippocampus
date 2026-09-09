@@ -32,15 +32,23 @@ var ErrInvalidPlacement = errors.New("invalid significance placement")
 // target slot), so significance never goes negative. A periodic compaction (compactSignificanceLevels)
 // keeps ranks small and inside int32.
 
-// coveringIndexName carries a version suffix because the index's column list has changed once (the
-// link graph's aggregate joined it) and CREATE INDEX IF NOT EXISTS would otherwise leave an
-// existing database on the narrower index forever - silently, since the scans would still be
-// correct and merely stop being covering. The new name's existence is the migration flag:
-// ensureCoveringIndex drops every earlier name unconditionally, which is a no-op once it has run.
+// coveringIndexName carries a version suffix because the index's column list has changed twice (the
+// link graph's aggregate joined it, then the external capacity axis) and CREATE INDEX IF NOT EXISTS
+// would otherwise leave an existing database on the narrower index forever - silently, since the
+// scans would still be correct and merely stop being covering. The new name's existence is the
+// migration flag: ensureCoveringIndex drops every earlier name unconditionally, which is a no-op
+// once it has run.
+//
+// external_bytes is in the list for a reason worth stating, because it is the one column here that
+// no per-row consolidation decision reads. The external capacity axis is an aggregate - one
+// SUM(external_bytes) over the whole table per sleep cycle - and on the embedded dialect a row is
+// stored inline, so summing that column off the base table reads every page holding a BODY. That is
+// precisely the cost this index exists to avoid paying, and it would be paid once a cycle forever.
+// Off the index the sum is a full heap scan; on it, an index-only one.
 const (
 	significanceLevelsTable = "significance_levels"
-	coveringIndexName       = "idx_memories_consolidation_v2"
-	coveringIndexColumns    = "(event_id, timestamp, significance_level_id, time_recalled, recall_count, link_significance)"
+	coveringIndexName       = "idx_memories_consolidation_v3"
+	coveringIndexColumns    = "(event_id, timestamp, significance_level_id, time_recalled, recall_count, link_significance, external_bytes)"
 
 	// listingIndexName and listingIndexColumns serve the LISTING path, which the covering index
 	// above cannot: that one leads on event_id, so a query ordering the whole table by timestamp can
@@ -74,7 +82,7 @@ const (
 
 // supersededCoveringIndexNames are the earlier incarnations of the covering index, dropped on
 // startup so a migrated database does not carry a redundant index the planner may still pick.
-var supersededCoveringIndexNames = []string{"idx_memories_consolidation"}
+var supersededCoveringIndexNames = []string{"idx_memories_consolidation", "idx_memories_consolidation_v2"}
 
 // significanceLevelsDDL is the CREATE TABLE for the registry in the active dialect. level_rank is UNIQUE
 // so a value maps to exactly one level; id is an auto-assigned stable key items reference.

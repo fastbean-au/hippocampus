@@ -27,13 +27,13 @@ const evictionRowOverheadBytes = 256
 // metadata sits ahead of link_significance so this list and memoryReturningColumns (which appends
 // link_significance to memoryStoredColumns) share one tail order, and scanMemory/scanMemoryStored
 // therefore read their last three columns identically.
-const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, metadata, link_significance`
+const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, external_bytes, metadata, link_significance`
 
 // memoryStoredColumns is the physical column list of the memories table (significance_level_id, not
 // the removed significance): used for INSERT. link_significance is deliberately absent - it is
 // maintained by the link graph rather than supplied by a write, so it must not appear in an insert's
 // column list.
-const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, metadata`
+const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, external_bytes, metadata`
 
 // memoryReturningColumns is memoryStoredColumns plus the link aggregate, for UPDATE ... RETURNING,
 // which reads rather than writes and so wants every column a caller sees. scanMemoryStored reads it.
@@ -48,7 +48,7 @@ var memoryValuePlaceholders = `(` + placeholders(strings.Count(memoryStoredColum
 // (id, event_id, significance, ...) need no change. An unranked (NULL) level reads as significance 0.
 const memoriesFrom = `(SELECT m.id, m.timestamp, COALESCE(l.level_rank, 0) AS significance, m.event_id,
 	m.body, m.is_binary, m.time_recalled, m.recall_count, m.is_summary, m.group_name, m.is_compressed,
-	m.link_significance, m.metadata
+	m.external_bytes, m.link_significance, m.metadata
 	FROM memories m LEFT JOIN significance_levels l ON l.id = m.significance_level_id) AS memories`
 
 // placeholders returns a comma-separated list of n SQL parameter placeholders.
@@ -101,6 +101,7 @@ func scanMemory(rows *sql.Rows) (types.Memory, error) {
 		&m.IsSummary,
 		&m.Group,
 		&isCompressed,
+		&m.ExternalBytes,
 		&metadata,
 		&m.LinkSignificance,
 	); err != nil {
@@ -156,6 +157,7 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 		&m.IsSummary,
 		&m.Group,
 		&isCompressed,
+		&m.ExternalBytes,
 		&metadata,
 		&m.LinkSignificance,
 	); err != nil {
@@ -253,6 +255,7 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 		memory.IsSummary,
 		memory.Group,
 		isCompressed,
+		memory.ExternalBytes,
 		metadata,
 	)
 	if err != nil {
@@ -348,6 +351,16 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 	} else if memory.Group != "" {
 		sets = append(sets, `group_name = ?`)
 		args = append(args, memory.Group)
+	}
+
+	// The external payload's size, on the same non-zero-means-change rule the rest of this function
+	// runs on. There is deliberately no clear flag beside ClearGroup's and ClearMetadata's: those
+	// exist because a group or a metadata map can legitimately be REMOVED from a memory that keeps
+	// its meaning without them, whereas a pointer-memory whose payload is gone is a memory to
+	// delete. Significance takes the same line for the same reason.
+	if memory.ExternalBytes > 0 {
+		sets = append(sets, `external_bytes = ?`)
+		args = append(args, memory.ExternalBytes)
 	}
 
 	// Metadata replaces wholesale rather than merging per key, and ClearMetadata is its counterpart
@@ -1538,6 +1551,7 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		summary.IsSummary,
 		summary.Group,
 		isCompressed,
+		summary.ExternalBytes,
 		metadata,
 	); err != nil {
 		_ = tx.Rollback()
@@ -1982,36 +1996,77 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 	return len(deletedIds), nil
 }
 
-// EvictMemories deletes the least valuable memories until an estimated freeBytes bytes have been
-// reclaimed. It backs the capacity target: unlike the consolidation passes it applies no
+// EvictionTarget is how many bytes one eviction pass has to reclaim, per capacity axis. A
+// non-positive figure means that axis is already satisfied and the pass is not run for its sake;
+// both non-positive means there is nothing to evict at all.
+type EvictionTarget struct {
+	// Bytes is this store's own footprint to reclaim, measured as UsedBytes measures it.
+	Bytes int64
+
+	// ExternalBytes is the payload to release in whatever system holds it, measured as
+	// ExternalBytes measures it (see contract.Memory.external_bytes).
+	//
+	// Independent of Bytes rather than a share of it, because one memory almost never serves the two
+	// axes in the same proportion: a pointer-memory is a couple of hundred bytes here and forty
+	// kilobytes there. A pass therefore runs until BOTH targets are met, and the axis that is
+	// already satisfied simply stops asking for more.
+	ExternalBytes int64
+}
+
+// satisfied reports whether a pass that has reclaimed the given figures has met both targets.
+func (t EvictionTarget) satisfied(bytes int64, externalBytes int64) bool {
+	return bytes >= t.Bytes && externalBytes >= t.ExternalBytes
+}
+
+// empty reports whether the target asks for nothing on either axis.
+func (t EvictionTarget) empty() bool {
+	return t.Bytes <= 0 && t.ExternalBytes <= 0
+}
+
+// EvictionResult is what one eviction pass actually did. Every figure is derived from the rows that
+// were really deleted, never from the selection, so a memory the recall-race guard spared is absent
+// from all four.
+type EvictionResult struct {
+	Memories      int
+	Events        int
+	Bytes         int64
+	ExternalBytes int64
+}
+
+// EvictMemories deletes the least valuable memories until the target's bytes have been reclaimed on
+// both capacity axes. It backs the capacity targets: unlike the consolidation passes it applies no
 // minimum-age protection — the storage bound must be achievable no matter how fresh the store is
 // — but the value ranking still sends the most significant and most recently recalled memories
 // to the back of the queue. Events stripped of their last memory are deleted; events losing only
 // some of their memories are flagged as consolidated. Unlike the consolidation scans this reads
 // body lengths, but SQLite serves length() from the record header without loading the content.
-// Returns the number of memories deleted, the number of events deleted, and the estimated bytes
-// freed.
-func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int, int, int64, error) {
+//
+// The external axis changes the ACCUMULATOR and deliberately not the SORT. Ordering by value per
+// byte is the tempting alternative and it is a different product: it changes what forgetting means
+// from "the least valuable goes first" to "the worst value density goes first", which is not
+// something that should arrive as a side effect of an accounting change.
+func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget) (EvictionResult, error) {
 	log.Trace("func() db.EvictMemories")
 
-	if freeBytes <= 0 {
-		return 0, 0, 0, nil
+	if target.empty() {
+		return EvictionResult{}, nil
 	}
 
 	type evictionCandidate struct {
-		id           string
-		eventId      string
-		size         int64
-		value        float64
-		timeRecalled int64
-		recallCount  int32
+		id            string
+		eventId       string
+		size          int64
+		externalBytes int64
+		value         float64
+		timeRecalled  int64
+		recallCount   int32
 	}
 
 	ranks, err := d.loadSignificanceRanks(ctx)
 	if err != nil {
 		log.Errorf("failed to load significance registry: %s", err.Error())
 
-		return 0, 0, 0, err
+		return EvictionResult{}, err
 	}
 
 	ctx, cancel := d.opContext(ctx)
@@ -2024,14 +2079,15 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		ctx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance,
-			COALESCE(e.memories_consolidated, ?), length(m.body) + `+d.metadataBytesExpr("m.")+`
+			COALESCE(e.memories_consolidated, ?), length(m.body) + `+d.metadataBytesExpr("m.")+`,
+			m.external_bytes
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 		false,
 	)
 	if err != nil {
 		log.Errorf("failed to evict memories: %s", err.Error())
 
-		return 0, 0, 0, err
+		return EvictionResult{}, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -2057,10 +2113,11 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 			&candidate.MemoryLinkSignificance,
 			&consolidated,
 			&c.size,
+			&c.externalBytes,
 		); err != nil {
 			log.Errorf("failed to scan memory for eviction: %s", err.Error())
 
-			return 0, 0, 0, err
+			return EvictionResult{}, err
 		}
 
 		candidate.MemorySignificance = rankOf(ranks, memoryLevelID)
@@ -2092,7 +2149,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 	if err := rows.Err(); err != nil {
 		log.Errorf("failed to evict memories: %s", err.Error())
 
-		return 0, 0, 0, err
+		return EvictionResult{}, err
 	}
 
 	_ = rows.Close()
@@ -2101,19 +2158,28 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		return evictionCandidates[i].value < evictionCandidates[j].value
 	})
 
+	// freedBytes is what deleting one candidate is estimated to reclaim, on each axis. Kept per id
+	// rather than accumulated as the selection is built, because the totals below are counted from
+	// the rows that were actually deleted.
+	type freedBytes struct {
+		bytes    int64
+		external int64
+	}
+
 	var deletions []memoryRecallSnapshot
 	eventIdByMemory := make(map[string]string)
-	freedById := make(map[string]int64)
-	var selected int64
+	freedById := make(map[string]freedBytes)
+	var selected, selectedExternal int64
 
 	for _, c := range evictionCandidates {
-		if selected >= freeBytes {
+		if target.satisfied(selected, selectedExternal) {
 			break
 		}
 
 		rowBytes := c.size + evictionRowOverheadBytes
 		selected += rowBytes
-		freedById[c.id] = rowBytes
+		selectedExternal += c.externalBytes
+		freedById[c.id] = freedBytes{bytes: rowBytes, external: c.externalBytes}
 		deletions = append(deletions, memoryRecallSnapshot{
 			id:           c.id,
 			timeRecalled: c.timeRecalled,
@@ -2130,7 +2196,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 	if err != nil {
 		log.Errorf("failed to delete evicted memories: %s", err.Error())
 
-		return 0, 0, 0, err
+		return EvictionResult{}, err
 	}
 
 	// Everything below is derived from the rows ACTUALLY deleted (deletedIds), not the selection.
@@ -2138,12 +2204,12 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 	// since the scan), so counting from the selection would overstate the freed bytes and, worse,
 	// flag an event as consolidated when none of its memories actually went - or count it toward the
 	// all-evicted event-delete test.
-	countMemories := len(deletedIds)
-	var freed int64
+	result := EvictionResult{Memories: len(deletedIds)}
 	evictedPerEvent := make(map[string]int)
 
 	for _, id := range deletedIds {
-		freed += freedById[id]
+		result.Bytes += freedById[id].bytes
+		result.ExternalBytes += freedById[id].external
 
 		if eid, ok := eventIdByMemory[id]; ok {
 			evictedPerEvent[eid]++
@@ -2156,7 +2222,6 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 	// DeleteEventIfEmpty re-checks live state so the event only goes if it's actually empty. These
 	// per-event cleanups are best-effort - retErr surfaces the first failure for the sleep cycle's
 	// success metric without stopping the remaining events.
-	countEvents := 0
 	var retErr error
 
 	for id, evicted := range evictedPerEvent {
@@ -2176,7 +2241,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		}
 
 		if deleted {
-			countEvents++
+			result.Events++
 
 			continue
 		}
@@ -2192,7 +2257,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, freeBytes int64) (int,
 		}
 	}
 
-	return countMemories, countEvents, freed, retErr
+	return result, retErr
 }
 
 // ConsolidateEventMemories evaluates every memory carrying an event_id, deleting those the server

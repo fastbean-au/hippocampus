@@ -193,6 +193,7 @@ class Hippocampus:
         binary: bool = False,
         links: Optional[Sequence[Link]] = None,
         placement: Optional[Placement] = None,
+        external_bytes: int = 0,
         timeout: Optional[float] = None,
     ) -> Stored:
         """Store one memory, given either a Memory or a body plus its significance.
@@ -216,6 +217,7 @@ class Hippocampus:
                 binary=binary,
                 links=list(links or []),
                 placement=placement,
+                external_bytes=external_bytes,
             ).to_proto()
 
         response = self._call(self.stub.StoreMemory, message, timeout)
@@ -260,7 +262,8 @@ class Hippocampus:
         stored one wholesale - there is no per-key merge.
 
         `significance` of 0 leaves the existing significance unchanged; it cannot reset a memory to
-        unranked. `binary`, `is_summary` and the recall fields are not updatable.
+        unranked, and `external_bytes` of 0 reads the same way. `binary`, `is_summary` and the
+        recall fields are not updatable.
         """
 
         message = memory.to_proto()

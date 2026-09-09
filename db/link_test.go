@@ -198,7 +198,7 @@ func TestPruneOnEveryDeletePath(t *testing.T) {
 					return 100
 				}}
 
-				if _, _, _, err := db.EvictMemories(ctx, server, 1); err != nil {
+				if _, err := db.EvictMemories(ctx, server, EvictionTarget{Bytes: 1}); err != nil {
 					t.Fatalf("EvictMemories: %s", err)
 				}
 			},

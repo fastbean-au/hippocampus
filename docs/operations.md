@@ -1130,6 +1130,12 @@ Metrics worth alerting on in production:
   nothing without a capacity target to be measured against, so nothing else pays for it. The
   service also logs a warning when retained bytes reach the capacity, for deployments not running a
   metrics stack.
+- `hippocampus.external_bytes` against `hippocampus.capacity_external_bytes` — the same pair for the
+  [external capacity axis](consolidation.md#the-external-capacity-axis), the payload this store only
+  points at. Published only when `consolidation.capacityExternalBytes` is set, because the sum is not
+  otherwise measured; `hippocampus.retained_external_bytes` is retention's hold on that axis, and
+  carries the same warning for the same reason. Note that `used_bytes` and `external_bytes` measure
+  different resources and are never comparable with each other.
 - `hippocampus.sleeps` (with the `success` attribute) and `hippocampus.sleep.duration` — a run of
   `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
 - `hippocampus.memories.evicted` / `hippocampus.events.evicted` — eviction volume per cycle, with
@@ -1172,7 +1178,9 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.memories.retained`              | gauge         |                                       | Memories inside the retention window, exempt from both decay paths          |
 | `hippocampus.memory.body_bytes`              | histogram     |                                       | Size of each accepted memory body                                           |
 | `hippocampus.bytes.evicted`                  | counter       |                                       | Estimated bytes reclaimed by eviction                                       |
+| `hippocampus.external_bytes.evicted`         | counter       |                                       | External payload bytes eviction released elsewhere                          |
 | `hippocampus.retained_bytes`                 | gauge         |                                       | Stored bytes held by the retention window                                   |
+| `hippocampus.retained_external_bytes`        | gauge         |                                       | External payload bytes held by the retention window                         |
 | `hippocampus.events.stored`                  | counter       |                                       | Events accepted and written                                                 |
 | `hippocampus.events.rejected`                | counter       | `reason`                              | Event writes refused, classified as memories are                            |
 | `hippocampus.events.deleted`                 | counter       |                                       | Events deleted by a client                                                  |
@@ -1185,6 +1193,8 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.capacity_pressure`              | gauge         |                                       | The threshold multiplier the last cycle computed                            |
 | `hippocampus.used_bytes`                     | gauge         |                                       | Bytes the store occupies (only with a byte capacity set)                    |
 | `hippocampus.capacity_bytes`                 | gauge         |                                       | The configured target, so a query need not hard-code it                     |
+| `hippocampus.external_bytes`                 | gauge         |                                       | Payload the store points at elsewhere (only with an external capacity set)  |
+| `hippocampus.capacity_external_bytes`        | gauge         |                                       | The configured external target, alongside `external_bytes`                  |
 | `hippocampus.purges`                         | counter       | `success`                             | `Purge` calls                                                               |
 | `hippocampus.tombstones`                     | gauge         |                                       | Records held by the [forgotten log](#what-was-forgotten--the-forgotten-log) |
 | `hippocampus.tombstones.deleted`             | counter       | `manual`                              | Forgotten-log records removed, by request or by the caps                    |

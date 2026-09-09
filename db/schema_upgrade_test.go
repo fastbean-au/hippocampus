@@ -442,6 +442,7 @@ var schemaFixtureTags = map[string]string{
 	"events.link_significance":       "v0.25.0",
 	"memories.metadata":              "v0.25.0",
 	"events.metadata":                "v0.25.0",
+	"memories.external_bytes":        "v0.38.3",
 
 	"link_tables":               "v0.25.0",
 	"drop_legacy_relationships": "v0.25.0",
@@ -463,6 +464,13 @@ var schemaFixtureTags = map[string]string{
 	// index survives being rebuilt onto significance_level_id.
 	"covering_index": "v0.4.0",
 	"listing_index":  "v0.4.0",
+
+	// The covering index's rebuild onto external_bytes. Every released schema predates the column,
+	// so every fixture exercises it - and what it has to prove is an ORDERING rather than a shape:
+	// the column arrives in migration 2 and the index is built over it in 7, so a fixture that
+	// upgrades cleanly is a fixture whose CREATE INDEX did not run against a column that was not
+	// there yet. The newest is named, being the closest to what a real upgrade meets.
+	"covering_index_external": "v0.38.3",
 
 	// The tables themselves are CREATE TABLE IF NOT EXISTS and so do nothing to an existing store,
 	// which is what every fixture is.

@@ -597,13 +597,14 @@ type Store interface {
 	ConsolidateMemories(ctx context.Context, s Server) (int, error)
 	ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error)
 	ConsolidateEvents(ctx context.Context, s Server) (int, error)
-	EvictMemories(ctx context.Context, s Server, freeBytes int64) (int, int, int64, error)
+	EvictMemories(ctx context.Context, s Server, target EvictionTarget) (EvictionResult, error)
 
 	// PreviewConsolidation reports what the four passes above would delete, and deletes nothing.
 	PreviewConsolidation(ctx context.Context, s Server, opts PreviewOptions) (ConsolidationPreview, error)
 
-	// RetainedStats counts the memories inside the minimum retention window, and their stored size.
-	RetainedStats(ctx context.Context, cutoff int64) (int, int64, error)
+	// RetainedStats counts the memories inside the minimum retention window, their stored size, and
+	// the external payload they hold onto.
+	RetainedStats(ctx context.Context, cutoff int64) (RetentionStats, error)
 
 	// The forgotten log (see tombstone.go). Writing is not on this interface: it happens inside the
 	// delete chokepoint the consolidation and eviction passes already funnel through, so nothing
@@ -694,6 +695,11 @@ type Store interface {
 	SearchOutboxDepth(ctx context.Context) (int64, error)
 
 	UsedBytes(ctx context.Context) (int64, error)
+
+	// ExternalBytes is the third capacity axis: the total size of the payloads the store's memories
+	// point at elsewhere. Separate from UsedBytes, never a part of it - see the method's comment.
+	ExternalBytes(ctx context.Context) (int64, error)
+
 	WALBytes() (int64, error)
 	Preserve(ctx context.Context) error
 	Purge(ctx context.Context) error
@@ -1004,6 +1010,38 @@ func (d *DB) UsedBytes(ctx context.Context) (int64, error) {
 		d.callbackQueueBytes(ctx)
 
 	return max(used, 0), nil
+}
+
+// ExternalBytes returns the total size of the payloads the store's memories POINT AT, in whatever
+// systems hold them: the sum of memories.external_bytes (see contract.Memory.external_bytes). It is
+// the third capacity axis's measure, and the counterpart of UsedBytes rather than a part of it -
+// UsedBytes is this store's own footprint, and folding external volume into it would let a payload
+// this store does not hold evict memories to reclaim space it is not using.
+//
+// One aggregate over one column, and it stays on the covering index, which is why external_bytes is
+// in that index at all: the embedded dialect stores a row inline, so summing this column off the
+// base table would read every page holding a body - the cost the covering index exists to avoid -
+// once per sleep cycle, forever.
+//
+// A store no client has ever given a size for answers 0, which is exactly right: the axis then
+// contributes nothing to capacity pressure. The caller (Server.evict) only asks when an external
+// capacity is configured, so nothing pays for the scan otherwise.
+func (d *DB) ExternalBytes(ctx context.Context) (int64, error) {
+	log.Trace("func() db.ExternalBytes")
+
+	ctx, cancel := d.opContext(ctx)
+	defer cancel()
+
+	var external sql.NullInt64
+
+	// COALESCE via NullInt64 because SUM over no rows is NULL - the empty store, not an error.
+	if err := d.queryRow(ctx, `SELECT SUM(external_bytes) FROM memories`).Scan(&external); err != nil {
+		log.Errorf("failed to sum external bytes: %s", err.Error())
+
+		return 0, err
+	}
+
+	return external.Int64, nil
 }
 
 // WALBytes returns the current size in bytes of the on-disk WAL file, or 0 for the server

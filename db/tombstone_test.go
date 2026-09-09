@@ -138,7 +138,7 @@ func TestEvictionWritesTombstonesUnderItsOwnRule(t *testing.T) {
 
 	seedForgettableMemory(t, d, "m1", "", "")
 
-	if _, _, _, err := d.EvictMemories(context.Background(), forgetAll{}, 1<<20); err != nil {
+	if _, err := d.EvictMemories(context.Background(), forgetAll{}, EvictionTarget{Bytes: 1 << 20}); err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 

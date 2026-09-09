@@ -48,17 +48,17 @@ func TestEvictMemories_LowestValueFirst(t *testing.T) {
 	db, server := evictionTestDB(t)
 
 	// One row's footprint satisfies a 1-byte request, so only the least valuable memory goes.
-	deletedMemories, deletedEvents, freed, err := db.EvictMemories(context.Background(), server, 1)
+	evicted, err := db.EvictMemories(context.Background(), server, EvictionTarget{Bytes: 1})
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
-	if deletedMemories != 1 || deletedEvents != 0 {
-		t.Fatalf("expected 1 memory and 0 events deleted, got %d and %d", deletedMemories, deletedEvents)
+	if evicted.Memories != 1 || evicted.Events != 0 {
+		t.Fatalf("expected 1 memory and 0 events deleted, got %d and %d", evicted.Memories, evicted.Events)
 	}
 
-	if freed <= 0 {
-		t.Errorf("expected a positive freed-bytes estimate, got %d", freed)
+	if evicted.Bytes <= 0 {
+		t.Errorf("expected a positive freed-bytes estimate, got %d", evicted.Bytes)
 	}
 
 	if m := getMemory(t, db, "m1"); m != nil {
@@ -86,13 +86,13 @@ func TestEvictMemories_LowestValueFirst(t *testing.T) {
 func TestEvictMemories_DeletesEmptiedEvent(t *testing.T) {
 	db, server := evictionTestDB(t)
 
-	deletedMemories, deletedEvents, _, err := db.EvictMemories(context.Background(), server, 1<<30)
+	evicted, err := db.EvictMemories(context.Background(), server, EvictionTarget{Bytes: 1 << 30})
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
-	if deletedMemories != 4 || deletedEvents != 1 {
-		t.Fatalf("expected 4 memories and 1 event deleted, got %d and %d", deletedMemories, deletedEvents)
+	if evicted.Memories != 4 || evicted.Events != 1 {
+		t.Fatalf("expected 4 memories and 1 event deleted, got %d and %d", evicted.Memories, evicted.Events)
 	}
 
 	if db.CountEvents(context.Background()) != 0 {
@@ -160,13 +160,13 @@ func TestDeleteEventIfEmpty(t *testing.T) {
 func TestEvictMemories_NoOpWhenNothingToFree(t *testing.T) {
 	db, server := evictionTestDB(t)
 
-	deletedMemories, deletedEvents, freed, err := db.EvictMemories(context.Background(), server, 0)
+	evicted, err := db.EvictMemories(context.Background(), server, EvictionTarget{Bytes: 0})
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
-	if deletedMemories != 0 || deletedEvents != 0 || freed != 0 {
-		t.Errorf("expected no deletions for a zero request, got %d memories, %d events, %d bytes", deletedMemories, deletedEvents, freed)
+	if evicted != (EvictionResult{}) {
+		t.Errorf("expected no deletions for a zero request, got %+v", evicted)
 	}
 }
 

@@ -54,6 +54,50 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ### Added
 
+- **An external capacity axis, so decay can govern storage this store does not hold.** Every capacity
+  measure the service had was about its own disk, which meant the one control it has that an
+  age-based expiry does not — capacity pressure, a *budget* that tightens when a traffic spike
+  threatens it, rather than an *age* that hopes the resulting volume fits — could only be applied to
+  data it was storing. A memory can now carry `external_bytes`: the size of a payload it only
+  **points at**, in a column store, a bucket, or another index. It is client-supplied and never
+  interpreted here — the service does not fetch it, verify it, or know its address.
+
+  `consolidation.capacityExternalBytes` is the target that payload is held under, with
+  `consolidation.capacityExternalBytesFloor` as its hysteresis floor, read exactly as
+  `capacityBytes`/`capacityBytesFloor` are. The sum joins capacity pressure as a **third**
+  utilisation beside the row count and the store's own bytes, and eviction gains a second target: one
+  pass, deleting least-valuable-first until each axis that is over has been brought back, so a store
+  under its byte target and over its external one still evicts. Two decisions are load-bearing. It is
+  never folded into `used_bytes` — that figure bounds this store's own disk and is the exact
+  complement of eviction's freed-bytes estimate, so counting a payload held elsewhere there would
+  make eviction chase bytes that deleting a memory does not return. And eviction's **accumulator**
+  changed while its **sort** did not: ordering by value per byte is a different product, one where
+  forgetting means "worst value density first" rather than "least valuable first", and that should
+  not arrive as a side effect of an accounting change.
+
+  Reported by `PreviewConsolidation` (per candidate, plus the axis totals),
+  `ExplainConsolidation`, `CycleReport.external_bytes_freed`, and four instruments —
+  `hippocampus.external_bytes`, `hippocampus.capacity_external_bytes`,
+  `hippocampus.retained_external_bytes` and `hippocampus.external_bytes.evicted`. New in the `hippo`
+  CLI as `--external-bytes` and in the Python client as `Memory.external_bytes`; deliberately not on
+  the MCP tool surface, which is about memories a model writes rather than payloads it manages.
+
+  The axis costs nothing when it is off, which is the default: `external_bytes` is 0 on every memory
+  written before the column existed, and the sum behind the utilisation is only measured when a
+  target is configured. Upgrading is automatic and needs nothing: the column is added in place and the
+  covering index is rebuilt to carry it — which is schema **migration 15**, so a store opened by this
+  release records a version an earlier build does not understand and that build will refuse to open
+  it, the ordinary no-downgrade rule. The rebuild is the one thing worth planning for on a large
+  store, since it is a full index build on `memories` during startup. `external_bytes` is in that
+  index although no per-row decision reads it: the axis is an aggregate, and on SQLite a row is stored
+  inline, so summing the column off the base table would read every page holding a **body** — the cost
+  the covering index exists to avoid — once per cycle, forever.
+
+  Note what this release does **not** do: the store decides what should go and
+  forgets its own record of it, but telling the far system to delete the payload is the
+  `memory_forgotten` callback, which is a best-effort notification rather than a guaranteed
+  instruction — so leave the far end's own expiry configured as the outer bound.
+
 - **Deletion by predicate: `DeleteMemoriesByFilter` and `DeleteEventsByFilter`.** The deletion
   surface was `DeleteMemories` (by id), `DeleteEvent` (one event), `Purge` (everything, refused to a
   group-scoped caller) and `Clear` (exactly what a prior `Export`/`Transfer` captured) — there was no

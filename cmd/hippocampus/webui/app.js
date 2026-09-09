@@ -2954,6 +2954,8 @@ function renderDecayStatus(data) {
   const capacityBytes = Number(data.capacityBytes || 0);
   const memoryCount = Number(data.memoryCount || 0);
   const capacityMemories = Number(data.capacityMemories || 0);
+  const externalBytes = Number(data.externalBytes || 0);
+  const capacityExternalBytes = Number(data.capacityExternalBytes || 0);
 
   const bytesNote =
     capacityBytes > 0
@@ -2964,6 +2966,19 @@ function renderDecayStatus(data) {
     capacityMemories > 0
       ? `${Math.round((memoryCount / capacityMemories) * 100)}% of ${capacityMemories.toLocaleString()}`
       : "no row capacity configured";
+
+  // The third pressure axis, shown only when it is configured. Pressure above is the greatest of
+  // three utilisations, so a reading the store's own size does not account for would otherwise look
+  // like a bug in this panel; on every other deployment the tile would be a permanent zero, which
+  // reads as an axis that is keeping up rather than one nobody asked for.
+  const externalTile =
+    capacityExternalBytes > 0
+      ? `<div class="stat">
+      <div class="k">Held elsewhere</div>
+      <div class="v">${esc(formatBytes(externalBytes))}</div>
+      <div class="n">${esc(Math.round((externalBytes / capacityExternalBytes) * 100) + "% of " + formatBytes(capacityExternalBytes))} · payload this store only points at</div>
+    </div>`
+      : "";
 
   const floors = [];
 
@@ -2993,6 +3008,7 @@ function renderDecayStatus(data) {
       <div class="v">${esc(memoryCount.toLocaleString())}</div>
       <div class="n">${esc(countNote)}</div>
     </div>
+    ${externalTile}
     <div class="stat">
       <div class="k">Algorithm</div>
       <div class="v">${esc(METHOD_NAMES[data.method] || "method " + data.method)}</div>

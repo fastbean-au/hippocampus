@@ -1093,6 +1093,21 @@ const STEPS = [
             help: "Eviction runs down to here rather than stopping at the target, so it is not re-triggered by every write. Typically 80–90% of the capacity.",
           },
           {
+            key: "consolidation.capacityExternalBytes",
+            label: "External capacity (bytes)",
+            type: "int",
+            def: 0,
+            help: "0 disables the external axis. Set it only when your memories carry external_bytes - the size of a payload held in another system that this store is deciding the retention of.",
+          },
+          {
+            key: "consolidation.capacityExternalBytesFloor",
+            label: "External eviction floor (bytes)",
+            type: "int",
+            def: 0,
+            when: (s) => value(s, "consolidation.capacityExternalBytes") > 0,
+            help: "The hysteresis floor for the external axis, read exactly as the byte floor above is. Typically 80-90% of the external capacity.",
+          },
+          {
             key: "consolidation.capacityPressureExponent",
             label: "Pressure exponent",
             type: "float",

@@ -106,7 +106,7 @@ func TestRenderTextPreview(t *testing.T) {
 	for _, want := range []string{
 		"would forget 5 memory/memories and 1 event(s)",
 		"consolidated (decayed below the threshold): 3",
-		"evicted (over the byte capacity):           2",
+		"evicted (over a capacity target):           2",
 		"retained by the minimum retention floor:    7 (8192 bytes)",
 		"used / capacity:    1000 / 2000 bytes",
 		"truncated",
@@ -141,6 +141,56 @@ func TestRenderTextPreviewWithoutCapacity(t *testing.T) {
 	// Nothing to show, so no sample header either.
 	if strings.Contains(out, "least valuable first") {
 		t.Errorf("empty candidate list produced a sample header: %q", out)
+	}
+}
+
+// TestRenderTextPreviewExternalAxis covers the external capacity axis's lines, and - the half worth
+// having - that they are absent on every deployment that has not configured one. Three zeroes on
+// screen read as an axis that is keeping up rather than one nobody asked for.
+func TestRenderTextPreviewExternalAxis(t *testing.T) {
+	render := func(t *testing.T, preview *contract.PreviewConsolidationResponse) string {
+		t.Helper()
+
+		var buf bytes.Buffer
+
+		r := &renderer{out: &buf}
+
+		if err := r.render(preview); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+
+		return buf.String()
+	}
+
+	configured := render(t, &contract.PreviewConsolidationResponse{
+		UsedBytes:             1000,
+		CapacityBytes:         2000,
+		ExternalBytes:         900000,
+		CapacityExternalBytes: 1000000,
+		ExternalBytesFreed:    40960,
+		RetainedExternalBytes: 8192,
+	})
+
+	for _, want := range []string{
+		"external / capacity: 900000 / 1000000 bytes",
+		"external payload it would release:          40960 bytes",
+		"external payload retention is holding:     8192 bytes",
+	} {
+		if !strings.Contains(configured, want) {
+			t.Errorf("output missing %q:\n%s", want, configured)
+		}
+	}
+
+	// The axis is off, so nothing about it appears - even though the response carries a reading,
+	// which is what a store with pointer-memories and no target would send.
+	unconfigured := render(t, &contract.PreviewConsolidationResponse{
+		UsedBytes:     1000,
+		CapacityBytes: 2000,
+		ExternalBytes: 900000,
+	})
+
+	if strings.Contains(unconfigured, "external") {
+		t.Errorf("an unconfigured external axis was rendered:\n%s", unconfigured)
 	}
 }
 

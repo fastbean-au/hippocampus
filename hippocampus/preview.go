@@ -117,9 +117,10 @@ func (s *Server) PreviewConsolidation(
 // several goroutines at once (marshalling writes the message's internal size cache), so each
 // caller builds its own response from this instead of being handed a pointer to one.
 type previewResult struct {
-	preview   db.ConsolidationPreview
-	pressure  float64
-	usedBytes int64
+	preview       db.ConsolidationPreview
+	pressure      float64
+	usedBytes     int64
+	externalBytes int64
 }
 
 // previewOnce runs a preview through previewGroup, so callers arriving while one is already
@@ -146,15 +147,20 @@ func (s *Server) previewOnce(ctx context.Context, limit int) (previewResult, err
 			UsedBytes:     state.usedBytes,
 			CapacityBytes: s.consolidation.capacityBytes,
 			EvictionFloor: s.evictionFloor(),
+
+			ExternalBytes:         state.externalBytes,
+			CapacityExternalBytes: s.consolidation.capacityExternalBytes,
+			ExternalEvictionFloor: s.externalEvictionFloor(),
 		})
 		if err != nil {
 			return previewResult{}, err
 		}
 
 		return previewResult{
-			preview:   preview,
-			pressure:  state.decider.capacityPressure,
-			usedBytes: state.usedBytes,
+			preview:       preview,
+			pressure:      state.decider.capacityPressure,
+			usedBytes:     state.usedBytes,
+			externalBytes: state.externalBytes,
 		}, nil
 	})
 	if err != nil {
@@ -185,23 +191,30 @@ func (s *Server) previewResponse(result previewResult) *contract.PreviewConsolid
 		DeletionThreshold:    s.consolidation.deletionThreshold * result.pressure,
 		UsedBytes:            result.usedBytes,
 		CapacityBytes:        s.consolidation.capacityBytes,
-		Truncated:            preview.Truncated,
-		Candidates:           make([]*contract.ForgetCandidate, 0, len(preview.Candidates)),
+
+		ExternalBytesFreed:    preview.ExternalBytesFreed,
+		ExternalBytes:         result.externalBytes,
+		CapacityExternalBytes: s.consolidation.capacityExternalBytes,
+		RetainedExternalBytes: preview.RetainedExternalBytes,
+
+		Truncated:  preview.Truncated,
+		Candidates: make([]*contract.ForgetCandidate, 0, len(preview.Candidates)),
 	}
 
 	for _, candidate := range preview.Candidates {
 		res.Candidates = append(res.Candidates, &contract.ForgetCandidate{
-			Id:           candidate.Id,
-			EventId:      candidate.EventId,
-			Group:        candidate.Group,
-			Significance: candidate.Significance,
-			Value:        candidate.Value,
-			Threshold:    res.DeletionThreshold,
-			BodyBytes:    candidate.Bytes,
-			Rule:         forgetRules[candidate.Rule],
-			TimeStamp:    candidate.TimeStamp,
-			TimeRecalled: candidate.TimeRecalled,
-			RecallCount:  candidate.RecallCount,
+			Id:            candidate.Id,
+			EventId:       candidate.EventId,
+			Group:         candidate.Group,
+			Significance:  candidate.Significance,
+			Value:         candidate.Value,
+			Threshold:     res.DeletionThreshold,
+			BodyBytes:     candidate.Bytes,
+			ExternalBytes: candidate.ExternalBytes,
+			Rule:          forgetRules[candidate.Rule],
+			TimeStamp:     candidate.TimeStamp,
+			TimeRecalled:  candidate.TimeRecalled,
+			RecallCount:   candidate.RecallCount,
 		})
 	}
 
@@ -224,6 +237,11 @@ type decisionState struct {
 	decider     previewDecider
 	usedBytes   int64
 	memoryCount int
+
+	// externalBytes is the third axis's reading (see contract.Memory.external_bytes). 0 when no
+	// external capacity is configured, in which case the sum is not measured at all - the same
+	// gate the cycle applies, so a preview costs exactly what a cycle costs.
+	externalBytes int64
 
 	// at is when the snapshot was computed, and is set only by cachedDecisionSnapshot - a zero
 	// value marks a snapshot that has never been cached rather than one cached at the epoch.
@@ -268,8 +286,21 @@ func (s *Server) decisionSnapshot(ctx context.Context) (decisionState, error) {
 		return state, status.Error(grpccodes.Internal, "failed to count memories for the preview")
 	}
 
+	// The external axis, on the same gate for the same reason: an unconfigured axis contributes
+	// nothing to pressure, so measuring it would buy a figure no decision reads.
+	if s.consolidation.capacityExternalBytes > 0 {
+		externalBytes, err := s.db.ExternalBytes(ctx)
+		if err != nil {
+			log.Errorf("failed to read external bytes for preview: %s", err.Error())
+
+			return state, err
+		}
+
+		state.externalBytes = externalBytes
+	}
+
 	state.memoryCount = with + without
-	state.decider.capacityPressure = s.calculateCapacityPressure(state.memoryCount, pressureBytes)
+	state.decider.capacityPressure = s.calculateCapacityPressure(state.memoryCount, pressureBytes, state.externalBytes)
 
 	// When the default event significance is derived from a percentile it is recomputed by every
 	// cycle, so the preview recomputes it too rather than reading the value the last cycle left

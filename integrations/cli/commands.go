@@ -412,6 +412,7 @@ func memoryContentFlags(fs *pflag.FlagSet) {
 	fs.Int32("significance", 0, "significance; 0 leaves it unranked (or unchanged on update)")
 	fs.String("event-id", "", "associate the memory with an event")
 	fs.String("group", "", "freeform grouping/context label")
+	fs.Int64("external-bytes", 0, "size of a payload held in another system that this memory points at; feeds consolidation.capacityExternalBytes (0 leaves it unchanged on update)")
 	fs.String("timestamp", "", "memory timestamp as RFC3339 (defaults to now on create)")
 	fs.StringSlice("metadata", nil, "metadata label as 'key=value' (repeatable)")
 	fs.Bool("clear-metadata", false, "on update, remove all metadata (an empty --metadata means 'leave unchanged')")
@@ -1753,6 +1754,7 @@ func memoryFromFlags(fs *pflag.FlagSet, id string) (*contract.Memory, error) {
 		Significance:  i32(fs, "significance"),
 		EventId:       str(fs, "event-id"),
 		Group:         str(fs, "group"),
+		ExternalBytes: i64(fs, "external-bytes"),
 		TimeStamp:     timestamp,
 		Placement:     place,
 		Metadata:      metadata,

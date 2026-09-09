@@ -119,10 +119,17 @@ func TestMemoryValidateInsert(t *testing.T) {
 		{"insert group too long", Memory{Significance: 1, Body: "b", Group: longGroup}, 0, false, "group too long"},
 		{"insert negative timestamp", Memory{Significance: 1, Body: "b", TimeStamp: -1}, 0, false, "timestamp must not be < 0"},
 		{"insert future timestamp", Memory{Significance: 1, Body: "b", TimeStamp: future}, 0, false, "too far in the future"},
+		{"insert external bytes", Memory{Significance: 1, Body: "b", ExternalBytes: 40960}, 0, false, ""},
+		{"insert negative external bytes", Memory{Significance: 1, Body: "b", ExternalBytes: -1}, 0, false, "external bytes must not be < 0"},
 		{"update valid", Memory{Id: "m1", Significance: 0}, 0, true, ""},
 		{"update no id", Memory{Significance: 1}, 0, true, "id must be provided"},
 		{"update negative significance", Memory{Id: "m1", Significance: -1}, 0, true, "significance must not be < 0"},
 		{"update future timestamp", Memory{Id: "m1", TimeStamp: future}, 0, true, "too far in the future"},
+
+		// Refused on the update arm too: a negative size is equally corrupting whichever RPC sets it,
+		// since the external axis sums the column across the store and one negative row would
+		// understate the pressure every other row contributes to.
+		{"update negative external bytes", Memory{Id: "m1", ExternalBytes: -1}, 0, true, "external bytes must not be < 0"},
 	}
 
 	for _, c := range cases {

@@ -16,7 +16,7 @@ func memoryReadRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"id", "timestamp", "significance", "event_id", "body", "is_binary",
 		"time_recalled", "recall_count", "is_summary", "group_name",
-		"is_compressed", "metadata", "link_significance",
+		"is_compressed", "external_bytes", "metadata", "link_significance",
 	})
 }
 
@@ -26,13 +26,13 @@ func memoryStoredRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"id", "timestamp", "significance_level_id", "event_id", "body", "is_binary",
 		"time_recalled", "recall_count", "is_summary", "group_name",
-		"is_compressed", "metadata", "link_significance",
+		"is_compressed", "external_bytes", "metadata", "link_significance",
 	})
 }
 
 // okMemoryRow is a well-formed row, for the cases that need a second row to fail on.
 func okMemoryRow(rows *sqlmock.Rows, id string) *sqlmock.Rows {
-	return rows.AddRow(id, 100, 5, "", []byte("body"), false, 0, 0, false, "", false, nil, 0)
+	return rows.AddRow(id, 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0)
 }
 
 // --- scanMemory / scanMemoryStored: the two row decoders, and the two ways a stored row can be
@@ -44,7 +44,7 @@ func TestScanMemory_MetadataDecodeErrorPropagates(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	rows := memoryReadRows().
-		AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, []byte("{not json"), 0)
+		AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, []byte("{not json"), 0)
 
 	mock.ExpectQuery(`SELECT`).WillReturnRows(rows)
 
@@ -62,7 +62,7 @@ func TestScanMemory_DecompressErrorPropagates(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	rows := memoryReadRows().
-		AddRow("m1", 100, 5, "", []byte("not a gzip stream"), false, 0, 0, false, "", true, nil, 0)
+		AddRow("m1", 100, 5, "", []byte("not a gzip stream"), false, 0, 0, false, "", true, 0, nil, 0)
 
 	mock.ExpectQuery(`SELECT`).WillReturnRows(rows)
 
@@ -80,7 +80,7 @@ func TestScanMemoryStored_DecodeErrorsPropagate(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, []byte("{not json"), 0)
+			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, []byte("{not json"), 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 
@@ -95,7 +95,7 @@ func TestScanMemoryStored_DecodeErrorsPropagate(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("not a gzip stream"), false, 0, 0, false, "", true, nil, 0)
+			AddRow("m1", 100, nil, "", []byte("not a gzip stream"), false, 0, 0, false, "", true, 0, nil, 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 
@@ -114,9 +114,9 @@ func TestRecallMemoriesReturning_Failures(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, nil, 0).
+			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0).
 			RowError(1, errors.New("boom")).
-			AddRow("m2", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, nil, 0)
+			AddRow("m2", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 
@@ -131,7 +131,7 @@ func TestRecallMemoriesReturning_Failures(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, nil, 0)
+			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 		mock.ExpectQuery(`SELECT id, level_rank FROM significance_levels`).WillReturnError(errors.New("boom"))
@@ -196,7 +196,7 @@ func TestRecallMemoriesMySQL_Failures(t *testing.T) {
 				mock.ExpectBegin()
 				mock.ExpectExec(`UPDATE memories SET time_recalled`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT`).WillReturnRows(memoryReadRows().
-					AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, []byte("{bad"), 0))
+					AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, []byte("{bad"), 0))
 				mock.ExpectRollback()
 			},
 		},
@@ -207,7 +207,7 @@ func TestRecallMemoriesMySQL_Failures(t *testing.T) {
 				mock.ExpectExec(`UPDATE memories SET time_recalled`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT`).WillReturnRows(okMemoryRow(memoryReadRows(), "m1").
 					RowError(1, errors.New("boom")).
-					AddRow("m2", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, nil, 0))
+					AddRow("m2", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0))
 				mock.ExpectRollback()
 			},
 		},
@@ -671,7 +671,7 @@ func TestMemoryReaders_RowFailuresPropagate(t *testing.T) {
 			d, mock := newMockDB(t, driverSQLite)
 
 			mock.ExpectQuery(reader.match).WillReturnRows(memoryReadRows().
-				AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, []byte("{bad"), 0))
+				AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, []byte("{bad"), 0))
 
 			if err := reader.call(d); err == nil {
 				t.Fatal("expected the scan failure to propagate")
@@ -683,7 +683,7 @@ func TestMemoryReaders_RowFailuresPropagate(t *testing.T) {
 
 			mock.ExpectQuery(reader.match).WillReturnRows(okMemoryRow(memoryReadRows(), "m1").
 				RowError(1, errors.New("boom")).
-				AddRow("m2", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, nil, 0))
+				AddRow("m2", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0))
 
 			if err := reader.call(d); err == nil {
 				t.Fatal("expected the row error to propagate")
@@ -699,7 +699,7 @@ func TestGetMemories_RowFailuresPropagate(t *testing.T) {
 		d, mock := newMockDB(t, driverSQLite)
 
 		mock.ExpectQuery(`SELECT`).WillReturnRows(memoryReadRows().
-			AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, []byte("{bad"), 0))
+			AddRow("m1", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, []byte("{bad"), 0))
 
 		if _, err := d.GetMemories(context.Background(), MemoryFilter{}); err == nil {
 			t.Fatal("expected the scan failure to propagate")
@@ -711,7 +711,7 @@ func TestGetMemories_RowFailuresPropagate(t *testing.T) {
 
 		mock.ExpectQuery(`SELECT`).WillReturnRows(okMemoryRow(memoryReadRows(), "m1").
 			RowError(1, errors.New("boom")).
-			AddRow("m2", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, nil, 0))
+			AddRow("m2", 100, 5, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0))
 
 		if _, err := d.GetMemories(context.Background(), MemoryFilter{}); err == nil {
 			t.Fatal("expected the row error to propagate")
@@ -838,7 +838,7 @@ func TestEvictMemories_ScanFailuresPropagate(t *testing.T) {
 
 		mock.ExpectQuery(`FROM memories`).WillReturnError(errors.New("boom"))
 
-		if _, _, _, err := d.EvictMemories(context.Background(), &stubServer{}, 1000); err == nil {
+		if _, err := d.EvictMemories(context.Background(), &stubServer{}, EvictionTarget{Bytes: 1000}); err == nil {
 			t.Fatal("expected the scan failure to propagate")
 		}
 
@@ -847,13 +847,14 @@ func TestEvictMemories_ScanFailuresPropagate(t *testing.T) {
 }
 
 // TestEvictMemories_NothingToFreeIsANoOp covers the early return: eviction is driven by a byte
-// shortfall, so a non-positive one means the store is already under its target.
+// shortfall on each axis, so a target asking for nothing on either means the store is already under
+// both its targets. The mock is the assertion - a pass that issued any query would fail it.
 func TestEvictMemories_NothingToFreeIsANoOp(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
-	evicted, events, freed, err := d.EvictMemories(context.Background(), &stubServer{}, 0)
-	if err != nil || evicted != 0 || events != 0 || freed != 0 {
-		t.Errorf("EvictMemories(0) = %d, %d, %d, %v; want 0, 0, 0, nil", evicted, events, freed, err)
+	result, err := d.EvictMemories(context.Background(), &stubServer{}, EvictionTarget{})
+	if err != nil || result != (EvictionResult{}) {
+		t.Errorf("EvictMemories(nothing) = %+v, %v; want a zero result and no error", result, err)
 	}
 
 	expectationsMet(t, mock)

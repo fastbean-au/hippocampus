@@ -560,24 +560,24 @@ func TestCalculateCapacityPressure(t *testing.T) {
 		},
 	}
 
-	if got := s.calculateCapacityPressure(0, 0); got != 1.0 {
+	if got := s.calculateCapacityPressure(0, 0, 0); got != 1.0 {
 		t.Errorf("empty store: expected pressure 1.0, got %v", got)
 	}
 
-	if got := s.calculateCapacityPressure(500, 0); got != 1.0625 {
+	if got := s.calculateCapacityPressure(500, 0, 0); got != 1.0625 {
 		t.Errorf("half full: expected pressure 1.0625, got %v", got)
 	}
 
-	if got := s.calculateCapacityPressure(1000, 0); got != 2.0 {
+	if got := s.calculateCapacityPressure(1000, 0, 0); got != 2.0 {
 		t.Errorf("at capacity: expected pressure 2.0, got %v", got)
 	}
 
-	if got := s.calculateCapacityPressure(1500, 0); got <= 2.0 {
+	if got := s.calculateCapacityPressure(1500, 0, 0); got <= 2.0 {
 		t.Errorf("over capacity: expected pressure > 2.0, got %v", got)
 	}
 
 	s.consolidation.capacityMemories = 0
-	if got := s.calculateCapacityPressure(1000000, 0); got != 1.0 {
+	if got := s.calculateCapacityPressure(1000000, 0, 0); got != 1.0 {
 		t.Errorf("capacity disabled: expected pressure 1.0, got %v", got)
 	}
 }
@@ -595,23 +595,23 @@ func TestCalculateCapacityPressure_ByteUtilisation(t *testing.T) {
 	}
 
 	// Few rows, bytes at capacity: byte utilisation (1.0) beats count utilisation (0.01).
-	if got := s.calculateCapacityPressure(10, 1000000); got != 2.0 {
+	if got := s.calculateCapacityPressure(10, 1000000, 0); got != 2.0 {
 		t.Errorf("bytes at capacity: expected pressure 2.0, got %v", got)
 	}
 
 	// Rows at capacity, few bytes: count utilisation (1.0) beats byte utilisation (0.001).
-	if got := s.calculateCapacityPressure(1000, 1000); got != 2.0 {
+	if got := s.calculateCapacityPressure(1000, 1000, 0); got != 2.0 {
 		t.Errorf("rows at capacity: expected pressure 2.0, got %v", got)
 	}
 
 	// Bytes over capacity keep growing pressure past 2.
-	if got := s.calculateCapacityPressure(10, 1500000); got <= 2.0 {
+	if got := s.calculateCapacityPressure(10, 1500000, 0); got <= 2.0 {
 		t.Errorf("bytes over capacity: expected pressure > 2.0, got %v", got)
 	}
 
 	// With the byte capacity disabled, used bytes must not contribute.
 	s.consolidation.capacityBytes = 0
-	if got := s.calculateCapacityPressure(500, 1000000000); got != 1.0625 {
+	if got := s.calculateCapacityPressure(500, 1000000000, 0); got != 1.0625 {
 		t.Errorf("byte capacity disabled: expected count-only pressure 1.0625, got %v", got)
 	}
 }
@@ -1184,8 +1184,8 @@ func (f failEvictMemoriesStore) UsedBytes(ctx context.Context) (int64, error) {
 	return math.MaxInt64 / 2, nil
 }
 
-func (f failEvictMemoriesStore) EvictMemories(ctx context.Context, s db.Server, freeBytes int64) (int, int, int64, error) {
-	return 0, 0, 0, f.err
+func (f failEvictMemoriesStore) EvictMemories(ctx context.Context, s db.Server, target db.EvictionTarget) (db.EvictionResult, error) {
+	return db.EvictionResult{}, f.err
 }
 
 // TestEvict_EvictMemoriesErrorPropagates verifies a failing EvictMemories call surfaces through

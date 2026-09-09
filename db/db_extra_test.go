@@ -197,13 +197,13 @@ func TestEvictMemories_RetainedMemoryExcludedButKeepsEventAlive(t *testing.T) {
 
 	// A large request would normally empty the event, but the retained memory must survive and keep
 	// e1 alive.
-	deletedMemories, deletedEvents, _, err := db.EvictMemories(context.Background(), server, 1<<30)
+	evicted, err := db.EvictMemories(context.Background(), server, EvictionTarget{Bytes: 1 << 30})
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
-	if deletedMemories != 1 || deletedEvents != 0 {
-		t.Fatalf("expected 1 memory deleted and the event to survive, got %d memories, %d events", deletedMemories, deletedEvents)
+	if evicted.Memories != 1 || evicted.Events != 0 {
+		t.Fatalf("expected 1 memory deleted and the event to survive, got %d memories, %d events", evicted.Memories, evicted.Events)
 	}
 
 	if getMemory(t, db, "retained") == nil {

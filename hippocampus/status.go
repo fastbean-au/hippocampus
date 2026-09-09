@@ -74,6 +74,7 @@ func cycleReportToProto(in *cycleReport) *contract.CycleReport {
 		MemoriesEvicted:         int32(in.memoriesEvicted),
 		EventsEvicted:           int32(in.eventsEvicted),
 		BytesFreed:              in.bytesFreed,
+		ExternalBytesFreed:      in.externalBytesFreed,
 		SummarisationCandidates: int32(in.summarisationCandidates),
 		Success:                 in.success,
 		Failure:                 in.failure,

@@ -1215,8 +1215,26 @@ type Memory struct {
 	Metadata         map[string]string      `protobuf:"bytes,14,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // optional multi-dimensional classification (source=slack, project=..., author=...), where group is the single freeform label. Keys match [A-Za-z0-9][A-Za-z0-9._:/-]{0,63}; values are any UTF-8 up to 512 bytes; at most 32 keys and 4096 bytes of serialised JSON in total, and those bytes count toward memory.limit.sizeBytes alongside the body. On UpdateMemory a non-empty map REPLACES the stored map wholesale - there is no per-key merge, and an absent or empty map leaves it untouched (use clear_metadata to remove it). Opaque to the server: filterable via GetMemories/SearchMemories, never interpreted, and never emitted as a metric, span, or log attribute
 	ClearMetadata    bool                   `protobuf:"varint,15,opt,name=clear_metadata,json=clearMetadata,proto3" json:"clear_metadata,omitempty"`                                           // write-only: on UpdateMemory, remove all metadata. Exists because the map's own emptiness cannot say it - an absent map and an explicitly empty one are the same on the wire, and every other updatable field reads unset as "leave unchanged". Ignored on StoreMemory; takes precedence over any metadata supplied alongside it
 	ClearGroup       bool                   `protobuf:"varint,16,opt,name=clear_group,json=clearGroup,proto3" json:"clear_group,omitempty"`                                                    // write-only: on UpdateMemory, reset group to empty, for the same reason clear_metadata exists - an empty group string otherwise means "leave unchanged". Ignored on StoreMemory; takes precedence over any group supplied alongside it
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// external_bytes is the size of a payload this memory POINTS AT rather than holds: the trace,
+	// blob or document that lives in another system and that this memory's forgetting is meant to
+	// govern. It is client-supplied and never interpreted - the service does not fetch, verify or
+	// even know the address of whatever it measures - and it exists for one reason: capacity
+	// pressure is the control this store has that an age-based expiry does not, and pressure
+	// computed over a couple of hundred bytes of pointer while the payload behind it is forty
+	// kilobytes is regulating a quantity with no relationship to the resource it exists to protect.
+	//
+	// It is a THIRD capacity axis (consolidation.capacityExternalBytes), never folded into
+	// used_bytes: used_bytes is this store's own footprint and protects its own disk, and
+	// conflating the two would let external volume evict memories to reclaim space it is not using.
+	// Eviction counts it toward what a pass has reclaimed, but the ordering is unchanged - least
+	// valuable still goes first, not worst value density.
+	//
+	// Must be >= 0. On UpdateMemory 0 leaves the stored value unchanged, exactly as significance
+	// does, so a partial update of other fields cannot silently zero it; a memory whose payload is
+	// gone is a memory to delete rather than one to set back to zero.
+	ExternalBytes int64 `protobuf:"varint,17,opt,name=external_bytes,json=externalBytes,proto3" json:"external_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Memory) Reset() {
@@ -1359,6 +1377,13 @@ func (x *Memory) GetClearGroup() bool {
 		return x.ClearGroup
 	}
 	return false
+}
+
+func (x *Memory) GetExternalBytes() int64 {
+	if x != nil {
+		return x.ExternalBytes
+	}
+	return 0
 }
 
 // StoreEventResponse carries the stored event's id and how many of its nested memories were
@@ -4809,6 +4834,7 @@ type ForgetCandidate struct {
 	TimeStamp     int64                  `protobuf:"varint,9,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`           // UnixNano
 	TimeRecalled  int64                  `protobuf:"varint,10,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"` // UnixNano of the most recent recall; 0 if never recalled
 	RecallCount   int32                  `protobuf:"varint,11,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`
+	ExternalBytes int64                  `protobuf:"varint,12,opt,name=external_bytes,json=externalBytes,proto3" json:"external_bytes,omitempty"` // Memory.external_bytes: the payload elsewhere that forgetting this memory releases; 0 for a memory pointing at nothing
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4920,6 +4946,13 @@ func (x *ForgetCandidate) GetRecallCount() int32 {
 	return 0
 }
 
+func (x *ForgetCandidate) GetExternalBytes() int64 {
+	if x != nil {
+		return x.ExternalBytes
+	}
+	return 0
+}
+
 // PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are
 // always complete; candidates is a bounded sample of the individual memories, ordered by value
 // ascending so the least valuable - those furthest past the threshold - come first.
@@ -4950,8 +4983,18 @@ type PreviewConsolidationResponse struct {
 	CapacityBytes     int64              `protobuf:"varint,10,opt,name=capacity_bytes,json=capacityBytes,proto3" json:"capacity_bytes,omitempty"`             // consolidation.capacityBytes; 0 when no byte capacity is configured, in which case eviction never runs
 	Candidates        []*ForgetCandidate `protobuf:"bytes,11,rep,name=candidates,proto3" json:"candidates,omitempty"`
 	Truncated         bool               `protobuf:"varint,12,opt,name=truncated,proto3" json:"truncated,omitempty"` // true when more memories would be forgotten than limit returned
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The external axis (see Memory.external_bytes), reported on the same basis as the three fields
+	// above it: what the candidates point at, what the store currently points at in total, and the
+	// target that decides whether eviction runs on that axis at all. external_bytes_freed is the sum
+	// over both paths, so it counts what consolidation would release as well as what eviction would.
+	// All three are 0 on a deployment that stores no external sizes, which is every deployment that
+	// has not asked for the feature.
+	ExternalBytesFreed    int64 `protobuf:"varint,13,opt,name=external_bytes_freed,json=externalBytesFreed,proto3" json:"external_bytes_freed,omitempty"`
+	ExternalBytes         int64 `protobuf:"varint,14,opt,name=external_bytes,json=externalBytes,proto3" json:"external_bytes,omitempty"`                           // the store's current total external bytes; 0 when no external capacity is configured, since it is not measured then
+	CapacityExternalBytes int64 `protobuf:"varint,15,opt,name=capacity_external_bytes,json=capacityExternalBytes,proto3" json:"capacity_external_bytes,omitempty"` // consolidation.capacityExternalBytes; 0 when no external capacity is configured, in which case the external axis is inert
+	RetainedExternalBytes int64 `protobuf:"varint,16,opt,name=retained_external_bytes,json=retainedExternalBytes,proto3" json:"retained_external_bytes,omitempty"` // the external bytes held by consolidation.minimumRetentionInDays, the counterpart of retained_bytes
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *PreviewConsolidationResponse) Reset() {
@@ -5066,6 +5109,34 @@ func (x *PreviewConsolidationResponse) GetTruncated() bool {
 		return x.Truncated
 	}
 	return false
+}
+
+func (x *PreviewConsolidationResponse) GetExternalBytesFreed() int64 {
+	if x != nil {
+		return x.ExternalBytesFreed
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetExternalBytes() int64 {
+	if x != nil {
+		return x.ExternalBytes
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetCapacityExternalBytes() int64 {
+	if x != nil {
+		return x.CapacityExternalBytes
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetRetainedExternalBytes() int64 {
+	if x != nil {
+		return x.RetainedExternalBytes
+	}
+	return 0
 }
 
 // ForgottenMemory is one record from the forgotten log: a memory the sleep cycle deleted, and the
@@ -6295,8 +6366,14 @@ type ExplainConsolidationResponse struct {
 	MinimumRetentionInDays int32              `protobuf:"varint,11,opt,name=minimum_retention_in_days,json=minimumRetentionInDays,proto3" json:"minimum_retention_in_days,omitempty"`
 	Valuations             []*MemoryValuation `protobuf:"bytes,12,rep,name=valuations,proto3" json:"valuations,omitempty"`
 	Curve                  *DecayCurve        `protobuf:"bytes,13,opt,name=curve,proto3" json:"curve,omitempty"` // absent when none was requested
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// The third pressure axis (see Memory.external_bytes). Reported beside the other two because
+	// capacity_pressure above is the greater of all three utilisations, so a client showing the
+	// pressure without this cannot explain a reading the store's own size does not account for.
+	// Both are 0 when no external capacity is configured, in which case the axis contributes nothing.
+	ExternalBytes         int64 `protobuf:"varint,14,opt,name=external_bytes,json=externalBytes,proto3" json:"external_bytes,omitempty"`
+	CapacityExternalBytes int64 `protobuf:"varint,15,opt,name=capacity_external_bytes,json=capacityExternalBytes,proto3" json:"capacity_external_bytes,omitempty"` // consolidation.capacityExternalBytes
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ExplainConsolidationResponse) Reset() {
@@ -6420,6 +6497,20 @@ func (x *ExplainConsolidationResponse) GetCurve() *DecayCurve {
 	return nil
 }
 
+func (x *ExplainConsolidationResponse) GetExternalBytes() int64 {
+	if x != nil {
+		return x.ExternalBytes
+	}
+	return 0
+}
+
+func (x *ExplainConsolidationResponse) GetCapacityExternalBytes() int64 {
+	if x != nil {
+		return x.CapacityExternalBytes
+	}
+	return 0
+}
+
 // CycleReport is what one sleep cycle did: the counts the two decay paths deleted, what it cost,
 // and whether it succeeded. Counts only - no ids, no groups, no bodies - which is what keeps this
 // aggregate rather than an enumeration, and so readable by the reader tier.
@@ -6446,9 +6537,16 @@ type CycleReport struct {
 	// RPC) or "wal" (the write-ahead log grew past consolidation.walTriggerBytes). A caller that
 	// joined a cycle already in flight does not change it - this describes the cycle that ran, not
 	// the call that observed it.
-	Trigger       string `protobuf:"bytes,11,opt,name=trigger,proto3" json:"trigger,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Trigger string `protobuf:"bytes,11,opt,name=trigger,proto3" json:"trigger,omitempty"`
+	// external_bytes_freed is bytes_freed's counterpart on the external axis (see
+	// Memory.external_bytes): what the cycle released in whatever system holds the payloads its
+	// memories pointed at. Estimated from the eviction pass, exactly as bytes_freed is - the
+	// consolidation passes stay on the covering index and count rows rather than bytes - so a cycle
+	// that consolidated without evicting reports 0 here whatever it released. 0 always on a
+	// deployment that stores no external sizes.
+	ExternalBytesFreed int64 `protobuf:"varint,12,opt,name=external_bytes_freed,json=externalBytesFreed,proto3" json:"external_bytes_freed,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *CycleReport) Reset() {
@@ -6556,6 +6654,13 @@ func (x *CycleReport) GetTrigger() string {
 		return x.Trigger
 	}
 	return ""
+}
+
+func (x *CycleReport) GetExternalBytesFreed() int64 {
+	if x != nil {
+		return x.ExternalBytesFreed
+	}
+	return 0
 }
 
 // GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.
@@ -7298,7 +7403,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\":\n" +
 	"\x04Link\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\"\n" +
-	"\fsignificance\x18\x02 \x01(\x05R\fsignificance\"\x9f\x05\n" +
+	"\fsignificance\x18\x02 \x01(\x05R\fsignificance\"\xc6\x05\n" +
 	"\x06Memory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -7319,7 +7424,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\bmetadata\x18\x0e \x03(\v2$.hippocampus.v1.Memory.MetadataEntryR\bmetadata\x12%\n" +
 	"\x0eclear_metadata\x18\x0f \x01(\bR\rclearMetadata\x12\x1f\n" +
 	"\vclear_group\x18\x10 \x01(\bR\n" +
-	"clearGroup\x1a;\n" +
+	"clearGroup\x12%\n" +
+	"\x0eexternal_bytes\x18\x11 \x01(\x03R\rexternalBytes\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"c\n" +
@@ -7583,7 +7689,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x0fGeneralResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\"3\n" +
 	"\x1bPreviewConsolidationRequest\x12\x14\n" +
-	"\x05limit\x18\x01 \x01(\x05R\x05limit\"\xe0\x02\n" +
+	"\x05limit\x18\x01 \x01(\x05R\x05limit\"\x87\x03\n" +
 	"\x0fForgetCandidate\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
 	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\x14\n" +
@@ -7598,7 +7704,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"time_stamp\x18\t \x01(\x03R\ttimeStamp\x12#\n" +
 	"\rtime_recalled\x18\n" +
 	" \x01(\x03R\ftimeRecalled\x12!\n" +
-	"\frecall_count\x18\v \x01(\x05R\vrecallCount\"\x9b\x04\n" +
+	"\frecall_count\x18\v \x01(\x05R\vrecallCount\x12%\n" +
+	"\x0eexternal_bytes\x18\f \x01(\x03R\rexternalBytes\"\xe4\x05\n" +
 	"\x1cPreviewConsolidationResponse\x123\n" +
 	"\x15memories_consolidated\x18\x01 \x01(\x05R\x14memoriesConsolidated\x12)\n" +
 	"\x10memories_evicted\x18\x02 \x01(\x05R\x0fmemoriesEvicted\x12%\n" +
@@ -7616,7 +7723,11 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\n" +
 	"candidates\x18\v \x03(\v2\x1f.hippocampus.v1.ForgetCandidateR\n" +
 	"candidates\x12\x1c\n" +
-	"\ttruncated\x18\f \x01(\bR\ttruncated\"\x95\x03\n" +
+	"\ttruncated\x18\f \x01(\bR\ttruncated\x120\n" +
+	"\x14external_bytes_freed\x18\r \x01(\x03R\x12externalBytesFreed\x12%\n" +
+	"\x0eexternal_bytes\x18\x0e \x01(\x03R\rexternalBytes\x126\n" +
+	"\x17capacity_external_bytes\x18\x0f \x01(\x03R\x15capacityExternalBytes\x126\n" +
+	"\x17retained_external_bytes\x18\x10 \x01(\x03R\x15retainedExternalBytes\"\x95\x03\n" +
 	"\x0fForgottenMemory\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x19\n" +
@@ -7723,7 +7834,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x1bExplainConsolidationRequest\x12\x1d\n" +
 	"\n" +
 	"memory_ids\x18\x01 \x03(\tR\tmemoryIds\x127\n" +
-	"\x05curve\x18\x02 \x01(\v2!.hippocampus.v1.DecayCurveRequestR\x05curve\"\xdd\x04\n" +
+	"\x05curve\x18\x02 \x01(\v2!.hippocampus.v1.DecayCurveRequestR\x05curve\"\xbc\x05\n" +
 	"\x1cExplainConsolidationResponse\x12+\n" +
 	"\x11capacity_pressure\x18\x01 \x01(\x01R\x10capacityPressure\x12-\n" +
 	"\x12deletion_threshold\x18\x02 \x01(\x01R\x11deletionThreshold\x12\x1d\n" +
@@ -7741,7 +7852,9 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\n" +
 	"valuations\x18\f \x03(\v2\x1f.hippocampus.v1.MemoryValuationR\n" +
 	"valuations\x120\n" +
-	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\"\xaf\x03\n" +
+	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\x12%\n" +
+	"\x0eexternal_bytes\x18\x0e \x01(\x03R\rexternalBytes\x126\n" +
+	"\x17capacity_external_bytes\x18\x0f \x01(\x03R\x15capacityExternalBytes\"\xe1\x03\n" +
 	"\vCycleReport\x12\x1d\n" +
 	"\n" +
 	"started_at\x18\x01 \x01(\x03R\tstartedAt\x12\x1f\n" +
@@ -7757,7 +7870,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\asuccess\x18\t \x01(\bR\asuccess\x12\x18\n" +
 	"\afailure\x18\n" +
 	" \x01(\tR\afailure\x12\x18\n" +
-	"\atrigger\x18\v \x01(\tR\atrigger\"\xea\x02\n" +
+	"\atrigger\x18\v \x01(\tR\atrigger\x120\n" +
+	"\x14external_bytes_freed\x18\f \x01(\x03R\x12externalBytesFreed\"\xea\x02\n" +
 	"\x1eGetConsolidationStatusResponse\x123\n" +
 	"\x15consolidation_enabled\x18\x01 \x01(\bR\x14consolidationEnabled\x12%\n" +
 	"\x0eperiod_seconds\x18\x02 \x01(\x03R\rperiodSeconds\x12\"\n" +

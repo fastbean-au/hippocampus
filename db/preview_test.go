@@ -212,13 +212,13 @@ func TestPreviewEvictionMatchesACycle(t *testing.T) {
 		t.Fatalf("PreviewConsolidation: %s", err)
 	}
 
-	evicted, _, _, err := db.EvictMemories(context.Background(), server, used-capacity)
+	evicted, err := db.EvictMemories(context.Background(), server, EvictionTarget{Bytes: used - capacity})
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
-	if preview.MemoriesEvicted != evicted {
-		t.Errorf("preview said %d memories evicted, the cycle evicted %d", preview.MemoriesEvicted, evicted)
+	if preview.MemoriesEvicted != evicted.Memories {
+		t.Errorf("preview said %d memories evicted, the cycle evicted %d", preview.MemoriesEvicted, evicted.Memories)
 	}
 
 	if preview.MemoriesConsolidated != 0 {
@@ -759,19 +759,19 @@ func TestRetainedStats(t *testing.T) {
 
 	cutoff := now - 7*day
 
-	count, bytes, err := db.RetainedStats(context.Background(), cutoff)
+	retained, err := db.RetainedStats(context.Background(), cutoff)
 	if err != nil {
 		t.Fatalf("RetainedStats: %s", err)
 	}
 
-	if count != 2 {
-		t.Errorf("expected 2 retained, got %d", count)
+	if retained.Memories != 2 {
+		t.Errorf("expected 2 retained, got %d", retained.Memories)
 	}
 
 	// Bodies plus the same per-row allowance eviction and the preview use, so the figure is
 	// comparable with the capacity target rather than a bare sum of body lengths.
-	if bytes <= 2*evictionRowOverheadBytes {
-		t.Errorf("expected the byte figure to include bodies and row overhead, got %d", bytes)
+	if retained.Bytes <= 2*evictionRowOverheadBytes {
+		t.Errorf("expected the byte figure to include bodies and row overhead, got %d", retained.Bytes)
 	}
 
 	// Recall renews retention with the decay clock, so a recalled old memory joins the window.
@@ -779,13 +779,13 @@ func TestRetainedStats(t *testing.T) {
 		t.Fatalf("RecallMemories: %s", err)
 	}
 
-	count, _, err = db.RetainedStats(context.Background(), cutoff)
+	retained, err = db.RetainedStats(context.Background(), cutoff)
 	if err != nil {
 		t.Fatalf("RetainedStats: %s", err)
 	}
 
-	if count != 3 {
-		t.Errorf("expected the recalled memory to be retained, got %d", count)
+	if retained.Memories != 3 {
+		t.Errorf("expected the recalled memory to be retained, got %d", retained.Memories)
 	}
 }
 
@@ -793,22 +793,22 @@ func TestRetainedStats(t *testing.T) {
 func TestRetainedStatsEmptyStore(t *testing.T) {
 	db := newTestDB(t)
 
-	count, bytes, err := db.RetainedStats(context.Background(), time.Now().UnixNano())
+	retained, err := db.RetainedStats(context.Background(), time.Now().UnixNano())
 	if err != nil {
 		t.Fatalf("RetainedStats: %s", err)
 	}
 
-	if count != 0 || bytes != 0 {
-		t.Errorf("expected 0/0 on an empty store, got %d/%d", count, bytes)
+	if retained != (RetentionStats{}) {
+		t.Errorf("expected a zero result on an empty store, got %+v", retained)
 	}
 }
 
 func TestRetainedStats_QueryError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
-	mock.ExpectQuery(`SELECT COUNT\(\*\), COALESCE\(SUM`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`SELECT COUNT\(\*\), SUM`).WillReturnError(errors.New("boom"))
 
-	if _, _, err := d.RetainedStats(context.Background(), 0); err == nil {
+	if _, err := d.RetainedStats(context.Background(), 0); err == nil {
 		t.Fatal("expected an error")
 	}
 
@@ -833,9 +833,9 @@ func TestRetainedStatsUsesTheDialectExpression(t *testing.T) {
 			d, mock := newMockDB(t, test.driver)
 
 			mock.ExpectQuery(test.want).
-				WillReturnRows(sqlmock.NewRows([]string{"count", "bytes"}).AddRow(1, int64(10)))
+				WillReturnRows(sqlmock.NewRows([]string{"count", "bytes", "external"}).AddRow(1, int64(10), int64(0)))
 
-			if _, _, err := d.RetainedStats(context.Background(), 0); err != nil {
+			if _, err := d.RetainedStats(context.Background(), 0); err != nil {
 				t.Fatalf("RetainedStats: %s", err)
 			}
 

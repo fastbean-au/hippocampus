@@ -21,6 +21,7 @@ def test_a_memory_round_trips():
         timestamp=when,
         binary=False,
         links=[hp.Link("m-2", 10)],
+        external_bytes=40960,
     )
 
     decoded = hp.Memory.from_proto(memory.to_proto())
@@ -32,6 +33,10 @@ def test_a_memory_round_trips():
     assert decoded.metadata == {"source": "ci"}
     assert decoded.timestamp == when
     assert decoded.links == [hp.Link("m-2", 10)]
+
+    # The external capacity axis: a size this store only points at, carried both ways so an agent
+    # writing pointer-memories can read back what it recorded.
+    assert decoded.external_bytes == 40960
 
 
 def test_an_event_round_trips():

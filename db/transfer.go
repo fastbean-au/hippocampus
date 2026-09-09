@@ -127,7 +127,8 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 		key:     []string{"id"},
 		update: []string{
 			"timestamp", "significance_level_id", "event_id", "body", "is_binary",
-			"time_recalled", "recall_count", "is_summary", "group_name", "is_compressed", "metadata",
+			"time_recalled", "recall_count", "is_summary", "group_name", "is_compressed",
+			"external_bytes", "metadata",
 		},
 	})
 
@@ -179,6 +180,7 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			memory.IsSummary,
 			memory.Group,
 			isCompressed,
+			memory.ExternalBytes,
 			metadata,
 		); err != nil {
 			_ = tx.Rollback()

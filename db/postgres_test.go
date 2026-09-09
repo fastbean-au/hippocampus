@@ -414,13 +414,13 @@ func TestPostgres_EvictionDoesNotFlagEventWhenNothingDeleted(t *testing.T) {
 		},
 	}
 
-	memories, events, _, err := database.EvictMemories(context.Background(), server, 1<<30)
+	evicted, err := database.EvictMemories(context.Background(), server, EvictionTarget{Bytes: 1 << 30})
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
-	if memories != 0 || events != 0 {
-		t.Fatalf("expected nothing evicted (m1 recall-skipped), got %d memories / %d events", memories, events)
+	if evicted.Memories != 0 || evicted.Events != 0 {
+		t.Fatalf("expected nothing evicted (m1 recall-skipped), got %d memories / %d events", evicted.Memories, evicted.Events)
 	}
 
 	event, err := database.GetEvent(context.Background(), "e1")
@@ -531,13 +531,13 @@ func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 		return float64(candidate.MemorySignificance)
 	}}
 
-	memories, events, freed, err := database.EvictMemories(context.Background(), server, 1)
+	evicted, err := database.EvictMemories(context.Background(), server, EvictionTarget{Bytes: 1})
 	if err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
-	if memories != 1 || events != 0 {
-		t.Fatalf("expected exactly 1 memory evicted, got %d memories and %d events", memories, events)
+	if evicted.Memories != 1 || evicted.Events != 0 {
+		t.Fatalf("expected exactly 1 memory evicted, got %d memories and %d events", evicted.Memories, evicted.Events)
 	}
 
 	remaining, err := database.UsedBytes(context.Background())
@@ -547,8 +547,8 @@ func TestPostgres_UsedBytesAndEviction(t *testing.T) {
 
 	// The two accountings must converge: the eviction's estimated freed bytes are exactly the
 	// drop in the reading, so eviction can never chase a figure that does not move.
-	if remaining != used-freed {
-		t.Errorf("UsedBytes after eviction = %d, want %d (%d - %d freed)", remaining, used-freed, used, freed)
+	if remaining != used-evicted.Bytes {
+		t.Errorf("UsedBytes after eviction = %d, want %d (%d - %d freed)", remaining, used-evicted.Bytes, used, evicted.Bytes)
 	}
 
 	// Events contribute too - their payload plus the same per-row allowance.

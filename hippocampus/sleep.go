@@ -128,6 +128,12 @@ type cycleReport struct {
 	eventsEvicted        int
 	bytesFreed           int64
 
+	// externalBytesFreed is bytesFreed's counterpart on the external axis: what the cycle released
+	// in whatever system holds the payloads its memories pointed at. From the eviction pass alone,
+	// like bytesFreed beside it - the consolidation passes stay on the covering index and report
+	// rows rather than bytes.
+	externalBytesFreed int64
+
 	summarisationCandidates int
 
 	success bool
@@ -169,22 +175,28 @@ func (s *Server) consolidate(ctx context.Context, report *cycleReport) error {
 	with, without := s.db.CountMemories(ctx)
 	if with >= 0 && without >= 0 {
 
-		// The byte measure only contributes when a byte capacity is configured; it reuses the
+		// The two byte measures only contribute when their capacity is configured; each reuses the
 		// reading eviction took at the end of the previous cycle rather than scanning the tables a
 		// second time this cycle. Pressure is a smoothing factor, so a one-cycle-old
-		// byte figure is fine - and the hard byte cap is still enforced against a fresh reading in
+		// byte figure is fine - and the hard byte caps are still enforced against fresh readings in
 		// evict(). Zero on the first cycle (no prior reading yet), leaving pressure to the row count.
 		var usedBytes int64
 		if s.consolidation.capacityBytes > 0 {
 			usedBytes = s.consolidation.lastUsedBytes
 		}
 
-		s.consolidation.capacityPressure = s.calculateCapacityPressure(with+without, usedBytes)
+		var externalBytes int64
+		if s.consolidation.capacityExternalBytes > 0 {
+			externalBytes = s.consolidation.lastExternalBytes
+		}
+
+		s.consolidation.capacityPressure = s.calculateCapacityPressure(with+without, usedBytes, externalBytes)
 		log.Infof(
-			"capacity pressure: %0.3f (%d memories, %d bytes used)",
+			"capacity pressure: %0.3f (%d memories, %d bytes used, %d external bytes)",
 			s.consolidation.capacityPressure,
 			with+without,
 			usedBytes,
+			externalBytes,
 		)
 
 		tel.capacityPressure.Record(ctx, s.consolidation.capacityPressure)
@@ -192,6 +204,7 @@ func (s *Server) consolidate(ctx context.Context, report *cycleReport) error {
 			attribute.Float64("capacity_pressure", s.consolidation.capacityPressure),
 			attribute.Int("memory_count", with+without),
 			attribute.Int64("used_bytes", usedBytes),
+			attribute.Int64("external_bytes", externalBytes),
 		))
 	}
 
@@ -294,10 +307,34 @@ func (s *Server) scanSummarisationCandidates(ctx context.Context, report *cycleR
 // cycle. An unset or invalid floor (non-positive, or above the target) falls back to the
 // capacity target itself.
 func (s *Server) evictionFloor() int64 {
-	floor := s.consolidation.capacityBytesFloor
+	return evictionFloorFor(s.consolidation.capacityBytes, s.consolidation.capacityBytesFloor)
+}
 
-	if floor <= 0 || floor > s.consolidation.capacityBytes {
-		return s.consolidation.capacityBytes
+// externalEvictionFloor is evictionFloor on the external axis, reading
+// consolidation.capacityExternalBytesFloor against consolidation.capacityExternalBytes. Separate
+// figures rather than one ratio applied to both: the two axes measure different resources on
+// different disks, and the headroom that spaces evictions sensibly on one says nothing about the
+// other.
+func (s *Server) externalEvictionFloor() int64 {
+	return evictionFloorFor(s.consolidation.capacityExternalBytes, s.consolidation.capacityExternalBytesFloor)
+}
+
+// evictionExcess is how much one axis asks an eviction pass to reclaim: nothing at all unless a
+// capacity is configured and currently exceeded, and otherwise the distance from the current
+// reading down to the floor. Shared by both axes, and mirrored by db.previewExcess.
+func evictionExcess(used int64, capacity int64, floor int64) int64 {
+	if capacity <= 0 || used <= capacity {
+		return 0
+	}
+
+	return used - floor
+}
+
+// evictionFloorFor is the rule both axes share: a floor is honoured only when it is positive and
+// actually below the target it provides headroom under, and otherwise the target is its own floor.
+func evictionFloorFor(capacity int64, floor int64) int64 {
+	if floor <= 0 || floor > capacity {
+		return capacity
 	}
 
 	return floor
@@ -323,8 +360,12 @@ func (s *Server) evict(ctx context.Context, report *cycleReport) error {
 	defer span.End()
 
 	bounded := s.consolidation.capacityBytes > 0
+	externallyBounded := s.consolidation.capacityExternalBytes > 0
 
-	span.SetAttributes(attribute.Bool("capacity_bounded", bounded))
+	span.SetAttributes(
+		attribute.Bool("capacity_bounded", bounded),
+		attribute.Bool("external_capacity_bounded", externallyBounded),
+	)
 
 	used, err := s.db.UsedBytes(ctx)
 	if err != nil {
@@ -351,42 +392,91 @@ func (s *Server) evict(ctx context.Context, report *cycleReport) error {
 
 	tel.usedBytes.Record(ctx, used)
 
+	// The external axis is measured only when a target is configured, unlike used bytes above.
+	// Used bytes is taken in both modes because a decay-only store's size is the one figure nothing
+	// else reports; external bytes has no such claim - an unconfigured axis is a store whose
+	// memories point at nothing this service was ever told about, so the sum is zero and the scan
+	// buys a gauge nobody set up. Under a target the reading IS the decision, so a failure fails
+	// the cycle for the same reason used bytes does.
+	external := int64(0)
+
+	if externallyBounded {
+		external, err = s.db.ExternalBytes(ctx)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+
+			return err
+		}
+
+		s.consolidation.lastExternalBytes = external
+
+		tel.externalBytes.Record(ctx, external)
+		tel.capacityExternalBytes.Record(ctx, s.consolidation.capacityExternalBytes)
+	}
+
 	s.recordRetention(ctx)
 
-	if !bounded {
+	if !bounded && !externallyBounded {
 		return nil
 	}
 
-	tel.capacityBytes.Record(ctx, s.consolidation.capacityBytes)
-
-	if used <= s.consolidation.capacityBytes {
-		return nil
+	if bounded {
+		tel.capacityBytes.Record(ctx, s.consolidation.capacityBytes)
 	}
 
 	// Reclaiming down to the floor rather than the target itself creates headroom, so the store
-	// does not re-cross the target moments after the eviction and every cycle stays busy.
-	excess := used - s.evictionFloor()
-	log.Infof("store is using %d bytes, %d over the eviction floor - evicting", used, excess)
+	// does not re-cross the target moments after the eviction and every cycle stays busy. One pass
+	// serves both axes: it deletes least-valuable-first until each target that is over has been
+	// brought back, so a store over only its external target still evicts, and a memory that
+	// happens to relieve both is counted once.
+	target := db.EvictionTarget{
+		Bytes:         evictionExcess(used, s.consolidation.capacityBytes, s.evictionFloor()),
+		ExternalBytes: evictionExcess(external, s.consolidation.capacityExternalBytes, s.externalEvictionFloor()),
+	}
+
+	if target.Bytes <= 0 && target.ExternalBytes <= 0 {
+		return nil
+	}
+
+	log.Infof(
+		"store is using %d bytes (%d over its eviction floor) and points at %d external bytes (%d over its own) - evicting",
+		used,
+		target.Bytes,
+		external,
+		target.ExternalBytes,
+	)
 
 	span.AddEvent("capacity_target_exceeded", trace.WithAttributes(
 		attribute.Int64("used_bytes", used),
 		attribute.Int64("capacity_bytes", s.consolidation.capacityBytes),
+		attribute.Int64("external_bytes", external),
+		attribute.Int64("capacity_external_bytes", s.consolidation.capacityExternalBytes),
 	))
 
-	memories, events, freed, err := s.db.EvictMemories(ctx, s, excess)
-	log.Infof("evicted %d memories and %d events, freeing an estimated %d bytes", memories, events, freed)
+	evicted, err := s.db.EvictMemories(ctx, s, target)
+	log.Infof(
+		"evicted %d memories and %d events, freeing an estimated %d bytes and releasing %d external bytes",
+		evicted.Memories,
+		evicted.Events,
+		evicted.Bytes,
+		evicted.ExternalBytes,
+	)
 
-	report.memoriesEvicted += memories
-	report.eventsEvicted += events
-	report.bytesFreed += freed
+	report.memoriesEvicted += evicted.Memories
+	report.eventsEvicted += evicted.Events
+	report.bytesFreed += evicted.Bytes
+	report.externalBytesFreed += evicted.ExternalBytes
 
-	tel.memoriesEvicted.Add(ctx, int64(memories))
-	tel.eventsEvicted.Add(ctx, int64(events))
-	tel.bytesEvicted.Add(ctx, freed)
+	tel.memoriesEvicted.Add(ctx, int64(evicted.Memories))
+	tel.eventsEvicted.Add(ctx, int64(evicted.Events))
+	tel.bytesEvicted.Add(ctx, evicted.Bytes)
+	tel.externalBytesEvicted.Add(ctx, evicted.ExternalBytes)
 	span.AddEvent("memories_evicted", trace.WithAttributes(
-		attribute.Int("memories_deleted", memories),
-		attribute.Int("events_deleted", events),
-		attribute.Int64("bytes_freed", freed),
+		attribute.Int("memories_deleted", evicted.Memories),
+		attribute.Int("events_deleted", evicted.Events),
+		attribute.Int64("bytes_freed", evicted.Bytes),
+		attribute.Int64("external_bytes_freed", evicted.ExternalBytes),
 	))
 
 	// Record what was evicted above regardless, then surface any failure so the sleep cycle's
@@ -425,24 +515,42 @@ func (s *Server) recordRetention(ctx context.Context) {
 
 	cutoff := time.Now().UnixNano() - int64(s.consolidation.minimumRetentionInDays)*DAY_IN_NANOSECONDS
 
-	count, bytes, err := s.db.RetainedStats(ctx, cutoff)
+	retained, err := s.db.RetainedStats(ctx, cutoff)
 	if err != nil {
 		log.Warnf("failed to measure retained memories: %s", err.Error())
 
 		return
 	}
 
-	tel.memoriesRetained.Record(ctx, int64(count))
-	tel.retainedBytes.Record(ctx, bytes)
+	tel.memoriesRetained.Record(ctx, int64(retained.Memories))
+	tel.retainedBytes.Record(ctx, retained.Bytes)
 
 	// Worth a log line, not only a metric: this is the condition under which the capacity target
 	// silently stops being achievable, and not every deployment runs the metrics stack.
-	if s.consolidation.capacityBytes > 0 && bytes >= s.consolidation.capacityBytes {
+	if s.consolidation.capacityBytes > 0 && retained.Bytes >= s.consolidation.capacityBytes {
 		log.Warnf(
 			"minimum retention is holding %d bytes across %d memories, at or above the %d byte capacity target - eviction cannot bring the store under its capacity until this data ages out",
-			bytes,
-			count,
+			retained.Bytes,
+			retained.Memories,
 			s.consolidation.capacityBytes,
+		)
+	}
+
+	// The same fact on the external axis, and the same warning, gated the same way. Published only
+	// under an external target: without one there is nothing for the figure to be unreachable
+	// against, exactly as the byte warning above needs a byte capacity to mean anything.
+	if s.consolidation.capacityExternalBytes <= 0 {
+		return
+	}
+
+	tel.retainedExternalBytes.Record(ctx, retained.ExternalBytes)
+
+	if retained.ExternalBytes >= s.consolidation.capacityExternalBytes {
+		log.Warnf(
+			"minimum retention is holding %d external bytes across %d memories, at or above the %d byte external capacity target - eviction cannot bring the external axis under its capacity until this data ages out",
+			retained.ExternalBytes,
+			retained.Memories,
+			s.consolidation.capacityExternalBytes,
 		)
 	}
 }
@@ -655,14 +763,21 @@ func (s *Server) deletionThresholdUnder(pressure float64) float64 {
 }
 
 // calculateCapacityPressure returns the multiplier applied to the deletion threshold based on how
-// full the memory store is. Fullness is the greater of the row-count utilisation (against
-// capacityMemories) and the byte utilisation (against capacityBytes) — row count is a poor proxy
-// for storage when bodies range from bytes to hundreds of kilobytes, so whichever axis is fuller
-// drives the pressure. With both capacities disabled, or an empty store, the multiplier is 1 (no
-// effect); it approaches 2 as the store reaches capacity and keeps growing beyond it. The
-// exponent controls how sharply pressure ramps up: higher values keep pressure negligible until
-// the store is nearly full.
-func (s *Server) calculateCapacityPressure(memoryCount int, usedBytes int64) float64 {
+// full the memory store is. Fullness is the greatest of three utilisations — the row count against
+// capacityMemories, the store's own bytes against capacityBytes, and the external payload the
+// store points at against capacityExternalBytes — because row count is a poor proxy for storage
+// when bodies range from bytes to hundreds of kilobytes, and this store's own footprint is a poor
+// proxy for a payload held elsewhere. Whichever axis is fullest drives the pressure. With every
+// capacity disabled, or an empty store, the multiplier is 1 (no effect); it approaches 2 as the
+// store reaches capacity and keeps growing beyond it. The exponent controls how sharply pressure
+// ramps up: higher values keep pressure negligible until the store is nearly full.
+//
+// The third axis is what makes this store a retention controller over storage it does not hold. A
+// pointer-memory is a couple of hundred bytes while the trace or blob behind it might be forty
+// kilobytes, so pressure computed on the first two axes alone regulates a quantity with no
+// relationship to the resource it exists to protect — and pressure is the one control an
+// age-based expiry cannot express, so losing it costs the whole argument.
+func (s *Server) calculateCapacityPressure(memoryCount int, usedBytes int64, externalBytes int64) float64 {
 	utilisation := 0.0
 
 	if s.consolidation.capacityMemories > 0 {
@@ -673,6 +788,13 @@ func (s *Server) calculateCapacityPressure(memoryCount int, usedBytes int64) flo
 		byteUtilisation := float64(usedBytes) / float64(s.consolidation.capacityBytes)
 		if byteUtilisation > utilisation {
 			utilisation = byteUtilisation
+		}
+	}
+
+	if s.consolidation.capacityExternalBytes > 0 {
+		externalUtilisation := float64(externalBytes) / float64(s.consolidation.capacityExternalBytes)
+		if externalUtilisation > utilisation {
+			utilisation = externalUtilisation
 		}
 	}
 

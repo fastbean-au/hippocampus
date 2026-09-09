@@ -120,7 +120,7 @@ func TestDispatchSendsQueuedDeliveries(t *testing.T) {
 	storeMemories(t, database, "c1", "c2")
 
 	// A real decay deletion.
-	if _, _, _, err := database.EvictMemories(ctx, &evictAllServer{}, 1<<20); err != nil {
+	if _, err := database.EvictMemories(ctx, &evictAllServer{}, db.EvictionTarget{Bytes: 1 << 20}); err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 
@@ -396,7 +396,7 @@ func TestTheSleepCycleQueuesItsCompletion(t *testing.T) {
 
 	database.BeginCallbackCycle(cycleId)
 
-	if _, _, _, err := database.EvictMemories(ctx, &evictAllServer{}, 1<<20); err != nil {
+	if _, err := database.EvictMemories(ctx, &evictAllServer{}, db.EvictionTarget{Bytes: 1 << 20}); err != nil {
 		t.Fatalf("EvictMemories: %s", err)
 	}
 

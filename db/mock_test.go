@@ -596,10 +596,10 @@ func TestRecallMemoriesMySQL(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "timestamp", "significance", "event_id", "body",
 			"is_binary", "time_recalled", "recall_count", "is_summary", "group_name", "is_compressed",
-			"metadata", "link_significance",
+			"external_bytes", "metadata", "link_significance",
 		}).AddRow(
 			"m1", int64(10), int32(5), "e1", []byte("hi"), false, int64(99), int32(1), false, "", false,
-			nil, int64(0),
+			int64(0), nil, int64(0),
 		))
 	mock.ExpectCommit()
 
@@ -860,7 +860,9 @@ func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name str
 		mock.ExpectQuery(`column_name FROM information_schema|pragma_table_info`).
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 
-	case "covering_index":
+	case "covering_index", "covering_index_external":
+		// The same function, run twice: 7 built the index and 15 records that it now carries
+		// external_bytes. Both issue the superseded drops and one ensureIndex.
 		expectSupersededIndexDrop(mock, d)
 		expectIndexPresent(mock, d)
 

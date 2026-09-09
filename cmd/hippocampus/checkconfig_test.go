@@ -225,6 +225,65 @@ func TestConfigProblems_TwoObjectStores(t *testing.T) {
 	}
 }
 
+// TestConfigProblems_ExternalCapacityAxis covers the two keys the external capacity axis added, and
+// the widening that came with them: a non-positive deletion threshold is rescued by an external
+// capacity exactly as it is by a byte capacity, because that configuration - a retention controller
+// over storage held somewhere else - forgets on the capacity target alone and is not the
+// forgets-nothing mistake the check exists to refuse.
+func TestConfigProblems_ExternalCapacityAxis(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+	viper.Set("storage.directory", t.TempDir())
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected the defaults alone to be valid, got %v", problems)
+	}
+
+	viper.Set("consolidation.capacityExternalBytes", 1<<30)
+	viper.Set("consolidation.capacityExternalBytesFloor", 1<<29)
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected a configured external axis to be valid, got %v", problems)
+	}
+
+	// Value-based consolidation off, no byte capacity, but an external target: eviction still runs,
+	// so this must be accepted.
+	viper.Set("consolidation.deletionThreshold", 0)
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Fatalf("expected an external capacity to rescue a zero deletion threshold, got %v", problems)
+	}
+
+	// With the external target removed as well, nothing forgets anything and it is refused again.
+	viper.Set("consolidation.capacityExternalBytes", 0)
+
+	if problems := configProblems(); len(problems) != 1 {
+		t.Fatalf("expected a zero threshold with no capacity at all to be refused, got %v", problems)
+	}
+
+	viper.Set("consolidation.deletionThreshold", 1.0)
+
+	for _, key := range []string{
+		"consolidation.capacityExternalBytes",
+		"consolidation.capacityExternalBytesFloor",
+	} {
+		viper.Set(key, -1)
+
+		problems := configProblems()
+		if len(problems) != 1 {
+			t.Fatalf("expected exactly one problem for a negative %s, got %v", key, problems)
+		}
+
+		if !strings.Contains(problems[0].Error(), key) {
+			t.Errorf("the problem does not name %s: %s", key, problems[0].Error())
+		}
+
+		viper.Set(key, 0)
+	}
+}
+
 // TestExecute_CheckConfigJSONStaysParseableWithNoConfigFile is why the dispatch sits ABOVE the
 // "no configuration file" warning rather than below it, where every other CLI mode's went. That
 // warning is logged at Warn, this binary logs to stdout, and --output json makes stdout a data

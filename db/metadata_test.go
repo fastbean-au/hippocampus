@@ -767,12 +767,12 @@ func TestMetadataCountsTowardEvictionBytes(t *testing.T) {
 
 		// The stub consolidates and retains nothing, so eviction alone decides - and asking for one
 		// byte evicts the single memory and reports everything its deletion frees.
-		_, _, freed, err := db.EvictMemories(context.Background(), &decisionServer{}, 1)
+		evicted, err := db.EvictMemories(context.Background(), &decisionServer{}, EvictionTarget{Bytes: 1})
 		if err != nil {
 			t.Fatalf("EvictMemories: %s", err)
 		}
 
-		return freed
+		return evicted.Bytes
 	}
 
 	bare := freedFor(t, types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "body"})

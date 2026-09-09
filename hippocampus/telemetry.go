@@ -29,6 +29,7 @@ type telemetry struct {
 	memoriesSearched     metric.Int64Counter
 	memoryBodyBytes      metric.Int64Histogram
 	bytesEvicted         metric.Int64Counter
+	externalBytesEvicted metric.Int64Counter
 
 	eventsStored       metric.Int64Counter
 	eventsRejected     metric.Int64Counter
@@ -45,6 +46,15 @@ type telemetry struct {
 	memoriesRetained metric.Int64Gauge
 	retainedBytes    metric.Int64Gauge
 	purges           metric.Int64Counter
+
+	// The external capacity axis (consolidation.capacityExternalBytes): the payload the store's
+	// memories point at in other systems, the target it is held under, and what retention is
+	// holding onto out there. Published only when that capacity is configured - the sum is not
+	// otherwise measured, and a flat zero would read as an axis that is keeping up rather than one
+	// nobody asked for.
+	externalBytes         metric.Int64Gauge
+	capacityExternalBytes metric.Int64Gauge
+	retainedExternalBytes metric.Int64Gauge
 
 	tombstones        metric.Int64Gauge
 	tombstonesDeleted metric.Int64Counter
@@ -87,6 +97,7 @@ func newTelemetry() *telemetry {
 		memoriesSearched:     newInt64Counter(meter, "hippocampus.memories.searched", "Number of memories returned by content search, by whether the search reinforced them."),
 		memoryBodyBytes:      newInt64Histogram(meter, "hippocampus.memory.body_bytes", "", "Size in bytes of each memory body accepted and stored."),
 		bytesEvicted:         newInt64Counter(meter, "hippocampus.bytes.evicted", "Estimated bytes reclaimed by capacity eviction."),
+		externalBytesEvicted: newInt64Counter(meter, "hippocampus.external_bytes.evicted", "External payload bytes released by capacity eviction - what the far system may delete, not what this store reclaimed."),
 
 		eventsStored:       newInt64Counter(meter, "hippocampus.events.stored", "Number of events accepted and stored."),
 		eventsRejected:     newInt64Counter(meter, "hippocampus.events.rejected", "Number of events rejected at storage time."),
@@ -102,7 +113,11 @@ func newTelemetry() *telemetry {
 		capacityBytes:    newInt64Gauge(meter, "hippocampus.capacity_bytes", "The configured byte capacity target, exported alongside used_bytes so a dashboard need not hard-code the limit."),
 		memoriesRetained: newInt64Gauge(meter, "hippocampus.memories.retained", "Memories inside the minimum retention window, and so exempt from both consolidation and eviction."),
 		retainedBytes:    newInt64Gauge(meter, "hippocampus.retained_bytes", "Stored bytes held by the minimum retention window. Approaching capacity_bytes means the capacity target has become unreachable, since retention overrides it."),
-		purges:           newInt64Counter(meter, "hippocampus.purges", "Number of purges performed."),
+
+		externalBytes:         newInt64Gauge(meter, "hippocampus.external_bytes", "Total size of the payloads the store's memories point at in other systems, measured each sleep cycle when an external capacity target is set."),
+		capacityExternalBytes: newInt64Gauge(meter, "hippocampus.capacity_external_bytes", "The configured external byte capacity target, exported alongside external_bytes so a dashboard need not hard-code the limit."),
+		retainedExternalBytes: newInt64Gauge(meter, "hippocampus.retained_external_bytes", "External payload bytes held by the minimum retention window. Approaching capacity_external_bytes means the external target has become unreachable, since retention overrides it."),
+		purges:                newInt64Counter(meter, "hippocampus.purges", "Number of purges performed."),
 
 		// The forgotten log's own size and turnover. What was forgotten and by which rule is
 		// already reported by memories.consolidated and memories.evicted; these two answer the

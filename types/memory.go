@@ -45,6 +45,13 @@ type Memory struct {
 	Links            []Link
 	LinkSignificance int64
 
+	// ExternalBytes is the size of the payload this memory points at in another system, supplied by
+	// the client and never interpreted here (see contract.Memory.external_bytes). It is the third
+	// capacity axis, and is deliberately not part of the memory.limit.sizeBytes budget the body and
+	// metadata share: that limit bounds what this store holds, and this number measures what it does
+	// not.
+	ExternalBytes int64
+
 	// SignificanceLevelID is the resolved significance registry level id, set by the RPC layer via
 	// db.ResolveSignificanceLevel before a create/update reaches the store. nil means unranked on a
 	// create, or "leave significance unchanged" on a partial update. It is internal - never part of
@@ -67,6 +74,8 @@ func MemoryFromProto(memory *contract.Memory) Memory {
 		IsSummary:    memory.GetIsSummary(),
 		Group:        memory.GetGroup(),
 		Links:        LinksFromProto(memory.GetLinks()),
+
+		ExternalBytes: memory.GetExternalBytes(),
 
 		Metadata:      CopyMetadata(memory.GetMetadata()),
 		ClearMetadata: memory.GetClearMetadata(),
@@ -93,6 +102,7 @@ func (m *Memory) ToProto() *contract.Memory {
 		Group:            m.Group,
 		Links:            LinksToProto(m.Links),
 		LinkSignificance: m.LinkSignificance,
+		ExternalBytes:    m.ExternalBytes,
 
 		// Copied, and nil for an empty map: a memory with no metadata allocates none, and a client
 		// cannot distinguish nil from empty on either transport anyway (the HTTP gateway emits
@@ -126,6 +136,11 @@ func (m *Memory) ValidateInsert(maxMemoryBodyLength int, update bool) error {
 		return fmt.Errorf("memory not valid - group too long")
 	case m.TimeStamp < 0:
 		return fmt.Errorf("memory not valid - timestamp must not be < 0")
+	case m.ExternalBytes < 0:
+		// A size, so negative is meaningless - and worse than meaningless here: the external
+		// capacity axis sums this column across the store, so one negative row would understate the
+		// pressure every other row contributes to.
+		return fmt.Errorf("memory not valid - external bytes must not be < 0")
 	case m.TimeStamp > time.Now().UnixNano()+maxClockSkew.Nanoseconds():
 		// Rejected on both the insert and update arms: a future timestamp is equally corrupting
 		// whichever RPC sets it (StoreMemory or UpdateMemory), and no legitimate write is future-dated.

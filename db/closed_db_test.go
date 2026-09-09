@@ -87,14 +87,14 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 		{"ConsolidateMemories", func() error { _, err := db.ConsolidateMemories(ctx, server); return err }},
 		{"ConsolidateEventMemories", func() error { _, _, _, err := db.ConsolidateEventMemories(ctx, server); return err }},
 		{"ConsolidateEvents", func() error { _, err := db.ConsolidateEvents(ctx, server); return err }},
-		{"EvictMemories", func() error { _, _, _, err := db.EvictMemories(ctx, server, 1024); return err }},
+		{"EvictMemories", func() error { _, err := db.EvictMemories(ctx, server, EvictionTarget{Bytes: 1024}); return err }},
 		{"PreviewConsolidation", func() error {
 			_, err := db.PreviewConsolidation(ctx, server, PreviewOptions{})
 
 			return err
 		}},
 		{"RetainedStats", func() error {
-			_, _, err := db.RetainedStats(ctx, 0)
+			_, err := db.RetainedStats(ctx, 0)
 
 			return err
 		}},

@@ -692,6 +692,25 @@ message Memory {
 	map<string, string>                    metadata                  = 14; // optional multi-dimensional classification (source=slack, project=..., author=...), where group is the single freeform label. Keys match [A-Za-z0-9][A-Za-z0-9._:/-]{0,63}; values are any UTF-8 up to 512 bytes; at most 32 keys and 4096 bytes of serialised JSON in total, and those bytes count toward memory.limit.sizeBytes alongside the body. On UpdateMemory a non-empty map REPLACES the stored map wholesale - there is no per-key merge, and an absent or empty map leaves it untouched (use clear_metadata to remove it). Opaque to the server: filterable via GetMemories/SearchMemories, never interpreted, and never emitted as a metric, span, or log attribute
 	bool                                   clear_metadata            = 15; // write-only: on UpdateMemory, remove all metadata. Exists because the map's own emptiness cannot say it - an absent map and an explicitly empty one are the same on the wire, and every other updatable field reads unset as "leave unchanged". Ignored on StoreMemory; takes precedence over any metadata supplied alongside it
 	bool                                   clear_group               = 16; // write-only: on UpdateMemory, reset group to empty, for the same reason clear_metadata exists - an empty group string otherwise means "leave unchanged". Ignored on StoreMemory; takes precedence over any group supplied alongside it
+
+	// external_bytes is the size of a payload this memory POINTS AT rather than holds: the trace,
+	// blob or document that lives in another system and that this memory's forgetting is meant to
+	// govern. It is client-supplied and never interpreted - the service does not fetch, verify or
+	// even know the address of whatever it measures - and it exists for one reason: capacity
+	// pressure is the control this store has that an age-based expiry does not, and pressure
+	// computed over a couple of hundred bytes of pointer while the payload behind it is forty
+	// kilobytes is regulating a quantity with no relationship to the resource it exists to protect.
+	//
+	// It is a THIRD capacity axis (consolidation.capacityExternalBytes), never folded into
+	// used_bytes: used_bytes is this store's own footprint and protects its own disk, and
+	// conflating the two would let external volume evict memories to reclaim space it is not using.
+	// Eviction counts it toward what a pass has reclaimed, but the ordering is unchanged - least
+	// valuable still goes first, not worst value density.
+	//
+	// Must be >= 0. On UpdateMemory 0 leaves the stored value unchanged, exactly as significance
+	// does, so a partial update of other fields cannot silently zero it; a memory whose payload is
+	// gone is a memory to delete rather than one to set back to zero.
+	int64                                  external_bytes            = 17;
 }
 
 // StoreEventResponse carries the stored event's id and how many of its nested memories were
@@ -1183,6 +1202,7 @@ message ForgetCandidate {
 	int64                                  time_stamp                = 9;  // UnixNano
 	int64                                  time_recalled             = 10; // UnixNano of the most recent recall; 0 if never recalled
 	int32                                  recall_count              = 11;
+	int64                                  external_bytes            = 12; // Memory.external_bytes: the payload elsewhere that forgetting this memory releases; 0 for a memory pointing at nothing
 }
 
 // PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are
@@ -1217,6 +1237,17 @@ message PreviewConsolidationResponse {
 
 	repeated ForgetCandidate               candidates                = 11;
 	bool                                   truncated                 = 12; // true when more memories would be forgotten than limit returned
+
+	// The external axis (see Memory.external_bytes), reported on the same basis as the three fields
+	// above it: what the candidates point at, what the store currently points at in total, and the
+	// target that decides whether eviction runs on that axis at all. external_bytes_freed is the sum
+	// over both paths, so it counts what consolidation would release as well as what eviction would.
+	// All three are 0 on a deployment that stores no external sizes, which is every deployment that
+	// has not asked for the feature.
+	int64                                  external_bytes_freed      = 13;
+	int64                                  external_bytes            = 14; // the store's current total external bytes; 0 when no external capacity is configured, since it is not measured then
+	int64                                  capacity_external_bytes   = 15; // consolidation.capacityExternalBytes; 0 when no external capacity is configured, in which case the external axis is inert
+	int64                                  retained_external_bytes   = 16; // the external bytes held by consolidation.minimumRetentionInDays, the counterpart of retained_bytes
 }
 
 // ForgottenMemory is one record from the forgotten log: a memory the sleep cycle deleted, and the
@@ -1439,6 +1470,13 @@ message ExplainConsolidationResponse {
 
 	repeated MemoryValuation               valuations                = 12;
 	DecayCurve                             curve                     = 13; // absent when none was requested
+
+	// The third pressure axis (see Memory.external_bytes). Reported beside the other two because
+	// capacity_pressure above is the greater of all three utilisations, so a client showing the
+	// pressure without this cannot explain a reading the store's own size does not account for.
+	// Both are 0 when no external capacity is configured, in which case the axis contributes nothing.
+	int64                                  external_bytes            = 14;
+	int64                                  capacity_external_bytes   = 15; // consolidation.capacityExternalBytes
 }
 
 // CycleReport is what one sleep cycle did: the counts the two decay paths deleted, what it cost,
@@ -1471,6 +1509,14 @@ message CycleReport {
 	// joined a cycle already in flight does not change it - this describes the cycle that ran, not
 	// the call that observed it.
 	string                                 trigger                   = 11;
+
+	// external_bytes_freed is bytes_freed's counterpart on the external axis (see
+	// Memory.external_bytes): what the cycle released in whatever system holds the payloads its
+	// memories pointed at. Estimated from the eviction pass, exactly as bytes_freed is - the
+	// consolidation passes stay on the covering index and count rows rather than bytes - so a cycle
+	// that consolidated without evicting reports 0 here whatever it released. 0 always on a
+	// deployment that stores no external sizes.
+	int64                                  external_bytes_freed      = 12;
 }
 
 // GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.
