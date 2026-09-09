@@ -119,6 +119,11 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   new derived default above. That is the reclaimed storage the change is for, and it is reversible by
   setting `search.contentIndex.enabled` true. The shipped `docker-compose.opensearch*.yaml` stacks
   are affected: they keep working, with search answered by OpenSearch as before.
+- **The web console's guided tour and card blurbs were rewritten in a plainer, contracted voice.**
+  The tour is offered unprompted on a first visit, so it is the one piece of writing here aimed at
+  somebody who has not decided to concentrate yet; the reference register it was written in made an
+  unusual idea sound harder than it is. Same content, same figures, fewer clauses. The console is
+  not covered by the version number.
 
 ### Fixed
 

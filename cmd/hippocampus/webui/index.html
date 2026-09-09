@@ -130,9 +130,10 @@
         <div class="card" id="now-hero">
           <h2>This store is finite. It forgets.</h2>
           <p class="muted pull-up">
-            Memories decay as they age and are reinforced when recalled. Once a
-            memory's value falls below the threshold, the next consolidation
-            cycle deletes it — and as the store fills, that threshold rises.
+            Memories decay as they age, and recalling one reinforces it. Once a
+            memory's value drops below the threshold, the next consolidation
+            cycle deletes it — and the fuller the store gets, the higher that
+            threshold climbs.
           </p>
 
           <div id="now-headline"></div>
@@ -181,8 +182,9 @@
           <h2>Content search</h2>
           <p class="muted pull-up">
             Queries the secondary content-search index. Leave the query blank
-            and give just an event id to list that event's memories instead.
-            Event ids in the results are clickable and open the whole event.
+            and give just an event id, and you'll get that event's memories
+            instead. Event ids in the results are clickable — they open the
+            whole event.
           </p>
           <div class="row">
             <div class="field wide">
@@ -769,9 +771,9 @@
             aria-labelledby="ev-mode-summarise"
           >
             <p class="muted">
-              Events whose memories have accumulated and gone quiet long enough
-              to be worth condensing, as identified by the most recent sleep
-              cycle. Open one to summarise it.
+              Events whose memories have piled up and gone quiet long enough to
+              be worth condensing, picked out by the most recent sleep cycle.
+              Open one to summarise it.
             </p>
             <div class="actions">
               <button class="btn" data-act="load-candidates">
@@ -829,9 +831,9 @@
           <h2>Forgetting</h2>
           <p class="muted pull-up">
             Every number here comes from the service, computed by the same code
-            that decides what to forget — so what is drawn is what will happen,
+            that decides what to forget — so what's drawn is what will happen,
             not an approximation of it. A memory is forgotten once its
-            <em>value</em> falls below the <em>threshold</em>; the threshold
+            <em>value</em> falls below the <em>threshold</em>, and the threshold
             rises with capacity pressure as the store fills.
           </p>
           <div id="decay-status">
@@ -910,10 +912,10 @@
           <h2>What was forgotten</h2>
           <p class="muted pull-up">
             The forgotten log: one record per memory a cycle actually deleted,
-            with the value and threshold that decided it. Optional and off by
+            with the value and threshold that decided it. Optional, and off by
             default (<code class="inline">consolidation.tombstones.enabled</code
-            >). Records carry no body — this says a memory was lost, not what it
-            said. Emptying the log is administrator only.
+            >). Records carry no body — this tells you a memory was lost, not
+            what it said. Emptying the log is administrator only.
           </p>
           <div class="row">
             <div class="field">
@@ -969,8 +971,8 @@
             else in a deployment (the broker bridges, the ingestor, MCP servers,
             the CLI) connects <em>to</em> it and is invisible here unless
             someone says otherwise. So each component below says where it came
-            from, and this is what this instance knows rather than a survey of
-            what is running.
+            from: this is what this instance knows, not a survey of what's
+            running.
           </p>
 
           <!-- Deployment-wide faults, which by definition have no node to sit on: chiefly that
@@ -990,7 +992,7 @@
                 type="checkbox"
                 data-change="topology-filter"
               />
-              Show what is not configured
+              Show what isn't configured
             </label>
           </div>
 
@@ -1021,13 +1023,13 @@
         <div class="card admin-only callbacks-only">
           <h2>Outbound callbacks</h2>
           <p class="muted pull-up">
-            Deliveries waiting to be sent, oldest first. A queue that is not
+            Deliveries waiting to be sent, oldest first. A queue that isn't
             draining means the receiver is down or refusing: the dispatcher
-            retries with backoff and abandons a delivery once it has tried too
+            retries with backoff and gives up on a delivery once it's tried too
             long, and an abandoned delivery is a notification nobody will ever
             get. Payloads are never shown here — a delivery can carry memory
-            bodies, and this is a view of a backlog rather than a second way to
-            read the store.
+            bodies, and this is a view of a backlog, not a second way to read
+            the store.
           </p>
 
           <div id="callback-summary" class="muted fs-12"></div>
@@ -1067,13 +1069,13 @@
         <div class="card">
           <h2>Storage outside the capacity target</h2>
           <p class="muted pull-up">
-            Three tables are excluded from the store's measured size on purpose:
-            the record of what was deleted must never be the reason live
-            memories are evicted. The consequence is that the disk this
-            deployment needs is <code>consolidation.capacityBytes</code> plus
-            what is here, and capacity pressure will never reflect it — on the
-            embedded driver these share the store's own file. Sizes are row
-            counts times a flat per-row allowance, not measurements.
+            Three tables are deliberately excluded from the store's measured
+            size: the record of what was deleted must never be the reason live
+            memories are evicted. So the disk this deployment needs is
+            <code>consolidation.capacityBytes</code> plus what's here, and
+            capacity pressure will never reflect it — on the embedded driver
+            these share the store's own file. Sizes are row counts times a flat
+            per-row allowance, not measurements.
           </p>
 
           <div id="ancillary-summary" class="muted fs-12"></div>

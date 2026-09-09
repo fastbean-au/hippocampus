@@ -1214,8 +1214,8 @@ export const TOUR_STEPS = [
     target: "now-hero",
     title: "This store is meant to forget",
     body: () =>
-      `A memory here is not a row that stays until something deletes it. It carries a
-       <em>significance</em>, it loses value as it ages, and once that value falls below the
+      `A memory here isn't a row that sits there until something deletes it. It carries a
+       <em>significance</em>, it loses value as it ages, and once that value drops below the
        store's threshold the next consolidation cycle deletes it — permanently, body and all.
        <p class="tour-note">Every number in this console is computed by the service, by the same
         code that does the forgetting. Nothing on this page is an estimate of it.</p>`,
@@ -1226,8 +1226,8 @@ export const TOUR_STEPS = [
     target: "now-headline",
     title: "What it holds, and what it just lost",
     body: (f) =>
-      `These three figures are the whole state of the store in one line: what it holds, what the
-       last cycle took, and when the next one is due.
+      `Three figures, and between them they're the whole state of the store: what it holds, what
+       the last cycle took, and when the next one's due.
        ${heldSentence(f)}`,
   },
   {
@@ -1239,9 +1239,9 @@ export const TOUR_STEPS = [
     body: (f) =>
       `Nothing decays away between cycles. A <em>sleep cycle</em> runs
        ${f.period > 0 ? "on a timer" : "when the Sleep RPC or the write-ahead log asks for one"},
-       walks the store, and deletes everything that has fallen below the threshold — so a memory
-       is not gone the moment it becomes forgettable, it is gone the next time the store looks.
-       <p class="tour-note">The two counts are kept apart because they are different events.
+       walks the store, and deletes everything that's fallen below the threshold — so a memory
+       isn't gone the moment it becomes forgettable, it's gone the next time the store looks.
+       <p class="tour-note">The two counts are kept apart because they're different events.
         <em>Decayed away</em> is the value model working. <em>Evicted</em> is the store being over
         its capacity target and having to take something that was still above the threshold.</p>`,
   },
@@ -1260,12 +1260,13 @@ export const TOUR_STEPS = [
     needs: (caps) => caps.consolidation && caps.tombstones,
     title: "What went, and what decided it",
     body: (f) =>
-      `The one view that can speak about a memory that no longer exists: a record per deletion
-       carrying the <em>value</em> the cycle computed and the <em>threshold</em> then in force.
+      `The one view that can tell you about a memory that no longer exists: a record per deletion,
+       carrying the <em>value</em> the cycle computed and the <em>threshold</em> in force at the
+       time.
        ${forgottenSentence(f)}
-       <p class="tour-note">Value and threshold are separate columns rather than "value &lt;
-        threshold", because on an eviction the value was <em>above</em> the threshold and the
-        memory went anyway.</p>`,
+       <p class="tour-note">They're two columns rather than one "value &lt; threshold" verdict,
+        because on an eviction the value was <em>above</em> the threshold and the memory went
+        anyway.</p>`,
   },
   {
     id: "significance",
@@ -1275,10 +1276,10 @@ export const TOUR_STEPS = [
     title: "Significance is the differentiator",
     body: () =>
       `Two memories of the same age are separated by one thing: how significant they were said to
-       be when they were stored. It is the input every decay curve starts from, so it decides how
-       long something survives.
+       be when they were stored. It's where every decay curve starts, so it decides how long
+       something survives.
        <p class="tour-note">The significance filter reads that directly — <em>Highest only</em> is
-        the store's most durable records, <em>Lowest only</em> is what will go first.</p>`,
+        the store's most durable records, <em>Lowest only</em> is what goes first.</p>`,
   },
   {
     id: "recall",
@@ -1287,13 +1288,13 @@ export const TOUR_STEPS = [
     prime: "memories",
     title: "Recalling a memory keeps it alive",
     body: () =>
-      `This is the relationship that makes the store more than an expiry date. <strong>Recall</strong>
-       on any row resets that memory's decay clock and raises its effective significance a little —
-       age is measured from the last recall, not from when it was stored, so something asked for
-       often is effectively never old.
+      `This is what makes the store more than an expiry date. <strong>Recall</strong> on any row
+       resets that memory's decay clock and lifts its effective significance a little — age is
+       measured from the last recall, not from when it was stored, so something asked for often is
+       never really old.
        <p class="tour-note"><strong>Links</strong> are the other half. A link raises the effective
         significance of <em>both</em> ends, with diminishing returns, so a well-connected memory
-        decays more slowly than an isolated one of the same significance.</p>`,
+        doesn't decay as fast as an isolated one of the same significance.</p>`,
   },
   {
     id: "events",
@@ -1303,10 +1304,10 @@ export const TOUR_STEPS = [
     title: "An event is a span its memories share",
     body: () =>
       `An event is a named stretch of time with a significance of its own, and a memory attached to
-       one is valued using both. That makes an event a way to keep a whole episode alive, or to let
-       a whole episode go.
-       <p class="tour-note">The relationship runs both ways: an event is deleted when its last
-        memory is forgotten, and forgetting an event's memories takes the event with them.</p>`,
+       one is valued using both. That's what makes an event a way to keep a whole episode alive —
+       or to let one go.
+       <p class="tour-note">It runs both ways: an event is deleted when its last memory goes, and
+        forgetting an event's memories takes the event with them.</p>`,
   },
   {
     id: "value",
@@ -1317,10 +1318,10 @@ export const TOUR_STEPS = [
     body: (f) =>
       `This is where the two numbers meet.
        ${thresholdSentence(f)}
-       Every memory's value is computed from its significance, its links, how often it has been
-       recalled, and how long since it last was — and it is compared against that one threshold.
-       <p class="tour-note">The Value column on the tables you have just seen is served from here
-        too. This console computes no decay maths of its own.</p>`,
+       Every memory's value comes from its significance, its links, how often it's been recalled,
+       and how long since it last was — and it's compared against that one threshold.
+       <p class="tour-note">The Value column on the tables you've just seen is served from here
+        too. This console does no decay maths of its own.</p>`,
   },
   {
     id: "curve",
@@ -1333,7 +1334,7 @@ export const TOUR_STEPS = [
        threshold drawn across it: where they cross is when a memory of that significance is
        forgotten, assuming nobody recalls it first.
        <p class="tour-note">Click the value of any memory in any table to plot that memory's own
-        curve, and how many days it has left.</p>`,
+        curve, and how many days it's got left.</p>`,
   },
   {
     id: "preview",
@@ -1342,9 +1343,9 @@ export const TOUR_STEPS = [
     needs: (caps) => caps.consolidation && caps.isUnboundAdmin,
     title: "Ask before it happens",
     body: () =>
-      `The dry run reports exactly what a cycle running now would delete, and deletes nothing. It
-       is a separate call from the cycle itself rather than a flag on it, so it can be granted to
-       someone who may not be trusted to run the destructive one.`,
+      `The dry run reports exactly what a cycle running now would delete, and deletes nothing. It's
+       a separate call rather than a flag on the cycle itself, so it can go to someone who isn't
+       trusted to run the destructive one.`,
   },
   {
     id: "deployment",
@@ -1355,11 +1356,11 @@ export const TOUR_STEPS = [
     body: () =>
       `An instance can only honestly report itself, whatever it dials, and the peers it finds
        registered on a shared database. Everything else in a deployment connects <em>to</em> it, so
-       each component says where it was learnt from rather than the diagram implying a survey.`,
+       each component says where it was learnt from — the diagram isn't claiming to be a survey.`,
   },
   {
     id: "done",
-    title: "That is the tour",
+    title: "That's the tour",
     body: () =>
       `The store forgets on a schedule, significance and recall decide what survives it, and every
        figure here is served rather than guessed.
@@ -1390,15 +1391,15 @@ function heldSentence(facts) {
 // store at zero pressure - it has no second axis at all, and describing pressure there would point
 // at a meter that is not drawn.
 function pressureBody(facts) {
-  const lede = `The decay model is not the only thing deciding. A store also has a capacity target, and as it
-     fills, the deletion threshold is scaled up — so the fuller it is, the more it forgets per
+  const lede = `The decay model isn't the only thing deciding. A store also has a capacity target, and as it
+     fills, the deletion threshold is scaled up — so the fuller it gets, the more it forgets per
      cycle, and the harder a memory has to work to stay.`;
 
   if (!facts || !facts.capacity) {
     return (
       lede +
-      `<p class="tour-note">This store has no capacity target configured, so nothing is evicted to
-        make room and memories are forgotten only as they decay.</p>`
+      `<p class="tour-note">This store has no capacity target configured, so nothing's evicted to
+        make room — memories go only as they decay.</p>`
     );
   }
 
@@ -1415,7 +1416,7 @@ function pressureBody(facts) {
 function forgottenSentence(facts) {
   if (!facts || !facts.tombstoneTotal) return "";
 
-  return `<p class="tour-note">This store has recorded
+  return `<p class="tour-note">This store's recorded
    <strong>${esc(Number(facts.tombstoneTotal).toLocaleString())}</strong> of them.</p>`;
 }
 
@@ -1424,7 +1425,7 @@ function thresholdSentence(facts) {
     return "";
   }
 
-  return `A memory of this store is forgotten once its value falls below
+  return `A memory here is forgotten once its value falls below
    <strong>${esc(num(facts.threshold))}</strong>.`;
 }
 
@@ -1436,7 +1437,7 @@ export function tourSteps(caps) {
   return TOUR_STEPS.filter((step) => !step.needs || step.needs(caps || {}));
 }
 
-// tourProgress is the "3 of 11" label. Trivial, and here rather than inline in app.js only so the
+// tourProgress is the "3 of 13" label. Trivial, and here rather than inline in app.js only so the
 // one-based conversion is pinned - an off-by-one in it is the kind of thing nobody reads.
 export function tourProgress(index, total) {
   return `${index + 1} of ${total}`;
