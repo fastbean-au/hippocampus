@@ -52,6 +52,8 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-09-10
+
 ### Added
 
 - **The store's own content index can be turned off, and is by default where OpenSearch answers
@@ -2900,7 +2902,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/fastbean-au/hippocampus/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/fastbean-au/hippocampus/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/fastbean-au/hippocampus/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/fastbean-au/hippocampus/compare/v0.40.1...v0.41.0
