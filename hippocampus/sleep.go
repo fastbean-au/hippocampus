@@ -60,6 +60,10 @@ func (s *Server) sleep(trigger string) error {
 
 	e3 := s.preserve(ctx)
 
+	// After the trims above, so the figure describes what the store is left holding rather than what
+	// it held at the top of the cycle. Reporting only - it decides nothing, and never fails a cycle.
+	s.recordAncillaryStorage(ctx)
+
 	// Best-effort registry maintenance: keeps significance ranks compact and inside int32 after
 	// repeated relative insertions. It never fails the sleep cycle (a no-op until inflation warrants
 	// it), so it sits outside the success flag.

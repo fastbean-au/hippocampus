@@ -925,22 +925,11 @@ const callbackRowBytes = 512
 //
 // A count times an allowance rather than a measurement, for the reason the other two give: this runs
 // inside the capacity check on every sleep cycle, and a scan there would put the cost of the queue
-// on the path that exists to bound the store.
+// on the path that exists to bound the store. The same measurement is what AncillaryStorage reports,
+// which for this table is the one that matters most: its rows are the only ones of the three with no
+// fixed size, so its row cap bounds its bytes only loosely (db/ancillary.go).
 func (d *DB) callbackQueueBytes(ctx context.Context) int64 {
-	if !d.callbackTable {
-
-		return 0
-	}
-
-	var count int64
-
-	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+callbackQueueTable).Scan(&count); err != nil {
-		log.Warnf("failed to measure the callback queue, counting it as stored bytes: %s", err.Error())
-
-		return 0
-	}
-
-	return count * callbackRowBytes
+	return d.excludedBytes(ctx, d.callbackProbe())
 }
 
 // memoryDelivery builds one delivery from a capture and the ids that were actually deleted.

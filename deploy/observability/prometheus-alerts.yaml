@@ -183,6 +183,22 @@ groups:
           description: "Memories inside consolidation.minimumRetentionInDays now hold over 90% of consolidation.capacityBytes. Retention overrides the capacity target, so eviction will keep running, find nothing it is allowed to delete, and the store will grow past its target until that data ages out. Shorten minimumRetentionInDays, raise capacityBytes, or reduce the ingest rate."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
 
+      # The storage the capacity target cannot see. All three tables are excluded from used_bytes on
+      # purpose - the record of what was deleted must never evict live memories - so nothing else in
+      # this file can fire on their growth, and on SQLite they share the store's own database file.
+      # Silent on a decay-only deployment, which publishes no capacity_bytes for the ratio to match
+      # against; there the absolute figure is the thing to watch on a dashboard instead.
+      - alert: HippocampusAncillaryStorageHigh
+        expr: sum(hippocampus_ancillary_bytes) / clamp_min(max(hippocampus_capacity_bytes), 1) > 0.25
+        for: 1h
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is spending storage its capacity target cannot see"
+          description: "The forgotten log, the search outbox and the callback queue now hold over a quarter of consolidation.capacityBytes between them, and none of it is counted by used_bytes or by capacity pressure - the exclusion is deliberate, so that the record of what was deleted can never evict live memories. The consequence is that the disk this deployment needs is capacityBytes PLUS this figure, and it is growing. Break it down by the component label: forgotten_log and search_outbox have fixed-width rows, so their row caps (consolidation.tombstones.maxRows, opensearch.outbox.maxRows) are effectively byte caps, while callback_queue rows carry a rendered payload - and memory bodies under callbacks.includeBodies - so callbacks.maxRows bounds its bytes only loosely. A growing callback_queue means a receiver is down: check HippocampusCallbackQueueBacklog and HippocampusCallbackDeliveriesFailing. On the embedded driver all three share the store's own file, so this is disk the capacity target will never reclaim."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+
       # --- Rate limiting -------------------------------------------------------------------
 
       # Rejections are the limit working, so this is not "something is broken" - it is "the limits

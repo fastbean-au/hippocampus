@@ -6,6 +6,8 @@ import {
   GATING_CLASSES,
   TRIGGER_LABELS,
   ageLabel,
+  ancillaryRows,
+  ancillarySummary,
   b64url,
   bodyClassesFor,
   callbackKindLabel,
@@ -795,6 +797,7 @@ const ACTIONS = {
   // --- Deployment tab
   "load-topology": () => loadTopology(),
   "load-callbacks": () => loadCallbacks(),
+  "load-ancillary": () => loadAncillary(),
   "topology-filter": () => renderTopology(),
   "topology-select": (el) => selectTopologyNode(el.dataset.node),
 };
@@ -3786,6 +3789,12 @@ function startTopologyPolling() {
   // Guarded on the capability, so a deployment with no sink - where the card is hidden by CSS -
   // does not spend an admin RPC per visit to the tab discovering that.
   if (caps.callbacks && caps.isAdmin) loadCallbacks();
+
+  // Unguarded by capability, and once per arrival for the same reason as the queue above. It is a
+  // reader-tier RPC answering from an in-memory measurement the sleep cycle took, so it costs the
+  // service nothing - but the figure it carries only moves when a cycle runs, so polling it on the
+  // topology's cadence would re-fetch an unchanged number once per probe interval.
+  loadAncillary();
 }
 
 function stopTopologyPolling() {
@@ -3875,6 +3884,60 @@ function renderCallbacks(data) {
 
   $("callback-queue").innerHTML = `<div class="tablewrap"><table>
      <thead><tr><th>Kind</th><th>Items</th><th>Queued</th><th>Attempts</th><th>Next try</th></tr></thead>
+     <tbody>${rows}</tbody>
+   </table></div>`;
+}
+
+// --- storage outside the capacity target ---------------------------------------------------------
+//
+// The third thing on this tab that is about the deployment rather than the store's contents: the
+// disk the capacity target does not count. All three tables are excluded from used_bytes on
+// purpose - the record of what was deleted must never evict live memories - and on the embedded
+// driver they share the store's own file, so their growth is real disk that capacity pressure will
+// never reflect. It sits under the callback queue because that queue is the one whose rows have no
+// fixed size, and so the usual reason this figure moves.
+//
+// Read from GetConsolidationStatus rather than measured here: a count of the callback queue is a
+// scan on the server dialects, so the cycle takes it once and this serves the cached reading. The
+// summary line says how old that reading is, which is why nothing on this card pretends to be live.
+async function loadAncillary() {
+  try {
+    const data = await api("GET", "/v1/consolidation/status");
+
+    renderAncillary(data);
+  } catch (e) {
+    $("ancillary-summary").textContent = "";
+    $("ancillary-tables").innerHTML =
+      '<div class="empty">The measurement could not be read.</div>';
+
+    fail("Storage outside the capacity target", e);
+  }
+}
+
+function renderAncillary(status) {
+  $("ancillary-summary").textContent = ancillarySummary(status, Date.now());
+
+  const ancillary = status && status.ancillary;
+
+  if (!ancillary) {
+    $("ancillary-tables").innerHTML = "";
+
+    return;
+  }
+
+  const rows = ancillaryRows(ancillary)
+    .map(
+      (row) => `<tr>
+    <td>${esc(row.label)}<br><span class="muted fs-12">${esc(row.note)}</span></td>
+    <td>${esc(row.rows.toLocaleString())}<br><span class="muted fs-12">${esc(row.state)}</span></td>
+    <td>${esc(formatBytes(row.bytes))}</td>
+    <td><span class="muted fs-12">${esc(row.bound)}</span></td>
+  </tr>`,
+    )
+    .join("");
+
+  $("ancillary-tables").innerHTML = `<div class="tablewrap"><table>
+     <thead><tr><th>Table</th><th>Rows</th><th>Approx. size</th><th>Bounded by</th></tr></thead>
      <tbody>${rows}</tbody>
    </table></div>`;
 }

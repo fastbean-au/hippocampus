@@ -1055,6 +1055,37 @@
             </div>
           </div>
         </div>
+
+        <!-- Storage outside the capacity target. Under the callback queue deliberately: that queue
+             is the one of the three whose rows have no fixed size, so it is the usual reason this
+             figure moves, and reading the two together is the point.
+
+             Not gated. GetConsolidationStatus is reader-tier and answers on every instance, and the
+             figure is about the deployment's disk rather than about anybody's records. A replica
+             takes no measurement of its own and the summary line says so, rather than the card
+             showing zeroes that would read as three empty tables. -->
+        <div class="card">
+          <h2>Storage outside the capacity target</h2>
+          <p class="muted pull-up">
+            Three tables are excluded from the store's measured size on purpose:
+            the record of what was deleted must never be the reason live
+            memories are evicted. The consequence is that the disk this
+            deployment needs is <code>consolidation.capacityBytes</code> plus
+            what is here, and capacity pressure will never reflect it — on the
+            embedded driver these share the store's own file. Sizes are row
+            counts times a flat per-row allowance, not measurements.
+          </p>
+
+          <div id="ancillary-summary" class="muted fs-12"></div>
+
+          <div id="ancillary-tables">
+            <div class="empty">Nothing loaded yet.</div>
+          </div>
+
+          <div class="actions gap-top">
+            <button class="btn ghost" data-act="load-ancillary">Refresh</button>
+          </div>
+        </div>
       </section>
     </main>
 

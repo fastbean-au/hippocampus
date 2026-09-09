@@ -1554,6 +1554,54 @@ message GetConsolidationStatusResponse {
 	// surviving the process that produced it would describe a cycle run under configuration that
 	// may since have changed.
 	CycleReport                            last_cycle                = 7;
+
+	// ancillary is what the capacity target deliberately does NOT count: the forgotten log, the
+	// search outbox and the callback queue. Absent until a cycle in THIS process has measured it,
+	// and on a replica always - it is measured by the sleep cycle rather than per request, since a
+	// count of the callback queue is a scan of up to callbacks.maxRows rows and this is an RPC a
+	// console polls.
+	AncillaryStorage                       ancillary                 = 8;
+}
+
+// AncillaryTable is what one of the three tables excluded from the capacity target holds.
+//
+// bytes is rows multiplied by a flat per-row allowance, not a measurement - summing the stored
+// payloads would put a scan of the queue on the path that exists to bound the store - so rows is
+// reported beside it rather than leaving a lone estimate to look more precise than it is.
+//
+// enabled separates the two zeroes: a feature nobody turned on holds nothing because nothing writes
+// to it, while an enabled one holding nothing is a queue that is keeping up. They call for opposite
+// reactions, and a bare 0 says neither.
+//
+// It means "is recording into this table right now", NOT "has rows worth counting". Disabling any of
+// the three leaves what was already written in place - DeleteForgottenMemories and
+// DeleteCallbackQueue are the explicit discards - so rows and bytes are reported whatever the
+// setting says, and enabled false beside a row count is a table nothing is adding to and nothing is
+// trimming.
+message AncillaryTable {
+	bool                                   enabled                   = 1;
+	int64                                  rows                      = 2;
+	int64                                  bytes                     = 3;
+}
+
+// AncillaryStorage is the storage this store spends that its byte capacity target cannot see.
+//
+// The three tables are excluded from used_bytes deliberately: the record of what was deleted must
+// never evict live memories, the search outbox is the sharp version of that (it grows precisely
+// when deletions are backing up), and the callback queue is sharper again - it grows when a
+// receiver is down, and with callbacks.includeBodies it carries memory bodies. On the embedded
+// deployment all three share the store's own file, so the growth is real disk that capacity
+// pressure will never reflect: the disk a deployment needs is consolidation.capacityBytes plus
+// this.
+//
+// The callback queue is the one to watch. Its rows have no fixed size, so callbacks.maxRows bounds
+// its bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps.
+message AncillaryStorage {
+	int64                                  measured_at               = 1; // UnixNano the cycle took this measurement
+	int64                                  total_bytes               = 2;
+	AncillaryTable                         forgotten_log             = 3;
+	AncillaryTable                         search_outbox             = 4;
+	AncillaryTable                         callback_queue            = 5;
 }
 
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the

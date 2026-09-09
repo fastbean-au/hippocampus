@@ -81,6 +81,38 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   and a build meeting the higher of the two would refuse — with `ErrSchemaTooNew` — to open a store it
   understands perfectly.
 
+- **The storage the capacity target cannot see is now reported.** The forgotten log, the search
+  outbox and the callback queue are excluded from `hippocampus.used_bytes` deliberately — the record
+  of what was deleted must never be the reason live memories are evicted, and the outbox is the sharp
+  version of that, since it grows precisely when deletions are backing up. The exclusion is
+  unchanged. What was missing was any way to see how large the excluded part had grown.
+
+  On the embedded driver those three tables share the store's own database file, so a receiver that
+  is down while a large cycle runs grows that file, capacity pressure stays exactly where it was, and
+  the one number an operator is told to watch reports headroom right up to a full disk — where the
+  failure is not "it forgot too little", it is every write failing at once.
+
+  `GetConsolidationStatus` now carries an `ancillary` block: total bytes, and per table the row
+  count, the estimated bytes and whether anything is still recording into it. The new
+  `hippocampus.ancillary_bytes` gauge publishes the same figures, labelled by `component`, and a
+  `HippocampusAncillaryStorageHigh` rule ships in both rule files, firing when the three together
+  exceed a quarter of `consolidation.capacityBytes`. The console's Deployment tab shows the reading
+  under the callback queue, and the bundled Grafana dashboard has a panel for it.
+
+  Three things worth knowing about the figure. It is the **same** one the capacity target subtracts,
+  so what is shown and what eviction ignores cannot disagree. It is a row count times a flat per-row
+  allowance rather than a measurement, because summing the stored payloads would put a scan of the
+  queue on the path that exists to bound the store — and it is taken **once per sleep cycle** rather
+  than per request, so the block reports `measured_at` and a client should read it as a reading with
+  an age rather than a live figure. And a component reporting `enabled: false` beside a row count is
+  a table switched off that still holds what it wrote: disabling any of the three stops the writing
+  *and* the trimming.
+
+  Nothing here caps or trims on the figure. The callback queue remains the one whose rows have no
+  fixed size — a delivery carries up to `callbacks.maxIdsPerDelivery` items, and memory bodies under
+  `callbacks.includeBodies` — so `callbacks.maxRows` bounds its bytes only loosely, and a byte cap is
+  still to come.
+
 ### Changed
 
 - **An OpenSearch deployment drops its store-side content index on the next startup**, following the

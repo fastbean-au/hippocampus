@@ -740,6 +740,11 @@ type Store interface {
 
 	UsedBytes(ctx context.Context) (int64, error)
 
+	// AncillaryStorage is what UsedBytes deliberately does NOT count: the forgotten log, the search
+	// outbox and the callback queue. Reported rather than folded in - the exclusion is correct, and
+	// what was missing was any way to see how large the excluded part had grown. See db/ancillary.go.
+	AncillaryStorage(ctx context.Context) (AncillaryStorage, error)
+
 	// ExternalBytes is the third capacity axis: the total size of the payloads the store's memories
 	// point at elsewhere. Separate from UsedBytes, never a part of it - see the method's comment.
 	ExternalBytes(ctx context.Context) (int64, error)

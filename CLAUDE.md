@@ -370,7 +370,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-two rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-three rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -393,7 +393,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the twenty-two are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the twenty-three are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
   broker bridges, the ingestor) and read instruments declared in `integrations/*`, which
   `metricSourceFiles` reaches as FILES rather than imports — the root module deliberately does not
@@ -525,6 +525,32 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     Warn for deployments without a metrics stack. Best-effort: a failure leaves the gauges stale and
     never fails the cycle. `hippocampus.capacity_bytes` is exported beside `used_bytes` so a
     dashboard need not hard-code the limit.
+  - `recordAncillaryStorage` (`hippocampus/ancillary.go` + `db/ancillary.go`, called from `sleep`)
+    publishes `hippocampus.ancillary_bytes` and caches the reading for `GetConsolidationStatus`'s
+    `ancillary` block, which is what the console's Deployment tab and the shipped
+    `HippocampusAncillaryStorageHigh` rule read. It is the **reporting** half of TODO-2 item 112.3 and
+    decides nothing. Five things carry it. (1) It reports exactly the figure `UsedBytes` **subtracts**
+    — the three helpers (`tombstoneBytes`/`searchOutboxBytes`/`callbackQueueBytes`) and this method
+    now go through one `ancillaryTable`, so what the console shows and what the controller ignores
+    cannot become two numbers. The exclusion itself is unchanged and correct; what was missing was any
+    way to see how large the excluded part had grown, and on the embedded deployment those three
+    tables share the store's own file, so a receiver that is down while a large cycle runs grows the
+    disk while capacity pressure sits exactly where it was. (2) The **error policy is deliberately
+    opposite** at the two callers: `UsedBytes` swallows a failed count and subtracts nothing (which
+    over-counts the store, so it errs toward forgetting slightly harder), while the report returns the
+    error and the server leaves the PREVIOUS measurement standing — a stale figure carries its own
+    `measured_at` and can be read, whereas a fresh zero says the queues are empty when nobody knows.
+    (3) It is measured **once per cycle and cached**, never per request: a count of the callback queue
+    is a scan of up to `callbacks.maxRows` rows on the server dialects and this is an RPC a console
+    polls, which is item 25.9's lesson and `ExplainConsolidation`'s snapshot cache by another route.
+    (4) `enabled` means "is recording", while the rows are counted whenever the **table exists** —
+    disabling any of the three stops the writing *and* the trimming and leaves everything already
+    written in place, so a table nothing records into can still be holding megabytes, and that is the
+    state the report most has to avoid hiding. (5) The gauge is per **table** (`component`) and
+    publishes nothing for a table the deployment never enabled, on the external axis's reasoning: a
+    flat zero reads as a queue that is keeping up. Only the callback queue's rows have no fixed size,
+    which is why its row cap bounds its bytes loosely and why the byte-cap half of 112.3 is still
+    open.
   - The **forgotten log** (`db/tombstone.go` + `hippocampus/forgotten.go`,
     `consolidation.tombstones.*`, off by default) is the third leg of the transparency trio and the
     only one that can speak about a memory that no longer exists: one row per memory the two decay

@@ -727,19 +727,8 @@ func (d *DB) PruneTombstones(ctx context.Context) (int64, error) {
 // rows explicitly, so the log is outside it already.
 //
 // It is a count multiplied by a flat allowance rather than a sum of the stored lengths: see
-// tombstoneRowBytes.
+// tombstoneRowBytes. The same measurement is what AncillaryStorage reports, so the figure the
+// capacity target ignores and the figure an operator is shown are one figure (db/ancillary.go).
 func (d *DB) tombstoneBytes(ctx context.Context) int64 {
-	if !d.tombstoneTable {
-		return 0
-	}
-
-	var count int64
-
-	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+tombstonesTable).Scan(&count); err != nil {
-		log.Warnf("failed to measure the forgotten log, counting it as stored bytes: %s", err.Error())
-
-		return 0
-	}
-
-	return count * tombstoneRowBytes
+	return d.excludedBytes(ctx, d.tombstoneProbe())
 }

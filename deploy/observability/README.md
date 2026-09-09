@@ -23,7 +23,7 @@ translation. Either produces the same names, which is the point — nothing here
 The client-side components in the `hippocampus-clients` group below take the same choice as a
 `--prometheus` flag, and serve `/metrics` on the `--health-port` they already listen on.
 
-Twenty-two rules in two groups. `hippocampus` is the service itself — sixteen rules covering what
+Twenty-three rules in two groups. `hippocampus` is the service itself — seventeen rules covering what
 actually goes wrong:
 
 | Alert                                  | Fires when                                                                 | Severity |
@@ -36,6 +36,7 @@ actually goes wrong:
 | `HippocampusCapacityPressureHigh`      | capacity pressure sustained near or above the target for 30m               | warning  |
 | `HippocampusStoreOverCapacity`         | used bytes above `capacityBytes` for an hour                               | warning  |
 | `HippocampusRetentionNearCapacity`     | retained bytes exceed 90% of `capacityBytes` for 30m                       | critical |
+| `HippocampusAncillaryStorageHigh`      | the tables outside the capacity target exceed 25% of `capacityBytes` for 1h | warning  |
 | `HippocampusRateLimitRejecting`        | a rate limit is refusing >1 request/second for 10m                         | warning  |
 | `HippocampusSearchIndexDropping`       | index operations are being dropped for 10m                                 | warning  |
 | `HippocampusSearchOutboxBacklog`       | queued index deletions exceed 10,000 for 30m                               | warning  |
@@ -97,7 +98,7 @@ Four properties worth knowing before you deploy them:
 
 ## The Grafana copy
 
-`../compose/observability/alerting-rules.yaml` is the same twenty-two rules as Grafana-managed rules,
+`../compose/observability/alerting-rules.yaml` is the same twenty-three rules as Grafana-managed rules,
 provisioned into the bundled `grafana/otel-lgtm` stack (every compose file's `observability` profile,
 and `demo/run.sh`) so the demo stack alerts as well as draws. It exists as a second file only
 because Grafana provisions its own rule format and cannot read a Prometheus rule file.

@@ -14,6 +14,8 @@ import {
   tourProgress,
   tourSteps,
   ageLabel,
+  ancillaryRows,
+  ancillarySummary,
   capacityMeter,
   countdownFraction,
   countdownLabel,
@@ -1664,4 +1666,125 @@ test("callbackKindLabel names the kinds, and does not invent one", () => {
   );
   assert.equal(callbackKindLabel("CALLBACK_KIND_SOMETHING_NEW"), "unknown");
   assert.equal(callbackKindLabel(undefined), "unknown");
+});
+
+
+// ------------------------------------------------- storage outside the capacity target
+//
+// The figure the capacity target cannot see, and the four states it has to keep apart. Three of
+// them render as zero bytes and mean entirely different things - a replica that never measures, an
+// instance whose first cycle has not run, and a deployment with all three tables switched off - so
+// what is worth pinning here is that none of them is allowed to read as "nothing is accumulating".
+
+const HOUR_AGO = String((Date.now() - 3600 * 1000) * 1e6);
+
+const measurement = (over = {}) => ({
+  consolidationEnabled: true,
+  ancillary: {
+    measuredAt: HOUR_AGO,
+    totalBytes: "2097152",
+    forgottenLog: { enabled: true, rows: "8000", bytes: "1536000" },
+    searchOutbox: { enabled: false, rows: "0", bytes: "0" },
+    callbackQueue: { enabled: true, rows: "1100", bytes: "563200" },
+    ...over,
+  },
+});
+
+test("ancillarySummary says a replica takes no measurement, rather than showing zeroes", () => {
+  const line = ancillarySummary({ consolidationEnabled: false }, Date.now());
+
+  assert.match(line, /runs no sleep cycle/);
+  assert.doesNotMatch(line, /0 B/);
+});
+
+test("ancillarySummary separates 'not measured yet' from 'measured and empty'", () => {
+  assert.match(
+    ancillarySummary({ consolidationEnabled: true }, Date.now()),
+    /No cycle has measured this/,
+  );
+
+  const off = ancillarySummary(
+    measurement({
+      totalBytes: "0",
+      forgottenLog: { enabled: false },
+      searchOutbox: { enabled: false },
+      callbackQueue: { enabled: false },
+    }),
+    Date.now(),
+  );
+
+  assert.match(off, /Nothing is accumulating/);
+  assert.match(off, /1h/);
+});
+
+test("ancillarySummary names a table that holds bytes but is no longer recording", () => {
+  const line = ancillarySummary(
+    measurement({
+      totalBytes: "1536000",
+      forgottenLog: { enabled: false, rows: "8000", bytes: "1536000" },
+      callbackQueue: { enabled: false, rows: "0", bytes: "0" },
+    }),
+    Date.now(),
+  );
+
+  // Disabling the log stops the writing and the trimming; the rows already written stay. A summary
+  // that named only what is enabled would report this store as spending nothing.
+  assert.match(line, /forgotten log/);
+  assert.doesNotMatch(line, /Nothing is accumulating/);
+});
+
+test("ancillarySummary reads the total, what is in it, and how old the reading is", () => {
+  const line = ancillarySummary(measurement(), Date.now());
+
+  assert.match(line, /2 MiB outside the capacity target/);
+  assert.match(line, /forgotten log and callback queue/);
+  assert.match(line, /Measured 1h\./);
+});
+
+test("ancillarySummary reports nothing loaded when there is no status at all", () => {
+  assert.equal(ancillarySummary(null, Date.now()), "Nothing loaded yet.");
+});
+
+test("ancillaryRows lists a disabled table rather than omitting it", () => {
+  const rows = ancillaryRows(measurement().ancillary);
+
+  assert.deepEqual(
+    rows.map((r) => [r.label, r.enabled, r.rows, r.bytes]),
+    [
+      ["Forgotten log", true, 8000, 1536000],
+      ["Search outbox", false, 0, 0],
+      ["Callback queue", true, 1100, 563200],
+    ],
+  );
+
+  // The callback queue is last on purpose: it is the one whose row cap is not a byte cap, so its
+  // note is the parting one rather than one of three equals.
+  assert.match(rows[2].note, /no fixed size/);
+  assert.equal(rows[2].bound, "callbacks.maxRows");
+
+  assert.equal(rows[0].state, "recording");
+  assert.equal(rows[1].state, "not enabled");
+});
+
+test("ancillaryRows separates a table nothing records into from one nobody enabled", () => {
+  const rows = ancillaryRows({
+    forgottenLog: { enabled: false, rows: "8000", bytes: "1536000" },
+    searchOutbox: { enabled: false, rows: "0", bytes: "0" },
+    callbackQueue: { enabled: true, rows: "0", bytes: "0" },
+  });
+
+  assert.match(rows[0].state, /no longer recording/);
+  assert.equal(rows[0].rows, 8000);
+  assert.equal(rows[1].state, "not enabled");
+  assert.equal(rows[2].state, "recording");
+});
+
+test("ancillaryRows tolerates a measurement that is missing entirely", () => {
+  const rows = ancillaryRows(undefined);
+
+  assert.equal(rows.length, 3);
+  assert.deepEqual(
+    rows.map((r) => r.enabled),
+    [false, false, false],
+  );
 });

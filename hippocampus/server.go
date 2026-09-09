@@ -243,6 +243,12 @@ type Server struct {
 	// cycle run under configuration that may since have changed.
 	lastCycle atomic.Pointer[cycleReport]
 
+	// lastAncillary is the most recent measurement of the storage the capacity target does not
+	// count - the forgotten log, the search outbox and the callback queue - or nil until a cycle in
+	// this process has taken one. An atomic.Pointer for the reason lastCycle is, and in memory only
+	// for the same reason. See hippocampus/ancillary.go.
+	lastAncillary atomic.Pointer[ancillarySnapshot]
+
 	// version is the build identification main.go derived and handed in (Dependencies.Version). It
 	// is reported by WhoAmI and on GetTopology's self node - the same string, since a client asking
 	// either question is asking about this process.

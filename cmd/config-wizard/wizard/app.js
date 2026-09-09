@@ -1082,7 +1082,7 @@ const STEPS = [
             label: "Capacity (bytes)",
             type: "int",
             def: 0,
-            help: "0 disables the byte axis and capacity eviction with it. The better axis when bodies vary in size.",
+            help: "0 disables the byte axis and capacity eviction with it. The better axis when bodies vary in size. It bounds the memories, events and links only - the forgotten log, the delete outbox and the callback queue are deliberately outside it, so size the disk for this plus their row caps.",
           },
           {
             key: "consolidation.capacityBytesFloor",

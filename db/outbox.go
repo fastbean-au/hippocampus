@@ -317,22 +317,10 @@ const outboxRowBytes = 96
 //
 // A count times an allowance rather than a measurement, for the reason the forgotten log's
 // equivalent gives: this runs inside the capacity check on every sleep cycle, and a scan there would
-// put the cost of the queue on the path that exists to bound the store.
+// put the cost of the queue on the path that exists to bound the store. The same measurement is what
+// AncillaryStorage reports (db/ancillary.go).
 func (d *DB) searchOutboxBytes(ctx context.Context) int64 {
-	if !d.searchOutbox {
-
-		return 0
-	}
-
-	var count int64
-
-	if err := d.queryRow(ctx, `SELECT COUNT(*) FROM `+searchOutboxTable).Scan(&count); err != nil {
-		log.Warnf("failed to measure the search outbox, counting it as stored bytes: %s", err.Error())
-
-		return 0
-	}
-
-	return count * outboxRowBytes
+	return d.excludedBytes(ctx, d.outboxProbe())
 }
 
 // SetSearchOutbox enables the transactional outbox for search-index deletions.

@@ -6693,7 +6693,13 @@ type GetConsolidationStatusResponse struct {
 	// so a restart clears it. That is deliberate: it reports what this instance did, and a figure
 	// surviving the process that produced it would describe a cycle run under configuration that
 	// may since have changed.
-	LastCycle     *CycleReport `protobuf:"bytes,7,opt,name=last_cycle,json=lastCycle,proto3" json:"last_cycle,omitempty"`
+	LastCycle *CycleReport `protobuf:"bytes,7,opt,name=last_cycle,json=lastCycle,proto3" json:"last_cycle,omitempty"`
+	// ancillary is what the capacity target deliberately does NOT count: the forgotten log, the
+	// search outbox and the callback queue. Absent until a cycle in THIS process has measured it,
+	// and on a replica always - it is measured by the sleep cycle rather than per request, since a
+	// count of the callback queue is a scan of up to callbacks.maxRows rows and this is an RPC a
+	// console polls.
+	Ancillary     *AncillaryStorage `protobuf:"bytes,8,opt,name=ancillary,proto3" json:"ancillary,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6773,6 +6779,176 @@ func (x *GetConsolidationStatusResponse) GetSnapshotTtlSeconds() int64 {
 func (x *GetConsolidationStatusResponse) GetLastCycle() *CycleReport {
 	if x != nil {
 		return x.LastCycle
+	}
+	return nil
+}
+
+func (x *GetConsolidationStatusResponse) GetAncillary() *AncillaryStorage {
+	if x != nil {
+		return x.Ancillary
+	}
+	return nil
+}
+
+// AncillaryTable is what one of the three tables excluded from the capacity target holds.
+//
+// bytes is rows multiplied by a flat per-row allowance, not a measurement - summing the stored
+// payloads would put a scan of the queue on the path that exists to bound the store - so rows is
+// reported beside it rather than leaving a lone estimate to look more precise than it is.
+//
+// enabled separates the two zeroes: a feature nobody turned on holds nothing because nothing writes
+// to it, while an enabled one holding nothing is a queue that is keeping up. They call for opposite
+// reactions, and a bare 0 says neither.
+//
+// It means "is recording into this table right now", NOT "has rows worth counting". Disabling any of
+// the three leaves what was already written in place - DeleteForgottenMemories and
+// DeleteCallbackQueue are the explicit discards - so rows and bytes are reported whatever the
+// setting says, and enabled false beside a row count is a table nothing is adding to and nothing is
+// trimming.
+type AncillaryTable struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Rows          int64                  `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
+	Bytes         int64                  `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AncillaryTable) Reset() {
+	*x = AncillaryTable{}
+	mi := &file_hippocampus_proto_msgTypes[76]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AncillaryTable) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AncillaryTable) ProtoMessage() {}
+
+func (x *AncillaryTable) ProtoReflect() protoreflect.Message {
+	mi := &file_hippocampus_proto_msgTypes[76]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AncillaryTable.ProtoReflect.Descriptor instead.
+func (*AncillaryTable) Descriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{76}
+}
+
+func (x *AncillaryTable) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *AncillaryTable) GetRows() int64 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *AncillaryTable) GetBytes() int64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+// AncillaryStorage is the storage this store spends that its byte capacity target cannot see.
+//
+// The three tables are excluded from used_bytes deliberately: the record of what was deleted must
+// never evict live memories, the search outbox is the sharp version of that (it grows precisely
+// when deletions are backing up), and the callback queue is sharper again - it grows when a
+// receiver is down, and with callbacks.includeBodies it carries memory bodies. On the embedded
+// deployment all three share the store's own file, so the growth is real disk that capacity
+// pressure will never reflect: the disk a deployment needs is consolidation.capacityBytes plus
+// this.
+//
+// The callback queue is the one to watch. Its rows have no fixed size, so callbacks.maxRows bounds
+// its bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps.
+type AncillaryStorage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MeasuredAt    int64                  `protobuf:"varint,1,opt,name=measured_at,json=measuredAt,proto3" json:"measured_at,omitempty"` // UnixNano the cycle took this measurement
+	TotalBytes    int64                  `protobuf:"varint,2,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
+	ForgottenLog  *AncillaryTable        `protobuf:"bytes,3,opt,name=forgotten_log,json=forgottenLog,proto3" json:"forgotten_log,omitempty"`
+	SearchOutbox  *AncillaryTable        `protobuf:"bytes,4,opt,name=search_outbox,json=searchOutbox,proto3" json:"search_outbox,omitempty"`
+	CallbackQueue *AncillaryTable        `protobuf:"bytes,5,opt,name=callback_queue,json=callbackQueue,proto3" json:"callback_queue,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AncillaryStorage) Reset() {
+	*x = AncillaryStorage{}
+	mi := &file_hippocampus_proto_msgTypes[77]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AncillaryStorage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AncillaryStorage) ProtoMessage() {}
+
+func (x *AncillaryStorage) ProtoReflect() protoreflect.Message {
+	mi := &file_hippocampus_proto_msgTypes[77]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AncillaryStorage.ProtoReflect.Descriptor instead.
+func (*AncillaryStorage) Descriptor() ([]byte, []int) {
+	return file_hippocampus_proto_rawDescGZIP(), []int{77}
+}
+
+func (x *AncillaryStorage) GetMeasuredAt() int64 {
+	if x != nil {
+		return x.MeasuredAt
+	}
+	return 0
+}
+
+func (x *AncillaryStorage) GetTotalBytes() int64 {
+	if x != nil {
+		return x.TotalBytes
+	}
+	return 0
+}
+
+func (x *AncillaryStorage) GetForgottenLog() *AncillaryTable {
+	if x != nil {
+		return x.ForgottenLog
+	}
+	return nil
+}
+
+func (x *AncillaryStorage) GetSearchOutbox() *AncillaryTable {
+	if x != nil {
+		return x.SearchOutbox
+	}
+	return nil
+}
+
+func (x *AncillaryStorage) GetCallbackQueue() *AncillaryTable {
+	if x != nil {
+		return x.CallbackQueue
 	}
 	return nil
 }
@@ -6860,7 +7036,7 @@ type WhoAmIResponse struct {
 
 func (x *WhoAmIResponse) Reset() {
 	*x = WhoAmIResponse{}
-	mi := &file_hippocampus_proto_msgTypes[76]
+	mi := &file_hippocampus_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6872,7 +7048,7 @@ func (x *WhoAmIResponse) String() string {
 func (*WhoAmIResponse) ProtoMessage() {}
 
 func (x *WhoAmIResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[76]
+	mi := &file_hippocampus_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6885,7 +7061,7 @@ func (x *WhoAmIResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WhoAmIResponse.ProtoReflect.Descriptor instead.
 func (*WhoAmIResponse) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{76}
+	return file_hippocampus_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *WhoAmIResponse) GetClientId() string {
@@ -6988,7 +7164,7 @@ type TopologyAttribute struct {
 
 func (x *TopologyAttribute) Reset() {
 	*x = TopologyAttribute{}
-	mi := &file_hippocampus_proto_msgTypes[77]
+	mi := &file_hippocampus_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7000,7 +7176,7 @@ func (x *TopologyAttribute) String() string {
 func (*TopologyAttribute) ProtoMessage() {}
 
 func (x *TopologyAttribute) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[77]
+	mi := &file_hippocampus_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7013,7 +7189,7 @@ func (x *TopologyAttribute) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TopologyAttribute.ProtoReflect.Descriptor instead.
 func (*TopologyAttribute) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{77}
+	return file_hippocampus_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *TopologyAttribute) GetKey() string {
@@ -7055,7 +7231,7 @@ type TopologyNode struct {
 
 func (x *TopologyNode) Reset() {
 	*x = TopologyNode{}
-	mi := &file_hippocampus_proto_msgTypes[78]
+	mi := &file_hippocampus_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7067,7 +7243,7 @@ func (x *TopologyNode) String() string {
 func (*TopologyNode) ProtoMessage() {}
 
 func (x *TopologyNode) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[78]
+	mi := &file_hippocampus_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7080,7 +7256,7 @@ func (x *TopologyNode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TopologyNode.ProtoReflect.Descriptor instead.
 func (*TopologyNode) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{78}
+	return file_hippocampus_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *TopologyNode) GetId() string {
@@ -7168,7 +7344,7 @@ type TopologyEdge struct {
 
 func (x *TopologyEdge) Reset() {
 	*x = TopologyEdge{}
-	mi := &file_hippocampus_proto_msgTypes[79]
+	mi := &file_hippocampus_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7180,7 +7356,7 @@ func (x *TopologyEdge) String() string {
 func (*TopologyEdge) ProtoMessage() {}
 
 func (x *TopologyEdge) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[79]
+	mi := &file_hippocampus_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7193,7 +7369,7 @@ func (x *TopologyEdge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TopologyEdge.ProtoReflect.Descriptor instead.
 func (*TopologyEdge) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{79}
+	return file_hippocampus_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *TopologyEdge) GetFromId() string {
@@ -7254,7 +7430,7 @@ type GetTopologyResponse struct {
 
 func (x *GetTopologyResponse) Reset() {
 	*x = GetTopologyResponse{}
-	mi := &file_hippocampus_proto_msgTypes[80]
+	mi := &file_hippocampus_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7266,7 +7442,7 @@ func (x *GetTopologyResponse) String() string {
 func (*GetTopologyResponse) ProtoMessage() {}
 
 func (x *GetTopologyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[80]
+	mi := &file_hippocampus_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7279,7 +7455,7 @@ func (x *GetTopologyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTopologyResponse.ProtoReflect.Descriptor instead.
 func (*GetTopologyResponse) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{80}
+	return file_hippocampus_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *GetTopologyResponse) GetNodes() []*TopologyNode {
@@ -7325,7 +7501,7 @@ type EmptyRequest struct {
 
 func (x *EmptyRequest) Reset() {
 	*x = EmptyRequest{}
-	mi := &file_hippocampus_proto_msgTypes[81]
+	mi := &file_hippocampus_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7337,7 +7513,7 @@ func (x *EmptyRequest) String() string {
 func (*EmptyRequest) ProtoMessage() {}
 
 func (x *EmptyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hippocampus_proto_msgTypes[81]
+	mi := &file_hippocampus_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7350,7 +7526,7 @@ func (x *EmptyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmptyRequest.ProtoReflect.Descriptor instead.
 func (*EmptyRequest) Descriptor() ([]byte, []int) {
-	return file_hippocampus_proto_rawDescGZIP(), []int{81}
+	return file_hippocampus_proto_rawDescGZIP(), []int{83}
 }
 
 var File_hippocampus_proto protoreflect.FileDescriptor
@@ -7871,7 +8047,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\afailure\x18\n" +
 	" \x01(\tR\afailure\x12\x18\n" +
 	"\atrigger\x18\v \x01(\tR\atrigger\x120\n" +
-	"\x14external_bytes_freed\x18\f \x01(\x03R\x12externalBytesFreed\"\xea\x02\n" +
+	"\x14external_bytes_freed\x18\f \x01(\x03R\x12externalBytesFreed\"\xaa\x03\n" +
 	"\x1eGetConsolidationStatusResponse\x123\n" +
 	"\x15consolidation_enabled\x18\x01 \x01(\bR\x14consolidationEnabled\x12%\n" +
 	"\x0eperiod_seconds\x18\x02 \x01(\x03R\rperiodSeconds\x12\"\n" +
@@ -7880,7 +8056,20 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x11sleep_in_progress\x18\x05 \x01(\bR\x0fsleepInProgress\x120\n" +
 	"\x14snapshot_ttl_seconds\x18\x06 \x01(\x03R\x12snapshotTtlSeconds\x12:\n" +
 	"\n" +
-	"last_cycle\x18\a \x01(\v2\x1b.hippocampus.v1.CycleReportR\tlastCycle\"\xdd\x03\n" +
+	"last_cycle\x18\a \x01(\v2\x1b.hippocampus.v1.CycleReportR\tlastCycle\x12>\n" +
+	"\tancillary\x18\b \x01(\v2 .hippocampus.v1.AncillaryStorageR\tancillary\"T\n" +
+	"\x0eAncillaryTable\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x12\n" +
+	"\x04rows\x18\x02 \x01(\x03R\x04rows\x12\x14\n" +
+	"\x05bytes\x18\x03 \x01(\x03R\x05bytes\"\xa5\x02\n" +
+	"\x10AncillaryStorage\x12\x1f\n" +
+	"\vmeasured_at\x18\x01 \x01(\x03R\n" +
+	"measuredAt\x12\x1f\n" +
+	"\vtotal_bytes\x18\x02 \x01(\x03R\n" +
+	"totalBytes\x12C\n" +
+	"\rforgotten_log\x18\x03 \x01(\v2\x1e.hippocampus.v1.AncillaryTableR\fforgottenLog\x12C\n" +
+	"\rsearch_outbox\x18\x04 \x01(\v2\x1e.hippocampus.v1.AncillaryTableR\fsearchOutbox\x12E\n" +
+	"\x0ecallback_queue\x18\x05 \x01(\v2\x1e.hippocampus.v1.AncillaryTableR\rcallbackQueue\"\xdd\x03\n" +
 	"\x0eWhoAmIResponse\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12!\n" +
@@ -8069,7 +8258,7 @@ func file_hippocampus_proto_rawDescGZIP() []byte {
 }
 
 var file_hippocampus_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
-var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 84)
+var file_hippocampus_proto_msgTypes = make([]protoimpl.MessageInfo, 86)
 var file_hippocampus_proto_goTypes = []any{
 	(Bool)(0),                                  // 0: hippocampus.v1.Bool
 	(SignificanceExtremum)(0),                  // 1: hippocampus.v1.SignificanceExtremum
@@ -8159,25 +8348,27 @@ var file_hippocampus_proto_goTypes = []any{
 	(*ExplainConsolidationResponse)(nil),       // 85: hippocampus.v1.ExplainConsolidationResponse
 	(*CycleReport)(nil),                        // 86: hippocampus.v1.CycleReport
 	(*GetConsolidationStatusResponse)(nil),     // 87: hippocampus.v1.GetConsolidationStatusResponse
-	(*WhoAmIResponse)(nil),                     // 88: hippocampus.v1.WhoAmIResponse
-	(*TopologyAttribute)(nil),                  // 89: hippocampus.v1.TopologyAttribute
-	(*TopologyNode)(nil),                       // 90: hippocampus.v1.TopologyNode
-	(*TopologyEdge)(nil),                       // 91: hippocampus.v1.TopologyEdge
-	(*GetTopologyResponse)(nil),                // 92: hippocampus.v1.GetTopologyResponse
-	(*EmptyRequest)(nil),                       // 93: hippocampus.v1.EmptyRequest
-	nil,                                        // 94: hippocampus.v1.Event.MetadataEntry
-	nil,                                        // 95: hippocampus.v1.Memory.MetadataEntry
+	(*AncillaryTable)(nil),                     // 88: hippocampus.v1.AncillaryTable
+	(*AncillaryStorage)(nil),                   // 89: hippocampus.v1.AncillaryStorage
+	(*WhoAmIResponse)(nil),                     // 90: hippocampus.v1.WhoAmIResponse
+	(*TopologyAttribute)(nil),                  // 91: hippocampus.v1.TopologyAttribute
+	(*TopologyNode)(nil),                       // 92: hippocampus.v1.TopologyNode
+	(*TopologyEdge)(nil),                       // 93: hippocampus.v1.TopologyEdge
+	(*GetTopologyResponse)(nil),                // 94: hippocampus.v1.GetTopologyResponse
+	(*EmptyRequest)(nil),                       // 95: hippocampus.v1.EmptyRequest
+	nil,                                        // 96: hippocampus.v1.Event.MetadataEntry
+	nil,                                        // 97: hippocampus.v1.Memory.MetadataEntry
 }
 var file_hippocampus_proto_depIdxs = []int32{
 	11,  // 0: hippocampus.v1.SignificancePlacement.mode:type_name -> hippocampus.v1.SignificancePlacement.Mode
 	16,  // 1: hippocampus.v1.Event.links:type_name -> hippocampus.v1.Link
 	17,  // 2: hippocampus.v1.Event.memories:type_name -> hippocampus.v1.Memory
 	12,  // 3: hippocampus.v1.Event.placement:type_name -> hippocampus.v1.SignificancePlacement
-	94,  // 4: hippocampus.v1.Event.metadata:type_name -> hippocampus.v1.Event.MetadataEntry
+	96,  // 4: hippocampus.v1.Event.metadata:type_name -> hippocampus.v1.Event.MetadataEntry
 	0,   // 5: hippocampus.v1.Memory.is_binary:type_name -> hippocampus.v1.Bool
 	12,  // 6: hippocampus.v1.Memory.placement:type_name -> hippocampus.v1.SignificancePlacement
 	16,  // 7: hippocampus.v1.Memory.links:type_name -> hippocampus.v1.Link
-	95,  // 8: hippocampus.v1.Memory.metadata:type_name -> hippocampus.v1.Memory.MetadataEntry
+	97,  // 8: hippocampus.v1.Memory.metadata:type_name -> hippocampus.v1.Memory.MetadataEntry
 	12,  // 9: hippocampus.v1.UpdateEventSignificanceRequest.placement:type_name -> hippocampus.v1.SignificancePlacement
 	15,  // 10: hippocampus.v1.GetEventResponse.event:type_name -> hippocampus.v1.Event
 	1,   // 11: hippocampus.v1.GetEventsRequest.significance_extremum:type_name -> hippocampus.v1.SignificanceExtremum
@@ -8229,104 +8420,108 @@ var file_hippocampus_proto_depIdxs = []int32{
 	83,  // 57: hippocampus.v1.ExplainConsolidationResponse.valuations:type_name -> hippocampus.v1.MemoryValuation
 	82,  // 58: hippocampus.v1.ExplainConsolidationResponse.curve:type_name -> hippocampus.v1.DecayCurve
 	86,  // 59: hippocampus.v1.GetConsolidationStatusResponse.last_cycle:type_name -> hippocampus.v1.CycleReport
-	3,   // 60: hippocampus.v1.WhoAmIResponse.search_modes:type_name -> hippocampus.v1.SearchMode
-	8,   // 61: hippocampus.v1.TopologyNode.kind:type_name -> hippocampus.v1.TopologyNodeKind
-	9,   // 62: hippocampus.v1.TopologyNode.source:type_name -> hippocampus.v1.TopologyNodeSource
-	10,  // 63: hippocampus.v1.TopologyNode.status:type_name -> hippocampus.v1.TopologyStatus
-	89,  // 64: hippocampus.v1.TopologyNode.attributes:type_name -> hippocampus.v1.TopologyAttribute
-	90,  // 65: hippocampus.v1.GetTopologyResponse.nodes:type_name -> hippocampus.v1.TopologyNode
-	91,  // 66: hippocampus.v1.GetTopologyResponse.edges:type_name -> hippocampus.v1.TopologyEdge
-	93,  // 67: hippocampus.v1.Hippocampus.Purge:input_type -> hippocampus.v1.EmptyRequest
-	93,  // 68: hippocampus.v1.Hippocampus.Sleep:input_type -> hippocampus.v1.EmptyRequest
-	67,  // 69: hippocampus.v1.Hippocampus.PreviewConsolidation:input_type -> hippocampus.v1.PreviewConsolidationRequest
-	84,  // 70: hippocampus.v1.Hippocampus.ExplainConsolidation:input_type -> hippocampus.v1.ExplainConsolidationRequest
-	93,  // 71: hippocampus.v1.Hippocampus.GetConsolidationStatus:input_type -> hippocampus.v1.EmptyRequest
-	71,  // 72: hippocampus.v1.Hippocampus.GetForgottenMemories:input_type -> hippocampus.v1.GetForgottenMemoriesRequest
-	73,  // 73: hippocampus.v1.Hippocampus.DeleteForgottenMemories:input_type -> hippocampus.v1.DeleteForgottenMemoriesRequest
-	76,  // 74: hippocampus.v1.Hippocampus.GetCallbackQueue:input_type -> hippocampus.v1.GetCallbackQueueRequest
-	78,  // 75: hippocampus.v1.Hippocampus.DeleteCallbackQueue:input_type -> hippocampus.v1.DeleteCallbackQueueRequest
-	93,  // 76: hippocampus.v1.Hippocampus.WhoAmI:input_type -> hippocampus.v1.EmptyRequest
-	93,  // 77: hippocampus.v1.Hippocampus.GetTopology:input_type -> hippocampus.v1.EmptyRequest
-	13,  // 78: hippocampus.v1.Hippocampus.GetSignificanceLevels:input_type -> hippocampus.v1.GetSignificanceLevelsRequest
-	15,  // 79: hippocampus.v1.Hippocampus.StoreEvent:input_type -> hippocampus.v1.Event
-	15,  // 80: hippocampus.v1.Hippocampus.UpdateEvent:input_type -> hippocampus.v1.Event
-	19,  // 81: hippocampus.v1.Hippocampus.EndEvent:input_type -> hippocampus.v1.EndEventRequest
-	20,  // 82: hippocampus.v1.Hippocampus.UpdateEventSignificance:input_type -> hippocampus.v1.UpdateEventSignificanceRequest
-	21,  // 83: hippocampus.v1.Hippocampus.MergeEvents:input_type -> hippocampus.v1.MergeEventsRequest
-	22,  // 84: hippocampus.v1.Hippocampus.DeleteEvent:input_type -> hippocampus.v1.DeleteEventRequest
-	23,  // 85: hippocampus.v1.Hippocampus.GetEventById:input_type -> hippocampus.v1.GetEventByIdRequest
-	25,  // 86: hippocampus.v1.Hippocampus.GetEvents:input_type -> hippocampus.v1.GetEventsRequest
-	17,  // 87: hippocampus.v1.Hippocampus.StoreMemory:input_type -> hippocampus.v1.Memory
-	30,  // 88: hippocampus.v1.Hippocampus.StoreMemories:input_type -> hippocampus.v1.StoreMemoriesRequest
-	17,  // 89: hippocampus.v1.Hippocampus.UpdateMemory:input_type -> hippocampus.v1.Memory
-	33,  // 90: hippocampus.v1.Hippocampus.DeleteMemories:input_type -> hippocampus.v1.DeleteMemoriesRequest
-	27,  // 91: hippocampus.v1.Hippocampus.GetMemories:input_type -> hippocampus.v1.GetMemoriesRequest
-	34,  // 92: hippocampus.v1.Hippocampus.RecallMemories:input_type -> hippocampus.v1.RecallMemoriesRequest
-	35,  // 93: hippocampus.v1.Hippocampus.SearchMemories:input_type -> hippocampus.v1.SearchMemoriesRequest
-	36,  // 94: hippocampus.v1.Hippocampus.LinkMemories:input_type -> hippocampus.v1.LinkMemoriesRequest
-	37,  // 95: hippocampus.v1.Hippocampus.UnlinkMemories:input_type -> hippocampus.v1.UnlinkMemoriesRequest
-	38,  // 96: hippocampus.v1.Hippocampus.GetMemoryLinks:input_type -> hippocampus.v1.GetMemoryLinksRequest
-	39,  // 97: hippocampus.v1.Hippocampus.LinkEvents:input_type -> hippocampus.v1.LinkEventsRequest
-	40,  // 98: hippocampus.v1.Hippocampus.UnlinkEvents:input_type -> hippocampus.v1.UnlinkEventsRequest
-	41,  // 99: hippocampus.v1.Hippocampus.GetEventLinks:input_type -> hippocampus.v1.GetEventLinksRequest
-	44,  // 100: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:input_type -> hippocampus.v1.ReplaceMemoriesWithSummaryRequest
-	93,  // 101: hippocampus.v1.Hippocampus.GetSummarisationCandidates:input_type -> hippocampus.v1.EmptyRequest
-	48,  // 102: hippocampus.v1.Hippocampus.SummariseMemories:input_type -> hippocampus.v1.SummariseMemoriesRequest
-	54,  // 103: hippocampus.v1.Hippocampus.Export:input_type -> hippocampus.v1.ExportRequest
-	56,  // 104: hippocampus.v1.Hippocampus.Import:input_type -> hippocampus.v1.ImportRequest
-	52,  // 105: hippocampus.v1.Hippocampus.ImportBatch:input_type -> hippocampus.v1.ImportBatchRequest
-	58,  // 106: hippocampus.v1.Hippocampus.Transfer:input_type -> hippocampus.v1.TransferRequest
-	60,  // 107: hippocampus.v1.Hippocampus.Clear:input_type -> hippocampus.v1.ClearRequest
-	62,  // 108: hippocampus.v1.Hippocampus.DeleteMemoriesByFilter:input_type -> hippocampus.v1.DeleteMemoriesByFilterRequest
-	64,  // 109: hippocampus.v1.Hippocampus.DeleteEventsByFilter:input_type -> hippocampus.v1.DeleteEventsByFilterRequest
-	66,  // 110: hippocampus.v1.Hippocampus.Purge:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 111: hippocampus.v1.Hippocampus.Sleep:output_type -> hippocampus.v1.GeneralResponse
-	69,  // 112: hippocampus.v1.Hippocampus.PreviewConsolidation:output_type -> hippocampus.v1.PreviewConsolidationResponse
-	85,  // 113: hippocampus.v1.Hippocampus.ExplainConsolidation:output_type -> hippocampus.v1.ExplainConsolidationResponse
-	87,  // 114: hippocampus.v1.Hippocampus.GetConsolidationStatus:output_type -> hippocampus.v1.GetConsolidationStatusResponse
-	72,  // 115: hippocampus.v1.Hippocampus.GetForgottenMemories:output_type -> hippocampus.v1.GetForgottenMemoriesResponse
-	74,  // 116: hippocampus.v1.Hippocampus.DeleteForgottenMemories:output_type -> hippocampus.v1.DeleteForgottenMemoriesResponse
-	77,  // 117: hippocampus.v1.Hippocampus.GetCallbackQueue:output_type -> hippocampus.v1.GetCallbackQueueResponse
-	79,  // 118: hippocampus.v1.Hippocampus.DeleteCallbackQueue:output_type -> hippocampus.v1.DeleteCallbackQueueResponse
-	88,  // 119: hippocampus.v1.Hippocampus.WhoAmI:output_type -> hippocampus.v1.WhoAmIResponse
-	92,  // 120: hippocampus.v1.Hippocampus.GetTopology:output_type -> hippocampus.v1.GetTopologyResponse
-	14,  // 121: hippocampus.v1.Hippocampus.GetSignificanceLevels:output_type -> hippocampus.v1.GetSignificanceLevelsResponse
-	18,  // 122: hippocampus.v1.Hippocampus.StoreEvent:output_type -> hippocampus.v1.StoreEventResponse
-	66,  // 123: hippocampus.v1.Hippocampus.UpdateEvent:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 124: hippocampus.v1.Hippocampus.EndEvent:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 125: hippocampus.v1.Hippocampus.UpdateEventSignificance:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 126: hippocampus.v1.Hippocampus.MergeEvents:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 127: hippocampus.v1.Hippocampus.DeleteEvent:output_type -> hippocampus.v1.GeneralResponse
-	24,  // 128: hippocampus.v1.Hippocampus.GetEventById:output_type -> hippocampus.v1.GetEventResponse
-	26,  // 129: hippocampus.v1.Hippocampus.GetEvents:output_type -> hippocampus.v1.GetEventsResponse
-	29,  // 130: hippocampus.v1.Hippocampus.StoreMemory:output_type -> hippocampus.v1.StoreMemoryResponse
-	32,  // 131: hippocampus.v1.Hippocampus.StoreMemories:output_type -> hippocampus.v1.StoreMemoriesResponse
-	66,  // 132: hippocampus.v1.Hippocampus.UpdateMemory:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 133: hippocampus.v1.Hippocampus.DeleteMemories:output_type -> hippocampus.v1.GeneralResponse
-	28,  // 134: hippocampus.v1.Hippocampus.GetMemories:output_type -> hippocampus.v1.GetMemoriesResponse
-	28,  // 135: hippocampus.v1.Hippocampus.RecallMemories:output_type -> hippocampus.v1.GetMemoriesResponse
-	28,  // 136: hippocampus.v1.Hippocampus.SearchMemories:output_type -> hippocampus.v1.GetMemoriesResponse
-	66,  // 137: hippocampus.v1.Hippocampus.LinkMemories:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 138: hippocampus.v1.Hippocampus.UnlinkMemories:output_type -> hippocampus.v1.GeneralResponse
-	43,  // 139: hippocampus.v1.Hippocampus.GetMemoryLinks:output_type -> hippocampus.v1.GetLinksResponse
-	66,  // 140: hippocampus.v1.Hippocampus.LinkEvents:output_type -> hippocampus.v1.GeneralResponse
-	66,  // 141: hippocampus.v1.Hippocampus.UnlinkEvents:output_type -> hippocampus.v1.GeneralResponse
-	43,  // 142: hippocampus.v1.Hippocampus.GetEventLinks:output_type -> hippocampus.v1.GetLinksResponse
-	45,  // 143: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:output_type -> hippocampus.v1.ReplaceMemoriesWithSummaryResponse
-	47,  // 144: hippocampus.v1.Hippocampus.GetSummarisationCandidates:output_type -> hippocampus.v1.GetSummarisationCandidatesResponse
-	49,  // 145: hippocampus.v1.Hippocampus.SummariseMemories:output_type -> hippocampus.v1.SummariseMemoriesResponse
-	55,  // 146: hippocampus.v1.Hippocampus.Export:output_type -> hippocampus.v1.ExportResponse
-	57,  // 147: hippocampus.v1.Hippocampus.Import:output_type -> hippocampus.v1.ImportResponse
-	53,  // 148: hippocampus.v1.Hippocampus.ImportBatch:output_type -> hippocampus.v1.ImportBatchResponse
-	59,  // 149: hippocampus.v1.Hippocampus.Transfer:output_type -> hippocampus.v1.TransferResponse
-	61,  // 150: hippocampus.v1.Hippocampus.Clear:output_type -> hippocampus.v1.ClearResponse
-	63,  // 151: hippocampus.v1.Hippocampus.DeleteMemoriesByFilter:output_type -> hippocampus.v1.DeleteMemoriesByFilterResponse
-	65,  // 152: hippocampus.v1.Hippocampus.DeleteEventsByFilter:output_type -> hippocampus.v1.DeleteEventsByFilterResponse
-	110, // [110:153] is the sub-list for method output_type
-	67,  // [67:110] is the sub-list for method input_type
-	67,  // [67:67] is the sub-list for extension type_name
-	67,  // [67:67] is the sub-list for extension extendee
-	0,   // [0:67] is the sub-list for field type_name
+	89,  // 60: hippocampus.v1.GetConsolidationStatusResponse.ancillary:type_name -> hippocampus.v1.AncillaryStorage
+	88,  // 61: hippocampus.v1.AncillaryStorage.forgotten_log:type_name -> hippocampus.v1.AncillaryTable
+	88,  // 62: hippocampus.v1.AncillaryStorage.search_outbox:type_name -> hippocampus.v1.AncillaryTable
+	88,  // 63: hippocampus.v1.AncillaryStorage.callback_queue:type_name -> hippocampus.v1.AncillaryTable
+	3,   // 64: hippocampus.v1.WhoAmIResponse.search_modes:type_name -> hippocampus.v1.SearchMode
+	8,   // 65: hippocampus.v1.TopologyNode.kind:type_name -> hippocampus.v1.TopologyNodeKind
+	9,   // 66: hippocampus.v1.TopologyNode.source:type_name -> hippocampus.v1.TopologyNodeSource
+	10,  // 67: hippocampus.v1.TopologyNode.status:type_name -> hippocampus.v1.TopologyStatus
+	91,  // 68: hippocampus.v1.TopologyNode.attributes:type_name -> hippocampus.v1.TopologyAttribute
+	92,  // 69: hippocampus.v1.GetTopologyResponse.nodes:type_name -> hippocampus.v1.TopologyNode
+	93,  // 70: hippocampus.v1.GetTopologyResponse.edges:type_name -> hippocampus.v1.TopologyEdge
+	95,  // 71: hippocampus.v1.Hippocampus.Purge:input_type -> hippocampus.v1.EmptyRequest
+	95,  // 72: hippocampus.v1.Hippocampus.Sleep:input_type -> hippocampus.v1.EmptyRequest
+	67,  // 73: hippocampus.v1.Hippocampus.PreviewConsolidation:input_type -> hippocampus.v1.PreviewConsolidationRequest
+	84,  // 74: hippocampus.v1.Hippocampus.ExplainConsolidation:input_type -> hippocampus.v1.ExplainConsolidationRequest
+	95,  // 75: hippocampus.v1.Hippocampus.GetConsolidationStatus:input_type -> hippocampus.v1.EmptyRequest
+	71,  // 76: hippocampus.v1.Hippocampus.GetForgottenMemories:input_type -> hippocampus.v1.GetForgottenMemoriesRequest
+	73,  // 77: hippocampus.v1.Hippocampus.DeleteForgottenMemories:input_type -> hippocampus.v1.DeleteForgottenMemoriesRequest
+	76,  // 78: hippocampus.v1.Hippocampus.GetCallbackQueue:input_type -> hippocampus.v1.GetCallbackQueueRequest
+	78,  // 79: hippocampus.v1.Hippocampus.DeleteCallbackQueue:input_type -> hippocampus.v1.DeleteCallbackQueueRequest
+	95,  // 80: hippocampus.v1.Hippocampus.WhoAmI:input_type -> hippocampus.v1.EmptyRequest
+	95,  // 81: hippocampus.v1.Hippocampus.GetTopology:input_type -> hippocampus.v1.EmptyRequest
+	13,  // 82: hippocampus.v1.Hippocampus.GetSignificanceLevels:input_type -> hippocampus.v1.GetSignificanceLevelsRequest
+	15,  // 83: hippocampus.v1.Hippocampus.StoreEvent:input_type -> hippocampus.v1.Event
+	15,  // 84: hippocampus.v1.Hippocampus.UpdateEvent:input_type -> hippocampus.v1.Event
+	19,  // 85: hippocampus.v1.Hippocampus.EndEvent:input_type -> hippocampus.v1.EndEventRequest
+	20,  // 86: hippocampus.v1.Hippocampus.UpdateEventSignificance:input_type -> hippocampus.v1.UpdateEventSignificanceRequest
+	21,  // 87: hippocampus.v1.Hippocampus.MergeEvents:input_type -> hippocampus.v1.MergeEventsRequest
+	22,  // 88: hippocampus.v1.Hippocampus.DeleteEvent:input_type -> hippocampus.v1.DeleteEventRequest
+	23,  // 89: hippocampus.v1.Hippocampus.GetEventById:input_type -> hippocampus.v1.GetEventByIdRequest
+	25,  // 90: hippocampus.v1.Hippocampus.GetEvents:input_type -> hippocampus.v1.GetEventsRequest
+	17,  // 91: hippocampus.v1.Hippocampus.StoreMemory:input_type -> hippocampus.v1.Memory
+	30,  // 92: hippocampus.v1.Hippocampus.StoreMemories:input_type -> hippocampus.v1.StoreMemoriesRequest
+	17,  // 93: hippocampus.v1.Hippocampus.UpdateMemory:input_type -> hippocampus.v1.Memory
+	33,  // 94: hippocampus.v1.Hippocampus.DeleteMemories:input_type -> hippocampus.v1.DeleteMemoriesRequest
+	27,  // 95: hippocampus.v1.Hippocampus.GetMemories:input_type -> hippocampus.v1.GetMemoriesRequest
+	34,  // 96: hippocampus.v1.Hippocampus.RecallMemories:input_type -> hippocampus.v1.RecallMemoriesRequest
+	35,  // 97: hippocampus.v1.Hippocampus.SearchMemories:input_type -> hippocampus.v1.SearchMemoriesRequest
+	36,  // 98: hippocampus.v1.Hippocampus.LinkMemories:input_type -> hippocampus.v1.LinkMemoriesRequest
+	37,  // 99: hippocampus.v1.Hippocampus.UnlinkMemories:input_type -> hippocampus.v1.UnlinkMemoriesRequest
+	38,  // 100: hippocampus.v1.Hippocampus.GetMemoryLinks:input_type -> hippocampus.v1.GetMemoryLinksRequest
+	39,  // 101: hippocampus.v1.Hippocampus.LinkEvents:input_type -> hippocampus.v1.LinkEventsRequest
+	40,  // 102: hippocampus.v1.Hippocampus.UnlinkEvents:input_type -> hippocampus.v1.UnlinkEventsRequest
+	41,  // 103: hippocampus.v1.Hippocampus.GetEventLinks:input_type -> hippocampus.v1.GetEventLinksRequest
+	44,  // 104: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:input_type -> hippocampus.v1.ReplaceMemoriesWithSummaryRequest
+	95,  // 105: hippocampus.v1.Hippocampus.GetSummarisationCandidates:input_type -> hippocampus.v1.EmptyRequest
+	48,  // 106: hippocampus.v1.Hippocampus.SummariseMemories:input_type -> hippocampus.v1.SummariseMemoriesRequest
+	54,  // 107: hippocampus.v1.Hippocampus.Export:input_type -> hippocampus.v1.ExportRequest
+	56,  // 108: hippocampus.v1.Hippocampus.Import:input_type -> hippocampus.v1.ImportRequest
+	52,  // 109: hippocampus.v1.Hippocampus.ImportBatch:input_type -> hippocampus.v1.ImportBatchRequest
+	58,  // 110: hippocampus.v1.Hippocampus.Transfer:input_type -> hippocampus.v1.TransferRequest
+	60,  // 111: hippocampus.v1.Hippocampus.Clear:input_type -> hippocampus.v1.ClearRequest
+	62,  // 112: hippocampus.v1.Hippocampus.DeleteMemoriesByFilter:input_type -> hippocampus.v1.DeleteMemoriesByFilterRequest
+	64,  // 113: hippocampus.v1.Hippocampus.DeleteEventsByFilter:input_type -> hippocampus.v1.DeleteEventsByFilterRequest
+	66,  // 114: hippocampus.v1.Hippocampus.Purge:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 115: hippocampus.v1.Hippocampus.Sleep:output_type -> hippocampus.v1.GeneralResponse
+	69,  // 116: hippocampus.v1.Hippocampus.PreviewConsolidation:output_type -> hippocampus.v1.PreviewConsolidationResponse
+	85,  // 117: hippocampus.v1.Hippocampus.ExplainConsolidation:output_type -> hippocampus.v1.ExplainConsolidationResponse
+	87,  // 118: hippocampus.v1.Hippocampus.GetConsolidationStatus:output_type -> hippocampus.v1.GetConsolidationStatusResponse
+	72,  // 119: hippocampus.v1.Hippocampus.GetForgottenMemories:output_type -> hippocampus.v1.GetForgottenMemoriesResponse
+	74,  // 120: hippocampus.v1.Hippocampus.DeleteForgottenMemories:output_type -> hippocampus.v1.DeleteForgottenMemoriesResponse
+	77,  // 121: hippocampus.v1.Hippocampus.GetCallbackQueue:output_type -> hippocampus.v1.GetCallbackQueueResponse
+	79,  // 122: hippocampus.v1.Hippocampus.DeleteCallbackQueue:output_type -> hippocampus.v1.DeleteCallbackQueueResponse
+	90,  // 123: hippocampus.v1.Hippocampus.WhoAmI:output_type -> hippocampus.v1.WhoAmIResponse
+	94,  // 124: hippocampus.v1.Hippocampus.GetTopology:output_type -> hippocampus.v1.GetTopologyResponse
+	14,  // 125: hippocampus.v1.Hippocampus.GetSignificanceLevels:output_type -> hippocampus.v1.GetSignificanceLevelsResponse
+	18,  // 126: hippocampus.v1.Hippocampus.StoreEvent:output_type -> hippocampus.v1.StoreEventResponse
+	66,  // 127: hippocampus.v1.Hippocampus.UpdateEvent:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 128: hippocampus.v1.Hippocampus.EndEvent:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 129: hippocampus.v1.Hippocampus.UpdateEventSignificance:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 130: hippocampus.v1.Hippocampus.MergeEvents:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 131: hippocampus.v1.Hippocampus.DeleteEvent:output_type -> hippocampus.v1.GeneralResponse
+	24,  // 132: hippocampus.v1.Hippocampus.GetEventById:output_type -> hippocampus.v1.GetEventResponse
+	26,  // 133: hippocampus.v1.Hippocampus.GetEvents:output_type -> hippocampus.v1.GetEventsResponse
+	29,  // 134: hippocampus.v1.Hippocampus.StoreMemory:output_type -> hippocampus.v1.StoreMemoryResponse
+	32,  // 135: hippocampus.v1.Hippocampus.StoreMemories:output_type -> hippocampus.v1.StoreMemoriesResponse
+	66,  // 136: hippocampus.v1.Hippocampus.UpdateMemory:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 137: hippocampus.v1.Hippocampus.DeleteMemories:output_type -> hippocampus.v1.GeneralResponse
+	28,  // 138: hippocampus.v1.Hippocampus.GetMemories:output_type -> hippocampus.v1.GetMemoriesResponse
+	28,  // 139: hippocampus.v1.Hippocampus.RecallMemories:output_type -> hippocampus.v1.GetMemoriesResponse
+	28,  // 140: hippocampus.v1.Hippocampus.SearchMemories:output_type -> hippocampus.v1.GetMemoriesResponse
+	66,  // 141: hippocampus.v1.Hippocampus.LinkMemories:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 142: hippocampus.v1.Hippocampus.UnlinkMemories:output_type -> hippocampus.v1.GeneralResponse
+	43,  // 143: hippocampus.v1.Hippocampus.GetMemoryLinks:output_type -> hippocampus.v1.GetLinksResponse
+	66,  // 144: hippocampus.v1.Hippocampus.LinkEvents:output_type -> hippocampus.v1.GeneralResponse
+	66,  // 145: hippocampus.v1.Hippocampus.UnlinkEvents:output_type -> hippocampus.v1.GeneralResponse
+	43,  // 146: hippocampus.v1.Hippocampus.GetEventLinks:output_type -> hippocampus.v1.GetLinksResponse
+	45,  // 147: hippocampus.v1.Hippocampus.ReplaceMemoriesWithSummary:output_type -> hippocampus.v1.ReplaceMemoriesWithSummaryResponse
+	47,  // 148: hippocampus.v1.Hippocampus.GetSummarisationCandidates:output_type -> hippocampus.v1.GetSummarisationCandidatesResponse
+	49,  // 149: hippocampus.v1.Hippocampus.SummariseMemories:output_type -> hippocampus.v1.SummariseMemoriesResponse
+	55,  // 150: hippocampus.v1.Hippocampus.Export:output_type -> hippocampus.v1.ExportResponse
+	57,  // 151: hippocampus.v1.Hippocampus.Import:output_type -> hippocampus.v1.ImportResponse
+	53,  // 152: hippocampus.v1.Hippocampus.ImportBatch:output_type -> hippocampus.v1.ImportBatchResponse
+	59,  // 153: hippocampus.v1.Hippocampus.Transfer:output_type -> hippocampus.v1.TransferResponse
+	61,  // 154: hippocampus.v1.Hippocampus.Clear:output_type -> hippocampus.v1.ClearResponse
+	63,  // 155: hippocampus.v1.Hippocampus.DeleteMemoriesByFilter:output_type -> hippocampus.v1.DeleteMemoriesByFilterResponse
+	65,  // 156: hippocampus.v1.Hippocampus.DeleteEventsByFilter:output_type -> hippocampus.v1.DeleteEventsByFilterResponse
+	114, // [114:157] is the sub-list for method output_type
+	71,  // [71:114] is the sub-list for method input_type
+	71,  // [71:71] is the sub-list for extension type_name
+	71,  // [71:71] is the sub-list for extension extendee
+	0,   // [0:71] is the sub-list for field type_name
 }
 
 func init() { file_hippocampus_proto_init() }
@@ -8345,7 +8540,7 @@ func file_hippocampus_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hippocampus_proto_rawDesc), len(file_hippocampus_proto_rawDesc)),
 			NumEnums:      12,
-			NumMessages:   84,
+			NumMessages:   86,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

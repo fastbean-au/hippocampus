@@ -2259,6 +2259,47 @@
         }
       }
     },
+    "v1AncillaryStorage": {
+      "type": "object",
+      "properties": {
+        "measuredAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano the cycle took this measurement"
+        },
+        "totalBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "forgottenLog": {
+          "$ref": "#/definitions/v1AncillaryTable"
+        },
+        "searchOutbox": {
+          "$ref": "#/definitions/v1AncillaryTable"
+        },
+        "callbackQueue": {
+          "$ref": "#/definitions/v1AncillaryTable"
+        }
+      },
+      "description": "AncillaryStorage is the storage this store spends that its byte capacity target cannot see.\n\nThe three tables are excluded from used_bytes deliberately: the record of what was deleted must\nnever evict live memories, the search outbox is the sharp version of that (it grows precisely\nwhen deletions are backing up), and the callback queue is sharper again - it grows when a\nreceiver is down, and with callbacks.includeBodies it carries memory bodies. On the embedded\ndeployment all three share the store's own file, so the growth is real disk that capacity\npressure will never reflect: the disk a deployment needs is consolidation.capacityBytes plus\nthis.\n\nThe callback queue is the one to watch. Its rows have no fixed size, so callbacks.maxRows bounds\nits bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps."
+    },
+    "v1AncillaryTable": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "string",
+          "format": "int64"
+        },
+        "bytes": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "AncillaryTable is what one of the three tables excluded from the capacity target holds.\n\nbytes is rows multiplied by a flat per-row allowance, not a measurement - summing the stored\npayloads would put a scan of the queue on the path that exists to bound the store - so rows is\nreported beside it rather than leaving a lone estimate to look more precise than it is.\n\nenabled separates the two zeroes: a feature nobody turned on holds nothing because nothing writes\nto it, while an enabled one holding nothing is a queue that is keeping up. They call for opposite\nreactions, and a bare 0 says neither.\n\nIt means \"is recording into this table right now\", NOT \"has rows worth counting\". Disabling any of\nthe three leaves what was already written in place - DeleteForgottenMemories and\nDeleteCallbackQueue are the explicit discards - so rows and bytes are reported whatever the\nsetting says, and enabled false beside a row count is a table nothing is adding to and nothing is\ntrimming."
+    },
     "v1Bool": {
       "type": "string",
       "enum": [
@@ -3120,6 +3161,10 @@
         "lastCycle": {
           "$ref": "#/definitions/v1CycleReport",
           "description": "last_cycle is absent until a cycle has run in THIS process - it is in-memory, not persisted,\nso a restart clears it. That is deliberate: it reports what this instance did, and a figure\nsurviving the process that produced it would describe a cycle run under configuration that\nmay since have changed."
+        },
+        "ancillary": {
+          "$ref": "#/definitions/v1AncillaryStorage",
+          "description": "ancillary is what the capacity target deliberately does NOT count: the forgotten log, the\nsearch outbox and the callback queue. Absent until a cycle in THIS process has measured it,\nand on a replica always - it is measured by the sleep cycle rather than per request, since a\ncount of the callback queue is a scan of up to callbacks.maxRows rows and this is an RPC a\nconsole polls."
         }
       },
       "description": "GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.\n\nEverything below consolidation_enabled is zero on a read/write replica, which runs no cycle of\nits own: its store is consolidated by whichever instance holds the single-consolidator lock,\nunder that instance's configuration."

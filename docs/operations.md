@@ -518,6 +518,22 @@ not for `capacityBytes` alone. Two of the defaults are a million rows each, and 
 can carry memory bodies (`callbacks.includeBodies`), so on a store with callbacks and an OpenSearch
 index that headroom is not a rounding error.
 
+**These tables are now reported.** `hippocampus.ancillary_bytes` carries what each of them holds,
+labelled by `component` (`forgotten_log`, `search_outbox`, `callback_queue`), measured once per sleep
+cycle; sum over the label for the figure to add to `capacityBytes` when sizing a disk. The console's
+Deployment tab shows the same reading under the callback queue, and `hippo consolidation status`
+carries it as the response's `ancillary` block. The shipped alert
+[`HippocampusAncillaryStorageHigh`](../deploy/observability/README.md) fires when the three together
+exceed a quarter of `capacityBytes`.
+
+Three things to know about the figure. It is a **row count times a flat per-row allowance**, not a
+measurement — summing the stored payloads would put a scan of the queue on the path that exists to
+bound the store — so it is the right order of magnitude and not more than that. It is the **same**
+figure the capacity target subtracts, so what the console shows and what eviction ignores cannot
+disagree. And a component reporting `enabled: false` beside a row count is a table that has been
+switched off and still holds what it wrote: disabling any of the three stops the writing *and* the
+trimming, so those rows stay until `DeleteForgottenMemories` or `DeleteCallbackQueue` discards them.
+
 One thing runs the other way. On **SQLite** the [content search](configuration.md#content-search)
 index (`memories_fts`) lives in the same database file and page accounting counts it, so the same
 `capacityBytes` holds fewer memories and eviction starts sooner than it would with search unused.
@@ -1195,6 +1211,7 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.capacity_bytes`                 | gauge         |                                       | The configured target, so a query need not hard-code it                     |
 | `hippocampus.external_bytes`                 | gauge         |                                       | Payload the store points at elsewhere (only with an external capacity set)  |
 | `hippocampus.capacity_external_bytes`        | gauge         |                                       | The configured external target, alongside `external_bytes`                  |
+| `hippocampus.ancillary_bytes`                | gauge         | `component`                           | Estimated bytes in the tables *outside* the capacity target — the forgotten log, the search outbox, the callback queue |
 | `hippocampus.purges`                         | counter       | `success`                             | `Purge` calls                                                               |
 | `hippocampus.tombstones`                     | gauge         |                                       | Records held by the [forgotten log](#what-was-forgotten--the-forgotten-log) |
 | `hippocampus.tombstones.deleted`             | counter       | `manual`                              | Forgotten-log records removed, by request or by the caps                    |

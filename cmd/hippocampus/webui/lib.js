@@ -636,6 +636,113 @@ export function callbackQueueSummary(data, now) {
   return parts.join(", ") + ".";
 }
 
+// --------------------------------------------------- storage outside capacity
+
+// ANCILLARY_TABLES name the three tables the byte capacity target does not count, in the order the
+// card lists them, with the setting that bounds each. The order is deliberate: the callback queue
+// is last because it is the one whose row cap is NOT a byte cap - its rows carry a rendered payload
+// and, under callbacks.includeBodies, memory bodies - so it reads as the parting note rather than
+// as one of three equals.
+export const ANCILLARY_TABLES = [
+  {
+    key: "forgottenLog",
+    label: "Forgotten log",
+    bound: "consolidation.tombstones.maxRows",
+    note: "One fixed-size row per forgotten memory, so its row cap is effectively a byte cap.",
+  },
+  {
+    key: "searchOutbox",
+    label: "Search outbox",
+    bound: "opensearch.outbox.maxRows",
+    note: "One fixed-size row per index deletion still owed. It grows precisely when deletions are backing up.",
+  },
+  {
+    key: "callbackQueue",
+    label: "Callback queue",
+    bound: "callbacks.maxRows",
+    note: "Rows here have no fixed size - a delivery carries up to callbacks.maxIdsPerDelivery items, and memory bodies when callbacks.includeBodies is set - so the row cap bounds the bytes only loosely.",
+  },
+];
+
+// ancillaryRows projects the measurement onto the card's table, one row per table whatever its
+// state. A table that is switched off is listed and said to be off rather than omitted: an absent
+// row reads as a table with nothing in it, which is the opposite conclusion, and the whole reason
+// the wire carries `enabled` beside the figures.
+//
+// The third state is the one worth having a word for. Disabling any of the three stops the writing
+// AND the trimming, and leaves every row already written where it was - so a table can be holding
+// megabytes that nothing is adding to and nothing will ever remove without an explicit discard.
+// "not enabled" would be a fair description of the setting and a misleading one of the disk.
+export function ancillaryRows(ancillary) {
+  return ANCILLARY_TABLES.map((table) => {
+    const measured = (ancillary && ancillary[table.key]) || {};
+    const enabled = Boolean(measured.enabled);
+    const rows = Number(measured.rows || 0);
+
+    return {
+      label: table.label,
+      bound: table.bound,
+      note: table.note,
+      enabled,
+      rows,
+      bytes: Number(measured.bytes || 0),
+      state: enabled
+        ? "recording"
+        : rows
+          ? "no longer recording — these rows stay until they are discarded"
+          : "not enabled",
+    };
+  });
+}
+
+// ancillarySummary is the sentence above that table, and it has to distinguish four states that
+// would otherwise all render as a row of zeroes.
+//
+// A replica takes no measurement at all - the tables belong to the instance that consolidates - and
+// an instance whose first cycle has not run yet has not taken one either. Neither is "nothing is
+// accumulating", and showing 0 B for either would say exactly that. Where a measurement does exist
+// its age is part of it: this figure is taken once per sleep cycle rather than per request, so a
+// reader who is not told how old it is will assume it is live.
+//
+// Pure and clock-injected, for ageLabel's reason: the boundaries are what wants testing.
+export function ancillarySummary(status, now) {
+  if (!status) return "Nothing loaded yet.";
+
+  if (!status.consolidationEnabled) {
+    return (
+      "This instance runs no sleep cycle, so it takes no measurement. Its store is " +
+      "consolidated by whichever instance holds the lock, and that one measures these tables."
+    );
+  }
+
+  const ancillary = status.ancillary;
+
+  if (!ancillary || !ancillary.measuredAt || ancillary.measuredAt === "0") {
+    return "No cycle has measured this since the instance started.";
+  }
+
+  // Named by what is HOLDING bytes rather than by what is enabled, because those are different
+  // sets: a table nothing records into any more still occupies the disk it occupied yesterday.
+  const holding = ancillaryRows(ancillary).filter((row) => row.bytes > 0);
+
+  if (!holding.length) {
+    return (
+      "Nothing is accumulating outside the capacity target. Measured " +
+      ageLabel(now, ancillary.measuredAt) +
+      "."
+    );
+  }
+
+  return (
+    formatBytes(Number(ancillary.totalBytes || 0)) +
+    " outside the capacity target, in " +
+    holding.map((row) => row.label.toLowerCase()).join(" and ") +
+    ". Measured " +
+    ageLabel(now, ancillary.measuredAt) +
+    "."
+  );
+}
+
 // ------------------------------------------------------------------ topology
 
 // TIER_RANK orders the authorisation tiers so a client can compare the tier a deployment requires

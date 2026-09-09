@@ -59,6 +59,8 @@ type telemetry struct {
 	tombstones        metric.Int64Gauge
 	tombstonesDeleted metric.Int64Counter
 
+	ancillaryBytes metric.Int64Gauge
+
 	searchOutboxDepth     metric.Int64Gauge
 	searchOutboxApplied   metric.Int64Counter
 	searchOutboxAbandoned metric.Int64Counter
@@ -124,6 +126,12 @@ func newTelemetry() *telemetry {
 		// question the log itself raises - is it growing without bound, and is anything trimming it.
 		tombstones:        newInt64Gauge(meter, "hippocampus.tombstones", "Records held by the forgotten log, measured each sleep cycle while it is enabled."),
 		tombstonesDeleted: newInt64Counter(meter, "hippocampus.tombstones.deleted", "Forgotten-log records removed, by whether the removal was a manual request or the configured caps."),
+
+		// The storage used_bytes deliberately does not count. Published per table (component) and
+		// only for the ones the deployment has enabled, so a flat zero never reads as a queue that
+		// is keeping up; sum over the components for the figure to add to capacity_bytes when
+		// sizing a disk. See hippocampus/ancillary.go.
+		ancillaryBytes: newInt64Gauge(meter, "hippocampus.ancillary_bytes", "Estimated bytes held by the tables outside the byte capacity target - the forgotten log, the search outbox and the callback queue - measured each sleep cycle. On the embedded driver this is growth in the store's own file that capacity pressure will never reflect."),
 
 		// The search index's delete queue. Depth is the one to alert on: it is the backpressure the
 		// outbox exists to make visible, since the failure it replaced - an index operation dropped

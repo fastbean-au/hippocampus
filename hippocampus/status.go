@@ -22,7 +22,10 @@ import (
 // rate its display needs. That is deliberate and is what lets the console show a live countdown
 // without touching the store; the expensive figures (capacity pressure, used bytes, memory count)
 // stay behind ExplainConsolidation's cached snapshot, and this reports that cache's TTL so a
-// polling client paces its calls to that RPC from the server rather than from a guess.
+// polling client paces its calls to that RPC from the server rather than from a guess. The
+// ancillary block is the same bargain kept a different way: the sleep cycle measures it once and
+// caches it here, so what would be a scan of the callback queue per page view is a field read, and
+// measured_at says how old the reading is rather than leaving a poller to assume it is live.
 //
 // (2) It does NOT refuse on a read/write replica, unlike Sleep, PreviewConsolidation and
 // ExplainConsolidation. Reporting consolidation_enabled false IS the answer there: refusing would
@@ -57,6 +60,10 @@ func (s *Server) GetConsolidationStatus(
 
 	if last := s.lastCycle.Load(); last != nil {
 		res.LastCycle = cycleReportToProto(last)
+	}
+
+	if ancillary := s.lastAncillary.Load(); ancillary != nil {
+		res.Ancillary = ancillaryToProto(ancillary)
 	}
 
 	return &res, nil
