@@ -339,3 +339,58 @@ type failingReader struct{}
 func (f *failingReader) Read(_ []byte) (int, error) {
 	return 0, errors.New("the source went away")
 }
+
+// TestFileStore_PutCannotStage covers the staging failure: the temporary file is created beside its
+// destination, so a directory the process cannot write to fails here rather than part-way through
+// the copy. The distinction matters because everything after this point removes the temporary file,
+// and this arm is the one where there is nothing to remove.
+func TestFileStore_PutCannotStage(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a read-only directory regardless of its mode")
+	}
+
+	store := newTestFileStore(t)
+
+	if err := os.Chmod(store.Directory(), 0o500); err != nil {
+		t.Fatalf("Chmod: %s", err)
+	}
+
+	// Restored so the temporary directory can be cleaned up when the test ends.
+	t.Cleanup(func() { _ = os.Chmod(store.Directory(), 0o750) })
+
+	if err := store.Put(context.Background(), "x.gz", strings.NewReader("body")); err == nil {
+		t.Error("expected Put to fail when it cannot stage a temporary file")
+	}
+}
+
+// TestFileStore_PutCannotRename covers the last step, which is the one that makes an export atomic:
+// until the rename lands there is no object, and after it there is a complete one. A non-empty
+// directory standing where the object goes is the reachable way for it to fail, and what this pins
+// is that the failure is reported rather than leaving a partial file behind under another name.
+func TestFileStore_PutCannotRename(t *testing.T) {
+	store := newTestFileStore(t)
+
+	blocked := filepath.Join(store.Directory(), "x.gz")
+
+	if err := os.MkdirAll(filepath.Join(blocked, "occupied"), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %s", err)
+	}
+
+	if err := store.Put(context.Background(), "x.gz", strings.NewReader("body")); err == nil {
+		t.Fatal("expected Put to fail where a non-empty directory stands in the object's place")
+	}
+
+	entries, err := os.ReadDir(store.Directory())
+	if err != nil {
+		t.Fatalf("ReadDir: %s", err)
+	}
+
+	// The staged file is removed unconditionally, so a failed export leaves nothing behind - which
+	// is the property, since a truncated archive is one Import would accept and then fail part way
+	// through, having already upserted what it read.
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".archive-") {
+			t.Errorf("a failed Put left %s behind", entry.Name())
+		}
+	}
+}

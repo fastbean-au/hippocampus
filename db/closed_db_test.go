@@ -163,4 +163,11 @@ func TestUsedBytes_ErrorOnClosedDB(t *testing.T) {
 	if _, err := db.UsedBytes(context.Background()); err == nil {
 		t.Error("expected UsedBytes to error against a closed database")
 	}
+
+	// The external axis is measured by the same shape of query, and under a configured target its
+	// reading IS the eviction decision - so it must surface a failure rather than answer zero, which
+	// would read as a store pointing at nothing.
+	if _, err := db.ExternalBytes(context.Background()); err == nil {
+		t.Error("expected ExternalBytes to error against a closed database")
+	}
 }

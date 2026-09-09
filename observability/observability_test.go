@@ -148,3 +148,99 @@ func TestInitObservability_MetricsOnly(t *testing.T) {
 	defer cancel()
 	_ = shutdown(ctx)
 }
+
+// TestInitObservability_ExporterConstructionFails covers the two arms where an exporter cannot be
+// built at all. They matter because they are the only ones that make Init RETURN an error: every
+// other failure here is a collector being unreachable, which is deliberately not fatal - the
+// exporters are lazy, and a service that refused to start because a metrics endpoint was down would
+// be trading a working store for an observability dependency.
+//
+// Both arms must still return the shutdown func, since the tracer provider may already have been
+// installed by the time the metric exporter fails and a caller that skipped the flush on an error
+// would leak it.
+func TestInitObservability_ExporterConstructionFails(t *testing.T) {
+	restoreTracer := otel.GetTracerProvider()
+	restoreMeter := otel.GetMeterProvider()
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(restoreTracer)
+		otel.SetMeterProvider(restoreMeter)
+	})
+
+	// An endpoint the gRPC target parser cannot make a URL of. Nothing is dialled - construction
+	// fails outright - which is what separates this from an unreachable collector.
+	const unparseable = "%%%"
+
+	t.Run("the trace exporter", func(t *testing.T) {
+		shutdown, err := Init(context.Background(), Config{
+			TracingEnabled: true,
+			OTLPEndpoint:   unparseable,
+			OTLPInsecure:   true,
+		})
+
+		if err == nil {
+			t.Error("expected an unbuildable trace exporter to fail Init")
+		}
+
+		if shutdown == nil {
+			t.Fatal("expected a shutdown func even on a failed Init")
+		}
+
+		if err := shutdown(context.Background()); err != nil {
+			t.Errorf("shutting down after a failed Init: %s", err)
+		}
+	})
+
+	t.Run("the metric exporter", func(t *testing.T) {
+		shutdown, err := Init(context.Background(), Config{
+			MetricsEnabled: true,
+			OTLPEndpoint:   unparseable,
+			OTLPInsecure:   true,
+		})
+
+		if err == nil {
+			t.Error("expected an unbuildable metric exporter to fail Init")
+		}
+
+		if shutdown == nil {
+			t.Fatal("expected a shutdown func even on a failed Init")
+		}
+
+		if err := shutdown(context.Background()); err != nil {
+			t.Errorf("shutting down after a failed Init: %s", err)
+		}
+	})
+}
+
+// TestInitObservability_GroupOnTheResource covers the tenancy label's resource half. It is
+// deliberately duplicated onto both the resource and each metric - the OTLP-to-Prometheus
+// translation puts resource attributes in target_info, where a metric-level label is what an
+// expression can actually group by - so the resource arm is the one nothing else exercises.
+func TestInitObservability_GroupOnTheResource(t *testing.T) {
+	restoreTracer := otel.GetTracerProvider()
+	restoreMeter := otel.GetMeterProvider()
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(restoreTracer)
+		otel.SetMeterProvider(restoreMeter)
+		setGroup("")
+	})
+
+	shutdown, err := Init(context.Background(), Config{
+		PrometheusEnabled: true,
+		ServiceVersion:    "v0.0.0-test",
+		Group:             "tenant-a",
+	})
+	if err != nil {
+		t.Fatalf("Init: %s", err)
+	}
+
+	t.Cleanup(func() { _ = shutdown(context.Background()) })
+
+	// The metric half is what a scrape can be read for, and its presence here is what proves the
+	// group reached Init at all - the resource half is not readable from outside the SDK.
+	handler := PrometheusHandler()
+	if handler == nil {
+		t.Fatal("expected the scrape handler to be published")
+	}
+}

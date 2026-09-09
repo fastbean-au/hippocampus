@@ -1,9 +1,16 @@
 package hippocampus
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
+	log "github.com/sirupsen/logrus"
+
+	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/types"
 )
@@ -244,5 +251,184 @@ func TestPreviewReportsTheExternalAxis(t *testing.T) {
 			t.Errorf("candidate %s reported %d external bytes, want 4000",
 				candidate.GetId(), candidate.GetExternalBytes())
 		}
+	}
+}
+
+// failingExternalStore refuses to sum the external axis, so the two callers that read it under a
+// configured target can be driven through their failure arms. Under a target the reading IS the
+// decision - eviction cannot judge the axis without it - which is why both fail rather than carrying
+// on with a zero, and why this needs its own fake rather than an unconfigured axis.
+type failingExternalStore struct {
+	db.Store
+}
+
+func (*failingExternalStore) ExternalBytes(context.Context) (int64, error) {
+	return 0, errors.New("boom")
+}
+
+// TestSleepFailsWhenTheExternalAxisCannotBeMeasured pins that the cycle stops rather than evicting
+// on an unread axis. A zero here would read as an empty external store and quietly switch the
+// target off for that cycle, which is the worst of the available answers: eviction would stop
+// reclaiming exactly when it was most needed and nothing would say so.
+func TestSleepFailsWhenTheExternalAxisCannotBeMeasured(t *testing.T) {
+	s, database := previewTestServer(t)
+	s.consolidation.capacityExternalBytes = 1 << 20
+
+	seedPreviewMemories(t, database, "m", 1, 1, 3)
+
+	s.db = &failingExternalStore{Store: database}
+
+	if err := s.sleep(triggerManual); err == nil {
+		t.Error("expected an unmeasurable external axis to fail the cycle")
+	}
+}
+
+// TestPreviewFailsWhenTheExternalAxisCannotBeMeasured is the same rule on the read-only side. The
+// preview reports the axis's utilisation, so a zero would describe a store with a target it is
+// nowhere near - a dry run that disagrees with the cycle it is describing.
+func TestPreviewFailsWhenTheExternalAxisCannotBeMeasured(t *testing.T) {
+	s, database := previewTestServer(t)
+	s.consolidation.capacityExternalBytes = 1 << 20
+
+	seedPreviewMemories(t, database, "m", 1, 1, 3)
+
+	s.db = &failingExternalStore{Store: database}
+
+	if _, err := s.PreviewConsolidation(context.Background(), &contract.PreviewConsolidationRequest{}); err == nil {
+		t.Error("expected an unmeasurable external axis to fail the preview")
+	}
+}
+
+// TestPressureReusesTheExternalReading covers the second cycle's arm: the figure eviction took at
+// the end of the previous cycle is reused rather than scanned for again. Pressure is a smoothing
+// factor, so a one-cycle-old reading is fine, and the hard caps are still enforced against fresh
+// readings in evict().
+func TestPressureReusesTheExternalReading(t *testing.T) {
+	s, database := previewTestServer(t)
+	s.consolidation.capacityExternalBytes = 10_000
+	s.consolidation.deletionThreshold = -1
+
+	ctx := context.Background()
+
+	if _, err := database.CreateMemory(ctx, types.Memory{
+		Id:            "pointer",
+		Body:          "x",
+		TimeStamp:     time.Now().UnixNano(),
+		Significance:  1000,
+		ExternalBytes: 5_000,
+	}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	// The first cycle measures and records the reading; the second is the one that reuses it.
+	if err := s.sleep(triggerManual); err != nil {
+		t.Fatalf("sleep: %s", err)
+	}
+
+	if s.consolidation.lastExternalBytes != 5_000 {
+		t.Fatalf("lastExternalBytes = %d, want the measured 5000", s.consolidation.lastExternalBytes)
+	}
+
+	if err := s.sleep(triggerManual); err != nil {
+		t.Fatalf("sleep (second cycle): %s", err)
+	}
+
+	// Half the target on the external axis, and nothing on the store's own, so the pressure the
+	// second cycle computed can only have come from the reading carried across.
+	if s.consolidation.capacityPressure <= 0 {
+		t.Errorf("capacity pressure = %g; the external reading did not reach it", s.consolidation.capacityPressure)
+	}
+}
+
+// TestRetentionWarnsWhenItHoldsTheExternalAxisOverItsTarget covers the external half of the
+// retention gauges. It is the one condition under which the external capacity target silently stops
+// being achievable - retention overrides the target, so eviction can never bring the axis back under
+// it - and it is logged as well as counted for the deployments with no metrics stack.
+func TestRetentionWarnsWhenItHoldsTheExternalAxisOverItsTarget(t *testing.T) {
+	s, database := previewTestServer(t)
+	s.consolidation.minimumRetentionInDays = 7
+	s.consolidation.capacityBytes = 1 << 20
+	s.consolidation.capacityExternalBytes = 1_000
+
+	ctx := context.Background()
+
+	if _, err := database.CreateMemory(ctx, types.Memory{
+		Id:            "retained",
+		Body:          "x",
+		TimeStamp:     time.Now().UnixNano(),
+		Significance:  1000,
+		ExternalBytes: 9_000,
+	}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	var buf bytes.Buffer
+
+	restoreOutput := log.StandardLogger().Out
+	restoreLevel := log.GetLevel()
+
+	log.SetOutput(&buf)
+	log.SetLevel(log.InfoLevel)
+
+	t.Cleanup(func() {
+		log.SetOutput(restoreOutput)
+		log.SetLevel(restoreLevel)
+	})
+
+	s.recordRetention(ctx)
+
+	if !strings.Contains(buf.String(), "external capacity target") {
+		t.Errorf("expected a warning about the external axis, got: %s", buf.String())
+	}
+}
+
+// TestRetentionSaysNothingAboutAnUnconfiguredExternalAxis is the gate's other side: without a target
+// there is nothing for the figure to be unreachable against, so neither the gauge nor the warning is
+// published.
+func TestRetentionSaysNothingAboutAnUnconfiguredExternalAxis(t *testing.T) {
+	s, database := previewTestServer(t)
+	s.consolidation.minimumRetentionInDays = 7
+	s.consolidation.capacityBytes = 1 << 20
+
+	seedPreviewMemories(t, database, "m", 0, 1000, 1)
+
+	var buf bytes.Buffer
+
+	restoreOutput := log.StandardLogger().Out
+	restoreLevel := log.GetLevel()
+
+	log.SetOutput(&buf)
+	log.SetLevel(log.InfoLevel)
+
+	t.Cleanup(func() {
+		log.SetOutput(restoreOutput)
+		log.SetLevel(restoreLevel)
+	})
+
+	s.recordRetention(context.Background())
+
+	if strings.Contains(buf.String(), "external capacity target") {
+		t.Errorf("an unconfigured axis must not be warned about, got: %s", buf.String())
+	}
+}
+
+// TestPreviewDeciderReportsTheSnapshotThreshold covers the decider's threshold accessor, which
+// exists so the store's scans read the preview's own snapshot pressure rather than the field the
+// sleep goroutine is mutating. The preview writes no tombstones - it deletes nothing - so this is
+// reached only through db.Server, and only a direct call exercises it.
+func TestPreviewDeciderReportsTheSnapshotThreshold(t *testing.T) {
+	s, _ := previewTestServer(t)
+	s.consolidation.deletionThreshold = 2
+
+	decider := previewDecider{server: s, capacityPressure: 3}
+
+	want := s.deletionThresholdUnder(3)
+
+	if got := decider.DeletionThreshold(); got != want {
+		t.Errorf("DeletionThreshold() = %g, want the snapshot's %g", got, want)
+	}
+
+	if got := decider.DeletionThreshold(); got == s.deletionThresholdUnder(s.consolidation.capacityPressure) && want != s.deletionThresholdUnder(s.consolidation.capacityPressure) {
+		t.Error("the decider read the server's live pressure rather than its own snapshot")
 	}
 }

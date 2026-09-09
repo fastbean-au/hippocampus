@@ -338,3 +338,66 @@ func TestBackfillSearch_IndexMemoryFailure(t *testing.T) {
 		})
 	})
 }
+
+// TestRebuildContentSearch_HappyPath drives the store-backed rebuild end to end. It is the mode
+// --backfill-search takes on every deployment that is not running OpenSearch, which since item 96 is
+// most of them, and unlike backfillSearch it WRITES to the service's own database - so the open is
+// read-write and the fixture is closed first.
+func TestRebuildContentSearch_HappyPath(t *testing.T) {
+	dir := seedSQLiteFixture(t, 3)
+
+	rebuildContentSearch(backfillConfig{
+		StorageDriver:    "sqlite",
+		StorageDirectory: dir,
+	})
+
+	// The rebuilt index must actually answer, which is the only assertion that distinguishes a
+	// rebuild from a truncation.
+	database, err := db.New(dir)
+	if err != nil {
+		t.Fatalf("reopening the fixture: %s", err)
+	}
+
+	t.Cleanup(func() { _ = database.Close() })
+
+	hits, err := database.SearchMemoryHits(context.Background(), db.ContentQuery{Text: "memory", Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchMemoryHits: %s", err)
+	}
+
+	if len(hits) != 3 {
+		t.Errorf("the rebuilt index returned %d hits, want 3", len(hits))
+	}
+}
+
+// TestRebuildContentSearch_UnknownStorageDriver covers the switch's default arm. It fails fast
+// rather than opening nothing and reporting a successful rebuild of an index that does not exist.
+func TestRebuildContentSearch_UnknownStorageDriver(t *testing.T) {
+	withFatalPanic(t, func() {
+		rebuildContentSearch(backfillConfig{StorageDriver: "bogus"})
+	})
+}
+
+// TestRebuildContentSearch_ServerDriverOpenFailure covers the two server arms. Both dial a DSN
+// nothing is listening on, so the open fails and the tool exits - which is what separates this from
+// backfillSearch's equivalents: these opens are read-WRITE, and a tool that carried on past a failed
+// open would be one that had not opened the database it is about to rewrite.
+func TestRebuildContentSearch_ServerDriverOpenFailure(t *testing.T) {
+	t.Run("postgres", func(t *testing.T) {
+		withFatalPanic(t, func() {
+			rebuildContentSearch(backfillConfig{
+				StorageDriver: "postgres",
+				PostgresDSN:   "postgres://hippo:hippo@127.0.0.1:1/hippocampus?sslmode=disable&connect_timeout=1",
+			})
+		})
+	})
+
+	t.Run("mysql", func(t *testing.T) {
+		withFatalPanic(t, func() {
+			rebuildContentSearch(backfillConfig{
+				StorageDriver: "mysql",
+				MySQLDSN:      "hippo:hippo@tcp(127.0.0.1:1)/hippocampus?timeout=1s",
+			})
+		})
+	})
+}

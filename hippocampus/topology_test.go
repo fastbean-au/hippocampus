@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/fastbean-au/hippocampus/archive"
 	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
@@ -1150,5 +1151,204 @@ func TestCollectorNodeReportsATracesOnlyDeployment(t *testing.T) {
 
 	if traces != "enabled" {
 		t.Errorf("the traces attribute is %q, want \"enabled\"", traces)
+	}
+}
+
+// TestStoreNodeNamesTheServerDialects covers the two server arms of the store node. Each reads a
+// different configuration key, and getting the pairing wrong shows an operator an empty detail on
+// exactly one driver - the sort of thing nothing else notices, since the node is still there.
+func TestStoreNodeNamesTheServerDialects(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Set("storage.driver", nil)
+		viper.Set("storage.mysql.dsn", nil)
+	})
+
+	viper.Set("storage.driver", "mysql")
+	viper.Set("storage.mysql.dsn", "hippo:sup3rs3cret@tcp(db.internal:3306)/hippocampus")
+
+	spec := (&Server{}).storeNodeSpec()
+
+	if spec.name != "MySQL" {
+		t.Errorf("name = %q, want MySQL", spec.name)
+	}
+
+	if strings.Contains(spec.detail, "sup3rs3cret") {
+		t.Fatalf("the store node carries the DSN password: %q", spec.detail)
+	}
+
+	if !strings.Contains(spec.detail, "db.internal") {
+		t.Errorf("the store node lost its host as well as its password: %q", spec.detail)
+	}
+}
+
+// TestProviderDisplayName covers the two named providers and the pass-through. The pass-through is
+// the one worth pinning: configProblems refuses an unrecognised provider at startup, so anything
+// reaching here skipped validation, and showing what is actually configured beats a default that
+// would report a model server nobody is running.
+func TestProviderDisplayName(t *testing.T) {
+	cases := map[string]string{
+		"openai":  "OpenAI-compatible",
+		"ollama":  "Ollama",
+		"":        "Ollama",
+		"unknown": "unknown",
+	}
+
+	for provider, want := range cases {
+		if got := providerDisplayName(provider); got != want {
+			t.Errorf("providerDisplayName(%q) = %q, want %q", provider, got, want)
+		}
+	}
+}
+
+// TestObjectStoreNodeNamesTheFilesystemBackend covers the local arm, which is read off the store the
+// Server actually holds rather than off the configuration - reading the keys back would describe
+// what main.go was asked for rather than what it built, and those differ on any startup where both
+// backends were configured.
+func TestObjectStoreNodeNamesTheFilesystemBackend(t *testing.T) {
+	directory := t.TempDir()
+
+	store, err := archive.NewFileStore(directory)
+	if err != nil {
+		t.Fatalf("NewFileStore: %s", err)
+	}
+
+	s := &Server{objects: store}
+	s.transfer.keyPrefix = "backups/"
+
+	spec := s.objectStoreNodeSpec()
+
+	if spec.name != "local archive" {
+		t.Errorf("name = %q, want local archive", spec.name)
+	}
+
+	if spec.detail != directory {
+		t.Errorf("detail = %q, want %q", spec.detail, directory)
+	}
+
+	attributes := map[string]string{}
+	for _, a := range spec.attributes {
+		attributes[a.key] = a.value
+	}
+
+	if attributes["backend"] != "filesystem" {
+		t.Errorf("backend = %q, want filesystem", attributes["backend"])
+	}
+
+	if attributes["key_prefix"] != "backups/" {
+		t.Errorf("key_prefix = %q, want backups/", attributes["key_prefix"])
+	}
+}
+
+// TestIdpNodeFallsBackToTheJWKSUrl covers the detail's second source. An IdP configured by JWKS URL
+// alone is a supported deployment - discovery is the convenience, not the requirement - and a node
+// with no detail there would read as an identity provider nobody had configured.
+func TestIdpNodeFallsBackToTheJWKSUrl(t *testing.T) {
+	s := newTopologyServer(t)
+
+	t.Cleanup(func() {
+		viper.Set("auth.issuer", nil)
+		viper.Set("auth.jwksUrl", nil)
+	})
+
+	viper.Set("auth.method", "idp")
+	viper.Set("auth.issuer", "")
+	viper.Set("auth.jwksUrl", "https://idp.internal/.well-known/jwks.json")
+
+	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+
+	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
+	if err != nil {
+		t.Fatalf("GetTopology: %s", err)
+	}
+
+	idp := nodesById(res)[topologyNodeIdP]
+
+	if idp == nil {
+		t.Fatal("the response has no node for the identity provider")
+	}
+
+	if !strings.Contains(idp.GetDetail(), "idp.internal") {
+		t.Errorf("detail = %q, want the JWKS URL when no issuer is configured", idp.GetDetail())
+	}
+}
+
+// TestCallbackNodeDescribesAConfiguredReceiver covers the enabled arm and both of its renderers.
+// The authentication one is the reason this is worth a test of its own: it says how a delivery
+// proves who it is without naming either secret, and a renderer that named one would put a signing
+// key on a reader-visible page.
+func TestCallbackNodeDescribesAConfiguredReceiver(t *testing.T) {
+	t.Cleanup(func() {
+		for _, key := range []string{
+			"callbacks.enabled", "callbacks.url", "callbacks.allDeletions",
+			"callbacks.includeBodies", "callbacks.token", "callbacks.signingSecret",
+		} {
+			viper.Set(key, nil)
+		}
+	})
+
+	viper.Set("callbacks.enabled", true)
+	viper.Set("callbacks.url", "https://hooks.internal/forgotten")
+	viper.Set("callbacks.allDeletions", true)
+	viper.Set("callbacks.token", "sup3rs3cret")
+	viper.Set("callbacks.signingSecret", "al5os3cret")
+
+	spec := callbackNodeSpec()
+
+	if spec.staticStatus == contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED {
+		t.Fatal("a configured receiver must not read as disabled")
+	}
+
+	attributes := map[string]string{}
+	for _, a := range spec.attributes {
+		attributes[a.key] = a.value
+	}
+
+	if attributes["scope"] != "every deletion" {
+		t.Errorf("scope = %q, want every deletion", attributes["scope"])
+	}
+
+	if attributes["authentication"] != "bearer token and signature" {
+		t.Errorf("authentication = %q, want both", attributes["authentication"])
+	}
+
+	for key, value := range attributes {
+		if strings.Contains(value, "sup3rs3cret") || strings.Contains(value, "al5os3cret") {
+			t.Errorf("the %s attribute carries a secret: %q", key, value)
+		}
+	}
+}
+
+// TestCallbackAuthDescription covers the remaining three arms of the renderer on its own, the node
+// test above having covered the two-secret one.
+func TestCallbackAuthDescription(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Set("callbacks.token", nil)
+		viper.Set("callbacks.signingSecret", nil)
+	})
+
+	cases := []struct {
+		token  string
+		signed string
+		want   string
+	}{
+		{want: "none"},
+		{token: "t", want: "bearer token"},
+		{signed: "s", want: "signature"},
+	}
+
+	for _, v := range cases {
+		viper.Set("callbacks.token", v.token)
+		viper.Set("callbacks.signingSecret", v.signed)
+
+		if got := callbackAuthDescription(); got != v.want {
+			t.Errorf("callbackAuthDescription(token=%q, signed=%q) = %q, want %q", v.token, v.signed, got, v.want)
+		}
+	}
+
+	viper.Set("callbacks.allDeletions", false)
+	t.Cleanup(func() { viper.Set("callbacks.allDeletions", nil) })
+
+	if got := callbackScopeDescription(); got != "consolidation and eviction only" {
+		t.Errorf("callbackScopeDescription = %q", got)
 	}
 }

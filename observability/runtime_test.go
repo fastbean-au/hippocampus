@@ -2,11 +2,14 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"testing"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/metric"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
@@ -19,8 +22,8 @@ func collectRuntimeMetrics(t *testing.T) []metricdata.Metrics {
 	restore := otel.GetMeterProvider()
 	t.Cleanup(func() { otel.SetMeterProvider(restore) })
 
-	reader := metric.NewManualReader()
-	provider := metric.NewMeterProvider(metric.WithReader(reader))
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	otel.SetMeterProvider(provider)
 
 	registerRuntimeMetrics()
@@ -184,5 +187,86 @@ func TestRuntimeGoroutineGaugeTracksGrowth(t *testing.T) {
 	if growth := after - before; growth < int64(controlAfter-controlBefore)-tolerance {
 		t.Errorf("started %d goroutines but the gauge moved from %d to %d while the runtime moved from %d to %d",
 			extra, before, after, controlBefore, controlAfter)
+	}
+}
+
+// failingMeter is a no-op meter that refuses to create one nominated gauge, and optionally refuses
+// to register the callback. Embedding noop.Meter is what keeps it to the two methods that matter:
+// the metric.Meter interface has fifteen, and a hand-written stub would have to be revisited every
+// time the API grows one.
+type failingMeter struct {
+	noopmetric.Meter
+
+	failOn       string
+	failCallback bool
+}
+
+func (m failingMeter) Int64ObservableGauge(name string, options ...metric.Int64ObservableGaugeOption) (metric.Int64ObservableGauge, error) {
+	if name == m.failOn {
+
+		return nil, errors.New("refused")
+	}
+
+	return m.Meter.Int64ObservableGauge(name, options...)
+}
+
+func (m failingMeter) RegisterCallback(f metric.Callback, instruments ...metric.Observable) (metric.Registration, error) {
+	if m.failCallback {
+
+		return nil, errors.New("refused")
+	}
+
+	return m.Meter.RegisterCallback(f, instruments...)
+}
+
+// failingMeterProvider hands back the failing meter for every scope.
+type failingMeterProvider struct {
+	noopmetric.MeterProvider
+
+	meter failingMeter
+}
+
+func (p failingMeterProvider) Meter(name string, options ...metric.MeterOption) metric.Meter {
+	return p.meter
+}
+
+// TestRuntimeMetricsGiveUpOnAnInstrumentFailure covers the four bail-outs. None of them is fatal
+// and none of them should be: process-health gauges are the least important thing a binary
+// publishes, and a meter provider that cannot create one is not a reason to refuse to serve. What
+// this pins is that each returns rather than carrying on to register a callback over an instrument
+// it does not have - which would be a nil observation on every collection for the life of the
+// process.
+func TestRuntimeMetricsGiveUpOnAnInstrumentFailure(t *testing.T) {
+	restore := otel.GetMeterProvider()
+	t.Cleanup(func() { otel.SetMeterProvider(restore) })
+
+	cases := []struct {
+		name     string
+		provider failingMeterProvider
+	}{
+		{
+			name:     "the goroutine gauge",
+			provider: failingMeterProvider{meter: failingMeter{failOn: "hippocampus.runtime.goroutines"}},
+		},
+		{
+			name:     "the heap gauge",
+			provider: failingMeterProvider{meter: failingMeter{failOn: "hippocampus.runtime.heap_bytes"}},
+		},
+		{
+			name:     "the memory gauge",
+			provider: failingMeterProvider{meter: failingMeter{failOn: "hippocampus.runtime.memory_bytes"}},
+		},
+		{
+			name:     "the callback registration",
+			provider: failingMeterProvider{meter: failingMeter{failCallback: true}},
+		},
+	}
+
+	for _, v := range cases {
+		t.Run(v.name, func(t *testing.T) {
+			otel.SetMeterProvider(v.provider)
+
+			registerRuntimeMetrics()
+		})
 	}
 }

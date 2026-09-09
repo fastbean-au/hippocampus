@@ -875,6 +875,50 @@ func TestLogForgettingMode(t *testing.T) {
 			notWant: []string{"reclaiming down to a floor"},
 		},
 		{
+			// The external axis is reported alongside whichever other mode applies, never instead of
+			// it: the two byte targets are independent, and a deployment may well carry both.
+			name: "the external axis with a floor names both numbers",
+			consolidation: Consolidation{
+				deletionThreshold:          0.5,
+				capacityBytes:              1024,
+				capacityExternalBytes:      8192,
+				capacityExternalBytesFloor: 4096,
+			},
+			want: []string{
+				"external capacity target",
+				"Memory.external_bytes",
+				"floor of 4096",
+				"forgetting mode: decay with a capacity target",
+			},
+		},
+		{
+			// Same reasoning as the store's own axis: a floor equal to the target would print the
+			// same number twice and read as hysteresis that is not there.
+			name: "the external axis with no floor says so",
+			consolidation: Consolidation{
+				deletionThreshold:     0.5,
+				capacityBytes:         1024,
+				capacityExternalBytes: 8192,
+			},
+			want:    []string{"external capacity target", "no hysteresis floor set"},
+			notWant: []string{"reclaiming down to a floor"},
+		},
+		{
+			// The one mode where eviction runs against a real bound while this store's own size is
+			// bounded by nothing - which is the sentence an operator reading "capacity target"
+			// would otherwise assume the opposite of.
+			name: "the external axis alone is named as such",
+			consolidation: Consolidation{
+				deletionThreshold:     0.5,
+				capacityExternalBytes: 8192,
+			},
+			want: []string{
+				"forgetting mode: external capacity target only",
+				"nothing bounds this store's own size",
+			},
+			notWant: []string{"decay-only", "row-capacity pressure"},
+		},
+		{
 			// Both axes set: the byte target wins the branch, since it is the one that actually
 			// bounds the store.
 			name: "both axes configured reports the capacity target",

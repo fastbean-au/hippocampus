@@ -322,3 +322,46 @@ func freePort(t *testing.T) int {
 
 	return port
 }
+
+// TestStartCarriesTheScrapeEndpoint covers the coupling between the probe port and the Prometheus
+// scrape endpoint, which share one listener. Both arms are worth pinning because the failure mode is
+// silent in both directions: a scrape endpoint mounted on a disabled port is a scraper seeing
+// nothing, which is indistinguishable from a process that is not running, and the warning at
+// startup is the only thing that says so.
+func TestStartCarriesTheScrapeEndpoint(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("# scraped\n"))
+	})
+
+	disabled := NewHealthServer(HealthConfig{Port: 0, MetricsHandler: handler})
+
+	if err := disabled.Start(); err != nil {
+		t.Fatalf("a zero port must disable the server, not fail: %s", err)
+	}
+
+	port := freePort(t)
+
+	h := NewHealthServer(HealthConfig{
+		Port:           port,
+		BindAddress:    "127.0.0.1",
+		Component:      "test",
+		MetricsHandler: handler,
+	})
+
+	if err := h.Start(); err != nil {
+		t.Fatalf("Start: %s", err)
+	}
+
+	defer func() { _ = h.Shutdown(context.Background()) }()
+
+	res, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, DefaultMetricsPath))
+	if err != nil {
+		t.Fatalf("scraping the listener: %s", err)
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 from the scrape endpoint, got %d", res.StatusCode)
+	}
+}

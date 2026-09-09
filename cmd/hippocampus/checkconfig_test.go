@@ -48,6 +48,24 @@ func TestPrintCheckConfig(t *testing.T) {
 			report: checkConfigReport{Status: checkConfigStatusValid, ConfigFile: "./config.json", Defaulted: true, Driver: "sqlite"},
 			want:   []string{"none at './config.json'", "built-in defaults"},
 		},
+		{
+			// A deprecated key is named even on a valid configuration, which is the point of
+			// reporting it here at all: the alias still works, so nothing else in a deploy would
+			// ever say that the key it was written against is on its way out.
+			name: "a deprecated key is named alongside a valid status",
+			report: checkConfigReport{
+				Status:     checkConfigStatusValid,
+				ConfigFile: "config.json",
+				Driver:     "sqlite",
+				Deprecated: []string{"ollama.address", "auth.enabled"},
+			},
+			want: []string{
+				"warning: 'ollama.address' is deprecated",
+				"warning: 'auth.enabled' is deprecated",
+				"read into its replacement",
+				"status:  valid",
+			},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer

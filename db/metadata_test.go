@@ -925,3 +925,69 @@ func TestMetadataFilterAgainstAPreMigrationDatabase(t *testing.T) {
 		t.Errorf("expected the newly tagged memory to match, got %+v", *matched)
 	}
 }
+
+// TestMetadataDecodeFailureSurfaces covers the decode arm on both scanners.
+//
+// A metadata column holding something that is not a JSON object is what a hand-edited row, a
+// partially-completed migration, or a write from a future schema looks like. Reporting it beats
+// returning the record with its metadata silently missing, which a client would read as a record
+// that never carried any - and, for a client filtering on metadata, as one that does not match.
+//
+// Driven by writing the column directly, since nothing above the storage boundary can produce a
+// value the marshaller would not have written.
+func TestMetadataDecodeFailureSurfaces(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an event", func(t *testing.T) {
+		database := newTestDB(t)
+
+		if _, err := database.CreateEvent(ctx, types.Event{
+			Id:           "e-corrupt",
+			Name:         "corrupt",
+			TimeStart:    1,
+			Significance: 1,
+			Metadata:     map[string]string{"k": "v"},
+		}); err != nil {
+			t.Fatalf("CreateEvent: %s", err)
+		}
+
+		corruptMetadata(t, database, "events", "e-corrupt")
+
+		if _, err := database.GetEvent(ctx, "e-corrupt"); err == nil {
+			t.Error("expected an undecodable metadata column to surface as an error")
+		}
+	})
+
+	t.Run("a memory", func(t *testing.T) {
+		database := newTestDB(t)
+
+		if _, err := database.CreateMemory(ctx, types.Memory{
+			Id:           "m-corrupt",
+			Body:         "x",
+			TimeStamp:    1,
+			Significance: 1,
+			Metadata:     map[string]string{"k": "v"},
+		}); err != nil {
+			t.Fatalf("CreateMemory: %s", err)
+		}
+
+		corruptMetadata(t, database, "memories", "m-corrupt")
+
+		if _, err := database.GetMemoriesByIds(ctx, []string{"m-corrupt"}); err == nil {
+			t.Error("expected an undecodable metadata column to surface as an error")
+		}
+	})
+}
+
+// corruptMetadata writes a value into a row's metadata column that the decoder cannot read. The
+// value is a JSON array rather than arbitrary text, so it stays valid JSON for the dialects whose
+// column type insists on that - the failure under test is the shape, not the syntax.
+func corruptMetadata(t *testing.T, database *DB, table string, id string) {
+	t.Helper()
+
+	if _, err := database.exec(context.Background(),
+		`UPDATE `+table+` SET metadata = ? WHERE id = ?`, `["not","an","object"]`, id,
+	); err != nil {
+		t.Fatalf("corrupting %s.%s: %s", table, id, err)
+	}
+}
