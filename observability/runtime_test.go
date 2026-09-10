@@ -5,6 +5,7 @@ import (
 	"errors"
 	"runtime"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -103,6 +104,16 @@ func TestRuntimeMetricsArePublished(t *testing.T) {
 	}
 }
 
+// The tolerances and retry budget quiescedGoroutineSample samples under.
+const (
+	// Covers the goroutines that may come and go between the callback observing the gauge and the
+	// control read a few instructions later.
+	goroutineTolerance = 2
+
+	goroutineSampleAttempts = 50
+	goroutineSampleBackoff  = 20 * time.Millisecond
+)
+
 // goroutineSample collects the goroutines gauge and reads runtime.NumGoroutine beside it, so the
 // caller holds the gauge's value and the runtime's own count from what is, for this purpose, the
 // same instant.
@@ -122,6 +133,41 @@ func goroutineSample(t *testing.T) (int64, int) {
 	return 0, 0
 }
 
+// quiescedGoroutineSample samples until the gauge and the control agree, which is the only state
+// in which the pair can be compared at all.
+//
+// "The same instant" is a convenient fiction: the gauge is observed inside reader.Collect and the
+// control is read a few instructions after Collect returns, so anything exiting in that gap makes
+// the gauge read HIGH against its own control. That is not hypothetical churn - a package that has
+// just finished exercising OTLP exporters and health servers is still draining goroutines, and CI
+// has seen the gauge report 10 against a control of 6. Retrying is what waits that drain out, and
+// it does not weaken the assertion: a gauge reporting a constant never converges and fails here
+// carrying the same two numbers it would have printed before.
+func quiescedGoroutineSample(t *testing.T, when string) (int64, int) {
+	t.Helper()
+
+	var (
+		gauge   int64
+		control int
+	)
+
+	for i := 0; i < goroutineSampleAttempts; i++ {
+		gauge, control = goroutineSample(t)
+
+		if diff := gauge - int64(control); diff <= goroutineTolerance && diff >= -goroutineTolerance {
+
+			return gauge, control
+		}
+
+		time.Sleep(goroutineSampleBackoff)
+	}
+
+	t.Fatalf("%s starting the goroutines the gauge reported %d and the runtime reported %d, still disagreeing after %d attempts",
+		when, gauge, control, goroutineSampleAttempts)
+
+	return 0, 0
+}
+
 // TestRuntimeGoroutineGaugeTracksGrowth verifies the goroutine gauge actually moves, which is the
 // entire reason it exists. Registering an observable gauge that returns a constant would satisfy
 // the test above and be useless for finding a leak.
@@ -134,15 +180,9 @@ func goroutineSample(t *testing.T) (int64, int) {
 // exactly the same churn, which is what makes it the honest comparison, and a gauge reporting a
 // constant fails it just as loudly.
 func TestRuntimeGoroutineGaugeTracksGrowth(t *testing.T) {
-	const (
-		extra = 25
+	const extra = 25
 
-		// Covers the goroutines that may come and go between the callback observing the gauge and
-		// the control read a few instructions later.
-		tolerance = 2
-	)
-
-	before, controlBefore := goroutineSample(t)
+	before, controlBefore := quiescedGoroutineSample(t, "before")
 
 	release := make(chan struct{})
 	running := make(chan struct{}, extra)
@@ -158,33 +198,17 @@ func TestRuntimeGoroutineGaugeTracksGrowth(t *testing.T) {
 		<-running
 	}
 
-	after, controlAfter := goroutineSample(t)
+	after, controlAfter := quiescedGoroutineSample(t, "after")
 	close(release)
-
-	samples := []struct {
-		when    string
-		gauge   int64
-		control int
-	}{
-		{"before", before, controlBefore},
-		{"after", after, controlAfter},
-	}
-
-	for _, sample := range samples {
-		if diff := sample.gauge - int64(sample.control); diff > tolerance || diff < -tolerance {
-			t.Errorf("%s starting the goroutines the gauge reported %d and the runtime reported %d",
-				sample.when, sample.gauge, sample.control)
-		}
-	}
 
 	// The control must have grown by what was started, or the premise of the test - that those
 	// goroutines are all still blocked - did not hold and the comparison below proves nothing.
-	if growth := controlAfter - controlBefore; growth < extra-tolerance {
+	if growth := controlAfter - controlBefore; growth < extra-goroutineTolerance {
 		t.Errorf("started %d goroutines but the runtime count moved from %d to %d",
 			extra, controlBefore, controlAfter)
 	}
 
-	if growth := after - before; growth < int64(controlAfter-controlBefore)-tolerance {
+	if growth := after - before; growth < int64(controlAfter-controlBefore)-goroutineTolerance {
 		t.Errorf("started %d goroutines but the gauge moved from %d to %d while the runtime moved from %d to %d",
 			extra, before, after, controlBefore, controlAfter)
 	}
