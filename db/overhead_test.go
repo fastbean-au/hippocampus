@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,30 +53,65 @@ func overheadBody(rng *rand.Rand, n int) string {
 	)
 }
 
+// overheadWriters is how many goroutines share the fill. Every one of these writes is a round trip
+// to a server, so a serial fill measures the network rather than the storage: it made this the
+// longest test in the repo by an order of magnitude and put the whole db package past the default
+// ten-minute timeout on CI. Writing concurrently is how the service itself fills a store, and what
+// the rows occupy when it is done does not depend on the order they arrived in.
+const overheadWriters = 8
+
 // fillForOverhead writes overheadRows memories through CreateMemory - so compression, the content
 // index and the significance registry all run exactly as they do in the service - and returns the
 // total plain body size, which is what the stored payload is compared against to report a ratio.
 func fillForOverhead(t *testing.T, database *DB, bodyBytes int) int64 {
 	t.Helper()
 
-	rng := rand.New(rand.NewSource(1))
-	ctx := context.Background()
+	var (
+		writers  sync.WaitGroup
+		payloads = make([]int64, overheadWriters)
+		failures = make([]error, overheadWriters)
+	)
+
+	for w := 0; w < overheadWriters; w++ {
+		writers.Add(1)
+
+		// Each writer takes every overheadWriters-th row and seeds its own generator, so the total
+		// written stays the same on every run whatever order the writers interleave in.
+		go func(w int) {
+			defer writers.Done()
+
+			rng := rand.New(rand.NewSource(int64(w) + 1))
+			ctx := context.Background()
+
+			for i := w; i < overheadRows; i += overheadWriters {
+				body := overheadBody(rng, bodyBytes)
+				payloads[w] += int64(len(body))
+
+				if _, err := database.CreateMemory(ctx, types.Memory{
+					Id:           uuid.New().String(),
+					TimeStamp:    time.Now().UnixNano(),
+					Significance: int32(1 + rng.Intn(10)),
+					Body:         body,
+					Group:        "overhead",
+				}); err != nil {
+					failures[w] = fmt.Errorf("CreateMemory %d: %w", i, err)
+
+					return
+				}
+			}
+		}(w)
+	}
+
+	writers.Wait()
 
 	var payload int64
 
-	for i := 0; i < overheadRows; i++ {
-		body := overheadBody(rng, bodyBytes)
-		payload += int64(len(body))
-
-		if _, err := database.CreateMemory(ctx, types.Memory{
-			Id:           uuid.New().String(),
-			TimeStamp:    time.Now().UnixNano(),
-			Significance: int32(1 + rng.Intn(10)),
-			Body:         body,
-			Group:        "overhead",
-		}); err != nil {
-			t.Fatalf("CreateMemory %d: %s", i, err)
+	for i, v := range payloads {
+		if failures[i] != nil {
+			t.Fatalf("filling the store: %s", failures[i])
 		}
+
+		payload += v
 	}
 
 	return payload
@@ -204,11 +240,25 @@ func (c overheadCase) name() string {
 // Both index modes are exercised, because the content index is the largest single term and a
 // deployment answering its searches from OpenSearch does not carry it.
 func TestRowOverheadMatchesRealStorage(t *testing.T) {
+	// The dialect sweep would run every one of these measurements a second and a third time and
+	// learn nothing: this test drives its own opens rather than newTestDB, so dialectEnv selects
+	// nothing here and each pass measures all three dialects again. Measure once, in the pass that
+	// collects coverage.
+	if os.Getenv(dialectEnv) != "" {
+		t.Skipf("measured once per run: %s repeats every dialect this test already covers", dialectEnv)
+	}
+
+	// The three dialects are three separate stores on three separate engines, so they are measured
+	// concurrently - the cases within one dialect share a database and stay sequential. Serially
+	// this test took longer than every other test in the package put together.
+
 	// The embedded dialect measures its own pages, so UsedBytes there is exact - it matched the
 	// database file byte for byte in every run of the measurement this test came from. That makes it
 	// the reading to hold the estimate against: these allowances still drive eviction's view of what
 	// a deletion frees and the preview's byte totals, on every dialect.
 	t.Run("sqlite", func(t *testing.T) {
+		t.Parallel()
+
 		for _, test := range overheadCases {
 			t.Run(test.name(), func(t *testing.T) {
 				directory := t.TempDir()
@@ -234,6 +284,8 @@ func TestRowOverheadMatchesRealStorage(t *testing.T) {
 	})
 
 	t.Run("postgres", func(t *testing.T) {
+		t.Parallel()
+
 		dsn := os.Getenv(postgresTestDSNEnv)
 		if dsn == "" {
 			t.Skipf("set %s to run the postgres storage measurement", postgresTestDSNEnv)
@@ -256,6 +308,8 @@ func TestRowOverheadMatchesRealStorage(t *testing.T) {
 	})
 
 	t.Run("mysql", func(t *testing.T) {
+		t.Parallel()
+
 		dsn := os.Getenv(mysqlTestDSNEnv)
 		if dsn == "" {
 			t.Skipf("set %s to run the mysql storage measurement", mysqlTestDSNEnv)
@@ -306,6 +360,16 @@ func openForOverhead(t *testing.T, open func(...Option) (*DB, error), test overh
 	if err := database.Purge(context.Background()); err != nil {
 		t.Fatalf("Purge: %s", err)
 	}
+
+	// And empty it again on the way out. The purge above is what makes a case measure its own rows,
+	// but it happens after the open - so a case leaving rows behind for a case that indexes them
+	// makes the next open backfill a content index it is about to discard, which on MySQL cost
+	// nearly as much as the fill itself.
+	t.Cleanup(func() {
+		if err := database.Purge(context.Background()); err != nil {
+			t.Errorf("Purge on cleanup: %s", err)
+		}
+	})
 
 	return database
 }

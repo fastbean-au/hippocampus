@@ -92,7 +92,10 @@ jobs:
           # counterpart: POSTGRES_USER is that container's superuser.
           HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN: root:hippocampus@tcp(localhost:3306)/hippocampus_test
           HIPPOCAMPUS_TEST_OPENSEARCH_URL: http://localhost:9200
-        run: go test -coverprofile=coverage.out ./...
+        # Longer than the ten-minute default because of db/overhead_test.go: it writes tens of
+        # thousands of rows to each of the three engines to measure what they really occupy, which
+        # is minutes of wall time that a timeout should not be able to mistake for a hang.
+        run: go test -timeout 20m -coverprofile=coverage.out ./...
 
       # The same db suite, rerun against each server dialect. HIPPOCAMPUS_TEST_DIALECT re-points
       # newTestDB (db/conformance_test.go), so the ~190 shared tests execute on Postgres and MySQL
