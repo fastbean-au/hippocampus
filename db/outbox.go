@@ -222,13 +222,19 @@ func (d *DB) ConfirmSearchDeletes(ctx context.Context, seqs []int64) error {
 	return nil
 }
 
-// PruneSearchOutbox drops rows older than maxAge, and trims the oldest beyond maxRows.
+// PruneSearchOutbox applies the configured bounds: rows older than MaxAge go, and so do the oldest
+// beyond whichever of MaxRows and MaxBytes binds first.
 //
 // The outbox must not be able to eat the store it lives in. An index that is unreachable for a long
 // time would otherwise grow it without bound - so the policy is that a delete which has waited this
 // long is abandoned to the reconciliation sweep, which removes stale documents whatever put them
 // there. That is the sweep's whole purpose: it is the backstop, and this is the case it backs.
-func (d *DB) PruneSearchOutbox(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error) {
+//
+// The byte cap is a row cap here and nothing more (rowsWithinBytes). These rows are fixed width - an
+// id, a timestamp and a surrogate key - so their bytes are their count times an allowance at the
+// report and at the exclusion alike, and a cap expressed in the unit an operator sizes a disk in
+// converts exactly rather than approximately.
+func (d *DB) PruneSearchOutbox(ctx context.Context, bounds QueueBounds) (int64, error) {
 	log.Trace("func() db.PruneSearchOutbox")
 
 	if !d.searchOutbox {
@@ -241,11 +247,13 @@ func (d *DB) PruneSearchOutbox(ctx context.Context, maxAge time.Duration, maxRow
 
 	var pruned int64
 
-	if maxAge > 0 {
+	maxRows := rowsWithinBytes(bounds, outboxRowBytes)
+
+	if bounds.MaxAge > 0 {
 		res, err := d.exec(
 			ctx,
 			`DELETE FROM `+searchOutboxTable+` WHERE queued_at < ?`,
-			time.Now().Add(-maxAge).UnixNano(),
+			time.Now().Add(-bounds.MaxAge).UnixNano(),
 		)
 		if err != nil {
 			log.Errorf("failed to prune the search outbox by age: %s", err.Error())

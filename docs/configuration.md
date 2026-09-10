@@ -1933,6 +1933,10 @@ keys:
 - `opensearch.outbox.maxAgeHours` (default `24`) — queued deletions older than this are discarded.
   Hours rather than days, deliberately: this queue is meant to drain in seconds, so a day of backlog
   is already an outage.
+- `opensearch.outbox.maxBytes` (default `0`, no bound) — the same bound stated in the unit a disk is
+  sized in. These rows are fixed width (an id, a timestamp and a surrogate key, charged 96 bytes
+  each), so this converts to a row cap exactly and the tighter of the two wins; the row cap above is
+  already roughly 96 MB. It is not defaulted because it would be that same bound said twice.
 
 Reaching either cap logs a warning and increments `hippocampus.search.outbox.abandoned`; what is
 discarded becomes the stale pass's job to find. Watch `hippocampus.search.outbox_depth` — sustained
@@ -2088,6 +2092,7 @@ Off by default. Enabling it needs a URL and nothing else:
     "includeBodies": false,
     "maxBodyBytes": 65536,
     "maxIdsPerDelivery": 500,
+    "maxBytes": 0,
     "events": {
         "memoryForgotten": true,
         "eventForgotten": true,
@@ -2273,6 +2278,21 @@ pressure and evict live memories to make room for the news that memories were ev
 excluded from the disk — see [The capacity target bounds the memories, not the
 database](operations.md#the-capacity-target-bounds-the-memories-not-the-database).
 
+Which is why `callbacks.maxRows` is not enough on its own, and `callbacks.maxBytes` exists. A row
+here is a whole delivery: up to `maxIdsPerDelivery` items, each of which may carry a body up to
+`maxBodyBytes` under `includeBodies`. So the row cap bounds this queue somewhere between a few
+hundred megabytes of bare ids and a figure with no useful ceiling, while the other two excluded
+tables have fixed-width rows whose row caps genuinely are byte caps. `maxBytes` is measured against
+the rendered payloads themselves — a `payload_bytes` column written at insert, so applying it costs
+no scan of the queue — and the newest delivery is never abandoned for it, since a delivery larger
+than the whole cap would otherwise be discarded the moment it was queued and the queue would deliver
+nothing for the life of that configuration. That case is logged at Warn.
+
+It is **not defaulted**, unlike `maxRows` and `maxAgeHours` beside it. Reaching it discards
+notifications nobody will ever receive, and how many bytes of those a deployment can afford is a
+property of its disk rather than of this service. Setting `includeBodies` without it is warned about
+at startup, that being the arrangement in which nothing bounds the queue's size at all.
+
 Watch `hippocampus.callbacks.queue_depth` — a rising depth with a non-zero
 `hippocampus.callbacks.delivered{outcome="failed"}` rate is a receiver that is refusing; a deep queue
 with no attempts is one the dispatcher has not reached yet. Both shipped alert rules cover this.
@@ -2307,6 +2327,28 @@ client-initiated ones the client already knows about — recording them on every
 a widened feed by the replica count with nothing to drain it. The queue is shared, so one owner
 drains it.
 
+#### The sink is HTTP, and only HTTP
+
+There is one implementation, and it POSTs. A deployment whose event bus is NATS, Kafka, MQTT or
+RabbitMQ receives these deliveries by running a small HTTP-to-broker shim in front of it, not by
+configuring a broker here.
+
+That is deliberate rather than pending. A webhook is the one receiver every deployment can already
+run, the shim is a few dozen lines against a client the deployment is running anyway, and the broker
+clients this repository does ship live in `integrations/eventsource` — a separate module the root
+deliberately does not import, which is exactly why they cost the service nothing. Pulling four
+broker dependency trees into its build to save some deployments a shim would charge every deployment
+for it. Those bridges also run the other way: they consume from a broker and write memories, which is
+the inbound half and shares nothing with this.
+
+Two things a shim wants to know, both properties of the queue rather than of the sink. It should
+answer 2xx only once the delivery is on the broker, because a 2xx confirms the delivery and it is
+then discarded — anything else is news the queue believes it delivered. And delivery is
+**at-least-once**: a receiver that publishes and then fails to answer is retried with the same body,
+and nothing on the wire identifies a delivery, so a shim needing exactly-once deduplicates on a hash
+of the body. The signature header cannot serve as that key — it covers a timestamp taken per attempt,
+so a retry of an identical body signs differently.
+
 #### Every key
 
 | Key                                 | Default   | What it does                                                                                 |
@@ -2327,6 +2369,7 @@ drains it.
 | `callbacks.atRiskLimit`             | `1000`    | How many at-risk memories one cycle reports, lowest value first. Capped at 1000.             |
 | `callbacks.atRiskMargin`            | `0`       | Raises the threshold the at-risk scan selects on, so the warning arrives with notice on it.  |
 | `callbacks.maxRows`                 | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound.   |
+| `callbacks.maxBytes`                | `0`       | Queue byte cap, measured against the stored payloads. 0 removes the bound. See below.        |
 | `callbacks.maxAgeHours`             | `24`      | Queue age cap, applied alongside the row cap. 0 removes the bound.                           |
 | `callbacks.batchSize`               | `100`     | How many deliveries one dispatch pass claims.                                                |
 | `callbacks.retryBaseBackoffSeconds` | `1`       | First retry delay; doubles per attempt, jittered.                                            |

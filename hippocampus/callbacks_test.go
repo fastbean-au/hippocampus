@@ -71,10 +71,10 @@ func callbackServer(t *testing.T, policy db.CallbackPolicy) (*Server, *db.DB) {
 	database.SetCallbackPolicy(policy)
 
 	return &Server{
-		db:                  database,
-		callbacksEnabled:    policy.Enabled,
-		callbackMaxRows:     1000,
-		callbackMaxAge:      time.Hour,
+		db:               database,
+		callbacksEnabled: policy.Enabled,
+		callbackBounds:   db.QueueBounds{MaxAge: time.Hour, MaxRows: 1000},
+
 		callbackBatchSize:   10,
 		callbackBaseBack:    time.Second,
 		callbackMaxBack:     time.Minute,
@@ -259,7 +259,7 @@ func TestDispatchPrunesOnTheIdlePathOnly(t *testing.T) {
 	s, database := callbackServer(t, recordingPolicy())
 	ctx := context.Background()
 
-	s.callbackMaxAge = time.Hour
+	s.callbackBounds.MaxAge = time.Hour
 
 	if err := database.QueueCallbacks(ctx, []db.CallbackDelivery{{
 		Kind:      db.CallbackKindMemoryForgotten,

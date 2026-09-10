@@ -350,6 +350,9 @@ func TestInitSchema_MigrationFailuresStopTheRun(t *testing.T) {
 			expectSupersededIndexDrop(mock, driverSQLite)
 			mock.ExpectExec(`CREATE INDEX IF NOT EXISTS`).WillReturnError(errors.New("boom"))
 		},
+		"callback_payload_bytes": func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, migration := range (&DB{driver: driverSQLite}).migrations() {

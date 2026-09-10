@@ -68,13 +68,13 @@ func (o *outboxFaultStore) ConfirmSearchDeletes(ctx context.Context, seqs []int6
 	return o.Store.ConfirmSearchDeletes(ctx, seqs)
 }
 
-func (o *outboxFaultStore) PruneSearchOutbox(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error) {
+func (o *outboxFaultStore) PruneSearchOutbox(ctx context.Context, bounds db.QueueBounds) (int64, error) {
 	if o.pruneErr != nil {
 
 		return 0, o.pruneErr
 	}
 
-	return o.Store.PruneSearchOutbox(ctx, maxAge, maxRows)
+	return o.Store.PruneSearchOutbox(ctx, bounds)
 }
 
 func (o *outboxFaultStore) SearchOutboxDepth(ctx context.Context) (int64, error) {
@@ -125,12 +125,12 @@ func TestStartOutboxDrainDefaultsTheCaps(t *testing.T) {
 
 	s.startOutboxDrain(nil)
 
-	if s.outboxMaxRows != defaultOutboxMaxRows {
-		t.Errorf("expected the default row cap %d, got %d", defaultOutboxMaxRows, s.outboxMaxRows)
+	if s.outboxBounds.MaxRows != defaultOutboxMaxRows {
+		t.Errorf("expected the default row cap %d, got %d", defaultOutboxMaxRows, s.outboxBounds.MaxRows)
 	}
 
-	if s.outboxMaxAge != defaultOutboxMaxAgeHours*time.Hour {
-		t.Errorf("expected the default age cap, got %s", s.outboxMaxAge)
+	if s.outboxBounds.MaxAge != defaultOutboxMaxAgeHours*time.Hour {
+		t.Errorf("expected the default age cap, got %s", s.outboxBounds.MaxAge)
 	}
 
 	viper.Set("opensearch.outbox.maxRows", 42)
@@ -139,12 +139,12 @@ func TestStartOutboxDrainDefaultsTheCaps(t *testing.T) {
 	s = outboxDrainServer(t, nil, false)
 	s.startOutboxDrain(nil)
 
-	if s.outboxMaxRows != 42 {
-		t.Errorf("expected the configured row cap 42, got %d", s.outboxMaxRows)
+	if s.outboxBounds.MaxRows != 42 {
+		t.Errorf("expected the configured row cap 42, got %d", s.outboxBounds.MaxRows)
 	}
 
-	if s.outboxMaxAge != 3*time.Hour {
-		t.Errorf("expected the configured age cap, got %s", s.outboxMaxAge)
+	if s.outboxBounds.MaxAge != 3*time.Hour {
+		t.Errorf("expected the configured age cap, got %s", s.outboxBounds.MaxAge)
 	}
 }
 
@@ -326,7 +326,7 @@ func TestDrainOutboxOnceSurfacesStorageFailures(t *testing.T) {
 	t.Run("the claim fails", func(t *testing.T) {
 		database := mustOutboxStore(t)
 		store := &outboxFaultStore{Store: database, claimErr: errors.New("boom")}
-		s := &Server{db: store, outboxMaxRows: 10, outboxMaxAge: time.Hour}
+		s := &Server{db: store, outboxBounds: db.QueueBounds{MaxAge: time.Hour, MaxRows: 10}}
 
 		if applied := s.drainOutboxOnce(&syncingIndex{}); applied != 0 {
 			t.Errorf("expected nothing applied, got %d", applied)
@@ -336,7 +336,7 @@ func TestDrainOutboxOnceSurfacesStorageFailures(t *testing.T) {
 	t.Run("the confirmation fails", func(t *testing.T) {
 		database := mustOutboxStore(t)
 		store := &outboxFaultStore{Store: database, confirmErr: errors.New("boom")}
-		s := &Server{db: store, outboxMaxRows: 10, outboxMaxAge: time.Hour}
+		s := &Server{db: store, outboxBounds: db.QueueBounds{MaxAge: time.Hour, MaxRows: 10}}
 
 		database.SetSearchOutbox(true)
 		deleteOneMemory(t, database)
@@ -357,7 +357,7 @@ func TestDrainOutboxOnceSurfacesStorageFailures(t *testing.T) {
 	t.Run("the prune fails on an idle pass", func(t *testing.T) {
 		database := mustOutboxStore(t)
 		store := &outboxFaultStore{Store: database, pruneErr: errors.New("boom")}
-		s := &Server{db: store, outboxMaxRows: 10, outboxMaxAge: time.Hour}
+		s := &Server{db: store, outboxBounds: db.QueueBounds{MaxAge: time.Hour, MaxRows: 10}}
 
 		if applied := s.drainOutboxOnce(&syncingIndex{}); applied != 0 {
 			t.Errorf("expected nothing applied on an empty queue, got %d", applied)
@@ -367,7 +367,7 @@ func TestDrainOutboxOnceSurfacesStorageFailures(t *testing.T) {
 	t.Run("the depth read fails on an idle pass", func(t *testing.T) {
 		database := mustOutboxStore(t)
 		store := &outboxFaultStore{Store: database, depthErr: errors.New("boom")}
-		s := &Server{db: store, outboxMaxRows: 10, outboxMaxAge: time.Hour}
+		s := &Server{db: store, outboxBounds: db.QueueBounds{MaxAge: time.Hour, MaxRows: 10}}
 
 		if applied := s.drainOutboxOnce(&syncingIndex{}); applied != 0 {
 			t.Errorf("expected nothing applied on an empty queue, got %d", applied)

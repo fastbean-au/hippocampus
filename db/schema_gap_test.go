@@ -273,6 +273,11 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 		"content_search_sql": func(mock sqlmock.Sqlmock, _ driver) {
 			mock.ExpectExec(`CREATE TABLE IF NOT EXISTS ` + contentSearchTable).WillReturnError(errors.New("boom"))
 		},
+		"callback_payload_bytes": func(mock sqlmock.Sqlmock, _ driver) {
+			// The probe, not the ALTER: this step asks whether the column is there before adding
+			// it, on both server dialects, because it has to know whether to backfill.
+			mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, dialect := range serverDialects {

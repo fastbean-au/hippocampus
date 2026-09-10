@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -244,7 +247,7 @@ func TestCallbackQueuePruning(t *testing.T) {
 		queueOne(t, d, testMemoryDelivery("fresh"))
 	}
 
-	pruned, err := d.PruneCallbackQueue(context.Background(), 24*time.Hour, 0)
+	pruned, err := d.PruneCallbackQueue(context.Background(), QueueBounds{MaxAge: 24 * time.Hour})
 	if err != nil {
 		t.Fatalf("PruneCallbackQueue (age): %s", err.Error())
 	}
@@ -257,7 +260,7 @@ func TestCallbackQueuePruning(t *testing.T) {
 		t.Fatalf("depth after the age prune is %d, want 4", depth)
 	}
 
-	pruned, err = d.PruneCallbackQueue(context.Background(), 0, 2)
+	pruned, err = d.PruneCallbackQueue(context.Background(), QueueBounds{MaxRows: 2})
 	if err != nil {
 		t.Fatalf("PruneCallbackQueue (rows): %s", err.Error())
 	}
@@ -291,7 +294,7 @@ func TestCallbackQueuePruningIsGated(t *testing.T) {
 
 	d.SetCallbackPolicy(CallbackPolicy{})
 
-	pruned, err := d.PruneCallbackQueue(context.Background(), time.Hour, 1)
+	pruned, err := d.PruneCallbackQueue(context.Background(), QueueBounds{MaxAge: time.Hour, MaxRows: 1})
 	if err != nil {
 		t.Fatalf("PruneCallbackQueue: %s", err.Error())
 	}
@@ -679,5 +682,252 @@ func TestPerKindTogglesStopTheRowsBeingWritten(t *testing.T) {
 	// callbacks.events.sleepCompleted itself.
 	if !policy.wantsKind(CallbackKindSleepCompleted) {
 		t.Error("the completion callback is gated by a per-kind toggle it should not consult")
+	}
+}
+
+// randomText is an incompressible body of a given length. Deliveries are gzipped into the queue when
+// that helps, so a payload of repeated text stores at a fraction of its size - which for a test
+// about byte accounting is the difference between asserting on what was written and asserting on
+// nothing. Hex rather than raw bytes because a payload item's Body is a JSON string.
+func randomText(t *testing.T, length int) string {
+	t.Helper()
+
+	raw := make([]byte, (length+1)/2)
+
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatalf("failed to build an incompressible body: %s", err.Error())
+	}
+
+	return hex.EncodeToString(raw)[:length]
+}
+
+// bodyDelivery is a delivery whose payload is large enough that the queue's size is dominated by it
+// rather than by the fixed columns - which is exactly the arrangement callbacks.maxBytes exists for,
+// and the one a row cap says nothing about.
+func bodyDelivery(id string, body string) CallbackDelivery {
+	return CallbackDelivery{
+		Kind:      CallbackKindMemoryForgotten,
+		Cause:     CauseConsolidation,
+		ItemCount: 1,
+		Payload:   CallbackPayload{Items: []CallbackItem{{Id: id, Body: body}}},
+	}
+}
+
+// queueBytes is what the queue holds, as the cap and the report both measure it.
+func queueBytes(t *testing.T, d *DB) int64 {
+	t.Helper()
+
+	measured, err := d.AncillaryStorage(context.Background())
+	if err != nil {
+		t.Fatalf("AncillaryStorage: %s", err.Error())
+	}
+
+	return measured.CallbackQueue.Bytes
+}
+
+// TestCallbackQueueBytePruning is the point of the byte cap: a queue inside its row cap and well
+// outside any sane disk budget, trimmed on the figure that actually describes it.
+//
+// The bodies are incompressible (random) on purpose. payload_bytes records what was STORED, and a
+// payload of repeated text gzips to almost nothing - which would leave the test asserting against a
+// number two orders of magnitude away from the one it wrote.
+func TestCallbackQueueBytePruning(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
+
+	for i := range 8 {
+		queueOne(t, d, bodyDelivery(fmt.Sprintf("m%d", i), randomText(t, 4096)))
+	}
+
+	before := queueBytes(t, d)
+
+	// Well above what eight rows cost as rows - which is the property, the whole complaint being
+	// that a count says nothing here. Not asserted against the 32 KiB written: a payload is JSON and
+	// is gzipped when that helps, and hex text carries four bits of entropy per byte, so even a
+	// random body compresses a little and by a margin that moves between runs.
+	if before < 8*2048 {
+		t.Fatalf("eight 4 KiB payloads measure %d bytes, which is not the payloads being counted", before)
+	}
+
+	// Room for roughly three of the eight, derived from the measurement rather than from the size
+	// written, for the reason above. No row cap at all, so anything trimmed was trimmed on bytes.
+	budget := before * 3 / 8
+
+	pruned, err := d.PruneCallbackQueue(context.Background(), QueueBounds{MaxBytes: budget})
+	if err != nil {
+		t.Fatalf("PruneCallbackQueue: %s", err.Error())
+	}
+
+	if pruned == 0 {
+		t.Fatal("the byte cap pruned nothing from a queue several times its size")
+	}
+
+	after := queueBytes(t, d)
+
+	if after > budget {
+		t.Errorf("the queue holds %d bytes after pruning to a %d-byte cap", after, budget)
+	}
+
+	if after == 0 {
+		t.Fatal("the byte cap emptied the queue rather than trimming it to the cap")
+	}
+
+	// The NEWEST survive, exactly as the row cap keeps them: an older undelivered notification has
+	// had longer to matter less.
+	remaining, err := d.ClaimCallbacks(context.Background(), 10, time.Now().UnixNano())
+	if err != nil {
+		t.Fatalf("ClaimCallbacks: %s", err.Error())
+	}
+
+	if len(remaining) == 0 {
+		t.Fatal("nothing survived")
+	}
+
+	if remaining[len(remaining)-1].Payload.Items[0].Id != "m7" {
+		t.Errorf("the newest surviving delivery is %q, want m7 - the byte cap kept the wrong end",
+			remaining[len(remaining)-1].Payload.Items[0].Id)
+	}
+}
+
+// TestCallbackQueueByteCapKeepsTheNewestDelivery pins the one case where the cap is deliberately
+// not honoured. A delivery larger than the whole cap would otherwise be discarded the instant it
+// was queued, for the life of that configuration - a queue that silently delivers nothing rather
+// than one that is bounded.
+func TestCallbackQueueByteCapKeepsTheNewestDelivery(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
+
+	queueOne(t, d, bodyDelivery("old", randomText(t, 8192)))
+	queueOne(t, d, bodyDelivery("new", randomText(t, 8192)))
+
+	if _, err := d.PruneCallbackQueue(context.Background(), QueueBounds{MaxBytes: 64}); err != nil {
+		t.Fatalf("PruneCallbackQueue: %s", err.Error())
+	}
+
+	remaining, err := d.ClaimCallbacks(context.Background(), 10, time.Now().UnixNano())
+	if err != nil {
+		t.Fatalf("ClaimCallbacks: %s", err.Error())
+	}
+
+	if len(remaining) != 1 {
+		t.Fatalf("%d deliveries survived a cap smaller than one of them, want exactly the newest", len(remaining))
+	}
+
+	if remaining[0].Payload.Items[0].Id != "new" {
+		t.Errorf("the survivor is %q, want the newest", remaining[0].Payload.Items[0].Id)
+	}
+}
+
+// TestCallbackQueueByteCapIsNotTakenWhenUnset pins the gating: reading the running total is a pass
+// over the queue, and a deployment that has configured no byte cap must not pay for it. Asserted
+// behaviourally - an unset cap trims nothing, whatever the queue holds.
+func TestCallbackQueueByteCapIsNotTakenWhenUnset(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
+
+	for i := range 4 {
+		queueOne(t, d, bodyDelivery(fmt.Sprintf("m%d", i), randomText(t, 4096)))
+	}
+
+	pruned, err := d.PruneCallbackQueue(context.Background(), QueueBounds{})
+	if err != nil {
+		t.Fatalf("PruneCallbackQueue: %s", err.Error())
+	}
+
+	if pruned != 0 {
+		t.Errorf("an unbounded prune removed %d deliveries", pruned)
+	}
+}
+
+// TestCallbackQueueBytesFollowThePayload is the measurement half, and the reason the column exists:
+// a count says nothing about a queue whose rows can carry five hundred memory bodies, so equal
+// numbers of very different deliveries must not move the figure by the same amount.
+//
+// Measured as two deltas on ONE store rather than as two stores compared: newTestDB hands back the
+// same shared database on the server dialects, so a second "empty" store would be the first one's
+// queue looked at twice.
+func TestCallbackQueueBytesFollowThePayload(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
+
+	empty := queueBytes(t, d)
+
+	for i := range 4 {
+		queueOne(t, d, testMemoryDelivery(fmt.Sprintf("bare%d", i)))
+	}
+
+	thin := queueBytes(t, d) - empty
+
+	for i := range 4 {
+		queueOne(t, d, bodyDelivery(fmt.Sprintf("body%d", i), randomText(t, 8192)))
+	}
+
+	fat := queueBytes(t, d) - empty - thin
+
+	if thin <= 0 || fat <= 0 {
+		t.Fatalf("four deliveries each added %d and %d bytes", thin, fat)
+	}
+
+	if fat < thin*4 {
+		t.Errorf("four deliveries carrying 8 KiB each added %d bytes against %d for four bare ones "+
+			"- the payload is not being counted", fat, thin)
+	}
+}
+
+// TestCallbackPayloadBytesBackfillsAPreMigrationQueue is migration 16 against rows that predate it.
+//
+// No released fixture can exercise it: every one of them predates the callback QUEUE, so their
+// upgrade creates the table with the column already on it and backfills nothing. What a real
+// deployment meets is the other case entirely - a queue that has been in use for months, whose rows
+// were all written before the column existed - so the column is dropped from a live store here and
+// the migration re-run over what is left.
+//
+// The backfill matters more than a transient queue suggests. Disabling callbacks stops the writing
+// AND the trimming, so a store can hold a queue nothing has touched for months; left at zero those
+// rows would report as costing nothing, which is the exact false reassurance the report exists to
+// end - and would also let the byte cap trim on a total that ignored most of the queue.
+func TestCallbackPayloadBytesBackfillsAPreMigrationQueue(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
+
+	for i := range 3 {
+		queueOne(t, d, bodyDelivery(fmt.Sprintf("m%d", i), randomText(t, 2048)))
+	}
+
+	written := queueBytes(t, d)
+
+	if _, err := d.sql.Exec(`ALTER TABLE ` + callbackQueueTable + ` DROP COLUMN payload_bytes`); err != nil {
+		t.Fatalf("failed to build the pre-migration queue: %s", err.Error())
+	}
+
+	if err := d.migrateCallbackPayloadBytes(); err != nil {
+		t.Fatalf("migrateCallbackPayloadBytes: %s", err.Error())
+	}
+
+	restored := queueBytes(t, d)
+
+	if restored != written {
+		t.Errorf("the migrated queue measures %d bytes, want the %d it measured before the column "+
+			"was dropped - the backfill read the payloads wrongly, or not at all", restored, written)
+	}
+
+	// Idempotent, because every migration runs on every startup: the second pass must find the
+	// column present and rewrite nothing.
+	if err := d.migrateCallbackPayloadBytes(); err != nil {
+		t.Fatalf("migrateCallbackPayloadBytes (second run): %s", err.Error())
+	}
+
+	if again := queueBytes(t, d); again != written {
+		t.Errorf("a second migration pass moved the figure to %d, want %d", again, written)
+	}
+
+	// And the rows themselves are still deliverable - a backfill that corrupted the payload while
+	// measuring it would leave the byte count right and the queue useless.
+	remaining, err := d.ClaimCallbacks(context.Background(), 10, time.Now().UnixNano())
+	if err != nil {
+		t.Fatalf("ClaimCallbacks: %s", err.Error())
+	}
+
+	if len(remaining) != 3 {
+		t.Fatalf("%d deliveries survived the migration, want 3", len(remaining))
+	}
+
+	if len(remaining[0].Payload.Items) != 1 || remaining[0].Payload.Items[0].Id != "m0" {
+		t.Errorf("the oldest surviving delivery decodes to %+v", remaining[0].Payload)
 	}
 }

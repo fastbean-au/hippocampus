@@ -7,6 +7,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
+	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
 )
 
@@ -70,16 +71,23 @@ var (
 // deletions exactly when something is going to drain them - and keeping it in one function is what
 // stops a deployment writing a row per forgotten memory into a table nothing reads.
 func (s *Server) startOutboxDrain(searchIndex search.Index) {
-	s.outboxMaxRows = int64(viper.GetInt("opensearch.outbox.maxRows"))
-	s.outboxMaxAge = time.Duration(viper.GetInt("opensearch.outbox.maxAgeHours")) * time.Hour
-
-	if s.outboxMaxRows <= 0 {
-		s.outboxMaxRows = defaultOutboxMaxRows
+	s.outboxBounds = db.QueueBounds{
+		MaxAge:   time.Duration(viper.GetInt("opensearch.outbox.maxAgeHours")) * time.Hour,
+		MaxRows:  int64(viper.GetInt("opensearch.outbox.maxRows")),
+		MaxBytes: viper.GetInt64("opensearch.outbox.maxBytes"),
 	}
 
-	if s.outboxMaxAge <= 0 {
-		s.outboxMaxAge = defaultOutboxMaxAgeHours * time.Hour
+	if s.outboxBounds.MaxRows <= 0 {
+		s.outboxBounds.MaxRows = defaultOutboxMaxRows
 	}
+
+	if s.outboxBounds.MaxAge <= 0 {
+		s.outboxBounds.MaxAge = defaultOutboxMaxAgeHours * time.Hour
+	}
+
+	// MaxBytes is left unset where it is unset: these rows are fixed width, so the row cap beside
+	// it is already a byte cap, and a second default would be a second number saying the same
+	// thing. It exists so the bound can be stated in the unit an operator sizes a disk in.
 
 	if searchIndex == nil || !searchIndex.Enabled() {
 
@@ -133,7 +141,8 @@ func (s *Server) outboxDrainLoop() {
 		return
 	}
 
-	log.Infof("search outbox drain enabled: caps %d rows / %s", s.outboxMaxRows, s.outboxMaxAge)
+	log.Infof("search outbox drain enabled: caps %d rows / %s / %s",
+		s.outboxBounds.MaxRows, s.outboxBounds.MaxAge, describeByteCap(s.outboxBounds.MaxBytes))
 
 	for {
 		applied := s.drainOutboxOnce(syncer)
@@ -224,7 +233,7 @@ func (s *Server) drainOutboxOnce(syncer deleteSyncer) int {
 //
 // Run only on an empty claim, so pruning never races the drain for rows it is about to apply.
 func (s *Server) pruneOutbox(ctx context.Context) {
-	pruned, err := s.db.PruneSearchOutbox(ctx, s.outboxMaxAge, s.outboxMaxRows)
+	pruned, err := s.db.PruneSearchOutbox(ctx, s.outboxBounds)
 	if err != nil {
 		log.Warnf("search outbox: failed to prune: %s", err.Error())
 
@@ -236,9 +245,9 @@ func (s *Server) pruneOutbox(ctx context.Context) {
 		return
 	}
 
-	log.Warnf("search outbox: abandoned %d queued index deletions at the caps (%d rows / %s) - "+
+	log.Warnf("search outbox: abandoned %d queued index deletions at the caps (%d rows / %s / %s) - "+
 		"the search index has stale documents until the reconciliation sweep finds them; is it reachable?",
-		pruned, s.outboxMaxRows, s.outboxMaxAge)
+		pruned, s.outboxBounds.MaxRows, s.outboxBounds.MaxAge, describeByteCap(s.outboxBounds.MaxBytes))
 
 	tel.searchOutboxAbandoned.Add(ctx, pruned)
 }

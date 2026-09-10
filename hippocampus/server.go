@@ -191,6 +191,12 @@ type Consolidation struct {
 	// own copy of the one flag because GetForgottenMemories has to report whether the service is
 	// recording: an empty log otherwise cannot be told from a log nobody is writing.
 	tombstones bool
+
+	// tombstoneMaxBytes (consolidation.tombstones.maxBytes) is mirrored for the same kind of
+	// reason: the log's cap is enforced in the storage layer, and GetConsolidationStatus has to
+	// REPORT it beside the figure it bounds. A byte count with no bound beside it is the state the
+	// reporting half of item 112.3 ended for the figure and would have left standing for the cap.
+	tombstoneMaxBytes int64
 }
 
 type Server struct {
@@ -341,8 +347,7 @@ type Server struct {
 	// stopReconcile / reconcileStopped do, and are nil when nothing is draining - the search backend
 	// deletes transactionally already (SQLite's FTS trigger), holds nothing to delete (the no-op
 	// backend), or this is a replica.
-	outboxMaxAge  time.Duration
-	outboxMaxRows int64
+	outboxBounds  db.QueueBounds
 	stopOutbox    chan struct{}
 	outboxStopped chan struct{}
 
@@ -352,8 +357,7 @@ type Server struct {
 	// when nothing is dispatching - no sink is configured, or this is a replica.
 	notifier          notify.Notifier
 	callbacksEnabled  bool
-	callbackMaxAge    time.Duration
-	callbackMaxRows   int64
+	callbackBounds    db.QueueBounds
 	callbackBatchSize int
 	callbackBaseBack  time.Duration
 	callbackMaxBack   time.Duration
@@ -577,6 +581,7 @@ func New(deps Dependencies) *Server {
 			summarisationMaxCandidates:         viper.GetInt("consolidation.summarisationMaxCandidates"),
 			autoSummarise:                      viper.GetBool("llm.autoSummarise"),
 			tombstones:                         viper.GetBool("consolidation.tombstones.enabled"),
+			tombstoneMaxBytes:                  viper.GetInt64("consolidation.tombstones.maxBytes"),
 		},
 	}
 

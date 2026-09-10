@@ -56,8 +56,12 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 
 	s.notifier = notifier
 
-	s.callbackMaxRows = int64(viper.GetInt("callbacks.maxRows"))
-	s.callbackMaxAge = time.Duration(viper.GetInt("callbacks.maxAgeHours")) * time.Hour
+	s.callbackBounds = db.QueueBounds{
+		MaxAge:   time.Duration(viper.GetInt("callbacks.maxAgeHours")) * time.Hour,
+		MaxRows:  int64(viper.GetInt("callbacks.maxRows")),
+		MaxBytes: viper.GetInt64("callbacks.maxBytes"),
+	}
+
 	s.callbackBatchSize = viper.GetInt("callbacks.batchSize")
 	s.callbackBaseBack = time.Duration(viper.GetInt("callbacks.retryBaseBackoffSeconds")) * time.Second
 	s.callbackMaxBack = time.Duration(viper.GetInt("callbacks.retryMaxBackoffSeconds")) * time.Second
@@ -67,13 +71,19 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 	s.callbackAtRiskLimit = viper.GetInt("callbacks.atRiskLimit")
 	s.callbackAtRiskMargin = viper.GetFloat64("callbacks.atRiskMargin")
 
-	if s.callbackMaxRows <= 0 {
-		s.callbackMaxRows = defaultCallbackMaxRows
+	if s.callbackBounds.MaxRows <= 0 {
+		s.callbackBounds.MaxRows = defaultCallbackMaxRows
 	}
 
-	if s.callbackMaxAge <= 0 {
-		s.callbackMaxAge = defaultCallbackMaxAgeHours * time.Hour
+	if s.callbackBounds.MaxAge <= 0 {
+		s.callbackBounds.MaxAge = defaultCallbackMaxAgeHours * time.Hour
 	}
+
+	// MaxBytes is deliberately NOT defaulted, unlike the two beside it. A byte cap discards
+	// undelivered notifications, and how many bytes of them a deployment can afford is a property
+	// of its disk rather than of this service - there is no figure that is right for both a laptop
+	// store and a server. What stands in for a default is a startup warning where the shape is
+	// dangerous (callbacks.includeBodies with no cap), which is validateCallbackConfig's job.
 
 	if s.callbackBatchSize <= 0 {
 		s.callbackBatchSize = defaultCallbackBatchSize
@@ -143,9 +153,10 @@ func (s *Server) callbackDispatchLoop() {
 	defer close(s.callbacksStopped)
 
 	log.Infof(
-		"callback dispatch enabled: caps %d rows / %s, batches of %d",
-		s.callbackMaxRows,
-		s.callbackMaxAge,
+		"callback dispatch enabled: caps %d rows / %s / %s, batches of %d",
+		s.callbackBounds.MaxRows,
+		s.callbackBounds.MaxAge,
+		describeByteCap(s.callbackBounds.MaxBytes),
 		s.callbackBatchSize,
 	)
 
@@ -311,7 +322,7 @@ func (s *Server) callbackBackoff(attempt int) time.Duration {
 // pruned callback is a notification that nobody will ever receive, and an operator whose receiver
 // has been down long enough for that to happen has genuinely lost data about their own store.
 func (s *Server) pruneCallbackQueue(ctx context.Context) {
-	pruned, err := s.db.PruneCallbackQueue(ctx, s.callbackMaxAge, s.callbackMaxRows)
+	pruned, err := s.db.PruneCallbackQueue(ctx, s.callbackBounds)
 	if err != nil {
 		log.Warnf("callbacks: failed to prune the queue: %s", err.Error())
 
@@ -323,11 +334,12 @@ func (s *Server) pruneCallbackQueue(ctx context.Context) {
 	}
 
 	log.Warnf(
-		"callbacks: abandoned %d undelivered callbacks past the queue's caps (%d rows / %s) - "+
+		"callbacks: abandoned %d undelivered callbacks past the queue's caps (%d rows / %s / %s) - "+
 			"these notifications are lost; check that the receiver at callbacks.url is reachable",
 		pruned,
-		s.callbackMaxRows,
-		s.callbackMaxAge,
+		s.callbackBounds.MaxRows,
+		s.callbackBounds.MaxAge,
+		describeByteCap(s.callbackBounds.MaxBytes),
 	)
 
 	tel.callbacksAbandoned.Add(ctx, pruned)

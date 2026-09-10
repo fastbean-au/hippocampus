@@ -70,12 +70,12 @@ func (f failingCallbackStore) DeferCallbacks(ctx context.Context, seqs []int64, 
 	return f.Store.DeferCallbacks(ctx, seqs, next)
 }
 
-func (f failingCallbackStore) PruneCallbackQueue(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error) {
+func (f failingCallbackStore) PruneCallbackQueue(ctx context.Context, bounds db.QueueBounds) (int64, error) {
 	if f.failPrune {
 		return 0, errStoreFailed
 	}
 
-	return f.Store.PruneCallbackQueue(ctx, maxAge, maxRows)
+	return f.Store.PruneCallbackQueue(ctx, bounds)
 }
 
 func (f failingCallbackStore) CallbackQueueDepth(ctx context.Context) (int64, error) {
@@ -221,7 +221,7 @@ func TestPruneCallbackQueueWarnsWhenItAbandons(t *testing.T) {
 		t.Fatalf("QueueCallbacks: %s", err)
 	}
 
-	s.callbackMaxAge = time.Hour
+	s.callbackBounds.MaxAge = time.Hour
 
 	s.pruneCallbackQueue(ctx)
 
@@ -414,9 +414,9 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 		}
 
 		// The viper values reached the server rather than the package defaults.
-		if s.callbackMaxRows != 10 || s.callbackBatchSize != 5 || s.callbackChunkIds != 7 {
+		if s.callbackBounds.MaxRows != 10 || s.callbackBatchSize != 5 || s.callbackChunkIds != 7 {
 			t.Errorf("configuration did not reach the server: rows=%d batch=%d chunk=%d",
-				s.callbackMaxRows, s.callbackBatchSize, s.callbackChunkIds)
+				s.callbackBounds.MaxRows, s.callbackBatchSize, s.callbackChunkIds)
 		}
 
 		if !s.callbackSleepEvents {
@@ -452,14 +452,14 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 			}
 		})
 
-		if s.callbackMaxRows != defaultCallbackMaxRows ||
-			s.callbackMaxAge != defaultCallbackMaxAgeHours*time.Hour ||
+		if s.callbackBounds.MaxRows != defaultCallbackMaxRows ||
+			s.callbackBounds.MaxAge != defaultCallbackMaxAgeHours*time.Hour ||
 			s.callbackBatchSize != defaultCallbackBatchSize ||
 			s.callbackBaseBack != defaultCallbackBaseBackoff ||
 			s.callbackMaxBack != defaultCallbackMaxBackoff ||
 			s.callbackChunkIds != defaultCallbackMaxIdsPerChunk {
 			t.Errorf("a zero bound did not fall back to its default: %+v", []any{
-				s.callbackMaxRows, s.callbackMaxAge, s.callbackBatchSize,
+				s.callbackBounds.MaxRows, s.callbackBounds.MaxAge, s.callbackBatchSize,
 				s.callbackBaseBack, s.callbackMaxBack, s.callbackChunkIds,
 			})
 		}

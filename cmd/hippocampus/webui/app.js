@@ -3930,7 +3930,7 @@ function renderAncillary(status) {
       (row) => `<tr>
     <td>${esc(row.label)}<br><span class="muted fs-12">${esc(row.note)}</span></td>
     <td>${esc(row.rows.toLocaleString())}<br><span class="muted fs-12">${esc(row.state)}</span></td>
-    <td>${esc(formatBytes(row.bytes))}</td>
+    <td>${esc(formatBytes(row.bytes))}<br><span class="muted fs-12">${esc(row.limit)}</span></td>
     <td><span class="muted fs-12">${esc(row.bound)}</span></td>
   </tr>`,
     )

@@ -538,6 +538,13 @@ func setStartupDefaults() {
 	viper.SetDefault("consolidation.tombstones.maxRows", 100000)
 	viper.SetDefault("consolidation.tombstones.maxAgeInDays", 30)
 
+	// consolidation.tombstones.maxBytes has deliberately NO default, and neither do the byte caps
+	// on the two queues below. A tombstone is a fixed-width row, so the row cap above already IS a
+	// byte cap - roughly 19 MB at the default - and a second defaulted number would be the same
+	// bound said twice, in a unit that would then disagree with it the day the per-row allowance
+	// moved. What the key buys is being able to state the bound in the unit a disk is sized in.
+	// Zero means unbounded on all three; see docs/operations.md on sizing.
+
 	// Outbound callbacks (see docs/operations.md). Off by default - a deployment with no receiver
 	// should queue nothing at all - but every bound is defaulted anyway, on the same reasoning as
 	// the forgotten log above: turning it on gets a queue that is already bounded rather than one
@@ -562,6 +569,15 @@ func setStartupDefaults() {
 	viper.SetDefault("callbacks.events.memoriesAtRisk", false)
 	viper.SetDefault("callbacks.atRiskLimit", 1000)
 	viper.SetDefault("callbacks.atRiskMargin", 0)
+
+	// callbacks.maxBytes is the one byte cap that bounds something a row cap cannot, and it is
+	// still not defaulted. A delivery carries up to maxIdsPerDelivery items and, under
+	// includeBodies, a body each, so maxRows bounds this queue between a few hundred megabytes of
+	// bare ids and a figure with no ceiling - but how much of that a deployment can afford is a
+	// property of its disk, and there is no number that is right for both a laptop store and a
+	// server. Reaching this cap discards notifications nobody will ever receive, which is a policy
+	// an operator should choose rather than inherit. What stands in for a default is the startup
+	// warning in validateCallbackConfig, where the shape is dangerous.
 
 	viper.SetDefault("opensearch.index", "hippocampus-memories")
 	viper.SetDefault("opensearch.queueSize", 1024)
@@ -779,14 +795,15 @@ func run(ctx context.Context, version versionInfo) error {
 	tombstones := db.TombstonePolicy{
 		Enabled:      viper.GetBool("consolidation.tombstones.enabled"),
 		MaxRows:      viper.GetInt("consolidation.tombstones.maxRows"),
+		MaxBytes:     viper.GetInt64("consolidation.tombstones.maxBytes"),
 		MaxAgeInDays: viper.GetInt("consolidation.tombstones.maxAgeInDays"),
 	}
 
-	if tombstones.Enabled && tombstones.MaxRows <= 0 && tombstones.MaxAgeInDays <= 0 {
+	if tombstones.Enabled && tombstones.MaxRows <= 0 && tombstones.MaxBytes <= 0 && tombstones.MaxAgeInDays <= 0 {
 		log.Warn(
-			"the forgotten log is enabled with neither consolidation.tombstones.maxRows nor " +
-				"maxAgeInDays set, so it will grow without bound; it is excluded from the capacity " +
-				"target but not from the disk",
+			"the forgotten log is enabled with none of consolidation.tombstones.maxRows, maxBytes " +
+				"or maxAgeInDays set, so it will grow without bound; it is excluded from the " +
+				"capacity target but not from the disk",
 		)
 	}
 
@@ -2361,6 +2378,14 @@ func configProblems() []error {
 		problems = append(problems, fmt.Errorf("consolidation.tombstones.maxAgeInDays must not be negative, got %d", maxAge))
 	}
 
+	if maxBytes := viper.GetInt64("consolidation.tombstones.maxBytes"); maxBytes < 0 {
+		problems = append(problems, fmt.Errorf("consolidation.tombstones.maxBytes must not be negative, got %d", maxBytes))
+	}
+
+	if maxBytes := viper.GetInt64("opensearch.outbox.maxBytes"); maxBytes < 0 {
+		problems = append(problems, fmt.Errorf("opensearch.outbox.maxBytes must not be negative, got %d", maxBytes))
+	}
+
 	// Cross-origin access. An entry that does not match what a browser actually sends in the Origin
 	// header - a trailing slash being the usual way to get it wrong - presents as CORS simply not
 	// working rather than as a configuration error, so refuse it at startup instead.
@@ -2494,6 +2519,7 @@ func validateCallbackConfig() error {
 		"callbacks.maxBodyBytes":            viper.GetInt("callbacks.maxBodyBytes"),
 		"callbacks.maxIdsPerDelivery":       viper.GetInt("callbacks.maxIdsPerDelivery"),
 		"callbacks.maxRows":                 viper.GetInt("callbacks.maxRows"),
+		"callbacks.maxBytes":                viper.GetInt("callbacks.maxBytes"),
 		"callbacks.maxAgeHours":             viper.GetInt("callbacks.maxAgeHours"),
 		"callbacks.batchSize":               viper.GetInt("callbacks.batchSize"),
 		"callbacks.retryBaseBackoffSeconds": viper.GetInt("callbacks.retryBaseBackoffSeconds"),
@@ -2544,11 +2570,25 @@ func validateCallbackConfig() error {
 		)
 	}
 
-	if viper.GetInt("callbacks.maxRows") <= 0 && viper.GetInt("callbacks.maxAgeHours") <= 0 {
+	if viper.GetInt("callbacks.maxRows") <= 0 && viper.GetInt("callbacks.maxAgeHours") <= 0 &&
+		viper.GetInt64("callbacks.maxBytes") <= 0 {
 		log.Warn(
-			"callbacks are enabled with neither callbacks.maxRows nor callbacks.maxAgeHours set, " +
-				"so an unreachable receiver will grow the queue without bound; it is excluded from " +
-				"the capacity target but not from the disk",
+			"callbacks are enabled with none of callbacks.maxRows, callbacks.maxAgeHours or " +
+				"callbacks.maxBytes set, so an unreachable receiver will grow the queue without " +
+				"bound; it is excluded from the capacity target but not from the disk",
+		)
+	}
+
+	// The combination the byte cap exists for. A row cap bounds this queue's rows and says nothing
+	// about its size once a row can carry five hundred memory bodies: at the defaults that is
+	// maxRows x maxIdsPerDelivery x maxBodyBytes, which is a number no disk has. Warned rather than
+	// refused, because an operator who knows their bodies are small is entitled to say so - and it
+	// is the shape that starts cleanly and then misbehaves, which is what a startup warning is for.
+	if viper.GetBool("callbacks.includeBodies") && viper.GetInt64("callbacks.maxBytes") <= 0 {
+		log.Warn(
+			"callbacks.includeBodies is set with no callbacks.maxBytes: callbacks.maxRows bounds " +
+				"the queue's rows, not its size, and a row carrying memory bodies is not a fixed " +
+				"size - so nothing bounds what an unreachable receiver can add to the disk",
 		)
 	}
 

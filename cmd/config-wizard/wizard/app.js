@@ -1182,6 +1182,14 @@ const STEPS = [
             when: (s) => value(s, "consolidation.tombstones.enabled"),
             help: "Applied alongside the record cap — a record past either bound is trimmed. 0 removes this bound.",
           },
+          {
+            key: "consolidation.tombstones.maxBytes",
+            label: "Keep at most (bytes)",
+            type: "int",
+            def: 0,
+            when: (s) => value(s, "consolidation.tombstones.enabled"),
+            help: "The record cap in the unit a disk is sized in. A tombstone is a fixed-width row (192 bytes), so this converts to a record cap exactly and the tighter of the two wins — 100,000 records is roughly 19 MB. 0 removes this bound.",
+          },
         ],
       },
       {
@@ -1345,6 +1353,14 @@ const STEPS = [
             svc: 24,
             when: (s) => value(s, "callbacks.enabled"),
             help: "Applied alongside the delivery cap. Hours rather than days: this queue is meant to drain in seconds, so a day of backlog is already an outage. 0 removes this bound.",
+          },
+          {
+            key: "callbacks.maxBytes",
+            label: "Queue at most (bytes)",
+            type: "int",
+            def: 0,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "The bound the delivery cap cannot give you: a delivery carries up to 500 items, each of which may carry a memory body, so a cap in rows says little about size. Measured against the stored payloads. 0 removes this bound — set one if bodies are being carried.",
           },
           {
             key: "callbacks.tls.enabled",
@@ -2297,12 +2313,24 @@ function validate() {
 
     if (
       Number(val("callbacks.maxRows")) === 0 &&
-      Number(val("callbacks.maxAgeHours")) === 0
+      Number(val("callbacks.maxAgeHours")) === 0 &&
+      Number(val("callbacks.maxBytes")) === 0
     ) {
       add(
         "warn",
         "memory",
-        "Both callback queue bounds are 0, so an unreachable receiver grows the queue until the disk stops it. The queue is excluded from the capacity target, not from the disk.",
+        "Every callback queue bound is 0, so an unreachable receiver grows the queue until the disk stops it. The queue is excluded from the capacity target, not from the disk.",
+      );
+    }
+
+    if (
+      val("callbacks.includeBodies") &&
+      Number(val("callbacks.maxBytes")) === 0
+    ) {
+      add(
+        "warn",
+        "memory",
+        "callbacks.includeBodies is set with no callbacks.maxBytes. A delivery carries up to 500 items, each of which may carry a body, so the delivery cap bounds the queue's rows and says nothing about its size — nothing bounds what an unreachable receiver can add to the disk.",
       );
     }
 

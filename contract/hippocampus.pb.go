@@ -6792,9 +6792,12 @@ func (x *GetConsolidationStatusResponse) GetAncillary() *AncillaryStorage {
 
 // AncillaryTable is what one of the three tables excluded from the capacity target holds.
 //
-// bytes is rows multiplied by a flat per-row allowance, not a measurement - summing the stored
-// payloads would put a scan of the queue on the path that exists to bound the store - so rows is
-// reported beside it rather than leaving a lone estimate to look more precise than it is.
+// For the two fixed-width tables bytes is rows multiplied by a flat per-row allowance, not a
+// measurement - scanning them to add up what their count already says would put a cost on the path
+// that exists to bound the store - so rows is reported beside it rather than leaving a lone estimate
+// to look more precise than it is. The callback queue is the exception, and is why the pair is
+// reported: its rows carry a rendered payload and, under callbacks.includeBodies, memory bodies, so
+// a count says nothing about its size and its bytes are summed from a size written at insert.
 //
 // enabled separates the two zeroes: a feature nobody turned on holds nothing because nothing writes
 // to it, while an enabled one holding nothing is a queue that is keeping up. They call for opposite
@@ -6806,10 +6809,21 @@ func (x *GetConsolidationStatusResponse) GetAncillary() *AncillaryStorage {
 // setting says, and enabled false beside a row count is a table nothing is adding to and nothing is
 // trimming.
 type AncillaryTable struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Rows          int64                  `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
-	Bytes         int64                  `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Enabled bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Rows    int64                  `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
+	Bytes   int64                  `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	// limit_bytes is the byte cap configured for this table, or 0 where none is - so bytes has the
+	// bound it is approaching beside it rather than being a figure with nothing to read it against.
+	// Reaching the cap discards rows: for the two queues that is undelivered work (a notification
+	// nobody will receive, an index deletion left to the reverse sweep), and for the forgotten log
+	// it is the oldest end of a record.
+	//
+	// A cap of 0 is not "no bytes allowed": it is what every deployment has until an operator sets
+	// one, since how much of this a deployment can afford is a property of its disk rather than of
+	// the service. What bounds it meanwhile is the row cap, exactly - the rows being fixed width -
+	// for the first two, and only loosely for the callback queue.
+	LimitBytes    int64 `protobuf:"varint,4,opt,name=limit_bytes,json=limitBytes,proto3" json:"limit_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6865,6 +6879,13 @@ func (x *AncillaryTable) GetBytes() int64 {
 	return 0
 }
 
+func (x *AncillaryTable) GetLimitBytes() int64 {
+	if x != nil {
+		return x.LimitBytes
+	}
+	return 0
+}
+
 // AncillaryStorage is the storage this store spends that its byte capacity target cannot see.
 //
 // The three tables are excluded from used_bytes deliberately: the record of what was deleted must
@@ -6877,6 +6898,7 @@ func (x *AncillaryTable) GetBytes() int64 {
 //
 // The callback queue is the one to watch. Its rows have no fixed size, so callbacks.maxRows bounds
 // its bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps.
+// callbacks.maxBytes is what bounds it in the same unit the figure is reported in.
 type AncillaryStorage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MeasuredAt    int64                  `protobuf:"varint,1,opt,name=measured_at,json=measuredAt,proto3" json:"measured_at,omitempty"` // UnixNano the cycle took this measurement
@@ -8057,11 +8079,13 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x14snapshot_ttl_seconds\x18\x06 \x01(\x03R\x12snapshotTtlSeconds\x12:\n" +
 	"\n" +
 	"last_cycle\x18\a \x01(\v2\x1b.hippocampus.v1.CycleReportR\tlastCycle\x12>\n" +
-	"\tancillary\x18\b \x01(\v2 .hippocampus.v1.AncillaryStorageR\tancillary\"T\n" +
+	"\tancillary\x18\b \x01(\v2 .hippocampus.v1.AncillaryStorageR\tancillary\"u\n" +
 	"\x0eAncillaryTable\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x12\n" +
 	"\x04rows\x18\x02 \x01(\x03R\x04rows\x12\x14\n" +
-	"\x05bytes\x18\x03 \x01(\x03R\x05bytes\"\xa5\x02\n" +
+	"\x05bytes\x18\x03 \x01(\x03R\x05bytes\x12\x1f\n" +
+	"\vlimit_bytes\x18\x04 \x01(\x03R\n" +
+	"limitBytes\"\xa5\x02\n" +
 	"\x10AncillaryStorage\x12\x1f\n" +
 	"\vmeasured_at\x18\x01 \x01(\x03R\n" +
 	"measuredAt\x12\x1f\n" +

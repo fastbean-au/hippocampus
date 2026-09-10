@@ -216,6 +216,15 @@ func (d *DB) migrations() []schemaMigration {
 			name:    "covering_index_external",
 			apply:   (*DB).ensureCoveringIndex,
 		},
+		{
+			// callback_queue.payload_bytes, which is what lets callbacks.maxBytes bound a queue
+			// whose rows have no fixed size. It sits after 13 rather than inside it because the
+			// table's CREATE TABLE IF NOT EXISTS says nothing to a store that already has the
+			// table, which is every store that has ever had callbacks enabled.
+			version: 16,
+			name:    "callback_payload_bytes",
+			apply:   (*DB).migrateCallbackPayloadBytes,
+		},
 	}
 }
 

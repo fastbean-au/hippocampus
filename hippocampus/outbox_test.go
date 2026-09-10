@@ -202,8 +202,7 @@ func outboxServer(t *testing.T, idx search.Index) (*Server, *db.DB) {
 		reconcileBatchSize: 2,
 		stopReconcile:      make(chan struct{}),
 		stopOutbox:         make(chan struct{}),
-		outboxMaxRows:      1000,
-		outboxMaxAge:       time.Hour,
+		outboxBounds:       db.QueueBounds{MaxAge: time.Hour, MaxRows: 1000},
 	}, database
 }
 
@@ -303,7 +302,7 @@ func TestPruneAbandonsQueuedDeletionsAtTheCaps(t *testing.T) {
 		t.Fatalf("DeleteMemories: %s", err)
 	}
 
-	s.outboxMaxRows = 1
+	s.outboxBounds.MaxRows = 1
 	s.pruneOutbox(ctx)
 
 	depth, err := database.SearchOutboxDepth(ctx)

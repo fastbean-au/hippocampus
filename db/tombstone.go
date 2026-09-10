@@ -69,13 +69,23 @@ const tombstoneChunkSize = deleteChunkSize
 // (all viper reads stay in main.go). The zero value records nothing, which is the default: the log
 // costs storage and a write per forgotten memory, so it is opt-in.
 //
-// MaxRows and MaxAgeInDays bound the log independently - a row exceeding either is pruned - and a
-// non-positive value disables that bound. Both disabled means an unbounded log, which is supported
-// but warned about at startup, since it is the shape that eats the store.
+// MaxRows, MaxBytes and MaxAgeInDays bound the log independently - a row exceeding any of them is
+// pruned - and a non-positive value disables that bound. All three disabled means an unbounded log,
+// which is supported but warned about at startup, since it is the shape that eats the store.
+//
+// MaxBytes is a row cap in the unit an operator sizes a disk in, and nothing more: a tombstone is a
+// fixed-width row, so the log's bytes are its row count times tombstoneRowBytes at the report, at
+// the exclusion and here. Where both are set the tighter wins (rowsWithinBytes).
 type TombstonePolicy struct {
 	Enabled      bool
 	MaxRows      int
+	MaxBytes     int64
 	MaxAgeInDays int
+}
+
+// bounds projects the policy onto the shape the byte cap arithmetic is written against.
+func (p TombstonePolicy) bounds() QueueBounds {
+	return QueueBounds{MaxRows: int64(p.MaxRows), MaxBytes: p.MaxBytes}
 }
 
 // SetTombstonePolicy installs the forgotten log's policy. Called once at startup from main, before
@@ -653,7 +663,8 @@ func (d *DB) DeleteForgottenMemories(ctx context.Context, before int64, groups [
 // effect of a configuration change.
 //
 // The row cap resolves to a seq cutoff read separately rather than as a subquery on the table
-// being deleted from, which MySQL forbids outright.
+// being deleted from, which MySQL forbids outright. MaxBytes resolves to a row cap before that,
+// these rows being fixed width; see rowsWithinBytes.
 func (d *DB) PruneTombstones(ctx context.Context) (int64, error) {
 	log.Trace("func() db.PruneTombstones")
 
@@ -674,21 +685,23 @@ func (d *DB) PruneTombstones(ctx context.Context) (int64, error) {
 		pruned += removed
 	}
 
-	if d.tombstones.MaxRows <= 0 {
+	maxRows := rowsWithinBytes(d.tombstones.bounds(), tombstoneRowBytes)
+
+	if maxRows <= 0 {
 		return pruned, nil
 	}
 
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	// The seq of the oldest row worth keeping: skip MaxRows-1 rows from the newest and take the
+	// The seq of the oldest row worth keeping: skip maxRows-1 rows from the newest and take the
 	// next. No row means the log is already inside the cap.
 	var cutoff int64
 
 	err := d.queryRow(
 		ctx,
 		`SELECT seq FROM `+tombstonesTable+` ORDER BY seq DESC LIMIT 1 OFFSET ?`,
-		d.tombstones.MaxRows-1,
+		maxRows-1,
 	).Scan(&cutoff)
 
 	if err == sql.ErrNoRows {

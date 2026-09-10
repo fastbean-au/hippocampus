@@ -54,6 +54,50 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ### Added
 
+- **The three tables outside the capacity target can now be bounded in bytes, not only in rows.**
+  `consolidation.tombstones.maxBytes`, `opensearch.outbox.maxBytes` and `callbacks.maxBytes` join
+  the row and age caps already on each; all three default to 0, which is unbounded, so nothing
+  changes for an existing configuration. 0.44.0 made what these tables hold visible
+  (`hippocampus.ancillary_bytes`, the console's Deployment tab, an alert rule); this is the half
+  that lets an operator do something about it, and the half that lets a disk be sized in one unit
+  rather than three.
+
+  For the forgotten log and the search outbox this is convenience: their rows are fixed width, so
+  the row cap already **is** a byte cap — roughly 19 MB and 96 MB at the defaults — and `maxBytes`
+  is the same bound stated in the unit a disk is sized in, converted exactly, with the tighter of
+  the two winning.
+
+  **The callback queue is the one that needed it.** A row there is a whole delivery: up to
+  `callbacks.maxIdsPerDelivery` items (500), each of which may carry a memory body up to
+  `callbacks.maxBodyBytes` (64 KiB) under `callbacks.includeBodies`. `callbacks.maxRows` therefore
+  bounded it somewhere between a few hundred megabytes of bare ids and a figure with no useful
+  ceiling — and on the embedded driver the queue and the store are the same file, so a receiver that
+  was down while a large cycle ran grew the disk while capacity pressure stayed exactly where it
+  was. The one number an operator is told to watch read green while the resource it exists to
+  protect was going.
+
+  Applying that cap costs no scan of the payloads: `callback_queue` gains a `payload_bytes` column,
+  written at insert where the size is already known, added in place on the next startup like every
+  other column migration and backfilled from the rows already queued. The same column makes the
+  **reported** figure a measurement rather than an estimate — a delivery carrying five hundred
+  memory bodies and one carrying five hundred bare ids are the same row to a count, and two orders
+  of magnitude apart on disk — so what the console shows, what eviction ignores and what gets
+  trimmed are one figure rather than three.
+
+  Two properties worth knowing. Reaching a byte cap **discards rows**, exactly as a row cap does: an
+  abandoned callback is a notification nobody will ever receive. And the newest callback delivery is
+  never abandoned for the cap — a delivery larger than the whole cap would otherwise be discarded
+  the instant it was queued, for the life of that configuration, so the bound you actually get is
+  `maxBytes` plus at most one delivery, and that case is logged at Warn naming the keys to lower.
+  None of the three is defaulted, because how much of this a deployment can afford is a property of
+  its disk rather than of the service, and a cap that discards data should be chosen rather than
+  inherited. What stands in for a default is a startup warning where the shape is dangerous:
+  `callbacks.includeBodies` with no `callbacks.maxBytes`.
+
+  `GetConsolidationStatus`'s `ancillary` block reports each table's `limit_bytes` beside its size,
+  and the console's Deployment tab renders the pair — a byte count with nothing to read it against
+  cannot distinguish a queue that is filling from one that is about to start discarding.
+
 - **The configuration wizard now flags combinations that start cleanly and then do not do what they
   look like they do.** Its checks had covered the two easy classes — what the service refuses at
   startup, and what a single key gets wrong on its own — and neither catches a configuration in
@@ -75,6 +119,16 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
   Issues are now sorted by severity on the step pages and the review screen, so a startup refusal
   cannot sit below three notes about things that are merely worth knowing.
+
+### Documentation
+
+- **The callback sink is HTTP and only HTTP, and `docs/configuration.md` now says so.** A deployment
+  whose event bus is NATS, Kafka, MQTT or RabbitMQ receives these deliveries through a small
+  HTTP-to-broker shim, not by configuring a broker here — which is deliberate rather than pending,
+  the broker clients this repository ships living in a separate module the service's own build does
+  not import. The note also states the two things such a shim needs to know: a 2xx confirms a
+  delivery and discards it, and redelivery carries the same body with nothing on the wire
+  identifying it, so exactly-once means deduplicating on a hash of the body.
 
 ### Fixed
 

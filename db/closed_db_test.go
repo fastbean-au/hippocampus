@@ -118,7 +118,10 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 		{"ClaimCallbacks", func() error { _, err := db.ClaimCallbacks(ctx, 10, 1); return err }},
 		{"ConfirmCallbacks", func() error { return db.ConfirmCallbacks(ctx, []int64{1}) }},
 		{"DeferCallbacks", func() error { return db.DeferCallbacks(ctx, []int64{1}, 2) }},
-		{"PruneCallbackQueue", func() error { _, err := db.PruneCallbackQueue(ctx, time.Hour, 10); return err }},
+		{"PruneCallbackQueue", func() error {
+			_, err := db.PruneCallbackQueue(ctx, QueueBounds{MaxAge: time.Hour, MaxRows: 10})
+			return err
+		}},
 		{"CallbackQueueDepth", func() error { _, err := db.CallbackQueueDepth(ctx); return err }},
 		{"OldestQueuedCallback", func() error { _, err := db.OldestQueuedCallback(ctx); return err }},
 		{"GetCallbackQueue", func() error { _, err := db.GetCallbackQueue(ctx, CallbackQueueFilter{}); return err }},

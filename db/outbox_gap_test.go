@@ -34,7 +34,7 @@ func TestOutboxMethodsAreGated(t *testing.T) {
 		t.Errorf("ConfirmSearchDeletes: %s", err)
 	}
 
-	pruned, err := database.PruneSearchOutbox(ctx, time.Hour, 10)
+	pruned, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxAge: time.Hour, MaxRows: 10})
 	if err != nil {
 		t.Fatalf("PruneSearchOutbox: %s", err)
 	}
@@ -121,11 +121,11 @@ func TestOutboxMethodsSurfaceStorageFailures(t *testing.T) {
 
 	// The age cap and the row cap are two statements, and the first one's failure returns before the
 	// second runs - so both are asked for separately.
-	if _, err := database.PruneSearchOutbox(ctx, time.Hour, 0); err == nil {
+	if _, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxAge: time.Hour}); err == nil {
 		t.Error("expected the age prune to surface the query failure")
 	}
 
-	if _, err := database.PruneSearchOutbox(ctx, 0, 10); err == nil {
+	if _, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxRows: 10}); err == nil {
 		t.Error("expected the row-count prune to surface the query failure")
 	}
 

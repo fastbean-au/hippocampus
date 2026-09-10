@@ -217,11 +217,11 @@ func TestAncillaryStorageReportsAFailedMeasurement(t *testing.T) {
 					break
 				}
 
-				mock.ExpectQuery(`SELECT COUNT\(\*\) FROM ` + before).
-					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+				mock.ExpectQuery(`SELECT COUNT\(\*\).* FROM ` + before).
+					WillReturnRows(sqlmock.NewRows([]string{"count", "payload"}).AddRow(1, 0))
 			}
 
-			mock.ExpectQuery(`SELECT COUNT\(\*\) FROM ` + table).WillReturnError(errors.New("boom"))
+			mock.ExpectQuery(`SELECT COUNT\(\*\).* FROM ` + table).WillReturnError(errors.New("boom"))
 
 			measured, err := d.AncillaryStorage(context.Background())
 			if err == nil {
@@ -233,6 +233,34 @@ func TestAncillaryStorageReportsAFailedMeasurement(t *testing.T) {
 			}
 
 			expectationsMet(t, mock)
+		})
+	}
+}
+
+// TestRowsWithinBytes is the whole implementation of the byte cap on the two fixed-width tables, so
+// it is worth stating exactly. Zero on either side means unbounded on that side, the tighter of the
+// two wins, and a cap below one row's allowance resolves to one row rather than to zero - which the
+// prune paths would read as "no row cap", making the strictest bound an operator can express into
+// no bound at all.
+func TestRowsWithinBytes(t *testing.T) {
+	for _, one := range []struct {
+		name     string
+		bounds   QueueBounds
+		rowBytes int64
+		want     int64
+	}{
+		{"neither bound", QueueBounds{}, 192, 0},
+		{"rows only", QueueBounds{MaxRows: 500}, 192, 500},
+		{"bytes only", QueueBounds{MaxBytes: 1920}, 192, 10},
+		{"bytes are tighter", QueueBounds{MaxRows: 500, MaxBytes: 1920}, 192, 10},
+		{"rows are tighter", QueueBounds{MaxRows: 5, MaxBytes: 1920}, 192, 5},
+		{"bytes below one row still keep one", QueueBounds{MaxBytes: 10}, 192, 1},
+		{"an unknown allowance leaves the row cap alone", QueueBounds{MaxRows: 7, MaxBytes: 1920}, 0, 7},
+	} {
+		t.Run(one.name, func(t *testing.T) {
+			if got := rowsWithinBytes(one.bounds, one.rowBytes); got != one.want {
+				t.Errorf("rowsWithinBytes(%+v, %d) = %d, want %d", one.bounds, one.rowBytes, got, one.want)
+			}
 		})
 	}
 }

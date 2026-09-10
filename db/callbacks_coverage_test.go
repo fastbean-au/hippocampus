@@ -66,7 +66,7 @@ func TestCallbackQueueGuardsAgainstAnUninitialisedTable(t *testing.T) {
 		t.Errorf("ClaimCallbacks = (%v, %v), want (nil, nil)", claimed, err)
 	}
 
-	if pruned, err := d.PruneCallbackQueue(ctx, time.Hour, 10); pruned != 0 || err != nil {
+	if pruned, err := d.PruneCallbackQueue(ctx, QueueBounds{MaxAge: time.Hour, MaxRows: 10}); pruned != 0 || err != nil {
 		t.Errorf("PruneCallbackQueue = (%d, %v), want (0, nil)", pruned, err)
 	}
 
@@ -422,7 +422,7 @@ func TestPruneCallbackQueueSurfacesTheRowCapFailure(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM callback_queue WHERE queued_at`).WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(`DELETE FROM callback_queue WHERE seq`).WillReturnError(errors.New("boom"))
 
-	pruned, err := d.PruneCallbackQueue(context.Background(), time.Hour, 10)
+	pruned, err := d.PruneCallbackQueue(context.Background(), QueueBounds{MaxAge: time.Hour, MaxRows: 10})
 	if err == nil {
 		t.Fatal("a failed row-cap prune was reported as successful")
 	}
@@ -441,7 +441,7 @@ func TestPruneCallbackQueueSurfacesTheRowCapFailure(t *testing.T) {
 func TestCallbackQueueBytesFailsSafe(t *testing.T) {
 	d, mock := mockCallbackDB(t)
 
-	mock.ExpectQuery(`COUNT\(\*\) FROM callback_queue`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`COUNT\(\*\).* FROM callback_queue`).WillReturnError(errors.New("boom"))
 
 	if bytes := d.callbackQueueBytes(context.Background()); bytes != 0 {
 		t.Errorf("callbackQueueBytes = %d on a failed measurement, want 0", bytes)

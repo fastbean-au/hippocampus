@@ -903,6 +903,13 @@ func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name str
 		mock.ExpectQuery(`count\(\*\) FROM ` + contentSearchTable).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
+	case "callback_payload_bytes":
+		// The column probe alone: on a store the migration has already run against - which a fresh
+		// one is, its CREATE TABLE having just made the column - it adds nothing and backfills
+		// nothing.
+		mock.ExpectQuery(`column_name FROM information_schema|pragma_table_info`).
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("payload_bytes"))
+
 	default:
 		t.Fatalf("expectFreshMigration has no script for migration %q", name)
 

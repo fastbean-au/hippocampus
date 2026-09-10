@@ -127,7 +127,7 @@ func TestPruneBoundsTheOutbox(t *testing.T) {
 		t.Fatalf("depth: got %d, want 6", n)
 	}
 
-	if _, err := database.PruneSearchOutbox(ctx, 0, 4); err != nil {
+	if _, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxRows: 4}); err != nil {
 		t.Fatalf("PruneSearchOutbox: %s", err)
 	}
 
@@ -170,12 +170,12 @@ func TestAgePruneAbandonsStaleQueuedDeletes(t *testing.T) {
 	}
 
 	// Nothing is old enough yet.
-	if pruned, err := database.PruneSearchOutbox(ctx, time.Hour, 0); err != nil || pruned != 0 {
+	if pruned, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxAge: time.Hour}); err != nil || pruned != 0 {
 		t.Fatalf("premature prune: %d rows (err %v)", pruned, err)
 	}
 
 	// Everything is, at a zero-width window.
-	if _, err := database.PruneSearchOutbox(ctx, time.Nanosecond, 0); err != nil {
+	if _, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxAge: time.Nanosecond}); err != nil {
 		t.Fatalf("PruneSearchOutbox: %s", err)
 	}
 
@@ -223,5 +223,52 @@ func TestNothingIsQueuedWithoutTheOutbox(t *testing.T) {
 
 	if count != 0 {
 		t.Fatalf("a store with the outbox disabled queued %d deletions; it must queue none", count)
+	}
+}
+
+// TestPruneBoundsTheOutboxInBytes is the byte cap on a fixed-width table, which is the row cap in
+// the unit a disk is sized in and nothing more - so what this pins is the arithmetic being right
+// and the two bounds combining the way they are documented to.
+func TestPruneBoundsTheOutboxInBytes(t *testing.T) {
+	database := newOutboxTestDB(t)
+	ctx := context.Background()
+
+	for i := range 6 {
+		id := string(rune('a' + i))
+
+		if _, err := database.CreateMemory(ctx, types.Memory{
+			Id: id, Body: "x", Significance: 1000, TimeStamp: time.Now().UnixNano(),
+		}); err != nil {
+			t.Fatalf("CreateMemory: %s", err)
+		}
+
+		if _, err := database.DeleteMemories(ctx, []string{id}); err != nil {
+			t.Fatalf("DeleteMemories: %s", err)
+		}
+	}
+
+	// Room for two rows and no row cap at all, so anything trimmed was trimmed on bytes.
+	if _, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxBytes: 2 * outboxRowBytes}); err != nil {
+		t.Fatalf("PruneSearchOutbox: %s", err)
+	}
+
+	depth, err := database.SearchOutboxDepth(ctx)
+	if err != nil {
+		t.Fatalf("SearchOutboxDepth: %s", err)
+	}
+
+	if depth != 2 {
+		t.Errorf("a cap of two rows' worth of bytes left %d rows, want 2", depth)
+	}
+
+	// The figure the cap is measured against is the one that is reported, which is what stops an
+	// operator reading a queue as being well inside a bound it is at.
+	measured, err := database.AncillaryStorage(ctx)
+	if err != nil {
+		t.Fatalf("AncillaryStorage: %s", err)
+	}
+
+	if measured.SearchOutbox.Bytes != 2*outboxRowBytes {
+		t.Errorf("the trimmed outbox reports %d bytes, want %d", measured.SearchOutbox.Bytes, 2*outboxRowBytes)
 	}
 }

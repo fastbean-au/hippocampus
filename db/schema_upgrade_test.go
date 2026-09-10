@@ -454,6 +454,12 @@ var schemaFixtureTags = map[string]string{
 	"content_search":            "v0.23.0",
 	"callback_queue":            notReleasedBefore,
 
+	// The queue's payload_bytes column. Every released fixture predates the QUEUE, so none of them
+	// carries a table for this to alter - the backfill is exercised by
+	// TestCallbackPayloadBytesBackfillsAPreMigrationQueue, which builds the old shape rather than
+	// waiting for a release to have shipped one.
+	"callback_payload_bytes": notReleasedBefore,
+
 	// The server dialects' content index. Every released server schema predates it, so the newest
 	// fixture is the one that exercises it - and it exercises the part that matters, which is not
 	// the CREATE TABLE but the backfill: a store upgraded into this index and left empty answers

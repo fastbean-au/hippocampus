@@ -155,6 +155,7 @@ func TestAncillaryToProtoCarriesEveryTable(t *testing.T) {
 			SearchOutbox:  db.AncillaryTable{Enabled: true, Rows: 2, Bytes: 20},
 			CallbackQueue: db.AncillaryTable{Rows: 3, Bytes: 30},
 		},
+		limits: ancillaryLimits{forgottenLog: 100, searchOutbox: 200, callbackQueue: 300},
 	})
 
 	if out.GetMeasuredAt() != measured.UnixNano() {
@@ -183,5 +184,50 @@ func TestAncillaryToProtoCarriesEveryTable(t *testing.T) {
 	// rather than being derived from the row count.
 	if out.GetCallbackQueue().GetEnabled() {
 		t.Error("the callback queue reported enabled from a measurement that said otherwise")
+	}
+
+	// Each table's cap travels with its figure, and belongs to that table rather than to whichever
+	// one happened to be projected first - a byte count with the wrong bound beside it is worse
+	// than one with none, since it reads as headroom that is not there.
+	for name, one := range map[string]struct{ got, want int64 }{
+		"forgotten log":  {out.GetForgottenLog().GetLimitBytes(), 100},
+		"search outbox":  {out.GetSearchOutbox().GetLimitBytes(), 200},
+		"callback queue": {out.GetCallbackQueue().GetLimitBytes(), 300},
+	} {
+		if one.got != one.want {
+			t.Errorf("%s: limit_bytes = %d, want %d", name, one.got, one.want)
+		}
+	}
+}
+
+// TestAncillaryLimitsComeFromTheEnforcedBounds is what stops the console reassuring about a bound
+// that is not the one being applied: the limits reported are read off the same fields the prune
+// paths are handed, not from a second reading of configuration.
+func TestAncillaryLimitsComeFromTheEnforcedBounds(t *testing.T) {
+	s := &Server{
+		outboxBounds:   db.QueueBounds{MaxBytes: 4096},
+		callbackBounds: db.QueueBounds{MaxBytes: 8192},
+	}
+
+	s.consolidation.tombstoneMaxBytes = 2048
+
+	limits := s.ancillaryLimits()
+
+	if limits.forgottenLog != 2048 {
+		t.Errorf("the forgotten log's limit is %d, want 2048", limits.forgottenLog)
+	}
+
+	if limits.searchOutbox != s.outboxBounds.MaxBytes {
+		t.Errorf("the outbox limit is %d but %d is enforced", limits.searchOutbox, s.outboxBounds.MaxBytes)
+	}
+
+	if limits.callbackQueue != s.callbackBounds.MaxBytes {
+		t.Errorf("the callback limit is %d but %d is enforced", limits.callbackQueue, s.callbackBounds.MaxBytes)
+	}
+
+	// Unset is unbounded, and must be reported as 0 rather than as some sentinel a client would
+	// render as a cap.
+	if (&Server{}).ancillaryLimits() != (ancillaryLimits{}) {
+		t.Error("an unconfigured instance reported a byte cap")
 	}
 }

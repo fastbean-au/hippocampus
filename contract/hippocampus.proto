@@ -1565,9 +1565,12 @@ message GetConsolidationStatusResponse {
 
 // AncillaryTable is what one of the three tables excluded from the capacity target holds.
 //
-// bytes is rows multiplied by a flat per-row allowance, not a measurement - summing the stored
-// payloads would put a scan of the queue on the path that exists to bound the store - so rows is
-// reported beside it rather than leaving a lone estimate to look more precise than it is.
+// For the two fixed-width tables bytes is rows multiplied by a flat per-row allowance, not a
+// measurement - scanning them to add up what their count already says would put a cost on the path
+// that exists to bound the store - so rows is reported beside it rather than leaving a lone estimate
+// to look more precise than it is. The callback queue is the exception, and is why the pair is
+// reported: its rows carry a rendered payload and, under callbacks.includeBodies, memory bodies, so
+// a count says nothing about its size and its bytes are summed from a size written at insert.
 //
 // enabled separates the two zeroes: a feature nobody turned on holds nothing because nothing writes
 // to it, while an enabled one holding nothing is a queue that is keeping up. They call for opposite
@@ -1582,6 +1585,18 @@ message AncillaryTable {
 	bool                                   enabled                   = 1;
 	int64                                  rows                      = 2;
 	int64                                  bytes                     = 3;
+
+	// limit_bytes is the byte cap configured for this table, or 0 where none is - so bytes has the
+	// bound it is approaching beside it rather than being a figure with nothing to read it against.
+	// Reaching the cap discards rows: for the two queues that is undelivered work (a notification
+	// nobody will receive, an index deletion left to the reverse sweep), and for the forgotten log
+	// it is the oldest end of a record.
+	//
+	// A cap of 0 is not "no bytes allowed": it is what every deployment has until an operator sets
+	// one, since how much of this a deployment can afford is a property of its disk rather than of
+	// the service. What bounds it meanwhile is the row cap, exactly - the rows being fixed width -
+	// for the first two, and only loosely for the callback queue.
+	int64                                  limit_bytes               = 4;
 }
 
 // AncillaryStorage is the storage this store spends that its byte capacity target cannot see.
@@ -1596,6 +1611,7 @@ message AncillaryTable {
 //
 // The callback queue is the one to watch. Its rows have no fixed size, so callbacks.maxRows bounds
 // its bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps.
+// callbacks.maxBytes is what bounds it in the same unit the figure is reported in.
 message AncillaryStorage {
 	int64                                  measured_at               = 1; // UnixNano the cycle took this measurement
 	int64                                  total_bytes               = 2;

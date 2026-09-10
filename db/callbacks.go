@@ -277,6 +277,7 @@ func (d *DB) callbackQueueDDL() string {
 		chunks          INTEGER NOT NULL DEFAULT 0,
 		item_count      INTEGER NOT NULL DEFAULT 0,
 		payload         ` + dialect.blobType + `,
+		payload_bytes   ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
 		is_compressed   ` + dialect.boolType + ` NOT NULL DEFAULT ` + dialect.boolFalse + `,
 		queued_at       ` + dialect.bigintType + ` NOT NULL DEFAULT 0,
 		attempts        INTEGER NOT NULL DEFAULT 0,
@@ -313,6 +314,56 @@ func (d *DB) initCallbackQueue() error {
 	return nil
 }
 
+// migrateCallbackPayloadBytes adds callback_queue.payload_bytes to a store whose queue predates it,
+// and backfills the rows already sitting there.
+//
+// The column is what turns callbacks.maxBytes from an estimate into a bound. Every other table the
+// capacity target excludes has fixed-width rows, so a row cap IS a byte cap there; a delivery
+// carries a rendered list of items and, under callbacks.includeBodies, memory bodies - so
+// callbacks.maxRows bounds this queue somewhere between a few hundred megabytes of bare ids and a
+// figure with no useful ceiling. The size is written at insert, where it is free, precisely so that
+// neither the cap nor the report has to read the payloads to find it.
+//
+// The backfill matters more than a transient queue suggests. Disabling callbacks stops the writing
+// AND the trimming and leaves everything already queued in place, so a store can hold a queue
+// nothing has touched for months - which is exactly the state that must not report zero bytes.
+//
+// It runs only where the column was actually missing. Migrations are re-run on every startup by
+// design, and an UPDATE predicated on payload_bytes = 0 would scan the queue on each one while also
+// being wrong the moment a payload legitimately encodes to nothing.
+func (d *DB) migrateCallbackPayloadBytes() error {
+	log.Trace("func() db.migrateCallbackPayloadBytes")
+
+	present, err := d.hasColumn(callbackQueueTable, "payload_bytes")
+	if err != nil {
+		return err
+	}
+
+	if present {
+
+		return nil
+	}
+
+	definition := d.dialect().bigintType + ` NOT NULL DEFAULT 0`
+
+	if err := d.addColumnIfMissing(callbackQueueTable, "payload_bytes", definition); err != nil {
+		return err
+	}
+
+	// COALESCE because the payload column is nullable and a NULL length would violate the NOT NULL
+	// the column was just created with.
+	update := `UPDATE ` + callbackQueueTable +
+		` SET payload_bytes = COALESCE(` + d.dialect().blobBytesFunc + `(payload), 0)`
+
+	if _, err := d.sql.Exec(update); err != nil {
+		log.Errorf("failed to backfill the callback queue's payload sizes: %s", err.Error())
+
+		return err
+	}
+
+	return nil
+}
+
 // queueCallbacks records deliveries inside the caller's transaction.
 //
 // Being in the caller's transaction is the whole point: it commits with the deletion or not at all,
@@ -335,11 +386,11 @@ func (d *DB) queueCallbacks(tx *sql.Tx, deliveries []CallbackDelivery) error {
 		chunk := deliveries[start:end]
 
 		query := `INSERT INTO ` + callbackQueueTable + ` (
-			kind, cause, cycle_id, chunk, chunks, item_count, payload, is_compressed,
-			queued_at, next_attempt_at
+			kind, cause, cycle_id, chunk, chunks, item_count, payload, payload_bytes,
+			is_compressed, queued_at, next_attempt_at
 		) VALUES `
 
-		args := make([]any, 0, len(chunk)*10)
+		args := make([]any, 0, len(chunk)*11)
 
 		for i, delivery := range chunk {
 			encoded, compressed, err := encodeCallbackPayload(delivery.Payload)
@@ -352,7 +403,7 @@ func (d *DB) queueCallbacks(tx *sql.Tx, deliveries []CallbackDelivery) error {
 				query += ", "
 			}
 
-			query += "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+			query += "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 			queuedAt := delivery.QueuedAt
 			if queuedAt == 0 {
@@ -367,6 +418,9 @@ func (d *DB) queueCallbacks(tx *sql.Tx, deliveries []CallbackDelivery) error {
 				delivery.Chunks,
 				delivery.ItemCount,
 				encoded,
+				// Written here because here is the only place the size is free. Reading it back
+				// out of the payload column later is the scan this column exists to avoid.
+				int64(len(encoded)),
 				compressed,
 				queuedAt,
 				// Due immediately: a fresh delivery has no backoff to serve.
@@ -644,14 +698,21 @@ func (d *DB) DeferCallbacks(ctx context.Context, seqs []int64, nextAttemptAt int
 	return nil
 }
 
-// PruneCallbackQueue drops deliveries older than maxAge, and trims the oldest beyond maxRows.
+// PruneCallbackQueue applies the configured bounds: deliveries older than MaxAge go, then the
+// oldest beyond MaxRows, then the oldest beyond MaxBytes.
 //
 // The queue must not be able to eat the store it lives in. A receiver that is unreachable for a long
 // time would otherwise grow it without bound - so the policy is that a delivery which has waited
 // this long is abandoned. There is no backstop for it, unlike the outbox's sweep, which is why it is
 // counted and logged at Warn rather than dropped quietly: an operator whose receiver has been down
 // for a day has genuinely lost notifications, and that is a thing to be told.
-func (d *DB) PruneCallbackQueue(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error) {
+//
+// This is the one of the three tables where the byte cap is not the row cap wearing a different
+// unit. A delivery carries up to callbacks.maxIdsPerDelivery items, each of which may carry a
+// memory body up to callbacks.maxBodyBytes, so MaxRows bounds this queue somewhere between a few
+// hundred megabytes of bare ids and a figure with no useful ceiling - which is what item 112.3 is
+// about. MaxBytes is enforced against the payload_bytes column instead, written at insert.
+func (d *DB) PruneCallbackQueue(ctx context.Context, bounds QueueBounds) (int64, error) {
 	log.Trace("func() db.PruneCallbackQueue")
 
 	if !d.callbacks.Enabled || !d.callbackTable {
@@ -664,11 +725,13 @@ func (d *DB) PruneCallbackQueue(ctx context.Context, maxAge time.Duration, maxRo
 
 	var pruned int64
 
-	if maxAge > 0 {
+	maxRows := bounds.MaxRows
+
+	if bounds.MaxAge > 0 {
 		res, err := d.exec(
 			ctx,
 			`DELETE FROM `+callbackQueueTable+` WHERE queued_at < ?`,
-			time.Now().Add(-maxAge).UnixNano(),
+			time.Now().Add(-bounds.MaxAge).UnixNano(),
 		)
 		if err != nil {
 			log.Errorf("failed to prune the callback queue by age: %s", err.Error())
@@ -705,7 +768,86 @@ func (d *DB) PruneCallbackQueue(ctx context.Context, maxAge time.Duration, maxRo
 		}
 	}
 
-	return pruned, nil
+	trimmed, err := d.pruneCallbackQueueBytes(ctx, bounds.MaxBytes)
+	if err != nil {
+
+		return pruned, err
+	}
+
+	return pruned + trimmed, nil
+}
+
+// pruneCallbackQueueBytes trims the oldest deliveries until the queue is inside its byte cap.
+//
+// The cutoff is found with a running total over payload_bytes from the newest delivery backwards,
+// which is one pass over a narrow column and is taken only when a byte cap is configured - the same
+// gating the external capacity axis settled on for a figure that costs something to read. Each row
+// is charged its overhead as well as its payload, so what is bounded here is exactly the figure
+// AncillaryStorage reports and UsedBytes subtracts, rather than a third number.
+//
+// The cutoff is read and then used, rather than being a subquery on the table being deleted from,
+// for the reason PruneTombstones gives: MySQL forbids that outright.
+//
+// The newest delivery is never abandoned for the cap. A single delivery larger than the whole cap
+// would otherwise be discarded the instant it was queued, for the life of that configuration, which
+// is a queue that silently delivers nothing rather than one that is bounded - so the bound an
+// operator actually gets is MaxBytes plus at most one delivery, and the case is logged.
+func (d *DB) pruneCallbackQueueBytes(ctx context.Context, maxBytes int64) (int64, error) {
+	if maxBytes <= 0 {
+
+		return 0, nil
+	}
+
+	var cutoff sql.NullInt64
+
+	err := d.queryRow(
+		ctx,
+		`SELECT MIN(seq) FROM (
+			SELECT seq, SUM(payload_bytes + ?) OVER (ORDER BY seq DESC) AS held
+			FROM `+callbackQueueTable+`
+		) AS totals WHERE held <= ?`,
+		int64(callbackRowOverheadBytes),
+		maxBytes,
+	).Scan(&cutoff)
+
+	if err != nil {
+		log.Errorf("failed to find the callback queue's byte cap cutoff: %s", err.Error())
+
+		return 0, err
+	}
+
+	if !cutoff.Valid {
+		// Either the queue is empty, or its newest delivery is on its own larger than the cap.
+		if err := d.queryRow(ctx, `SELECT MAX(seq) FROM `+callbackQueueTable).Scan(&cutoff); err != nil {
+			log.Errorf("failed to read the callback queue's newest delivery: %s", err.Error())
+
+			return 0, err
+		}
+
+		if !cutoff.Valid {
+
+			return 0, nil
+		}
+
+		log.Warnf("a single callback delivery is larger than callbacks.maxBytes (%d): it is kept "+
+			"rather than abandoned unsent, so the queue is bounded at the cap plus one delivery - "+
+			"lower callbacks.maxIdsPerDelivery or callbacks.maxBodyBytes, or raise the cap", maxBytes)
+	}
+
+	result, err := d.exec(ctx, `DELETE FROM `+callbackQueueTable+` WHERE seq < ?`, cutoff.Int64)
+	if err != nil {
+		log.Errorf("failed to prune the callback queue to its byte cap: %s", err.Error())
+
+		return 0, err
+	}
+
+	trimmed, err := result.RowsAffected()
+	if err != nil {
+
+		return 0, nil
+	}
+
+	return trimmed, nil
 }
 
 // CallbackQueueDepth is how many deliveries are waiting, for the metric and the RPC.
@@ -908,12 +1050,19 @@ func (d *DB) DeleteCallbackQueue(ctx context.Context, before int64) (int64, erro
 	return n, nil
 }
 
-// callbackRowBytes is the flat per-row allowance callbackQueueBytes charges the queue, in the mould
-// of tombstoneRowBytes and outboxRowBytes. It is larger than either because a row carries a rendered
-// payload rather than an id, and larger again when bodies are included - but a rough figure is the
-// right kind of figure here: it is subtracted from a whole-file measurement to keep the queue from
-// influencing eviction, not reported to anybody.
-const callbackRowBytes = 512
+// callbackRowOverheadBytes is what a queued delivery costs BESIDE its payload: eleven narrow typed
+// columns, the row's own page overhead, and its entries in the primary key and the two secondary
+// indexes. In the mould of tombstoneRowBytes and outboxRowBytes, and of the same order, because
+// what those two charge is the whole row and this charges everything except the one part of the row
+// that has no fixed size.
+//
+// It replaced a flat 512 for the entire row. That figure was defensible while nothing but UsedBytes
+// read it - a rough number subtracted from a whole-file measurement to keep the queue out of
+// eviction's way - and it stopped being defensible the moment the same figure was reported to an
+// operator and then enforced as a cap, since a delivery carrying five hundred memory bodies is not
+// 512 bytes by two orders of magnitude. The payload is measured now (payload_bytes, written at
+// insert); this is the part that is still an allowance.
+const callbackRowOverheadBytes = 192
 
 // callbackQueueBytes estimates what the queue occupies, for UsedBytes to subtract on SQLite.
 //
@@ -923,11 +1072,14 @@ const callbackRowBytes = 512
 // notifications that could not be sent as stored bytes, raise capacity pressure, and evict live
 // memories to make room for the news that memories were evicted.
 //
-// A count times an allowance rather than a measurement, for the reason the other two give: this runs
-// inside the capacity check on every sleep cycle, and a scan there would put the cost of the queue
-// on the path that exists to bound the store. The same measurement is what AncillaryStorage reports,
-// which for this table is the one that matters most: its rows are the only ones of the three with no
-// fixed size, so its row cap bounds its bytes only loosely (db/ancillary.go).
+// The payload is summed and everything else is charged a flat allowance, which is the one place the
+// three excluded tables differ. For the other two a count times an allowance IS the measurement -
+// their rows are fixed width - and reading anything more would put a scan on the path that exists to
+// bound the store. Here a count would be measuring the wrong thing entirely: a delivery carrying
+// five hundred memory bodies and one carrying five hundred bare ids are the same row to a COUNT, and
+// two orders of magnitude apart on disk. So the size is written at insert, where it is free, and the
+// sum is over that narrow column rather than over the payloads. The same measurement is what
+// AncillaryStorage reports and what callbacks.maxBytes is enforced against (db/ancillary.go).
 func (d *DB) callbackQueueBytes(ctx context.Context) int64 {
 	return d.excludedBytes(ctx, d.callbackProbe())
 }

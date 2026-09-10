@@ -632,7 +632,7 @@ type Store interface {
 	ClaimCallbacks(ctx context.Context, limit int, now int64) ([]CallbackDelivery, error)
 	ConfirmCallbacks(ctx context.Context, seqs []int64) error
 	DeferCallbacks(ctx context.Context, seqs []int64, nextAttemptAt int64) error
-	PruneCallbackQueue(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error)
+	PruneCallbackQueue(ctx context.Context, bounds QueueBounds) (int64, error)
 	CallbackQueueDepth(ctx context.Context) (int64, error)
 	OldestQueuedCallback(ctx context.Context) (int64, error)
 	GetCallbackQueue(ctx context.Context, filter CallbackQueueFilter) ([]CallbackDelivery, error)
@@ -735,7 +735,7 @@ type Store interface {
 	// has confirmed, so a crash between the two replays the deletion rather than losing it.
 	ClaimSearchDeletes(ctx context.Context, limit int) ([]SearchOutboxEntry, error)
 	ConfirmSearchDeletes(ctx context.Context, seqs []int64) error
-	PruneSearchOutbox(ctx context.Context, maxAge time.Duration, maxRows int64) (int64, error)
+	PruneSearchOutbox(ctx context.Context, bounds QueueBounds) (int64, error)
 	SearchOutboxDepth(ctx context.Context) (int64, error)
 
 	UsedBytes(ctx context.Context) (int64, error)
@@ -978,23 +978,10 @@ func (d *DB) addColumnIfMissing(table string, column string, definition string) 
 		return nil
 	}
 
-	rows, err := d.sql.Query(d.rebind(d.columnProbe()), table, column)
+	exists, err := d.hasColumn(table, column)
 	if err != nil {
-		log.Errorf("failed to check for column '%s' on table '%s': %s", column, table, err.Error())
-
 		return err
 	}
-
-	exists := rows.Next()
-
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		log.Errorf("failed to check for column '%s' on table '%s': %s", column, table, err.Error())
-
-		return err
-	}
-
-	_ = rows.Close()
 
 	if exists {
 		return nil
@@ -1009,6 +996,38 @@ func (d *DB) addColumnIfMissing(table string, column string, definition string) 
 	}
 
 	return nil
+}
+
+// hasColumn reports whether a table already carries a column.
+//
+// Split out of addColumnIfMissing because a migration that BACKFILLS the column it adds needs the
+// answer as well as the action: every migration runs on every startup, so a backfill that cannot
+// tell an existing column from a new one either re-scans the table forever or has to carry its own
+// "have I run" predicate - and the ledger deliberately does not answer that (a recorded migration
+// still runs, which is what makes a reverted one heal).
+//
+// It probes on every dialect, including the two that can ADD COLUMN IF NOT EXISTS: what is wanted
+// here is the state before the change, which that form does not report.
+func (d *DB) hasColumn(table string, column string) (bool, error) {
+	rows, err := d.sql.Query(d.rebind(d.columnProbe()), table, column)
+	if err != nil {
+		log.Errorf("failed to check for column '%s' on table '%s': %s", column, table, err.Error())
+
+		return false, err
+	}
+
+	exists := rows.Next()
+
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		log.Errorf("failed to check for column '%s' on table '%s': %s", column, table, err.Error())
+
+		return false, err
+	}
+
+	_ = rows.Close()
+
+	return exists, nil
 }
 
 // UsedBytes returns the store's logical live size — the figure compared against the byte

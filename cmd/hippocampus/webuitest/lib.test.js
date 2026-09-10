@@ -14,6 +14,7 @@ import {
   tourProgress,
   tourSteps,
   ageLabel,
+  ancillaryLimitLabel,
   ancillaryRows,
   ancillarySummary,
   capacityMeter,
@@ -1760,10 +1761,40 @@ test("ancillaryRows lists a disabled table rather than omitting it", () => {
   // The callback queue is last on purpose: it is the one whose row cap is not a byte cap, so its
   // note is the parting one rather than one of three equals.
   assert.match(rows[2].note, /no fixed size/);
-  assert.equal(rows[2].bound, "callbacks.maxRows");
+  assert.equal(rows[2].bound, "callbacks.maxRows / .maxBytes");
 
   assert.equal(rows[0].state, "recording");
   assert.equal(rows[1].state, "not enabled");
+});
+
+test("ancillaryLimitLabel names the unset cap rather than printing a bound of nothing", () => {
+  // Every deployment has this until somebody sets a cap, and "0 B" beside a real figure would read
+  // as a bound of zero - the opposite of what an absent cap means.
+  assert.equal(ancillaryLimitLabel(1536000, 0), "no byte cap");
+  assert.equal(ancillaryLimitLabel(1536000, undefined), "no byte cap");
+  assert.equal(ancillaryLimitLabel(0, 0), "no byte cap");
+});
+
+test("ancillaryLimitLabel reports how close a table is to discarding rows", () => {
+  assert.equal(ancillaryLimitLabel(512, 1024), "50% of the 1 KiB cap");
+  assert.equal(ancillaryLimitLabel(1024, 1024), "100% of the 1 KiB cap");
+
+  // Over its cap is a real state between cycles: the figure is measured once per sleep cycle and
+  // the trim happens in one, so a queue can be read while it is past the bound it will be brought
+  // back inside. Reporting it as over is the truth; clamping would hide it.
+  assert.equal(ancillaryLimitLabel(2048, 1024), "200% of the 1 KiB cap");
+});
+
+test("ancillaryRows carries each table's own cap", () => {
+  const rows = ancillaryRows({
+    forgottenLog: { enabled: true, rows: "10", bytes: "1000", limitBytes: "4000" },
+    searchOutbox: { enabled: true, rows: "10", bytes: "1000" },
+    callbackQueue: { enabled: true, rows: "10", bytes: "1000", limitBytes: "2000" },
+  });
+
+  assert.equal(rows[0].limit, "25% of the 3.91 KiB cap");
+  assert.equal(rows[1].limit, "no byte cap");
+  assert.equal(rows[2].limit, "50% of the 1.95 KiB cap");
 });
 
 test("ancillaryRows separates a table nothing records into from one nobody enabled", () => {

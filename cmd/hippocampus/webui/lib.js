@@ -647,22 +647,41 @@ export const ANCILLARY_TABLES = [
   {
     key: "forgottenLog",
     label: "Forgotten log",
-    bound: "consolidation.tombstones.maxRows",
-    note: "One fixed-size row per forgotten memory, so its row cap is effectively a byte cap.",
+    bound: "consolidation.tombstones.maxRows / .maxBytes",
+    note: "One fixed-size row per forgotten memory, so its row cap is already a byte cap and the byte cap is the same bound in the other unit.",
   },
   {
     key: "searchOutbox",
     label: "Search outbox",
-    bound: "opensearch.outbox.maxRows",
+    bound: "opensearch.outbox.maxRows / .maxBytes",
     note: "One fixed-size row per index deletion still owed. It grows precisely when deletions are backing up.",
   },
   {
     key: "callbackQueue",
     label: "Callback queue",
-    bound: "callbacks.maxRows",
-    note: "Rows here have no fixed size - a delivery carries up to callbacks.maxIdsPerDelivery items, and memory bodies when callbacks.includeBodies is set - so the row cap bounds the bytes only loosely.",
+    bound: "callbacks.maxRows / .maxBytes",
+    note: "Rows here have no fixed size - a delivery carries up to callbacks.maxIdsPerDelivery items, and memory bodies when callbacks.includeBodies is set - so the row cap bounds the bytes only loosely. callbacks.maxBytes is the one that does.",
   },
 ];
+
+// ancillaryLimitLabel is what goes under a table's size: the byte cap it is measured against, and
+// how close it is to it.
+//
+// The unset case is the one that has to read clearly, because it is what every deployment has until
+// somebody sets a cap - and a bare "0 B" beside a real figure reads as a bound of nothing, which is
+// the opposite of what it means. Reaching a cap DISCARDS rows, so this is not decoration: on the
+// callback queue those are notifications nobody will ever receive.
+export function ancillaryLimitLabel(bytes, limitBytes) {
+  const limit = Number(limitBytes || 0);
+
+  if (limit <= 0) {
+    return "no byte cap";
+  }
+
+  const share = Math.round((Number(bytes || 0) / limit) * 100);
+
+  return `${share}% of the ${formatBytes(limit)} cap`;
+}
 
 // ancillaryRows projects the measurement onto the card's table, one row per table whatever its
 // state. A table that is switched off is listed and said to be off rather than omitted: an absent
@@ -679,13 +698,17 @@ export function ancillaryRows(ancillary) {
     const enabled = Boolean(measured.enabled);
     const rows = Number(measured.rows || 0);
 
+    const bytes = Number(measured.bytes || 0);
+
     return {
       label: table.label,
       bound: table.bound,
       note: table.note,
       enabled,
       rows,
-      bytes: Number(measured.bytes || 0),
+      bytes,
+      limitBytes: Number(measured.limitBytes || 0),
+      limit: ancillaryLimitLabel(bytes, measured.limitBytes),
       state: enabled
         ? "recording"
         : rows

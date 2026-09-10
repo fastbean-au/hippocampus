@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -21,10 +22,12 @@ import (
 // capacity pressure stays exactly where it was. The one number an operator is told to watch reads
 // green while the resource it exists to protect is going.
 //
-// This reports it and decides nothing. Nothing here caps, trims or evicts on the figure; the two
-// queues already trim themselves against their own row caps, and whether those caps should be byte
-// caps is a separate question (TODO-2 item 112.3's other half). Turning an invisible growth into a
-// visible one is worth doing on its own and first.
+// This reports it and decides nothing. Nothing here caps, trims or evicts on the figure - each of
+// the three tables trims itself, against its own bounds, in the storage layer. What this adds is
+// that the bound travels WITH the figure (limit_bytes), because a byte count with nothing to read it
+// against is most of the problem this file exists about: an operator who can see 400 MB and not the
+// cap it is approaching cannot tell a queue that is filling from one that is about to start
+// discarding deliveries.
 //
 // Two decisions carry the shape.
 //
@@ -39,6 +42,17 @@ import (
 // are effectively byte caps; the callback queue's rows carry a rendered payload and, under
 // callbacks.includeBodies, memory bodies - so it is the one whose bytes its row cap barely bounds.
 
+// describeByteCap renders a byte cap for a log line, naming the unbounded case rather than printing
+// a 0 that reads as "zero bytes allowed" - which is the opposite of what it means.
+func describeByteCap(bytes int64) string {
+	if bytes <= 0 {
+
+		return "no byte cap"
+	}
+
+	return fmt.Sprintf("%d bytes", bytes)
+}
+
 // ancillarySnapshot is one measurement of the excluded tables, with when it was taken.
 //
 // Held as an atomic.Pointer for the reason lastCycle is: written once per cycle by the sleep
@@ -51,6 +65,31 @@ import (
 type ancillarySnapshot struct {
 	measuredAt time.Time
 	storage    db.AncillaryStorage
+	limits     ancillaryLimits
+}
+
+// ancillaryLimits is the byte cap in force on each of the three tables when a measurement was taken,
+// captured beside it rather than read at render time so a figure and its bound are always the pair
+// that were true together.
+//
+// Zero means unbounded, which is what a deployment has until an operator sets one; see
+// AncillaryTable.limit_bytes in the contract for why there is no default.
+type ancillaryLimits struct {
+	forgottenLog  int64
+	searchOutbox  int64
+	callbackQueue int64
+}
+
+// ancillaryLimits reads the three caps off the same fields the prune paths are given, so what is
+// reported and what is enforced cannot be two different numbers. The forgotten log's is mirrored
+// from configuration rather than from the storage layer's policy for the reason the enabled flag
+// beside it is (see consolidationConfig.tombstoneMaxBytes).
+func (s *Server) ancillaryLimits() ancillaryLimits {
+	return ancillaryLimits{
+		forgottenLog:  s.consolidation.tombstoneMaxBytes,
+		searchOutbox:  s.outboxBounds.MaxBytes,
+		callbackQueue: s.callbackBounds.MaxBytes,
+	}
 }
 
 // recordAncillaryStorage measures the three excluded tables, publishes the gauge and caches the
@@ -74,7 +113,11 @@ func (s *Server) recordAncillaryStorage(ctx context.Context) {
 		return
 	}
 
-	s.lastAncillary.Store(&ancillarySnapshot{measuredAt: time.Now(), storage: storage})
+	s.lastAncillary.Store(&ancillarySnapshot{
+		measuredAt: time.Now(),
+		storage:    storage,
+		limits:     s.ancillaryLimits(),
+	})
 
 	// A disabled table publishes no series at all, on the reasoning the external capacity axis
 	// follows: a flat zero reads as a queue that is keeping up rather than as a feature nobody
@@ -100,16 +143,17 @@ func ancillaryToProto(in *ancillarySnapshot) *contract.AncillaryStorage {
 	return &contract.AncillaryStorage{
 		MeasuredAt:    in.measuredAt.UnixNano(),
 		TotalBytes:    in.storage.TotalBytes(),
-		ForgottenLog:  ancillaryTableToProto(in.storage.ForgottenLog),
-		SearchOutbox:  ancillaryTableToProto(in.storage.SearchOutbox),
-		CallbackQueue: ancillaryTableToProto(in.storage.CallbackQueue),
+		ForgottenLog:  ancillaryTableToProto(in.storage.ForgottenLog, in.limits.forgottenLog),
+		SearchOutbox:  ancillaryTableToProto(in.storage.SearchOutbox, in.limits.searchOutbox),
+		CallbackQueue: ancillaryTableToProto(in.storage.CallbackQueue, in.limits.callbackQueue),
 	}
 }
 
-func ancillaryTableToProto(in db.AncillaryTable) *contract.AncillaryTable {
+func ancillaryTableToProto(in db.AncillaryTable, limitBytes int64) *contract.AncillaryTable {
 	return &contract.AncillaryTable{
-		Enabled: in.Enabled,
-		Rows:    in.Rows,
-		Bytes:   in.Bytes,
+		Enabled:    in.Enabled,
+		Rows:       in.Rows,
+		Bytes:      in.Bytes,
+		LimitBytes: limitBytes,
 	}
 }

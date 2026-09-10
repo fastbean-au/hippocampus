@@ -73,6 +73,7 @@ var unmanagedConfigKeys = map[string]string{
 	"opensearch.staleSweep":                  "the reverse half of that sweep, which defaults on and is turned off only to diagnose it; offering a checkbox for a correctness backstop invites turning it off",
 	"opensearch.outbox.maxRows":              "a bound on the delete queue, reached only when the index cannot keep up; defaulted, and a number to raise against a measured backlog rather than to guess at up front",
 	"opensearch.outbox.maxAgeHours":          "as above",
+	"opensearch.outbox.maxBytes":             "as above, and the row cap already is a byte cap on a fixed-width row - this states it in the other unit",
 	"reflection.enabled":                     "the service derives its default from auth.method (on when auth is off, off otherwise), which is right for both configurations the wizard produces; a wizard field's default is a static literal, so offering it would mean picking one of the two and writing the other out wrongly",
 	"callbacks.batchSize":                    "dispatcher tuning: how many deliveries one pass claims, defaulted and tuned only against a measured backlog rather than guessed at up front",
 	"callbacks.retryBaseBackoffSeconds":      "as above, for the retry curve against a failing receiver",

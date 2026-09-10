@@ -513,35 +513,68 @@ outside** the target: each grows precisely when something is going wrong, so cou
 capacity pressure and evict live memories to make room for the record of memories being evicted.
 They are excluded from the capacity target; they are not excluded from the disk.
 
-| Feature                                                              | Table               | Bounded by                                                               | Default cap                              |
-| -------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------ | ---------------------------------------- |
-| [Forgotten log](#what-was-forgotten--the-forgotten-log)               | `memory_tombstones` | `consolidation.tombstones.maxRows` / `.maxAgeInDays`, trimmed each cycle  | 100,000 rows or 30 days (feature is off) |
-| [Delete outbox](configuration.md#the-delete-outbox)                   | `search_outbox`     | `opensearch.outbox.maxRows` / `.maxAgeHours`                              | 1,000,000 rows or 24 hours               |
-| [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue` | `callbacks.maxRows` / `.maxAgeHours`                                      | 1,000,000 rows or 24 hours               |
-| [Peer registry](#seeing-the-deployment) (server drivers)              | `instances`         | one row per live instance, each pruned against its own heartbeat interval | negligible                               |
+| Feature                                                              | Table               | Bounded by                                                                                  | Default cap                              |
+| -------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| [Forgotten log](#what-was-forgotten--the-forgotten-log)               | `memory_tombstones` | `consolidation.tombstones.maxRows` / `.maxBytes` / `.maxAgeInDays`, trimmed each cycle       | 100,000 rows or 30 days (feature is off) |
+| [Delete outbox](configuration.md#the-delete-outbox)                   | `search_outbox`     | `opensearch.outbox.maxRows` / `.maxBytes` / `.maxAgeHours`                                   | 1,000,000 rows or 24 hours               |
+| [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue` | `callbacks.maxRows` / `.maxBytes` / `.maxAgeHours`                                           | 1,000,000 rows or 24 hours               |
+| [Peer registry](#seeing-the-deployment) (server drivers)              | `instances`         | one row per live instance, each pruned against its own heartbeat interval                    | negligible                               |
 
-Setting a bound to 0 removes it, which is supported — the forgotten log warns at startup when both
-of its bounds are gone — but an unbounded table here grows until the disk stops it, and eviction
-will never notice. **Size the disk for `capacityBytes` plus the caps of whatever you have enabled**,
-not for `capacityBytes` alone. Two of the defaults are a million rows each, and the callback queue
-can carry memory bodies (`callbacks.includeBodies`), so on a store with callbacks and an OpenSearch
-index that headroom is not a rounding error.
+Setting a bound to 0 removes it, which is supported — the forgotten log and the callback queue both
+warn at startup when every one of their bounds is gone — but an unbounded table here grows until the
+disk stops it, and eviction will never notice. **Size the disk for `capacityBytes` plus the caps of
+whatever you have enabled**, not for `capacityBytes` alone.
 
-**These tables are now reported.** `hippocampus.ancillary_bytes` carries what each of them holds,
+#### Sizing the three, in bytes
+
+Each of them takes a `maxBytes` beside its row cap, all three unset by default. What that buys
+differs by table, and the difference is worth knowing before setting one:
+
+- **The forgotten log and the delete outbox have fixed-width rows**, so their row caps are already
+  byte caps — roughly **19 MB** and **96 MB** at the defaults, at 192 and 96 bytes a row. `maxBytes`
+  there is the same bound stated in the unit a disk is sized in, and reaching it trims exactly as
+  the row cap does; where both are set, the tighter wins.
+- **The callback queue's rows have no fixed size**, and that is the case the key exists for. A
+  delivery carries up to `callbacks.maxIdsPerDelivery` items (500), each of which may carry a memory
+  body up to `callbacks.maxBodyBytes` (64 KiB) under `callbacks.includeBodies` — so
+  `callbacks.maxRows` bounds the queue anywhere between a few hundred megabytes of bare ids and a
+  figure with no useful ceiling. `callbacks.maxBytes` is measured against the rendered payloads
+  themselves (a `payload_bytes` column written at insert, so no scan of the queue is needed), which
+  is the only thing that actually bounds it.
+
+Two properties to know. **Reaching a byte cap discards rows, exactly as a row cap does** — an
+abandoned callback is a notification nobody will ever receive, an abandoned outbox row is a stale
+index document left for the reverse sweep, and an abandoned tombstone is the oldest end of a record.
+And **the newest callback delivery is never abandoned for the byte cap**: a single delivery larger
+than the whole cap would otherwise be discarded the instant it was queued, for the life of that
+configuration, so the bound you actually get is `maxBytes` plus at most one delivery, and that case
+is logged at Warn naming the keys to lower.
+
+None of the three is defaulted, because how much of this a deployment can afford is a property of
+its disk rather than of the service, and a byte cap discards data. What stands in for a default is a
+startup warning where the shape is dangerous — `callbacks.includeBodies` with no `callbacks.maxBytes`
+is the one that matters, since it is the arrangement in which nothing bounds the queue's size at all.
+
+**These tables are reported.** `hippocampus.ancillary_bytes` carries what each of them holds,
 labelled by `component` (`forgotten_log`, `search_outbox`, `callback_queue`), measured once per sleep
 cycle; sum over the label for the figure to add to `capacityBytes` when sizing a disk. The console's
 Deployment tab shows the same reading under the callback queue, and `hippo consolidation status`
-carries it as the response's `ancillary` block. The shipped alert
+carries it as the response's `ancillary` block — where each table also reports its `limit_bytes`, so
+the figure has the bound it is approaching beside it rather than standing alone. The shipped alert
 [`HippocampusAncillaryStorageHigh`](../deploy/observability/README.md) fires when the three together
 exceed a quarter of `capacityBytes`.
 
-Three things to know about the figure. It is a **row count times a flat per-row allowance**, not a
-measurement — summing the stored payloads would put a scan of the queue on the path that exists to
-bound the store — so it is the right order of magnitude and not more than that. It is the **same**
-figure the capacity target subtracts, so what the console shows and what eviction ignores cannot
-disagree. And a component reporting `enabled: false` beside a row count is a table that has been
-switched off and still holds what it wrote: disabling any of the three stops the writing *and* the
-trimming, so those rows stay until `DeleteForgottenMemories` or `DeleteCallbackQueue` discards them.
+Three things to know about the figure. For the two fixed-width tables it is a **row count times a
+flat per-row allowance**, not a measurement — scanning them to add up what their count already says
+would put a cost on the path that exists to bound the store — so it is the right order of magnitude
+and not more than that; the callback queue is the exception, and its bytes are summed from a size
+recorded at insert, a count there saying nothing about a row that may carry five hundred memory
+bodies. It is the **same** figure the capacity target subtracts and the same one `maxBytes` is
+enforced against, so what the console shows, what eviction ignores and what gets trimmed cannot be
+three different numbers. And a component reporting `enabled: false` beside a row count is a table
+that has been switched off and still holds what it wrote: disabling any of the three stops the
+writing *and* the trimming, so those rows stay until `DeleteForgottenMemories` or
+`DeleteCallbackQueue` discards them.
 
 One thing runs the other way. On **SQLite** the [content search](configuration.md#content-search)
 index (`memories_fts`) lives in the same database file and page accounting counts it, so the same
@@ -704,6 +737,7 @@ It is optional and off by default:
   "tombstones": {
     "enabled": true,
     "maxRows": 100000,
+    "maxBytes": 0,
     "maxAgeInDays": 30
   }
 }
@@ -732,9 +766,11 @@ Four things to know before turning it on.
   deletes (`DeleteMemories`, `DeleteEvent --memories`, summary replacement) do not. Nothing was
   lost in those cases, and a log claiming otherwise would be worse than no log.
 - **It is bounded, and the bounds matter.** The log lives in the store it describes, so an
-  unbounded one would slowly consume the headroom that drives forgetting. `maxRows` and
-  `maxAgeInDays` are applied at the end of every cycle and a record past either bound is trimmed;
-  setting both to 0 removes the bounds, which is supported and warned about at startup. The log is
+  unbounded one would slowly consume the headroom that drives forgetting. `maxRows`, `maxBytes` and
+  `maxAgeInDays` are applied at the end of every cycle and a record past any of them is trimmed;
+  setting all three to 0 removes the bounds, which is supported and warned about at startup. A
+  tombstone is a fixed-width row, so `maxBytes` is the row cap in another unit — 192 bytes a row —
+  and where both are set the tighter wins. The log is
   excluded from the store's measured size, so it never raises capacity pressure or triggers
   eviction — but it does still occupy disk, and is one of the tables [the disk budget has to cover
   on top of `capacityBytes`](#the-capacity-target-bounds-the-memories-not-the-database).

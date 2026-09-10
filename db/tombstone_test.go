@@ -731,7 +731,7 @@ func TestForgottenReadErrors(t *testing.T) {
 	t.Run("count", func(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
-		mock.ExpectQuery(`COUNT\(\*\) FROM memory_tombstones`).WillReturnError(errors.New("boom"))
+		mock.ExpectQuery(`COUNT\(\*\).* FROM memory_tombstones`).WillReturnError(errors.New("boom"))
 
 		if _, err := d.CountForgottenMemories(context.Background(), nil); err == nil {
 			t.Fatal("expected an error")
@@ -823,11 +823,47 @@ func TestTombstoneBytesUnavailable(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 	d.tombstoneTable = true
 
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM memory_tombstones`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`SELECT COUNT\(\*\).* FROM memory_tombstones`).WillReturnError(errors.New("boom"))
 
 	if got := d.tombstoneBytes(context.Background()); got != 0 {
 		t.Errorf("tombstoneBytes on a failed measurement = %d, want 0", got)
 	}
 
 	expectationsMet(t, mock)
+}
+
+// TestPruneTombstonesByBytes is the forgotten log's byte cap: the row cap in the unit a disk is
+// sized in, these rows being fixed width. What it pins beyond the arithmetic is that it is applied
+// at all - PruneTombstones reads its bounds off the policy rather than taking them as parameters,
+// so a byte cap that never reached the policy would leave every existing test passing.
+func TestPruneTombstonesByBytes(t *testing.T) {
+	d := recordingDB(t, TombstonePolicy{Enabled: true, MaxBytes: 3 * tombstoneRowBytes})
+
+	ctx := context.Background()
+
+	for i := range 10 {
+		seedForgettableMemory(t, d, fmt.Sprintf("m%d", i), "", "")
+	}
+
+	if _, err := d.ConsolidateMemories(ctx, forgetAll{}); err != nil {
+		t.Fatalf("ConsolidateMemories: %s", err)
+	}
+
+	if _, err := d.PruneTombstones(ctx); err != nil {
+		t.Fatalf("PruneTombstones: %s", err)
+	}
+
+	measured, err := d.AncillaryStorage(ctx)
+	if err != nil {
+		t.Fatalf("AncillaryStorage: %s", err)
+	}
+
+	if measured.ForgottenLog.Rows != 3 {
+		t.Errorf("a cap of three rows' worth of bytes left %d records, want 3", measured.ForgottenLog.Rows)
+	}
+
+	if measured.ForgottenLog.Bytes > 3*tombstoneRowBytes {
+		t.Errorf("the trimmed log reports %d bytes, over its %d-byte cap",
+			measured.ForgottenLog.Bytes, 3*tombstoneRowBytes)
+	}
 }
