@@ -92,15 +92,18 @@ func TestAddColumnIfMissing_RowsIterationError(t *testing.T) {
 func TestUsedBytes_DelegatesToLiveRowsOnServerDrivers(t *testing.T) {
 	d, mock := newMockDB(t, driverPostgres)
 
-	mock.ExpectQuery(`SELECT`).WillReturnRows(sqlmock.NewRows([]string{"used"}).AddRow(int64(1234)))
+	// One memory of 700 stored bytes, all of them indexed: the estimate adds this dialect's per-row
+	// overhead and its content-index share.
+	mock.ExpectQuery(`SELECT`).WillReturnRows(sqlmock.NewRows([]string{"memories", "memory_bytes", "memory_indexed_bytes", "events", "event_bytes", "links"}).
+		AddRow(int64(1), int64(700), int64(700), int64(0), int64(0), int64(0)))
 
 	used, err := d.UsedBytes(context.Background())
 	if err != nil {
 		t.Fatalf("UsedBytes: %v", err)
 	}
 
-	if used != 1234 {
-		t.Fatalf("used = %d, want 1234", used)
+	if want := d.memoriesFootprint(1, 700, 700); used != want {
+		t.Fatalf("used = %d, want %d", used, want)
 	}
 
 	expectationsMet(t, mock)

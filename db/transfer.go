@@ -181,6 +181,7 @@ func (d *DB) ImportMemories(ctx context.Context, memories []types.Memory) (int, 
 			memory.Group,
 			isCompressed,
 			memory.ExternalBytes,
+			indexedBodyBytes(memory.Body, memory.IsBinary),
 			metadata,
 		); err != nil {
 			_ = tx.Rollback()

@@ -476,10 +476,19 @@ compared against the store's **live logical size**, not the physical file size:
 - **SQLite** — database pages excluding the freelist (the size the file would have after a full
   vacuum).
 - **Postgres / MySQL** — an estimate summed from the live rows themselves: each row's payload
-  (`octet_length`) plus a fixed per-row overhead. This is deliberately _not_ a file-size measure:
-  neither server returns space to the filesystem after `DELETE` (they reuse it internally), so a
-  file-size reading would plateau at its high-water mark and make eviction chase a figure that can
-  never drop.
+  (`octet_length`) plus a per-row allowance for what the row costs beyond it — the row header, the
+  columns the payload sum does not measure, this row's entries in the primary key and the two
+  secondary indexes, and its share of the [content index](configuration.md#content-search) where the
+  store keeps one. The allowance is measured per dialect rather than assumed, and held to real
+  relation sizes by a test. This is deliberately _not_ a file-size measure: neither server returns
+  space to the filesystem after `DELETE` (they reuse it internally), so a file-size reading would
+  plateau at its high-water mark and make eviction chase a figure that can never drop.
+
+  **It is an estimate, and it is not the disk.** Measured against real relation sizes across bodies
+  from 64 bytes to four kilobytes, both index modes and compression both ways, it lands within about
+  10% — which is close enough to size a disk from with headroom, and not close enough to treat as a
+  quota. Before 0.45.0 it was not close at all: one 256-byte constant served all three drivers and
+  under-counted server-driver disk by three to five times.
 
 Three consequences for sizing:
 
@@ -539,9 +548,12 @@ index (`memories_fts`) lives in the same database file and page accounting count
 `capacityBytes` holds fewer memories and eviction starts sooner than it would with search unused.
 The index is contentless — an inverted index, not a second copy of the bodies — so the overhead is a
 fraction of the text, but it is real and it is inside the target. The server drivers keep the same
-index and the same table name, but their live-row estimate does not see it at all: it is disk to
-size for, not capacity pressure. On **MySQL** size for rather more of it than the other two, since a
-`FULLTEXT` index is an index on a column and so holds an uncompressed copy of every indexed body.
+index and the same table name, and since 0.45.0 their live-row estimate allows for it too — so
+enabling or disabling the store's own content index moves capacity pressure on every driver rather
+than on one. On **MySQL** that allowance is much the largest of the three, because a `FULLTEXT` index
+is an index on a column and so holds an uncompressed copy of every indexed body: the store's estimate
+of a memory there is its body twice over plus a kilobyte, against roughly its body plus half again on
+the other two.
 
 ### MySQL: size the InnoDB buffer pool to the working set
 

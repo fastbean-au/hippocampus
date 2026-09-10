@@ -116,10 +116,16 @@ type PreviewOptions struct {
 
 // previewRow is one scanned memory, carrying both the decision inputs and the reporting detail.
 type previewRow struct {
-	candidate     MemoryConsolidationCandidate
-	id            string
-	eventId       string
-	group         string
+	candidate MemoryConsolidationCandidate
+	id        string
+	eventId   string
+	group     string
+	// payload is the row's stored size; bytes is the footprint the estimate works in, which adds
+	// this dialect's per-row overhead and its content-index share. The two are kept apart because
+	// the reported candidate carries the former and the byte totals the latter, and subtracting one
+	// back out of the other stopped being possible once the overhead gained a term that is not
+	// per-row.
+	payload       int64
 	bytes         int64
 	externalBytes int64
 	value         float64
@@ -169,7 +175,8 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			m.group_name, e.significance_level_id, COALESCE(e.link_significance, 0),
 			m.link_significance, e.id,
-			length(m.body) + `+d.metadataBytesExpr("m.")+`, m.external_bytes
+			length(m.body) + `+d.metadataBytesExpr("m.")+`,
+			COALESCE(m.indexed_bytes, length(m.body)), m.external_bytes
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 	)
 	if err != nil {
@@ -191,7 +198,7 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 		var row previewRow
 		var joinedEventId sql.NullString
 		var memoryLevelID, eventLevelID sql.NullInt64
-		var bodyBytes sql.NullInt64
+		var payloadBytes, indexedBytes sql.NullInt64
 
 		if err := rows.Scan(
 			&row.id,
@@ -205,7 +212,8 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 			&row.candidate.EventLinkSignificance,
 			&row.candidate.MemoryLinkSignificance,
 			&joinedEventId,
-			&bodyBytes,
+			&payloadBytes,
+			&indexedBytes,
 			&row.externalBytes,
 		); err != nil {
 			log.Errorf("failed to scan memory for preview: %s", err.Error())
@@ -215,7 +223,8 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 
 		row.candidate.MemorySignificance = rankOf(ranks, memoryLevelID)
 		row.candidate.EventSignificance = rankOf(ranks, eventLevelID)
-		row.bytes = bodyBytes.Int64 + evictionRowOverheadBytes
+		row.payload = payloadBytes.Int64
+		row.bytes = d.memoryFootprint(row.payload, indexedBytes.Int64)
 		row.value = s.MemoryValue(row.candidate)
 
 		// A dangling event reference has no event row to delete, so it stays out of the event
@@ -395,8 +404,8 @@ func previewSample(consolidating []previewRow, evicting []previewRow, limit int)
 	return candidates, false
 }
 
-// forgetCandidate projects a scanned row onto the reported shape. Bytes is reported net of the
-// row overhead the estimate adds, so it reads as the body's stored size rather than as an
+// forgetCandidate projects a scanned row onto the reported shape. Bytes reports the row's stored
+// payload rather than its footprint, so it reads as the size of the memory rather than as an
 // accounting figure.
 func (r previewRow) forgetCandidate(rule ForgetRule) ForgetCandidate {
 	return ForgetCandidate{
@@ -405,7 +414,7 @@ func (r previewRow) forgetCandidate(rule ForgetRule) ForgetCandidate {
 		Group:         r.group,
 		Significance:  r.candidate.MemorySignificance,
 		Value:         r.value,
-		Bytes:         r.bytes - evictionRowOverheadBytes,
+		Bytes:         r.payload,
 		ExternalBytes: r.externalBytes,
 		Rule:          rule,
 		TimeStamp:     r.candidate.Timestamp,
@@ -444,26 +453,27 @@ func (d *DB) RetainedStats(ctx context.Context, cutoff int64) (RetentionStats, e
 	greatest := d.greatest("timestamp", "time_recalled")
 
 	var stats RetentionStats
-	var bytes, external sql.NullInt64
+	var bytes, indexedBytes, external sql.NullInt64
 
 	// The NullInt64s carry the empty-store case: SUM over no rows is NULL, which is not an error.
 	err := d.queryRow(
 		ctx,
-		`SELECT COUNT(*), SUM(length(body) + `+d.metadataBytesExpr("")+`), SUM(external_bytes)
+		`SELECT COUNT(*), SUM(length(body) + `+d.metadataBytesExpr("")+`),
+			SUM(COALESCE(indexed_bytes, length(body))), SUM(external_bytes)
 		FROM memories WHERE `+greatest+` >= ?`,
 		cutoff,
-	).Scan(&stats.Memories, &bytes, &external)
+	).Scan(&stats.Memories, &bytes, &indexedBytes, &external)
 	if err != nil {
 		log.Errorf("failed to read retained stats: %s", err.Error())
 
 		return RetentionStats{}, err
 	}
 
-	// The same per-row allowance EvictMemories and the preview add, so the figure is comparable
-	// with used bytes and the capacity target rather than being a bare sum of body lengths. The
-	// external figure takes no allowance: it measures bytes in another system, where this store's
-	// per-row overhead means nothing.
-	stats.Bytes = bytes.Int64 + int64(stats.Memories)*evictionRowOverheadBytes
+	// The same footprint EvictMemories and the preview estimate, so the figure is comparable with
+	// used bytes and the capacity target rather than being a bare sum of body lengths. The external
+	// figure takes no allowance: it measures bytes in another system, where this store's per-row
+	// overhead means nothing.
+	stats.Bytes = d.memoriesFootprint(int64(stats.Memories), bytes.Int64, indexedBytes.Int64)
 	stats.ExternalBytes = external.Int64
 
 	return stats, nil

@@ -326,7 +326,7 @@ func TestRetainedStatsReportsExternalBytes(t *testing.T) {
 	// The two figures measure different resources, so the external one is a bare sum: it must not
 	// carry the per-row allowance the store's own accounting adds, which means nothing on a disk
 	// this service does not own.
-	if retained.Bytes <= evictionRowOverheadBytes {
+	if retained.Bytes <= db.dialect().memoryRowOverheadBytes {
 		t.Errorf("retained bytes = %d, which does not include the per-row allowance", retained.Bytes)
 	}
 }

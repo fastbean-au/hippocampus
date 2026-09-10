@@ -379,12 +379,14 @@ flowchart LR
     direction TB
     inputs["Decay inputs — the covering index<br/>event_id · timestamp · significance_level_id<br/>time_recalled · recall_count · link_significance<br/>external_bytes"]
     flags["Flags and labels<br/>group_name · is_binary · is_summary · is_compressed"]
+    accounting["Accounting<br/>indexed_bytes"]
     payload["Payload<br/>body (gzipped) · metadata"]
   end
 
   C["Consolidation passes<br/>every row, every cycle"] --> inputs
   E["Eviction pass<br/>every row, when over capacity"] --> inputs
   E -.->|"length() only"| payload
+  E --> accounting
   R["Client reads<br/>GetMemories · RecallMemories · SearchMemories"] --> inputs
   R --> flags
   R --> payload
@@ -404,6 +406,7 @@ flowchart LR
 | `is_binary`             | flag        | no             |
 | `is_summary`            | flag        | no             |
 | `is_compressed`         | flag        | no             |
+| `indexed_bytes`         | accounting  | no             |
 | `body`                  | payload     | no             |
 | `metadata`              | payload     | no             |
 
@@ -415,6 +418,15 @@ memory itself.) That is why the cost of a cycle tracks the _number_ of memories 
 size: a store of 64 KB bodies scans no more slowly than one of 200-byte bodies. It is
 pinned by benchmark rather than by intention — a regression in `db/bench_test.go`'s scan benchmarks
 is how a scan that had started reading bodies would announce itself.
+
+**`indexed_bytes` is there so eviction need not read a body to size one.** It records how much of
+this memory's plain text the [content index](configuration.md#content-search) holds — nothing for a
+binary memory, which is never indexed — and it exists because that figure cannot be recovered later:
+the stored body may be compressed, while the index was fed the body before compression. Measured, a
+content index is the same size whether the bodies beside it were compressed or not, so an estimate
+scaled off the stored length under-counts it by whatever compression saved. A row written before the
+column existed has none, and the estimate falls back to its stored length there — exact for an
+uncompressed row, and low for a compressed one.
 
 **`significance_level_id` is an id, not a value.** Significance is stored indirectly, as a row in
 the shared `significance_levels` registry, so that a client can rank a new item _between_ two

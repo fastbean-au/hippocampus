@@ -52,6 +52,80 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ## [Unreleased]
 
+### Breaking
+
+- **`consolidation.capacityBytes` now regulates a figure three to five times larger on `postgres`
+  and `mysql`, and somewhat larger on `sqlite`. Re-derive your capacity target from real disk before
+  upgrading.** The key is unchanged, the values it accepts are unchanged, and no configuration
+  becomes invalid — but the number it is compared against has moved, so a store sitting comfortably
+  under its target today can be over it on the first cycle after the upgrade, and that cycle will
+  evict hard.
+
+  What was wrong: the store estimates its live size as each row's stored payload plus a per-row
+  allowance for everything else the row costs. That allowance was a single 256-byte constant shared
+  by all three drivers, unchanged since the initial commit, while the columns it allowed for grew, a
+  second index was added, the covering index was widened twice and the content index arrived. Its doc
+  comment had always claimed to cover "the remaining columns and the index entries"; it had never
+  been measured against either. Measured over 10,000 memories, the Postgres row alone costs 400 bytes
+  and the MySQL row 1,050, and neither figure included the content index — 11 to 40 MiB of it — at
+  all. The result was a capacity target regulating a figure **3.0x to 5.0x smaller than the disk**,
+  on the one setting an operator is told to size a volume from.
+
+  What replaces it: a measured allowance per dialect, in two parts — a per-row cost, and the content
+  index's share, which is itself a per-row cost plus a term proportional to the body, because an
+  inverted index necessarily grows with the text it indexes. A flat allowance cannot express that,
+  which is why the obvious "bigger constant" is not what shipped. Against real relation sizes, across
+  bodies from 64 bytes to four kilobytes, both index modes and compression both ways, the estimate now
+  lands within about 10% on all three drivers.
+
+  The estimate deliberately remains an estimate. Asking the server for its relation sizes would be
+  more accurate and quite wrong: no file-size measure on either server shrinks after a `DELETE`, so
+  eviction would chase a figure that cannot drop and would drain the store trying.
+
+  **What to do.** If `consolidation.capacityBytes` is unset or zero, nothing changes — there is no
+  byte target. If it is set, it was very probably derived from what the disk was doing rather than
+  from the store's own reported figure, in which case it is now roughly right and may need no change.
+  If it was derived from `hippocampus.used_bytes` or the console's capacity meter, multiply it by
+  three to five on the server drivers before upgrading. Either way the service now says so at
+  startup: a store already over its target logs a warning naming both figures, before the first cycle
+  runs.
+
+### Changed
+
+- **`memories` gains an `indexed_bytes` column**, added in place on the next startup like every other
+  column migration; no action is needed and an older store opens unchanged. It records how much of
+  each memory's plain body the content index holds — nothing for a binary memory, which is never
+  indexed — because that figure cannot be recovered afterwards: the stored body may be compressed,
+  and the index is fed the body before compression happens. Measured, a content index is the same
+  size to within a byte whether the bodies beside it were compressed or not, so an estimate scaled
+  off the stored length under-counts it by exactly what compression saved — which on the shipped
+  default configuration (compression on, the store's own content index on) was about a quarter.
+  Memories written before the column exists have no recorded figure and fall back to their stored
+  length, which is exact for an uncompressed row and low for a compressed one, so an upgraded store
+  estimates no worse than it did and every row written since is right.
+
+- **`hippocampus.used_bytes`, the capacity meter, `PreviewConsolidation`'s byte totals,
+  `RetainedStats` and eviction's estimate of what a deletion frees all move together**, being four
+  readings of the one figure above. `ForgetCandidate.bytes` is unchanged: it reports the memory's
+  stored payload, as it always did.
+- **The store's own content index now moves capacity pressure on the server drivers.** It was inside
+  the target on `sqlite` (page accounting cannot exclude a table in its own file) and outside it on
+  `postgres` and `mysql`; it is now allowed for on all three, so turning
+  `search.contentIndex.enabled` off frees measurable headroom rather than only disk.
+
+### Added
+
+- **A test that holds the per-row allowances to real disk.** `TestRowOverheadMatchesRealStorage`
+  writes a known number of memories of a known size on each driver — in both index modes, and with
+  bodies stored compressed as well as plain — and fails if the estimate falls outside a band of what
+  the server reports it is really holding. The compressed cases are the ones that matter most: every
+  uncompressed case passed while the default configuration was being under-counted by a quarter. It is a band
+  rather than a value because page fill and allocation granularity move a few per cent between runs,
+  and a test that failed on that would be turned off rather than read. The MySQL case needs
+  `HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN` as well as the usual DSN: a `FULLTEXT` index's auxiliary tables
+  are tablespaces of their own, visible only to a connection with the `PROCESS` privilege, and they
+  are a large part of what that index costs.
+
 ## [0.44.0] - 2026-09-10
 
 ### Added

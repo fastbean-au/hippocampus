@@ -176,6 +176,35 @@ type dialect struct {
 	// has to be confirmed separately.
 	countsChangedRows bool
 
+	// memoryRowOverheadBytes is what one memory row costs this dialect beyond its stored payload:
+	// the row header, the columns the payload sum does not measure, and the entries the row earns
+	// in the primary key and the two secondary indexes. It is an ALLOWANCE rather than a
+	// measurement, and it has to be: no server returns space freed by a DELETE to the filesystem,
+	// so a relation-size reading would plateau at its high-water mark and eviction would chase a
+	// figure that cannot drop. See usedBytesLiveRows.
+	//
+	// Measured per dialect rather than assumed - it was one 256-byte constant shared by all three
+	// from the initial commit until it was measured, by which point the Postgres row alone cost
+	// 400. TestRowOverheadMatchesRealStorage is what holds each of these to real disk.
+	memoryRowOverheadBytes int64
+
+	// contentIndexRowOverheadBytes and contentIndexPayloadPerMille are what one memory's entry in
+	// the store's OWN content index costs, added only where that index is present (see
+	// contentIndexed). Two terms because one will not do: the per-row part is the index row and its
+	// key, and the proportional part is the inverted form of the body, which necessarily grows with
+	// the body it indexes. A flat allowance sized for a short body under-counts a long one by three
+	// times over on the dialect that stores the body a second time.
+	contentIndexRowOverheadBytes int64
+	contentIndexPayloadPerMille  int64
+
+	// rowOverheadBytes is the same allowance for the store's other counted rows - events and the
+	// two link tables. They carry no content index, and a link row has no payload of its own worth
+	// measuring, so they take a plain per-row figure. It is the memory row's own allowance rather
+	// than a separately derived one: those rows are a small share of a store whose bytes are
+	// memories, and an allowance nobody has measured is better set to a number that was than to a
+	// rounder one that was not.
+	rowOverheadBytes int64
+
 	// idCollationMigration is set where an id column's collation is a property that can be wrong on
 	// a database created by an older version and has to be corrected in place. Only the dialect
 	// whose default collation is case-insensitive has one - the others compare byte-for-byte with no
@@ -215,9 +244,18 @@ var dialects = map[driver]*dialect{
 		walFile:              true,
 		contentSearch:        true,
 		contentIndexCascades: false,
-		instanceRegistry:     false,
-		countsChangedRows:    false,
-		idCollationMigration: false,
+		// Page accounting makes UsedBytes exact here, so these figures serve only the eviction and
+		// preview estimates. The floor decomposes as 78 B of row, 107 B of listing index, 50 B of
+		// primary key autoindex and 27 B of covering index; the FTS5 index is CONTENTLESS, which is
+		// why its proportional term is the smallest of the three dialects by some way - it holds an
+		// inverted index and not a second copy of the body.
+		memoryRowOverheadBytes:       290,
+		contentIndexRowOverheadBytes: 95,
+		contentIndexPayloadPerMille:  190,
+		rowOverheadBytes:             290,
+		instanceRegistry:             false,
+		countsChangedRows:            false,
+		idCollationMigration:         false,
 	},
 
 	driverPostgres: {
@@ -246,9 +284,19 @@ var dialects = map[driver]*dialect{
 		walFile:              false,
 		contentSearch:        true,
 		contentIndexCascades: true,
-		instanceRegistry:     true,
-		countsChangedRows:    false,
-		idCollationMigration: false,
+		// 24 B tuple header, an item pointer, alignment, a 37-byte id and ten more columns at the
+		// default fillfactor, plus this row's entries in the primary key and the two secondary
+		// indexes. The content index is a tsvector under a GIN index: a row and its key, plus the
+		// lexemes, which grow with the body - sublinearly, since a longer body repeats words it has
+		// already used, so the two terms are fitted across bodies from 175 bytes to four kilobytes
+		// rather than taken from either end.
+		memoryRowOverheadBytes:       400,
+		contentIndexRowOverheadBytes: 750,
+		contentIndexPayloadPerMille:  420,
+		rowOverheadBytes:             400,
+		instanceRegistry:             true,
+		countsChangedRows:            false,
+		idCollationMigration:         false,
 	},
 
 	driverMySQL: {
@@ -281,9 +329,18 @@ var dialects = map[driver]*dialect{
 		walFile:              false,
 		contentSearch:        true,
 		contentIndexCascades: true,
-		instanceRegistry:     true,
-		countsChangedRows:    true,
-		idCollationMigration: true,
+		// Larger than Postgres's for one reason above all: the id is VARCHAR(255) under utf8mb4, so
+		// every index entry reserves four bytes per character. The content index is the expensive
+		// one here - a FULLTEXT index is an index on a COLUMN, so the table holds a second,
+		// uncompressed copy of the body, and the proportional term is above 1.0 for that reason
+		// alone.
+		memoryRowOverheadBytes:       1050,
+		contentIndexRowOverheadBytes: 2030,
+		contentIndexPayloadPerMille:  1639,
+		rowOverheadBytes:             1050,
+		instanceRegistry:             true,
+		countsChangedRows:            true,
+		idCollationMigration:         true,
 	},
 }
 
@@ -297,6 +354,62 @@ func (d *DB) dialect() *dialect {
 	}
 
 	return dialect
+}
+
+// contentIndexed reports whether this store carries its own content-search index, which is what
+// decides whether a memory's footprint includes a share of it.
+//
+// Deliberately not ContentSearchAvailable, which also asks whether this open may WRITE the index: a
+// read-only tool open of a store that has one is still looking at the disk the index occupies, and
+// an estimate that shrank because of how the store was opened would be a different figure for the
+// same bytes.
+func (d *DB) contentIndexed() bool {
+	return d.dialect().contentSearch && !d.contentIndexOff
+}
+
+// memoryFootprint estimates the disk one memory occupies: its stored payload - the body as it is
+// held, compressed or not, plus its metadata - and everything the store spends carrying it.
+//
+// The two figures are different measurements and not two parts of one: payloadBytes is what the row
+// occupies (the body AS STORED, compressed or not, plus its metadata), while indexedBytes is what the
+// content index holds for it (memories.indexed_bytes - the PLAIN body, bounded, and zero for a binary
+// memory, which is never indexed). Neither substitutes for the other. Metadata appears in the first
+// and not the second because the index does not index it.
+//
+// This is the figure the capacity target governs, so the four places that compute it must agree
+// exactly or a cycle stops before it has freed what it believes it has: UsedBytes on the server
+// dialects, EvictMemories' estimate of what a deletion frees, PreviewConsolidation's dry run and
+// RetainedStats. All four reach it through here.
+//
+// One case the estimate does not model, and it errs the safe way: memories written before
+// indexed_bytes existed have no recorded figure, so callers fall back to their stored body length.
+// That is exact for an uncompressed row and low for a compressed one, which leaves an upgraded store
+// estimating no worse than it did before - and every row written since is right.
+func (d *DB) memoryFootprint(payloadBytes int64, indexedBytes int64) int64 {
+	return d.memoriesFootprint(1, payloadBytes, indexedBytes)
+}
+
+// memoriesFootprint is memoryFootprint over an aggregate: a row count and the sum of those rows'
+// stored payloads. The arithmetic is done here rather than in SQL deliberately - the proportional
+// term is a ratio, and integer division is spelled differently on every dialect while a float bound
+// into a parameter a server has inferred as an integer arrives as zero.
+func (d *DB) memoriesFootprint(rows int64, payloadBytes int64, indexedBytes int64) int64 {
+	dialect := d.dialect()
+
+	footprint := payloadBytes + rows*dialect.memoryRowOverheadBytes
+
+	if d.contentIndexed() {
+		footprint += rows*dialect.contentIndexRowOverheadBytes +
+			indexedBytes*dialect.contentIndexPayloadPerMille/1000
+	}
+
+	return footprint
+}
+
+// rowsFootprint is the same for the store's rows that carry no content index and no body of their
+// own: events and the two link tables.
+func (d *DB) rowsFootprint(rows int64, payloadBytes int64) int64 {
+	return payloadBytes + rows*d.dialect().rowOverheadBytes
 }
 
 // rebind converts the package's shared ?-style placeholders to the numbered style a dialect wants.
@@ -621,6 +734,7 @@ func (d *DB) coreSchemaStatements() []string {
 			is_compressed         ` + boolean + `,
 			link_significance     ` + bigint + `,
 			external_bytes        ` + bigint + `,
+			indexed_bytes         ` + dialect.bigintType + `,
 			body                  ` + dialect.blobType + ` NOT NULL` + dialect.blobDefaultEmpty + `,
 			metadata              ` + dialect.jsonType + `
 		)`,
@@ -697,6 +811,14 @@ func (d *DB) coreColumnMigrations() []coreColumn {
 		// zero contributes nothing to the external capacity axis - so an upgraded store behaves
 		// exactly as it did until something starts recording sizes.
 		{"memories", "external_bytes", dialect.bigintType + ` NOT NULL DEFAULT 0`, "the external capacity axis"},
+
+		// How many bytes of this row's body the content index holds (see indexedBodyBytes). NULL-able
+		// with no default, and the absence is meaningful: NULL is a row written before the column
+		// existed, whose indexed size the estimate falls back to length(body) for - which is exactly
+		// right for an uncompressed row and low for a compressed one, so an upgraded store estimates
+		// no worse than it did. A recorded 0 is a different statement: a binary memory, which is
+		// never indexed at all.
+		{"memories", "indexed_bytes", dialect.bigintType, "the content index's share of the storage estimate"},
 
 		// Metadata (see types/metadata.go) is deliberately NULL-able with no default, unlike
 		// group_name beside it, and must stay that way on every dialect: a JSON accessor raises

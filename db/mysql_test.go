@@ -509,7 +509,7 @@ func TestMySQL_UsedBytesAndEviction(t *testing.T) {
 		t.Fatalf("UsedBytes: %s", err)
 	}
 
-	want := int64(1000 + 3000 + 2*evictionRowOverheadBytes)
+	want := database.memoriesFootprint(2, 1000+3000, 1000+3000)
 
 	if used != want {
 		t.Fatalf("UsedBytes = %d, want %d (body bytes plus the per-row allowance)", used, want)

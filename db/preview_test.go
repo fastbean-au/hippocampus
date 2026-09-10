@@ -770,7 +770,7 @@ func TestRetainedStats(t *testing.T) {
 
 	// Bodies plus the same per-row allowance eviction and the preview use, so the figure is
 	// comparable with the capacity target rather than a bare sum of body lengths.
-	if retained.Bytes <= 2*evictionRowOverheadBytes {
+	if retained.Bytes <= 2*db.dialect().memoryRowOverheadBytes {
 		t.Errorf("expected the byte figure to include bodies and row overhead, got %d", retained.Bytes)
 	}
 
@@ -833,7 +833,8 @@ func TestRetainedStatsUsesTheDialectExpression(t *testing.T) {
 			d, mock := newMockDB(t, test.driver)
 
 			mock.ExpectQuery(test.want).
-				WillReturnRows(sqlmock.NewRows([]string{"count", "bytes", "external"}).AddRow(1, int64(10), int64(0)))
+				WillReturnRows(sqlmock.NewRows([]string{"count", "bytes", "indexed_bytes", "external"}).
+					AddRow(1, int64(10), int64(10), int64(0)))
 
 			if _, err := d.RetainedStats(context.Background(), 0); err != nil {
 				t.Fatalf("RetainedStats: %s", err)

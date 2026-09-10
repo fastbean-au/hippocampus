@@ -432,6 +432,46 @@ func resolveLLMAliases() []string {
 	return honoured
 }
 
+// warnIfOverCapacity reports a store that is already past its byte capacity target as the service
+// starts, naming both figures.
+//
+// It exists for one upgrade in particular. Until 0.45.0 the per-row allowance behind UsedBytes was a
+// single 256-byte constant on all three drivers, and on the server drivers it under-counted real
+// disk by three to five times; the allowances are now measured per dialect, so the same store
+// against the same consolidation.capacityBytes reports a much larger figure than it did yesterday
+// and the first cycle after the upgrade is the one that evicts hard. A deployment that has re-derived
+// its capacity target from real disk sees nothing; one that has not is told before the cycle runs
+// rather than after.
+//
+// Only when a byte target is configured, since UsedBytes is a scan of the two tables on the server
+// drivers and is otherwise never consulted.
+func warnIfOverCapacity(database db.Store, capacityBytes int64) {
+	log.Trace("func() warnIfOverCapacity")
+
+	if capacityBytes <= 0 {
+		return
+	}
+
+	used, err := database.UsedBytes(context.Background())
+	if err != nil {
+		// Not fatal: this is advice, and the sleep cycle reads the same figure for itself.
+		log.Warnf("could not read the store's used bytes to check it against the capacity target: %s", err.Error())
+
+		return
+	}
+
+	if used <= capacityBytes {
+		return
+	}
+
+	log.Warnf(
+		"the store is already over its capacity target - used_bytes %d against consolidation.capacityBytes %d - "+
+			"so the next consolidation cycle will evict until it is back under; if this is unexpected after an "+
+			"upgrade, see the 0.45.0 release note on the per-row storage allowances",
+		used, capacityBytes,
+	)
+}
+
 // setStartupDefaults applies every built-in default shared by normal startup and the
 // --backfill-search CLI mode. It is a function rather than a run of statements inside execute so a
 // test can assert what the service does with no configuration file at all - which, since these
@@ -751,6 +791,8 @@ func run(ctx context.Context, version versionInfo) error {
 	}
 
 	database.SetTombstonePolicy(tombstones)
+
+	warnIfOverCapacity(database, viper.GetInt64("consolidation.capacityBytes"))
 
 	log.Debug("database initialised")
 

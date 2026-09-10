@@ -26,7 +26,7 @@ func memoryStoredRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"id", "timestamp", "significance_level_id", "event_id", "body", "is_binary",
 		"time_recalled", "recall_count", "is_summary", "group_name",
-		"is_compressed", "external_bytes", "metadata", "link_significance",
+		"is_compressed", "external_bytes", "indexed_bytes", "metadata", "link_significance",
 	})
 }
 
@@ -80,7 +80,7 @@ func TestScanMemoryStored_DecodeErrorsPropagate(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, []byte("{not json"), 0)
+			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, 4, []byte("{not json"), 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 
@@ -95,7 +95,7 @@ func TestScanMemoryStored_DecodeErrorsPropagate(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("not a gzip stream"), false, 0, 0, false, "", true, 0, nil, 0)
+			AddRow("m1", 100, nil, "", []byte("not a gzip stream"), false, 0, 0, false, "", true, 0, 4, nil, 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 
@@ -114,9 +114,9 @@ func TestRecallMemoriesReturning_Failures(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0).
+			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, 4, nil, 0).
 			RowError(1, errors.New("boom")).
-			AddRow("m2", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0)
+			AddRow("m2", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, 4, nil, 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 
@@ -131,7 +131,7 @@ func TestRecallMemoriesReturning_Failures(t *testing.T) {
 		d, mock := newMockDB(t, driverPostgres)
 
 		rows := memoryStoredRows().
-			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, nil, 0)
+			AddRow("m1", 100, nil, "", []byte("body"), false, 0, 0, false, "", false, 0, 4, nil, 0)
 
 		mock.ExpectQuery(`UPDATE memories SET time_recalled`).WillReturnRows(rows)
 		mock.ExpectQuery(`SELECT id, level_rank FROM significance_levels`).WillReturnError(errors.New("boom"))

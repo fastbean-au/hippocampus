@@ -149,10 +149,10 @@ func (d *DB) acquireInstanceLock() error {
 }
 
 // usedBytesLiveRows estimates the store's live logical size for the server drivers: every row's
-// payload bytes plus the same fixed per-row allowance eviction uses when estimating the bytes a
-// deletion will free (evictionRowOverheadBytes, covering the remaining columns and index
-// entries), so the two measures converge — evicting rows estimated to free N bytes lowers this
-// figure by exactly N.
+// payload bytes plus the same per-row allowance eviction uses when estimating the bytes a deletion
+// will free, so the two measures converge - evicting rows estimated to free N bytes lowers this
+// figure by exactly N. Both come from memoriesFootprint/rowsFootprint, which is what keeps them
+// converged; see memoryFootprint for what the allowance covers and the one direction it errs in.
 //
 // A file-size measure (pg_database_size, information_schema table sizes) would be cheaper to
 // read but is wrong here: neither server returns space freed by DELETE to the filesystem —
@@ -171,34 +171,42 @@ func (d *DB) acquireInstanceLock() error {
 func (d *DB) usedBytesLiveRows(ctx context.Context) (int64, error) {
 	log.Trace("func() db.usedBytesLiveRows")
 
-	var used int64
+	var (
+		memoryRows, memoryBytes, memoryIndexedBytes int64
+		eventRows, eventBytes                       int64
+		linkRows                                    int64
+	)
 
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	if err := d.queryRow(
 		ctx,
+		// The counts and the sums come back separately rather than as one total because the
+		// arithmetic over them is done in Go: see memoriesFootprint for why it is not done here.
 		// Link rows are counted at the flat per-row overhead like everything else: an edge is two
 		// ids and two integers, with no variable payload of its own worth measuring. Metadata is
 		// measured rather than absorbed into that overhead - it is client-supplied and bounded well
 		// above it (types.MaxMetadataBytes), and this figure must stay the exact complement of
 		// EvictMemories' freed-bytes estimate, which measures it too.
 		`SELECT
-			(SELECT COUNT(*) * ? + COALESCE(SUM(octet_length(body) + `+d.metadataBytesExpr("")+`), 0) FROM memories)
-			+ (SELECT COUNT(*) * ? + COALESCE(SUM(
+			(SELECT COUNT(*) FROM memories),
+			(SELECT COALESCE(SUM(octet_length(body) + `+d.metadataBytesExpr("")+`), 0) FROM memories),
+			(SELECT COALESCE(SUM(COALESCE(indexed_bytes, octet_length(body))), 0) FROM memories),
+			(SELECT COUNT(*) FROM events),
+			(SELECT COALESCE(SUM(
 				octet_length(name) + octet_length(description) + `+d.metadataBytesExpr("")+`
-			), 0) FROM events)
-			+ (SELECT COUNT(*) * ? FROM memory_links)
-			+ (SELECT COUNT(*) * ? FROM event_links)`,
-		evictionRowOverheadBytes,
-		evictionRowOverheadBytes,
-		evictionRowOverheadBytes,
-		evictionRowOverheadBytes,
-	).Scan(&used); err != nil {
+			), 0) FROM events),
+			(SELECT COUNT(*) FROM memory_links) + (SELECT COUNT(*) FROM event_links)`,
+	).Scan(&memoryRows, &memoryBytes, &memoryIndexedBytes, &eventRows, &eventBytes, &linkRows); err != nil {
 		log.Errorf("failed to estimate used bytes: %s", err.Error())
 
 		return 0, err
 	}
+
+	used := d.memoriesFootprint(memoryRows, memoryBytes, memoryIndexedBytes) +
+		d.rowsFootprint(eventRows, eventBytes) +
+		d.rowsFootprint(linkRows, 0)
 
 	return used, nil
 }

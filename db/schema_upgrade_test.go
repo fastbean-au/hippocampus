@@ -443,6 +443,7 @@ var schemaFixtureTags = map[string]string{
 	"memories.metadata":              "v0.25.0",
 	"events.metadata":                "v0.25.0",
 	"memories.external_bytes":        "v0.38.3",
+	"memories.indexed_bytes":         "v0.38.3",
 
 	"link_tables":               "v0.25.0",
 	"drop_legacy_relationships": "v0.25.0",

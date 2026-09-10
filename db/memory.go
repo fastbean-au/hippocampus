@@ -17,10 +17,6 @@ import (
 // well inside SQLite's bound-parameter limit.
 const deleteChunkSize = 500
 
-// evictionRowOverheadBytes is the allowance added to a memory's body length when estimating the
-// bytes its deletion will free, covering the remaining columns and the index entries.
-const evictionRowOverheadBytes = 256
-
 // memoryColumns is the read projection. significance is the level's rank, exposed by memoriesFrom's
 // join to the registry; scanMemory reads it into types.Memory.Significance. Use it with memoriesFrom
 // as the FROM source, never the bare memories table (which has no significance column).
@@ -33,7 +29,7 @@ const memoryColumns = `id, timestamp, significance, event_id, body, is_binary, t
 // the removed significance): used for INSERT. link_significance is deliberately absent - it is
 // maintained by the link graph rather than supplied by a write, so it must not appear in an insert's
 // column list.
-const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, external_bytes, metadata`
+const memoryStoredColumns = `id, timestamp, significance_level_id, event_id, body, is_binary, time_recalled, recall_count, is_summary, group_name, is_compressed, external_bytes, indexed_bytes, metadata`
 
 // memoryReturningColumns is memoryStoredColumns plus the link aggregate, for UPDATE ... RETURNING,
 // which reads rather than writes and so wants every column a caller sees. scanMemoryStored reads it.
@@ -145,6 +141,12 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 	var isCompressed bool
 	var metadata any
 
+	// indexed_bytes is read into a discard: it is in memoryStoredColumns because every insert writes
+	// it, and so arrives in memoryReturningColumns, but it is the storage estimate's own bookkeeping
+	// and no caller sees it. Reading it away here is what keeps the two lists derived from one
+	// constant rather than maintained in parallel.
+	var indexedBytes sql.NullInt64
+
 	if err := rows.Scan(
 		&m.Id,
 		&m.TimeStamp,
@@ -158,6 +160,7 @@ func scanMemoryStored(rows *sql.Rows) (types.Memory, error) {
 		&m.Group,
 		&isCompressed,
 		&m.ExternalBytes,
+		&indexedBytes,
 		&metadata,
 		&m.LinkSignificance,
 	); err != nil {
@@ -256,6 +259,7 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 		memory.Group,
 		isCompressed,
 		memory.ExternalBytes,
+		indexedBodyBytes(memory.Body, memory.IsBinary),
 		metadata,
 	)
 	if err != nil {
@@ -335,8 +339,8 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 
 		body, isCompressed := d.compressBody(memory.Body, isBinary)
 
-		sets = append(sets, `body = ?`, `is_compressed = ?`)
-		args = append(args, body, isCompressed)
+		sets = append(sets, `body = ?`, `is_compressed = ?`, `indexed_bytes = ?`)
+		args = append(args, body, isCompressed, indexedBodyBytes(memory.Body, isBinary))
 
 		bodyChanged = true
 		bodyIsBinary = isBinary
@@ -1552,6 +1556,7 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		summary.Group,
 		isCompressed,
 		summary.ExternalBytes,
+		indexedBodyBytes(summary.Body, summary.IsBinary),
 		metadata,
 	); err != nil {
 		_ = tx.Rollback()
@@ -2053,9 +2058,12 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 	}
 
 	type evictionCandidate struct {
-		id            string
-		eventId       string
+		id      string
+		eventId string
+		// size is the row's stored payload; indexedBytes is what the content index holds for it,
+		// which is a different figure once compression is on - see memoriesFootprint.
 		size          int64
+		indexedBytes  int64
 		externalBytes int64
 		value         float64
 		timeRecalled  int64
@@ -2080,7 +2088,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance,
 			COALESCE(e.memories_consolidated, ?), length(m.body) + `+d.metadataBytesExpr("m.")+`,
-			m.external_bytes
+			COALESCE(m.indexed_bytes, length(m.body)), m.external_bytes
 		FROM memories m LEFT JOIN events e ON e.id = m.event_id`,
 		false,
 	)
@@ -2113,6 +2121,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 			&candidate.MemoryLinkSignificance,
 			&consolidated,
 			&c.size,
+			&c.indexedBytes,
 			&c.externalBytes,
 		); err != nil {
 			log.Errorf("failed to scan memory for eviction: %s", err.Error())
@@ -2176,7 +2185,7 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 			break
 		}
 
-		rowBytes := c.size + evictionRowOverheadBytes
+		rowBytes := d.memoryFootprint(c.size, c.indexedBytes)
 		selected += rowBytes
 		selectedExternal += c.externalBytes
 		freedById[c.id] = freedBytes{bytes: rowBytes, external: c.externalBytes}

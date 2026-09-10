@@ -397,6 +397,23 @@ func contentTokens(text string) []string {
 	})
 }
 
+// indexedBodyBytes is how many bytes of a memory's body the content index actually holds: none for
+// a binary memory, which is never indexed, and otherwise the body bounded by contentIndexMaxBytes.
+//
+// It exists so the storage estimate and the indexing path cannot disagree about what was indexed.
+// The figure is recorded per row (memories.indexed_bytes) at write time, because it is a property of
+// the PLAIN body and nothing downstream can recover it: the stored body may be compressed, and the
+// index is fed from inside the storage boundary before that happens. Measured, a content index is
+// the same size to within a byte whether the bodies beside it were compressed or not - so an
+// estimate scaled off the stored length under-counts it by whatever compression saved.
+func indexedBodyBytes(body string, isBinary bool) int64 {
+	if isBinary {
+		return 0
+	}
+
+	return int64(len(truncateForIndex(body)))
+}
+
 // truncateForIndex bounds a body to contentIndexMaxBytes, cutting on a rune boundary.
 //
 // The boundary matters: a body is a proto3 string and so valid UTF-8, and half a rune is not - it

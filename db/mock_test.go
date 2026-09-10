@@ -170,15 +170,20 @@ func TestUsedBytesLiveRows(t *testing.T) {
 	d, mock := newMockDB(t, driverPostgres)
 
 	mock.ExpectQuery(`SELECT`).
-		WillReturnRows(sqlmock.NewRows([]string{"used"}).AddRow(int64(9000)))
+		WillReturnRows(sqlmock.NewRows([]string{"memories", "memory_bytes", "memory_indexed_bytes", "events", "event_bytes", "links"}).
+			AddRow(int64(3), int64(9000), int64(8800), int64(2), int64(40), int64(5)))
 
 	used, err := d.usedBytesLiveRows(context.Background())
 	if err != nil {
 		t.Fatalf("usedBytesLiveRows: %v", err)
 	}
 
-	if used != 9000 {
-		t.Fatalf("used = %d, want 9000", used)
+	// The three groups are counted through their own footprint helpers, so the expectation is
+	// written the same way rather than as a literal that would have to be re-derived per dialect.
+	want := d.memoriesFootprint(3, 9000, 8800) + d.rowsFootprint(2, 40) + d.rowsFootprint(5, 0)
+
+	if used != want {
+		t.Fatalf("used = %d, want %d", used, want)
 	}
 
 	expectationsMet(t, mock)
