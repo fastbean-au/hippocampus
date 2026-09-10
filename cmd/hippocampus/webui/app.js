@@ -32,6 +32,7 @@ import {
   parseMetadataPairs,
   randomString,
   shortId,
+  stallNotice,
   topologyCheckedLabel,
   topologyLayout,
   topologyWarningsHtml,
@@ -2799,6 +2800,7 @@ function renderNowCycle(status) {
       <div class="n">${esc(Number(last.eventsConsolidated || 0) + Number(last.eventsEvicted || 0))} event(s) went too</div>
     </div>
   </div>
+  ${last.stalled ? `<p class="muted warn gap-top">${esc(stallNotice(last))}</p>` : ""}
   ${failed ? `<p class="muted warn gap-top">That cycle failed: ${esc(last.failure)}. The counts above are what it managed before it did.</p>` : ""}`);
 }
 

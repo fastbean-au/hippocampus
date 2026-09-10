@@ -66,6 +66,7 @@ type telemetry struct {
 	searchOutboxAbandoned metric.Int64Counter
 	staleDocumentsRemoved metric.Int64Counter
 
+	forgettingStalls   metric.Int64Counter
 	callbackQueueDepth metric.Int64Gauge
 	callbacksDelivered metric.Int64Counter
 	callbacksAbandoned metric.Int64Counter
@@ -148,6 +149,11 @@ func newTelemetry() *telemetry {
 		// says something is wrong while depth says how far behind it has fallen. Abandoned is
 		// depth's escalation, and it is worse than the search outbox's namesake - there is no sweep
 		// behind this queue, so an abandoned delivery is a notification nobody will ever get.
+		// The valve, and the one instrument in this file that reports the store NOT doing its job.
+		// A stalled cycle publishes zero consolidated and zero evicted, which is exactly what a quiet
+		// store publishes, so nothing else here can distinguish the two.
+		forgettingStalls: newInt64Counter(meter, "hippocampus.forgetting.stalls", "Sleep cycles whose decay passes were held off rather than run. Non-zero means the store has stopped forgetting and is growing past its capacity target."),
+
 		callbackQueueDepth: newInt64Gauge(meter, "hippocampus.callbacks.queue_depth", "Callback deliveries recorded but not yet accepted by the receiver. Sustained growth means the receiver is failing or unreachable."),
 		callbacksDelivered: newInt64Counter(meter, "hippocampus.callbacks.delivered", "Callback delivery attempts, by kind and outcome."),
 		callbacksAbandoned: newInt64Counter(meter, "hippocampus.callbacks.abandoned", "Queued callbacks discarded by the queue caps before the receiver accepted them. Unlike a dropped index deletion, nothing recovers these."),

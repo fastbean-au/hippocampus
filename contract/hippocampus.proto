@@ -1517,6 +1517,19 @@ message CycleReport {
 	// that consolidated without evicting reports 0 here whatever it released. 0 always on a
 	// deployment that stores no external sizes.
 	int64                                  external_bytes_freed      = 12;
+
+	// stalled reports that the two decay passes did not run: the cycle was held off rather than
+	// finding nothing to forget. Without it a stalled cycle is indistinguishable from a quiet one -
+	// both report zero consolidated and zero evicted - which is the reading an operator would draw
+	// exactly when the store has stopped doing the one thing it exists to do.
+	//
+	// Today the only thing that stalls a cycle is callbacks.backlogPolicy: stall with the outbound
+	// callback queue over its caps, but the field is deliberately about the OUTCOME rather than that
+	// cause, so a later reason needs no second flag.
+	bool                                   stalled                   = 13;
+
+	// stalled_reason says why, in words meant to be shown rather than parsed. Empty unless stalled.
+	string                                 stalled_reason            = 14;
 }
 
 // GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.

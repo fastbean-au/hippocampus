@@ -375,6 +375,12 @@ type Server struct {
 	callbackAtRiskLimit  int
 	callbackAtRiskMargin float64
 
+	// callbackBacklogPolicy is callbacks.backlogPolicy: what happens to a DELETION delivery that
+	// reaches the queue's caps with the receiver still refusing it. Resolved at startup like the
+	// toggles above, and read by the sleep cycle rather than by the dispatcher, because the only
+	// policy that does anything at delivery time is the one that does nothing.
+	callbackBacklogPolicy BacklogPolicy
+
 	stopCallbacks    chan struct{}
 	callbacksStopped chan struct{}
 

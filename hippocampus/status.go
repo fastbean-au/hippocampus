@@ -83,6 +83,8 @@ func cycleReportToProto(in *cycleReport) *contract.CycleReport {
 		BytesFreed:              in.bytesFreed,
 		ExternalBytesFreed:      in.externalBytesFreed,
 		SummarisationCandidates: int32(in.summarisationCandidates),
+		Stalled:                 in.stalled,
+		StalledReason:           in.stalledReason,
 		Success:                 in.success,
 		Failure:                 in.failure,
 		Trigger:                 in.trigger,

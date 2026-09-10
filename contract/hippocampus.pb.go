@@ -6545,8 +6545,19 @@ type CycleReport struct {
 	// that consolidated without evicting reports 0 here whatever it released. 0 always on a
 	// deployment that stores no external sizes.
 	ExternalBytesFreed int64 `protobuf:"varint,12,opt,name=external_bytes_freed,json=externalBytesFreed,proto3" json:"external_bytes_freed,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// stalled reports that the two decay passes did not run: the cycle was held off rather than
+	// finding nothing to forget. Without it a stalled cycle is indistinguishable from a quiet one -
+	// both report zero consolidated and zero evicted - which is the reading an operator would draw
+	// exactly when the store has stopped doing the one thing it exists to do.
+	//
+	// Today the only thing that stalls a cycle is callbacks.backlogPolicy: stall with the outbound
+	// callback queue over its caps, but the field is deliberately about the OUTCOME rather than that
+	// cause, so a later reason needs no second flag.
+	Stalled bool `protobuf:"varint,13,opt,name=stalled,proto3" json:"stalled,omitempty"`
+	// stalled_reason says why, in words meant to be shown rather than parsed. Empty unless stalled.
+	StalledReason string `protobuf:"bytes,14,opt,name=stalled_reason,json=stalledReason,proto3" json:"stalled_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CycleReport) Reset() {
@@ -6661,6 +6672,20 @@ func (x *CycleReport) GetExternalBytesFreed() int64 {
 		return x.ExternalBytesFreed
 	}
 	return 0
+}
+
+func (x *CycleReport) GetStalled() bool {
+	if x != nil {
+		return x.Stalled
+	}
+	return false
+}
+
+func (x *CycleReport) GetStalledReason() string {
+	if x != nil {
+		return x.StalledReason
+	}
+	return ""
 }
 
 // GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.
@@ -8052,7 +8077,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"valuations\x120\n" +
 	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\x12%\n" +
 	"\x0eexternal_bytes\x18\x0e \x01(\x03R\rexternalBytes\x126\n" +
-	"\x17capacity_external_bytes\x18\x0f \x01(\x03R\x15capacityExternalBytes\"\xe1\x03\n" +
+	"\x17capacity_external_bytes\x18\x0f \x01(\x03R\x15capacityExternalBytes\"\xa2\x04\n" +
 	"\vCycleReport\x12\x1d\n" +
 	"\n" +
 	"started_at\x18\x01 \x01(\x03R\tstartedAt\x12\x1f\n" +
@@ -8069,7 +8094,9 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\afailure\x18\n" +
 	" \x01(\tR\afailure\x12\x18\n" +
 	"\atrigger\x18\v \x01(\tR\atrigger\x120\n" +
-	"\x14external_bytes_freed\x18\f \x01(\x03R\x12externalBytesFreed\"\xaa\x03\n" +
+	"\x14external_bytes_freed\x18\f \x01(\x03R\x12externalBytesFreed\x12\x18\n" +
+	"\astalled\x18\r \x01(\bR\astalled\x12%\n" +
+	"\x0estalled_reason\x18\x0e \x01(\tR\rstalledReason\"\xaa\x03\n" +
 	"\x1eGetConsolidationStatusResponse\x123\n" +
 	"\x15consolidation_enabled\x18\x01 \x01(\bR\x14consolidationEnabled\x12%\n" +
 	"\x0eperiod_seconds\x18\x02 \x01(\x03R\rperiodSeconds\x12\"\n" +

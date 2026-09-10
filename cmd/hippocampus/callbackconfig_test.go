@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
+
+	"github.com/fastbean-au/hippocampus/hippocampus"
 )
 
 // validateCallbackConfig's own rules, none of which any other test in this package reaches - the
@@ -152,6 +154,72 @@ func TestValidateCallbackConfig_Warnings(t *testing.T) {
 
 	if err := validateCallbackConfig(); err != nil {
 		t.Errorf("a signed plain-http sink must be valid, got %s", err)
+	}
+}
+
+// TestValidateCallbackConfig_BacklogPolicy covers the one callback setting that decides what the
+// deployment is willing to LOSE. A misspelling here fails in the direction nobody would guess -
+// viper hands back a string nothing matches, which resolves to the default, which is the policy
+// whose whole point is that it discards - so it is refused rather than defaulted.
+func TestValidateCallbackConfig_BacklogPolicy(t *testing.T) {
+	callbackConfig(t)
+
+	for _, name := range hippocampus.BacklogPolicyNames() {
+		viper.Set("callbacks.backlogPolicy", name)
+
+		if err := validateCallbackConfig(); err != nil {
+			t.Errorf("the shipped policy %q is refused: %s", name, err)
+		}
+	}
+
+	viper.Set("callbacks.backlogPolicy", "keep")
+
+	err := validateCallbackConfig()
+	if err == nil {
+		t.Fatal("an unknown backlog policy was accepted, and would silently mean abandon")
+	}
+
+	// The message has to name the alternatives, or an operator learns only that their value is
+	// wrong and goes round the restart loop guessing.
+	for _, name := range hippocampus.BacklogPolicyNames() {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("the error does not name the %q policy: %s", name, err)
+		}
+	}
+}
+
+// TestValidateCallbackConfig_StallNeedsACap is the one combination here that is refused rather than
+// warned about, because it degrades to a policy that does not exist: the caps are exempted (so
+// nothing trims the queue) AND the bound meant to replace them can never fire.
+func TestValidateCallbackConfig_StallNeedsACap(t *testing.T) {
+	callbackConfig(t)
+
+	viper.Set("callbacks.backlogPolicy", "stall")
+	viper.Set("callbacks.maxRows", 0)
+	viper.Set("callbacks.maxAgeHours", 0)
+	viper.Set("callbacks.maxBytes", 0)
+
+	if err := validateCallbackConfig(); err == nil {
+		t.Fatal("stall with no cap was accepted: nothing would ever stall and nothing would be trimmed")
+	}
+
+	// Any one of the three is enough - they are alternatives, not a set.
+	for _, key := range []string{"callbacks.maxRows", "callbacks.maxAgeHours", "callbacks.maxBytes"} {
+		viper.Set(key, 1)
+
+		if err := validateCallbackConfig(); err != nil {
+			t.Errorf("stall with %s set is refused: %s", key, err)
+		}
+
+		viper.Set(key, 0)
+	}
+
+	// And "retain" needs no cap at all: it never stalls, so there is nothing for a cap to be judged
+	// against.
+	viper.Set("callbacks.backlogPolicy", "retain")
+
+	if err := validateCallbackConfig(); err != nil {
+		t.Errorf("retain with no cap is refused: %s", err)
 	}
 }
 

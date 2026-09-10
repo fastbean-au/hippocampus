@@ -21,6 +21,7 @@ import {
   countdownFraction,
   countdownLabel,
   cycleSummary,
+  stallNotice,
   TRIGGER_LABELS,
   bodyClassesFor,
   callbackKindLabel,
@@ -732,6 +733,42 @@ test("cycleSummary names the two decay paths separately", () => {
 
   assert.match(both, /2 decayed away/);
   assert.match(both, /3 evicted/);
+});
+
+// The reading this pair exists to prevent: a stalled cycle reports zero consolidated and zero
+// evicted, which is exactly what a store with nothing to forget reports, so read by the counts alone
+// the most serious state the console can show renders as the healthiest.
+test("cycleSummary reports a stalled cycle as stalled, not as nothing forgotten", () => {
+  assert.match(cycleSummary({ stalled: true }), /stalled/i);
+  assert.doesNotMatch(cycleSummary({ stalled: true }), /Nothing was forgotten/);
+
+  // The flag wins over counts a stalled cycle should never carry, so a future pass that stalls
+  // halfway can never be summarised as a clean run.
+  assert.match(
+    cycleSummary({ stalled: true, memoriesConsolidated: 9 }),
+    /stalled/i,
+  );
+});
+
+test("stallNotice says what stopped and what it costs, and is empty otherwise", () => {
+  assert.strictEqual(stallNotice(null), "");
+  assert.strictEqual(stallNotice({}), "");
+  assert.strictEqual(stallNotice({ stalled: false }), "");
+
+  const notice = stallNotice({
+    stalled: true,
+    stalledReason: "the outbound callback queue holds 12 undelivered forget-callbacks",
+  });
+
+  assert.match(notice, /12 undelivered forget-callbacks/);
+  assert.match(notice, /capacity target/);
+
+  // A reason the service did not send must still leave a complete sentence: the flag is what the
+  // console branches on, and a missing reason is not a reason to say nothing.
+  const bare = stallNotice({ stalled: true });
+
+  assert.match(bare, /stalled/i);
+  assert.doesNotMatch(bare, /because/);
 });
 
 test("TRIGGER_LABELS covers every trigger the service reports", () => {

@@ -23,7 +23,7 @@ translation. Either produces the same names, which is the point — nothing here
 The client-side components in the `hippocampus-clients` group below take the same choice as a
 `--prometheus` flag, and serve `/metrics` on the `--health-port` they already listen on.
 
-Twenty-three rules in two groups. `hippocampus` is the service itself — seventeen rules covering what
+Twenty-four rules in two groups. `hippocampus` is the service itself — eighteen rules covering what
 actually goes wrong:
 
 | Alert                                  | Fires when                                                                 | Severity |
@@ -43,15 +43,23 @@ actually goes wrong:
 | `HippocampusCallbackQueueBacklog`      | queued callback deliveries exceed 10,000 for 30m                           | warning  |
 | `HippocampusCallbackDeliveriesFailing` | the callback receiver is refusing deliveries for 15m                       | warning  |
 | `HippocampusCallbacksAbandoning`       | the callback queue's caps are discarding undelivered notifications         | critical |
+| `HippocampusForgettingStalled`         | the decay passes are held off because forget-callbacks are undelivered     | critical |
 | `HippocampusSearchOutboxAbandoning`    | the outbox's caps are discarding queued index deletions                    | critical |
 | `HippocampusPanicsRecovered`           | a handler panicked and was recovered                                       | warning  |
 
-The last five of those are the two durable queues — the search delete outbox and the callback
+The last six of those are the two durable queues — the search delete outbox and the callback
 queue — and they come in pairs by design: a backlog rule that fires while nothing is yet lost, and
 an abandoning rule that fires once the queue's caps have started discarding. The outbox's discards
 are recoverable by the reconciliation sweep and the callback queue's are not, which is why one pair
 escalates to critical over an index that is knowingly wrong and the other over notifications
 nobody will ever receive.
+
+`HippocampusForgettingStalled` is the callback pair's third member and the alternative to its
+abandoning rule rather than an escalation of it. Under `callbacks.backlogPolicy: stall` a receiver
+outage past the caps holds the decay passes instead of discarding the deliveries, so a deployment
+sees one rule or the other, never both — the choice being whether a receiver outage costs
+notifications (and, where the receiver holds the payloads the memories point at, orphans out there)
+or costs the store its willingness to forget until the endpoint is fixed.
 
 `hippocampus-clients` is the six rules for the components that _dial_ a Hippocampus instance — the
 [broker bridges](../../docs/eventsource.md) and the [ingestor](../../docs/ingestor.md), separate
@@ -98,7 +106,7 @@ Four properties worth knowing before you deploy them:
 
 ## The Grafana copy
 
-`../compose/observability/alerting-rules.yaml` is the same twenty-three rules as Grafana-managed rules,
+`../compose/observability/alerting-rules.yaml` is the same twenty-four rules as Grafana-managed rules,
 provisioned into the bundled `grafana/otel-lgtm` stack (every compose file's `observability` profile,
 and `demo/run.sh`) so the demo stack alerts as well as draws. It exists as a second file only
 because Grafana provisions its own rule format and cannot read a Prometheus rule file.

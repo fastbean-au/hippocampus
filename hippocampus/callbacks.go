@@ -2,7 +2,10 @@ package hippocampus
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"sort"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -38,6 +41,97 @@ const (
 	defaultCallbackMaxIdsPerChunk = 500
 )
 
+// BacklogPolicy is what happens to a DELETION delivery that reaches the queue's caps while the
+// receiver is still refusing it - which is to say, who absorbs the failure.
+//
+// The queue was built as a NOTIFICATION channel and the caps are right for one: a receiver that has
+// been unreachable for a day is not helped by a day-old summary of a cycle. A forget-callback is a
+// different thing. It is an INSTRUCTION about a payload this store does not hold and cannot see, and
+// dropping it leaves that payload orphaned in the far system forever - a leak that is monotonic,
+// silent, and grows precisely with how well the decay cycle is working. This repository has already
+// paid for that lesson once, in the OpenSearch index that self-healed in one direction and dropped
+// in the other until it held 4.38M documents against 211,657 rows.
+//
+// So there are three answers and they differ in who pays, which is why this is configuration rather
+// than a fix. Under BacklogAbandon the far end pays, in orphans. Under BacklogRetain this disk pays,
+// in a queue nothing trims. Under BacklogStall the workload pays, in a store that stops forgetting
+// until somebody fixes the receiver. Nothing here can make the failure cost nothing.
+type BacklogPolicy int
+
+const (
+	// BacklogAbandon is the default and is what every deployment had before this existed: the caps
+	// discard undelivered deliveries of every kind, deletions included.
+	BacklogAbandon BacklogPolicy = iota
+
+	// BacklogRetain exempts the deletion kinds from the caps. Nothing is lost and nothing stops; the
+	// queue grows for as long as the receiver is down, on a disk the capacity target deliberately
+	// does not count.
+	BacklogRetain
+
+	// BacklogStall is BacklogRetain plus a bound: once the retained backlog is past the caps the
+	// two decay passes stop running, so the store cannot go on generating instructions nobody is
+	// taking delivery of.
+	BacklogStall
+)
+
+// backlogPolicyNames maps the configuration spelling onto the policy, and is the only place the two
+// are related - ParseBacklogPolicy and the startup validation both read it, so a value the service
+// accepts and a value it refuses cannot come apart.
+var backlogPolicyNames = map[string]BacklogPolicy{
+	"abandon": BacklogAbandon,
+	"retain":  BacklogRetain,
+	"stall":   BacklogStall,
+}
+
+// String is the configuration spelling, for the log lines and the stall reason.
+func (p BacklogPolicy) String() string {
+	for name, policy := range backlogPolicyNames {
+		if policy != p {
+			continue
+		}
+
+		return name
+	}
+
+	return "abandon"
+}
+
+// retains reports whether the deletion kinds are exempt from the queue's caps under this policy.
+func (p BacklogPolicy) retains() bool {
+	return p == BacklogRetain || p == BacklogStall
+}
+
+// ParseBacklogPolicy resolves callbacks.backlogPolicy, reporting whether the spelling was one this
+// build knows. An empty setting is the default rather than an error, so the key stays optional.
+//
+// Exported because main.go validates the configuration before the server is constructed, and a value
+// the validator accepted but the server silently defaulted would be the worst of both.
+func ParseBacklogPolicy(setting string) (BacklogPolicy, bool) {
+	setting = strings.ToLower(strings.TrimSpace(setting))
+
+	if setting == "" {
+
+		return BacklogAbandon, true
+	}
+
+	policy, ok := backlogPolicyNames[setting]
+
+	return policy, ok
+}
+
+// BacklogPolicyNames lists the accepted spellings, sorted, for an error message that names them.
+func BacklogPolicyNames() []string {
+	names := make([]string, 0, len(backlogPolicyNames))
+
+	for name := range backlogPolicyNames {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names
+}
+
 // startCallbackDispatch launches the worker that posts queued deliveries, when a sink is configured
 // and this is the instance that owns queue maintenance.
 //
@@ -70,6 +164,11 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 	s.callbackAtRiskEvents = viper.GetBool("callbacks.events.memoriesAtRisk")
 	s.callbackAtRiskLimit = viper.GetInt("callbacks.atRiskLimit")
 	s.callbackAtRiskMargin = viper.GetFloat64("callbacks.atRiskMargin")
+
+	// An unknown spelling has already failed startup (validateCallbackConfig), so this cannot
+	// silently choose a policy - which for a key whose values differ in what they are willing to lose
+	// is the one failure mode worth ruling out.
+	s.callbackBacklogPolicy, _ = ParseBacklogPolicy(viper.GetString("callbacks.backlogPolicy"))
 
 	if s.callbackBounds.MaxRows <= 0 {
 		s.callbackBounds.MaxRows = defaultCallbackMaxRows
@@ -132,12 +231,13 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 	}
 
 	store.SetCallbackPolicy(db.CallbackPolicy{
-		Enabled:       true,
-		AllDeletions:  viper.GetBool("callbacks.allDeletions"),
-		IncludeBodies: viper.GetBool("callbacks.includeBodies"),
-		MaxBodyBytes:  viper.GetInt("callbacks.maxBodyBytes"),
-		MemoryEvents:  viper.GetBool("callbacks.events.memoryForgotten"),
-		EventEvents:   viper.GetBool("callbacks.events.eventForgotten"),
+		Enabled:         true,
+		AllDeletions:    viper.GetBool("callbacks.allDeletions"),
+		IncludeBodies:   viper.GetBool("callbacks.includeBodies"),
+		MaxBodyBytes:    viper.GetInt("callbacks.maxBodyBytes"),
+		RetainDeletions: s.callbackBacklogPolicy.retains(),
+		MemoryEvents:    viper.GetBool("callbacks.events.memoryForgotten"),
+		EventEvents:     viper.GetBool("callbacks.events.eventForgotten"),
 	})
 
 	s.callbacksEnabled = true
@@ -153,11 +253,12 @@ func (s *Server) callbackDispatchLoop() {
 	defer close(s.callbacksStopped)
 
 	log.Infof(
-		"callback dispatch enabled: caps %d rows / %s / %s, batches of %d",
+		"callback dispatch enabled: caps %d rows / %s / %s, batches of %d, backlog policy %s",
 		s.callbackBounds.MaxRows,
 		s.callbackBounds.MaxAge,
 		describeByteCap(s.callbackBounds.MaxBytes),
 		s.callbackBatchSize,
+		s.callbackBacklogPolicy,
 	)
 
 	for {
@@ -395,6 +496,8 @@ func (s *Server) queueCycleCallback(ctx context.Context, cycleId int64, report *
 		EventsEvicted:           report.eventsEvicted,
 		BytesFreed:              report.bytesFreed,
 		SummarisationCandidates: report.summarisationCandidates,
+		Stalled:                 report.stalled,
+		StalledReason:           report.stalledReason,
 		Success:                 report.success,
 		Failure:                 report.failure,
 	}
@@ -572,7 +675,82 @@ func notifyCycle(in *db.CallbackCycle) *notify.Cycle {
 		EventsEvicted:           in.EventsEvicted,
 		BytesFreed:              in.BytesFreed,
 		SummarisationCandidates: in.SummarisationCandidates,
+		Stalled:                 in.Stalled,
+		StalledReason:           in.StalledReason,
 		Success:                 in.Success,
 		Failure:                 in.Failure,
 	}
+}
+
+// forgettingStalled reports whether the two decay passes should be held off this cycle, and why.
+//
+// It is the bound that replaces the caps under BacklogStall. Retaining deletion deliveries removes
+// the only thing that was trimming the queue, so without this the policy would trade a silent
+// unbounded leak in the far system for a silent unbounded one on this disk - which is the same
+// failure wearing a different hat. Stalling instead converts it into the loudest thing a store like
+// this can say: it stops forgetting.
+//
+// Judged on the same three figures the caps are expressed in, so an operator who set a row cap is
+// stalled by rows and one who set a byte cap by bytes. A cap left unset bounds nothing here either -
+// there is no figure this service could invent that would be right for both a laptop store and a
+// server, which is why validateCallbackConfig refuses BacklogStall with all three caps unset rather
+// than defaulting one.
+//
+// Only the two DECAY passes are held. A client's own DeleteMemories still deletes: the caller
+// already knows what they asked for, and refusing it would make somebody else's request fail for a
+// receiver outage they have nothing to do with. Summarisation is untouched for the same reason - it
+// replaces memories rather than forgetting them.
+func (s *Server) forgettingStalled(ctx context.Context) (bool, string) {
+	if s.callbackBacklogPolicy != BacklogStall || !s.callbacksEnabled {
+
+		return false, ""
+	}
+
+	backlog, err := s.db.CallbackBacklog(ctx)
+	if err != nil {
+		// Not a stall: a cycle held off because the check itself failed would stop the store
+		// forgetting for a reason that has nothing to do with the backlog, and the fault is already
+		// logged. The policy protects against a receiver that is down, not against this store's own
+		// storage being unreadable - which has larger problems.
+		log.Warnf("callbacks: failed to measure the retained backlog, not stalling this cycle: %s", err.Error())
+
+		return false, ""
+	}
+
+	if backlog.Rows == 0 {
+
+		return false, ""
+	}
+
+	bounds := s.callbackBounds
+
+	switch {
+
+	case bounds.MaxRows > 0 && backlog.Rows > bounds.MaxRows:
+
+		return true, fmt.Sprintf(
+			"the outbound callback queue holds %d undelivered forget-callbacks, past callbacks.maxRows (%d)",
+			backlog.Rows,
+			bounds.MaxRows,
+		)
+
+	case bounds.MaxBytes > 0 && backlog.Bytes > bounds.MaxBytes:
+
+		return true, fmt.Sprintf(
+			"the outbound callback queue holds %d bytes of undelivered forget-callbacks, past callbacks.maxBytes (%d)",
+			backlog.Bytes,
+			bounds.MaxBytes,
+		)
+
+	case bounds.MaxAge > 0 && backlog.OldestAt > 0 && time.Since(time.Unix(0, backlog.OldestAt)) > bounds.MaxAge:
+
+		return true, fmt.Sprintf(
+			"the oldest undelivered forget-callback has been queued for %s, past callbacks.maxAgeHours (%s)",
+			time.Since(time.Unix(0, backlog.OldestAt)).Round(time.Second),
+			bounds.MaxAge,
+		)
+
+	}
+
+	return false, ""
 }

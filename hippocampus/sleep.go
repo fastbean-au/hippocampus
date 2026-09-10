@@ -46,13 +46,42 @@ func (s *Server) sleep(trigger string) error {
 	// by default and a no-op then, because it costs a preview scan; never allowed to fail the cycle.
 	s.queueAtRiskCallback(ctx, cycleId)
 
-	e1 := s.consolidate(ctx, report)
+	// The backpressure valve (callbacks.backlogPolicy: stall). Asked once, before either decay pass,
+	// so a cycle either forgets or does not - a run that consolidated and was then stopped short of
+	// evicting would report counts for half a decision.
+	stalled, reason := s.forgettingStalled(ctx)
+
+	var e1, e2 error
+
+	if stalled {
+		report.stalled = true
+		report.stalledReason = reason
+
+		tel.forgettingStalls.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "callback_backlog")))
+
+		span.AddEvent("forgetting stalled", trace.WithAttributes(attribute.String("reason", reason)))
+
+		// Warn on every cycle, deliberately. This is a store that has stopped doing the one thing it
+		// exists to do, and a single line at the moment it began would be off the top of the log by
+		// the time anybody looked.
+		log.Warnf(
+			"forgetting is stalled: %s. Nothing is being consolidated or evicted while this lasts, so "+
+				"the store will grow past its capacity target - check the receiver at callbacks.url",
+			reason,
+		)
+	}
+
+	if !stalled {
+		e1 = s.consolidate(ctx, report)
+	}
 
 	s.scanSummarisationCandidates(ctx, report)
 
 	s.autoSummariseCandidates(ctx)
 
-	e2 := s.evict(ctx, report)
+	if !stalled {
+		e2 = s.evict(ctx, report)
+	}
 
 	// Before preserve(), so pages the trimmed log frees are returned by the same compaction that
 	// returns the ones consolidation freed.
@@ -139,6 +168,13 @@ type cycleReport struct {
 	externalBytesFreed int64
 
 	summarisationCandidates int
+
+	// stalled reports that neither decay pass ran because the cycle was held off, and stalledReason
+	// says why in words meant to be read. They matter because a stalled cycle and a cycle with
+	// nothing to forget produce identical counts, so without them the store's most serious state is
+	// reported as its healthiest.
+	stalled       bool
+	stalledReason string
 
 	success bool
 	failure string

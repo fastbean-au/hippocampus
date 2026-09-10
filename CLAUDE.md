@@ -370,7 +370,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-three rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-four rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -393,7 +393,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the twenty-three are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the twenty-four are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
   broker bridges, the ingestor) and read instruments declared in `integrations/*`, which
   `metricSourceFiles` reaches as FILES rather than imports — the root module deliberately does not
@@ -593,6 +593,33 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     itself the explicit request to leave nothing behind. Both RPCs are `admin` but **scoped by
     predicate**, not refused like the preview — a tombstone carries its memory's group. Bodies are
     never recorded; not on the MCP surface. See TODO 57.2.
+  - **`callbacks.backlogPolicy`** (`hippocampus/callbacks.go` + the prune half in `db/callbacks.go`)
+    decides whether a `memory_forgotten` delivery is a **notification** the queue's caps may discard
+    or an **instruction** they may not. The queue was built for the former and its caps are right for
+    one; the latter is what it becomes whenever the receiver is the system holding what the memory
+    pointed at (`Memory.external_bytes`), and discarding it orphans that payload permanently — a leak
+    that is monotonic, silent, and grows precisely with how well the decay cycle is working. Six
+    things carry it. (1) **Three values, differing in who absorbs the failure**: `abandon` (the
+    default, and exactly the previous behaviour) costs the far system orphans, `retain` costs this
+    disk a queue nothing trims, `stall` costs the workload a store that stops forgetting. Nothing here
+    makes the failure cost nothing, which is why it is configuration rather than a fix. (2) **`stall`
+    needs no limit of its own**: the same three caps it exempts the deletions from stop *trimming* and
+    start *gating*, so there is one bound rather than two that can disagree — and that is also why
+    `stall` with no cap is **refused** at startup, being a policy where nothing is trimmed and nothing
+    ever stalls. (3) The other two kinds stay capped under every policy: a sleep-completed summary and
+    a pre-reap warning are worthless once stale. (4) **The pull path is the forgotten log**, not a
+    reverse sweep — this service cannot enumerate the far system, but the log already *is* the
+    ordered, durable, keyset-paginated record of these instructions, so a rebuilt receiver pages
+    `GetForgottenMemories` newest-first back to its own cursor and a repeated delete is a no-op.
+    Startup warns when a retaining policy runs with the log off. (5) **A stalled cycle is reported,
+    not inferred**: it publishes zero consolidated and zero evicted, identical to a quiet store, so
+    `CycleReport.stalled`/`stalled_reason` exist, `cycleSummary` in the console reads the flag before
+    the counts, `hippocampus.forgetting.stalls` counts it, `HippocampusForgettingStalled` alerts on
+    it, and the flag rides the `sleep_completed` delivery itself — the receiver being the one party
+    that can end the stall. (6) Only the two **decay** passes are held; a client's `DeleteMemories`
+    still deletes, and a failure to *measure* the backlog is not a stall. The storage half is one SQL
+    fragment on the three prune statements, empty unless the policy retains, with the byte cap's
+    running total still summing every row and only its DELETE narrowed. See TODO 107.2/119.
   - **The deployment topology view** (`hippocampus/topology.go` + `topology_probe.go`, `topology.*`,
     on by default) is `GetTopology`: what this instance is attached to, how the pieces relate, and
     the last known health of each, backing the console's Deployment tab and `hippo topology`. Six

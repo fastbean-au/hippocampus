@@ -52,6 +52,34 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ## [Unreleased]
 
+### Added
+
+- **`callbacks.backlogPolicy` — a forget-callback can now be an instruction rather than a
+  notification.** The outbound queue was built for notifications, and its caps are right for one: a
+  receiver that has been unreachable for a day is not helped by a day-old summary of a cycle. A
+  `memory_forgotten` callback is a different thing whenever the receiver is the system holding what
+  the memory pointed at (`Memory.external_bytes`) — it is an instruction to delete a payload this
+  store cannot see, and discarding it orphans that payload permanently, in a leak that is monotonic,
+  silent, and grows precisely with how well the decay cycle is working.
+
+  The new key decides who absorbs a receiver outage that outlasts the caps. `abandon` (the default,
+  and exactly today's behaviour) discards the oldest deliveries, and the far system pays in orphans.
+  `retain` exempts the two deletion kinds from the caps, and this disk pays in a queue nothing trims.
+  `stall` is `retain` plus a bound: past the caps the sleep cycle's consolidation and eviction passes
+  do not run, and the workload pays in a store that has stopped forgetting until the receiver is
+  fixed. The `sleep_completed` and `memories_at_risk` kinds stay capped under every policy — both are
+  worthless once stale. `stall` with none of `callbacks.maxRows`/`maxAgeHours`/`maxBytes` set is
+  refused at startup, since nothing would ever be trimmed and nothing would ever stall.
+
+  A stalled cycle is reported rather than left to be inferred from its zeroes: `CycleReport` gains
+  `stalled` and `stalled_reason` (so `GetConsolidationStatus`, `hippo status` and the console's Now
+  tab all say so), a Warn line is logged every cycle, `hippocampus.forgetting.stalls` counts them,
+  the new `HippocampusForgettingStalled` alert rule ships in both rule files, and the flag travels on
+  the `sleep_completed` delivery itself — the receiver being the one party that can end the stall.
+  Two startup warnings frame the choice: a retaining policy without the forgotten log (which is the
+  catch-up path a rebuilt receiver pages back through), and an external capacity target still on
+  `abandon`.
+
 ### Fixed
 
 - **Empty events no longer accumulate forever.** Two independent halves met in one place, and the

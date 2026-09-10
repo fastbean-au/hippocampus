@@ -116,8 +116,16 @@ type Cycle struct {
 	EventsEvicted           int    `json:"events_evicted"`
 	BytesFreed              int64  `json:"bytes_freed"`
 	SummarisationCandidates int    `json:"summarisation_candidates"`
-	Success                 bool   `json:"success"`
-	Failure                 string `json:"failure,omitempty"`
+
+	// Stalled reports that neither decay pass ran because the cycle was held off - under
+	// callbacks.backlogPolicy: stall, because THIS receiver has not been accepting deliveries. It is
+	// carried because the counts alone say "nothing was forgotten", which is indistinguishable from a
+	// quiet store, and because the party that can end the stall is the one reading this.
+	Stalled       bool   `json:"stalled,omitempty"`
+	StalledReason string `json:"stalled_reason,omitempty"`
+
+	Success bool   `json:"success"`
+	Failure string `json:"failure,omitempty"`
 }
 
 // AtRisk is the summary carried by a KindMemoriesAtRisk delivery: what the store would forget at

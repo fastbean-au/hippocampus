@@ -850,6 +850,17 @@ memories were evicted — but it is **not** excluded from the [disk
 budget](#the-capacity-target-bounds-the-memories-not-the-database). `hippo callbacks clear` discards
 pending deliveries when a receiver is gone for good; it requires `--before` or `--all`.
 
+Whether abandoning is acceptable at all depends on what the receiver is. If it is the system holding
+the payloads this store's memories point at, a discarded `memory_forgotten` is an orphaned object out
+there rather than a gap in a feed, and `callbacks.backlogPolicy` is how a deployment says so — see
+[When a forget-callback is an instruction, not a
+notification](configuration.md#when-a-forget-callback-is-an-instruction-not-a-notification).
+Operationally the one to know is `stall`: past the caps the cycle stops forgetting rather than
+discarding, which shows up as `hippocampus.forgetting.stalls` climbing, a Warn line on every cycle, a
+`stalled` cycle report in `hippo status` and the console's Now tab, and — because nothing is being
+reclaimed — capacity pressure and `used_bytes` rising past the target. Treat it as a receiver outage
+with a deadline attached: the store is holding its own growth open until somebody fixes the far end.
+
 ## Seeing the deployment
 
 `hippo topology`, and the console's **Deployment** tab, report the deployment as one instance
@@ -1291,6 +1302,7 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.callbacks.delivered`            | counter       | `kind`, `outcome`                     | Callback delivery attempts, by what they were about and whether they landed |
 | `hippocampus.callbacks.abandoned`            | counter       |                                       | Queued callbacks discarded at the caps — unlike an index deletion, nothing recovers these |
 | `hippocampus.callbacks.delivery.duration`    | histogram (s) | `outcome`                             | How long one delivery attempt took                                          |
+| `hippocampus.forgetting.stalls`              | counter       | `reason`                              | Sleep cycles whose decay passes were held off — the store has stopped forgetting |
 
 Three things the shape of this list says. The **four `search.*` counters exist only under
 `opensearch.enabled`** — the built-in FTS5 backend runs inside the primary write and has no queue to

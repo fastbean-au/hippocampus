@@ -645,6 +645,7 @@ type Store interface {
 	DeferCallbacks(ctx context.Context, seqs []int64, nextAttemptAt int64) error
 	PruneCallbackQueue(ctx context.Context, bounds QueueBounds) (int64, error)
 	CallbackQueueDepth(ctx context.Context) (int64, error)
+	CallbackBacklog(ctx context.Context) (CallbackBacklog, error)
 	OldestQueuedCallback(ctx context.Context) (int64, error)
 	GetCallbackQueue(ctx context.Context, filter CallbackQueueFilter) ([]CallbackDelivery, error)
 	DeleteCallbackQueue(ctx context.Context, before int64) (int64, error)

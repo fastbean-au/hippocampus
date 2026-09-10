@@ -570,6 +570,12 @@ func setStartupDefaults() {
 	viper.SetDefault("callbacks.atRiskLimit", 1000)
 	viper.SetDefault("callbacks.atRiskMargin", 0)
 
+	// "abandon" is what every deployment had before the key existed, so the default changes nothing.
+	// It is not the right answer for a store pointing at payloads it does not hold - see
+	// validateBacklogPolicy, which says so at startup rather than choosing for the operator, because
+	// the alternatives cost either this disk or the store's willingness to forget at all.
+	viper.SetDefault("callbacks.backlogPolicy", "abandon")
+
 	// callbacks.maxBytes is the one byte cap that bounds something a row cap cannot, and it is
 	// still not defaulted. A delivery carries up to maxIdsPerDelivery items and, under
 	// includeBodies, a body each, so maxRows bounds this queue between a few hundred megabytes of
@@ -2589,6 +2595,72 @@ func validateCallbackConfig() error {
 			"callbacks.includeBodies is set with no callbacks.maxBytes: callbacks.maxRows bounds " +
 				"the queue's rows, not its size, and a row carrying memory bodies is not a fixed " +
 				"size - so nothing bounds what an unreachable receiver can add to the disk",
+		)
+	}
+
+	return validateBacklogPolicy()
+}
+
+// validateBacklogPolicy checks callbacks.backlogPolicy and the settings it changes the meaning of.
+//
+// Split out because it is the one callback setting that decides what the service is willing to LOSE,
+// and the three values fail in three different places - the far system, this disk, the workload. A
+// deployment that picked one and then configured it as though it had picked another gets the failure
+// of the one it did not choose.
+func validateBacklogPolicy() error {
+	setting := viper.GetString("callbacks.backlogPolicy")
+
+	policy, ok := hippocampus.ParseBacklogPolicy(setting)
+	if !ok {
+		return fmt.Errorf(
+			"callbacks.backlogPolicy must be one of %s, got %q",
+			strings.Join(hippocampus.BacklogPolicyNames(), ", "),
+			setting,
+		)
+	}
+
+	capped := viper.GetInt("callbacks.maxRows") > 0 ||
+		viper.GetInt("callbacks.maxAgeHours") > 0 ||
+		viper.GetInt64("callbacks.maxBytes") > 0
+
+	// A stall with no cap can never fire, so it is refused rather than warned about: every other
+	// misconfiguration here degrades to one of the two remaining policies, but this one degrades to a
+	// policy that does not exist - the caps are retained (so nothing trims the queue) AND the bound
+	// that was supposed to replace them never triggers, which is unbounded growth chosen by an
+	// operator who explicitly asked for the opposite.
+	if policy == hippocampus.BacklogStall && !capped {
+		return fmt.Errorf(
+			"callbacks.backlogPolicy is \"stall\" with none of callbacks.maxRows, callbacks.maxAgeHours " +
+				"or callbacks.maxBytes set: the stall is judged against those caps, so nothing would " +
+				"ever stall and nothing would ever be trimmed",
+		)
+	}
+
+	// The forgotten log is the PULL path behind the push one: it records the same deletions, in
+	// order, with a keyset cursor, so a receiver that was rebuilt - or whose queue an operator
+	// emptied - can page GetForgottenMemories back to its cursor and catch up. Without it, a delivery
+	// that never lands is unrecoverable however carefully the queue holds it, which is most of what
+	// retaining it was for.
+	if policy != hippocampus.BacklogAbandon && !viper.GetBool("consolidation.tombstones.enabled") {
+		log.Warnf(
+			"callbacks.backlogPolicy is %q with consolidation.tombstones.enabled off: the queue will "+
+				"hold undelivered forget-callbacks, but nothing records them anywhere else, so a "+
+				"receiver that is rebuilt or a queue that is emptied leaves those deletions "+
+				"unrecoverable - enable the forgotten log as the catch-up path",
+			setting,
+		)
+	}
+
+	// The shape the whole policy exists for: this store points at payloads it does not hold, and the
+	// callback is the only thing that will ever tell the far system to delete one. Under abandon a
+	// receiver outage leaks them permanently, and the leak grows with how well the decay cycle is
+	// working, which is the opposite of the direction a warning usually needs to point.
+	if policy == hippocampus.BacklogAbandon && viper.GetInt64("consolidation.capacityExternalBytes") > 0 {
+		log.Warn(
+			"consolidation.capacityExternalBytes is set with callbacks.backlogPolicy at its default " +
+				"of \"abandon\": this store is sizing storage it does not hold, but a receiver outage " +
+				"long enough to reach the queue's caps discards the forget-callbacks for whatever was " +
+				"deleted meanwhile, orphaning those payloads permanently - consider \"retain\" or \"stall\"",
 		)
 	}
 

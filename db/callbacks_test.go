@@ -931,3 +931,195 @@ func TestCallbackPayloadBytesBackfillsAPreMigrationQueue(t *testing.T) {
 		t.Errorf("the oldest surviving delivery decodes to %+v", remaining[0].Payload)
 	}
 }
+
+// TestRetainedDeletionsSurviveEveryCap is the whole storage half of the instruction/notification
+// split: under a retaining policy the three caps may take the two summary kinds and must not take
+// the two deletion kinds, whichever cap is doing the taking.
+//
+// It drives all three in one store because they are three separate statements over one table, and a
+// predicate added to two of them is exactly the shape that ships.
+func TestRetainedDeletionsSurviveEveryCap(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{
+		Enabled:         true,
+		RetainDeletions: true,
+		MemoryEvents:    true,
+		EventEvents:     true,
+	})
+
+	ctx := context.Background()
+	old := time.Now().Add(-48 * time.Hour).UnixNano()
+
+	// One of each kind, all far past the age cap, so nothing survives on freshness.
+	for _, kind := range []CallbackKind{
+		CallbackKindMemoryForgotten,
+		CallbackKindEventForgotten,
+		CallbackKindSleepCompleted,
+		CallbackKindMemoriesAtRisk,
+	} {
+		queueOne(t, d, CallbackDelivery{
+			Kind:     kind,
+			Cause:    CauseConsolidation,
+			QueuedAt: old,
+			Payload:  CallbackPayload{Items: []CallbackItem{{Id: "x"}}},
+		})
+	}
+
+	// Age: takes the two summaries, leaves the two deletions.
+	if _, err := d.PruneCallbackQueue(ctx, QueueBounds{MaxAge: time.Hour}); err != nil {
+		t.Fatalf("PruneCallbackQueue (age): %s", err.Error())
+	}
+
+	assertRetainedOnly(t, d, "the age cap")
+
+	// Rows: a cap of zero prunable rows would take everything if the predicate were missing.
+	if _, err := d.PruneCallbackQueue(ctx, QueueBounds{MaxRows: 1}); err != nil {
+		t.Fatalf("PruneCallbackQueue (rows): %s", err.Error())
+	}
+
+	assertRetainedOnly(t, d, "the row cap")
+
+	// Bytes: a cap of one byte cannot be met at all while the deletions are exempt, which is the
+	// point - the cap trims what it may and the operator is left short of it.
+	if _, err := d.PruneCallbackQueue(ctx, QueueBounds{MaxBytes: 1}); err != nil {
+		t.Fatalf("PruneCallbackQueue (bytes): %s", err.Error())
+	}
+
+	assertRetainedOnly(t, d, "the byte cap")
+}
+
+// assertRetainedOnly checks the queue holds exactly the two deletion kinds.
+func assertRetainedOnly(t *testing.T, d *DB, after string) {
+	t.Helper()
+
+	claimed, err := d.ClaimCallbacks(context.Background(), 100, time.Now().UnixNano())
+	if err != nil {
+		t.Fatalf("ClaimCallbacks: %s", err.Error())
+	}
+
+	kinds := make(map[CallbackKind]int, len(claimed))
+
+	for _, entry := range claimed {
+		kinds[entry.Kind]++
+	}
+
+	if kinds[CallbackKindMemoryForgotten] != 1 || kinds[CallbackKindEventForgotten] != 1 {
+		t.Errorf("%s removed a deletion delivery: %v", after, kinds)
+	}
+
+	// And nothing else survived: without this the assertion above passes just as well when the cap
+	// removed nothing at all, which is the failure it is meant to catch on the other side.
+	if len(claimed) != 2 {
+		t.Errorf("%s left %d deliveries, want only the 2 deletions: %v", after, len(claimed), kinds)
+	}
+
+	// Claiming does not consume, so a deferral is needed before the next pass reads the table again
+	// - but the assertions above are about what is still there, which claiming does not change.
+	if err := d.DeferCallbacks(context.Background(), claimSeqs(claimed), 0); err != nil {
+		t.Fatalf("DeferCallbacks: %s", err.Error())
+	}
+}
+
+func claimSeqs(claimed []CallbackDelivery) []int64 {
+	seqs := make([]int64, 0, len(claimed))
+
+	for _, entry := range claimed {
+		seqs = append(seqs, entry.Seq)
+	}
+
+	return seqs
+}
+
+// TestCallbackQueuePruningIsUnchangedWithoutRetention is the other direction, and the one that
+// matters to every existing deployment: with the policy off the statements must take deletions
+// exactly as they always did.
+func TestCallbackQueuePruningIsUnchangedWithoutRetention(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
+
+	old := time.Now().Add(-48 * time.Hour).UnixNano()
+
+	for range 3 {
+		queueOne(t, d, CallbackDelivery{
+			Kind:     CallbackKindMemoryForgotten,
+			Cause:    CauseConsolidation,
+			QueuedAt: old,
+			Payload:  CallbackPayload{Items: []CallbackItem{{Id: "stale"}}},
+		})
+	}
+
+	pruned, err := d.PruneCallbackQueue(context.Background(), QueueBounds{MaxAge: time.Hour})
+	if err != nil {
+		t.Fatalf("PruneCallbackQueue: %s", err.Error())
+	}
+
+	if pruned != 3 {
+		t.Errorf("the age cap pruned %d deletion deliveries, want 3", pruned)
+	}
+}
+
+// TestCallbackBacklogCountsOnlyTheDeletions pins what the stall is judged on. A queue full of
+// sleep-completed summaries is not a store leaking payloads, and stalling on it would stop a
+// deployment forgetting over notifications its own caps are already free to discard.
+func TestCallbackBacklogCountsOnlyTheDeletions(t *testing.T) {
+	d := callbackTestDB(t, CallbackPolicy{
+		Enabled:         true,
+		RetainDeletions: true,
+		MemoryEvents:    true,
+		EventEvents:     true,
+	})
+
+	ctx := context.Background()
+
+	empty, err := d.CallbackBacklog(ctx)
+	if err != nil {
+		t.Fatalf("CallbackBacklog: %s", err.Error())
+	}
+
+	// Nothing waiting reports no oldest instant rather than the epoch, which a caller comparing
+	// against an age cap would read as a delivery queued in 1970 and stall on immediately.
+	if empty.Rows != 0 || empty.OldestAt != 0 || empty.Bytes != 0 {
+		t.Fatalf("an empty queue reported %+v, want zeroes", empty)
+	}
+
+	queued := time.Now().Add(-90 * time.Minute).UnixNano()
+
+	queueOne(t, d, CallbackDelivery{
+		Kind:     CallbackKindMemoryForgotten,
+		Cause:    CauseConsolidation,
+		QueuedAt: queued,
+		Payload:  CallbackPayload{Items: []CallbackItem{{Id: "a"}}},
+	})
+
+	queueOne(t, d, CallbackDelivery{
+		Kind:     CallbackKindEventForgotten,
+		Cause:    CauseConsolidation,
+		QueuedAt: time.Now().UnixNano(),
+		Payload:  CallbackPayload{Items: []CallbackItem{{Id: "e"}}},
+	})
+
+	for range 5 {
+		queueOne(t, d, CallbackDelivery{
+			Kind:    CallbackKindSleepCompleted,
+			Cause:   CauseNone,
+			Payload: CallbackPayload{Cycle: &CallbackCycle{Trigger: "timer"}},
+		})
+	}
+
+	backlog, err := d.CallbackBacklog(ctx)
+	if err != nil {
+		t.Fatalf("CallbackBacklog: %s", err.Error())
+	}
+
+	if backlog.Rows != 2 {
+		t.Errorf("the backlog counts %d rows, want the 2 deletion deliveries", backlog.Rows)
+	}
+
+	if backlog.OldestAt != queued {
+		t.Errorf("the backlog's oldest instant is %d, want %d", backlog.OldestAt, queued)
+	}
+
+	// Charged the same flat overhead the ancillary report and the byte cap charge, so a byte cap set
+	// against one figure is not judged against another.
+	if backlog.Bytes <= int64(callbackRowOverheadBytes)*2 {
+		t.Errorf("the backlog reports %d bytes, want the payloads plus both rows' overhead", backlog.Bytes)
+	}
+}

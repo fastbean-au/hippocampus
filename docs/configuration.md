@@ -2297,6 +2297,57 @@ Watch `hippocampus.callbacks.queue_depth` — a rising depth with a non-zero
 `hippocampus.callbacks.delivered{outcome="failed"}` rate is a receiver that is refusing; a deep queue
 with no attempts is one the dispatcher has not reached yet. Both shipped alert rules cover this.
 
+#### When a forget-callback is an instruction, not a notification
+
+Everything above is right for a **notification**. A receiver that has been unreachable for a day is
+not helped by a day-old summary of a cycle, so discarding it costs nothing that was not already lost.
+
+A `memory_forgotten` callback is a different thing whenever the receiver is the system holding what
+the memory pointed at (see [the external capacity axis](consolidation.md#the-external-capacity-axis)). It is an **instruction**
+about a payload this store does not hold and cannot see, and discarding it leaves that payload
+orphaned in the far system permanently. The leak is monotonic, silent, and grows precisely with how
+well the decay cycle is working.
+
+`callbacks.backlogPolicy` decides who absorbs a receiver outage that outlasts the queue's caps. There
+is no answer that costs nothing:
+
+| Value       | What happens at the caps                                                        | Who pays                                              |
+| :---------- | :------------------------------------------------------------------------------ | :---------------------------------------------------- |
+| `abandon`   | The oldest undelivered deliveries are discarded, deletions included. The default. | The far system, in orphaned payloads                  |
+| `retain`    | The two deletion kinds are exempt from the caps and the queue keeps them.        | This disk, in a queue nothing trims                   |
+| `stall`     | As `retain`, and the two decay passes stop until the backlog is back under them. | The workload, in a store that has stopped forgetting  |
+
+The other two kinds — `sleep_completed` and `memories_at_risk` — are capped under every policy. Both
+are worthless once stale, and holding them would be holding rows for their own sake.
+
+Under `stall` the caps stop trimming and start **gating**: once the retained backlog is past
+`maxRows`, `maxBytes` or `maxAgeHours`, `consolidate()` and `evict()` do not run. The cycle still
+scans for summarisation candidates, still trims the forgotten log and still compacts; what it does
+not do is forget. Every stalled cycle logs at Warn, counts
+`hippocampus.forgetting.stalls`, sets `stalled` and `stalled_reason` on the cycle report
+(`GetConsolidationStatus`, and the console's Now tab), and — for the party that can actually end it —
+carries both on the `sleep_completed` delivery the receiver will read when it comes back. A store
+that has stopped forgetting will grow past its capacity target, which is the point: it is the loudest
+thing a store like this can say, and it is reversible, while an orphan in somebody else's bucket is
+not.
+
+`stall` with none of the three caps set is **refused at startup**. Nothing would ever be trimmed and
+nothing would ever stall, which is unbounded growth chosen by an operator who asked for the opposite.
+
+A client's own `DeleteMemories` still deletes under every policy. The caller already knows what they
+asked for, and failing somebody's request over a receiver outage they have nothing to do with would
+be the wrong party paying again.
+
+**Keep the forgotten log on** under `retain` or `stall` — it is the pull path behind the push one.
+`GetForgottenMemories` records the same deletions, in order, behind a keyset cursor, so a receiver
+that was rebuilt (or whose queue an operator emptied with `DeleteCallbackQueue`) pages back to its
+own cursor and catches up. Deleting an object that is already gone is a no-op, so replaying more than
+was missed is harmless — which is what makes at-least-once the right guarantee here. Without it, a
+delivery that never lands is unrecoverable however carefully the queue holds it, and startup warns
+about the combination. It is also worth leaving the far system's own expiry configured as the outer
+bound: a controller that has died then degrades to the far end's flat policy rather than to unbounded
+growth.
+
 #### Inspecting and emptying the queue
 
 `GET /v1/callbacks/queue` (`GetCallbackQueue`) reports the depth, the oldest queued instant, and a
@@ -2368,6 +2419,7 @@ so a retry of an identical body signs differently.
 | `callbacks.events.memoriesAtRisk`   | `false`   | Warn at the top of a cycle about what it is about to forget. Costs a preview scan per cycle. |
 | `callbacks.atRiskLimit`             | `1000`    | How many at-risk memories one cycle reports, lowest value first. Capped at 1000.             |
 | `callbacks.atRiskMargin`            | `0`       | Raises the threshold the at-risk scan selects on, so the warning arrives with notice on it.  |
+| `callbacks.backlogPolicy`           | `abandon` | What happens to an undelivered **deletion** callback at the caps: `abandon`, `retain`, `stall`. |
 | `callbacks.maxRows`                 | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound.   |
 | `callbacks.maxBytes`                | `0`       | Queue byte cap, measured against the stored payloads. 0 removes the bound. See below.        |
 | `callbacks.maxAgeHours`             | `24`      | Queue age cap, applied alongside the row cap. 0 removes the bound.                           |

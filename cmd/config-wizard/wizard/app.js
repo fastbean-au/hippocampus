@@ -1363,6 +1363,23 @@ const STEPS = [
             help: "The bound the delivery cap cannot give you: a delivery carries up to 500 items, each of which may carry a memory body, so a cap in rows says little about size. Measured against the stored payloads. 0 removes this bound — set one if bodies are being carried.",
           },
           {
+            key: "callbacks.backlogPolicy",
+            label: "When the caps are reached",
+            type: "select",
+            def: (s) =>
+              Number(value(s, "consolidation.capacityExternalBytes")) > 0
+                ? "stall"
+                : "abandon",
+            svc: "abandon",
+            when: (s) => value(s, "callbacks.enabled"),
+            options: [
+              ["abandon", "abandon — discard the oldest undelivered callbacks"],
+              ["retain", "retain — keep forget-callbacks; let the queue grow"],
+              ["stall", "stall — keep them, and stop forgetting until they drain"],
+            ],
+            help: "The caps above are right for a notification: a day-old summary of a cycle helps nobody. A memory_forgotten callback is different when the receiver is the system holding what the memory pointed at — it is an instruction to delete a payload this store cannot see, and discarding it orphans that payload permanently. Suggested as stall wherever an external capacity target is set, because that is exactly the deployment where it is an instruction. Under stall the caps stop trimming and start gating: past them, consolidation and eviction do not run, the store grows past its target, and every cycle says so. Under retain nothing stops and nothing is lost — the queue simply grows until the receiver comes back. Keep the forgotten log on with either: it is the catch-up path for a receiver that was rebuilt.",
+          },
+          {
             key: "callbacks.tls.enabled",
             label: "Customise TLS for the receiver",
             type: "bool",
@@ -2308,6 +2325,51 @@ function validate() {
         "warn",
         "memory",
         "callbacks.includeBodies is set with no callbacks.maxBodyBytes, so a single large memory can be carried whole into the queue and the delivery.",
+      );
+    }
+
+    const backlogPolicy = String(val("callbacks.backlogPolicy") || "abandon");
+
+    // The stall is judged against the very caps it exempts the deletions from, so with none of them
+    // set nothing is ever trimmed AND nothing ever stalls - the one combination here the service
+    // refuses outright rather than warns about.
+    if (
+      backlogPolicy === "stall" &&
+      Number(val("callbacks.maxRows")) === 0 &&
+      Number(val("callbacks.maxAgeHours")) === 0 &&
+      Number(val("callbacks.maxBytes")) === 0
+    ) {
+      add(
+        "error",
+        "memory",
+        "callbacks.backlogPolicy is stall with none of callbacks.maxRows, callbacks.maxAgeHours or callbacks.maxBytes set. The stall is judged against those caps, so nothing would ever stall and nothing would ever be trimmed \u2014 the service refuses to start.",
+      );
+    }
+
+    // The forgotten log is the pull path behind the push one. Without it a delivery that never lands
+    // is unrecoverable however carefully the queue holds it, which is most of what retaining it was
+    // for.
+    if (
+      backlogPolicy !== "abandon" &&
+      !val("consolidation.tombstones.enabled")
+    ) {
+      add(
+        "warn",
+        "memory",
+        "callbacks.backlogPolicy keeps undelivered forget-callbacks, but the forgotten log is off, so nothing records those deletions anywhere else. A receiver that is rebuilt, or a queue an operator empties, leaves them unrecoverable \u2014 turn on consolidation.tombstones.enabled as the catch-up path.",
+      );
+    }
+
+    // The shape the policy exists for, pointing the other way: an external target says the payloads
+    // live elsewhere, and abandon discards the only instruction that will ever remove one.
+    if (
+      backlogPolicy === "abandon" &&
+      Number(val("consolidation.capacityExternalBytes")) > 0
+    ) {
+      add(
+        "warn",
+        "memory",
+        "consolidation.capacityExternalBytes is set with callbacks.backlogPolicy at abandon. This store is sizing storage it does not hold, but a receiver outage long enough to reach the queue's caps discards the forget-callbacks for whatever was deleted meanwhile, orphaning those payloads permanently.",
       );
     }
 

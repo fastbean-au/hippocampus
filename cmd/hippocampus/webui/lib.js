@@ -561,6 +561,11 @@ export function capacityMeter(explain) {
 export function cycleSummary(cycle) {
   if (!cycle) return "No cycle has run since this instance started.";
 
+  // Read before the counts, because a stalled cycle produces exactly the counts a quiet one does.
+  // Left to the counts it would report a store that has stopped forgetting as one with nothing to
+  // forget - the most serious state this tab can show, rendered as its healthiest.
+  if (cycle.stalled) return "Forgetting is stalled — nothing was reclaimed.";
+
   const parts = [];
   const consolidated = Number(cycle.memoriesConsolidated || 0);
   const evicted = Number(cycle.memoriesEvicted || 0);
@@ -572,6 +577,23 @@ export function cycleSummary(cycle) {
   if (!parts.length) return "Nothing was forgotten.";
 
   return parts.join(", ") + ".";
+}
+
+// stallNotice is the sentence a stalled cycle earns beside its zeroes: what stopped, why, and what
+// happens while it lasts. Empty for a cycle that ran, so a caller can interpolate it unconditionally.
+//
+// It says the store will grow past its target rather than leaving that to be inferred, because every
+// other number on the tab keeps moving in the usual direction and only this explains why.
+export function stallNotice(cycle) {
+  if (!cycle || !cycle.stalled) return "";
+
+  const reason = String(cycle.stalledReason || "").trim();
+
+  return (
+    "Forgetting is stalled: neither consolidation nor eviction ran" +
+    (reason ? ", because " + reason : "") +
+    ". Nothing is being reclaimed, so this store will grow past its capacity target until it clears."
+  );
 }
 
 // TRIGGER_LABELS spell out what started a cycle. The raw values are wire enums; these are what a

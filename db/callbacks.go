@@ -133,6 +133,20 @@ type CallbackPolicy struct {
 	// omission. Non-positive means no cap.
 	MaxBodyBytes int
 
+	// RetainDeletions exempts the two deletion kinds from the queue's caps, so a delivery about a
+	// memory or an event that has been forgotten is removed only once the receiver has accepted it.
+	//
+	// It is what turns those two kinds from a NOTIFICATION into an INSTRUCTION. A dropped
+	// notification is a gap in somebody's feed; a dropped forget-instruction leaves the payload the
+	// memory pointed at orphaned in a system this store cannot see, forever - a leak that is
+	// monotonic, silent, and grows precisely with how well the decay cycle is working. The other two
+	// kinds stay capped whatever this says: a sleep-completed summary and a pre-reap warning are both
+	// worthless once stale, and holding them would be holding rows for their own sake.
+	//
+	// Set from callbacks.backlogPolicy; see hippocampus/callbacks.go for what bounds the queue
+	// instead once its caps no longer do.
+	RetainDeletions bool
+
 	// MemoryEvents and EventEvents select which of the two deletion callbacks are recorded. Both
 	// default on where the feature is on at all: an operator who has configured a receiver wants the
 	// callbacks, and having to enable each one afterwards would be a second switch for one decision.
@@ -164,6 +178,25 @@ func (p CallbackPolicy) wants(cause DeleteCause) bool {
 	}
 
 	return p.AllDeletions || cause.decay()
+}
+
+// prunableKinds is the SQL predicate limiting a prune to the kinds the caps may remove.
+//
+// Empty unless deletions are retained, so the statements are byte-for-byte what they were on every
+// deployment that has not asked for the other behaviour. The kinds are spliced as literals rather
+// than bound: they are constants of this package, not input, and the three prune statements are
+// assembled as strings already.
+func (p CallbackPolicy) prunableKinds() string {
+	if !p.RetainDeletions {
+
+		return ""
+	}
+
+	return fmt.Sprintf(
+		" AND kind NOT IN (%d, %d)",
+		int(CallbackKindMemoryForgotten),
+		int(CallbackKindEventForgotten),
+	)
 }
 
 // SetCallbackPolicy applies the callback configuration to the store.
@@ -208,8 +241,16 @@ type CallbackCycle struct {
 	EventsEvicted           int    `json:"events_evicted"`
 	BytesFreed              int64  `json:"bytes_freed"`
 	SummarisationCandidates int    `json:"summarisation_candidates"`
-	Success                 bool   `json:"success"`
-	Failure                 string `json:"failure,omitempty"`
+
+	// Stalled reports that neither decay pass ran because the cycle was held off - under
+	// callbacks.backlogPolicy: stall, because THIS receiver has not been accepting deliveries. It is
+	// carried because the counts alone say "nothing was forgotten", which is indistinguishable from a
+	// quiet store, and because the party that can end the stall is the one reading this.
+	Stalled       bool   `json:"stalled,omitempty"`
+	StalledReason string `json:"stalled_reason,omitempty"`
+
+	Success bool   `json:"success"`
+	Failure string `json:"failure,omitempty"`
 }
 
 // CallbackAtRisk is the summary a pre-reap delivery carries: what the store would forget at the
@@ -727,10 +768,14 @@ func (d *DB) PruneCallbackQueue(ctx context.Context, bounds QueueBounds) (int64,
 
 	maxRows := bounds.MaxRows
 
+	// Empty on every deployment that has not asked for deletions to be retained, so all three
+	// statements below are unchanged there.
+	prunable := d.callbacks.prunableKinds()
+
 	if bounds.MaxAge > 0 {
 		res, err := d.exec(
 			ctx,
-			`DELETE FROM `+callbackQueueTable+` WHERE queued_at < ?`,
+			`DELETE FROM `+callbackQueueTable+` WHERE queued_at < ?`+prunable,
 			time.Now().Add(-bounds.MaxAge).UnixNano(),
 		)
 		if err != nil {
@@ -752,9 +797,9 @@ func (d *DB) PruneCallbackQueue(ctx context.Context, bounds QueueBounds) (int64,
 			ctx,
 			`DELETE FROM `+callbackQueueTable+` WHERE seq <= (
 				SELECT MIN(seq) FROM (
-					SELECT seq FROM `+callbackQueueTable+` ORDER BY seq DESC LIMIT ?
+					SELECT seq FROM `+callbackQueueTable+` WHERE 1 = 1`+prunable+` ORDER BY seq DESC LIMIT ?
 				) AS keep
-			)  - 1`,
+			)  - 1`+prunable,
 			maxRows,
 		)
 		if err != nil {
@@ -834,7 +879,15 @@ func (d *DB) pruneCallbackQueueBytes(ctx context.Context, maxBytes int64) (int64
 			"lower callbacks.maxIdsPerDelivery or callbacks.maxBodyBytes, or raise the cap", maxBytes)
 	}
 
-	result, err := d.exec(ctx, `DELETE FROM `+callbackQueueTable+` WHERE seq < ?`, cutoff.Int64)
+	// The running total above is taken over EVERY row, retained deletions included, because what the
+	// cap bounds is the table's size and a retained row occupies the disk whether or not this pass may
+	// remove it. Only the delete is narrowed - so under a retaining policy the cap trims what it is
+	// permitted to and the operator is left short of it rather than being told a bound that is not one.
+	result, err := d.exec(
+		ctx,
+		`DELETE FROM `+callbackQueueTable+` WHERE seq < ?`+d.callbacks.prunableKinds(),
+		cutoff.Int64,
+	)
 	if err != nil {
 		log.Errorf("failed to prune the callback queue to its byte cap: %s", err.Error())
 
@@ -871,6 +924,62 @@ func (d *DB) CallbackQueueDepth(ctx context.Context) (int64, error) {
 	}
 
 	return n, nil
+}
+
+// CallbackBacklog is what the queue holds of the two DELETION kinds: the deliveries a retaining
+// policy exempts from the caps, and so the only ones whose backlog can grow without bound.
+//
+// Reported as the three figures the caps are expressed in, so the caller compares like with like -
+// callbacks.maxRows against Rows, maxAgeHours against OldestAt, maxBytes against Bytes - rather than
+// judging a stall on one axis while the operator configured another.
+type CallbackBacklog struct {
+	Rows int64
+
+	// OldestAt is the UnixNano the oldest retained delivery was queued, or 0 when there are none.
+	// Zero therefore means "nothing waiting" rather than "waiting since 1970", which is the same
+	// reading the never-recalled timestamp carries elsewhere.
+	OldestAt int64
+
+	// Bytes charges each row its payload plus the same flat overhead AncillaryStorage reports and
+	// UsedBytes subtracts, so a byte cap is compared against the figure it was set against.
+	Bytes int64
+}
+
+// CallbackBacklog measures what a retaining policy is holding, for the stall check.
+//
+// One aggregate over the queue per sleep cycle, and only where the caller asks - the same gating the
+// external capacity axis settled on for a figure that costs a scan. It counts the two deletion kinds
+// whatever the policy says, because the question it answers ("how much undeliverable forgetting is
+// this store sitting on") has the same meaning under every policy; what differs is who reads it.
+func (d *DB) CallbackBacklog(ctx context.Context) (CallbackBacklog, error) {
+	log.Trace("func() db.CallbackBacklog")
+
+	var backlog CallbackBacklog
+
+	if !d.callbackTable {
+
+		return backlog, nil
+	}
+
+	ctx, cancel := d.opContext(ctx)
+	defer cancel()
+
+	query := fmt.Sprintf(
+		`SELECT COUNT(*), COALESCE(MIN(queued_at), 0), COALESCE(SUM(payload_bytes), 0)
+		FROM %s WHERE kind IN (%d, %d)`,
+		callbackQueueTable,
+		int(CallbackKindMemoryForgotten),
+		int(CallbackKindEventForgotten),
+	)
+
+	if err := d.queryRow(ctx, query).Scan(&backlog.Rows, &backlog.OldestAt, &backlog.Bytes); err != nil {
+
+		return CallbackBacklog{}, fmt.Errorf("measuring the callback backlog: %w", err)
+	}
+
+	backlog.Bytes += backlog.Rows * int64(callbackRowOverheadBytes)
+
+	return backlog, nil
 }
 
 // CallbackQueueFilter selects rows from the callback queue for the listing RPC. The zero value asks

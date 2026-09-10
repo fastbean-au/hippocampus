@@ -2403,6 +2403,14 @@
           "type": "string",
           "format": "int64",
           "description": "external_bytes_freed is bytes_freed's counterpart on the external axis (see\nMemory.external_bytes): what the cycle released in whatever system holds the payloads its\nmemories pointed at. Estimated from the eviction pass, exactly as bytes_freed is - the\nconsolidation passes stay on the covering index and count rows rather than bytes - so a cycle\nthat consolidated without evicting reports 0 here whatever it released. 0 always on a\ndeployment that stores no external sizes."
+        },
+        "stalled": {
+          "type": "boolean",
+          "description": "stalled reports that the two decay passes did not run: the cycle was held off rather than\nfinding nothing to forget. Without it a stalled cycle is indistinguishable from a quiet one -\nboth report zero consolidated and zero evicted - which is the reading an operator would draw\nexactly when the store has stopped doing the one thing it exists to do.\n\nToday the only thing that stalls a cycle is callbacks.backlogPolicy: stall with the outbound\ncallback queue over its caps, but the field is deliberately about the OUTCOME rather than that\ncause, so a later reason needs no second flag."
+        },
+        "stalledReason": {
+          "type": "string",
+          "description": "stalled_reason says why, in words meant to be shown rather than parsed. Empty unless stalled."
         }
       },
       "description": "CycleReport is what one sleep cycle did: the counts the two decay paths deleted, what it cost,\nand whether it succeeded. Counts only - no ids, no groups, no bodies - which is what keeps this\naggregate rather than an enumeration, and so readable by the reader tier.\n\nThe counts come from the passes themselves rather than from the metrics instruments they also\nfeed, so a deployment exporting no telemetry still gets them."
