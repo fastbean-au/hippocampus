@@ -2231,6 +2231,12 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 	// DeleteEventIfEmpty re-checks live state so the event only goes if it's actually empty. These
 	// per-event cleanups are best-effort - retErr surfaces the first failure for the sleep cycle's
 	// success metric without stopping the remaining events.
+	//
+	// A failure here therefore leaves the event standing, and eviction can never reach it again: it
+	// enters this map only through a memory being deleted, and it has none left. What retries it is
+	// the flag set below - an event carrying memories_consolidated and holding nothing is swept by
+	// the bare-event pass on the next cycle whatever it is worth (see hippocampus.sweepEmptyEvent),
+	// which is why the fall-through matters as much as the delete.
 	var retErr error
 
 	for id, evicted := range evictedPerEvent {
@@ -2400,7 +2406,8 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 	// Delete events where all memories have been deleted, otherwise, set MemoriesConsolidated.
 	// DeleteEventIfEmpty re-checks live state, since a concurrent write can have attached a fresh
 	// memory to the event, or a concurrent recall can have kept one of its memories alive, since
-	// the scan above ran.
+	// the scan above ran. As in EvictMemories, a failed delete falls through to the flag, and the
+	// flag is what gets the event swept on a later cycle.
 	countEventsDeleted := 0
 
 	for id, event := range eventDeletions {

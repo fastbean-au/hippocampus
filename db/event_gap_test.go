@@ -199,8 +199,8 @@ func TestConsolidateEvents_ScanError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM events e LEFT JOIN significance_levels`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance"}).
-			AddRow("e1", "not-an-int", int64(0), int32(0), int64(0)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance", "memories_consolidated"}).
+			AddRow("e1", "not-an-int", int64(0), int32(0), int64(0), false))
 
 	if _, err := d.ConsolidateEvents(context.Background(), &stubServer{}); err == nil {
 		t.Fatal("expected a scan error")
@@ -213,8 +213,8 @@ func TestConsolidateEvents_RowsIterationError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM events e LEFT JOIN significance_levels`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance"}).
-			AddRow("e1", int64(1), int64(0), int32(0), int64(0)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance", "memories_consolidated"}).
+			AddRow("e1", int64(1), int64(0), int32(0), int64(0), false).
 			RowError(0, errors.New("boom")))
 
 	if _, err := d.ConsolidateEvents(context.Background(), &stubServer{}); err == nil {
@@ -228,8 +228,8 @@ func TestConsolidateEvents_DeleteErrorIsBestEffort(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectQuery(`FROM events e LEFT JOIN significance_levels`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance"}).
-			AddRow("e1", int64(1), int64(0), int32(0), int64(0)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "time_start", "time_end", "significance", "link_significance", "memories_consolidated"}).
+			AddRow("e1", int64(1), int64(0), int32(0), int64(0), false))
 	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnError(errors.New("boom"))
 	mock.ExpectRollback()

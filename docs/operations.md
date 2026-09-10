@@ -456,9 +456,16 @@ the actual requirement and any lifetime derived from significance would be arbit
 up is prediction: `days_until_forgotten` reports `-1` for every memory, correctly, because nothing
 crosses a threshold and how long a memory survives depends entirely on what is written after it.
 
-Two operational consequences. `hippocampus_memories_consolidated_total` sits at zero permanently, so
-any alert comparing it against arrivals — `HippocampusStoreGrowing` among them — needs eviction to be
-the term it looks at. And `consolidation.minimumRetentionInDays` becomes the one thing that can
+Empty events are the one thing this mode still deletes on its own. Eviction's pool is memories, so an
+event whose last memory is evicted would be left behind with nothing to value it against and no pass
+that could ever reach it again — which is how two demo stores on this mode came to be carrying tens of
+thousands of them, more than a third of their event tables, invisible to the capacity target
+(`UsedBytes` estimates live memory rows). A cycle therefore sweeps every event holding no memories
+while the threshold is off, subject to `consolidation.minimumRetentionInDays` like everything else.
+
+Two further operational consequences. `hippocampus_memories_consolidated_total` sits at zero
+permanently, so any alert comparing it against arrivals — `HippocampusStoreGrowing` among them —
+needs eviction to be the term it looks at. And `consolidation.minimumRetentionInDays` becomes the one thing that can
 defeat the target, since retention overrides the capacity bound: set it too high in this mode and
 eviction has nothing left it is allowed to reclaim. Watch `hippocampus_memories_retained` against
 `hippocampus_memories_count` for that, which is the pairing those gauges exist for.

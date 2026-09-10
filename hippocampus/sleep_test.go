@@ -1335,3 +1335,190 @@ func TestShouldConsolidateMemory_RecallCountBoostsSignificance(t *testing.T) {
 		t.Error("frequently recalled memory should not be consolidated")
 	}
 }
+
+// TestShouldConsolidateEvent_CapacityTargetOnlyMode exposes the steady-state half of item 116: on
+// the capacity-target-only mode (a non-positive deletionThreshold with a capacity target) the
+// bare-event pass scanned every orphan event and deleted none of them, forever. Every
+// calculateValue method is a non-negative significance over a positive age, and the threshold is
+// the configured 0 scaled by pressure, so `value < threshold` was never true. An event with no
+// memories is a remnant there, not a record, and must be swept - subject to the retention floor,
+// which overrides the capacity target everywhere else too.
+func TestShouldConsolidateEvent_CapacityTargetOnlyMode(t *testing.T) {
+	s := &Server{
+		consolidation: Consolidation{
+			method:                 1,
+			aggressiveness:         1.0,
+			unitsOfAgeInDays:       1.0,
+			deletionThreshold:      0,
+			capacityBytes:          160_000_000,
+			linkSignificanceWeight: 1.0,
+		},
+	}
+
+	tenDaysAgo := time.Now().UnixNano() - int64(10*DAY_IN_NANOSECONDS)
+
+	orphan := db.EventConsolidationCandidate{Significance: 5, TimeStart: tenDaysAgo}
+	if !s.ShouldConsolidateEvent(orphan) {
+		t.Error("an orphan event should be swept when the deletion threshold is off")
+	}
+
+	// Neither significance nor links save it: there are no memories left for them to be the
+	// significance of.
+	connected := db.EventConsolidationCandidate{Significance: 100, LinkSignificance: 10000, TimeStart: tenDaysAgo}
+	if !s.ShouldConsolidateEvent(connected) {
+		t.Error("a significant, well-connected orphan event should still be swept in this mode")
+	}
+
+	// The hard retention floor still holds, exactly as it does over the capacity target.
+	s.consolidation.minimumRetentionInDays = 30
+
+	if s.ShouldConsolidateEvent(orphan) {
+		t.Error("an orphan event inside the retention window must never be swept")
+	}
+}
+
+// TestShouldConsolidateEvent_EmptiedByDecay exposes the failure half of item 116, on every mode.
+// Eviction and the evented consolidation pass both delete an event once their pass takes its last
+// memory - whatever the event's own significance - but that delete is best-effort: a failure logs,
+// flags the event memories_consolidated and moves on, and the event then has no memories left to
+// evict, so nothing revisits it. The value pass is the only path back and it keeps a significant
+// event forever. An empty event the decay machinery has already emptied is finished; retrying the
+// delete completes an action that was decided, rather than making a new decision.
+func TestShouldConsolidateEvent_EmptiedByDecay(t *testing.T) {
+	s := &Server{
+		consolidation: Consolidation{
+			method:                 1,
+			aggressiveness:         1.0,
+			unitsOfAgeInDays:       1.0,
+			deletionThreshold:      1.0,
+			linkSignificanceWeight: 1.0,
+		},
+	}
+
+	twoDaysAgo := time.Now().UnixNano() - int64(2*DAY_IN_NANOSECONDS)
+
+	// method 1: 5 / 2 = 2.5 > 1.0, so the value pass keeps this event.
+	untouched := db.EventConsolidationCandidate{Significance: 5, TimeStart: twoDaysAgo}
+	if s.ShouldConsolidateEvent(untouched) {
+		t.Error("a valuable orphan event should survive the value pass unchanged")
+	}
+
+	emptied := untouched
+	emptied.MemoriesConsolidated = true
+
+	if !s.ShouldConsolidateEvent(emptied) {
+		t.Error("an event the decay machinery emptied should be deleted whatever its own value")
+	}
+
+	// And the retention floor holds here too.
+	s.consolidation.minimumRetentionInDays = 30
+
+	if s.ShouldConsolidateEvent(emptied) {
+		t.Error("an emptied event inside the retention window must never be swept")
+	}
+}
+
+// TestConsolidate_CapacityTargetOnlyModeSweepsOrphanEvents is item 116 end to end, and the shape
+// the measurement found it in: two public demo stores on this mode were each carrying tens of
+// thousands of events holding no memories, more than a third of their event tables, growing at the
+// eviction rate and invisible to the capacity target that is supposed to bound the store (UsedBytes
+// estimates live MEMORY rows, and eviction's pool is memories). A cycle must sweep them.
+func TestConsolidate_CapacityTargetOnlyModeSweepsOrphanEvents(t *testing.T) {
+	s := newTestServer(t)
+	s.consolidation = Consolidation{
+		method:            1,
+		aggressiveness:    1.0,
+		unitsOfAgeInDays:  1.0,
+		deletionThreshold: 0,
+		capacityBytes:     160_000_000,
+	}
+
+	tenDaysAgo := time.Now().UnixNano() - int64(10*DAY_IN_NANOSECONDS)
+
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "orphan", Name: "emptied", TimeStart: tenDaysAgo, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent(orphan): %s", err)
+	}
+
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "held", Name: "still holds one", TimeStart: tenDaysAgo, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent(held): %s", err)
+	}
+
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: tenDaysAgo, Significance: 5, EventId: "held", Body: "kept"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if err := s.consolidate(context.Background(), &cycleReport{}); err != nil {
+		t.Fatalf("consolidate: %s", err)
+	}
+
+	if _, err := s.db.GetEvent(context.Background(), "orphan"); err == nil {
+		t.Error("an event holding no memories should not survive a cycle on the capacity-target-only mode")
+	}
+
+	// The memory and its event are untouched: nothing here forgets on value, and eviction is not
+	// running - the store is nowhere near its target.
+	if _, err := s.db.GetEvent(context.Background(), "held"); err != nil {
+		t.Errorf("an event still holding a memory must survive: %s", err)
+	}
+
+	if with, _ := s.db.CountMemories(context.Background()); with != 1 {
+		t.Errorf("expected the memory to survive, got %d memories with events", with)
+	}
+}
+
+// TestConsolidate_SweepsAnEventTheCycleEmptied is the other half of item 116, on the ordinary
+// decay mode: an event the decay machinery emptied is swept even where its own value would keep it.
+// The store already deletes an event as the pass takes its last memory, whatever the event is
+// worth, so the only events that reach this state are ones where that delete was decided and did
+// not happen - the last memory went by a route that does not cascade, or the cascade failed. Here
+// it is a client delete, which is the reproducible shape of the same thing.
+func TestConsolidate_SweepsAnEventTheCycleEmptied(t *testing.T) {
+	s := newTestServer(t)
+	s.consolidation = Consolidation{
+		method:            1,
+		aggressiveness:    1.0,
+		unitsOfAgeInDays:  1.0,
+		deletionThreshold: 1.0,
+	}
+
+	now := time.Now().UnixNano()
+	oneDayAgo := now - int64(DAY_IN_NANOSECONDS)
+	hundredDaysAgo := now - int64(100*DAY_IN_NANOSECONDS)
+
+	// A young, significant event: 5 / 1 = 5 > 1.0, so the value pass keeps it indefinitely.
+	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "recent", TimeStart: oneDayAgo, Significance: 5}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	// One stale memory - (5 + 1) / 100 = 0.06 < 1.0, so the cycle takes it - and one fresh one it
+	// leaves, which is what makes the cycle flag the event rather than delete it.
+	for _, m := range []types.Memory{
+		{Id: "stale", TimeStamp: hundredDaysAgo, Significance: 1, EventId: "e1", Body: "old detail"},
+		{Id: "fresh", TimeStamp: now, Significance: 1, EventId: "e1", Body: "new detail"},
+	} {
+		if _, err := s.db.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	if err := s.consolidate(context.Background(), &cycleReport{}); err != nil {
+		t.Fatalf("consolidate: %s", err)
+	}
+
+	if _, err := s.db.GetEvent(context.Background(), "e1"); err != nil {
+		t.Fatalf("the event should survive while it still holds a memory: %s", err)
+	}
+
+	// The surviving memory now goes by a route that does not cascade to the event.
+	if _, err := s.db.DeleteMemories(context.Background(), []string{"fresh"}); err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	if err := s.consolidate(context.Background(), &cycleReport{}); err != nil {
+		t.Fatalf("consolidate: %s", err)
+	}
+
+	if _, err := s.db.GetEvent(context.Background(), "e1"); err == nil {
+		t.Error("an event the cycle emptied should not survive once its last memory is gone")
+	}
+}

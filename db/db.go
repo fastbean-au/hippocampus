@@ -385,6 +385,17 @@ type EventConsolidationCandidate struct {
 	LinkSignificance int64
 	TimeStart        int64
 	TimeEnd          int64
+
+	// MemoriesConsolidated is the event's own memories_consolidated flag: this event did hold
+	// memories and a decay pass took them. It separates an event that is empty because the store
+	// forgot its contents from one that never held anything, which the value function cannot tell
+	// apart and which the two need not be treated alike. Eviction and the evented consolidation
+	// pass both delete an event as their pass takes its last memory - whatever the event's own
+	// significance - so an emptied event that is still here is a delete that was decided and did
+	// not complete: its last memory went by a route that does not cascade, or the cascade itself
+	// failed and flagged it instead. Either way nothing else revisits it, since an event with no
+	// memories can never enter an eviction pass again.
+	MemoriesConsolidated bool
 }
 
 // MemoryFilter narrows a GetMemories query. A zero value on any field leaves that dimension

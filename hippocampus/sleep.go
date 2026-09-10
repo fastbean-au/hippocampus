@@ -688,10 +688,45 @@ func (s *Server) shouldConsolidateEventUnder(candidate db.EventConsolidationCand
 		timestamp = candidate.TimeEnd
 	}
 
+	if s.sweepEmptyEvent(candidate) {
+		return !s.retained(timestamp)
+	}
+
 	significance := float64(candidate.Significance) +
 		linkContribution(s.consolidation.linkSignificanceWeight, candidate.LinkSignificance)
 
 	return s.shouldConsolidateUnder(significance, timestamp, pressure)
+}
+
+// sweepEmptyEvent reports whether this event — which by the time it reaches here holds no memories —
+// is to be swept regardless of what it is worth. Both cases below are the completion of a decision
+// already taken elsewhere rather than a new one, which is why value has no part in either; only the
+// hard retention floor still applies, as it does over the capacity target everywhere else.
+//
+// The FLAG case is any mode. Eviction and the evented consolidation pass each delete an event as
+// their pass takes its last memory, whatever the event's own significance — so an event carrying
+// memories_consolidated and holding nothing is a delete that was decided and did not happen: its
+// final memory went by a route that does not cascade (a client delete, a predicate deletion asked
+// not to take empty events), or the cascade failed, logged, and flagged the event instead. Nothing
+// else revisits it either way — an event with no memories can never enter an eviction pass again,
+// because eviction reaches an event only through a memory it is deleting — so the value pass is the
+// only path back, and it keeps a significant event forever. The demo's own upgrade to 0.44.0 stranded
+// 9,965 events this way inside a single minute.
+//
+// The THRESHOLD case is the capacity-target-only mode (item 88: a non-positive
+// consolidation.deletionThreshold, which startup permits only alongside a capacity target). There
+// the value pass is inert by construction — every calculateValue method is a non-negative
+// significance over a positive age and the threshold is 0 however pressure scales it, so
+// `value < threshold` is never true — while eviction, the only thing that forgets in that mode,
+// deletes memories and so leaves empty events behind at the eviction rate. An event with no
+// memories has nothing left to be the significance OF, and the mode has no other way to notice it:
+// orphan events are counted toward neither the byte estimate nor the eviction pool, so a store can
+// sit exactly on its capacity target while a third of its event table is unreachable. This is the
+// one branch that is a policy statement, and it is confined to the mode that cannot express the
+// policy any other way — everywhere else an empty event still has to decay past the threshold like
+// anything else.
+func (s *Server) sweepEmptyEvent(candidate db.EventConsolidationCandidate) bool {
+	return candidate.MemoriesConsolidated || s.consolidation.deletionThreshold <= 0
 }
 
 // retained reports whether an item whose decay clock reads timestamp is still inside the configured

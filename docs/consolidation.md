@@ -17,6 +17,17 @@ memories that are still here; to keep a record of the ones that are not, turn on
 
 Memory consolidation is done through a process that runs regularly at a configured frequency, and which can also be run manually. Through this process when all of an event's memories are deleted, the event will be deleted. Events that have no memories age out independently under the same decay rules: an event's value is its own significance plus its weighted relationship significance, and its age is measured from the most recent of its start and end times. Memories without an associated event can be given a default event significance equivalence, this can either be an explicit value or set at the value for a specified percentile of the existing events.
 
+Two kinds of empty event are swept rather than valued. An event the decay
+machinery itself emptied is deleted on the next cycle whatever its own value: the store already
+deletes an event as a pass takes its last memory, whatever that event is worth, so an empty event
+still carrying the `memories_consolidated` flag is a deletion that was decided and did not happen —
+its final memory left by a route that does not cascade (a client delete), or the cascade failed and
+flagged the event instead. Nothing else would revisit it, since an event with no memories can never
+enter an eviction pass again. And under [capacity target only](#forgetting-modes) every event holding
+no memories is swept, because value-based consolidation is switched off there and an empty event
+would otherwise never be deleted at all. Both are subject to `consolidation.minimumRetentionInDays`,
+which overrides them exactly as it overrides the capacity target.
+
 The frequency is set by `sleep.periodSeconds`. Setting it to `0` (or any non-positive value) disables the automatic timed cycle entirely: the service then only consolidates when the manual `Sleep` RPC is called, or when the WAL trigger fires (see [Checkpoint-triggered eviction](#checkpoint-triggered-eviction)). This suits an instance that should not forget on its own — for example one used purely for import/archival, or one whose sleep cadence is driven externally.
 
 `consolidation.enabled` (default `true`) is a coarser switch: set it to `false` and the instance runs **no** sleep cycle at all — no timed cycle, no WAL trigger, and the manual `Sleep` RPC is rejected with `FailedPrecondition`. This is the read/write-replica half of [horizontal scaling](operations.md#deployment-model-one-consolidating-instance-per-store): several instances share one PostgreSQL/MySQL database, exactly one runs with `consolidation.enabled: true` (and holds the single-consolidator lock), and the rest run with it `false` to serve reads and writes without ever consolidating.

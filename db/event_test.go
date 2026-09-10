@@ -651,3 +651,71 @@ func TestGetEventsSortingAndPagination(t *testing.T) {
 		t.Errorf("significance>=50 count = %d, want 2", sig)
 	}
 }
+
+// TestConsolidateEvents_ReportsAnEventEmptiedByDecay pins the storage half of item 116: the
+// bare-event scan must tell the decision function whether the event it is looking at was emptied by
+// the decay machinery (memories_consolidated) rather than merely holding no memories. Without that
+// flag the server cannot distinguish an event whose last memory a pass took - a delete that was
+// already decided, and may simply have failed - from one that never held a memory at all, and the
+// first kind is what accumulates: it has no memories left to evict, so eviction can never revisit
+// it, and the value pass keeps it for as long as its own significance holds up.
+func TestConsolidateEvents_ReportsAnEventEmptiedByDecay(t *testing.T) {
+	database := newTestDB(t)
+
+	// The two events are told apart by their start times: the candidate carries no id, since the
+	// decision is about value rather than identity.
+	for _, e := range []types.Event{
+		{Id: "emptied", Name: "lost its memories to a cycle", TimeStart: 100, Significance: 1},
+		{Id: "untouched", Name: "never held one", TimeStart: 200, Significance: 1},
+	} {
+		mustCreateEvent(t, database, e)
+	}
+
+	for _, m := range []types.Memory{
+		{Id: "m1", TimeStamp: 100, Significance: 1, EventId: "emptied", Body: "first"},
+		{Id: "m2", TimeStamp: 200, Significance: 1, EventId: "emptied", Body: "second"},
+	} {
+		if _, err := database.CreateMemory(context.Background(), m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	// The evented pass takes the older memory and leaves the newer one, so the event survives the
+	// cascade and is flagged as having had memories consolidated.
+	consolidateOlder := &decisionServer{memory: func(c MemoryConsolidationCandidate) bool {
+		return c.Timestamp == 100
+	}}
+
+	if _, _, _, err := database.ConsolidateEventMemories(context.Background(), consolidateOlder); err != nil {
+		t.Fatalf("ConsolidateEventMemories: %s", err)
+	}
+
+	// The remaining memory then goes by a route that does not cascade to the event - a client
+	// delete - leaving the event empty, flagged, and reachable only by the bare-event pass.
+	if _, err := database.DeleteMemories(context.Background(), []string{"m2"}); err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	seen := make(map[int64]EventConsolidationCandidate)
+	capture := &decisionServer{event: func(c EventConsolidationCandidate) bool {
+		seen[c.TimeStart] = c
+
+		return false
+	}}
+
+	if _, err := database.ConsolidateEvents(context.Background(), capture); err != nil {
+		t.Fatalf("ConsolidateEvents: %s", err)
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("expected both orphan events to reach the decision, got %d", len(seen))
+	}
+
+	if !seen[100].MemoriesConsolidated {
+		t.Error("the event a consolidation pass emptied should report MemoriesConsolidated")
+	}
+
+	if seen[200].MemoriesConsolidated {
+		t.Error("an event that never held a memory should not report MemoriesConsolidated")
+	}
+}

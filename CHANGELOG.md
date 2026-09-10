@@ -52,6 +52,42 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ## [Unreleased]
 
+### Fixed
+
+- **Empty events no longer accumulate forever.** Two independent halves met in one place, and the
+  measurement is what found it: the two public demo stores configured to forget on the capacity
+  target alone (`consolidation.deletionThreshold: 0` with a positive `capacityBytes`) were each
+  carrying tens of thousands of events holding no memories — 36% and 35% of their event tables —
+  spread back over days, while the three stores with a positive threshold carried none at all.
+
+  The first half is the bare-event pass. Its query selects exactly the orphan set, and then gates
+  each row on the value function: every decay method is a non-negative significance over a positive
+  age, and the threshold is `deletionThreshold × pressure`, so with the threshold at 0 the bound is
+  0 however pressure scales it and nothing is ever below it. The pass ran every cycle, scanned every
+  orphan, and deleted none of them. The second half is that eviction reaches an event only through a
+  memory it is deleting, so an event stranded with no memories can never enter an eviction pass
+  again — which makes any failure of eviction's own empty-event cleanup permanent (the 0.44.0 upgrade
+  produced 9,965 of that error on one store inside a minute).
+
+  An empty event is now swept rather than valued in two cases, both subject to
+  `consolidation.minimumRetentionInDays`, which overrides them as it overrides the capacity target.
+  **Any mode:** an event the decay machinery emptied — carrying `memories_consolidated` and holding
+  nothing — is deleted whatever its own value, because that deletion was already decided: the store
+  deletes an event as a pass takes its last memory, whatever the event is worth, so one still
+  standing is a cascade that did not happen (its last memory left by a route that does not cascade,
+  or the cascade failed and flagged the event instead). **Capacity target only:** every event holding
+  no memories is swept, because value-based consolidation is off there and nothing else would ever
+  reach them; orphan events are counted toward neither the byte estimate nor the eviction pool, so a
+  store could sit exactly on its capacity target with a third of its event table unreachable.
+
+  Everywhere else an empty event still has to decay past the threshold like anything else.
+  `PreviewConsolidation` reports the swept events, since it evaluates through the same decision.
+
+  **Expect one large cycle after the upgrade** on a store that has been accumulating them: the
+  backlog is swept in a single pass, one transaction per event, and the two demo stores are carrying
+  around 19,500 and 15,000. `hippocampus_events_consolidated_total{has_memories="false"}` steps by
+  the whole backlog once and then settles, and that cycle's duration steps with it.
+
 ## [0.46.0] - 2026-09-10
 
 ### Added

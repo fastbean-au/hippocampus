@@ -625,7 +625,8 @@ func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 
 	rows, err := d.query(
 		ctx,
-		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.link_significance
+		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.link_significance,
+			e.memories_consolidated
 		FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id
 		WHERE e.id NOT IN (SELECT DISTINCT event_id FROM memories WHERE event_id != '')`,
 	)
@@ -642,7 +643,14 @@ func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 		var id string
 		var candidate EventConsolidationCandidate
 
-		if err := rows.Scan(&id, &candidate.TimeStart, &candidate.TimeEnd, &candidate.Significance, &candidate.LinkSignificance); err != nil {
+		if err := rows.Scan(
+			&id,
+			&candidate.TimeStart,
+			&candidate.TimeEnd,
+			&candidate.Significance,
+			&candidate.LinkSignificance,
+			&candidate.MemoriesConsolidated,
+		); err != nil {
 			log.Errorf("failed to scan event for consolidation: %s", err.Error())
 
 			return 0, err
