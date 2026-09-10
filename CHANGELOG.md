@@ -52,6 +52,43 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ## [Unreleased]
 
+### Added
+
+- **The configuration wizard now flags combinations that start cleanly and then do not do what they
+  look like they do.** Its checks had covered the two easy classes — what the service refuses at
+  startup, and what a single key gets wrong on its own — and neither catches a configuration in
+  which every value is individually valid and the combination is not. The one that prompted this:
+  OpenSearch enabled with no embedding model, which stands up a cluster to answer keyword searches
+  the store already answers on its own, in the same transaction as the write, on every driver.
+  Fourteen new checks in that class, each naming the case where the pairing is deliberate rather
+  than simply refusing it: a store with nothing to trigger a consolidation cycle; sleep-cycle
+  settings (the forgotten log, the summarisation scan, automatic summarisation) on a replica, where
+  they are silently inert; a `minimumAgeInDays` shorter than the retention floor that covers it; a
+  `defaultEventSignificanceValue` beside a non-zero percentile that overrides it; retention against
+  a capacity target it can hold a store permanently above; a loopback bind address under the Compose
+  and Kubernetes targets, where nothing outside the container can reach it; a query timeout below a
+  consolidation scan; both content indexes maintained while only one is read; no content index at
+  all; a transfer target with no object store. Four more mirror startup refusals the wizard did not
+  yet know about — semantic search without OpenSearch, an `openai` provider left on the Ollama
+  default address (both blocks), and a Prometheus scrape port already taken by the gRPC or gateway
+  listener.
+
+  Issues are now sorted by severity on the step pages and the review screen, so a startup refusal
+  cannot sit below three notes about things that are merely worth knowing.
+
+### Fixed
+
+- **The wizard refused a valid configuration and mis-gated one check.** A non-positive
+  `consolidation.deletionThreshold` is rescued by `consolidation.capacityExternalBytes` exactly as
+  it is by `consolidation.capacityBytes` — the service has accepted that pairing since the external
+  axis landed — but the wizard reported it as an error, so a retention controller over storage held
+  elsewhere could not be built here without ignoring a red banner. The automatic-summarisation
+  check also read `llm.autoSummarise` without first asking whether the LLM was enabled, so it could
+  fire on a value left behind by a setting since turned off and never written to the config file.
+  The external capacity axis also gains the two checks its byte-axis counterpart already had, its
+  floor being the one the service does **not** refuse: a floor at or above its target is silently
+  replaced by the target, so the configuration reads as though it has hysteresis and has none.
+
 ## [0.45.0] - 2026-09-10
 
 ### Breaking
@@ -143,7 +180,7 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   Measured over 20,000 memories of log-shaped JSON it is the **largest non-body cost the store
   carries** on every driver: 43–59% of the payload on `sqlite`, where at 4 KiB bodies the index is
   larger than the compressed bodies it indexes; 22 MiB against a 4.9 MiB payload on `postgres`; and
-  on `mysql`, where a `FULLTEXT` index is an index on a *column*, a second uncompressed copy of every
+  on `mysql`, where a `FULLTEXT` index is an index on a _column_, a second uncompressed copy of every
   body — 40 MiB against 19.5 MiB.
 
   Disabling **drops** the index rather than ceasing to maintain it. An index that stops being written
@@ -184,7 +221,7 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   than per request, so the block reports `measured_at` and a client should read it as a reading with
   an age rather than a live figure. And a component reporting `enabled: false` beside a row count is
   a table switched off that still holds what it wrote: disabling any of the three stops the writing
-  *and* the trimming.
+  _and_ the trimming.
 
   Nothing here caps or trims on the figure. The callback queue remains the one whose rows have no
   fixed size — a delivery carries up to `callbacks.maxIdsPerDelivery` items, and memory bodies under
@@ -214,8 +251,8 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 - **An external capacity axis, so decay can govern storage this store does not hold.** Every capacity
   measure the service had was about its own disk, which meant the one control it has that an
-  age-based expiry does not — capacity pressure, a *budget* that tightens when a traffic spike
-  threatens it, rather than an *age* that hopes the resulting volume fits — could only be applied to
+  age-based expiry does not — capacity pressure, a _budget_ that tightens when a traffic spike
+  threatens it, rather than an _age_ that hopes the resulting volume fits — could only be applied to
   data it was storing. A memory can now carry `external_bytes`: the size of a payload it only
   **points at**, in a column store, a bucket, or another index. It is client-supplied and never
   interpreted here — the service does not fetch it, verify it, or know its address.
@@ -316,12 +353,13 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   client generated from `vX.Y.Z`'s contract.
 
   One thing found on the way, and corrected in `docs/clients.md`, which had it wrong: the
-  protoc-gen-openapiv2 annotations are *not* free of runtime consequence in every language.
+  protoc-gen-openapiv2 annotations are _not_ free of runtime consequence in every language.
   `protoc` writes an import of them into the generated Python module, and that package exists on no
   index — so a client generated by following that page's own recipe installed cleanly and raised
   `ModuleNotFoundError` on first import. Stripping the option before generating is the fix.
 
   See `docs/python.md`. Item 64, and item 100.4's sharpening of why it matters.
+
 - **A LlamaIndex adapter: `pip install llama-index-memory-hippocampus`.** The client's other half.
   Being callable from Python is not the same as being an agent's memory, and the distance between
   the two is one framework adapter — `HippocampusMemoryBlock`, a long-term memory block that writes
@@ -354,6 +392,7 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   The block holds a four-call protocol rather than the whole client, which is what keeps an agent's
   memory away from `Purge` and `Clear` — the same line the event-source bridges draw, and held at
   four by a test. See `docs/llamaindex.md`. Item 108.2.
+
 - **`StoreMemories`: a validated batch write.** A producer holding a batch of unrelated memories had
   two options and both were wrong. Loop `StoreMemory` and spend a round trip, an interceptor chain,
   a rate-limit token and a transaction on every record — which is what the broker bridges and the
@@ -717,7 +756,7 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   `callbacks.atRiskMargin` is what makes it actionable rather than merely earlier, and is the part
   worth setting deliberately. At its default of `0` the warning covers exactly what the cycle now
   starting will take — which arrives while that cycle is taking it. A margin raises the bar the scan
-  selects on, so the delivery also carries memories still *above* the threshold and approaching it: at
+  selects on, so the delivery also carries memories still _above_ the threshold and approaching it: at
   `0.25`, everything within a quarter of the bar, which is a cycle or more of notice. Both thresholds
   are reported and each item carries its computed `value`, so the two populations are told apart by
   comparison rather than by guessing.
@@ -740,6 +779,7 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   being taken to make room — which a recall may not save, and which an operator fixes by raising the
   capacity. Visible in `hippo callbacks queue --kind memories-at-risk` and in the console's callback
   card. Item 28, open since the beginning, and item 102.1.
+
 - **The Obsidian plugin mirrors the vault's `[[wikilinks]]`.** It called memories, events and
   summarisation candidates and never `/v1/memories/{id}/links`, so a synced vault became a set of
   **isolated** memories. That is not a missing feature so much as a mismatch of premises: Obsidian's

@@ -2146,6 +2146,18 @@ function validate() {
   const authMethod = val("auth.method");
   const gatewayPort = Number(val("gateway.port"));
 
+  // A field whose `when` is false never reaches the generated config - buildConfig skips it - so a
+  // check reading one would be judging a value nobody set: the stale answer left behind when the key
+  // that revealed it was turned off again. Every check below that reads a conditional key asks
+  // through these, which is what stops a new one firing on a field the operator cannot even see.
+  const active = (key) => {
+    const field = FIELDS.get(key);
+
+    return !field || !field.when || field.when(state);
+  };
+  const on = (key) => active(key) && Boolean(val(key));
+  const num = (key) => (active(key) ? Number(val(key)) : 0);
+
   if (driver === "sqlite" && !String(val("storage.directory")).trim()) {
     add(
       "error",
@@ -2213,7 +2225,10 @@ function validate() {
   // store that forgets nothing when it does not. capacityMemories does not rescue it - a row
   // capacity only scales the pressure that scales the threshold, and nothing evicts on it.
   if (!(Number(val("consolidation.deletionThreshold")) > 0)) {
-    if (Number(val("consolidation.capacityBytes")) > 0) {
+    if (
+      Number(val("consolidation.capacityBytes")) > 0 ||
+      Number(val("consolidation.capacityExternalBytes")) > 0
+    ) {
       add(
         "warn",
         "memory",
@@ -2223,7 +2238,7 @@ function validate() {
       add(
         "error",
         "memory",
-        "consolidation.deletionThreshold must be greater than 0 \u2014 at or below it no value is ever under the threshold, so nothing is ever consolidated and the store only grows. Set consolidation.capacityBytes to forget on the capacity target alone instead.",
+        "consolidation.deletionThreshold must be greater than 0 \u2014 at or below it no value is ever under the threshold, so nothing is ever consolidated and the store only grows. Set consolidation.capacityBytes (or consolidation.capacityExternalBytes) to forget on a capacity target alone instead.",
       );
     }
   }
@@ -2342,6 +2357,64 @@ function validate() {
     );
   }
 
+  // The external axis is read by exactly the same rule (evictionFloorFor is shared), so it wants
+  // exactly the same two warnings. The floor one matters more here than on the byte axis, because
+  // the service does not refuse a floor above its target - it silently uses the target as its own
+  // floor, so the configuration reads as though it has hysteresis and has none.
+  const externalBytes = num("consolidation.capacityExternalBytes");
+  const externalFloor = num("consolidation.capacityExternalBytesFloor");
+
+  if (externalBytes > 0 && externalFloor >= externalBytes) {
+    add(
+      "error",
+      "memory",
+      "consolidation.capacityExternalBytesFloor must be below consolidation.capacityExternalBytes \u2014 it is the headroom eviction frees, not a second target. At or above it the service falls back to the target as its own floor, silently.",
+    );
+  }
+
+  if (externalBytes > 0 && externalFloor === 0) {
+    add(
+      "warn",
+      "memory",
+      "consolidation.capacityExternalBytes is set without a floor, so eviction on the external axis stops the moment it reaches the target and re-triggers on the next write that carries external bytes. Set consolidation.capacityExternalBytesFloor to about 85% of the target.",
+    );
+  }
+
+  // Two floors over the same window, and only one of them stops eviction. Worth saying plainly:
+  // the pair reads like belt and braces, and the shorter one is simply never reached.
+  const minimumAge = Number(val("consolidation.minimumAgeInDays"));
+  const retention = Number(val("consolidation.minimumRetentionInDays"));
+
+  if (minimumAge > 0 && retention >= minimumAge) {
+    add(
+      "info",
+      "memory",
+      `consolidation.minimumAgeInDays (${minimumAge}) never decides anything here: consolidation.minimumRetentionInDays (${retention}) covers the same window and is at least as long. The age floor only defers value-based consolidation; the retention floor is harder \u2014 it stops eviction too.`,
+    );
+  }
+
+  // The one way a bounded store can sit permanently over its capacity target, and it is a
+  // configuration rather than a fault, so it belongs here rather than in an alert an operator meets
+  // at 3am. This pairing is what hippocampus.memories_retained / retained_bytes exist to expose.
+  if (retention > 0 && capacityBytes > 0) {
+    add(
+      "info",
+      "memory",
+      "consolidation.minimumRetentionInDays overrides the capacity target: a memory inside the retention window is never evicted, whatever the pressure. If enough of the store is retained, eviction cannot bring it back under consolidation.capacityBytes at all \u2014 so size the volume above the target rather than at it, and watch hippocampus.retained_bytes against it, which is the pair those gauges are published for.",
+    );
+  }
+
+  if (
+    Number(val("consolidation.defaultEventSignificancePercentile")) > 0 &&
+    Number(val("consolidation.defaultEventSignificanceValue")) > 0
+  ) {
+    add(
+      "info",
+      "memory",
+      "consolidation.defaultEventSignificancePercentile is non-zero, so it overrides consolidation.defaultEventSignificanceValue: a memory with no event is given that percentile of the event significances actually in the store, recomputed each cycle, and the fixed value is never read.",
+    );
+  }
+
   // The capacity target counts the memories, events and links and nothing else. Every feature that
   // keeps its own table is deliberately outside it - each grows precisely when something is wrong,
   // so counting it would evict live memories to make room for the record of memories being evicted
@@ -2397,6 +2470,48 @@ function validate() {
       "server",
       "The gateway and gRPC listeners cannot share a port.",
     );
+  }
+
+  // Mirrors validateMetricsEndpoint, which refuses the collision rather than leaving it to the
+  // listener: only one of the two binds fails, and which one depends on the order they start in.
+  if (on("observability.prometheus.enabled")) {
+    const metricsPort = num("observability.prometheus.port");
+
+    for (const [key, port] of [
+      ["port", Number(val("port"))],
+      ["gateway.port", gatewayPort],
+    ]) {
+      if (metricsPort > 0 && metricsPort === port) {
+        add(
+          "error",
+          "server",
+          `observability.prometheus.port is ${metricsPort}, which ${key} is already using. The scrape endpoint needs a listener of its own — it is deliberately not on the gateway, which would hand every API caller the store's size and RPC rates. The service refuses to start.`,
+        );
+      }
+    }
+  }
+
+  // A loopback bind is right on a VM behind a sidecar and wrong inside a container, where it means
+  // the container's own loopback and nothing outside can reach it. Worth an error rather than a
+  // warning on those two targets: the artefacts generated here publish a port and probe over HTTP,
+  // and both would simply fail to connect.
+  if (state.target === "compose" || state.target === "k8s") {
+    const loopback = (address) =>
+      /^(127\.\d|::1|localhost)$|^127\./.test(String(address).trim());
+
+    for (const key of [
+      "bindAddress",
+      "gateway.bindAddress",
+      "observability.prometheus.bindAddress",
+    ]) {
+      if (active(key) && loopback(val(key))) {
+        add(
+          "error",
+          "server",
+          `${key} is a loopback address, which inside a container is the container's own loopback: a published port connects to nothing, and a Kubernetes probe reaches the pod on its pod IP rather than 127.0.0.1. Leave it empty to bind every interface — the network boundary here is the compose network or the pod, not this setting.`,
+        );
+      }
+    }
   }
 
   if (
@@ -2577,18 +2692,108 @@ function validate() {
     );
   }
 
+  // The service refuses to start on this pairing, and the mistake is easy to make from either end:
+  // semantic search is offered on every driver, and the thing it needs is one card above it.
+  if (on("llm.embedding.enabled") && !on("opensearch.enabled")) {
+    add(
+      "error",
+      "extras",
+      "Semantic search needs opensearch.enabled: the vectors live in the OpenSearch k-NN index and no other backend has one, on any driver. The service refuses to start with this pairing.",
+    );
+  }
+
+  // What a cluster is actually buying. The store's own index is not a fallback for a missing
+  // OpenSearch - it is a real content index on every driver, maintained inside the write's own
+  // transaction, so it is never stale and needs neither the delete outbox nor the reconciliation
+  // sweep that keep OpenSearch in step. That leaves OpenSearch two jobs: vectors, and scale beyond
+  // this store. Neither is in play here.
+  if (on("opensearch.enabled") && !on("llm.embedding.enabled")) {
+    const builtIn = {
+      sqlite: "an FTS5 index inside the same database file",
+      postgres: "a tsvector under a GIN index",
+      mysql: "a FULLTEXT index",
+    };
+
+    add(
+      "warn",
+      "extras",
+      `OpenSearch is being run to answer keyword searches the ${driver} store already answers on its own — ${builtIn[driver]}, written in the same transaction as the memory, so it is never stale and nothing has to reconcile it. Propagation to OpenSearch is asynchronous and best-effort by design, which is why it needs a delete outbox and a periodic sweep to stay in step. A cluster earns that when search has to scale past this store, and it is the only way to get semantic search (the card above) — short of either, turning it off removes a moving part and leaves search working.`,
+    );
+  }
+
+  if (!on("opensearch.enabled") && !on("search.contentIndex.enabled")) {
+    add(
+      "warn",
+      "extras",
+      "Nothing indexes memory content: the store keeps no index of its own and OpenSearch is off, so SearchMemories is rejected with FailedPrecondition on every call. That is a coherent choice for a store nobody searches by content — reading by id, event, group, metadata and time is unaffected — but it is worth having chosen rather than inherited.",
+    );
+  }
+
+  if (on("opensearch.enabled") && on("search.contentIndex.enabled")) {
+    add(
+      "info",
+      "extras",
+      `Both content indexes are being maintained and only OpenSearch is ever read: one backend is selected at startup. The store's own index is the largest non-body cost it carries${driver === "mysql" ? " — on mysql a FULLTEXT index is an index on a column, so it holds a second, uncompressed copy of every body beside the compressed one — " : ", "}so keep it only as the thing that still answers when the cluster is unreachable, which is what it is good for.`,
+    );
+  }
+
+  // Mirrors llmProblems on both blocks: the defaults describe Ollama's native API, so an openai
+  // provider left on them points at a port that answers 404 to every call - which reads as a model
+  // server that is up and refusing rather than as a setting nobody filled in.
+  for (const block of [
+    {
+      enabled: "llm.enabled",
+      provider: "llm.provider",
+      address: "llm.address",
+    },
+    {
+      enabled: "llm.embedding.enabled",
+      provider: "llm.embedding.provider",
+      address: "llm.embedding.address",
+    },
+  ]) {
+    if (!on(block.enabled) || val(block.provider) !== "openai") {
+      continue;
+    }
+
+    if (
+      String(val(block.address)).replace(/\/+$/, "") ===
+      "http://localhost:11434"
+    ) {
+      add(
+        "error",
+        "extras",
+        `${block.provider} is 'openai' but ${block.address} is still the Ollama default, which serves a different API at that path — the service refuses to start. Set it to your endpoint's base URL including its version path: https://api.openai.com/v1, or http://localhost:11434/v1 for Ollama's own OpenAI-compatible API.`,
+      );
+    }
+  }
+
   if (val("llm.enabled") && !val("llm.address")) {
     add("error", "extras", "The embedded summariser needs llm.address.");
   }
 
   if (
-    val("llm.autoSummarise") &&
+    on("llm.autoSummarise") &&
     Number(val("consolidation.summarisationMinMemories")) === 0
   ) {
     add(
       "warn",
       "extras",
       "Automatic summarisation has nothing to work on: consolidation.summarisationMinMemories is 0, so the candidate scan never runs.",
+    );
+  }
+
+  // The endpoint is optional and its absence is a fallback rather than a failure, so nothing says
+  // so at startup - it is discovered as an export error logged on every interval.
+  if (
+    (val("observability.tracing.enabled") ||
+      val("observability.metrics.enabled")) &&
+    !String(val("observability.otlp.endpoint")).trim()
+  ) {
+    add(
+      "info",
+      "observability",
+      "No OTLP endpoint is set, so the exporter falls back to the standard OTEL_EXPORTER_OTLP_* environment variables. With none of those set either it dials localhost:4317 and logs an export failure every interval. A Prometheus scrape endpoint needs none of this.",
     );
   }
 
@@ -2600,6 +2805,21 @@ function validate() {
     );
   }
 
+  // Transfer and Export are commonly confused because they sit on the same page: one streams to
+  // another instance and needs no object store, the other writes an archive object and refuses
+  // without one. FailedPrecondition on the first Export is a poor way to learn the difference.
+  if (
+    String(val("transfer.targetAddress")).trim() &&
+    !val("s3.bucket") &&
+    !val("archive.directory")
+  ) {
+    add(
+      "info",
+      "transfer",
+      "A transfer target with no object store is a complete configuration: Transfer streams straight into the target instance, and Clear needs nothing. Export and Import are the two that refuse without one, since they read and write archive objects — set archive.directory or s3.bucket if you also want offline archives.",
+    );
+  }
+
   if (val("s3.bucket") && !val("s3.region") && !val("s3.endpoint")) {
     add(
       "warn",
@@ -2608,12 +2828,52 @@ function validate() {
     );
   }
 
+  // "Supported mode" and "nothing forgets" are the same configuration minus the WAL trigger, and
+  // the difference is worth stating rather than leaving in one parenthesis: with neither, the store
+  // starts, serves, and grows until something outside it remembers to call Sleep.
   if (Number(val("sleep.periodSeconds")) <= 0 && val("consolidation.enabled")) {
-    add(
-      "info",
-      "memory",
-      "The timed sleep cycle is disabled. Consolidation then runs only when the Sleep RPC is called (or the WAL trigger fires), which is a supported mode — just make sure something calls it.",
-    );
+    if (num("consolidation.walTriggerBytes") > 0) {
+      add(
+        "info",
+        "memory",
+        "The timed sleep cycle is disabled, so a cycle runs when the WAL trigger fires or the Sleep RPC is called. That is a supported mode — note only that the WAL trigger measures writes, so a store that goes quiet also stops forgetting.",
+      );
+    } else {
+      add(
+        "warn",
+        "memory",
+        "Nothing here triggers a consolidation cycle: the timed cycle is off (sleep.periodSeconds is not positive) and no WAL trigger is set, so this store forgets only when something calls the Sleep RPC. It starts and serves normally — until that call arrives it simply grows.",
+      );
+    }
+  }
+
+  // Every one of these is read inside the sleep cycle, which only the consolidating instance runs.
+  // Each is harmless on a replica and each is silently inert there, which is the combination worth
+  // naming: nothing fails, and the behaviour the operator configured never happens.
+  if (!val("consolidation.enabled")) {
+    const inert = [];
+
+    if (on("consolidation.tombstones.enabled")) {
+      inert.push(
+        "the forgotten log (only the instance that forgets a memory records it)",
+      );
+    }
+
+    if (num("consolidation.summarisationMinMemories") > 0) {
+      inert.push("the summarisation candidate scan (it runs inside the cycle)");
+    }
+
+    if (on("llm.autoSummarise")) {
+      inert.push("automatic summarisation (likewise)");
+    }
+
+    if (inert.length > 0) {
+      add(
+        "info",
+        "memory",
+        `This instance does not consolidate, so ${joinList(inert)} will not run here. The settings are worth carrying — one config usually serves the whole deployment — but the behaviour comes from whichever instance holds the consolidator lock, so make sure it has them too.`,
+      );
+    }
   }
 
   if (driver !== "sqlite" && val("consolidation.enabled")) {
@@ -2621,6 +2881,28 @@ function validate() {
       "info",
       "storage",
       "This instance holds the single-consolidator lock. Every other instance against the same database must set consolidation.enabled false, or it will fail to start.",
+    );
+  }
+
+  // Compression is the one setting here that can only make the capacity target hold more, so it is
+  // worth naming when it has been turned off - it costs retention and buys nothing back.
+  if (!val("storage.compression.enabled")) {
+    add(
+      "info",
+      "storage",
+      "Memory bodies are stored verbatim. Compression is what turns a fixed capacity target into more retained memories, and it is measured at about 2% overhead on a store-and-read round trip, so leaving it off costs retention rather than buying anything back. Each row records how it was written, so it is safe to enable later and rows already stored stay readable.",
+    );
+  }
+
+  // The one value here that can abort a consolidation scan part way through. main.go's own comment
+  // says it must exceed the longest legitimate operation, and that operation is the full scan.
+  const queryTimeout = Number(val("storage.queryTimeoutSeconds"));
+
+  if (queryTimeout > 0 && queryTimeout < 30 && val("consolidation.enabled")) {
+    add(
+      "warn",
+      "storage",
+      `storage.queryTimeoutSeconds is ${queryTimeout}. It bounds every database operation, including the full consolidation scan, so on a store of any size a cycle can be cut off part way through and never get back under the capacity target. It has to exceed the longest legitimate operation, not the longest RPC — the default is 60.`,
     );
   }
 
@@ -4106,8 +4388,25 @@ function renderCards(step) {
   return cards;
 }
 
+// Issues are declared in whatever order the checks happen to run, which is close enough to the form
+// order to be useful and not close enough to be relied on. Sorting by severity is what keeps a
+// startup refusal from sitting below three notes about things that are merely worth knowing; the
+// sort is stable, so within a level the declaration order survives.
+const LEVEL_ORDER = { error: 0, warn: 1, info: 2 };
+
+const orderIssues = (issues) =>
+  issues
+    .map((issue, index) => [issue, index])
+    .sort(
+      (a, b) =>
+        LEVEL_ORDER[a[0].level] - LEVEL_ORDER[b[0].level] || a[1] - b[1],
+    )
+    .map(([issue]) => issue);
+
 function renderIssues(stepId) {
-  const issues = validate().filter((issue) => issue.step === stepId);
+  const issues = orderIssues(
+    validate().filter((issue) => issue.step === stepId),
+  );
 
   if (issues.length === 0) {
     return null;
@@ -4310,7 +4609,7 @@ function refreshPreview() {
 
 function renderReview() {
   const files = artefacts();
-  const issues = validate();
+  const issues = orderIssues(validate());
   const errors = issues.filter((issue) => issue.level === "error");
   const active = files.find((file) => file.id === state.reviewTab) || files[0];
 

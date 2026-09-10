@@ -414,7 +414,19 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   unit / launchd plist / `DEPLOY.md` runbook per deployment target, all in the browser (nothing is
   transmitted, and secrets are kept out of `localStorage`). Validation mirrors `validateConfig` and
   the driver switch in `cmd/hippocampus/main.go`; the decay preview mirrors `calculateValue` in
-  `hippocampus/sleep.go`. Each field records `def` (what the wizard suggests) and, where the service
+  `hippocampus/sleep.go`. Beyond mirroring the startup refusals, `validate()` carries a third class
+  of check the service itself has no place for: **combinations in which every value is individually
+  valid and the whole does not do what it looks like it does** — a cluster answering searches the
+  store already answers, sleep-cycle settings on a replica, a store with nothing to trigger a cycle,
+  a loopback bind inside a container. Three things carry them. (1) They are **advice, not
+  refusals**: each names the case where the pairing is deliberate, because most of them are
+  somebody's real deployment. (2) They read conditional keys through `active`/`on`/`num` rather than
+  `val`, since a field whose `when` is false never reaches the generated config and a check reading
+  one would judge a value nobody set — the stale answer left behind when the key that revealed it
+  was turned off again. (3) A mistyped key here fails **silently and in the wrong direction** (an
+  unknown key reads as `undefined`, every comparison answers no, and the check simply never fires),
+  so `validate_test.go` holds every dotted key literal in `validate()` against the declared field
+  set and every issue's step id against the declared steps. Each field records `def` (what the wizard suggests) and, where the service
   has one of its own, `svc` (the `viper.SetDefault` value) — that distinction is what makes the
   "minimal" config safe, since a key the service does not default reads as zero and several of those
   are fatal; `defaults_test.go` cross-checks the two files so they cannot drift. Ships as its own

@@ -75,9 +75,39 @@ The wizard applies the service's own startup validation as you type — the rule
 and the storage-driver switch — so a configuration that passes here starts. That covers the
 outright refusals (`consolidation.unitsOfAgeInDays` at 0, method 3's aggressiveness floor of 1/e, a
 `walTriggerBytes` on a server driver, an empty `storage.directory` under SQLite, an `idp` method
-without an issuer or JWKS) as well as the things the service only warns about at startup or does not
-mention at all: a short HMAC secret, auth without TLS, a capacity target with no eviction floor, both
-capacity axes disabled, a disabled gateway under a target whose probes need it.
+without an issuer or JWKS, semantic search without OpenSearch, an `openai` provider still pointed at
+the Ollama default, a scrape port already in use) as well as the things the service only warns about
+at startup or does not mention at all: a short HMAC secret, auth without TLS, a capacity target with
+no eviction floor, both capacity axes disabled, a disabled gateway under a target whose probes need
+it.
+
+Beyond those it flags **combinations that start cleanly and then do not do what they look like they
+do** — the class a startup check cannot catch, because every value in them is individually valid:
+
+- **A cluster answering searches the store already answers.** OpenSearch with no embedding model
+  configured is running a second index for keyword search that every driver already does on its own,
+  inside the write's own transaction. Propagation to OpenSearch is asynchronous and best-effort by
+  design, which is why it needs a delete outbox and a reconciliation sweep to stay in step. It earns
+  that when search has to scale past the store, and it is the only way to get semantic search — the
+  check names both, so the answer can be "yes, deliberately".
+- **Nothing that triggers a cycle.** No timed sleep and no WAL trigger leaves a store that forgets
+  only when something calls the `Sleep` RPC. It starts, serves, and grows.
+- **Settings on the wrong instance.** The forgotten log, the summarisation scan and automatic
+  summarisation all run inside the sleep cycle, so they are silently inert on a replica.
+- **Floors that never come into play.** A `minimumAgeInDays` shorter than `minimumRetentionInDays`
+  decides nothing, since retention covers the same window and stops eviction as well; a
+  `defaultEventSignificanceValue` beside a non-zero percentile is never read.
+- **Retention against capacity.** `minimumRetentionInDays` overrides the capacity target, so enough
+  retained memories means eviction cannot bring the store back under it at all.
+- **A loopback bind inside a container.** Right on a VM behind a sidecar, and unreachable under the
+  Compose and Kubernetes targets, where a published port connects to nothing and the kubelet probes
+  the pod IP.
+- **A query timeout below a consolidation scan**, which cuts a cycle off part way through.
+- **A transfer target with no object store**, which is a complete configuration for `Transfer` and
+  refuses every `Export`.
+
+Each issue is filed under the step that fixes it, and the list is sorted by severity — errors first,
+then warnings, then notes — on both the step pages and the review screen.
 
 ## Secrets
 
@@ -109,7 +139,7 @@ key that would actually change behaviour, and nothing else.
 
 The distinction matters more than it looks. The service applies a built-in default to only a handful
 of keys; every other absent key reads as its zero value, and several of those are fatal — a
-*present* `consolidation.method`, `aggressiveness`, or `unitsOfAgeInDays` of 0 still refuses to
+_present_ `consolidation.method`, `aggressiveness`, or `unitsOfAgeInDays` of 0 still refuses to
 start, which is why the minimal form omits them only when they match the service's own default
 rather than writing a zero. A test in `cmd/config-wizard` keeps the wizard's list
 of service defaults in step with `viper.SetDefault` in `cmd/hippocampus/main.go`, so the two cannot
