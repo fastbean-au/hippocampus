@@ -325,7 +325,7 @@ if [ "$skip_checks" = false ]; then
 	go test ./...
 
 	# Each integration module is released from this same tag, so a broken one must not ship.
-	for module in integrations/mcp integrations/cli integrations/eventsource integrations/ingestor integrations/otel/hippocampusexporter; do
+	for module in integrations/mcp integrations/cli integrations/eventsource integrations/ingestor integrations/objectstore integrations/otel/hippocampusexporter; do
 		note "pre-flight: $module"
 		(cd "$module" && go build ./... && go vet ./... && go test ./...)
 	done

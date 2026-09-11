@@ -54,11 +54,11 @@ pre-flight plus the one command that starts all of that.
 
 ## Local pre-flight
 
-**[`scripts/release.sh`](scripts/release.sh) runs steps 1–3 and 7–8 for you** — the mechanical ones.
-What is left below is the three judgement calls it cannot make (the benchmarks, the coverage review,
-and the compatibility question) and the writing of the changelog entries themselves, which must be
-done _before_ the script is run: it rolls what is in `[Unreleased]` and refuses when that section is
-empty.
+**[`scripts/release.sh`](scripts/release.sh) runs steps 1–3 and 8–9 for you** — the mechanical ones.
+What is left below is the four judgement calls it cannot make (the benchmarks, the coverage review,
+the compatibility question and the site question) and the writing of the changelog entries
+themselves, which must be done _before_ the script is run: it rolls what is in `[Unreleased]` and
+refuses when that section is empty.
 
 Most of the mechanical checks are also enforced by `hooks/pre-commit`.
 
@@ -91,37 +91,58 @@ Most of the mechanical checks are also enforced by `hooks/pre-commit`.
 
    Refusing configuration a previous version accepted is a **breaking change** even though no key
    was removed or renamed, and it presents as a service that no longer starts. Anything this turns
-   up is a **Breaking** entry in step 7, naming the values that are no longer accepted and what to
+   up is a **Breaking** entry in step 8, naming the values that are no longer accepted and what to
    set instead — not merely the rule that changed — plus the version increment
    [Compatibility](#compatibility) requires. The contract has `proto-breaking` to compare it against
    the previous tag and the stored schema has the version ledger and the upgrade fixtures;
    configuration has this question, and nothing else.
 
-7. Update [`CHANGELOG.md`](CHANGELOG.md): rename the `[Unreleased]` heading to the version and its
+7. **Site question: does anything in this release need a paragraph on the public site?** Read the
+   `[Unreleased]` entries you are about to roll and ask it of each one — a capability that is now
+   there, a package that now exists, an instruction the release has just invalidated. The site is
+   its own repository ([`hippocampus-demo-site`](https://github.com/fastbean-au/hippocampus-demo-site)),
+   on its own release train, and nothing relates its copy to a tag, so this question is the whole
+   mechanism.
+
+   It is asked here, next to the changelog, because this is the one moment the missing paragraphs
+   are already being written. And it is asked at all because the two failures differ in cost: an
+   unlisted feature is a missed opportunity, while an instruction the release has **invalidated** is
+   a reader sent down a road that no longer works. 0.43.0 shipped exactly that — the landing page
+   told a Python reader to generate a client from the proto on the day `hippocampus-client` was
+   published *because* that path yields a module which installs cleanly and raises on first import.
+   Silent about the new thing and wrong about the old one, for a month.
+
+   A "yes" is a commit in that repository and a deploy, which belongs with the rest of
+   [After the release](#after-the-release) rather than here. Note that the guard in that repo
+   (`showcase/check-consistency.sh`) holds its own copies of the stack to each other and says
+   nothing about this one; there is no mechanical check in this direction, which is why there is a
+   question.
+8. Update [`CHANGELOG.md`](CHANGELOG.md): rename the `[Unreleased]` heading to the version and its
    date, open a fresh empty `[Unreleased]` (bare, with no version marker), and add the two link
    references at the foot of the file. Anything under **Breaking** must also be reflected in the
    release notes people actually read — see [Compatibility](#compatibility) below. If the release
    you are heading towards is a **major** increment, say so in the heading while the work is in
    flight — `## [Unreleased] (v2.0.0)` — which is what stands the contract gate down; renaming the
    heading here is what clears it again.
-8. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
+9. Land all changes on `main` (PR merged, or pushed) — the tag should point at the commit you intend
    to release.
-9. **If this release changed the stored schema**, add its tag to `DEFAULT_TAGS` in
-   [`scripts/schema-fixtures.sh`](scripts/schema-fixtures.sh) and regenerate — after the tag exists,
-   so it is the last step rather than part of the pre-flight:
+10. **If this release changed the stored schema**, add its tag to `DEFAULT_TAGS` in
+    [`scripts/schema-fixtures.sh`](scripts/schema-fixtures.sh) and regenerate — after the tag exists,
+    so it is the last step rather than part of the pre-flight:
 
-   ```sh
-   scripts/schema-fixtures.sh --driver all vX.Y.Z
-   ```
+    ```sh
+    scripts/schema-fixtures.sh --driver all vX.Y.Z
+    ```
 
-   The fixtures are what `db/schema_upgrade_test.go` replays, and they are the only test of
-   upgrading a store that a previous release actually wrote. The guard already refuses a migration
-   with no fixture predating it, so this cannot be forgotten for an _old_ band; what it cannot catch
-   is the **newest** band having none — and that is the band a real upgrade comes from. Commit the
-   generated files.
+    The fixtures are what `db/schema_upgrade_test.go` replays, and they are the only test of
+    upgrading a store that a previous release actually wrote. The guard already refuses a migration
+    with no fixture predating it, so this cannot be forgotten for an _old_ band; what it cannot catch
+    is the **newest** band having none — and that is the band a real upgrade comes from. Commit the
+    generated files.
 
 The script goes further than steps 1–3 on one point: it also builds, vets and tests each integration
-module (`integrations/mcp`, `cli`, `eventsource`, `ingestor`, `otel/hippocampusexporter`) and runs
+module (`integrations/mcp`, `cli`, `eventsource`, `ingestor`, `objectstore`,
+`otel/hippocampusexporter`) and runs
 the embedded console's JavaScript tests, because all of them are released from this same tag and a
 broken one must not ship. Pass `--skip-checks` to re-run after a failure you have already
 investigated.
@@ -180,7 +201,7 @@ release process's business:
 scripts/release.sh --minor          # or --patch, --major, or --version 1.2.3
 ```
 
-That runs the pre-flight above, rolls the changelog (step 7), commits it, and creates the tag.
+That runs the pre-flight above, rolls the changelog (step 8), commits it, and creates the tag.
 Choose the increment with normal semver rules: patch for fixes, minor for backward-compatible
 features, major for breaking changes — remembering that pre-1.0, a breaking change goes in a minor.
 
@@ -281,6 +302,12 @@ while the work is in flight — that is what stands the contract gate down (see
   `HOMEBREW_TAP_TOKEN` is not configured.
 - Confirm the coverage update on Coveralls — it lands from the CI run for the merge to `main`, not
   from the tag push.
+- **If step 7 was answered "yes", deploy the site.** Commit the paragraphs in
+  `hippocampus-demo-site`, then `sudo ./showcase/deploy-site.sh` on the host. Writing them and
+  shipping them are separate acts and the second is the one that is forgotten: the copy catching the
+  site up to 0.43.0 sat committed and unserved for two days, during which the front door still gave
+  the instruction the release had invalidated. A commit in that repository changes nothing a visitor
+  sees.
 
 ## How the version reaches the binary
 
