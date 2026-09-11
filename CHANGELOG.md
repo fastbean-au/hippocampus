@@ -52,6 +52,8 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-09-12
+
 ### Added
 
 - **The object-storage agents: decay as a retention controller over a bucket.** The retention-
@@ -3217,7 +3219,8 @@ This release added the delivery and production-readiness layer around it:
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/fastbean-au/hippocampus/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/fastbean-au/hippocampus/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/fastbean-au/hippocampus/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/fastbean-au/hippocampus/compare/v0.43.0...v0.44.0
