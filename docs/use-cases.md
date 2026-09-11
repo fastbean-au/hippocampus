@@ -1,7 +1,5 @@
 # Use cases & deployment modes
 
-![Hippocampus](go-hippocampus.png)
-
 ## When Hippocampus fits
 
 Hippocampus is for **long-term retention under a finite budget**, where you want to keep the most
@@ -32,6 +30,10 @@ important for a long time, and which is which is not known up front. Some shapes
   assistant reads a distilled set of durable facts instead of years of raw daily notes: notes that
   get recalled are reinforced and survive, trivial ones decay. See the
   [Obsidian integration](obsidian.md).
+- **Deciding what _another_ system keeps** — the payload stays in the bucket, column store or index
+  that already holds it, and one pointer-memory per record carries its significance, its links and
+  its size. This store runs the decay and says what should go; the far system does the deleting. See
+  [Retention controller](#retention-controller-the-payload-stays-where-it-is) below.
 
 It is **not** a general-purpose database, a cache, or a system of record for data you must never
 lose: forgetting is the point, and the service has no visibility into memory _content_ (bodies are
@@ -56,9 +58,12 @@ each is a consequence of what the store is for, and each has a place to read fur
   content.
 - **Content search is a secondary index.** Primary reads are strictly consistent. The optional
   OpenSearch index is asynchronous and best-effort, though hits are always re-read from the primary
-  store so stale entries drop out; the store's own index, which every driver has, is maintained
-  inside the write itself and is not subject to that. See
-  [Content search](configuration.md#content-search).
+  store so stale entries drop out; the store's own index, available on every driver, is maintained
+  inside the write itself and is not subject to that. Only one backend is ever selected, so the
+  store's own index is on by default and derived off when OpenSearch is configured — and it can be
+  turned off outright, since it is the largest non-body cost the store carries. See
+  [Content search](configuration.md#content-search) and
+  [Turning the store index off](configuration.md#turning-the-store-index-off).
 - **A shared store is a shared trust domain.** Group scoping is a _soft_ partition: records are
   scoped, but the decay dynamics stay store-global, so a busy group influences what a quiet one
   forgets. Hard isolation is one instance per tenant — read
@@ -149,6 +154,87 @@ Instead, run **one instance per tenant** (or per subsystem, per environment). Co
 one container + one SQLite volume (or one Postgres database) per tenant trivial, and it gives perfect
 isolation of the memory dynamics, per-tenant capacity/decay tuning, and clean per-tenant deletion
 (drop the volume). This is also horizontal scaling by sharding, without leader election.
+
+### Retention controller: the payload stays where it is
+
+The inversion of every mode above. Instead of writing the data here, leave it in the bucket, column
+store or index that already holds it and write **one pointer-memory per record** — a summary or key
+in the body, the record's own significance, its links to related records, and
+[`external_bytes`](configuration.md#external-bytes): the size of the payload out there. Decay runs
+here; deletion happens there, driven by a callback. Hippocampus stops being a store for that data and
+becomes a _retention controller_ over it.
+
+The reason to reach for it is narrower than it first looks, and worth stating exactly, because most
+of the obvious pitch is already free. ClickHouse's TTL takes an arbitrary expression and S3 lifecycle
+rules do the same for objects, so `if(has_error, 30, 3) DAY` covers per-record significance tiers
+with no daemon at all. What neither can do is **close the loop**: a TTL names an _age_ and hopes the
+resulting volume fits, and a traffic spike does not shorten it by one second.
+[The capacity target](consolidation.md#capacity-target) names a _budget_ and moves the threshold to
+hold it. That is a different control model rather than a better-tuned version of the same one, and
+where disk is the binding constraint and traffic is spiky it is the correct one. Recall
+reinforcement and link propagation are on top of it.
+
+```mermaid
+flowchart LR
+  Producer["Producer"]
+  Far[("Far system — the payload<br/>bucket · column store · index")]
+
+  subgraph ctl["Hippocampus — the controller"]
+    H["Pointer-memories<br/>summary · significance · links<br/>external_bytes"]
+    Q["Callback queue<br/>backlogPolicy: retain / stall"]
+    H --> Q
+  end
+
+  Producer -->|"payload"| Far
+  Producer -->|"pointer-memory"| H
+  Q -->|"memory_forgotten → delete"| Far
+  Far -. "reads → RecallMemories (the tap)" .-> H
+
+  class Far far
+  classDef far stroke-dasharray:4 3,opacity:0.85
+```
+
+**What it needs configured.** The external axis
+(`consolidation.capacityExternalBytes` and its floor) so pressure measures the bytes that actually
+matter — a pointer-memory is a couple of hundred bytes against a payload of tens of kilobytes, so
+`capacityBytes` alone would regulate a quantity with no relationship to the resource it exists to
+protect. Then [outbound callbacks](configuration.md#outbound-callbacks) pointed at the far system,
+with **`callbacks.backlogPolicy` set to `retain` or `stall`**: here a `memory_forgotten` delivery is
+an _instruction_, and the default `abandon` discards deletions at the queue's caps, orphaning the
+payload behind each one permanently. Keep the [forgotten
+log](operations.md#what-was-forgotten--the-forgotten-log) on as well — it is the pull path behind the
+push one, so a rebuilt receiver pages `GetForgottenMemories` back to its own cursor and catches up.
+
+**What it gives up, honestly.** Reads happen in the far system, so this store never sees them and
+recall reinforcement — the one differentiator no expiry policy has — goes dark unless something
+feeds it. Wiring that tap is per-integration and is the only genuinely new work: a fetch proxy or
+signed-URL issuer is the natural chokepoint for object storage, an application's own API is the hard
+case. It is cheaper than it sounds, because `RecallMemories` is an `UPDATE ... WHERE id IN (...)`
+that matches nothing on a miss — fire speculative recalls for every id that appears in a result set,
+batch them on a window, and let the misses fall through. No lookup table and no state. Coarse signals
+count: appearing in any query window, or being referenced by an alert, is enough to move a decay
+clock. The [Bluesky bridge](eventsource.md) is the same design already built, with _post_ for
+_external record_ and _like_ for _somebody opened it_.
+
+**The actuator decides whether it is worth it.** Object storage is the good case: per-object deletes
+are cheap, independent and idempotent, which is exactly what makes at-least-once delivery correct.
+A column store is the bad one — per-record deletion is a mutation that rewrites whole parts, and
+thousands of scattered ids per cycle costs far more than dropping a partition would. If only one
+integration is ever built, build it against a bucket.
+
+There is an escape hatch for the column-store case that needs no callback and no queue:
+`ExplainConsolidation` reports `days_until_forgotten`, a per-memory projected expiry. Write that into
+a TTL column at ingest and let the far end's own merge-time expiry do the deleting for free. What it
+gives up is the closed loop — the expiry is fixed at write time, so no pressure adaptation and no
+recall extension unless it is periodically rewritten.
+
+**Before it is authoritative over data you cannot see.** Run it in shadow first: callbacks recorded
+and not acted on, diffed against what the far end's flat expiry would have dropped —
+[`PreviewConsolidation`](operations.md#previewing-what-would-be-forgotten) and the forgotten log make
+that nearly free. Treat `consolidation.minimumRetentionInDays` as a compliance floor rather than a
+tuning knob, and **leave the far end's own expiry configured as the outer bound**, so a controller
+that stops running degrades to today's behaviour rather than to unbounded growth. That is the
+difference between a component that fails and one that fails dangerously.
 
 ## The embedded → centralised topology
 

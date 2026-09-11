@@ -12,12 +12,27 @@
 
 <br clear="left" />
 
-## 🔭 See it running — [hippocampus-demo.com](https://hippocampus-demo.com)
+## See it running
 
-## 📈 What forgetting costs you
+There's a live instance at **[hippocampus-demo.com](https://hippocampus-demo.com)** with nothing to
+install. To watch forgetting happen locally, `./demo/run.sh` from a clone runs the service and a
+load generator with the decay clock compressed, so a cycle plays out in minutes rather than days.
 
-A store that forgets is only worth having if what it keeps is what you turn out to need. That is
-measurable, so it has been measured — by replaying an agent workload fitted to a real corpus into a
+## Install
+
+```sh
+brew install fastbean-au/tap/hippocampus && brew services start hippocampus
+```
+
+Or a `.deb`/`.rpm`, the container image, a release binary, or `go build` — they're all one command
+each, and they're all on the **[install page](docs/install.md)**. From there,
+[Getting started](docs/getting-started.md) covers the first requests and the configuration to grow
+from.
+
+## What forgetting costs you
+
+A store that forgets is only worth having if what it keeps is what you turn out to need. That's
+measurable, so it's been measured — by replaying an agent workload fitted to a real corpus into a
 live instance and scoring the survivors against the standard cache-replacement baselines at the same
 store size:
 
@@ -26,44 +41,21 @@ store size:
 > manages 18.4%. Hippocampus scores 27.6% at the same store size, and **+11.1 points over LRU** at a
 > larger one.
 
-Importance is not in the access log, so a policy reading only the access log cannot see it. Method,
-baselines, the checks that stop it being circular, and the limitations: **[Retention
-quality](docs/retention.md)**.
+Importance isn't in the access log, so a policy reading only the access log can't see it. Method,
+baselines, the checks that stop it being circular, and the limitations are all in
+**[Retention quality](docs/retention.md)**.
 
----
+## Documentation
 
-## 📚 Documentation
+**[The documentation index](docs/README.md)** is the map — it's arranged by what you're trying to
+do, and it covers the deployment artefacts and the integration subprojects as well as the guides.
+Four worth naming here:
 
-The guides below cover the service itself; the components that ship _around_ it are in the second
-table. If you are deciding rather than deploying, read **[Use cases & deployment
-modes](docs/use-cases.md)** first — its _Worth knowing before you start_ section is the set of
-properties that shape what you can build on this.
-
-### Core
-
-| Guide                                                | Description                                                                                          |
-| :--------------------------------------------------- | :--------------------------------------------------------------------------------------------------- |
-| 🎬 **[Getting Started](docs/getting-started.md)**    | Step-by-step build, initial config, and first gRPC/HTTP requests.                                    |
-| 📐 **[Use Cases & Patterns](docs/use-cases.md)**     | Embedded vs. centralised topologies and data transfer strategies.                                    |
-| 🧠 **[Memory Consolidation](docs/consolidation.md)** | Deep dive on decay algorithms, capacity targets, and summarisation.                                  |
-| 🧙 **[Configuration wizard](docs/config-wizard.md)** | Build a config and its deployment artefacts in the browser, with a live forgetting preview.          |
-| ⚙️ **[Configurability](docs/configuration.md)**      | Exhaustive key reference for TLS, auth, storage drivers, and listeners.                              |
-| 🛠️ **[Operations & Deployment](docs/operations.md)** | Containers, Kubernetes, packages, sizing, backups, shutdown, and observability.                      |
-| 🔒 **[Security](docs/security.md)**                  | What is off by default, auth and role tiers, hardening checklist, and where content can leave.       |
-| 📈 **[Retention quality](docs/retention.md)**        | What a bounded store keeps, measured against the standard cache-replacement baselines.               |
-| 📊 **[Performance Benchmarks](docs/performance.md)** | Throughput sweeps across SQLite, Postgres, and MySQL under heavy loads.                              |
-| 🧪 **[Demonstrations](docs/demonstrations.md)**      | The hosted demo, plus worked scenarios using real-world data shapes and generators.                  |
-| 🖥️ **[Web console](docs/console.md)**                | The console every instance serves at `/ui` — what each tab answers, and where its numbers come from. |
-
-### Tertiary
-
-| Guide                                           | Description                                                                                       |
-| :---------------------------------------------- | :------------------------------------------------------------------------------------------------ |
-| 🤖 **[MCP Server](docs/mcp.md)**                | Give an LLM host (e.g. Claude, ChatGPT, Gemini, etc) memory tools via the Model Context Protocol. |
-| 🔌 **[Event Sourcing](docs/eventsource.md)**    | Bridge NATS, MQTT, RabbitMQ, Kafka, or the Bluesky firehose in, storing each message as a memory. |
-| 🚦 **[Ingestor](docs/ingestor.md)**             | Stage data at the edge and promote completed events into a central store under CEL rules.         |
-| 💻 **[CLI](docs/cli.md)**                       | Drive a running service from the shell over either transport.                                     |
-| 🐍 **[Python Client](docs/python.md)**          | `pip install hippocampus-client` — the published client, covering the full RPC surface.           |
-| 🦙 **[LlamaIndex](docs/llamaindex.md)**         | `pip install llama-index-memory-hippocampus` — an agent's long-term memory, reinforced by use.    |
-| 🧬 **[Clients & Codegen](docs/clients.md)**     | Generate a TypeScript, Java, Rust, or any-language client from the proto or OpenAPI document.     |
-| 📓 **[Obsidian Integration](docs/obsidian.md)** | Use Hippocampus as a memory layer for an Obsidian vault via the plugin or the MCP bridge.         |
+- **[Use cases & deployment modes](docs/use-cases.md)** — start here if you're deciding rather than
+  deploying. The _Worth knowing before you start_ section is the set of properties that shape what
+  you can build on this.
+- **[Memory consolidation](docs/consolidation.md)** — how it decides what to forget: the value
+  model, the six decay algorithms, and the capacity axes.
+- **[Configurability](docs/configuration.md)** — the exhaustive key reference.
+- **[Security](docs/security.md)** — everything is off by default, so anything reachable beyond
+  localhost needs a deliberate pass over this page.

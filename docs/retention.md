@@ -1,7 +1,5 @@
 # Retention quality — what a bounded store keeps
 
-![Hippocampus](go-hippocampus.png)
-
 [Performance](performance.md) answers "how fast, and does it stay bounded". This one answers the
 question that decides whether a forgetting store is worth having at all: **of everything it threw
 away, how much did you actually need later?**

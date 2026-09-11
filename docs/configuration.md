@@ -624,10 +624,18 @@ It round-trips through `Export`/`Import`/`Transfer`, is reported per candidate b
 `PreviewConsolidation`, and is 0 on every memory written before the column existed — so an upgraded
 store behaves exactly as it did until something starts recording sizes.
 
-**Nothing is deleted out there.** The store decides what should go and forgets its own record of it;
-telling the far system to delete the payload is the `memory_forgotten`
-[callback](#outbound-callbacks), which is a best-effort notification rather than a guaranteed
-instruction. Until that gap is closed, leave the far end's own expiry configured as the outer bound.
+**Nothing is deleted out there by this store.** It decides what should go and forgets its own record
+of it; telling the far system to delete the payload is the `memory_forgotten`
+[callback](#outbound-callbacks). Whether that delivery is a notification the queue's caps may discard
+or an instruction they may not is `callbacks.backlogPolicy` — set it to `retain` or `stall` when the
+receiver is the system holding the payloads, or a receiver outage that outlasts the caps orphans
+every payload deleted during it. See [When a forget-callback is an instruction, not a
+notification](#when-a-forget-callback-is-an-instruction-not-a-notification).
+
+Even so, **leave the far end's own expiry configured as the outer bound**. Delivery is at-least-once
+against a receiver that may be rebuilt, and a controller that has stopped running publishes no
+instructions at all — an outer bound is the difference between a component that fails and one that
+fails dangerously.
 
 ### Listing totals
 
@@ -1132,7 +1140,7 @@ everything a lower one can:
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reader` | `GetEvents`, `GetEventById`, `GetMemories`, `SearchMemories`, `RecallMemories`, `GetMemoryLinks`, `GetEventLinks`, `GetSummarisationCandidates`, `ExplainConsolidation`, `GetConsolidationStatus`, `GetForgottenMemories`, `GetSignificanceLevels`, `WhoAmI`, `GetTopology`¹                                                                 |
 | `writer` | everything `reader` can, plus `StoreEvent`, `UpdateEvent`, `EndEvent`, `UpdateEventSignificance`, `MergeEvents`, `DeleteEvent`, `StoreMemory`, `StoreMemories`, `UpdateMemory`, `DeleteMemories`, `LinkMemories`, `UnlinkMemories`, `LinkEvents`, `UnlinkEvents`, `ReplaceMemoriesWithSummary`, `SummariseMemories`, `Import`, `ImportBatch` |
-| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteMemoriesByFilter`, `DeleteEventsByFilter`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                                                                                                                  |
+| `admin`  | everything `writer` can, plus `Purge`, `Sleep`, `PreviewConsolidation`, `DeleteMemoriesByFilter`, `DeleteEventsByFilter`, `DeleteForgottenMemories`, `GetCallbackQueue`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`                                                                                                                |
 
 The three forgetting-transparency reads — `ExplainConsolidation`, `GetConsolidationStatus` and
 `GetForgottenMemories` — are all `reader`, while the dry run beside them is `admin`. What separates
@@ -1562,13 +1570,13 @@ It is worth turning off because it is the **largest non-body cost the store carr
 driver. Measured over 20,000 memories of log-shaped JSON: on `sqlite` it is 43–59% of the payload,
 and at 4 KiB bodies the index is larger than the compressed bodies it indexes — the column gets
 gzip, the index gets the plain text. On `postgres` the `tsvector` table with its GIN index is 22 MiB
-against a 4.9 MiB payload. On `mysql`, where a `FULLTEXT` index is an index on a *column*, the table
+against a 4.9 MiB payload. On `mysql`, where a `FULLTEXT` index is an index on a _column_, the table
 holds a second uncompressed copy of every body: 40 MiB against 19.5 MiB.
 
 Two things to know before setting it:
 
 - **Disabling drops the index; it does not merely stop maintaining it.** An index that stops being
-  written does not become empty, it becomes *wrong* — it would go on answering from a subset that
+  written does not become empty, it becomes _wrong_ — it would go on answering from a subset that
   shrinks with every consolidation cycle, and a search silently returning some of the matches is
   worse than one that refuses. With it dropped, `SearchMemories` answers `FAILED_PRECONDITION` and
   `WhoAmI.search_modes` reports the absence, so a client feature-detects rather than search-and-fails.
@@ -2156,7 +2164,7 @@ unbounded request. Every chunk repeats the `cycle` summary, so a receiver that m
 what the cycle did. An item whose `id` and `event_id` are the same names an event rather than a
 memory.
 
-#### Being told *before* a memory goes
+#### Being told _before_ a memory goes
 
 `memory_forgotten` arrives too late to act on: by the time a receiver reads it, the memory it might
 have wanted to summarise, archive elsewhere or recall is gone. `memories_at_risk` is the kind that
@@ -2203,7 +2211,7 @@ itself pays.
 `callbacks.atRiskMargin` is what makes it **actionable rather than merely earlier**. At its default
 of 0 the warning covers exactly what the cycle now starting will take — which arrives while that
 cycle is taking it, and the queue drains asynchronously afterwards. A margin raises the bar the scan
-selects on, so the delivery also carries memories that are still *above* the threshold and
+selects on, so the delivery also carries memories that are still _above_ the threshold and
 approaching it: at `0.25` a receiver hears about everything within a quarter of the bar, which is a
 cycle or more of notice. The delivery reports **both** thresholds and each item its `value`, so the
 two populations are told apart by comparison rather than by guessing — an item under `threshold` is
@@ -2311,11 +2319,11 @@ well the decay cycle is working.
 `callbacks.backlogPolicy` decides who absorbs a receiver outage that outlasts the queue's caps. There
 is no answer that costs nothing:
 
-| Value       | What happens at the caps                                                        | Who pays                                              |
-| :---------- | :------------------------------------------------------------------------------ | :---------------------------------------------------- |
-| `abandon`   | The oldest undelivered deliveries are discarded, deletions included. The default. | The far system, in orphaned payloads                  |
-| `retain`    | The two deletion kinds are exempt from the caps and the queue keeps them.        | This disk, in a queue nothing trims                   |
-| `stall`     | As `retain`, and the two decay passes stop until the backlog is back under them. | The workload, in a store that has stopped forgetting  |
+| Value     | What happens at the caps                                                          | Who pays                                             |
+| :-------- | :-------------------------------------------------------------------------------- | :--------------------------------------------------- |
+| `abandon` | The oldest undelivered deliveries are discarded, deletions included. The default. | The far system, in orphaned payloads                 |
+| `retain`  | The two deletion kinds are exempt from the caps and the queue keeps them.         | This disk, in a queue nothing trims                  |
+| `stall`   | As `retain`, and the two decay passes stop until the backlog is back under them.  | The workload, in a store that has stopped forgetting |
 
 The other two kinds — `sleep_completed` and `memories_at_risk` — are capped under every policy. Both
 are worthless once stale, and holding them would be holding rows for their own sake.
@@ -2402,35 +2410,35 @@ so a retry of an identical body signs differently.
 
 #### Every key
 
-| Key                                 | Default   | What it does                                                                                 |
-| ----------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
-| `callbacks.enabled`                 | `false`   | The feature switch. Off, nothing is queued and nothing is sent.                              |
-| `callbacks.url`                     | —         | The endpoint each delivery is POSTed to. Required when enabled; startup fails without it.    |
-| `callbacks.token`                   | `""`      | Sent as `Authorization: Bearer`. Secret.                                                     |
-| `callbacks.signingSecret`           | `""`      | Keys the HMAC signature header. Secret; use at least 32 random bytes.                        |
-| `callbacks.timeoutSeconds`          | `10`      | Bounds one delivery attempt.                                                                 |
-| `callbacks.allDeletions`            | `false`   | Widen the feed from the two decay paths to every deletion.                                   |
-| `callbacks.includeBodies`           | `false`   | Carry each memory's body. Costs a body read per forgotten memory and space in the queue.     |
-| `callbacks.maxBodyBytes`            | `65536`   | Caps one carried body; over it the body is omitted and flagged. 0 removes the cap.           |
-| `callbacks.maxIdsPerDelivery`       | `500`     | Bounds one chunk of a cycle delivery, at-risk or completed.                                  |
-| `callbacks.events.memoryForgotten`  | `true`    | Record memory-deletion callbacks.                                                            |
-| `callbacks.events.eventForgotten`   | `true`    | Record event-deletion callbacks.                                                             |
-| `callbacks.events.sleepCompleted`   | `true`    | Record sleep-cycle completion callbacks.                                                     |
-| `callbacks.events.memoriesAtRisk`   | `false`   | Warn at the top of a cycle about what it is about to forget. Costs a preview scan per cycle. |
-| `callbacks.atRiskLimit`             | `1000`    | How many at-risk memories one cycle reports, lowest value first. Capped at 1000.             |
-| `callbacks.atRiskMargin`            | `0`       | Raises the threshold the at-risk scan selects on, so the warning arrives with notice on it.  |
+| Key                                 | Default   | What it does                                                                                    |
+| ----------------------------------- | --------- | ----------------------------------------------------------------------------------------------- |
+| `callbacks.enabled`                 | `false`   | The feature switch. Off, nothing is queued and nothing is sent.                                 |
+| `callbacks.url`                     | —         | The endpoint each delivery is POSTed to. Required when enabled; startup fails without it.       |
+| `callbacks.token`                   | `""`      | Sent as `Authorization: Bearer`. Secret.                                                        |
+| `callbacks.signingSecret`           | `""`      | Keys the HMAC signature header. Secret; use at least 32 random bytes.                           |
+| `callbacks.timeoutSeconds`          | `10`      | Bounds one delivery attempt.                                                                    |
+| `callbacks.allDeletions`            | `false`   | Widen the feed from the two decay paths to every deletion.                                      |
+| `callbacks.includeBodies`           | `false`   | Carry each memory's body. Costs a body read per forgotten memory and space in the queue.        |
+| `callbacks.maxBodyBytes`            | `65536`   | Caps one carried body; over it the body is omitted and flagged. 0 removes the cap.              |
+| `callbacks.maxIdsPerDelivery`       | `500`     | Bounds one chunk of a cycle delivery, at-risk or completed.                                     |
+| `callbacks.events.memoryForgotten`  | `true`    | Record memory-deletion callbacks.                                                               |
+| `callbacks.events.eventForgotten`   | `true`    | Record event-deletion callbacks.                                                                |
+| `callbacks.events.sleepCompleted`   | `true`    | Record sleep-cycle completion callbacks.                                                        |
+| `callbacks.events.memoriesAtRisk`   | `false`   | Warn at the top of a cycle about what it is about to forget. Costs a preview scan per cycle.    |
+| `callbacks.atRiskLimit`             | `1000`    | How many at-risk memories one cycle reports, lowest value first. Capped at 1000.                |
+| `callbacks.atRiskMargin`            | `0`       | Raises the threshold the at-risk scan selects on, so the warning arrives with notice on it.     |
 | `callbacks.backlogPolicy`           | `abandon` | What happens to an undelivered **deletion** callback at the caps: `abandon`, `retain`, `stall`. |
-| `callbacks.maxRows`                 | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound.   |
-| `callbacks.maxBytes`                | `0`       | Queue byte cap, measured against the stored payloads. 0 removes the bound. See below.        |
-| `callbacks.maxAgeHours`             | `24`      | Queue age cap, applied alongside the row cap. 0 removes the bound.                           |
-| `callbacks.batchSize`               | `100`     | How many deliveries one dispatch pass claims.                                                |
-| `callbacks.retryBaseBackoffSeconds` | `1`       | First retry delay; doubles per attempt, jittered.                                            |
-| `callbacks.retryMaxBackoffSeconds`  | `300`     | Ceiling on that backoff.                                                                     |
-| `callbacks.tls.enabled`             | `false`   | Customise TLS for an `https://` receiver.                                                    |
-| `callbacks.tls.caCertFile`          | `""`      | PEM CA bundle trusted in place of the system pool.                                           |
-| `callbacks.tls.certFile`            | `""`      | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither.              |
-| `callbacks.tls.keyFile`             | `""`      | The matching key.                                                                            |
-| `callbacks.tls.insecureSkipVerify`  | `false`   | Dev-only: disables certificate verification.                                                 |
+| `callbacks.maxRows`                 | `1000000` | Queue row cap. Passing it abandons the oldest undelivered deliveries. 0 removes the bound.      |
+| `callbacks.maxBytes`                | `0`       | Queue byte cap, measured against the stored payloads. 0 removes the bound. See below.           |
+| `callbacks.maxAgeHours`             | `24`      | Queue age cap, applied alongside the row cap. 0 removes the bound.                              |
+| `callbacks.batchSize`               | `100`     | How many deliveries one dispatch pass claims.                                                   |
+| `callbacks.retryBaseBackoffSeconds` | `1`       | First retry delay; doubles per attempt, jittered.                                               |
+| `callbacks.retryMaxBackoffSeconds`  | `300`     | Ceiling on that backoff.                                                                        |
+| `callbacks.tls.enabled`             | `false`   | Customise TLS for an `https://` receiver.                                                       |
+| `callbacks.tls.caCertFile`          | `""`      | PEM CA bundle trusted in place of the system pool.                                              |
+| `callbacks.tls.certFile`            | `""`      | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither.                 |
+| `callbacks.tls.keyFile`             | `""`      | The matching key.                                                                               |
+| `callbacks.tls.insecureSkipVerify`  | `false`   | Dev-only: disables certificate verification.                                                    |
 
 ### Transfer and archive
 

@@ -1,7 +1,5 @@
 # Performance under sustained high throughput
 
-![Hippocampus](go-hippocampus.png)
-
 This note reports how Hippocampus behaves when writes arrive far faster than a comfortable
 steady state — driving each storage backend from a modest fraction of its byte capacity per second
 up to and beyond the capacity per second — and how the sleep cycle (consolidation + eviction, the

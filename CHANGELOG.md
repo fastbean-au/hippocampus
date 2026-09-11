@@ -80,6 +80,44 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
   catch-up path a rebuilt receiver pages back through), and an external capacity target still on
   `abandon`.
 
+### Documentation
+
+- **A documentation index and an install page, and a README that points at both.** The two guide
+  tables in `README.md` had become the only map of `docs/`, which made the front page longer than
+  the thing a first-time reader actually wants from it — how to install this. The index moved to
+  [`docs/README.md`](docs/README.md), where GitHub serves it on browsing the directory, and is
+  arranged by what a reader is trying to do rather than alphabetically; it covers the deployment
+  artefacts under `deploy/` and the subprojects under `integrations/` as well as the guides, neither
+  of which the README's tables reached. The five install routes — Homebrew, the `.deb`/`.rpm`
+  packages, the GHCR images plus the Compose and Kustomize artefacts, the release binaries, and a
+  build from source — were spread across `getting-started.md` and `operations.md` with only the
+  demo-stack clone on the front page; they are now one page,
+  [`docs/install.md`](docs/install.md), a command each, with `getting-started.md` deferring to it
+  rather than carrying an abridged copy. The README keeps one install command and four links.
+- **The retention-controller deployment mode is written down.** `docs/use-cases.md` described four
+  topologies, all of which assume this store holds the data. The mode where it does not — one
+  pointer-memory per external record, `external_bytes` carrying the payload's size,
+  `consolidation.capacityExternalBytes` as the axis pressure is measured on, and a
+  `memory_forgotten` callback doing the deleting — had shipped across three releases with its parts
+  documented separately and the shape they make never stated. It is now a deployment mode beside the
+  others, including what it gives up (recall reinforcement goes dark until a tap is wired, and
+  wiring one is per-integration), which actuators suit it (buckets yes, column stores no), the
+  `days_until_forgotten` escape hatch for the ones that do not, and what has to be true before it is
+  authoritative over data the store cannot see.
+- **The documentation pages dropped their decorations.** Every guide link in `README.md` and the new
+  index carried a leading emoji, and seven pages under `docs/` opened with the same gopher image
+  between the title and the first sentence. Both are gone, and the README's prose was loosened —
+  contractions, shorter sentences — since a front page that reads like a specification is a poor
+  advertisement for one.
+
+- **Two pages still said the forget-callback could not be relied on.** `docs/configuration.md` and
+  `docs/consolidation.md` both closed their external-capacity sections with "a best-effort
+  notification rather than a guaranteed instruction — until that gap is closed", which
+  `callbacks.backlogPolicy` closed above. Both now name the setting and say which value a deployment
+  holding payloads elsewhere wants; both keep the advice to leave the far end's own expiry
+  configured as the outer bound, which is true for a different reason — a controller that has
+  stopped running publishes no instructions at all.
+
 ### Fixed
 
 - **Empty events no longer accumulate forever.** Two independent halves met in one place, and the

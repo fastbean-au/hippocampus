@@ -1,7 +1,5 @@
 # Operations & deployment guide
 
-![Hippocampus](go-hippocampus.png)
-
 This guide covers running Hippocampus in production: the deployment model, choosing and sizing a
 storage backend, capacity tuning, backup and migration, shutdown, observability, and security. For
 the exhaustive list of configuration keys see

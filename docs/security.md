@@ -1,7 +1,5 @@
 # Security
 
-![Hippocampus](go-hippocampus.png)
-
 Hippocampus ships with **authentication, TLS, and rate limiting all off**. That is deliberate — the
 default install is an embedded store on `localhost` with no dependencies, and a first run should not
 require minting a token. It also means that **every deployment reachable beyond localhost needs a

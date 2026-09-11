@@ -670,11 +670,15 @@ Three properties are worth knowing before configuring it.
   the tempting alternative and it is a different product — it changes forgetting from "the least
   valuable goes first" to "the worst value density goes first" — so the accumulator changed and the
   sort did not.
-- **Nothing is deleted out there.** This release adds the axis and the accounting: the store decides
-  what should go and forgets its own record of it. Telling the far system to delete the payload is
-  the [`memory_forgotten` callback](operations.md#callbacks), which is a best-effort notification
-  rather than a guaranteed instruction — so until that gap is closed, leave the far end's own expiry
-  configured as the outer bound.
+- **Nothing is deleted out there by this store.** It decides what should go and forgets its own
+  record of it; telling the far system to delete the payload is the [`memory_forgotten`
+  callback](operations.md#being-told-what-was-forgotten--outbound-callbacks). When the receiver is
+  the system holding those payloads, that delivery is an _instruction_ rather than a notification,
+  and [`callbacks.backlogPolicy`](configuration.md#when-a-forget-callback-is-an-instruction-not-a-notification)
+  is how a deployment says so — `retain` or `stall` rather than the default `abandon`, which
+  discards deletions at the queue's caps and orphans the payloads behind them. Leave the far end's
+  own expiry configured as the outer bound regardless: a controller that has stopped running
+  publishes no instructions at all.
 
 The axis costs nothing when it is off: `external_bytes` defaults to 0 on every memory, and the sum
 behind the utilisation is only measured when a target is configured. It is reported by

@@ -1,7 +1,5 @@
 # Getting started
 
-![Hippocampus](go-hippocampus.png)
-
 This walks through building Hippocampus, running it with a minimal SQLite configuration, and making
 your first requests over the HTTP/JSON gateway. For production concerns (driver choice, tuning,
 backup, security) see the [Operations guide](operations.md); for the full configuration reference see
@@ -37,29 +35,19 @@ listeners all belong to it. The rest of this page is the instance you keep.
 
 ## Install or build
 
-Homebrew is the quickest supervised install on macOS and Linux — it manages the launchd/systemd
-definition and installs a default embedded-SQLite config that survives upgrades:
+The quickest supervised install is Homebrew on macOS or Linux:
 
 ```sh
 brew install fastbean-au/tap/hippocampus
 brew services start hippocampus
 ```
 
-From a clone, build it:
+From a clone, `go build -o hippocampus ./cmd/hippocampus` needs nothing but Go 1.27+. The `.deb` and
+`.rpm` packages, the container images, the Kubernetes overlays and the per-platform release binaries
+are all on the [install page](install.md), one command each.
 
-```sh
-go build -o hippocampus ./cmd/hippocampus
-```
-
-Or use Docker (statically linked, CGO disabled, runs as non-root):
-
-```sh
-docker compose up --build         # SQLite, database persisted in a named volume
-```
-
-The compose file exposes `50051` (gRPC) and `8080` (HTTP gateway). If you build from source, use the
-configuration below. Packages (`.deb`/`.rpm`), the Kubernetes overlays, and the service-supervision
-options are in the [Operations guide](operations.md#running-as-a-service).
+The rest of this page assumes you have a binary you can run in the foreground, which every route
+above gives you.
 
 ## Run it with no configuration at all
 
@@ -85,17 +73,17 @@ config.json` from a clone works as-is. To write your own:
 
 ```json
 {
-    "port": 50051,
-    "gateway": { "port": 8080 },
-    "storage": { "directory": "./data" },
-    "sleep": { "periodSeconds": 60 },
-    "consolidation": {
-        "method": 1,
-        "aggressiveness": 1.0,
-        "unitsOfAgeInDays": 1.0,
-        "deletionThreshold": 5,
-        "minimumAgeInDays": 0
-    }
+  "port": 50051,
+  "gateway": { "port": 8080 },
+  "storage": { "directory": "./data" },
+  "sleep": { "periodSeconds": 60 },
+  "consolidation": {
+    "method": 1,
+    "aggressiveness": 1.0,
+    "unitsOfAgeInDays": 1.0,
+    "deletionThreshold": 5,
+    "minimumAgeInDays": 0
+  }
 }
 ```
 
@@ -150,7 +138,7 @@ curl -s -X POST localhost:8080/v1/memories \
 # {"id":"6f1c…","rejected":false}
 ```
 
-A memory below `memory.minimumSignificance` is *quietly forgotten*: no error, empty id,
+A memory below `memory.minimumSignificance` is _quietly forgotten_: no error, empty id,
 `"rejected":true` — a design choice echoing how a brain drops the insignificant.
 
 **List memories** (most significant first):
