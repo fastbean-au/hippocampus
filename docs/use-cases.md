@@ -205,11 +205,17 @@ payload behind each one permanently. Keep the [forgotten
 log](operations.md#what-was-forgotten--the-forgotten-log) on as well — it is the pull path behind the
 push one, so a rebuilt receiver pages `GetForgottenMemories` back to its own cursor and catches up.
 
+**Against a bucket, both halves are built.** [`docs/objectstore.md`](objectstore.md) covers the two
+agents that implement this mode over S3 (or MinIO): `object-gateway` fronts the bucket and reinforces
+the pointer-memory behind every object it serves, and `object-reaper` deletes the object behind a
+memory that has been forgotten — by callback, by the forgotten log, and by a reverse sweep. Neither
+holds any state, because the memory id is `<bucket>/<key>` and the mapping goes both ways.
+
 **What it gives up, honestly.** Reads happen in the far system, so this store never sees them and
 recall reinforcement — the one differentiator no expiry policy has — goes dark unless something
-feeds it. Wiring that tap is per-integration and is the only genuinely new work: a fetch proxy or
-signed-URL issuer is the natural chokepoint for object storage, an application's own API is the hard
-case. It is cheaper than it sounds, because `RecallMemories` is an `UPDATE ... WHERE id IN (...)`
+feeds it. Wiring that tap is per-integration: a fetch proxy or signed-URL issuer is the natural
+chokepoint for object storage — which is what the gateway above is — and an application's own API is
+the hard case. It is cheaper than it sounds, because `RecallMemories` is an `UPDATE ... WHERE id IN (...)`
 that matches nothing on a miss — fire speculative recalls for every id that appears in a result set,
 batch them on a window, and let the misses fall through. No lookup table and no state. Coarse signals
 count: appearing in any query window, or being referenced by an alert, is enough to move a decay

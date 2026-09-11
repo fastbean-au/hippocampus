@@ -23,29 +23,29 @@ translation. Either produces the same names, which is the point — nothing here
 The client-side components in the `hippocampus-clients` group below take the same choice as a
 `--prometheus` flag, and serve `/metrics` on the `--health-port` they already listen on.
 
-Twenty-four rules in two groups. `hippocampus` is the service itself — eighteen rules covering what
+Twenty-seven rules in two groups. `hippocampus` is the service itself — eighteen rules covering what
 actually goes wrong:
 
-| Alert                                  | Fires when                                                                 | Severity |
-| -------------------------------------- | -------------------------------------------------------------------------- | -------- |
-| `HippocampusServerErrorRateHigh`       | >1% of RPCs return a server-fault code for 10m                             | critical |
-| `HippocampusRequestLatencyHigh`        | p95 of the interactive RPCs is above 1s for 15m                            | warning  |
-| `HippocampusSleepCycleFailing`         | sleep cycles have been failing for 15m                                     | critical |
-| `HippocampusConsolidatorAbsent`        | no successful sleep cycle anywhere for an hour                             | critical |
-| `HippocampusStoreGrowing`              | memories arrive faster than consolidation and eviction remove them, for 6h | warning  |
-| `HippocampusCapacityPressureHigh`      | capacity pressure sustained near or above the target for 30m               | warning  |
-| `HippocampusStoreOverCapacity`         | used bytes above `capacityBytes` for an hour                               | warning  |
-| `HippocampusRetentionNearCapacity`     | retained bytes exceed 90% of `capacityBytes` for 30m                       | critical |
+| Alert                                  | Fires when                                                                  | Severity |
+| -------------------------------------- | --------------------------------------------------------------------------- | -------- |
+| `HippocampusServerErrorRateHigh`       | >1% of RPCs return a server-fault code for 10m                              | critical |
+| `HippocampusRequestLatencyHigh`        | p95 of the interactive RPCs is above 1s for 15m                             | warning  |
+| `HippocampusSleepCycleFailing`         | sleep cycles have been failing for 15m                                      | critical |
+| `HippocampusConsolidatorAbsent`        | no successful sleep cycle anywhere for an hour                              | critical |
+| `HippocampusStoreGrowing`              | memories arrive faster than consolidation and eviction remove them, for 6h  | warning  |
+| `HippocampusCapacityPressureHigh`      | capacity pressure sustained near or above the target for 30m                | warning  |
+| `HippocampusStoreOverCapacity`         | used bytes above `capacityBytes` for an hour                                | warning  |
+| `HippocampusRetentionNearCapacity`     | retained bytes exceed 90% of `capacityBytes` for 30m                        | critical |
 | `HippocampusAncillaryStorageHigh`      | the tables outside the capacity target exceed 25% of `capacityBytes` for 1h | warning  |
-| `HippocampusRateLimitRejecting`        | a rate limit is refusing >1 request/second for 10m                         | warning  |
-| `HippocampusSearchIndexDropping`       | index operations are being dropped for 10m                                 | warning  |
-| `HippocampusSearchOutboxBacklog`       | queued index deletions exceed 10,000 for 30m                               | warning  |
-| `HippocampusCallbackQueueBacklog`      | queued callback deliveries exceed 10,000 for 30m                           | warning  |
-| `HippocampusCallbackDeliveriesFailing` | the callback receiver is refusing deliveries for 15m                       | warning  |
-| `HippocampusCallbacksAbandoning`       | the callback queue's caps are discarding undelivered notifications         | critical |
-| `HippocampusForgettingStalled`         | the decay passes are held off because forget-callbacks are undelivered     | critical |
-| `HippocampusSearchOutboxAbandoning`    | the outbox's caps are discarding queued index deletions                    | critical |
-| `HippocampusPanicsRecovered`           | a handler panicked and was recovered                                       | warning  |
+| `HippocampusRateLimitRejecting`        | a rate limit is refusing >1 request/second for 10m                          | warning  |
+| `HippocampusSearchIndexDropping`       | index operations are being dropped for 10m                                  | warning  |
+| `HippocampusSearchOutboxBacklog`       | queued index deletions exceed 10,000 for 30m                                | warning  |
+| `HippocampusCallbackQueueBacklog`      | queued callback deliveries exceed 10,000 for 30m                            | warning  |
+| `HippocampusCallbackDeliveriesFailing` | the callback receiver is refusing deliveries for 15m                        | warning  |
+| `HippocampusCallbacksAbandoning`       | the callback queue's caps are discarding undelivered notifications          | critical |
+| `HippocampusForgettingStalled`         | the decay passes are held off because forget-callbacks are undelivered      | critical |
+| `HippocampusSearchOutboxAbandoning`    | the outbox's caps are discarding queued index deletions                     | critical |
+| `HippocampusPanicsRecovered`           | a handler panicked and was recovered                                        | warning  |
 
 The last six of those are the two durable queues — the search delete outbox and the callback
 queue — and they come in pairs by design: a backlog rule that fires while nothing is yet lost, and
@@ -61,18 +61,21 @@ sees one rule or the other, never both — the choice being whether a receiver o
 notifications (and, where the receiver holds the payloads the memories point at, orphans out there)
 or costs the store its willingness to forget until the endpoint is fixed.
 
-`hippocampus-clients` is the six rules for the components that _dial_ a Hippocampus instance — the
-[broker bridges](../../docs/eventsource.md) and the [ingestor](../../docs/ingestor.md), separate
-processes publishing their own metrics:
+`hippocampus-clients` is the nine rules for the components that _dial_ a Hippocampus instance — the
+[broker bridges](../../docs/eventsource.md), the [ingestor](../../docs/ingestor.md) and the
+[object-storage agents](../../docs/objectstore.md), separate processes publishing their own metrics:
 
-| Alert                              | Fires when                                                        | Severity |
-| ---------------------------------- | ----------------------------------------------------------------- | -------- |
-| `HippocampusBridgeDuplicateStream` | >80% of a bridge's messages are records the store already had     | warning  |
-| `HippocampusBridgeNotConsuming`    | a bridge is publishing metrics and handling no messages at all    | warning  |
-| `HippocampusBridgeWriteFailing`    | >5% of a bridge's messages fail to transform or store for 10m     | critical |
-| `HippocampusClientTokenRejected`   | a client's calls are refused `Unauthenticated`/`PermissionDenied` | critical |
-| `HippocampusIngestorPassStale`     | no ingestor pass has completed in 15 minutes                      | critical |
-| `HippocampusIngestorRuleErrors`    | an ingestor rule is erroring rather than matching, for 15m        | warning  |
+| Alert                                 | Fires when                                                        | Severity |
+| ------------------------------------- | ----------------------------------------------------------------- | -------- |
+| `HippocampusBridgeDuplicateStream`    | >80% of a bridge's messages are records the store already had     | warning  |
+| `HippocampusBridgeNotConsuming`       | a bridge is publishing metrics and handling no messages at all    | warning  |
+| `HippocampusBridgeWriteFailing`       | >5% of a bridge's messages fail to transform or store for 10m     | critical |
+| `HippocampusClientTokenRejected`      | a client's calls are refused `Unauthenticated`/`PermissionDenied` | critical |
+| `HippocampusIngestorPassStale`        | no ingestor pass has completed in 15 minutes                      | critical |
+| `HippocampusIngestorRuleErrors`       | an ingestor rule is erroring rather than matching, for 15m        | warning  |
+| `HippocampusObjectTapNotReinforcing`  | every object read is reinforcing a memory the store does not hold | warning  |
+| `HippocampusObjectDeletionsFailing`   | the reaper cannot delete the objects behind forgotten memories    | critical |
+| `HippocampusObjectDeliveriesRejected` | the reaper is answering forget-callbacks with a 5xx, for 30m      | warning  |
 
 That group exists because of an outage. A Bluesky bridge on the public demo spent hours
 re-presenting one record it could never store, at a cursor that never moved: the process was up, its
@@ -106,7 +109,7 @@ Four properties worth knowing before you deploy them:
 
 ## The Grafana copy
 
-`../compose/observability/alerting-rules.yaml` is the same twenty-four rules as Grafana-managed rules,
+`../compose/observability/alerting-rules.yaml` is the same twenty-seven rules as Grafana-managed rules,
 provisioned into the bundled `grafana/otel-lgtm` stack (every compose file's `observability` profile,
 and `demo/run.sh`) so the demo stack alerts as well as draws. It exists as a second file only
 because Grafana provisions its own rule format and cannot read a Prometheus rule file.

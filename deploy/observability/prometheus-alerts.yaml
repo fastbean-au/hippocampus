@@ -15,9 +15,9 @@
 # metric no instrument in this repo declares.
 #
 # There are two groups. `hippocampus` is the service itself. `hippocampus-clients` is the components
-# that dial it - the broker bridges and the ingestor - which are separate processes publishing their
-# own metrics: a deployment running none of them produces none of those series, and every rule in
-# that group stays silent rather than firing on the absence.
+# that dial it - the broker bridges, the ingestor and the object-storage agents - which are separate
+# processes publishing their own metrics: a deployment running none of them produces none of those
+# series, and every rule in that group stays silent rather than firing on the absence.
 #
 # Metric names are the Prometheus rendering of the OTLP instruments (dots become underscores, a
 # counter gains `_total`, a histogram in seconds gains `_seconds_bucket`); see
@@ -452,4 +452,54 @@ groups:
         annotations:
           summary: "A Hippocampus ingestor rule is erroring rather than matching"
           description: "This rule's CEL expression is erroring when evaluated, so it never matches and the events it was meant to judge are falling through to whatever follows it. The classic cause is an unguarded map index such as event.metadata['k'] on an event that does not carry the key - guard it with 'k' in event.metadata. The ingestor logs the rule name and the error; --check-rules compiles the file without running a pass."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # --- Object-storage agents -----------------------------------------------------------
+
+      # The tap's silent failure, and the only detector for it. The ids the gateway reinforces are
+      # DERIVED from the object key, so if the pointer-memories were written under any other scheme
+      # every recall lands on nothing - and a recall that lands on nothing is by design a no-op,
+      # indistinguishable from a memory the store has already forgotten. Reads are happening and not
+      # one of them is reinforcing anything, which is either a derivation mismatch or a store that
+      # has genuinely forgotten everything being served.
+      - alert: HippocampusObjectTapNotReinforcing
+        expr: sum(rate(hippocampus_objectstore_recalls_total{outcome="missing"}[15m])) > 0 and sum(rate(hippocampus_objectstore_recalls_total{outcome="reinforced"}[15m])) == 0
+        for: 30m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus object gateway is reinforcing nothing"
+          description: "Every object read is recalling a memory the store does not hold, so recall reinforcement - the one input no expiry policy has - is not reaching the controller at all. Check that the producer writes each pointer-memory under the id the agent derives, which is '<bucket>/<key>'. The gateway logs the same finding at Warn every 5 minutes."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # A deletion that fails is a payload that outlives its memory. The push path retries (the
+      # service's queue replays what this agent 5xxs) and the sweep would eventually find it, but a
+      # sustained rate means neither is getting there - most often the agent's credentials cannot
+      # delete from the bucket, which no amount of retrying fixes.
+      - alert: HippocampusObjectDeletionsFailing
+        expr: sum by (path) (rate(hippocampus_objectstore_deletions_total{outcome="failed"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus object reaper cannot delete what has been forgotten"
+          description: "Objects behind forgotten memories are failing to delete, so external storage is now holding payloads nothing will ever mention again - a leak that grows precisely with how well the decay cycle is working. Check the agent's bucket credentials and its logs, which name the key and the store's error. Deleting an absent object is a success, so this is not a race with another deleter."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+
+      # Rejected means this agent answered a delivery with a 5xx, which the service's queue treats as
+      # "retry later". That is the correct behaviour and the queue is durable, so a burst is fine;
+      # what is not fine is a sustained one, because the queue's caps eventually discard the delivery
+      # unless callbacks.backlogPolicy is retain or stall - and under stall the store stops
+      # forgetting altogether while it waits for this agent.
+      - alert: HippocampusObjectDeliveriesRejected
+        expr: sum(rate(hippocampus_objectstore_deliveries_total{outcome="rejected"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus object reaper is refusing forget-callbacks"
+          description: "This agent is answering deliveries with a 5xx, so the service is retrying them and its callback queue is backing up. Under the default backlog policy those deliveries are eventually discarded and the payloads behind them orphaned; under 'stall' the sleep cycle stops forgetting until the backlog drains. The agent logs the underlying failure - usually the bucket refusing a delete."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"

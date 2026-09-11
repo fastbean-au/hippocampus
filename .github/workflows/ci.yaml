@@ -346,6 +346,17 @@ jobs:
       - name: Ingestor image build
         run: docker build -f integrations/ingestor/Dockerfile -t hippocampus-ingestor:ci .
 
+      # The two object-storage agents share one parameterised Dockerfile (COMMAND build-arg), the
+      # same shape as the bridges: built here on the native platform so a broken Dockerfile or
+      # module build fails CI rather than the release.
+      - name: Object-storage agent images build
+        run: |
+          for command in object-gateway object-reaper; do
+            docker build -f integrations/objectstore/Dockerfile \
+              --build-arg COMMAND="$command" \
+              -t "hippocampus-${command}:ci" .
+          done
+
   # The OTEL collector exporter under integrations/otel is a SEPARATE Go module (its dependency tree
   # is large and kept out of the root module), so the test job's `go build/test ./...` never
   # descends into it - it would rot undetected. Build, vet, and test it here on its own. It has a
@@ -427,6 +438,29 @@ jobs:
 
       - name: Build, vet, and test the ingestor module
         working-directory: integrations/ingestor
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  # The object-storage agents under integrations/objectstore are a SEPARATE Go module (the AWS SDK
+  # dependency tree stays out of the root module), so the test job's `go build/test ./...` never
+  # descends into them. Build, vet, and test the module on its own. It has a `replace => ../..` back
+  # to the repo root, so the full checkout is required. Its tests need no bucket and no service: the
+  # S3 driver is exercised against an httptest server speaking just enough of the wire protocol, and
+  # everything above it against in-memory fakes.
+  objectstore-agents:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: integrations/objectstore/go.mod
+
+      - name: Build, vet, and test the object-storage module
+        working-directory: integrations/objectstore
         run: |
           go build ./...
           go vet ./...

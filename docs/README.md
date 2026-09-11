@@ -61,6 +61,7 @@ The load generator and the compressed-clock demo stack are in [`demo/`](../demo/
 | **[Ingestor](ingestor.md)**          | Stage data at the edge and promote completed events into a central store under CEL rules. |
 | **[LlamaIndex](llamaindex.md)**      | `pip install llama-index-memory-hippocampus` — an agent's memory, reinforced by use.      |
 | **[Obsidian](obsidian.md)**          | Use the store as a memory layer for a note vault, via the plugin or the MCP bridge.       |
+| **[Object storage](objectstore.md)** | Govern a bucket you do not hold: reinforce on read, delete on forget.                     |
 
 Each integration is a self-contained subproject with its own README:
 [`integrations/cli`](../integrations/cli/README.md),
@@ -69,6 +70,7 @@ Each integration is a self-contained subproject with its own README:
 [`integrations/llamaindex`](../integrations/llamaindex/README.md),
 [`integrations/eventsource`](../integrations/eventsource/README.md),
 [`integrations/ingestor`](../integrations/ingestor/README.md),
+[`integrations/objectstore`](../integrations/objectstore/README.md),
 [`integrations/obsidian`](../integrations/obsidian/README.md), and the OpenTelemetry Collector
 [logs exporter](../integrations/otel/hippocampusexporter/README.md) plus its
 [builder manifest](../integrations/otel/collector/README.md).

@@ -38,7 +38,7 @@
 version: 2
 
 updates:
-  # ---- Go: all six modules as one coupled set -----------------------------------------------
+  # ---- Go: all seven modules as one coupled set ---------------------------------------------
   - package-ecosystem: "gomod"
     directories:
       - "/"
@@ -46,10 +46,11 @@ updates:
       - "/integrations/eventsource"
       - "/integrations/ingestor"
       - "/integrations/mcp"
+      - "/integrations/objectstore"
       - "/integrations/otel/hippocampusexporter"
     schedule:
       interval: "weekly"
-    # Six directories share most of their dependencies, so without a raised limit the default of
+    # Seven directories share most of their dependencies, so without a raised limit the default of
     # five would leave the set perpetually part-updated - the condition this file exists to avoid.
     open-pull-requests-limit: 15
     groups:
@@ -89,6 +90,7 @@ updates:
       - "/"
       - "/integrations/eventsource"
       - "/integrations/ingestor"
+      - "/integrations/objectstore"
       - "/integrations/otel/collector"
     schedule:
       interval: "weekly"

@@ -1091,3 +1091,132 @@ groups:
                   reducer:
                     type: last
                     params: []
+      - uid: hippocampus-object-tap-not-reinforcing
+        title: HippocampusObjectTapNotReinforcing
+        condition: B
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus object gateway is reinforcing nothing"
+          description: "Every object read is recalling a memory the store does not hold, so recall reinforcement - the one input no expiry policy has - is not reaching the controller at all. Check that the producer writes each pointer-memory under the id the agent derives, which is '<bucket>/<key>'. The gateway logs the same finding at Warn every 5 minutes."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_objectstore_recalls_total{outcome="missing"}[15m])) > 0 and sum(rate(hippocampus_objectstore_recalls_total{outcome="reinforced"}[15m])) == 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+      - uid: hippocampus-object-deletions-failing
+        title: HippocampusObjectDeletionsFailing
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus object reaper cannot delete what has been forgotten"
+          description: "Objects behind forgotten memories are failing to delete, so external storage is now holding payloads nothing will ever mention again - a leak that grows precisely with how well the decay cycle is working. Check the agent's bucket credentials and its logs, which name the key and the store's error. Deleting an absent object is a success, so this is not a race with another deleter."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (path) (rate(hippocampus_objectstore_deletions_total{outcome="failed"}[15m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []
+      - uid: hippocampus-object-deliveries-rejected
+        title: HippocampusObjectDeliveriesRejected
+        condition: B
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "The Hippocampus object reaper is refusing forget-callbacks"
+          description: "This agent is answering deliveries with a 5xx, so the service is retrying them and its callback queue is backing up. Under the default backlog policy those deliveries are eventually discarded and the payloads behind them orphaned; under 'stall' the sleep cycle stops forgetting until the backlog drains. The agent logs the underlying failure - usually the bucket refusing a delete."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#client-side-components"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(hippocampus_objectstore_deliveries_total{outcome="rejected"}[15m])) > 0
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - type: query
+                  evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                    params: []

@@ -54,6 +54,47 @@ tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by cons
 
 ### Added
 
+- **The object-storage agents: decay as a retention controller over a bucket.** The retention-
+  controller mode — the payload stays where it is, Hippocampus holds one pointer-memory per record
+  and decides what survives — has had its parts in place since 0.45.0 and nothing to carry the
+  decisions out. Two new commands in a new module, `integrations/objectstore`, close the loop against
+  S3 (and MinIO, and anything S3-compatible):
+
+  `hippocampus-object-gateway` is the **tap**. It fronts the bucket and reinforces the pointer-memory
+  behind every object it serves, which is what keeps recall reinforcement — the one input no expiry
+  policy has — reaching a store that never sees the reads. By default it presigns and answers 302, so
+  no payload byte passes through it; `--mode proxy` streams instead and forwards `Range` requests. A
+  `POST /recall` endpoint takes keys from a chokepoint you already have, for a deployment that does
+  not want a new one on the request path.
+
+  `hippocampus-object-reaper` is the **actuator**. It deletes the object behind a memory that has been
+  forgotten, by three paths that back each other up: the `memory_forgotten` callback as the cycle
+  runs, the forgotten log read back over a window at startup, and a reverse sweep of the bucket. It
+  does **not** delete by default — without `--delete` every deletion is selected, counted and logged
+  and none is carried out, which is the state to compare against whatever flat expiry it is replacing
+  before a decay model becomes authoritative over data the store cannot see.
+
+  Both hold no state at all, and one decision is what buys that: a pointer-memory's id is
+  `<bucket>/<key>`. The tap reinforces a derived id without asking whether the memory exists (a recall
+  that matches nothing is a no-op) and the reaper turns a forgotten id back into the object it named.
+  A hash would have been the obvious choice and is the wrong one — the forgotten log carries ids and
+  deliberately never bodies, so an agent catching up after an outage would be unable to name a single
+  object.
+
+  Three of the guards are worth stating because they are what makes an agent that deletes other
+  people's data safe to run: the sweep never judges an object younger than `--sweep-min-age` (24h,
+  and not disableable, or it would race every producer write); it **stops** rather than deleting
+  anything if the store cannot be asked what it holds; and `--causes` defaults to the decay paths
+  only, so an Export's `clear` (a move) and a `Purge` (an operator resetting the store) never reach
+  the bucket.
+
+  Both publish `hippocampus.objectstore.*` metrics and serve `/healthz`+`/readyz`, with three new
+  alert rules in both shipped rule files. The tap's hit rate is among them: the ids it recalls are
+  derived, so a producer writing memories under any other scheme reinforces nothing, silently and
+  forever — `HippocampusObjectTapNotReinforcing` and a Warn line are the only things that would ever
+  notice. Images are published per agent and both binaries are on the release. See
+  [`docs/objectstore.md`](docs/objectstore.md).
+
 - **`callbacks.backlogPolicy` — a forget-callback can now be an instruction rather than a
   notification.** The outbound queue was built for notifications, and its caps are right for one: a
   receiver that has been unreachable for a day is not helped by a day-old summary of a cycle. A

@@ -39,6 +39,13 @@ pytest pytest-asyncio && pip install -e . --no-deps && python -m pytest` (the pu
   `--check-rules` compiles the rules and exits, `--dry-run` judges without moving anything;
   `--health-port` (8090) serves `/healthz`+`/readyz` and `--metrics` exports OTLP;
   `go test ./...` in that dir needs no service; see `docs/ingestor.md`)
+- Run the object-storage agents (separate module — run from its directory):
+  `cd integrations/objectstore && go run ./cmd/object-gateway --bucket payloads --auth-token dev`
+  (the tap: fronts a bucket, and every object it serves reinforces the pointer-memory behind it) and
+  `go run ./cmd/object-reaper --bucket payloads --sweep-now` (the actuator: deletes the object behind
+  a forgotten memory — **shadow mode unless `--delete`**, and `--sweep-now` is one pass and out).
+  A pointer-memory's id must be `<bucket>/<key>`, which is what makes both agents stateless;
+  `go test ./...` in that dir needs neither a bucket nor a service; see `docs/objectstore.md`
 - Test: `go test ./...` (single test: `go test ./hippocampus -run TestName`)
 - Benchmarks: `go test ./db -bench . -run XXX` (`db/bench_test.go`; run on demand — deliberately
   not CI-gated — and compare with benchstat when touching `hippocampus/sleep.go`, the db scans,
@@ -370,7 +377,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-four rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-seven rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -393,9 +400,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Six of the twenty-four are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the twenty-seven are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
-  broker bridges, the ingestor) and read instruments declared in `integrations/*`, which
+  broker bridges, the ingestor, the object-storage agents) and read instruments declared in
+  `integrations/*`, which
   `metricSourceFiles` reaches as FILES rather than imports — the root module deliberately does not
   depend on those modules, and the guard needs the instrument names, not the instruments. That group
   is item 73's outage written down: a bridge whose stream is all `outcome="exists"` is running and
@@ -556,7 +564,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     is a scan of up to `callbacks.maxRows` rows on the server dialects and this is an RPC a console
     polls, which is item 25.9's lesson and `ExplainConsolidation`'s snapshot cache by another route.
     (4) `enabled` means "is recording", while the rows are counted whenever the **table exists** —
-    disabling any of the three stops the writing *and* the trimming and leaves everything already
+    disabling any of the three stops the writing _and_ the trimming and leaves everything already
     written in place, so a table nothing records into can still be holding megabytes, and that is the
     state the report most has to avoid hiding. (5) The gauge is per **table** (`component`) and
     publishes nothing for a table the deployment never enabled, on the external axis's reasoning: a
@@ -603,12 +611,12 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     default, and exactly the previous behaviour) costs the far system orphans, `retain` costs this
     disk a queue nothing trims, `stall` costs the workload a store that stops forgetting. Nothing here
     makes the failure cost nothing, which is why it is configuration rather than a fix. (2) **`stall`
-    needs no limit of its own**: the same three caps it exempts the deletions from stop *trimming* and
-    start *gating*, so there is one bound rather than two that can disagree — and that is also why
+    needs no limit of its own**: the same three caps it exempts the deletions from stop _trimming_ and
+    start _gating_, so there is one bound rather than two that can disagree — and that is also why
     `stall` with no cap is **refused** at startup, being a policy where nothing is trimmed and nothing
     ever stalls. (3) The other two kinds stay capped under every policy: a sleep-completed summary and
     a pre-reap warning are worthless once stale. (4) **The pull path is the forgotten log**, not a
-    reverse sweep — this service cannot enumerate the far system, but the log already *is* the
+    reverse sweep — this service cannot enumerate the far system, but the log already _is_ the
     ordered, durable, keyset-paginated record of these instructions, so a rebuilt receiver pages
     `GetForgottenMemories` newest-first back to its own cursor and a repeated delete is a no-op.
     Startup warns when a retaining policy runs with the log off. (5) **A stalled cycle is reported,
@@ -617,7 +625,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     the counts, `hippocampus.forgetting.stalls` counts it, `HippocampusForgettingStalled` alerts on
     it, and the flag rides the `sleep_completed` delivery itself — the receiver being the one party
     that can end the stall. (6) Only the two **decay** passes are held; a client's `DeleteMemories`
-    still deletes, and a failure to *measure* the backlog is not a stall. The storage half is one SQL
+    still deletes, and a failure to _measure_ the backlog is not a stall. The storage half is one SQL
     fragment on the three prune statements, empty unless the policy retains, with the byte cap's
     running total still summing every row and only its DELETE narrowed. See TODO 107.2/119.
   - **The deployment topology view** (`hippocampus/topology.go` + `topology_probe.go`, `topology.*`,
@@ -1321,7 +1329,8 @@ github.com/fastbean-au/hippocampus => ../..`, so the modelcontextprotocol/go-sdk
   `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
 - `integrations/` — self-contained client/edge subprojects, each a thin bridge rather than part of
   the core service. Each Go integration is a separate module whose dependency tree stays out of the
-  root build (`mcp`, `cli`, `otel/hippocampusexporter`, `eventsource`), two are Python projects
+  root build (`mcp`, `cli`, `otel/hippocampusexporter`, `eventsource`, `ingestor`, `objectstore`),
+  two are Python projects
   (`python`, `llamaindex`), and one is a TypeScript project (`obsidian`).
   - `integrations/cli/` — the `hippo` command-line client (its own Go module, module path
     `github.com/fastbean-au/hippocampus/integrations/cli`; `replace
@@ -1381,7 +1390,7 @@ github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter t
     resolves only outside a package; the usual alternative is rewriting the import in generated code
     afterwards. (3) **The openapiv2 option is stripped on the way past**, and this is the one thing
     `docs/clients.md` had wrong: protoc writes `from protoc_gen_openapiv2.options import
-    annotations_pb2` into the generated module and no index publishes that package, so a client
+annotations_pb2` into the generated module and no index publishes that package, so a client
     generated by following that page installed cleanly and raised on first import. Both removals are
     ASSERTED, since a silent no-op ships a wheel nobody can import. (4) **`force-include` differs per
     target** - the stubs are gitignored and hatchling honours .gitignore, so without it the sdist
@@ -1606,6 +1615,59 @@ github.com/fastbean-au/hippocampus => ../..`), which is what makes `github.com/g
     open**, or its own decay will forget in-flight events before the rules ever see them.
     Instrumented like the bridges (see `observability/` below): `hippocampus.ingestor.*` plus the
     shared client RED metrics, and `/healthz`+`/readyz` naming which of its two ends is unreachable.
+  - `integrations/objectstore/` — the **object-storage agents** (TODO-2 item 107.3): the working half
+    of the retention-controller mode, where the payload stays in a bucket and this store decides what
+    survives. Its own Go module (module path
+    `github.com/fastbean-au/hippocampus/integrations/objectstore`; `replace
+github.com/fastbean-au/hippocampus => ../..`), which is what keeps the AWS SDK out of the root
+    build — **the root module does not import it**. Two commands: `object-gateway` is the **tap**
+    (fronts the bucket, and every object it serves reinforces the pointer-memory behind it) and
+    `object-reaper` is the **actuator** (deletes the object behind a memory that has been forgotten).
+    Seven things carry the design. (1) **The id IS the contract and it is reversible**:
+    `keymap.MemoryId` is `<bucket>/<key>`, not a hash, and the reason is the catch-up path rather
+    than anything about the tap — a `ForgottenMemory` carries an id and deliberately never a body, so
+    an agent holding only a hash could read the log, learn that forty thousand memories went, and be
+    unable to name one object. The cost is a 255-character bound (MySQL's id column), and a key over
+    it is **unmappable**: skipped by the tap and never deleted by the sweep, which cannot tell an
+    object it failed to map from one nobody asked it to manage. (2) **Reinforcement is stateless and
+    its failure is silent**: recall is an `UPDATE ... WHERE id IN (...)` that matches nothing on a
+    miss, which is what lets the tap hold no lookup table — and means a producer using any other id
+    scheme produces no error and no reinforcement, forever. So the hit rate is a metric, a sustained
+    zero is a Warn line naming that cause, and `HippocampusObjectTapNotReinforcing` alerts on it;
+    that detector is the whole answer to the one failure this design can hide. (3) **Redirect, not
+    proxy**: the gateway presigns and answers 302, so it is a chokepoint for the DECISION to read
+    without being one for the bandwidth; `--mode proxy` streams instead and forwards `Range`, because
+    answering a range request with a whole body is a wrong answer rather than a degraded one. A HEAD
+    never reinforces. An inbound token is **required** unless `--allow-anonymous` — a presigned URL
+    grants a read to whoever holds it, so an unauthenticated gateway is a public read endpoint for
+    the whole bucket. (4) **Three deletion paths, because at-least-once against a process that can be
+    down is still lossy**: the push path (the `memory_forgotten` callback), the pull path (the
+    forgotten log read back over `--catch-up`, bounded by a WINDOW rather than a cursor so it stays
+    stateless and idempotent), and the sweep (`ListObjectsV2`, then `ExplainConsolidation` as an
+    existence oracle 200 ids at a time — it answers only about ids it is given and omits the ones it
+    does not hold). The receiver's status codes are a contract with the drain worker: 5xx for
+    anything it could not carry out (so the queue replays it), 2xx for anything it deliberately did
+    not act on (or the queue replays that forever). (5) **Shadow mode is the default** — `--delete`
+    arms it — and `outcome="shadow"` is a counted outcome rather than an absence, because comparing a
+    shadow run against what the far end's flat expiry would have dropped is how this becomes
+    authoritative over data the store cannot see. (6) **What it refuses to delete** is most of the
+    safety: an id that is not an object reference, an id naming another bucket, an unmappable key, and
+    any cause outside `--causes` (default `consolidation,eviction,cascade`) — `clear` is a MOVE,
+    `purge` would empty the bucket on one administrative command, `summary_replace` is a judgement,
+    and `client` only arrives when `callbacks.allDeletions` is set, which is a visibility key rather
+    than consent. The sweep additionally never judges an object younger than `--sweep-min-age`
+    (24h, **not** disableable — without it the sweep races every producer write), and **stops**
+    outright if the store cannot be asked what it holds, since reading "cannot ask" as "not held"
+    empties the bucket on the first outage. (7) **Readiness is deliberately asymmetric**: the
+    gateway's `/readyz` covers the bucket ONLY (its job is serving objects; pulling it from a load
+    balancer because a memory store is down turns a lost decay-clock update into an outage for every
+    reader), the reaper's covers both ends. Tests need no bucket and no service — the S3 driver runs
+    against an `httptest` server speaking enough of the wire protocol to exercise the paginator and
+    the presigner. Built by its own `objectstore-agents` CI job; the release cross-compiles both
+    binaries and publishes `ghcr.io/fastbean-au/hippocampus-object-{gateway,reaper}` from one
+    `COMMAND`-parameterised Dockerfile. Registration is **not** here: writing the pointer-memories is
+    the producer's, being the only party that knows an object's significance and group. See
+    `docs/objectstore.md`.
 - `observability/` — the shared OTEL bootstrap and probe endpoints, in the root module so the
   service, the ingestor and the four broker bridges use one implementation (it began as
   `cmd/hippocampus/observability.go` and was promoted, not copied; the integration modules already
