@@ -272,9 +272,7 @@ while the work is in flight — that is what stands the contract gate down (see
    [`deploy/homebrew/bump-formulae.py`](deploy/homebrew/bump-formulae.py) to rewrite the version and
    per-arch `sha256`s in `hippocampus`, `hippocampus-cli`, and `hippocampus-mcp`, then commits and
    pushes to the tap. Requires the `HOMEBREW_TAP_TOKEN` secret above; **self-skips** when it is
-   absent (so the release still succeeds). The parallel `publish-otel-collector` and
-   `publish-eventsource-bridges` jobs (also gated on `release`) publish the collector and the four
-   per-broker bridge images to GHCR.
+   absent (so the release still succeeds).
 
 5. **`publish-python` job** (gated on `release`) — publishes the `hippocampus-client` Python
    package. The tag is stamped into `integrations/python/src/hippocampus/_version.py` (PEP 440 has
@@ -286,6 +284,29 @@ while the work is in flight — that is what stands the contract gate down (see
    and passes every test in the suite, because the tests run against the source tree. The upload is
    gated on the `PUBLISH_PYPI` variable above; the distributions are attached to the GitHub release
    either way.
+6. **`publish-llamaindex` job** (gated on `release` **and** on `publish-python`, since the adapter
+   declares a floor on the client that release just published) — publishes
+   `llama-index-memory-hippocampus` the same way, stamping the tag over the `0.0.0.dev0`
+   placeholder and asserting the placeholder is gone: it is a version PyPI accepts and nobody can
+   install as the release they asked for.
+7. **The remaining image jobs**, each gated on `release` and each publishing to GHCR with the same
+   three tags as job 3:
+
+   - the **`publish-otel-collector` job** — the OCB-built collector;
+   - the **`publish-eventsource-bridges` job** — a matrix over the brokers (`nats`, `mqtt`,
+     `rabbitmq`, `kafka`, `bluesky`) through the one `BROKER`-parameterised Dockerfile;
+   - the **`publish-ingestor` job**;
+   - the **`publish-objectstore-agents` job** — a matrix over `object-gateway` and `object-reaper`,
+     through the one `COMMAND`-parameterised Dockerfile.
+
+The release therefore runs **ten** jobs, and this section described five of them until 2026-09-12 —
+`publish-llamaindex`, `publish-ingestor` and `publish-objectstore-agents` were absent outright, and
+the other two were named in a trailing clause that also called five brokers four. That is the drift
+step 7 of the pre-flight exists to ask about, pointed at this file rather than at the site: a module
+can be added, wired into the release, and never reach the document describing what a release does.
+[`TestReleaseDocumentsEveryWorkflowJob`](cmd/hippocampus/release_test.go) now holds the two together
+in both directions, on the same reasoning as the alert-rule guards — a list copied into prose that
+nothing executes is exactly what drifts.
 
 ## After the release
 
