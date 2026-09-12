@@ -3,7 +3,7 @@ module github.com/fastbean-au/hippocampus/integrations/mcp
 go 1.27.0
 
 require (
-	github.com/fastbean-au/hippocampus v0.39.0
+	github.com/fastbean-au/hippocampus v0.0.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/pflag v1.0.10

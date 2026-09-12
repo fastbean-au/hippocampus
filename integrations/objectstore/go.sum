@@ -10,8 +10,8 @@ github.com/aws/aws-sdk-go-v2/credentials v1.20.3 h1:tToOYM/LXev4NpfWlIYGDvBvjHmJ
 github.com/aws/aws-sdk-go-v2/credentials v1.20.3/go.mod h1:wfGneWyncO7p67wqXV2IQhPk14JqIc25woKlaArT3WI=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.19.2 h1:Ldv7RPHs7qwwTscRjAl3YBud32f3BvdAGRmSvAx5L38=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.19.2/go.mod h1:XyK6UV8xbo66ysVqLd2783C09pBYHOm8aKTRV5DVJ30=
-github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.3 h1:vsFkmFrfzODkxVbyuPLscv5j5lC8KbG48LZwV+p56Y0=
-github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.3/go.mod h1:pjQYVtvVBEtlsf2p6nXMsjPuDaWs9GM44FMdHbmnmYU=
+github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.4 h1:dc/GZeqeKqO/AqxC9FmSIY64wSb6fkFZrxPDONFAOJ8=
+github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.4/go.mod h1:ATGiwbI0OICjQbyVJa++zRFLv4xyZIPCXEnk3NOYbkk=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.2 h1:q/PSLGuRWCChWg+dLnb9dWOnrCxJtnboXbBtFoqqRrI=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.2/go.mod h1:TD1jvU2LvXkJexct5vBqcd8QlNXh5EmRUeL/Z32p0n4=
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.2 h1:6fl86IPqKEXoySqiOWdfgbEp9OVbn44zTfEICNEBDhY=
@@ -73,8 +73,8 @@ github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsI
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761/go.mod h1:5TJZWKEWniPve33vlWYSoGYefn3gLQRzjfDlhSJ9ZKM=
-github.com/jackc/pgx/v5 v5.10.0 h1:VhSvgU2jSli8o3AqIEOTJr7rZwAEUVo4E4XhR94Zfr0=
-github.com/jackc/pgx/v5 v5.10.0/go.mod h1:mal1tBGAFfLHvZzaYh77YS/eC6IX9OWbRV1QIIM0Jn4=
+github.com/jackc/pgx/v5 v5.11.0 h1:IzBBtyK9AHqf98cctWFifYSci2hgQR/cd56wB4p+ogg=
+github.com/jackc/pgx/v5 v5.11.0/go.mod h1:mal1tBGAFfLHvZzaYh77YS/eC6IX9OWbRV1QIIM0Jn4=
 github.com/jackc/puddle/v2 v2.2.2 h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo=
 github.com/jackc/puddle/v2 v2.2.2/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=
 github.com/klauspost/compress v1.19.1 h1:VsB4HPswih7mmZ8WleSFQ75c/Ui1M4trX5oAsJnhSlk=

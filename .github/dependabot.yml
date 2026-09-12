@@ -34,6 +34,14 @@
 # NOT COVERED, deliberately: cmd/hippocampus/webuitest has no dependencies at all (node's built-in
 # test runner is the whole harness, which is a property that package documents and intends), so
 # there is nothing there to update or audit.
+#
+# THE OTHER HALF, and it is not Dependabot's to do. Because the five integration modules replace the
+# root with `../..`, the root's requirements flow into each of them as indirect ones - so a bump that
+# lands only in the root go.mod leaves all five recording stale indirect versions. Dependabot does
+# not resolve through a local replace, and nothing else tidied those modules either: hooks/pre-commit
+# and scripts/release.sh both run `go mod tidy` against the ROOT only. All five had silently drifted
+# by the time anyone looked. Each module's CI job now ends in a tidy check, and the release
+# pre-flight does the same, so this shows up as a red build rather than as a surprise in a diff.
 
 version: 2
 

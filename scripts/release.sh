@@ -325,10 +325,19 @@ if [ "$skip_checks" = false ]; then
 	test -z "$(gofmt -l .)" || die "gofmt: $(gofmt -l . | tr '\n' ' ')"
 	go test ./...
 
-	# Each integration module is released from this same tag, so a broken one must not ship.
+	# Each integration module is released from this same tag, so a broken one must not ship. The
+	# tidy check is here for the same reason it is on each module's CI job: these modules replace the
+	# root with ../.., so the root's requirements reach them as indirect ones, and a bump that landed
+	# only in the root go.mod left all five recording stale versions with nothing to notice.
 	for module in integrations/mcp integrations/cli integrations/eventsource integrations/ingestor integrations/objectstore; do
 		note "pre-flight: $module"
-		(cd "$module" && go build ./... && go vet ./... && go test ./...)
+		(
+			cd "$module"
+			go build ./... && go vet ./... && go test ./...
+			go mod tidy
+			git diff --quiet -- go.mod go.sum ||
+				die "go mod tidy changed $module's go.mod/go.sum; review and commit that separately"
+		)
 	done
 
 	# The embedded console's JavaScript, which no Go test reaches.
