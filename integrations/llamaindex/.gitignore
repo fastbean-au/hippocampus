@@ -1,5 +1,0 @@
-# Build output.
-dist/
-build/
-*.egg-info/
-.pytest_cache/

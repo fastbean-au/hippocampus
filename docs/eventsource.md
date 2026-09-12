@@ -15,14 +15,14 @@ There is one bridge for each of five sources:
 | Kafka    | `cmd/kafka`    | at-least-once (offset committed after store)                              |
 | Bluesky  | `cmd/bluesky`  | at-least-once, cursor-gated (see [Bluesky](#bluesky-the-firehose-bridge)) |
 
-Like the [OpenTelemetry exporter](../integrations/otel/hippocampusexporter/README.md), this is its
+Like the [OpenTelemetry exporter](https://github.com/fastbean-au/hippocampus-otel-collector), this is its
 own Go module (`github.com/fastbean-au/hippocampus/integrations/eventsource`), separate from the root
 so its broker-client dependencies never reach the main service build. Each bridge is a normal gRPC
 client, so it works against any deployment topology — an embedded per-tenant SQLite instance, a
 centralised Postgres/MySQL store, or a read/write replica behind a load balancer.
 
 > For turning application **logs** into memories instead of broker messages, see the
-> [OpenTelemetry log ingestion](../integrations/otel/collector/README.md) integration; for an LLM
+> [OpenTelemetry log ingestion](https://github.com/fastbean-au/hippocampus-otel-collector) integration; for an LLM
 > host, see the [MCP server](mcp.md).
 
 ## How it works

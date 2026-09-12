@@ -38,7 +38,7 @@
 version: 2
 
 updates:
-  # ---- Go: all seven modules as one coupled set ---------------------------------------------
+  # ---- Go: all six modules as one coupled set -----------------------------------------------
   - package-ecosystem: "gomod"
     directories:
       - "/"
@@ -47,27 +47,15 @@ updates:
       - "/integrations/ingestor"
       - "/integrations/mcp"
       - "/integrations/objectstore"
-      - "/integrations/otel/hippocampusexporter"
     schedule:
       interval: "weekly"
-    # Seven directories share most of their dependencies, so without a raised limit the default of
+    # Six directories share most of their dependencies, so without a raised limit the default of
     # five would leave the set perpetually part-updated - the condition this file exists to avoid.
     open-pull-requests-limit: 15
     groups:
       go:
         # One PR per dependency, across every directory that has it. See the header.
         group-by: "dependency-name"
-        patterns:
-          - "*"
-
-  # ---- npm: the Obsidian plugin (the only JS project with dependencies) ----------------------
-  - package-ecosystem: "npm"
-    directory: "/integrations/obsidian"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    groups:
-      obsidian-dev:
         patterns:
           - "*"
 
@@ -91,7 +79,6 @@ updates:
       - "/integrations/eventsource"
       - "/integrations/ingestor"
       - "/integrations/objectstore"
-      - "/integrations/otel/collector"
     schedule:
       interval: "weekly"
     groups:

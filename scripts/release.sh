@@ -104,7 +104,8 @@ fi
 # ------------------------------------------------------------------- versioning
 
 # The current release is the most recent v* tag reachable from HEAD - the same baseline CI's
-# proto-breaking job uses. The obsidian plugin's own tags do not match this pattern.
+# proto-breaking job uses. The obsidian plugin's own tags, left in this repository's history when
+# it moved to fastbean-au/hippocampus-obsidian, do not match this pattern.
 current_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)"
 
 if [ -z "$current_tag" ]; then
@@ -325,7 +326,7 @@ if [ "$skip_checks" = false ]; then
 	go test ./...
 
 	# Each integration module is released from this same tag, so a broken one must not ship.
-	for module in integrations/mcp integrations/cli integrations/eventsource integrations/ingestor integrations/objectstore integrations/otel/hippocampusexporter; do
+	for module in integrations/mcp integrations/cli integrations/eventsource integrations/ingestor integrations/objectstore; do
 		note "pre-flight: $module"
 		(cd "$module" && go build ./... && go vet ./... && go test ./...)
 	done

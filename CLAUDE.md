@@ -20,13 +20,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   build time and are **not committed** — the build hook runs on an editable install too, so there is
   no separate setup step, and `python scripts/generate_stubs.py` regenerates them after a contract
   edit without reinstalling; see `docs/python.md`)
-- Test the LlamaIndex adapter (its own Python project, over the published client — run from its
-  directory): `cd integrations/llamaindex && pip install -e ../python && pip install llama-index-core
-pytest pytest-asyncio && pip install -e . --no-deps && python -m pytest` (the published
-  `llama-index-memory-hippocampus` package, a `BaseMemoryBlock` whose retrieval reinforces what it
-  returns; `--no-deps` is what makes a clone work before `hippocampus-client` has been published for
-  that release, since pip would otherwise refuse the local `0.0.0.dev0` against the declared floor;
-  the tests need no service; see `docs/llamaindex.md`)
 - Run an event-sourcing bridge (separate module — run from its directory):
   `cd integrations/eventsource && go run ./cmd/nats --subject 'events.>' --address localhost:50051`
   (one `cmd/<broker>` each for `nats`/`mqtt`/`rabbitmq`/`kafka`/`bluesky`; consumes from the broker
@@ -1322,16 +1315,28 @@ github.com/fastbean-au/hippocampus => ../..`, so the modelcontextprotocol/go-sdk
   in-memory transport (`main_test.go` covers the flag/transport/credential wiring — the package
   sits ~94%, only the thin `main` shell uncovered). Built on
   `github.com/modelcontextprotocol/go-sdk/mcp`. Built/vetted/tested by its own `mcp-bridge` CI job
-  (like `otel-exporter`), since the root module's `go build/test ./...` no longer descends into it.
+  (like `cli`), since the root module's `go build/test ./...` no longer descends into it.
   Ships as its own image (`Dockerfile` `target: mcp`, built from within the module directory),
   reachable over HTTP via the opt-in `mcp` compose profile; the release workflow cross-compiles the
   binary for every OS/arch onto the GitHub release and publishes the image to
   `ghcr.io/fastbean-au/hippocampus-mcp`. See `docs/mcp.md`.
 - `integrations/` — self-contained client/edge subprojects, each a thin bridge rather than part of
   the core service. Each Go integration is a separate module whose dependency tree stays out of the
-  root build (`mcp`, `cli`, `otel/hippocampusexporter`, `eventsource`, `ingestor`, `objectstore`),
-  two are Python projects
-  (`python`, `llamaindex`), and one is a TypeScript project (`obsidian`).
+  root build (`mcp`, `cli`, `eventsource`, `ingestor`, `objectstore`), and one is a Python project
+  (`python`).
+
+  **Three subprojects now live in their own repositories** (TODO-2 item 113), because each tracked a
+  release train that is not this one's: the Obsidian plugin
+  (`fastbean-au/hippocampus-obsidian` — Obsidian's community registry lists a repository whose
+  **root** holds `manifest.json`, which a monorepo cannot offer), the LlamaIndex adapter
+  (`fastbean-au/hippocampus-llamaindex` — it tracks `llama-index-core`, and depends on the
+  **published** client rather than on the contract) and the OpenTelemetry collector
+  (`fastbean-au/hippocampus-otel-collector` — twelve collector modules on a dual-series fortnightly
+  cadence). Each takes a **versioned** dependency on this module rather than a `replace`, and the
+  release workflow's `notify-satellites` job fires a `repository_dispatch` at each so it re-pins and
+  reports whether it still builds. The rule is no longer "one release train, plus Obsidian": it is
+  that a subproject stays here if it tracks **this** contract, and leaves if it tracks somebody
+  else's train.
   - `integrations/cli/` — the `hippo` command-line client (its own Go module, module path
     `github.com/fastbean-au/hippocampus/integrations/cli`; `replace
 github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stays out of the
@@ -1359,22 +1364,6 @@ github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stay
     tested by its own `cli` CI job (self-contained: fake gRPC client plus an httptest gateway, no
     service container); the release cross-compiles the `hippo` binary for every OS/arch onto the
     GitHub release. See `docs/cli.md` and the module README.
-  - `integrations/otel/` — the OpenTelemetry Collector logs pipeline (moved here from the old
-    top-level `otel/`): `hippocampusexporter/` is its own Go module (module path
-    `github.com/fastbean-au/hippocampus/integrations/otel/hippocampusexporter`; `replace
-github.com/fastbean-au/hippocampus => ../../..`) — a collector logs exporter turning each
-    collector batch into one `StoreMemories` call (severity→significance, `service.name`→`group`,
-    and metadata from four selections: fixed labels, `trace_metadata`'s `trace_id`/`span_id` — on by
-    default, since a trace id not written at ingest cannot be recovered by a metadata filter later —
-    the named `metadata_from` attributes and everything under `metadata_prefix`, resolved record →
-    scope → resource). Two things carry the write. A per-memory failure is **not** handed back for
-    retry, because `exporterhelper` retries whole batches and a fresh memory mints a new id per send,
-    so a partial success would store its survivors twice; the exception is a call in which nothing
-    landed and every failure was transient. And the `Unimplemented` fallback to per-record
-    `StoreMemory` **latches**, since a service does not grow an RPC while it is running. `collector/`
-    is the OCB builder manifest (`builder-config.yaml`) that links it into a runnable collector. See
-    the two READMEs and `otel/collector`'s walkthrough. **NB the root module does not import this
-    module**, so the main build is unaffected by it.
   - `integrations/python/` — the **published** Python client, `hippocampus-client` on PyPI (its own
     project, not a Go module and not imported by anything here). A thin wrapper over generated gRPC
     stubs covering the **full** RPC surface, unlike the MCP bridge's curated one - it is a client
@@ -1407,47 +1396,6 @@ annotations_pb2` into the generated module and no index publishes that package, 
     also regenerates from the contract, builds both distributions and imports the wheel out of a
     clean environment - the one failure this package can ship is a wheel with no stubs in it, which
     every test passes against because they run on the source tree. See `docs/python.md`.
-  - `integrations/llamaindex/` — the **LlamaIndex adapter**, `llama-index-memory-hippocampus` on
-    PyPI (its own Python project, over the published client; not a Go module and not imported by
-    anything here). One `BaseMemoryBlock[str]` - `HippocampusMemoryBlock` - plus a
-    `hippocampus_memory()` one-liner, installing as `llama_index.memory.hippocampus` under
-    llama-index's namespace package, which is why the two directories above the leaf stay
-    `__init__.py`-less and the wheel packages `src/llama_index` rather than the leaf. Seven things
-    carry it. (1) **The slot is a long-term memory block and deliberately not a conversation
-    session**: a transcript has a structural invariant a forgetting store breaks - a tool call needs
-    its matching tool result, they are two memories with two significances, and a cycle will
-    eventually take one - whereas facts folded into a prompt by relevance are SUPPOSED to thin out.
-    (2) **Retrieval reinforces** (`reinforce=True`), which is the whole pairing: a fact the agent
-    keeps reaching for is recalled by being used and one it never retrieves decays out, so the
-    adapter carries no eviction, no cap and no TTL of its own. (3) **The role and session go in
-    metadata, never the body** - a body is what the content index tokenises, so the framework's own
-    `<message role='user'>` wrapper would put `message`, `role` and `user` into the index for every
-    memory, three terms matching everything and ranking nothing; the role is restored as a prefix at
-    render time. (4) The **`significance` map is the selector as well as the ranking** (a role absent
-    from it is not stored), so there is no way to configure a role that is written and then ranked by
-    a default nobody chose; system messages are absent because a system prompt is configuration
-    resent every call. (5) The **search mode is resolved once from `who_am_i()`**, richest first,
-    because a mode with no backend is refused per call - a block configured for one would fail every
-    retrieval for the life of the process while looking like a retrieval bug. (6) The block holds a
-    **`MemoryClient` protocol naming exactly four calls**, not the whole client, and that list is the
-    only thing between an agent's memory and `Purge`/`Clear` - the event-source bridges' rule, held
-    at four by a test. (7) **Retrieval is not session-scoped by default** (remembering across
-    conversations is the point) and every call runs through `asyncio.to_thread`, the published client
-    being synchronous. Two traps worth knowing, both found by driving a real `Memory` rather than by
-    reading the base class: it feeds a block only on short-term **overflow**, so a short conversation
-    writes nothing (`block.aput` direct is the per-turn write), and `token_flush_size` defaults to
-    10% of the DEFAULT token limit rather than of the one passed, so `hippocampus_memory` lowers it
-    with `token_limit` or `Memory` refuses the construction for a field the caller never set.
-    Built/tested by the `llamaindex-adapter` CI job against the `llama-index-core` floor and newest,
-    on the same reasoning the client tests its interpreter floor. See `docs/llamaindex.md`.
-  - `integrations/obsidian/` — a TypeScript Obsidian community plugin (its own npm project, not part
-    of the Go module) that uses Hippocampus as a memory layer for a vault. It talks to the **HTTP
-    `/v1` gateway** via Obsidian's `requestUrl` (not gRPC, not the MCP bridge) — store notes/
-    selections as memories, search/recall, and optional idempotent folder auto-sync (a persisted
-    note-path→memory-id map, update-or-recreate on 404). Pure logic (`parse.ts` wire normalisation,
-    `mapping.ts` note→memory mapping) is split out from the Obsidian-dependent modules so it is
-    unit-testable without a running app. Requires Node.js to build (`npm install && npm run build`);
-    there is no JS runtime in the default dev image. See `docs/obsidian.md` and the plugin README.
   - `integrations/eventsource/` — event-sourcing broker bridges: consume from a message broker and
     store each message as a memory. Its own Go module (module path
     `github.com/fastbean-au/hippocampus/integrations/eventsource`; `replace
@@ -1555,7 +1503,7 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     `HIPPOCAMPUS_TEST_JETSTREAM`, the last needing no container since Jetstream is public, and set in
     CI only on pushes to the default branch so a fork's PR never reaches Bluesky), every package
     ≥95% covered (`bridge` itself sits at ~91%, held down by `StartRuntime`). Built/vetted/tested by the `eventsource-bridges`
-    CI job (like `otel-exporter`; the `docker` CI job also smoke-builds the five images). The release
+    CI job (like `ingestor`; the `docker` CI job also smoke-builds the five images). The release
     workflow cross-compiles all five `cmd` binaries (`hippocampus-<broker>-bridge`) onto the GitHub
     release and publishes one multi-arch image per broker to GHCR
     (`ghcr.io/fastbean-au/hippocampus-<broker>-bridge`) via a matrix over the one parameterised

@@ -63,17 +63,19 @@ The load generator and the compressed-clock demo stack are in [`demo/`](../demo/
 | **[Obsidian](obsidian.md)**          | Use the store as a memory layer for a note vault, via the plugin or the MCP bridge.       |
 | **[Object storage](objectstore.md)** | Govern a bucket you do not hold: reinforce on read, delete on forget.                     |
 
-Each integration is a self-contained subproject with its own README:
+Each integration in this repository is a self-contained subproject with its own README:
 [`integrations/cli`](../integrations/cli/README.md),
 [`integrations/mcp`](../integrations/mcp/README.md),
 [`integrations/python`](../integrations/python/README.md),
-[`integrations/llamaindex`](../integrations/llamaindex/README.md),
 [`integrations/eventsource`](../integrations/eventsource/README.md),
-[`integrations/ingestor`](../integrations/ingestor/README.md),
-[`integrations/objectstore`](../integrations/objectstore/README.md),
-[`integrations/obsidian`](../integrations/obsidian/README.md), and the OpenTelemetry Collector
-[logs exporter](../integrations/otel/hippocampusexporter/README.md) plus its
-[builder manifest](../integrations/otel/collector/README.md).
+[`integrations/ingestor`](../integrations/ingestor/README.md), and
+[`integrations/objectstore`](../integrations/objectstore/README.md).
+
+Three more live in their own repositories, because each tracks a release train that is not this
+one's — see the pages above, which say what they are and where they went:
+[hippocampus-obsidian](https://github.com/fastbean-au/hippocampus-obsidian),
+[hippocampus-llamaindex](https://github.com/fastbean-au/hippocampus-llamaindex), and
+[hippocampus-otel-collector](https://github.com/fastbean-au/hippocampus-otel-collector).
 
 ## The project itself
 

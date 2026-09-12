@@ -9,7 +9,7 @@ on:
 # Least privilege for the whole workflow, set here rather than per job because every job in it only
 # ever reads the repository: nothing pushes a commit, publishes an image, or comments on a PR. The
 # default GITHUB_TOKEN is otherwise write-capable on a push to the default branch, so a compromised
-# third-party action or dependency in any of these nine jobs would inherit that. Coveralls and the
+# third-party action or dependency in any of these ten jobs would inherit that. Coveralls and the
 # Homebrew tap authenticate with their own secrets, not this token, so neither needs more.
 permissions:
   contents: read
@@ -165,7 +165,9 @@ jobs:
 
       # The baseline is the most recent release tag reachable from HEAD - the released contract a
       # client would have generated from. The obsidian plugin's own tags (obsidian-v*, and a bare
-      # 0.1.0) are excluded by the match pattern; they do not carry a contract. With no tag
+      # 0.1.0) are excluded by the match pattern; they do not carry a contract. The plugin moved to
+      # fastbean-au/hippocampus-obsidian, but those tags stay in this repository's history, so the
+      # exclusion stays with them. With no tag
       # reachable there is nothing to compare against and the check is skipped outright; every
       # other case runs buf and only decides whether its verdict is binding.
       #
@@ -357,27 +359,6 @@ jobs:
               -t "hippocampus-${command}:ci" .
           done
 
-  # The OTEL collector exporter under integrations/otel is a SEPARATE Go module (its dependency tree
-  # is large and kept out of the root module), so the test job's `go build/test ./...` never
-  # descends into it - it would rot undetected. Build, vet, and test it here on its own. It has a
-  # `replace => ../../..` back to the repo root, so the full checkout is required.
-  otel-exporter:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: integrations/otel/hippocampusexporter/go.mod
-
-      - name: Build, vet, and test the exporter module
-        working-directory: integrations/otel/hippocampusexporter
-        run: |
-          go build ./...
-          go vet ./...
-          go test ./...
-
   # The MCP bridge under integrations/mcp is a SEPARATE Go module (the modelcontextprotocol/go-sdk
   # dependency tree is kept out of the root module), so the test job's `go build/test ./...` never
   # descends into it - it would rot undetected. Build, vet, and test it here on its own. It has a
@@ -554,39 +535,6 @@ jobs:
           go vet ./...
           go test -race ./...
 
-  # The Obsidian plugin under integrations/obsidian is a TypeScript project outside the Go module, so
-  # nothing in the Go jobs exercises it. Typecheck+bundle and run its unit tests here - this is the
-  # only place they run (there is no JS runtime on the maintainer's box). `npm ci` installs from the
-  # committed package-lock.json for a reproducible, drift-detecting build.
-  obsidian-plugin:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-
-      - name: Install dependencies
-        working-directory: integrations/obsidian
-        run: npm ci
-
-      # Fail the build on any moderate-or-higher advisory in the dependency tree. These are all
-      # build-time (dev) dependencies, but a compromised build tool can inject into the shipped
-      # main.js, so a known-vulnerable toolchain must not build a release. npm ci does not audit,
-      # so this is a distinct step; it queries the registry advisory database on every run and thus
-      # catches advisories disclosed after the lockfile was written.
-      - name: Audit dependencies
-        working-directory: integrations/obsidian
-        run: npm audit --audit-level=moderate
-
-      - name: Build and test the plugin
-        working-directory: integrations/obsidian
-        run: |
-          npm run build
-          npm test
-
   # The Python client under integrations/python is not a Go module at all, so no Go job reaches it.
   # It is built and tested on the OLDEST interpreter it claims support for and the newest, because
   # the failure this catches is a syntax or typing feature that works on the developer's Python and
@@ -643,74 +591,15 @@ jobs:
           /tmp/wheel-check/bin/pip install --quiet dist/*.whl
           cd /tmp && /tmp/wheel-check/bin/python -c "import hippocampus; print(hippocampus.__version__)"
 
-  # The LlamaIndex adapter, over the published client. The matrix dimension is llama-index-core
-  # rather than the interpreter: what this package implements is one upstream base class, and the
-  # floor it declares is the release that first exported it - a floor nothing installs is a floor
-  # that is wrong, which is the same reasoning python-client applies to its interpreter floor.
-  llamaindex-adapter:
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        # The floor declared in pyproject.toml, and whatever is current.
-        llama-index-core: ["0.12.36", ""]
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      # The client is installed from this repository rather than from PyPI, and the adapter with
-      # --no-deps, because both packages publish from the same tag: the client release this one
-      # declares a floor against does not exist on the index until the release that also uploads
-      # this package. Resolving the floor against the local 0.0.0.dev0 would fail every run.
-      - name: Install the client from this repository
-        working-directory: integrations/python
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .
-
-      - name: Install the adapter and its test dependencies
-        working-directory: integrations/llamaindex
-        run: |
-          python -m pip install pytest pytest-asyncio build
-          python -m pip install "llama-index-core${LLAMA_INDEX_CORE:+==$LLAMA_INDEX_CORE}"
-          python -m pip install -e . --no-deps
-        env:
-          LLAMA_INDEX_CORE: ${{ matrix.llama-index-core }}
-
-      - name: Test
-        working-directory: integrations/llamaindex
-        run: python -m pytest -q
-
-      - name: Build the distributions
-        working-directory: integrations/llamaindex
-        run: python -m build
-
-      # The failure this package can ship is a wheel that installs and then shadows or misses the
-      # llama_index namespace, which no test on the source tree can see. --no-deps keeps the check
-      # to that question rather than to whether the client is on the index yet.
-      - name: Install the built wheel into a clean environment and import it
-        working-directory: integrations/llamaindex
-        run: |
-          python -m venv /tmp/adapter-check
-          /tmp/adapter-check/bin/pip install --quiet llama-index-core ../python
-          /tmp/adapter-check/bin/pip install --quiet --no-deps dist/*.whl
-          cd /tmp && /tmp/adapter-check/bin/python -c \
-            "from llama_index.memory.hippocampus import HippocampusMemoryBlock, __version__; \
-             from llama_index.core.memory import Memory; print(__version__)"
-
   # The embedded console is ~2,800 lines of JavaScript that no Go job can exercise. Its pure logic
   # lives in cmd/hippocampus/webui/lib.js — the capability matrix that decides which controls a
   # caller sees, the decay-curve geometry, the escaping, the age and metadata parsing — and this
   # runs it under node's built-in test runner, plus a drift guard pairing every data-act control in
   # the markup with a handler in app.js.
   #
-  # Unlike obsidian-plugin there is deliberately NOTHING to install: no dependencies, no lockfile,
-  # no node_modules inside a Go source tree, and so no npm ci and no npm audit step.
+  # There is deliberately NOTHING to install: no dependencies, no lockfile, no node_modules inside
+  # a Go source tree, and so no npm ci and no npm audit step. That is a property this package
+  # documents and intends, and it is why the Obsidian plugin's departure left no JS tooling behind.
   webui:
     runs-on: ubuntu-latest
 

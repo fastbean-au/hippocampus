@@ -43,14 +43,56 @@ What each version number covers:
 
 Not covered: the embedded web console, the demo stack, the Grafana dashboard, and anything under
 `docs/`. Each integration under `integrations/` (the MCP bridge, the `hippo` CLI, the event-source
-bridges, the ingestor, the OTEL collector exporter, the `hippocampus-client` Python package and the
-`llama-index-memory-hippocampus` adapter over it) is released from this same tag and tracks the
-service; the Obsidian plugin has its own `obsidian-v*`
-tags and its own version line. For the Python package that coupling is stronger than convention —
-its stubs are generated from the contract during the build, and its version is stamped from the
-tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by construction.
+bridges, the ingestor, the object-storage agents and the `hippocampus-client` Python package) is
+released from this same tag and tracks the service. For the Python package that coupling is stronger
+than convention — its stubs are generated from the contract during the build, and its version is
+stamped from the tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by
+construction.
+
+Three subprojects have **their own repositories and their own version lines**, and a release here
+makes no promise about them: the [Obsidian plugin][obsidian-repo], the [LlamaIndex
+adapter][llamaindex-repo] and the [OpenTelemetry collector][otel-repo]. Each takes a versioned
+dependency on this module and is told about a release by a `repository_dispatch`, so each states for
+itself which service version it was built against.
 
 ## [Unreleased]
+
+### Changed
+
+- **Three subprojects moved to their own repositories**: the Obsidian plugin, the LlamaIndex adapter
+  and the OpenTelemetry collector exporter. Nothing about the service changed; what changed is where
+  those clients are developed and released.
+
+  The rule used to be "one release train, plus Obsidian". It is now that a subproject stays here if
+  it tracks **this** contract, and leaves if it tracks somebody else's release train. By that test
+  the `hippo` CLI stays (it changes with the contract in two commits out of three), the Python client
+  stays (its stubs are generated from `contract/hippocampus.proto` at build time), and the MCP bridge
+  stays (its tool surface is a security statement held to the contract by tests) — while the plugin
+  hand-writes its wire types and imports nothing from here, the adapter tracks `llama-index-core` and
+  depends on the published client, and the collector tracks twelve collector modules on a dual-series
+  fortnightly cadence.
+
+  The plugin's case was decided by distribution rather than by cadence: Obsidian's community registry
+  lists a repository whose **root** holds `manifest.json`, which a monorepo cannot offer, so the
+  plugin could not be listed from here at all.
+
+  | Was | Now |
+  | --- | --- |
+  | `integrations/obsidian` | [fastbean-au/hippocampus-obsidian][obsidian-repo] |
+  | `integrations/llamaindex` | [fastbean-au/hippocampus-llamaindex][llamaindex-repo] |
+  | `integrations/otel` | [fastbean-au/hippocampus-otel-collector][otel-repo] |
+
+  For consumers: the plugin's releases continue from `0.3.0` in its own repository (BRAT cannot
+  follow the move — remove it and re-add `fastbean-au/hippocampus-obsidian`), and
+  `ghcr.io/fastbean-au/hippocampus-otel-collector` is the same package published from its new home,
+  so existing pins keep resolving. The collector exporter's Go import path changed to
+  `github.com/fastbean-au/hippocampus-otel-collector/hippocampusexporter`, which matters only if you
+  reference it from your own OCB manifest.
+
+- The release workflow gained a `notify-satellites` job, which tells each satellite repository that a
+  release exists so it can re-pin what it tracks and report whether it still builds against it. A
+  satellite nobody tells drifts silently — `hippocampus-gen` has sat eleven releases behind its pinned
+  version for exactly that reason.
 
 ## [0.47.0] - 2026-09-12
 
@@ -3218,6 +3260,10 @@ This release added the delivery and production-readiness layer around it:
 ### Fixed
 
 - A stored XSS in the embedded web console, plus auth, TLS, and gateway hardening.
+
+[obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
+[llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
+[otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
 
 [Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.47.0...HEAD
 [0.47.0]: https://github.com/fastbean-au/hippocampus/compare/v0.46.0...v0.47.0

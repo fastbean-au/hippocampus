@@ -144,8 +144,9 @@ func TestDependabotCoversEveryGoModule(t *testing.T) {
 	}
 }
 
-// contains reports whether values holds want. Explicit rather than a substring match, which would
-// be wrong over these paths: /integrations/otel is a prefix of /integrations/otel/hippocampusexporter.
+// contains reports whether values holds want. Explicit rather than a substring match, which would be
+// wrong the moment one module directory nests inside another - as /integrations/otel and
+// /integrations/otel/hippocampusexporter did until the collector moved to its own repository.
 func contains(values []string, want string) bool {
 	for _, v := range values {
 		if v == want {

@@ -8,9 +8,11 @@ decay under a finite budget — so the assistant reads a distilled memory instea
 
 There are two ways to connect a vault, and they compose:
 
-1. **The Obsidian plugin** (`integrations/obsidian/`) — a first-party plugin that talks directly to
-   the HTTP/JSON gateway. Store notes/selections as memories, search and recall them, and optionally
-   auto-sync a folder.
+1. **The Obsidian plugin** — a first-party plugin that talks directly to the HTTP/JSON gateway.
+   Store notes/selections as memories, search and recall them, mirror the vault's `[[wikilinks]]`
+   into the memory graph, and optionally auto-sync a folder. It lives in its own repository,
+   [**fastbean-au/hippocampus-obsidian**](https://github.com/fastbean-au/hippocampus-obsidian),
+   which is where its documentation, releases and install instructions are.
 2. **The MCP bridge** (`integrations/mcp`) — for AI assistants (Claude Desktop/Code, or an
    MCP-capable Obsidian plugin) that already speak the Model Context Protocol and want Hippocampus as
    their bounded memory store.
@@ -19,41 +21,28 @@ There are two ways to connect a vault, and they compose:
 
 ## 1. The Obsidian plugin
 
-The plugin lives at [`integrations/obsidian/`](../integrations/obsidian/); its
-[README](../integrations/obsidian/README.md) has the full build/install/configure walkthrough. In
-short:
+The plugin is not in this repository. It has its own repository and its own version line, because
+Obsidian's community registry lists a repository whose **root** holds `manifest.json`, which a
+monorepo cannot offer — see TODO-2 item 113 for the reasoning, and
+[`hippocampus-obsidian`](https://github.com/fastbean-au/hippocampus-obsidian) for the plugin itself.
 
-- It calls the Hippocampus **HTTP gateway** (`gateway.port` must be non-zero on the service — the
-  `deploy/compose/config.sqlite.json` demo uses `8080`; the root `config.json` ships with it disabled). It
-  uses Obsidian's `requestUrl`, so it is not blocked by renderer CORS and needs no server-side
-  changes.
-- Bearer-token auth and OS-trusted TLS are supported; `requestUrl` has no
-  `insecureSkipVerify`, so use plaintext localhost or a properly CA-signed endpoint.
+Two things about it are worth knowing from this side, because they are properties of the **service**
+rather than of the plugin:
 
-### What it does
-
-- **Store note / selection as memory** — significance comes from a `significance:` frontmatter key
-  (falling back to a configurable default); the `group` label comes from the note's top-level
-  folder, a frontmatter key, or a fixed value; and `metadata` labels come from a named list of
-  frontmatter keys plus any fixed `key=value` lines. The frontmatter keys are named explicitly
-  rather than copied wholesale, so plugin bookkeeping, dates, and tag arrays stay out of the labels
-  unless you ask for them; awkward keys ("Project Name") are normalised to the service's charset.
-- **Search memories and insert results** — content search (built into the service on every storage
-  driver; `opensearch.enabled` adds semantic and hybrid modes), optionally reinforcing the matches.
-- **Auto-sync a folder** — notes under a configured folder are pushed in as they are edited,
-  idempotently (one memory per note path, updated in place, re-created if consolidation has since
-  forgotten it). This is what lets the sleep cycle prune the noise: notes you keep touching are
-  reinforced and survive; notes you never revisit fade.
-- **Mirror the vault's `[[wikilinks]]`** — a synced note's links become links between the memories,
-  in both the manual and automatic paths. On by default. A link to a note that does not exist yet is
-  ignored (that is ordinary Obsidian), embeds count as links, and deleting a wikilink removes the
-  edge unless the note at the other end declares it too.
+- It calls the Hippocampus **HTTP gateway**, so `gateway.port` must be non-zero (the
+  `deploy/compose/config.sqlite.json` demo uses `8080`; the root `config.json` ships with it
+  disabled). It uses Obsidian's `requestUrl`, so it is not blocked by renderer CORS and needs no
+  server-side changes.
+- Its wire handling is hand-written against the `/v1` gateway rather than generated from
+  `contract/hippocampus.proto`, so it holds itself to a vendored copy of
+  `contract/hippocampus.swagger.json` and declares a minimum service version. A contract change that
+  moves a route or drops a field turns that repository's CI red, not this one's.
 
 ### Why the shape fits
 
-- **The link graph is the same idea on both sides** — Obsidian's entire model is `[[wikilinks]]`,
-  and Hippocampus raises the effective significance of **both** ends of a link (`log1p`-damped, so a
-  hub note cannot become unforgettable by being linked a thousand times). A well-connected note is
+- **The link graph is the same idea on both sides** — Obsidian's entire model is `[[wikilinks]]`, and
+  Hippocampus raises the effective significance of **both** ends of a link (`log1p`-damped, so a hub
+  note cannot become unforgettable by being linked a thousand times). A well-connected note is
   therefore kept for the reason it deserves to be, without anybody assigning it a significance.
 - **Reinforcement through recall** — when you (or an assistant) repeatedly reference an old project
   note, recalling it resets its decay clock and raises its effective significance, so it survives.
