@@ -57,6 +57,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-09-13
+
 ### Changed
 
 - **Three subprojects moved to their own repositories**: the Obsidian plugin, the LlamaIndex adapter
@@ -3265,7 +3267,8 @@ This release added the delivery and production-readiness layer around it:
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/fastbean-au/hippocampus/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/fastbean-au/hippocampus/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/fastbean-au/hippocampus/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/fastbean-au/hippocampus/compare/v0.44.0...v0.45.0
