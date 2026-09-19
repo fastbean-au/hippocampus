@@ -57,6 +57,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-09-20
+
 ### Added
 
 - **`observability.serviceName`** — what this instance calls itself in the telemetry (the semconv
@@ -3296,7 +3298,8 @@ This release added the delivery and production-readiness layer around it:
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.47.1...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/fastbean-au/hippocampus/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/fastbean-au/hippocampus/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/fastbean-au/hippocampus/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/fastbean-au/hippocampus/compare/v0.45.0...v0.46.0
