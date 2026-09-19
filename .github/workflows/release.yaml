@@ -720,8 +720,15 @@ jobs:
   #
   # Best-effort per repository: one unreachable satellite must not stop the other two being told,
   # and none of them can stop the release.
+  #
+  # Gated on publish-python as well as release, because whatever a satellite re-pins to has to
+  # exist by the time it is told. hippocampus-llamaindex pins the release WHEEL, which publish-python
+  # attaches - and on v0.47.1 this job dispatched twenty seconds before that upload landed, so the
+  # bump died with "v0.47.1 has no hippocampus_client-0.47.1-py3-none-any.whl attached". The other
+  # two read the tag itself (raw.githubusercontent for the contract, `go get @tag` for the module),
+  # which the release job already guarantees, so this need covers the only satellite that has one.
   notify-satellites:
-    needs: release
+    needs: [release, publish-python]
     runs-on: ubuntu-latest
 
     permissions: {} # dispatches elsewhere with a PAT; needs nothing here
