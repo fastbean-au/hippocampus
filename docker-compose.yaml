@@ -70,7 +70,7 @@ services:
   # Unauthenticated, like the rest of this demo stack - do not expose it as-is. Against an instance
   # with auth on, use the Authorize box (the document declares a bearer securityDefinition).
   swagger-ui:
-    image: swaggerapi/swagger-ui:v5.17.14
+    image: swaggerapi/swagger-ui:v5.32.15
     profiles: ["swagger"]
     environment:
       SWAGGER_JSON_URL: "http://localhost:8080/v1/openapi.json"
