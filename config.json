@@ -57,6 +57,7 @@
     "keyFile": ""
   },
   "observability": {
+    "serviceName": "hippocampus",
     "tracing": {
       "enabled": false,
       "samplingRatio": 1.0

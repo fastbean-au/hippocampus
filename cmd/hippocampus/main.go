@@ -657,6 +657,33 @@ func setStartupDefaults() {
 // or an explicit cancel in a test - or a listener fails, then shuts every component down in order.
 // It returns an error for a bootstrap failure or a fatal serve error; a clean shutdown returns nil.
 // Split out of main so the whole serve/shutdown lifecycle can be exercised in-process by a test,
+// observabilityConfigFromViper builds the observability configuration from the config file, in the
+// same mould as hmacConfigFromViper: the viper reads stay in main.go, and what they produce is a
+// plain struct a test can assert on without starting a service.
+//
+// observability.serviceName is the one key here that a single-instance deployment never needs and a
+// horizontally-scaled one cannot do without. The OTLP-to-Prometheus translation promotes only
+// service.name/service.version/job/instance onto each series, so every instance sharing this name
+// publishes one series per instrument between them, and the value a dashboard reads is whichever
+// instance exported last. Empty is left empty rather than defaulted here, so the fallback to
+// "hippocampus" stays in observability.Config.serviceName and an existing config file keeps the
+// resource attributes it has always had.
+func observabilityConfigFromViper(version versionInfo) observability.Config {
+	log.Trace("func() observabilityConfigFromViper")
+
+	return observability.Config{
+		TracingEnabled:         viper.GetBool("observability.tracing.enabled"),
+		TracingSamplingRatio:   viper.GetFloat64("observability.tracing.samplingRatio"),
+		MetricsEnabled:         viper.GetBool("observability.metrics.enabled"),
+		MetricsIntervalSeconds: viper.GetInt("observability.metrics.exportIntervalSeconds"),
+		OTLPEndpoint:           viper.GetString("observability.otlp.endpoint"),
+		OTLPInsecure:           viper.GetBool("observability.otlp.insecure"),
+		PrometheusEnabled:      viper.GetBool("observability.prometheus.enabled"),
+		ServiceName:            viper.GetString("observability.serviceName"),
+		ServiceVersion:         version.Version,
+	}
+}
+
 // which main() (blocking on real signals) cannot be.
 func run(ctx context.Context, version versionInfo) error {
 	log.Info("initialising hippocampus")
@@ -665,16 +692,7 @@ func run(ctx context.Context, version versionInfo) error {
 
 	// initialise observability
 	log.Debug("initialising observability")
-	obsCfg := observability.Config{
-		TracingEnabled:         viper.GetBool("observability.tracing.enabled"),
-		TracingSamplingRatio:   viper.GetFloat64("observability.tracing.samplingRatio"),
-		MetricsEnabled:         viper.GetBool("observability.metrics.enabled"),
-		MetricsIntervalSeconds: viper.GetInt("observability.metrics.exportIntervalSeconds"),
-		OTLPEndpoint:           viper.GetString("observability.otlp.endpoint"),
-		OTLPInsecure:           viper.GetBool("observability.otlp.insecure"),
-		PrometheusEnabled:      viper.GetBool("observability.prometheus.enabled"),
-		ServiceVersion:         version.Version,
-	}
+	obsCfg := observabilityConfigFromViper(version)
 
 	shutdownObservability, err := observability.Init(context.Background(), obsCfg)
 	if err != nil {

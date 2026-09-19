@@ -1739,6 +1739,16 @@ const STEPS = [
           "Tracing and metrics are independent, both exported over OTLP/gRPC. With both off, the instrumentation is a no-op and nothing is dialled.",
         fields: [
           {
+            key: "observability.serviceName",
+            label: "Service name",
+            type: "text",
+            def: "hippocampus",
+            when: (s) =>
+              value(s, "observability.tracing.enabled") ||
+              value(s, "observability.metrics.enabled"),
+            help: "Names this instance in the telemetry. Give every instance sharing a collector its own name — the OTLP-to-Prometheus translation puts only this, the version and the job on each series, so instances sharing a name publish one series between them and a dashboard reads whichever exported last. Empty falls back to \"hippocampus\".",
+          },
+          {
             key: "observability.tracing.enabled",
             label: "Enable tracing",
             type: "bool",

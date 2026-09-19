@@ -57,6 +57,35 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **`observability.serviceName`** — what this instance calls itself in the telemetry (the semconv
+  `service.name` resource attribute). Empty falls back to `hippocampus`, which is what every
+  previous release reported, so an existing configuration is unchanged.
+
+  It exists because the service was the one component that could not set it. `observability.Config`
+  has carried the field since the package was promoted out of `cmd/hippocampus`, and the ingestor
+  and the object-storage agents both set it; `cmd/hippocampus` never did, and no key reached it, so
+  every Hippocampus instance everywhere reported as `hippocampus`.
+
+  That is invisible on one instance and destroys the metrics on several. The OTLP-to-Prometheus
+  translation promotes only `service.name`, `service.version`, `job` and `instance` onto each series
+  and puts every other resource attribute in `target_info`, so instances sharing a name publish
+  **one series per instrument between them** — the value a dashboard or an alert rule reads is
+  whichever instance exported last, flapping at the export interval. Found on a host running five
+  independent stores against one collector, where `hippocampus_memories_count` had exactly two
+  series (differing only by the `has_event` attribute) and alternated between a store holding 617
+  memories and one holding 127,959. The shipped rules in `deploy/observability/` cannot attribute a
+  fault under that, and a store that stopped forgetting would not have shown up at all.
+
+  It matters in the topology this project documents as its scaling model — one consolidator plus N
+  replicas over a shared Postgres — as much as on a host running several separate stores. Set it per
+  instance wherever more than one reports to the same collector.
+
+  The viper reads it needs moved into `observabilityConfigFromViper`, in the same mould as
+  `hmacConfigFromViper`: the reads stay in `main.go` and what they produce is a plain struct a test
+  can assert on.
+
 ## [0.47.1] - 2026-09-13
 
 ### Changed

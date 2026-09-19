@@ -51,6 +51,7 @@ OpenTelemetry tracing and metrics are optional and independently enabled through
 
 ```json
 "observability": {
+    "serviceName": "hippocampus",
     "tracing": {
         "enabled": false,
         "samplingRatio": 1.0
@@ -71,6 +72,21 @@ OpenTelemetry tracing and metrics are optional and independently enabled through
     }
 }
 ```
+
+- `serviceName` — how this instance names itself in the telemetry (the semconv `service.name`
+  resource attribute). Empty falls back to `hippocampus`, which is what every release before this
+  key reported, so an existing configuration is unchanged.
+
+  **Give every instance that shares a collector its own name.** The OTLP-to-Prometheus translation
+  promotes only `service.name`, `service.version`, `job` and `instance` onto each series and puts
+  every other resource attribute in `target_info`, so instances sharing a name publish *one* series
+  per instrument between them: the value a dashboard or an alert rule reads is whichever instance
+  exported last, flapping between them at the export interval. That makes the shipped rules in
+  [`deploy/observability/`](../deploy/observability/README.md) unable to say which instance is at
+  fault, and a per-store gauge such as `hippocampus_memories_count` meaningless. It matters most in
+  exactly the topology this project documents as its scaling model — a consolidator plus N replicas
+  over one Postgres (see [Horizontal scaling](operations.md#horizontal-scaling-with-replicas)) —
+  and in any host running several independent stores against one collector.
 
 - `tracing.samplingRatio` — the fraction of traces to sample (0.0–1.0). The sampler is
   parent-based, so sampling decisions propagated by callers are honoured; the ratio applies to
