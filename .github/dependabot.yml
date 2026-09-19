@@ -93,3 +93,24 @@ updates:
       base-images:
         patterns:
           - "*"
+
+  # ---- Docker Compose: the images the deploy stacks pin ---------------------------------------
+  # A SEPARATE ECOSYSTEM from the block above, and it covers the other half of this repository's
+  # container surface. The `docker` entry watches the base images the published images are BUILT
+  # on; this one watches the third-party services the deploy stacks RUN against, which nothing
+  # else in the tree bumps: `postgres:17-alpine`, `mysql:8.4`, `opensearchproject/opensearch:3.1.0`
+  # and `swaggerapi/swagger-ui:v5.17.14`. The first three are the stores the `db` conformance suite
+  # and the compose smoke tests in CI actually execute against, so a bump here is a change to what
+  # this repository is tested on - read it as that rather than as a dependency refresh.
+  #
+  # `grafana/otel-lgtm` and `ollama/ollama` float `:latest` and so have nothing to bump.
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/"
+      - "/deploy/compose"
+    schedule:
+      interval: "weekly"
+    groups:
+      stack-images:
+        patterns:
+          - "*"

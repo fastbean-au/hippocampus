@@ -150,6 +150,28 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   containers, and that is how they survive a reboot), the second protects named compose state, and
   relying on the refusal instead would make `--dry-run` overstate what it is about to delete. It
   never touches `~/.hippocampus` (a personal instance's real store) or the Go module cache
+- Administer the **family of repositories** (the service plus `hippocampus-demo-site`,
+  `-gen`, `-llamaindex`, `-obsidian`, `-otel-collector` and `homebrew-tap`), all from this
+  repository because it is the hub the other six are satellites of. Three scripts, each idempotent
+  and each taking `--dry-run`:
+  - `scripts/apply-rulesets.sh` — the `protect-main` branch ruleset on every repository: `deletion`
+    and `non_fast_forward`, no bypass actors, targeting `~DEFAULT_BRANCH`. **What it leaves out is
+    the design**: required pull requests, required status checks and required linear history would
+    all refuse the direct pushes these repositories are actually developed with, and the predictable
+    response — a bypass actor for the only person who pushes — protects nothing. Tags are
+    deliberately untargeted too, since a rebase of already-tagged work has to re-point them.
+  - `scripts/setup-discussions.sh` — enables Discussions and seeds one welcome post per repository.
+    The satellites' posts point at the service's Discussions for anything about the service, because
+    conversation split seven ways across six thin satellites is six tabs holding one thread each.
+  - `scripts/social-preview.py` — renders each repository's social-preview card (Pillow; the family
+    mark from `docs/go-hippocampus.png` over the demo site's palette) to `.github/social-preview.png`
+    in that repository's clone. Every card carries a human title rather than the repository name,
+    because GitHub's fallback card is the NAME over the owner's avatar and six names all beginning
+    `hippocampus-` are indistinguishable at the size a link preview renders. **Uploading is not
+    scriptable** — GitHub exposes no API field for a repository's social preview — so the PNG is
+    committed and set by hand under Settings → General.
+  The two shell scripts need `GITHUB_TOKEN` with `administration: write` (and `discussions: write`
+  for the second)
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
   list); its **Compatibility** section states what a version number covers — contract, config keys
   **and the values they accept**, stored schema — and what is exempt. `RELEASE.md` carries the

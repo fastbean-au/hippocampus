@@ -2,6 +2,7 @@
 
 > **Hippocampus provides human-like memory for digital data. It uses events with linked memories, each of which have their own significance rating on an open scale, reinforced through recall, and a sleep cycle to shed memories that are no longer worth keeping. It is a lossy data store by design, meant for long-term storage.**
 
+[![CI](https://github.com/fastbean-au/hippocampus/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/fastbean-au/hippocampus/actions/workflows/ci.yaml)
 [![Coverage Status](https://coveralls.io/repos/github/fastbean-au/hippocampus/badge.svg?branch=main)](https://coveralls.io/github/fastbean-au/hippocampus)
 ![Dependabot](https://img.shields.io/badge/dependabot-enabled-brightgreen)
 [![Known Vulnerabilities](https://snyk.io/test/github/fastbean-au/hippocampus/badge.svg)](https://snyk.io/test/github/fastbean-au/hippocampus)
