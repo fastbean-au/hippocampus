@@ -531,6 +531,20 @@ func setStartupDefaults() {
 	viper.SetDefault("search.significanceWeight", 0.3)
 	viper.SetDefault("search.recallWeight", 0.2)
 
+	// How long a significance registry level survives having nothing left that carries it, before
+	// the sleep cycle reaps it. The registry is the one table that otherwise grows with the store's
+	// HISTORY rather than its contents - a row per distinct significance value ever written, never
+	// removed - so unlike every other bound here this one defaults to being IN FORCE.
+	//
+	// A week rather than a month, which is the window the forgotten log takes, because the two are
+	// bounding different things. The log is a record and its window is how much history an operator
+	// wants to be able to read; the registry is a SCALE, and what the window protects is a client
+	// that positions against a value it is not carrying at this instant. Seven days spans the gap
+	// between any two sessions of a client that is actually using the registry that way, while a
+	// producer writing arbitrary values - the shape that grew one to 29,001 rows - never reads it at
+	// all. 0 keeps every value ever seen, which is what the service did before.
+	viper.SetDefault("consolidation.significanceLevels.unusedRetentionInDays", 7)
+
 	// The forgotten log (see docs/operations.md). Off by default - it costs a row per forgotten
 	// memory - but its bounds are defaulted anyway, so that turning it on gets a log that is
 	// already bounded rather than one that grows until somebody notices. An explicit 0 on either

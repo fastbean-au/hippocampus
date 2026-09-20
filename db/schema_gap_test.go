@@ -278,6 +278,17 @@ func TestServerSchemaInitFailuresStopTheRun(t *testing.T) {
 			// it, on both server dialects, because it has to know whether to backfill.
 			mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
 		},
+		"significance_level_unused": func(mock sqlmock.Sqlmock, d driver) {
+			// Plain addColumnIfMissing, so it splits on the dialect exactly as core_columns does -
+			// nothing to backfill, and so nothing to probe for on a dialect that can ALTER blind.
+			if dialects[d].addColumnIfNotExists {
+				mock.ExpectExec(`ALTER TABLE .* ADD COLUMN IF NOT EXISTS`).WillReturnError(errors.New("boom"))
+
+				return
+			}
+
+			mock.ExpectQuery(`column_name FROM information_schema`).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, dialect := range serverDialects {

@@ -87,6 +87,11 @@ func (s *Server) sleep(trigger string) error {
 	// returns the ones consolidation freed.
 	s.pruneTombstones(ctx)
 
+	// And before it for the same reason. It also runs before the compaction below, which renumbers
+	// whatever is left: reaping first means a level that is about to go is not renumbered on its way
+	// out.
+	s.reapSignificanceLevels(ctx)
+
 	e3 := s.preserve(ctx)
 
 	// After the trims above, so the figure describes what the store is left holding rather than what

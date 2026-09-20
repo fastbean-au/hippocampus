@@ -4,6 +4,7 @@ import (
 	"context"
 
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -190,4 +191,51 @@ func (s *Server) GetSignificanceLevels(ctx context.Context, in *contract.GetSign
 	res.TotalCount = int32(total)
 
 	return &res, nil
+}
+
+// reapSignificanceLevels trims the significance registry, at the end of every sleep cycle.
+//
+// The registry is the one table in the store that grows with the store's HISTORY rather than its
+// contents: a row per distinct significance value ever written, and nothing ever removed one, so a
+// producer writing varied significance left a level behind for every value it had ever used long
+// after the last memory carrying it was forgotten (TODO-2 item 128). The storage layer does the
+// work and explains how it is made safe against a level being handed out as it goes;
+// consolidation.significanceLevels.unusedRetentionInDays is how long a level survives having
+// nothing left that carries it.
+//
+// Best-effort, exactly as pruneTombstones is - a registry that could not be trimmed is tidiness,
+// not a reason to report the cycle as failed - and the size it reports is published whether or not
+// anything is being reaped, since a registry nothing reaps is the one worth watching.
+//
+// The two instruments part company on a failure, and deliberately. Levels removed are removed, and
+// a counter that dropped them would under-report for the life of the process, so they are counted
+// whatever happened afterwards. The SIZE is a measurement, and a pass that stopped part way has not
+// finished taking it - publishing what it had would replace a figure an operator can read with one
+// nobody can, which is the policy recordAncillaryStorage states at greater length.
+func (s *Server) reapSignificanceLevels(ctx context.Context) {
+	log.Debug("reapSignificanceLevels()")
+
+	ctx, span := tel.tracer.Start(ctx, "reap_significance_levels")
+	defer span.End()
+
+	registry, err := s.db.ReapSignificanceLevels(ctx, s.consolidation.significanceLevelRetention)
+
+	if registry.Reaped > 0 {
+		log.Infof("reaped %d unused levels from the significance registry", registry.Reaped)
+
+		tel.significanceLevelsReaped.Add(ctx, registry.Reaped)
+	}
+
+	span.SetAttributes(attribute.Int64("reaped", registry.Reaped))
+
+	if err != nil {
+		log.Warnf("failed to reap the significance registry: %s", err.Error())
+		span.RecordError(err)
+
+		return
+	}
+
+	tel.significanceLevels.Record(ctx, registry.Levels)
+
+	span.SetAttributes(attribute.Int64("significance_levels", registry.Levels))
 }

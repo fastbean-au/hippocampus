@@ -186,6 +186,18 @@ type Consolidation struct {
 	// rewriting stored memories.
 	autoSummarise bool
 
+	// significanceLevelRetention (consolidation.significanceLevels.unusedRetentionInDays) is how
+	// long a registry level survives having nothing left that carries it, before the sleep cycle
+	// reaps it. The registry is the one table that grows with the store's HISTORY rather than its
+	// contents - a row per distinct significance value ever written, and until item 128 nothing
+	// ever removed one.
+	//
+	// It is a retention window rather than a switch because the registry is also the scale
+	// SignificancePlacement positions against and GetSignificanceLevels reports: a value carried by
+	// nothing today is not necessarily one a client has finished with. 0 restores the old behaviour
+	// of remembering every value forever, and still reports the registry's size.
+	significanceLevelRetention time.Duration
+
 	// tombstones (consolidation.tombstones.enabled) mirrors the storage layer's forgotten-log
 	// policy, which is where the feature actually lives (db/tombstone.go). The RPC layer keeps its
 	// own copy of the one flag because GetForgottenMemories has to report whether the service is
@@ -581,6 +593,9 @@ func New(deps Dependencies) *Server {
 			summarisationMaxCandidates:         viper.GetInt("consolidation.summarisationMaxCandidates"),
 			autoSummarise:                      viper.GetBool("llm.autoSummarise"),
 			tombstones:                         viper.GetBool("consolidation.tombstones.enabled"),
+			significanceLevelRetention: time.Duration(
+				viper.GetInt("consolidation.significanceLevels.unusedRetentionInDays"),
+			) * 24 * time.Hour,
 		},
 	}
 

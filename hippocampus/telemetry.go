@@ -59,6 +59,9 @@ type telemetry struct {
 	tombstones        metric.Int64Gauge
 	tombstonesDeleted metric.Int64Counter
 
+	significanceLevels       metric.Int64Gauge
+	significanceLevelsReaped metric.Int64Counter
+
 	ancillaryBytes metric.Int64Gauge
 
 	searchOutboxDepth     metric.Int64Gauge
@@ -127,6 +130,13 @@ func newTelemetry() *telemetry {
 		// question the log itself raises - is it growing without bound, and is anything trimming it.
 		tombstones:        newInt64Gauge(meter, "hippocampus.tombstones", "Records held by the forgotten log, measured each sleep cycle while it is enabled."),
 		tombstonesDeleted: newInt64Counter(meter, "hippocampus.tombstones.deleted", "Forgotten-log records removed, by whether the removal was a manual request or the configured caps."),
+
+		// The significance registry's size and turnover. It is published whether or not the reap is
+		// enabled, because a registry nothing reaps is precisely the one worth watching: it gains a
+		// row per distinct significance value ever written and, before item 128, lost one only to a
+		// Purge - so it grows with the store's history rather than its contents.
+		significanceLevels:       newInt64Gauge(meter, "hippocampus.significance_levels", "Distinct significance values the registry holds, measured each sleep cycle."),
+		significanceLevelsReaped: newInt64Counter(meter, "hippocampus.significance_levels.reaped", "Registry levels removed after carrying nothing for longer than the configured retention."),
 
 		// The storage used_bytes deliberately does not count. Published per table (component) and
 		// only for the ones the deployment has enabled, so a flat zero never reads as a queue that

@@ -290,8 +290,19 @@ func TestSignificanceLevelsDDL_PerDialect(t *testing.T) {
 			t.Errorf("driver %d DDL missing %q: %s", c.driver, c.want, ddl)
 		}
 
-		if !contains(ddl, "level_rank INTEGER NOT NULL UNIQUE") {
+		// Whitespace-collapsed, so the column list can stay aligned for a reader without the
+		// alignment being what this asserts.
+		columns := strings.Join(strings.Fields(ddl), " ")
+
+		if !contains(columns, "level_rank INTEGER NOT NULL UNIQUE") {
 			t.Errorf("driver %d DDL missing the shared level_rank column: %s", c.driver, ddl)
+		}
+
+		// The registry's own decay mark (significance_reap.go). NULL-able with no default on every
+		// dialect: the absence is the ordinary state, and a level a reap has never looked at must
+		// not read as one it found unused at the epoch.
+		if !contains(columns, "unused_since "+d.dialect().bigintType+" )") {
+			t.Errorf("driver %d DDL missing a NULL-able unused_since column: %s", c.driver, ddl)
 		}
 	}
 }

@@ -92,7 +92,7 @@ type schemaMigration struct {
 // these steps arrived across seventeen releases, several of them are already the accumulated result
 // of earlier ones, and no store anywhere is at an intermediate point between them - every store in
 // existence has either seen all of them or is about to. What the ledger needs to be honest about is
-// the future, and it is: version 15 is where this list ends today, and a store recording 16 was
+// the future, and it is: version 17 is where this list ends today, and a store recording 18 was
 // written by something this build has not met.
 func (d *DB) migrations() []schemaMigration {
 	return []schemaMigration{
@@ -224,6 +224,15 @@ func (d *DB) migrations() []schemaMigration {
 			version: 16,
 			name:    "callback_payload_bytes",
 			apply:   (*DB).migrateCallbackPayloadBytes,
+		},
+		{
+			// significance_levels.unused_since, which is what lets the registry forget a value
+			// nothing carries any more (significance_reap.go). It sits here rather than inside
+			// migration 1 for the reason 16 sits outside 13: CREATE TABLE IF NOT EXISTS says
+			// nothing to a store that already has the table, which is every store there is.
+			version: 17,
+			name:    "significance_level_unused",
+			apply:   (*DB).initSignificanceLevelMark,
 		},
 	}
 }

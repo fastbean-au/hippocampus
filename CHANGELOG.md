@@ -71,6 +71,12 @@ itself which service version it was built against.
   memories a day, held **five days** of the thirty it had been asked for — both caps enforced,
   neither violated, and nothing anywhere that said so.
 
+- **`consolidation.significanceLevels.unusedRetentionInDays`** (default 7) — how long the
+  significance registry keeps a value nothing carries any more, before the sleep cycle reaps it. 0
+  keeps every value the store has ever seen, which is what previous releases did. Two instruments
+  come with it: `hippocampus.significance_levels` (the registry's size, published whether or not
+  anything is being reaped) and `hippocampus.significance_levels.reaped`.
+
 ### Changed
 
 - **`hippocampus.ancillary_bytes` and `ancillary.total_bytes` now report what the engine is
@@ -84,6 +90,26 @@ itself which service version it was built against.
   table's dead rows would prune harder, leave more dead rows, and prune harder again.
 
 ### Fixed
+
+- **The significance registry no longer grows without bound.** It gains a row per distinct
+  significance value ever written and, until now, lost one only to a `Purge` — which made it the one
+  table in the store that grew with the store's **history** rather than its contents. A producer
+  writing varied significance left a level behind for every value it had ever used, long after the
+  last memory carrying that value was forgotten; one live deployment held 29,001 levels against
+  211,657 memories, in neither `used_bytes` nor the ancillary report.
+
+  The sleep cycle now reaps levels nothing carries, after `unusedRetentionInDays`. The window is
+  there because the registry is the scale `SignificancePlacement` positions against and
+  `GetSignificanceLevels` reports — a value carried by nothing today is not necessarily one a client
+  has finished with — so **`GetSignificanceLevels` can now return fewer values than it used to** on
+  a store whose scale includes values that have been out of use for over a week. Set
+  `unusedRetentionInDays` to 0 for the previous behaviour.
+
+  A level is marked on the cycle that first finds it unused and removed only by a later one, rather
+  than deleted on sight. That is not tidiness: a level is handed out *before* anything references
+  it, and there is no foreign key, so deleting one in that window would leave a memory pointing at a
+  level that no longer exists — which every read resolves to unranked, silently costing that memory
+  its significance in a store that decides what to forget by significance.
 
 - **The forgotten log's and the delete outbox's per-row allowances are now per driver, and
   measured.** One flat 192 bytes a tombstone and 96 an outbox row served all three drivers; measured

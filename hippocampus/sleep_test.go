@@ -1032,6 +1032,99 @@ func TestSleep_CompactSignificanceLevelsFailureIsBestEffort(t *testing.T) {
 	}
 }
 
+// failReapStore is the same for the registry reap, which sits beside the compaction and under the
+// same best-effort contract.
+type failReapStore struct {
+	db.Store
+	err error
+}
+
+func (f failReapStore) ReapSignificanceLevels(ctx context.Context, grace time.Duration) (db.SignificanceRegistry, error) {
+	return db.SignificanceRegistry{}, f.err
+}
+
+// TestSleep_ReapSignificanceLevelsFailureIsBestEffort: a registry that could not be trimmed is
+// tidiness, exactly as a forgotten log that could not be pruned is, and a cycle that consolidated
+// and evicted correctly has not failed because of it.
+func TestSleep_ReapSignificanceLevelsFailureIsBestEffort(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{
+		db: failReapStore{Store: database, err: errors.New("reap boom")},
+		consolidation: Consolidation{
+			method:                     1,
+			aggressiveness:             1.0,
+			unitsOfAgeInDays:           1.0,
+			deletionThreshold:          1.0,
+			significanceLevelRetention: 7 * 24 * time.Hour,
+		},
+	}
+
+	if err := s.sleep(triggerManual); err != nil {
+		t.Errorf("expected a failing ReapSignificanceLevels to be best-effort, got %s", err)
+	}
+}
+
+// TestSleep_ReapsTheSignificanceRegistry is the wiring: the cycle actually calls the reap, with the
+// window configuration gave it. Two cycles, because the first only marks.
+func TestSleep_ReapsTheSignificanceRegistry(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{
+		db: database,
+		consolidation: Consolidation{
+			method:            1,
+			aggressiveness:    1.0,
+			unitsOfAgeInDays:  1.0,
+			deletionThreshold: 1.0,
+
+			// A window short enough that the second cycle's cutoff has already passed the first
+			// cycle's mark, which is what a store reaches after a week in a real deployment.
+			significanceLevelRetention: time.Nanosecond,
+		},
+	}
+
+	ctx := context.Background()
+
+	if _, err := database.CreateMemory(ctx, types.Memory{
+		Id:           "m1",
+		Body:         "b",
+		Significance: 5,
+		TimeStamp:    time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("create memory: %s", err)
+	}
+
+	if _, err := database.DeleteMemories(ctx, []string{"m1"}); err != nil {
+		t.Fatalf("delete memory: %s", err)
+	}
+
+	for range 2 {
+		if err := s.sleep(triggerManual); err != nil {
+			t.Fatalf("sleep: %s", err)
+		}
+	}
+
+	levels, err := database.SignificanceLevels(ctx, db.SignificanceLevelFilter{})
+	if err != nil {
+		t.Fatalf("significance levels: %s", err)
+	}
+
+	if len(levels) != 0 {
+		t.Errorf("the registry still holds %v after two cycles with nothing carrying them", levels)
+	}
+}
+
 // TestConsolidate_PercentileCalculatedFromEvents verifies the success arm of the default event
 // significance percentile calculation: with events present, the computed percentile overwrites the
 // configured fixed value (the complementary case to TestConsolidate_PercentileWithNoEvents, which

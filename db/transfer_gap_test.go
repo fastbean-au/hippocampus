@@ -116,7 +116,7 @@ func TestImportMemories_LevelResolutionErrorRollsBack(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`SELECT id, unused_since FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
 	mock.ExpectRollback()
 
 	if _, err := d.ImportMemories(context.Background(), []types.Memory{{Id: "m1", TimeStamp: 1, Significance: 5, Body: "x"}}); err == nil {
@@ -193,7 +193,7 @@ func TestImportEvents_LevelResolutionErrorRollsBack(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`SELECT id, unused_since FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
 	mock.ExpectRollback()
 
 	if _, err := d.ImportEvents(context.Background(), []types.Event{{Id: "e1", Name: "n", TimeStart: 1, Significance: 5}}); err == nil {

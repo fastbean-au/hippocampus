@@ -631,6 +631,13 @@ type Store interface {
 	// inflated toward the int32 ceiling; a best-effort maintenance step run from the sleep cycle.
 	CompactSignificanceLevels(ctx context.Context) error
 
+	// ReapSignificanceLevels removes registry levels nothing carries any more, once they have been
+	// unused for longer than grace - the registry being the one table that otherwise grows with the
+	// store's history rather than its contents - and reports what the registry is left holding.
+	// Best-effort, and run from the sleep cycle beside the compaction; a non-positive grace leaves
+	// only the count. See db/significance_reap.go.
+	ReapSignificanceLevels(ctx context.Context, grace time.Duration) (SignificanceRegistry, error)
+
 	// SignificanceLevels/CountSignificanceLevels read the registry itself - the distinct significance
 	// values in use - which is what a client positioning with SignificancePlacement needs to see its
 	// anchors. Both read only the registry, never the items ranked by it.

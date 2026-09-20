@@ -353,6 +353,9 @@ func TestInitSchema_MigrationFailuresStopTheRun(t *testing.T) {
 		"callback_payload_bytes": func(mock sqlmock.Sqlmock) {
 			mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
 		},
+		"significance_level_unused": func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(`pragma_table_info`).WillReturnError(errors.New("boom"))
+		},
 	}
 
 	for _, migration := range (&DB{driver: driverSQLite}).migrations() {

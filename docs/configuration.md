@@ -476,6 +476,39 @@ which is why it is `reader` tier and why a group-scoped caller is answered in fu
 a partition. There is no per-group significance scale, and the decay maths a scoped caller's
 memories are subject to runs on this one.
 
+##### The registry forgets too
+
+The registry gains a row for every distinct significance value ever written, and for a long time
+lost one only to a `Purge`. That made it the one table in the store that grew with the store's
+**history** rather than its contents: a producer writing varied significance left a level behind for
+every value it had ever used, long after the last memory carrying that value had been forgotten. One
+live deployment held 29,001 levels against 211,657 memories.
+
+```json
+"consolidation": {
+    "significanceLevels": {
+        "unusedRetentionInDays": 7
+    }
+}
+```
+
+The sleep cycle now reaps levels that nothing carries any more. A level is not removed on the cycle
+that first finds it unused: that cycle marks it, and only a later cycle, finding it still carried by
+nothing and marked for longer than `unusedRetentionInDays`, deletes it. Anything that hands the
+level out again in the meantime clears the mark, and the clock starts over the next time it falls
+idle.
+
+**The window is there because the registry is a scale, not a log.** A value carried by nothing today
+is not necessarily one a client has finished positioning against, so the reap waits out a week
+before assuming so; a client that is actually using `SignificancePlacement` reuses its anchors far
+more often than that, and a producer writing arbitrary values never reads the list at all. Set
+`unusedRetentionInDays` to **0** to keep every value the store has ever seen, which is what earlier
+versions did — the registry's size is still reported either way (`hippocampus.significance_levels`).
+
+Removing a level changes nothing about the records that were ranked by it, because by definition
+there are none. What it does change is the answer `GetSignificanceLevels` gives, which is the whole
+reason the window is configurable.
+
 ### Server reflection
 
 gRPC [server reflection](https://grpc.io/docs/guides/reflection/) lets `grpcurl`, Postman, Insomnia

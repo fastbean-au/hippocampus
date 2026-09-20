@@ -446,6 +446,10 @@ them. Reading a rank would therefore mean a join per row — so instead each pas
 once, which is cheap because it holds one row per _distinct_ significance rather than one per
 memory, and translates ids to ranks in Go. The join never happens and the index stays covering.
 
+That registry is itself subject to forgetting, since it would otherwise be the one table growing
+with the store's history rather than its contents — see
+[the registry forgets too](configuration.md#the-registry-forgets-too).
+
 **`external_bytes` is in the index although no per-row decision reads it.** It is the size of the
 payload a memory _points at_ in another system (see
 [the external capacity axis](#the-external-capacity-axis)), and it participates in

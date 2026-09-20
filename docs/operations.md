@@ -524,6 +524,16 @@ They are excluded from the capacity target; they are not excluded from the disk.
 | [Delete outbox](configuration.md#the-delete-outbox)                      | `search_outbox`     | `opensearch.outbox.maxRows` / `.maxBytes` / `.maxAgeHours`                             | 1,000,000 rows or 24 hours               |
 | [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue`    | `callbacks.maxRows` / `.maxBytes` / `.maxAgeHours`                                     | 1,000,000 rows or 24 hours               |
 | [Peer registry](#seeing-the-deployment) (server drivers)                 | `instances`         | one row per live instance, each pruned against its own heartbeat interval              | negligible                               |
+| [Significance registry](configuration.md#the-registry-forgets-too)       | `significance_levels` | `consolidation.significanceLevels.unusedRetentionInDays`, reaped each cycle          | 7 days after a value falls out of use    |
+
+The significance registry is the odd one out and is listed here for one reason: it is the only table
+that grew with the store's **history** rather than its contents, gaining a row per distinct
+significance value ever written and losing one only to a `Purge`. It is counted inside the target on
+the embedded driver (page accounting cannot exclude a table in the same file) and outside it on the
+server drivers (which count memory, event and link rows explicitly), so on neither was its growth
+something an operator could act on. The reap is what bounds it; see
+[the registry forgets too](configuration.md#the-registry-forgets-too), and
+`hippocampus.significance_levels` for its size.
 
 Setting a bound to 0 removes it, which is supported — the forgotten log and the callback queue both
 warn at startup when every one of their bounds is gone — but an unbounded table here grows until the
@@ -1319,6 +1329,8 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.purges`                         | counter       | `success`                             | `Purge` calls                                                                                                          |
 | `hippocampus.tombstones`                     | gauge         |                                       | Records held by the [forgotten log](#what-was-forgotten--the-forgotten-log)                                            |
 | `hippocampus.tombstones.deleted`             | counter       | `manual`                              | Forgotten-log records removed, by request or by the caps                                                               |
+| `hippocampus.significance_levels`            | gauge         |                                       | Distinct significance values the registry holds, measured each cycle                                                   |
+| `hippocampus.significance_levels.reaped`     | counter       |                                       | Registry levels removed after carrying nothing for longer than the retention window                                    |
 | `hippocampus.summarisation_candidates`       | gauge         |                                       | Events the last scan flagged as worth condensing                                                                       |
 | `hippocampus.summaries.created`              | counter       |                                       | Summary memories written                                                                                               |
 | `hippocampus.summarisations`                 | counter       | `success`                             | Embedded-LLM generation calls                                                                                          |

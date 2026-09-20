@@ -86,10 +86,16 @@ var supersededCoveringIndexNames = []string{"idx_memories_consolidation", "idx_m
 
 // significanceLevelsDDL is the CREATE TABLE for the registry in the active dialect. level_rank is UNIQUE
 // so a value maps to exactly one level; id is an auto-assigned stable key items reference.
+//
+// unused_since is NULL-able with no default, and the absence is the ordinary state: it is set only
+// by a reap that found nothing carrying the level, and cleared again the moment something does. See
+// significance_reap.go, and initSignificanceLevelMark for the half that migrates a registry created
+// before the column existed.
 func (d *DB) significanceLevelsDDL() string {
 	return `CREATE TABLE IF NOT EXISTS significance_levels (
-		id         ` + d.dialect().autoIncrementPK + `,
-		level_rank INTEGER NOT NULL UNIQUE
+		id           ` + d.dialect().autoIncrementPK + `,
+		level_rank   INTEGER NOT NULL UNIQUE,
+		` + significanceLevelUnusedColumn + ` ` + d.dialect().bigintType + `
 	)`
 }
 
@@ -516,19 +522,47 @@ func (d *DB) openGapAt(ctx context.Context, tx *sql.Tx, rank int32) error {
 
 // findLevel looks up the level id for a rank without any lock (a plain indexed read), backing the
 // ResolveSignificanceLevel fast path for already-known ranks.
+//
+// It reads the reap's unused mark alongside the id, and a marked level is CLAIMED rather than
+// simply returned. An unmarked level is safe to hand out on the read alone - a reap has to mark it
+// and then wait out the grace before it can delete anything - while a marked one is a level the
+// reap has already set a clock running on, and the claim is what stops that clock. A claim that
+// changes no row means the reap got there first, so this reports the rank as absent and the caller
+// creates it again under the registry lock. See significance_reap.go.
 func (d *DB) findLevel(ctx context.Context, rank int32) (int64, bool, error) {
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
-	var id int64
+	var (
+		id    int64
+		since sql.NullInt64
+	)
 
-	err := d.queryRow(ctx, `SELECT id FROM significance_levels WHERE level_rank = ?`, rank).Scan(&id)
+	err := d.queryRow(
+		ctx,
+		`SELECT id, `+significanceLevelUnusedColumn+` FROM significance_levels WHERE level_rank = ?`,
+		rank,
+	).Scan(&id, &since)
+
 	if err == sql.ErrNoRows {
 		return 0, false, nil
 	}
 
 	if err != nil {
 		return 0, false, err
+	}
+
+	if !since.Valid {
+		return id, true, nil
+	}
+
+	claimed, err := d.claimSignificanceLevel(ctx, id)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if !claimed {
+		return 0, false, nil
 	}
 
 	return id, true, nil
@@ -558,13 +592,37 @@ func (d *DB) ensureSignificanceLevel(ctx context.Context, significance int32, le
 }
 
 // findOrCreateLevelTx returns the id of the level at the given rank, creating it if absent.
+//
+// An existing level has its unused mark cleared on the way out, exactly as findLevel claims one -
+// but with no need to check that the clear took effect, since every caller holds the registry lock
+// and the reap takes it too, so no reap can be running.
 func (d *DB) findOrCreateLevelTx(ctx context.Context, tx *sql.Tx, rank int32) (int64, error) {
-	var id int64
+	var (
+		id    int64
+		since sql.NullInt64
+	)
 
-	query := d.rebind(`SELECT id FROM significance_levels WHERE level_rank = ?`)
+	query := d.rebind(
+		`SELECT id, ` + significanceLevelUnusedColumn + ` FROM significance_levels WHERE level_rank = ?`,
+	)
 
-	err := tx.QueryRowContext(ctx, query, rank).Scan(&id)
+	err := tx.QueryRowContext(ctx, query, rank).Scan(&id, &since)
+
 	if err == nil {
+		if !since.Valid {
+			return id, nil
+		}
+
+		clear := d.rebind(
+			`UPDATE significance_levels SET ` + significanceLevelUnusedColumn + ` = NULL WHERE id = ?`,
+		)
+
+		if _, err := tx.ExecContext(ctx, clear, id); err != nil {
+			log.Errorf("failed to clear the unused mark on significance level %d: %s", id, err.Error())
+
+			return 0, err
+		}
+
 		return id, nil
 	}
 

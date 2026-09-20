@@ -910,6 +910,12 @@ func expectFreshMigration(t *testing.T, mock sqlmock.Sqlmock, d driver, name str
 		mock.ExpectQuery(`column_name FROM information_schema|pragma_table_info`).
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("payload_bytes"))
 
+	case "significance_level_unused":
+		// One addColumnIfMissing, which on a fresh store's registry has nothing to add - the CREATE
+		// TABLE carries the column. It goes through expectColumnPresent rather than a bare probe
+		// because addColumnIfMissing asks a dialect offering ADD COLUMN IF NOT EXISTS directly.
+		expectColumnPresent(mock, d)
+
 	default:
 		t.Fatalf("expectFreshMigration has no script for migration %q", name)
 
@@ -936,20 +942,26 @@ var coreMigratedColumnCount = len((&DB{driver: driverSQLite}).coreColumnMigratio
 // expectCoreColumnMigrations queues migrateCoreColumns' statements alone, every column present.
 func expectCoreColumnMigrations(mock sqlmock.Sqlmock, d driver) {
 	for range coreMigratedColumnCount {
-		if dialects[d].addColumnIfNotExists {
-			mock.ExpectExec(`ALTER TABLE .* ADD COLUMN IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
+		expectColumnPresent(mock, d)
+	}
+}
 
-			continue
-		}
+// expectColumnPresent queues one addColumnIfMissing finding its column already there. A dialect
+// offering ADD COLUMN IF NOT EXISTS issues the ALTER unconditionally and never probes, which is why
+// this cannot be a single regex.
+func expectColumnPresent(mock sqlmock.Sqlmock, d driver) {
+	switch {
 
-		if d == driverSQLite {
-			sqliteColumnPresent(mock)
+	case dialects[d].addColumnIfNotExists:
+		mock.ExpectExec(`ALTER TABLE .* ADD COLUMN IF NOT EXISTS`).WillReturnResult(sqlmock.NewResult(0, 0))
 
-			continue
-		}
+	case d == driverSQLite:
+		sqliteColumnPresent(mock)
 
+	default:
 		mock.ExpectQuery(`column_name FROM information_schema`).
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("present"))
+
 	}
 }
 
@@ -1446,7 +1458,7 @@ func TestFindOrCreateLevelTx_QueryErrorOtherThanNoRows(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 	tx := beginMockTx(t, d, mock)
 
-	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`SELECT id, unused_since FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
 
 	if _, err := d.findOrCreateLevelTx(context.Background(), tx, 5); err == nil {
 		t.Fatal("expected an error")
@@ -1633,7 +1645,7 @@ func TestLoadSignificanceRanks_RowsIterationError(t *testing.T) {
 func TestResolveSignificanceLevel_FindLevelError(t *testing.T) {
 	d, mock := newMockDB(t, driverSQLite)
 
-	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`SELECT id, unused_since FROM significance_levels WHERE level_rank`).WillReturnError(errors.New("boom"))
 
 	if _, _, err := d.ResolveSignificanceLevel(context.Background(), SignificanceSpec{Value: 5}); err == nil {
 		t.Fatal("expected an error")
@@ -1647,9 +1659,9 @@ func TestResolveSignificanceLevel_CommitError(t *testing.T) {
 
 	// The fast path (findLevel) reports no existing level, so ResolveSignificanceLevel takes the
 	// lock+transaction path; findOrCreateLevelTx then also finds nothing and creates one.
-	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT id, unused_since FROM significance_levels WHERE level_rank`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT id, unused_since FROM significance_levels WHERE level_rank`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO significance_levels`).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT id FROM significance_levels WHERE level_rank`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))

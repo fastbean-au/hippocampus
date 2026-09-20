@@ -460,6 +460,12 @@ var schemaFixtureTags = map[string]string{
 	// waiting for a release to have shipped one.
 	"callback_payload_bytes": notReleasedBefore,
 
+	// significance_levels.unused_since. Every released fixture predates the column and carries a
+	// registry to add it to, so the newest is named - it is the closest to what a real upgrade meets,
+	// and the seeded row's significance is resolved through that registry, which is what proves the
+	// ALTER did not disturb it.
+	"significance_level_unused": "v0.38.3",
+
 	// The server dialects' content index. Every released server schema predates it, so the newest
 	// fixture is the one that exercises it - and it exercises the part that matters, which is not
 	// the CREATE TABLE but the backfill: a store upgraded into this index and left empty answers
