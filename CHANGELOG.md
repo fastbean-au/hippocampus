@@ -91,6 +91,21 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **A replica no longer refuses to start because the consolidator was mid-cycle.** On PostgreSQL and
+  MySQL the content index is kept in step with a foreign key, and the backfill that populates it on
+  first sight — enabling the index, or upgrading into it — reads the memories a page at a time with
+  nothing holding them still. A memory deleted between the page that read it and the insert that
+  indexed it violated that foreign key, and because the backfill is a schema migration's work the
+  error failed the migration, which failed the **open**: the service did not start. The window is
+  widest exactly where it matters, since a backfill over a large store takes a long time and that is
+  when a consolidation cycle is most likely to land inside one.
+
+  Both server dialects now resolve the id through a `SELECT` over `memories` in the insert itself,
+  which is the shape SQLite's has always had. A memory that is gone matches no row, so the write is
+  a no-op rather than an error — and the right one, that being the index state the cascade would
+  have left had the delete landed a moment later. The read and the insert are one statement, so
+  there is no interleaving left to lose.
+
 - **The significance registry no longer grows without bound.** It gains a row per distinct
   significance value ever written and, until now, lost one only to a `Purge` — which made it the one
   table in the store that grew with the store's **history** rather than its contents. A producer

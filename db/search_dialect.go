@@ -202,6 +202,22 @@ func (d *DB) dropContentIndex() error {
 // dialect's contentless FTS5 table has no upsert, so it resolves the rowid through the INSERT's own
 // SELECT, which achieves the same thing for the same reason: none of the three call sites has to
 // know whether a row is already there.
+//
+// All three SELECT the id from memories rather than binding it as a value, which is the other half
+// of the same statement and is about a race rather than about upserting. Nothing holds the memories
+// table still while the backfill runs, so a memory can be deleted between the page that read it and
+// the insert that indexes it - a consolidation cycle landing inside a replica's startup, which is
+// exactly when a backfill is slowest and a cycle most likely. Bound as a value, that insert
+// violates the foreign key, and since the backfill is a migration's apply function the error fails
+// the migration, which fails the OPEN. Selected, the statement matches no row and writes nothing,
+// which is the correct index state for a memory that is gone - precisely what the cascade would
+// have left had the delete landed a moment later. The embedded dialect was never exposed to this
+// because its insert already had that shape; the other two now share it.
+//
+// The read and the insert are one statement, so this closes the window rather than narrowing it:
+// the foreign key check takes a share lock on the referenced row, so a concurrent delete either
+// waits for this insert and then cascades the entry away, or committed first and is simply not
+// seen.
 func (d *DB) writeContentIndexEntry(ctx context.Context, id string, body string) error {
 	switch d.driver {
 
@@ -211,20 +227,25 @@ func (d *DB) writeContentIndexEntry(ctx context.Context, id string, body string)
 		// agree on which memories match rather than one of them quietly matching "run" for
 		// "running".
 		_, err := d.exec(ctx,
-			`INSERT INTO `+contentSearchTable+` (memory_id, body_search) VALUES (?, to_tsvector('simple', ?))
+			`INSERT INTO `+contentSearchTable+` (memory_id, body_search)
+			SELECT m.id, to_tsvector('simple', ?) FROM memories m WHERE m.id = ?
 			ON CONFLICT (memory_id) DO UPDATE SET body_search = excluded.body_search`,
-			id,
 			body,
+			id,
 		)
 
 		return err
 
 	case driverMySQL:
+		// The row alias the other upsert paths use is a syntax error with INSERT ... SELECT, so the
+		// alias goes on a derived table instead - which is what MySQL's own manual offers in its
+		// place, and the only reason this statement is shaped differently from the one above it.
 		_, err := d.exec(ctx,
-			`INSERT INTO `+contentSearchTable+` (memory_id, body) VALUES (?, ?) AS new
+			`INSERT INTO `+contentSearchTable+` (memory_id, body)
+			SELECT * FROM (SELECT m.id AS memory_id, ? AS body FROM memories m WHERE m.id = ?) AS new
 			ON DUPLICATE KEY UPDATE body = new.body`,
-			id,
 			body,
+			id,
 		)
 
 		return err

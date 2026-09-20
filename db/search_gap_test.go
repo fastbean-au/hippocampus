@@ -69,8 +69,10 @@ func TestCreateContentIndex_ServerDialectDDL(t *testing.T) {
 }
 
 // TestWriteContentIndexEntry_DialectStatements pins that each dialect writes through its own
-// index's shape - and that the two server dialects UPSERT, which is what lets one call site serve a
-// create, an update and an import upsert alike.
+// index's shape - that the two server dialects UPSERT, which is what lets one call site serve a
+// create, an update and an import upsert alike, and that all three resolve the id through a SELECT
+// over memories rather than binding it, which is what makes a memory deleted mid-backfill a no-op
+// instead of a foreign key violation that fails the open.
 func TestWriteContentIndexEntry_DialectStatements(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -85,12 +87,12 @@ func TestWriteContentIndexEntry_DialectStatements(t *testing.T) {
 		{
 			name:      "postgres stores a tsvector",
 			driver:    driverPostgres,
-			statement: `to_tsvector\('simple', \$2\)\)\s*ON CONFLICT \(memory_id\) DO UPDATE SET body_search = excluded.body_search`,
+			statement: `SELECT m.id, to_tsvector\('simple', \$1\) FROM memories m WHERE m.id = \$2\s*ON CONFLICT \(memory_id\) DO UPDATE SET body_search = excluded.body_search`,
 		},
 		{
 			name:      "mysql stores the text",
 			driver:    driverMySQL,
-			statement: `ON DUPLICATE KEY UPDATE body = new.body`,
+			statement: `SELECT \* FROM \(SELECT m.id AS memory_id, \? AS body FROM memories m WHERE m.id = \?\) AS new\s*ON DUPLICATE KEY UPDATE body = new.body`,
 		},
 	}
 

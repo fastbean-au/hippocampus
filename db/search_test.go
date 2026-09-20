@@ -314,6 +314,37 @@ func TestContentSearchUpdateOfAbsentMemoryIndexesNothing(t *testing.T) {
 	}
 }
 
+// A memory that has gone between a backfill's page read and its insert must leave the index write
+// a no-op rather than an error. That is the shape of the race item 129 describes: the backfill
+// reads a page, a consolidation cycle on another instance deletes one of those memories, and the
+// insert that follows names an id the memories table no longer holds.
+//
+// It matters far beyond a dropped row, because the backfill is a migration's apply function: an
+// error here fails the migration, which fails the open, which stops a replica starting against a
+// store whose consolidator happens to be mid-cycle.
+//
+// The embedded dialect was always safe - its insert resolves the rowid through memories in the
+// same statement, so no row matches and nothing is written - and this pins that the two server
+// dialects, whose index is an ordinary table under a foreign key, behave the same way.
+func TestContentSearchIndexOfAVanishedMemoryIsANoOp(t *testing.T) {
+	ctx := context.Background()
+
+	d := newContentSearchDB(t)
+	defer func() { _ = d.Close() }()
+
+	storeMemory(t, d, "m1", "findable content", "ops")
+
+	// Exactly what RebuildContentSearch does with a page entry, for a memory deleted since the page
+	// was read.
+	if err := d.indexMemoryContent(ctx, "gone", "the body the backfill was holding", false); err != nil {
+		t.Fatalf("indexing a memory that no longer exists: %s", err)
+	}
+
+	if n := contentIndexRowCount(t, d); n != 1 {
+		t.Errorf("index holds %d rows, want only the one real memory's", n)
+	}
+}
+
 // Deletion is handled by the storage engine rather than by any call site - a trigger on one
 // dialect, a cascading foreign key on the other two - so it must hold for every path that removes a
 // memory, including the consolidation/eviction path, which never goes near the index maintenance
