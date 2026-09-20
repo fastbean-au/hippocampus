@@ -1088,6 +1088,38 @@
             <button class="btn ghost" data-act="load-ancillary">Refresh</button>
           </div>
         </div>
+
+        <!-- What the disk really holds, against what the store's accounting counts. The card above
+             is the storage the capacity target deliberately does not count; this one is the same
+             tables it DOES count, measured rather than estimated.
+
+             Last on the tab because it is the only card here that is about maintenance rather than
+             about state: nothing on it changes what the service does, and what it asks of an
+             operator is a scheduled job. Not gated, for the same reasons the card above is not. -->
+        <div class="card">
+          <h2>What the store really occupies</h2>
+          <p class="muted pull-up">
+            <code>used_bytes</code> is a live-row estimate on the server
+            drivers, deliberately — eviction driven by a file-size measure would
+            chase a reading that never drops after a delete. It describes a
+            <em>compacted</em> store, and a store that forgets never stays
+            compacted: a B-tree page emptied by a delete is marked reusable and
+            never repacked, so the indexes grow with what has been forgotten
+            rather than with what is held. Nothing here is acted on — the remedy
+            is <code>REINDEX INDEX CONCURRENTLY</code>, which is a maintenance
+            decision. PostgreSQL only.
+          </p>
+
+          <div id="footprint-summary" class="muted fs-12"></div>
+
+          <div id="footprint-indexes">
+            <div class="empty">Nothing loaded yet.</div>
+          </div>
+
+          <div class="actions gap-top">
+            <button class="btn ghost" data-act="load-footprint">Refresh</button>
+          </div>
+        </div>
       </section>
     </main>
 

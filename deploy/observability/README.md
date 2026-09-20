@@ -23,7 +23,7 @@ translation. Either produces the same names, which is the point — nothing here
 The client-side components in the `hippocampus-clients` group below take the same choice as a
 `--prometheus` flag, and serve `/metrics` on the `--health-port` they already listen on.
 
-Twenty-seven rules in two groups. `hippocampus` is the service itself — eighteen rules covering what
+Twenty-nine rules in two groups. `hippocampus` is the service itself — twenty rules covering what
 actually goes wrong:
 
 | Alert                                  | Fires when                                                                  | Severity |
@@ -37,6 +37,8 @@ actually goes wrong:
 | `HippocampusStoreOverCapacity`         | used bytes above `capacityBytes` for an hour                                | warning  |
 | `HippocampusRetentionNearCapacity`     | retained bytes exceed 90% of `capacityBytes` for 30m                        | critical |
 | `HippocampusAncillaryStorageHigh`      | the tables outside the capacity target exceed 25% of `capacityBytes` for 1h | warning  |
+| `HippocampusStoreDiskFarAboveEstimate` | the database holds >4x what the store's own accounting counts, for 6h       | warning  |
+| `HippocampusIndexBloated`              | an index is spending >512 bytes on each entry it holds, for 6h              | warning  |
 | `HippocampusRateLimitRejecting`        | a rate limit is refusing >1 request/second for 10m                          | warning  |
 | `HippocampusSearchIndexDropping`       | index operations are being dropped for 10m                                  | warning  |
 | `HippocampusSearchOutboxBacklog`       | queued index deletions exceed 10,000 for 30m                                | warning  |
@@ -46,6 +48,15 @@ actually goes wrong:
 | `HippocampusForgettingStalled`         | the decay passes are held off because forget-callbacks are undelivered      | critical |
 | `HippocampusSearchOutboxAbandoning`    | the outbox's caps are discarding queued index deletions                     | critical |
 | `HippocampusPanicsRecovered`           | a handler panicked and was recovered                                        | warning  |
+
+`HippocampusStoreDiskFarAboveEstimate` and `HippocampusIndexBloated` are the pair that reports what
+`used_bytes` deliberately cannot see. That figure is a live-row estimate on the server drivers and
+has to stay one — eviction driven by a file-size measure would chase a reading that never drops
+after a delete — so the estimate can be exactly right while the database is several times larger.
+A store that forgets is a store whose indexes bloat, because `VACUUM` marks a B-tree page reusable
+and never repacks it. The first rule says the gap has opened; the second says which index to
+`REINDEX`. Both are silent on SQLite and MySQL, which publish no `disk_bytes` — see
+[index bloat on the server drivers](../../docs/operations.md#index-bloat-on-the-server-drivers).
 
 The last six of those are the two durable queues — the search delete outbox and the callback
 queue — and they come in pairs by design: a backlog rule that fires while nothing is yet lost, and
@@ -109,7 +120,7 @@ Four properties worth knowing before you deploy them:
 
 ## The Grafana copy
 
-`../compose/observability/alerting-rules.yaml` is the same twenty-seven rules as Grafana-managed rules,
+`../compose/observability/alerting-rules.yaml` is the same twenty-nine rules as Grafana-managed rules,
 provisioned into the bundled `grafana/otel-lgtm` stack (every compose file's `observability` profile,
 and `demo/run.sh`) so the demo stack alerts as well as draws. It exists as a second file only
 because Grafana provisions its own rule format and cannot read a Prometheus rule file.

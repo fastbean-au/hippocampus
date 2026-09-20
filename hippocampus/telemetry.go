@@ -64,6 +64,13 @@ type telemetry struct {
 
 	ancillaryBytes metric.Int64Gauge
 
+	// What the counted tables really occupy, against what the store's own accounting believes they
+	// occupy. Published on the drivers that can answer cheaply and on no others, so a flat zero
+	// never reads as a store holding no disk. See hippocampus/footprint.go.
+	diskBytes    metric.Int64Gauge
+	indexBytes   metric.Int64Gauge
+	indexEntries metric.Int64Gauge
+
 	searchOutboxDepth     metric.Int64Gauge
 	searchOutboxApplied   metric.Int64Counter
 	searchOutboxAbandoned metric.Int64Counter
@@ -144,6 +151,17 @@ func newTelemetry() *telemetry {
 		// is keeping up; sum over the components for the figure to add to capacity_bytes when
 		// sizing a disk. See hippocampus/ancillary.go.
 		ancillaryBytes: newInt64Gauge(meter, "hippocampus.ancillary_bytes", "Estimated bytes held by the tables outside the byte capacity target - the forgotten log, the search outbox and the callback queue - measured each sleep cycle. On the embedded driver this is growth in the store's own file that capacity pressure will never reflect."),
+
+		// The other direction, and the one nothing else in this service can see. used_bytes is a
+		// live-row estimate on the server drivers and must stay one - eviction driven by a file-size
+		// measure would chase a figure that never drops after a delete - so read disk_bytes against
+		// it rather than instead of it: the RATIO is the finding. A store that forgets is a store
+		// whose indexes bloat, because a B-tree page emptied by a delete is marked reusable and
+		// never repacked, and index_bytes divided by index_entries is what says which index to
+		// reindex. Published only where the driver can answer from its catalogue.
+		diskBytes:    newInt64Gauge(meter, "hippocampus.disk_bytes", "What the storage engine says the tables inside the byte capacity target really occupy, space it has not reclaimed included, measured each sleep cycle. Read against used_bytes, which is the estimate eviction acts on."),
+		indexBytes:   newInt64Gauge(meter, "hippocampus.index_bytes", "Bytes one index over a counted table really occupies, by table and index. Grows with what the store has forgotten rather than with what it holds, since nothing repacks a B-tree page a delete emptied."),
+		indexEntries: newInt64Gauge(meter, "hippocampus.index_entries", "Entries one index over a counted table holds, from the catalogue's own estimate. Divide index_bytes by this: the widest key in this store is an id and seven numbers, so an entry costing a kilobyte is air."),
 
 		// The search index's delete queue. Depth is the one to alert on: it is the backpressure the
 		// outbox exists to make visible, since the failure it replaced - an index operation dropped

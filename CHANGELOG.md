@@ -71,6 +71,36 @@ itself which service version it was built against.
   memories a day, held **five days** of the thirty it had been asked for — both caps enforced,
   neither violated, and nothing anywhere that said so.
 
+- **What the store really occupies on disk, reported beside what its accounting counts
+  (PostgreSQL).** `used_bytes` is a live-row estimate on the server drivers and stays one — eviction
+  driven by a file-size measure would chase a reading that never drops after a delete — so nothing
+  compared the estimate with the disk. On a high-churn store the two diverge by most of an order of
+  magnitude: a measured instance reported 153 MB against a 160 MB `capacityBytes` while holding an
+  892 MB database, of which 687 MB was indexes on `memories` and 533 MB was the covering index alone,
+  at 5% average leaf density. `VACUUM` marks a B-tree page a delete emptied as reusable and never
+  repacks it, so **a store that forgets is a store whose indexes bloat**, without bound, as a direct
+  cost of the thing the service exists to do.
+
+  Three gauges — `hippocampus.disk_bytes`, and `hippocampus.index_bytes` /
+  `hippocampus.index_entries` by `table` and `index` — plus a `footprint` block on
+  `GetConsolidationStatus` carrying the same figures with the cycle's own estimate beside them.
+  Measured once per cycle from the catalogue, so it costs a handful of round trips and reads no
+  rows; `pgstatindex`'s `avg_leaf_density` is deliberately not taken, since it reads every page of
+  the index. Two alerts ship with it (`HippocampusStoreDiskFarAboveEstimate`,
+  `HippocampusIndexBloated`) and the cycle logs the ratio when it crosses, naming the index costing
+  the most per entry. The console's Deployment tab shows it below the ancillary card, one row per
+  index largest first.
+
+  **The service does not act on any of it.** `REINDEX INDEX CONCURRENTLY` is online but is still a
+  maintenance decision, and a memory store that rebuilds its own indexes on a timer surprises its
+  operator at the moment it is already under pressure.
+  [docs/operations.md](docs/operations.md#index-bloat-on-the-server-drivers) carries the runbook and
+  the cadence the measurement justifies, which is **daily**: the reindexed instance above was back
+  from 151 MB to 634 MB nine hours later. SQLite reports nothing because page accounting already
+  counts every index inside the capacity target; MySQL reports nothing because
+  `information_schema` serves relation sizes from a cache refreshed at most once a day, and a stale
+  figure presented as what the disk holds is worse than none.
+
 - **Three instruments for the OpenSearch apply queue and the sweep that backs it up.**
   `hippocampus.search.queue_depth` and `hippocampus.search.queue_capacity` are the pair
   `opensearch.queueSize` is tuned on — a queue that is spiky and near zero between bursts is one a

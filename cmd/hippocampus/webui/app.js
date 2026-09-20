@@ -8,6 +8,8 @@ import {
   ageLabel,
   ancillaryRows,
   ancillarySummary,
+  footprintRows,
+  footprintSummary,
   b64url,
   bodyClassesFor,
   callbackKindLabel,
@@ -799,6 +801,7 @@ const ACTIONS = {
   "load-topology": () => loadTopology(),
   "load-callbacks": () => loadCallbacks(),
   "load-ancillary": () => loadAncillary(),
+  "load-footprint": () => loadFootprint(),
   "topology-filter": () => renderTopology(),
   "topology-select": (el) => selectTopologyNode(el.dataset.node),
 };
@@ -3797,6 +3800,10 @@ function startTopologyPolling() {
   // service nothing - but the figure it carries only moves when a cycle runs, so polling it on the
   // topology's cadence would re-fetch an unchanged number once per probe interval.
   loadAncillary();
+
+  // Beside it and on the same terms: a reader-tier RPC answering from the same cached measurement,
+  // once per arrival because the figure only moves when a cycle runs.
+  loadFootprint();
 }
 
 function stopTopologyPolling() {
@@ -3949,6 +3956,62 @@ function renderAncillary(status) {
   $("ancillary-tables").innerHTML = `<div class="tablewrap"><table>
      <thead><tr><th>Table</th><th>Rows</th><th>Approx. size</th><th>Held by</th></tr></thead>
      <tbody>${rows}</tbody>
+   </table></div>`;
+}
+
+// The maintenance half of the same tab. The card above is the storage the capacity target
+// deliberately does not count; this is the same tables it DOES count, measured against the estimate
+// eviction acts on - and the ratio between them is the reading, never either figure alone.
+//
+// One fetch, shared with the card above in everything but the call: both read
+// GetConsolidationStatus, which answers from the measurement the sleep cycle took, so neither
+// pretends to be live and both say how old their figure is.
+async function loadFootprint() {
+  try {
+    const data = await api("GET", "/v1/consolidation/status");
+
+    renderFootprint(data);
+  } catch (e) {
+    $("footprint-summary").textContent = "";
+    $("footprint-indexes").innerHTML =
+      '<div class="empty">The measurement could not be read.</div>';
+
+    fail("What the store really occupies", e);
+  }
+}
+
+function renderFootprint(status) {
+  $("footprint-summary").textContent = footprintSummary(status, Date.now());
+
+  const rows = footprintRows(status && status.footprint);
+
+  if (!rows.length) {
+    $("footprint-indexes").innerHTML = "";
+
+    return;
+  }
+
+  // Cost per entry is the column that decides anything. Bytes alone say an index is large, which on
+  // a large store is what one expects; bytes per entry say what a single entry costs, and that has a
+  // known right answer for every index here except the content one.
+  const body = rows
+    .map(
+      (row) => `<tr>
+    <td>${esc(row.index)}<br><span class="muted fs-12">${esc(row.table)}</span></td>
+    <td>${esc(formatBytes(row.bytes))}</td>
+    <td>${esc(row.entries.toLocaleString())}</td>
+    <td><span class="${row.cost.suspect ? "warn" : ""}">${
+      row.cost.bytesPerEntry === null
+        ? "—"
+        : esc(Math.round(row.cost.bytesPerEntry).toLocaleString() + " B")
+    }</span><br><span class="muted fs-12">${esc(row.cost.note)}</span></td>
+  </tr>`,
+    )
+    .join("");
+
+  $("footprint-indexes").innerHTML = `<div class="tablewrap"><table>
+     <thead><tr><th>Index</th><th>On disk</th><th>Entries</th><th>Per entry</th></tr></thead>
+     <tbody>${body}</tbody>
    </table></div>`;
 }
 

@@ -98,6 +98,14 @@ func (s *Server) sleep(trigger string) error {
 	// it held at the top of the cycle. Reporting only - it decides nothing, and never fails a cycle.
 	s.recordAncillaryStorage(ctx)
 
+	// And the other direction: what the tables the target DOES count really occupy. It reads the
+	// estimate evict() has just cached rather than taking UsedBytes again - that is a full scan on
+	// the server drivers, and a second one for a figure nothing acts on is exactly the cost item
+	// 25.9 is the standing reminder about. A cycle that could not take the reading (a stall, or a
+	// decay-only store whose measurement failed) leaves the previous one standing, which is a
+	// figure a day old at worst against a quantity that moves over days.
+	s.recordStorageFootprint(ctx, s.consolidation.lastUsedBytes)
+
 	// Best-effort registry maintenance: keeps significance ranks compact and inside int32 after
 	// repeated relative insertions. It never fails the sleep cycle (a no-op until inflation warrants
 	// it), so it sits outside the success flag.

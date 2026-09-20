@@ -1574,6 +1574,14 @@ message GetConsolidationStatusResponse {
 	// count of the callback queue is a scan of up to callbacks.maxRows rows and this is an RPC a
 	// console polls.
 	AncillaryStorage                       ancillary                 = 8;
+
+	// footprint is the other direction: what the tables the capacity target DOES count really
+	// occupy on disk. used_bytes is a live-row estimate on the server drivers and must stay one -
+	// eviction driven by a file-size measure would chase a figure that never drops after a delete -
+	// so nothing compared the estimate against the disk, and on a high-churn store the two diverge
+	// by most of an order of magnitude. Reported and never acted on; absent on the drivers that
+	// cannot answer cheaply, and until a cycle in THIS process has measured it.
+	StorageFootprint                       footprint                 = 9;
 }
 
 // AncillaryTable is what one of the three tables excluded from the capacity target holds.
@@ -1681,6 +1689,89 @@ message AncillaryStorage {
 	AncillaryTable                         forgotten_log             = 3;
 	AncillaryTable                         search_outbox             = 4;
 	AncillaryTable                         callback_queue            = 5;
+}
+
+// IndexFootprint is what one index over a counted table really occupies, and how many entries it
+// holds.
+//
+// The pair is the reading rather than two readings. A byte count alone says an index is large, which
+// on a large store is what one expects; bytes divided by entries says what a single entry is
+// costing, and that number has a known right answer - the widest key in this store is a 37-character
+// id and seven numeric columns, so an entry costing a kilobyte is air whatever the store's size.
+// The same measurement found a store of 1,011 memories carrying a 3.5 MB listing index at 3,581
+// bytes an entry, 2.7 times its own heap: bloat tracks churn, not row count, and a store small
+// enough that nobody would think to look at it is proportionally the worst affected.
+//
+// entries is the catalogue's own estimate, refreshed by ANALYZE rather than maintained per write,
+// so it lags a heavy burst. That is acceptable because nothing acts on this and the quantity being
+// judged moves over days.
+message IndexFootprint {
+	string                                 table                     = 1;
+	string                                 index                     = 2;
+
+	// bytes is what the engine says this index occupies, space it has not reclaimed included. A
+	// B-tree page emptied by a delete is marked reusable and never repacked, and a store keyed on a
+	// UUID that deletes millions of rows over its life never refills one - so this figure grows with
+	// what the store has forgotten rather than with what it holds.
+	int64                                  bytes                     = 3;
+	int64                                  entries                   = 4;
+}
+
+// TableFootprint is one counted table's real occupancy, and the share of it the indexes account for.
+//
+// The split is what separates the two findings: a heap larger than the store's estimate of it is a
+// store that is not forgetting fast enough, while indexes larger than it is a store forgetting
+// exactly as designed and paying for it in space nothing reclaims. On the deployment this was
+// measured against the heap was 78 MB and fine, and the indexes were 687 MB.
+message TableFootprint {
+	string                                 table                     = 1;
+
+	// bytes is everything the engine holds for this table - rows, out-of-line storage and indexes
+	// together. index_bytes is the part of it the indexes account for; the difference is the rows.
+	int64                                  bytes                     = 2;
+	int64                                  index_bytes               = 3;
+
+	// indexes is largest first, and capped - an index name is a metric attribute on the gauge that
+	// carries the same figures, and while the indexes this store creates are a fixed set, an
+	// operator may add their own. Truncation drops the smallest, which is what a reader would skip.
+	repeated IndexFootprint                indexes                   = 4;
+}
+
+// StorageFootprint is what the tables INSIDE the byte capacity target really occupy on disk.
+//
+// used_bytes is a live-row estimate on the server drivers, deliberately: no file-size measure on
+// either server shrinks after a delete, so eviction driven by one would chase a figure that cannot
+// drop, evicting every cycle without the reading ever moving. That decision is right and this does
+// not touch it. What was missing was any comparison between the estimate and the disk - and a live
+// instance reporting 153 MB against a 160 MB capacity target was holding an 892 MB database, of
+// which 533 MB was one index at 5% leaf density.
+//
+// A store that forgets is a store whose indexes bloat. It is the direct cost of the thing this
+// service exists to do, it is unbounded, and the remedy (REINDEX CONCURRENTLY) is a maintenance
+// decision rather than something a memory store should do to itself on a timer. This reports the
+// figure that says when; docs/operations.md carries the runbook.
+//
+// measured is false where the driver cannot answer cheaply, which separates it from a store
+// occupying no disk. Only PostgreSQL can, for the reasons AncillaryTable.disk_bytes gives - and on
+// SQLite there is nothing to answer, page accounting already counting every index inside the target.
+message StorageFootprint {
+	bool                                   measured                  = 1;
+	int64                                  measured_at               = 2; // UnixNano the cycle took this measurement
+
+	// bytes is the sum over the counted tables, and index_bytes the part of it that is indexes.
+	// Read bytes against used_bytes: the ratio is the finding, and on the deployment above it was
+	// 5.8. The tables the target deliberately EXCLUDES are not in here - they have their own
+	// reading, which reports their disk the same way. See AncillaryStorage.
+	int64                                  bytes                     = 3;
+	int64                                  index_bytes               = 4;
+
+	// estimated_bytes is what the store's own accounting believes those same tables hold - the
+	// figure used_bytes publishes and eviction acts on - carried here so the comparison travels as
+	// one measurement rather than as two readings a client has to pair up itself. 0 where this
+	// cycle could not take it.
+	int64                                  estimated_bytes           = 5;
+
+	repeated TableFootprint                tables                    = 6;
 }
 
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the

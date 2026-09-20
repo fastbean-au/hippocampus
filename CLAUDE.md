@@ -392,7 +392,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-seven rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-nine rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -415,7 +415,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the twenty-seven are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the twenty-nine are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
   broker bridges, the ingestor, the object-storage agents) and read instruments declared in
   `integrations/*`, which
@@ -586,6 +586,39 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     flat zero reads as a queue that is keeping up. Only the callback queue's rows have no fixed size,
     which is why its row cap bounds its bytes loosely and why the byte-cap half of 112.3 is still
     open.
+  - `recordStorageFootprint` (`hippocampus/footprint.go` + `db/footprint.go`, called from `sleep`)
+    is the same move in the opposite direction: what the tables `UsedBytes` **does** count really
+    occupy on disk, per table and per index. `UsedBytes` is a live-row estimate on the server
+    drivers and **stays one** — eviction driven by a file-size measure would chase a reading that
+    never drops after a delete — but nothing compared the estimate with the disk, and a measured
+    instance reported 153 MB against a 160 MB `capacityBytes` while holding an 892 MB database, of
+    which 533 MB was the covering index alone at 5% leaf density. A **store that forgets is a store
+    whose indexes bloat**: `VACUUM` marks a B-tree page a delete emptied as reusable and never
+    repacks it, and a store keyed on a UUID never refills one. Six things carry it (TODO-2 item 124).
+    (1) It is **reported and never acted on** — `REINDEX CONCURRENTLY` is online but is still a
+    maintenance decision, and there is no seam for it anyway, `Preserve()` being a correct no-op on
+    both server dialects. `docs/operations.md` carries the runbook and the **daily** cadence the
+    regrowth rate justifies. (2) Everything is a **catalogue lookup** (`pg_total_relation_size`,
+    `pg_relation_size`, `pg_class.reltuples`), two statements per table, reading no rows.
+    `pgstatindex`'s `avg_leaf_density` is the authoritative figure and is deliberately **not** taken:
+    it reads every page of the index, which is item 25.9's cost on the very index this is about, and
+    it needs an extension a managed instance may not have — bytes against entries says the same thing
+    for free. (3) It is **per index**, because only that says what to act on, and because it is what
+    makes the small-store case visible: bloat tracks churn rather than row count, and a store of
+    1,011 memories was measured carrying a listing index at 3,581 bytes an entry. (4) The **estimate
+    travels with the measurement** — the cycle's own cached `UsedBytes`, never a second scan — since
+    `used_bytes` is published only under a byte capacity target and the **ratio** is the finding.
+    (5) A driver that cannot answer publishes **nothing**, not a `measured:false` block: a zeroed
+    footprint reads as a store occupying no disk, and that is the ordinary state on two drivers of
+    three (SQLite has nothing to report, its page accounting already counting every index inside the
+    target; MySQL's `information_schema` sizes come from a cache refreshed at most once a day).
+    (6) The set of tables is exactly `usedBytesLiveRows`' plus the content index, because a footprint
+    covering tables the estimate excludes would report a gap that was never the estimate's to close.
+    Published as `hippocampus.disk_bytes` plus `hippocampus.index_bytes`/`.index_entries`
+    (`table`, `index` — a bounded set, and the storage layer caps what any one table reports so an
+    operator's own indexes cannot grow the series count), served as `GetConsolidationStatus.footprint`,
+    alerted on by `HippocampusStoreDiskFarAboveEstimate`/`HippocampusIndexBloated`, and logged when
+    the ratio crosses — naming the index costing the most per entry, which is not always the largest.
   - The **forgotten log** (`db/tombstone.go` + `hippocampus/forgotten.go`,
     `consolidation.tombstones.*`, off by default) is the third leg of the transparency trio and the
     only one that can speak about a memory that no longer exists: one row per memory the two decay

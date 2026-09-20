@@ -764,6 +764,12 @@ type Store interface {
 	// what was missing was any way to see how large the excluded part had grown. See db/ancillary.go.
 	AncillaryStorage(ctx context.Context, bounds AncillaryBounds) (AncillaryStorage, error)
 
+	// StorageFootprint is the other half of the same admission: what the tables UsedBytes DOES
+	// count really occupy on disk, per table and per index. The estimate is right and drives
+	// eviction; this is what it cannot see, which on a high-churn store is most of an order of
+	// magnitude of index nothing repacks. Reported, never regulated on - see db/footprint.go.
+	StorageFootprint(ctx context.Context) (StorageFootprint, error)
+
 	// ExternalBytes is the third capacity axis: the total size of the payloads the store's memories
 	// point at elsewhere. Separate from UsedBytes, never a part of it - see the method's comment.
 	ExternalBytes(ctx context.Context) (int64, error)

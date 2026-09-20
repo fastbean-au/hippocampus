@@ -199,6 +199,42 @@ groups:
           description: "The forgotten log, the search outbox and the callback queue now hold over a quarter of consolidation.capacityBytes between them, and none of it is counted by used_bytes or by capacity pressure - the exclusion is deliberate, so that the record of what was deleted can never evict live memories. The consequence is that the disk this deployment needs is capacityBytes PLUS this figure, and it is growing. Break it down by the component label: forgotten_log and search_outbox have fixed-width rows, so their row caps (consolidation.tombstones.maxRows, opensearch.outbox.maxRows) are effectively byte caps, while callback_queue rows carry a rendered payload - and memory bodies under callbacks.includeBodies - so callbacks.maxRows bounds its bytes only loosely and callbacks.maxBytes is what actually bounds it. Each of the three takes a maxBytes, unset by default; setting one trims the table rather than letting it grow, at the cost of discarding what is past the cap. A growing callback_queue means a receiver is down: check HippocampusCallbackQueueBacklog and HippocampusCallbackDeliveriesFailing. On the embedded driver all three share the store's own file, so this is disk the capacity target will never reclaim."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
 
+      # The other direction, and the one nothing else here can see. used_bytes is a live-row
+      # estimate on the server drivers and has to stay one - eviction driven by a file-size measure
+      # would chase a figure that never drops after a delete - so the estimate can be exactly right
+      # while the database is several times larger. A store that forgets is a store whose indexes
+      # bloat: a B-tree page emptied by a delete is marked reusable and never repacked, and a store
+      # keyed on a UUID never refills one. Silent on SQLite and MySQL, which publish no disk_bytes,
+      # and on a deployment with no capacity target, which publishes no used_bytes.
+      - alert: HippocampusStoreDiskFarAboveEstimate
+        expr: max(hippocampus_disk_bytes) / (max(hippocampus_used_bytes) > 0) > 4
+        for: 6h
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus is holding several times the disk its own accounting counts"
+          description: "The tables inside consolidation.capacityBytes now occupy over four times what used_bytes estimates for them. That estimate is not wrong and must not be changed to a file-size measure: it describes a compacted store, and eviction driven by a reading that never drops after a delete would evict every cycle without the figure moving. The gap is space the engine has marked reusable and will not return - overwhelmingly index, since VACUUM never repacks a B-tree page a delete emptied. Break it down with hippocampus_index_bytes / hippocampus_index_entries by index: an entry costing more than a few hundred bytes over a 37-character id is air. The remedy is REINDEX INDEX CONCURRENTLY on the indexes that show it, which is online but is a maintenance decision the service deliberately does not take for itself. On a high-churn store it is a DAILY job, not an occasional one: a reindexed instance was measured back from 13 MB to 393 MB on one index in nine hours."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#index-bloat-on-the-server-drivers"
+
+      # The per-index half, and the only one that says what to act on. The content index is excluded
+      # deliberately: it is a tsvector under GIN whose entries grow with the bodies they index, so
+      # its honest cost per entry is a property of the stored text rather than a number with a right
+      # answer. Every other index here is keyed on an id and a handful of numbers, so an entry over
+      # half a kilobyte is mostly empty page. Indexes under 500 entries are excluded too - a nearly
+      # empty B-tree is a metapage and a leaf whatever it holds, which divides into a large ratio
+      # that means nothing.
+      - alert: HippocampusIndexBloated
+        expr: max by (table, index) (hippocampus_index_bytes{table!="memories_fts"} / (hippocampus_index_entries{table!="memories_fts"} > 500)) > 512
+        for: 6h
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "A Hippocampus index is mostly empty pages"
+          description: "This index is spending over 512 bytes on each entry it holds, against a key of an id and a few numbers that should cost tens. The space is pages a delete emptied: VACUUM marks them reusable and never repacks them, and a store keyed on a UUID that forgets by design never refills one - so this grows with what the store has forgotten rather than with what it holds, and it is unbounded. It is not a large-store phenomenon: bloat tracks churn, and a store of a thousand memories was measured carrying a listing index 2.7 times the size of its own heap. Fix it with REINDEX INDEX CONCURRENTLY on the named index, which is online and takes seconds to minutes; there is no configuration change that prevents it and the service deliberately does not do it on a timer. Schedule it daily on a store under sustained write load."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#index-bloat-on-the-server-drivers"
+
       # --- Rate limiting -------------------------------------------------------------------
 
       # Rejections are the limit working, so this is not "something is broken" - it is "the limits

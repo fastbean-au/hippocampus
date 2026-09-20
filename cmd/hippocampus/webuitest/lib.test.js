@@ -20,6 +20,9 @@ import {
   ancillaryRows,
   ancillarySpanDays,
   ancillarySummary,
+  footprintRows,
+  footprintSummary,
+  indexCost,
   capacityMeter,
   countdownFraction,
   countdownLabel,
@@ -760,7 +763,8 @@ test("stallNotice says what stopped and what it costs, and is empty otherwise", 
 
   const notice = stallNotice({
     stalled: true,
-    stalledReason: "the outbound callback queue holds 12 undelivered forget-callbacks",
+    stalledReason:
+      "the outbound callback queue holds 12 undelivered forget-callbacks",
   });
 
   assert.match(notice, /12 undelivered forget-callbacks/);
@@ -1709,7 +1713,6 @@ test("callbackKindLabel names the kinds, and does not invent one", () => {
   assert.equal(callbackKindLabel(undefined), "unknown");
 });
 
-
 // ------------------------------------------------- storage outside the capacity target
 //
 // The figure the capacity target cannot see, and the four states it has to keep apart. Three of
@@ -1884,8 +1887,10 @@ test("ancillaryBinding flags a window the store forgets too fast to reach", () =
 
   // A row cap with no age cap beside it is nobody's unmet intention.
   assert.equal(
-    ancillaryBinding({ bindingLimit: "rows", oldestAt: fiveDays }, String(measuredAt))
-      .unreachable,
+    ancillaryBinding(
+      { bindingLimit: "rows", oldestAt: fiveDays },
+      String(measuredAt),
+    ).unreachable,
     false,
   );
 });
@@ -1946,9 +1951,19 @@ test("ancillaryLimitLabel reports how close a table is to discarding rows", () =
 
 test("ancillaryRows carries each table's own cap", () => {
   const rows = ancillaryRows({
-    forgottenLog: { enabled: true, rows: "10", bytes: "1000", limitBytes: "4000" },
+    forgottenLog: {
+      enabled: true,
+      rows: "10",
+      bytes: "1000",
+      limitBytes: "4000",
+    },
     searchOutbox: { enabled: true, rows: "10", bytes: "1000" },
-    callbackQueue: { enabled: true, rows: "10", bytes: "1000", limitBytes: "2000" },
+    callbackQueue: {
+      enabled: true,
+      rows: "10",
+      bytes: "1000",
+      limitBytes: "2000",
+    },
   });
 
   assert.equal(rows[0].limit, "25% of the 3.91 KiB cap");
@@ -1977,4 +1992,195 @@ test("ancillaryRows tolerates a measurement that is missing entirely", () => {
     rows.map((r) => r.enabled),
     [false, false, false],
   );
+});
+
+// ------------------------------------- what the store really occupies on disk
+//
+// The other direction from the card above: the tables the capacity target DOES count, measured
+// rather than estimated. Three absences have to stay apart and all three render as an empty card -
+// a replica, an instance whose first cycle has not run, and a driver that cannot answer at all -
+// because an absence with no explanation reads as a store occupying no disk.
+
+const bloated = (over = {}) => ({
+  consolidationEnabled: true,
+  lastCycle: { startedAt: HOUR_AGO },
+  footprint: {
+    measured: true,
+    measuredAt: HOUR_AGO,
+    bytes: "892000000",
+    indexBytes: "687000000",
+    estimatedBytes: "153000000",
+    tables: [
+      {
+        table: "memories",
+        bytes: "765000000",
+        indexBytes: "687000000",
+        indexes: [
+          {
+            table: "memories",
+            index: "idx_memories_listing_v1",
+            bytes: "60000000",
+            entries: "145524",
+          },
+          {
+            table: "memories",
+            index: "idx_memories_consolidation_v3",
+            bytes: "533000000",
+            entries: "145524",
+          },
+        ],
+      },
+      {
+        table: "memories_fts",
+        bytes: "20000000",
+        indexBytes: "12000000",
+        indexes: [
+          {
+            table: "memories_fts",
+            index: "memories_fts_body",
+            bytes: "12000000",
+            entries: "145524",
+          },
+        ],
+      },
+    ],
+    ...over,
+  },
+});
+
+test("footprintSummary reads the ratio, never either figure alone", () => {
+  const line = footprintSummary(bloated(), Date.now());
+
+  assert.match(line, /851 MiB on disk/);
+  assert.match(line, /655 MiB of it indexes/);
+  assert.match(line, /a factor of 5\.8/);
+  assert.match(line, /Measured 1h\./);
+
+  // The estimate is not presented as a fault. It is right, and saying otherwise would invite
+  // somebody to "fix" it into the file-size measure eviction must never chase.
+  assert.match(line, /The estimate is not wrong/);
+});
+
+test("footprintSummary says a replica takes no measurement", () => {
+  const line = footprintSummary({ consolidationEnabled: false }, Date.now());
+
+  assert.match(line, /runs no sleep cycle/);
+  assert.doesNotMatch(line, /0 B/);
+});
+
+test("footprintSummary separates 'no cycle yet' from 'this driver cannot answer'", () => {
+  assert.match(
+    footprintSummary({ consolidationEnabled: true }, Date.now()),
+    /No cycle has measured this/,
+  );
+
+  // A cycle HAS run and still produced no footprint, which is the ordinary state on two drivers of
+  // three - and the one a bare empty card would render as a store occupying nothing.
+  const unsupported = footprintSummary(
+    { consolidationEnabled: true, lastCycle: { startedAt: HOUR_AGO } },
+    Date.now(),
+  );
+
+  assert.match(unsupported, /does not report what the store really occupies/);
+  assert.match(unsupported, /SQLite/);
+  assert.match(unsupported, /MySQL/);
+});
+
+test("footprintSummary reports nothing loaded when there is no status at all", () => {
+  assert.equal(footprintSummary(null, Date.now()), "Nothing loaded yet.");
+});
+
+test("footprintSummary omits the comparison when there is no estimate to make it against", () => {
+  const line = footprintSummary(bloated({ estimatedBytes: "0" }), Date.now());
+
+  assert.match(line, /851 MiB on disk/);
+  assert.doesNotMatch(line, /a factor of/);
+});
+
+test("footprintRows flattens every index across every table, largest first", () => {
+  const rows = footprintRows(bloated().footprint);
+
+  // Largest first and across tables, because the card lists what to act on rather than what the
+  // schema looks like - and the table each index belongs to travels with it, a name alone not being
+  // something an operator can issue a REINDEX against.
+  assert.deepEqual(
+    rows.map((r) => [r.index, r.table, r.bytes]),
+    [
+      ["idx_memories_consolidation_v3", "memories", 533000000],
+      ["idx_memories_listing_v1", "memories", 60000000],
+      ["memories_fts_body", "memories_fts", 12000000],
+    ],
+  );
+});
+
+test("footprintRows tolerates a footprint that is missing entirely", () => {
+  assert.deepEqual(footprintRows(null), []);
+  assert.deepEqual(footprintRows({}), []);
+  assert.deepEqual(footprintRows({ tables: [{ table: "memories" }] }), []);
+});
+
+test("indexCost flags an index that is mostly empty pages", () => {
+  const cost = indexCost({
+    table: "memories",
+    index: "idx_memories_consolidation_v3",
+    bytes: "533000000",
+    entries: "145524",
+  });
+
+  assert.equal(cost.suspect, true);
+  assert.match(cost.note, /REINDEX/);
+  assert.ok(cost.bytesPerEntry > 3000);
+});
+
+test("indexCost leaves a healthy index unflagged", () => {
+  const cost = indexCost({
+    table: "memories",
+    index: "memories_pkey",
+    bytes: "6100000",
+    entries: "145524",
+  });
+
+  assert.equal(cost.suspect, false);
+  assert.equal(cost.note, "");
+});
+
+test("indexCost never judges the content index", () => {
+  // Its entries are an inverted index over the bodies, so their cost grows with the stored text
+  // rather than with a fixed key - there is no right answer to compare against.
+  const cost = indexCost({
+    table: "memories_fts",
+    index: "memories_fts_body",
+    bytes: "533000000",
+    entries: "145524",
+  });
+
+  assert.equal(cost.suspect, false);
+  assert.match(cost.note, /grows with the bodies/);
+});
+
+test("indexCost refuses to judge a nearly empty index, or one never analysed", () => {
+  // A B-tree holding three entries is a metapage and a leaf whatever it holds, which divides into a
+  // large number that is not bloat.
+  const tiny = indexCost({
+    table: "events",
+    index: "events_pkey",
+    bytes: "16384",
+    entries: "3",
+  });
+
+  assert.equal(tiny.suspect, false);
+  assert.match(tiny.note, /too few entries/);
+
+  // An entry count of zero is the catalogue never having analysed the index, not an index that is
+  // free - so there is no ratio to report at all.
+  const unanalysed = indexCost({
+    table: "memories",
+    index: "memories_pkey",
+    bytes: "8192",
+    entries: "0",
+  });
+
+  assert.equal(unanalysed.bytesPerEntry, null);
+  assert.equal(unanalysed.suspect, false);
+  assert.match(unanalysed.note, /not yet analysed/);
 });

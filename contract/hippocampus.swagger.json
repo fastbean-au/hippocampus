@@ -3203,6 +3203,10 @@
         "ancillary": {
           "$ref": "#/definitions/v1AncillaryStorage",
           "description": "ancillary is what the capacity target deliberately does NOT count: the forgotten log, the\nsearch outbox and the callback queue. Absent until a cycle in THIS process has measured it,\nand on a replica always - it is measured by the sleep cycle rather than per request, since a\ncount of the callback queue is a scan of up to callbacks.maxRows rows and this is an RPC a\nconsole polls."
+        },
+        "footprint": {
+          "$ref": "#/definitions/v1StorageFootprint",
+          "description": "footprint is the other direction: what the tables the capacity target DOES count really\noccupy on disk. used_bytes is a live-row estimate on the server drivers and must stay one -\neviction driven by a file-size measure would chase a figure that never drops after a delete -\nso nothing compared the estimate against the disk, and on a high-churn store the two diverge\nby most of an order of magnitude. Reported and never acted on; absent on the drivers that\ncannot answer cheaply, and until a cycle in THIS process has measured it."
         }
       },
       "description": "GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.\n\nEverything below consolidation_enabled is zero on a read/write replica, which runs no cycle of\nits own: its store is consolidated by whichever instance holds the single-consolidator lock,\nunder that instance's configuration."
@@ -3416,6 +3420,27 @@
           "format": "int32"
         }
       }
+    },
+    "v1IndexFootprint": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string"
+        },
+        "index": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "bytes is what the engine says this index occupies, space it has not reclaimed included. A\nB-tree page emptied by a delete is marked reusable and never repacked, and a store keyed on a\nUUID that deletes millions of rows over its life never refills one - so this figure grows with\nwhat the store has forgotten rather than with what it holds."
+        },
+        "entries": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "IndexFootprint is what one index over a counted table really occupies, and how many entries it\nholds.\n\nThe pair is the reading rather than two readings. A byte count alone says an index is large, which\non a large store is what one expects; bytes divided by entries says what a single entry is\ncosting, and that number has a known right answer - the widest key in this store is a 37-character\nid and seven numeric columns, so an entry costing a kilobyte is air whatever the store's size.\nThe same measurement found a store of 1,011 memories carrying a 3.5 MB listing index at 3,581\nbytes an entry, 2.7 times its own heap: bloat tracks churn, not row count, and a store small\nenough that nobody would think to look at it is proportionally the worst affected.\n\nentries is the catalogue's own estimate, refreshed by ANALYZE rather than maintained per write,\nso it lags a heavy burst. That is acceptable because nothing acts on this and the quantity being\njudged moves over days."
     },
     "v1Link": {
       "type": "object",
@@ -3914,6 +3939,41 @@
       "default": "SORT_DIRECTION_UNSPECIFIED",
       "description": "SortDirection reverses the order a listing's order_by field sorts in (GetEventsRequest.order_dir,\nGetMemoriesRequest.order_dir).\n\nUNSPECIFIED keeps each order_by value's NATURAL direction rather than meaning \"ascending\": the\nmagnitude and time fields sort descending (most significant, most recent, most recalled first -\nwhich is what a listing is nearly always asked for, and what every one of these listings did\nbefore there was a direction to set), while the lexical ones - id, group, and an event's name -\nsort ascending, alphabetical order being the only reading of those anyone wants first. The\nnatural direction of each value is stated on order_by itself.\n\n - SORT_DIRECTION_UNSPECIFIED: sort in the order_by field's natural direction (see above)\n - SORT_DIRECTION_ASC: ascending, whatever the field's natural direction\n - SORT_DIRECTION_DESC: descending, whatever the field's natural direction"
     },
+    "v1StorageFootprint": {
+      "type": "object",
+      "properties": {
+        "measured": {
+          "type": "boolean"
+        },
+        "measuredAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "UnixNano the cycle took this measurement"
+        },
+        "bytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "bytes is the sum over the counted tables, and index_bytes the part of it that is indexes.\nRead bytes against used_bytes: the ratio is the finding, and on the deployment above it was\n5.8. The tables the target deliberately EXCLUDES are not in here - they have their own\nreading, which reports their disk the same way. See AncillaryStorage."
+        },
+        "indexBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "estimatedBytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "estimated_bytes is what the store's own accounting believes those same tables hold - the\nfigure used_bytes publishes and eviction acts on - carried here so the comparison travels as\none measurement rather than as two readings a client has to pair up itself. 0 where this\ncycle could not take it."
+        },
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1TableFootprint"
+          }
+        }
+      },
+      "description": "StorageFootprint is what the tables INSIDE the byte capacity target really occupy on disk.\n\nused_bytes is a live-row estimate on the server drivers, deliberately: no file-size measure on\neither server shrinks after a delete, so eviction driven by one would chase a figure that cannot\ndrop, evicting every cycle without the reading ever moving. That decision is right and this does\nnot touch it. What was missing was any comparison between the estimate and the disk - and a live\ninstance reporting 153 MB against a 160 MB capacity target was holding an 892 MB database, of\nwhich 533 MB was one index at 5% leaf density.\n\nA store that forgets is a store whose indexes bloat. It is the direct cost of the thing this\nservice exists to do, it is unbounded, and the remedy (REINDEX CONCURRENTLY) is a maintenance\ndecision rather than something a memory store should do to itself on a timer. This reports the\nfigure that says when; docs/operations.md carries the runbook.\n\nmeasured is false where the driver cannot answer cheaply, which separates it from a store\noccupying no disk. Only PostgreSQL can, for the reasons AncillaryTable.disk_bytes gives - and on\nSQLite there is nothing to answer, page accounting already counting every index inside the target."
+    },
     "v1StoreEventResponse": {
       "type": "object",
       "properties": {
@@ -4045,6 +4105,32 @@
           "title": "the LLM-generated summary text stored in the new memory"
         }
       }
+    },
+    "v1TableFootprint": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "bytes is everything the engine holds for this table - rows, out-of-line storage and indexes\ntogether. index_bytes is the part of it the indexes account for; the difference is the rows."
+        },
+        "indexBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "indexes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1IndexFootprint"
+          },
+          "description": "indexes is largest first, and capped - an index name is a metric attribute on the gauge that\ncarries the same figures, and while the indexes this store creates are a fixed set, an\noperator may add their own. Truncation drops the smallest, which is what a reader would skip."
+        }
+      },
+      "description": "TableFootprint is one counted table's real occupancy, and the share of it the indexes account for.\n\nThe split is what separates the two findings: a heap larger than the store's estimate of it is a\nstore that is not forgetting fast enough, while indexes larger than it is a store forgetting\nexactly as designed and paying for it in space nothing reclaims. On the deployment this was\nmeasured against the heap was 78 MB and fine, and the indexes were 687 MB."
     },
     "v1TopologyAttribute": {
       "type": "object",

@@ -887,6 +887,149 @@ export function ancillarySummary(status, now) {
   );
 }
 
+// ------------------------------------- what the store really occupies on disk
+
+// The other direction from the card above, and the one nothing else here can see. used_bytes is a
+// live-row estimate on the server drivers and has to stay one - eviction driven by a file-size
+// measure would chase a reading that never drops after a delete - so the estimate can be exactly
+// right while the database is several times larger. A store that forgets is a store whose indexes
+// bloat: a B-tree page a delete emptied is marked reusable and never repacked.
+
+// INDEX_COST_SUSPECT is the bytes-per-entry figure above which an index is mostly empty page rather
+// than data. Every index over a counted table here is keyed on an id and a handful of numbers, so a
+// healthy entry costs tens of bytes; a measured bloated one cost 2,700.
+export const INDEX_COST_SUSPECT = 512;
+
+// INDEX_MIN_ENTRIES is the floor below which the ratio means nothing: a nearly empty B-tree is a
+// metapage and a leaf whatever it holds, which divides into a large number that is not bloat.
+export const INDEX_MIN_ENTRIES = 500;
+
+// CONTENT_INDEX_TABLE is the one table whose cost per entry has no right answer - its entries are an
+// inverted index over the bodies, so they grow with the stored text rather than with a fixed key.
+// It is shown and never judged, which is the same line the shipped alert draws.
+export const CONTENT_INDEX_TABLE = "memories_fts";
+
+// indexCost says what one entry of an index is costing and whether that is a number to act on.
+//
+// Null bytesPerEntry is an absence rather than a ratio: the entry count is the catalogue's own
+// estimate, and an index it has never analysed reports none. Rendering that as 0 would say the
+// index is free.
+export function indexCost(index) {
+  const bytes = Number(index.bytes || 0);
+  const entries = Number(index.entries || 0);
+
+  if (entries <= 0) {
+    return { bytesPerEntry: null, suspect: false, note: "not yet analysed" };
+  }
+
+  const perEntry = bytes / entries;
+
+  if (index.table === CONTENT_INDEX_TABLE) {
+    return {
+      bytesPerEntry: perEntry,
+      suspect: false,
+      note: "grows with the bodies it indexes",
+    };
+  }
+
+  if (entries < INDEX_MIN_ENTRIES) {
+    return {
+      bytesPerEntry: perEntry,
+      suspect: false,
+      note: "too few entries to judge",
+    };
+  }
+
+  if (perEntry <= INDEX_COST_SUSPECT) {
+    return { bytesPerEntry: perEntry, suspect: false, note: "" };
+  }
+
+  return {
+    bytesPerEntry: perEntry,
+    suspect: true,
+    note: "mostly empty pages - REINDEX INDEX CONCURRENTLY",
+  };
+}
+
+// footprintRows flattens every index across every counted table, largest first, so the card lists
+// what to act on rather than what to read. The table each index belongs to travels with it, since a
+// name alone is not something an operator can issue a REINDEX against.
+export function footprintRows(footprint) {
+  if (!footprint) return [];
+
+  const rows = [];
+
+  for (const table of footprint.tables || []) {
+    for (const index of table.indexes || []) {
+      rows.push({
+        table: table.table || index.table || "",
+        index: index.index || "",
+        bytes: Number(index.bytes || 0),
+        entries: Number(index.entries || 0),
+        cost: indexCost({ ...index, table: table.table || index.table }),
+      });
+    }
+  }
+
+  return rows.sort((a, b) => b.bytes - a.bytes);
+}
+
+// footprintSummary is the headline: the ratio, which is the finding, and never either figure alone.
+//
+// Three absences have to stay apart and all three render as no card content. A replica measures
+// nothing. A consolidating instance that has not yet run a cycle has nothing measured YET. And two
+// drivers of three cannot answer at all - which is derived from a cycle having run and produced no
+// footprint, since an absence with no explanation reads as a store occupying no disk.
+export function footprintSummary(status, now) {
+  if (!status) return "Nothing loaded yet.";
+
+  if (!status.consolidationEnabled) {
+    return (
+      "This instance runs no sleep cycle, so it takes no measurement. Its store is " +
+      "consolidated by whichever instance holds the lock, and that one measures this."
+    );
+  }
+
+  const footprint = status.footprint;
+
+  if (!footprint || !footprint.measured) {
+    if (!status.lastCycle) {
+      return "No cycle has measured this since the instance started.";
+    }
+
+    return (
+      "This driver does not report what the store really occupies. SQLite has nothing to " +
+      "report - its page accounting already counts every index inside the capacity target - and " +
+      "MySQL serves relation sizes from a cache refreshed at most once a day, which would answer " +
+      "with yesterday's size. Watch the disk directly there."
+    );
+  }
+
+  const bytes = Number(footprint.bytes || 0);
+  const estimated = Number(footprint.estimatedBytes || 0);
+  const indexes = Number(footprint.indexBytes || 0);
+
+  const held =
+    formatBytes(bytes) +
+    " on disk, " +
+    formatBytes(indexes) +
+    " of it indexes. Measured " +
+    ageLabel(now, footprint.measuredAt) +
+    ".";
+
+  if (estimated <= 0) return held;
+
+  return (
+    held +
+    " The store's own accounting counts " +
+    formatBytes(estimated) +
+    " for the same tables — a factor of " +
+    (bytes / estimated).toFixed(1) +
+    ". The estimate is not wrong; it describes a compacted store, and nothing repacks a B-tree " +
+    "page that forgetting emptied."
+  );
+}
+
 // ------------------------------------------------------------------ topology
 
 // TIER_RANK orders the authorisation tiers so a client can compare the tier a deployment requires

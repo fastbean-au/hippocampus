@@ -66,6 +66,13 @@ func (s *Server) GetConsolidationStatus(
 		res.Ancillary = ancillaryToProto(ancillary)
 	}
 
+	// Absent on a driver that cannot measure it, not a measured:false block: a zeroed footprint on
+	// screen reads as a store occupying no disk, which is the one thing this field exists to stop
+	// anybody believing. See hippocampus/footprint.go.
+	if footprint := s.lastFootprint.Load(); footprint != nil {
+		res.Footprint = footprintToProto(footprint)
+	}
+
 	return &res, nil
 }
 

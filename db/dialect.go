@@ -243,6 +243,21 @@ type dialect struct {
 	// Reported and never regulated on, for the reason the structural figures above give.
 	relationBytes string
 
+	// indexFootprint lists what each index over one named table really occupies, and how many
+	// entries it holds: the per-index half of the same reading, and the only one that says WHICH
+	// index to act on. It takes the table name as its one bind parameter and returns a row per
+	// index, largest first, so a caller that truncates the list keeps the one that matters.
+	//
+	// It must be a CATALOGUE lookup for the reason relationBytes must, and that rules out the
+	// authoritative answer: pgstatindex reports avg_leaf_density directly, but it reads every page
+	// of the index to do it, which on the 533 MB index this exists about is not a figure to take
+	// once a sleep cycle - and it needs an extension a managed instance may not have installed.
+	// Bytes against entries is measured, exact, free, and says the same thing: an index costing
+	// 2,700 bytes an entry over a 37-byte key is air, whatever the density figure would have been.
+	//
+	// Empty on the same two dialects relationBytes is empty on, for the same two reasons.
+	indexFootprint string
+
 	// idCollationMigration is set where an id column's collation is a property that can be wrong on
 	// a database created by an older version and has to be corrected in place. Only the dialect
 	// whose default collation is case-insensitive has one - the others compare byte-for-byte with no
@@ -298,6 +313,7 @@ var dialects = map[driver]*dialect{
 		tombstoneRowBytes:    165,
 		outboxRowBytes:       75,
 		relationBytes:        "",
+		indexFootprint:       "",
 		instanceRegistry:     false,
 		countsChangedRows:    false,
 		idCollationMigration: false,
@@ -347,7 +363,15 @@ var dialects = map[driver]*dialect{
 		outboxRowBytes:    120,
 		// to_regclass answers NULL rather than raising for a table this store does not have, which
 		// is the read-only opens and any store that never enabled the feature.
-		relationBytes:        `SELECT COALESCE(pg_total_relation_size(to_regclass(?)), 0)`,
+		relationBytes: `SELECT COALESCE(pg_total_relation_size(to_regclass(?)), 0)`,
+		// GREATEST rather than COALESCE on reltuples: a relation this build has never analysed
+		// carries -1 since PG 14, which is an absence rather than a count and must not travel as a
+		// negative entry count into a bytes-per-entry division.
+		indexFootprint: `SELECT i.relname, pg_relation_size(i.oid), GREATEST(i.reltuples, 0)::bigint
+			FROM pg_index x
+			JOIN pg_class i ON i.oid = x.indexrelid
+			WHERE x.indrelid = to_regclass(?)
+			ORDER BY pg_relation_size(i.oid) DESC, i.relname ASC`,
 		instanceRegistry:     true,
 		countsChangedRows:    false,
 		idCollationMigration: false,
@@ -417,6 +441,7 @@ var dialects = map[driver]*dialect{
 		// different reason, and with a different consequence: here the unreclaimed space is real and
 		// simply not visible from inside the service.
 		relationBytes:        "",
+		indexFootprint:       "",
 		instanceRegistry:     true,
 		countsChangedRows:    true,
 		idCollationMigration: true,

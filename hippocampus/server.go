@@ -261,6 +261,12 @@ type Server struct {
 	// for the same reason. See hippocampus/ancillary.go.
 	lastAncillary atomic.Pointer[ancillarySnapshot]
 
+	// lastFootprint is the most recent measurement of what the tables the capacity target DOES
+	// count really occupy on disk, or nil until a cycle in this process has taken one - and on a
+	// driver that cannot answer, always. An atomic.Pointer for the reason lastCycle is. See
+	// hippocampus/footprint.go.
+	lastFootprint atomic.Pointer[footprintSnapshot]
+
 	// version is the build identification main.go derived and handed in (Dependencies.Version). It
 	// is reported by WhoAmI and on GetTopology's self node - the same string, since a client asking
 	// either question is asking about this process.
