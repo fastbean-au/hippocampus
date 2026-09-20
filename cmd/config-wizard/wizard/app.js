@@ -1180,7 +1180,7 @@ const STEPS = [
             def: 30,
             svc: 30,
             when: (s) => value(s, "consolidation.tombstones.enabled"),
-            help: "Applied alongside the record cap — a record past either bound is trimmed. 0 removes this bound.",
+            help: "Applied alongside the record cap — a record past either bound is trimmed. Which of the two actually binds depends on how fast this store forgets: at 19,000 memories a day, a 100,000-record cap is five days of history whatever this says. The console's Deployment tab reports which cap is in force; if a retention window is the point, raise the record cap until the age cap is the one binding. 0 removes this bound.",
           },
           {
             key: "consolidation.tombstones.maxBytes",
@@ -1188,7 +1188,7 @@ const STEPS = [
             type: "int",
             def: 0,
             when: (s) => value(s, "consolidation.tombstones.enabled"),
-            help: "The record cap in the unit a disk is sized in. A tombstone is a fixed-width row (192 bytes), so this converts to a record cap exactly and the tighter of the two wins — 100,000 records is roughly 19 MB. 0 removes this bound.",
+            help: "The record cap in the unit a disk is sized in. A tombstone is a fixed-width row, so this converts to a record cap exactly and the tighter of the two wins — at 165 bytes a row on SQLite, 255 on PostgreSQL and 345 on MySQL, 100,000 records is roughly 17, 26 or 35 MB. It bounds the rows; on PostgreSQL the relation also carries space the engine has not reclaimed, which is reported separately and can be about as much again. 0 removes this bound.",
           },
         ],
       },

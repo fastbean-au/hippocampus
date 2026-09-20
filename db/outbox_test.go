@@ -248,7 +248,7 @@ func TestPruneBoundsTheOutboxInBytes(t *testing.T) {
 	}
 
 	// Room for two rows and no row cap at all, so anything trimmed was trimmed on bytes.
-	if _, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxBytes: 2 * outboxRowBytes}); err != nil {
+	if _, err := database.PruneSearchOutbox(ctx, QueueBounds{MaxBytes: 2 * database.dialect().outboxRowBytes}); err != nil {
 		t.Fatalf("PruneSearchOutbox: %s", err)
 	}
 
@@ -263,12 +263,12 @@ func TestPruneBoundsTheOutboxInBytes(t *testing.T) {
 
 	// The figure the cap is measured against is the one that is reported, which is what stops an
 	// operator reading a queue as being well inside a bound it is at.
-	measured, err := database.AncillaryStorage(ctx)
+	measured, err := database.AncillaryStorage(ctx, AncillaryBounds{})
 	if err != nil {
 		t.Fatalf("AncillaryStorage: %s", err)
 	}
 
-	if measured.SearchOutbox.Bytes != 2*outboxRowBytes {
-		t.Errorf("the trimmed outbox reports %d bytes, want %d", measured.SearchOutbox.Bytes, 2*outboxRowBytes)
+	if want := 2 * database.dialect().outboxRowBytes; measured.SearchOutbox.Bytes != want {
+		t.Errorf("the trimmed outbox reports %d bytes, want %d", measured.SearchOutbox.Bytes, want)
 	}
 }

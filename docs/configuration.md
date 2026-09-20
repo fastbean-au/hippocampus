@@ -1958,9 +1958,10 @@ keys:
   Hours rather than days, deliberately: this queue is meant to drain in seconds, so a day of backlog
   is already an outage.
 - `opensearch.outbox.maxBytes` (default `0`, no bound) — the same bound stated in the unit a disk is
-  sized in. These rows are fixed width (an id, a timestamp and a surrogate key, charged 96 bytes
-  each), so this converts to a row cap exactly and the tighter of the two wins; the row cap above is
-  already roughly 96 MB. It is not defaulted because it would be that same bound said twice.
+  sized in. These rows are fixed width (an id, a timestamp and a surrogate key, charged 75 bytes on
+  SQLite, 120 on PostgreSQL and 185 on MySQL), so this converts to a row cap exactly and the tighter
+  of the two wins; the row cap above is already roughly 75, 120 or 185 MB. It is not defaulted
+  because it would be that same bound said twice.
 
 Reaching either cap logs a warning and increments `hippocampus.search.outbox.abandoned`; what is
 discarded becomes the stale pass's job to find. Watch `hippocampus.search.outbox_depth` — sustained

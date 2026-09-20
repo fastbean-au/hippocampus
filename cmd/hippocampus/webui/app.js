@@ -3927,19 +3927,27 @@ function renderAncillary(status) {
     return;
   }
 
+  // The "Held by" column is the one that answers a question no other figure here can: the caps are
+  // independent bounds with no precedence between them, and which one binds depends on how fast this
+  // store is forgetting. A log sitting at its row cap while an age cap is also set is holding less
+  // history than its operator asked for, and that reads as perfectly healthy everywhere else.
   const rows = ancillaryRows(ancillary)
     .map(
       (row) => `<tr>
     <td>${esc(row.label)}<br><span class="muted fs-12">${esc(row.note)}</span></td>
-    <td>${esc(row.rows.toLocaleString())}<br><span class="muted fs-12">${esc(row.state)}</span></td>
-    <td>${esc(formatBytes(row.bytes))}<br><span class="muted fs-12">${esc(row.limit)}</span></td>
-    <td><span class="muted fs-12">${esc(row.bound)}</span></td>
+    <td>${esc(row.rowsLabel)}<br><span class="muted fs-12">${esc(row.state)}</span></td>
+    <td>${esc(formatBytes(row.bytes))}<br><span class="muted fs-12">${esc(row.limit)}${
+      row.disk ? ` · ${esc(row.disk)}` : ""
+    }</span></td>
+    <td>${esc(row.binding.label)}<br><span class="fs-12 ${
+      row.binding.unreachable ? "warn" : "muted"
+    }">${esc(row.binding.detail)}</span><br><span class="muted fs-12">${esc(row.bound)}</span></td>
   </tr>`,
     )
     .join("");
 
   $("ancillary-tables").innerHTML = `<div class="tablewrap"><table>
-     <thead><tr><th>Table</th><th>Rows</th><th>Approx. size</th><th>Bounded by</th></tr></thead>
+     <thead><tr><th>Table</th><th>Rows</th><th>Approx. size</th><th>Held by</th></tr></thead>
      <tbody>${rows}</tbody>
    </table></div>`;
 }

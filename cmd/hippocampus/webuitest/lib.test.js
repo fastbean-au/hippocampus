@@ -14,8 +14,11 @@ import {
   tourProgress,
   tourSteps,
   ageLabel,
+  ancillaryBinding,
+  ancillaryDiskLabel,
   ancillaryLimitLabel,
   ancillaryRows,
+  ancillarySpanDays,
   ancillarySummary,
   capacityMeter,
   countdownFraction,
@@ -1798,10 +1801,129 @@ test("ancillaryRows lists a disabled table rather than omitting it", () => {
   // The callback queue is last on purpose: it is the one whose row cap is not a byte cap, so its
   // note is the parting one rather than one of three equals.
   assert.match(rows[2].note, /no fixed size/);
-  assert.equal(rows[2].bound, "callbacks.maxRows / .maxBytes");
+  assert.equal(rows[2].bound, "callbacks.maxRows / .maxBytes / .maxAgeHours");
 
   assert.equal(rows[0].state, "recording");
   assert.equal(rows[1].state, "not enabled");
+});
+
+test("ancillarySpanDays reads how much history a table holds, and separates empty from zero", () => {
+  const measuredAt = String(Date.now() * 1e6);
+  const fiveDays = String((Date.now() - 5.2 * 86400 * 1000) * 1e6);
+
+  assert.ok(
+    Math.abs(ancillarySpanDays(fiveDays, measuredAt) - 5.2) < 0.01,
+    "a log reaching back five days should say so",
+  );
+
+  // An empty table has no span, which is not the same statement as a span of zero - the first is
+  // "nothing in it", the second would read as "it holds today's rows".
+  assert.equal(ancillarySpanDays(0, measuredAt), null);
+  assert.equal(ancillarySpanDays(fiveDays, 0), null);
+});
+
+test("ancillaryBinding names the cap that is actually holding a table", () => {
+  const measuredAt = String(Date.now() * 1e6);
+
+  assert.equal(
+    ancillaryBinding({ bindingLimit: "rows" }, measuredAt).label,
+    "Row cap",
+  );
+  assert.equal(
+    ancillaryBinding({ bindingLimit: "bytes" }, measuredAt).label,
+    "Byte cap",
+  );
+  assert.equal(
+    ancillaryBinding({ bindingLimit: "age" }, measuredAt).label,
+    "Age cap",
+  );
+
+  // A table nothing will trim says so rather than leaving the column blank, which would read as
+  // "not measured".
+  const unbounded = ancillaryBinding({ bindingLimit: "none" }, measuredAt);
+
+  assert.equal(unbounded.label, "Nothing");
+  assert.match(unbounded.detail, /nothing will remove it/);
+
+  // And an instance too old to report the field is distinguished from one reporting "none".
+  assert.equal(ancillaryBinding({}, measuredAt).label, "Not reported");
+});
+
+test("ancillaryBinding flags a window the store forgets too fast to reach", () => {
+  const measuredAt = Date.now() * 1e6;
+  const fiveDays = String(measuredAt - 5.2 * 86400 * 1000 * 1e6);
+
+  // The state TODO-2 item 126 is about: maxRows 100000 and maxAgeInDays 30, where the row cap is
+  // five days of history and the thirty the operator configured is unreachable. Nothing else on this
+  // card would show it - both caps are enforced and neither is violated.
+  const held = ancillaryBinding(
+    {
+      bindingLimit: "rows",
+      limitAgeSeconds: String(30 * 86400),
+      oldestAt: fiveDays,
+    },
+    String(measuredAt),
+  );
+
+  assert.equal(held.unreachable, true);
+  assert.match(held.detail, /5\.2 days of history/);
+  assert.match(held.detail, /short of the 30 days/);
+
+  // The same age cap, when it is the one actually acting, is the arrangement working.
+  const aged = ancillaryBinding(
+    {
+      bindingLimit: "age",
+      limitAgeSeconds: String(30 * 86400),
+      oldestAt: fiveDays,
+    },
+    String(measuredAt),
+  );
+
+  assert.equal(aged.unreachable, false);
+  assert.doesNotMatch(aged.detail, /short of/);
+
+  // A row cap with no age cap beside it is nobody's unmet intention.
+  assert.equal(
+    ancillaryBinding({ bindingLimit: "rows", oldestAt: fiveDays }, String(measuredAt))
+      .unreachable,
+    false,
+  );
+});
+
+test("ancillaryDiskLabel speaks only when the disk says something the estimate does not", () => {
+  // The embedded driver measures no relation, so there is nothing to add.
+  assert.equal(ancillaryDiskLabel(1536000, 0), "");
+
+  // Nor when the two agree: a compacted table's structural size IS its disk, and printing both
+  // would suggest a discrepancy that is not there.
+  assert.equal(ancillaryDiskLabel(1536000, 1540000), "");
+
+  // And when they do not, the gap is the reading - space the engine is holding that no other figure
+  // on this card can see.
+  assert.match(ancillaryDiskLabel(25500000, 46000000), /on disk/);
+});
+
+test("ancillaryRows carries the row cap and the binding onto each row", () => {
+  const rows = ancillaryRows(
+    measurement({
+      forgottenLog: {
+        enabled: true,
+        rows: "8000",
+        bytes: "1536000",
+        limitRows: "8000",
+        limitAgeSeconds: String(30 * 86400),
+        oldestAt: HOUR_AGO,
+        bindingLimit: "rows",
+      },
+    }).ancillary,
+  );
+
+  assert.equal(rows[0].rowsLabel, "8,000 of 8,000");
+  assert.equal(rows[0].binding.label, "Row cap");
+  assert.equal(rows[0].binding.unreachable, true);
+
+  // A table with no row cap shows its count alone rather than "8,000 of 0".
+  assert.equal(rows[1].rowsLabel, "0");
 });
 
 test("ancillaryLimitLabel names the unset cap rather than printing a bound of nothing", () => {

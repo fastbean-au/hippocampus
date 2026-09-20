@@ -1610,6 +1610,50 @@ message AncillaryTable {
 	// the service. What bounds it meanwhile is the row cap, exactly - the rows being fixed width -
 	// for the first two, and only loosely for the callback queue.
 	int64                                  limit_bytes               = 4;
+
+	// disk_bytes is what the storage engine says this relation and its indexes really occupy right
+	// now, space it has not reclaimed included. It is reported BESIDE bytes rather than replacing it
+	// because the two answer different questions and both are wanted: bytes is the table's
+	// structural size and the currency the caps are enforced in, while disk_bytes is what the disk
+	// is actually carrying. Under steady churn the second is routinely twice the first - a live
+	// PostgreSQL store held 100,002 tombstones structurally worth 25 MB in 46 MB of relation - and
+	// that gap is itself the reading: it is space the engine will reuse rather than return, and no
+	// other figure this service publishes can see it. The caps deliberately do NOT chase it; see
+	// limit_bytes.
+	//
+	// 0 where the driver cannot answer, which is two of the three and for opposite reasons. The
+	// embedded driver has nothing to report: a page a prune frees returns to the freelist used_bytes
+	// already excludes, so bytes is the whole truth there. MySQL has something to report and no
+	// current way to read it - information_schema serves its sizes from a cache refreshed at most
+	// once a day by default, which would answer with yesterday's size exactly when a queue started
+	// growing today - so it reports nothing rather than something stale.
+	int64                                  disk_bytes                = 5;
+
+	// oldest_at is the UnixNano of the oldest row, or 0 when the table is empty. It is what turns a
+	// row count into a retention window: a log sitting at its row cap says nothing about how much
+	// history that is, and the deployment this field came from was holding five days of a window it
+	// had configured as thirty.
+	int64                                  oldest_at                 = 6;
+
+	// limit_rows is the EFFECTIVE row cap - the tighter of the configured row cap and whatever
+	// limit_bytes resolves to at this driver's per-row allowance - or 0 where neither is set. It is
+	// resolved rather than echoed because a byte cap on a fixed-width table IS a row cap, and which
+	// of the two is biting is not something a client could work out: the allowance differs per
+	// driver.
+	int64                                  limit_rows                = 7;
+
+	// limit_age_seconds is the configured age cap, or 0 where none is.
+	int64                                  limit_age_seconds         = 8;
+
+	// binding_limit names the cap that is actually deciding what this table drops: "rows", "bytes",
+	// "age", or "none" for a table nothing will trim. Meant to be shown rather than parsed, in the
+	// mould of CycleReport.trigger.
+	//
+	// It exists because the caps are independent bounds with no stated precedence, and which one
+	// binds depends on a rate an operator cannot see when choosing them. "rows" or "bytes" while
+	// limit_age_seconds is set is the reading to act on: both caps are enforced, neither is
+	// violated, and the age cap is a window this store forgets too fast to reach.
+	string                                 binding_limit             = 9;
 }
 
 // AncillaryStorage is the storage this store spends that its byte capacity target cannot see.
@@ -1627,6 +1671,12 @@ message AncillaryTable {
 // callbacks.maxBytes is what bounds it in the same unit the figure is reported in.
 message AncillaryStorage {
 	int64                                  measured_at               = 1; // UnixNano the cycle took this measurement
+
+	// total_bytes sums each table's disk_bytes where there is one and its bytes where there is not,
+	// because the question it answers - what disk does this deployment need beyond
+	// consolidation.capacityBytes - is asked of what the engine is holding rather than of what the
+	// rows would occupy if it were compacted. It is therefore not always the sum of the three
+	// `bytes` fields, and is usually larger.
 	int64                                  total_bytes               = 2;
 	AncillaryTable                         forgotten_log             = 3;
 	AncillaryTable                         search_outbox             = 4;

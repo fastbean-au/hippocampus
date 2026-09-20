@@ -6848,7 +6848,46 @@ type AncillaryTable struct {
 	// one, since how much of this a deployment can afford is a property of its disk rather than of
 	// the service. What bounds it meanwhile is the row cap, exactly - the rows being fixed width -
 	// for the first two, and only loosely for the callback queue.
-	LimitBytes    int64 `protobuf:"varint,4,opt,name=limit_bytes,json=limitBytes,proto3" json:"limit_bytes,omitempty"`
+	LimitBytes int64 `protobuf:"varint,4,opt,name=limit_bytes,json=limitBytes,proto3" json:"limit_bytes,omitempty"`
+	// disk_bytes is what the storage engine says this relation and its indexes really occupy right
+	// now, space it has not reclaimed included. It is reported BESIDE bytes rather than replacing it
+	// because the two answer different questions and both are wanted: bytes is the table's
+	// structural size and the currency the caps are enforced in, while disk_bytes is what the disk
+	// is actually carrying. Under steady churn the second is routinely twice the first - a live
+	// PostgreSQL store held 100,002 tombstones structurally worth 25 MB in 46 MB of relation - and
+	// that gap is itself the reading: it is space the engine will reuse rather than return, and no
+	// other figure this service publishes can see it. The caps deliberately do NOT chase it; see
+	// limit_bytes.
+	//
+	// 0 where the driver cannot answer, which is two of the three and for opposite reasons. The
+	// embedded driver has nothing to report: a page a prune frees returns to the freelist used_bytes
+	// already excludes, so bytes is the whole truth there. MySQL has something to report and no
+	// current way to read it - information_schema serves its sizes from a cache refreshed at most
+	// once a day by default, which would answer with yesterday's size exactly when a queue started
+	// growing today - so it reports nothing rather than something stale.
+	DiskBytes int64 `protobuf:"varint,5,opt,name=disk_bytes,json=diskBytes,proto3" json:"disk_bytes,omitempty"`
+	// oldest_at is the UnixNano of the oldest row, or 0 when the table is empty. It is what turns a
+	// row count into a retention window: a log sitting at its row cap says nothing about how much
+	// history that is, and the deployment this field came from was holding five days of a window it
+	// had configured as thirty.
+	OldestAt int64 `protobuf:"varint,6,opt,name=oldest_at,json=oldestAt,proto3" json:"oldest_at,omitempty"`
+	// limit_rows is the EFFECTIVE row cap - the tighter of the configured row cap and whatever
+	// limit_bytes resolves to at this driver's per-row allowance - or 0 where neither is set. It is
+	// resolved rather than echoed because a byte cap on a fixed-width table IS a row cap, and which
+	// of the two is biting is not something a client could work out: the allowance differs per
+	// driver.
+	LimitRows int64 `protobuf:"varint,7,opt,name=limit_rows,json=limitRows,proto3" json:"limit_rows,omitempty"`
+	// limit_age_seconds is the configured age cap, or 0 where none is.
+	LimitAgeSeconds int64 `protobuf:"varint,8,opt,name=limit_age_seconds,json=limitAgeSeconds,proto3" json:"limit_age_seconds,omitempty"`
+	// binding_limit names the cap that is actually deciding what this table drops: "rows", "bytes",
+	// "age", or "none" for a table nothing will trim. Meant to be shown rather than parsed, in the
+	// mould of CycleReport.trigger.
+	//
+	// It exists because the caps are independent bounds with no stated precedence, and which one
+	// binds depends on a rate an operator cannot see when choosing them. "rows" or "bytes" while
+	// limit_age_seconds is set is the reading to act on: both caps are enforced, neither is
+	// violated, and the age cap is a window this store forgets too fast to reach.
+	BindingLimit  string `protobuf:"bytes,9,opt,name=binding_limit,json=bindingLimit,proto3" json:"binding_limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6911,6 +6950,41 @@ func (x *AncillaryTable) GetLimitBytes() int64 {
 	return 0
 }
 
+func (x *AncillaryTable) GetDiskBytes() int64 {
+	if x != nil {
+		return x.DiskBytes
+	}
+	return 0
+}
+
+func (x *AncillaryTable) GetOldestAt() int64 {
+	if x != nil {
+		return x.OldestAt
+	}
+	return 0
+}
+
+func (x *AncillaryTable) GetLimitRows() int64 {
+	if x != nil {
+		return x.LimitRows
+	}
+	return 0
+}
+
+func (x *AncillaryTable) GetLimitAgeSeconds() int64 {
+	if x != nil {
+		return x.LimitAgeSeconds
+	}
+	return 0
+}
+
+func (x *AncillaryTable) GetBindingLimit() string {
+	if x != nil {
+		return x.BindingLimit
+	}
+	return ""
+}
+
 // AncillaryStorage is the storage this store spends that its byte capacity target cannot see.
 //
 // The three tables are excluded from used_bytes deliberately: the record of what was deleted must
@@ -6925,12 +6999,17 @@ func (x *AncillaryTable) GetLimitBytes() int64 {
 // its bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps.
 // callbacks.maxBytes is what bounds it in the same unit the figure is reported in.
 type AncillaryStorage struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MeasuredAt    int64                  `protobuf:"varint,1,opt,name=measured_at,json=measuredAt,proto3" json:"measured_at,omitempty"` // UnixNano the cycle took this measurement
-	TotalBytes    int64                  `protobuf:"varint,2,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
-	ForgottenLog  *AncillaryTable        `protobuf:"bytes,3,opt,name=forgotten_log,json=forgottenLog,proto3" json:"forgotten_log,omitempty"`
-	SearchOutbox  *AncillaryTable        `protobuf:"bytes,4,opt,name=search_outbox,json=searchOutbox,proto3" json:"search_outbox,omitempty"`
-	CallbackQueue *AncillaryTable        `protobuf:"bytes,5,opt,name=callback_queue,json=callbackQueue,proto3" json:"callback_queue,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	MeasuredAt int64                  `protobuf:"varint,1,opt,name=measured_at,json=measuredAt,proto3" json:"measured_at,omitempty"` // UnixNano the cycle took this measurement
+	// total_bytes sums each table's disk_bytes where there is one and its bytes where there is not,
+	// because the question it answers - what disk does this deployment need beyond
+	// consolidation.capacityBytes - is asked of what the engine is holding rather than of what the
+	// rows would occupy if it were compacted. It is therefore not always the sum of the three
+	// `bytes` fields, and is usually larger.
+	TotalBytes    int64           `protobuf:"varint,2,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
+	ForgottenLog  *AncillaryTable `protobuf:"bytes,3,opt,name=forgotten_log,json=forgottenLog,proto3" json:"forgotten_log,omitempty"`
+	SearchOutbox  *AncillaryTable `protobuf:"bytes,4,opt,name=search_outbox,json=searchOutbox,proto3" json:"search_outbox,omitempty"`
+	CallbackQueue *AncillaryTable `protobuf:"bytes,5,opt,name=callback_queue,json=callbackQueue,proto3" json:"callback_queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8106,13 +8185,20 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x14snapshot_ttl_seconds\x18\x06 \x01(\x03R\x12snapshotTtlSeconds\x12:\n" +
 	"\n" +
 	"last_cycle\x18\a \x01(\v2\x1b.hippocampus.v1.CycleReportR\tlastCycle\x12>\n" +
-	"\tancillary\x18\b \x01(\v2 .hippocampus.v1.AncillaryStorageR\tancillary\"u\n" +
+	"\tancillary\x18\b \x01(\v2 .hippocampus.v1.AncillaryStorageR\tancillary\"\xa1\x02\n" +
 	"\x0eAncillaryTable\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x12\n" +
 	"\x04rows\x18\x02 \x01(\x03R\x04rows\x12\x14\n" +
 	"\x05bytes\x18\x03 \x01(\x03R\x05bytes\x12\x1f\n" +
 	"\vlimit_bytes\x18\x04 \x01(\x03R\n" +
-	"limitBytes\"\xa5\x02\n" +
+	"limitBytes\x12\x1d\n" +
+	"\n" +
+	"disk_bytes\x18\x05 \x01(\x03R\tdiskBytes\x12\x1b\n" +
+	"\toldest_at\x18\x06 \x01(\x03R\boldestAt\x12\x1d\n" +
+	"\n" +
+	"limit_rows\x18\a \x01(\x03R\tlimitRows\x12*\n" +
+	"\x11limit_age_seconds\x18\b \x01(\x03R\x0flimitAgeSeconds\x12#\n" +
+	"\rbinding_limit\x18\t \x01(\tR\fbindingLimit\"\xa5\x02\n" +
 	"\x10AncillaryStorage\x12\x1f\n" +
 	"\vmeasured_at\x18\x01 \x01(\x03R\n" +
 	"measuredAt\x12\x1f\n" +

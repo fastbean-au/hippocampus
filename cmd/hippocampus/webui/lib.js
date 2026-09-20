@@ -661,7 +661,8 @@ export function callbackQueueSummary(data, now) {
 // --------------------------------------------------- storage outside capacity
 
 // ANCILLARY_TABLES name the three tables the byte capacity target does not count, in the order the
-// card lists them, with the setting that bounds each. The order is deliberate: the callback queue
+// card lists them, with the settings that bound each - all three of them, since which one is
+// actually acting is what the row's "Held by" column reports. The order is deliberate: the callback queue
 // is last because it is the one whose row cap is NOT a byte cap - its rows carry a rendered payload
 // and, under callbacks.includeBodies, memory bodies - so it reads as the parting note rather than
 // as one of three equals.
@@ -669,19 +670,19 @@ export const ANCILLARY_TABLES = [
   {
     key: "forgottenLog",
     label: "Forgotten log",
-    bound: "consolidation.tombstones.maxRows / .maxBytes",
+    bound: "consolidation.tombstones.maxRows / .maxBytes / .maxAgeInDays",
     note: "One fixed-size row per forgotten memory, so its row cap is already a byte cap and the byte cap is the same bound in the other unit.",
   },
   {
     key: "searchOutbox",
     label: "Search outbox",
-    bound: "opensearch.outbox.maxRows / .maxBytes",
+    bound: "opensearch.outbox.maxRows / .maxBytes / .maxAgeHours",
     note: "One fixed-size row per index deletion still owed. It grows precisely when deletions are backing up.",
   },
   {
     key: "callbackQueue",
     label: "Callback queue",
-    bound: "callbacks.maxRows / .maxBytes",
+    bound: "callbacks.maxRows / .maxBytes / .maxAgeHours",
     note: "Rows here have no fixed size - a delivery carries up to callbacks.maxIdsPerDelivery items, and memory bodies when callbacks.includeBodies is set - so the row cap bounds the bytes only loosely. callbacks.maxBytes is the one that does.",
   },
 ];
@@ -705,6 +706,95 @@ export function ancillaryLimitLabel(bytes, limitBytes) {
   return `${share}% of the ${formatBytes(limit)} cap`;
 }
 
+// ANCILLARY_BINDINGS render the cap that is actually deciding what a table drops. The server
+// resolves which one it is, since a byte cap on a fixed-width table IS a row cap and the per-row
+// allowance that converts between them differs per driver.
+export const ANCILLARY_BINDINGS = {
+  rows: "Row cap",
+  bytes: "Byte cap",
+  age: "Age cap",
+  none: "Nothing",
+};
+
+// ancillarySpanDays is how much history a table actually holds: the gap between its oldest row and
+// the moment the measurement was taken. Null where the table is empty or was never measured, which
+// is a different thing from a span of zero.
+export function ancillarySpanDays(oldestAt, measuredAt) {
+  const oldest = Number(oldestAt || 0);
+  const measured = Number(measuredAt || 0);
+
+  if (!oldest || !measured || measured <= oldest) return null;
+
+  return (measured - oldest) / 1e6 / 86400000;
+}
+
+// ancillaryBinding describes what is holding a table where it is, and whether that is the cap its
+// operator asked for.
+//
+// The unreachable case is the whole reason this is on the card. A log at its row cap with an age cap
+// also configured is holding less history than the operator believes they configured, and nothing
+// about it looks wrong from any other reading: both caps are enforced, neither is violated, and
+// which one binds depends on how fast the store is forgetting - a rate nobody could see when
+// choosing them. So the row states the span the table actually holds against the window that was
+// asked for, which is the only pair of numbers that makes the mismatch visible.
+export function ancillaryBinding(measured, measuredAt) {
+  const binding = String(measured.bindingLimit || "");
+  const limitAge = Number(measured.limitAgeSeconds || 0);
+  const span = ancillarySpanDays(measured.oldestAt, measuredAt);
+
+  const holds =
+    span === null ? "nothing in it yet" : `${span.toFixed(1)} days of history`;
+
+  if (!binding) {
+    return { label: "Not reported", detail: "", unreachable: false };
+  }
+
+  if (binding === "none") {
+    return {
+      label: ANCILLARY_BINDINGS.none,
+      detail: `${holds}, and nothing will remove it`,
+      unreachable: false,
+    };
+  }
+
+  const unreachable = binding !== "age" && limitAge > 0;
+
+  if (!unreachable) {
+    return {
+      label: ANCILLARY_BINDINGS[binding] || binding,
+      detail: holds,
+      unreachable: false,
+    };
+  }
+
+  return {
+    label: ANCILLARY_BINDINGS[binding] || binding,
+    detail: `${holds} — short of the ${Math.round(limitAge / 86400)} days its age cap asks for, which this store forgets too fast to reach`,
+    unreachable: true,
+  };
+}
+
+// ancillaryDiskLabel is the second byte figure, and it is reported only when it says something the
+// first does not.
+//
+// The two answer different questions. bytes is the table's structural size - what its rows and
+// indexes occupy compacted - and is the currency the byte caps are enforced in. diskBytes is what
+// the engine says the relation is really holding right now, space it has not reclaimed included. On
+// the embedded driver they are the same number and nothing measures the second; on a server driver
+// under steady churn the second is routinely twice the first, and that gap is space no other figure
+// this console shows can see.
+export function ancillaryDiskLabel(bytes, diskBytes) {
+  const disk = Number(diskBytes || 0);
+
+  if (!disk) return "";
+
+  const structural = Number(bytes || 0);
+
+  if (structural > 0 && disk <= structural * 1.1) return "";
+
+  return `${formatBytes(disk)} on disk, the rest not yet reclaimed`;
+}
+
 // ancillaryRows projects the measurement onto the card's table, one row per table whatever its
 // state. A table that is switched off is listed and said to be off rather than omitted: an absent
 // row reads as a table with nothing in it, which is the opposite conclusion, and the whole reason
@@ -715,12 +805,15 @@ export function ancillaryLimitLabel(bytes, limitBytes) {
 // megabytes that nothing is adding to and nothing will ever remove without an explicit discard.
 // "not enabled" would be a fair description of the setting and a misleading one of the disk.
 export function ancillaryRows(ancillary) {
+  const measuredAt = ancillary && ancillary.measuredAt;
+
   return ANCILLARY_TABLES.map((table) => {
     const measured = (ancillary && ancillary[table.key]) || {};
     const enabled = Boolean(measured.enabled);
     const rows = Number(measured.rows || 0);
 
     const bytes = Number(measured.bytes || 0);
+    const limitRows = Number(measured.limitRows || 0);
 
     return {
       label: table.label,
@@ -729,8 +822,14 @@ export function ancillaryRows(ancillary) {
       enabled,
       rows,
       bytes,
+      limitRows,
+      rowsLabel: limitRows
+        ? `${rows.toLocaleString()} of ${limitRows.toLocaleString()}`
+        : rows.toLocaleString(),
       limitBytes: Number(measured.limitBytes || 0),
       limit: ancillaryLimitLabel(bytes, measured.limitBytes),
+      disk: ancillaryDiskLabel(bytes, measured.diskBytes),
+      binding: ancillaryBinding(measured, measuredAt),
       state: enabled
         ? "recording"
         : rows

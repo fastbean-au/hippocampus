@@ -57,6 +57,43 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **The ancillary storage report says which cap is actually in force, and what the disk really
+  holds.** `GetConsolidationStatus`'s `ancillary` block gains four fields per table —
+  `binding_limit` (`rows`, `bytes`, `age` or `none`), `limit_rows` (the effective row cap: the
+  tighter of the configured row cap and whatever `maxBytes` resolves to at this driver's per-row
+  allowance), `limit_age_seconds`, and `oldest_at` — plus `disk_bytes`, what the engine reports the
+  relation really occupies, space it has not reclaimed included. The console's Deployment tab shows
+  all of it, and the service logs the binding when it changes. The caps were independent bounds with
+  no precedence between them, and which one acted depended on how fast the store was forgetting: a
+  forgotten log configured `maxRows: 100000` with `maxAgeInDays: 30`, on a store forgetting 19,000
+  memories a day, held **five days** of the thirty it had been asked for — both caps enforced,
+  neither violated, and nothing anywhere that said so.
+
+### Changed
+
+- **`hippocampus.ancillary_bytes` and `ancillary.total_bytes` now report what the engine is
+  holding** rather than what the rows would occupy compacted, where the driver can say — a catalogue
+  lookup on PostgreSQL; unchanged on SQLite, where a page a prune frees returns to the freelist
+  `used_bytes` already excludes and the two figures are the same, and on MySQL, whose
+  `information_schema` sizes are cached for a day by default and so would report yesterday's. On
+  PostgreSQL under steady churn the difference is around a factor of two, and
+  [`HippocampusAncillaryStorageHigh`](deploy/observability/README.md) was reading the estimate. Each table's `bytes` still carries the structural figure, which is what the byte caps are
+  enforced against and what `used_bytes` excludes — deliberately, since a cap that grew with a
+  table's dead rows would prune harder, leave more dead rows, and prune harder again.
+
+### Fixed
+
+- **The forgotten log's and the delete outbox's per-row allowances are now per driver, and
+  measured.** One flat 192 bytes a tombstone and 96 an outbox row served all three drivers; measured
+  against real relations after a compaction, a tombstone costs 165 bytes on SQLite, 255 on
+  PostgreSQL and 345 on MySQL, and an outbox row 75 / 120 / 185. The figure is reported to an
+  operator, read by an alert, and used to convert `maxBytes` into a row cap, so it was understating
+  the log and admitting more rows than the byte cap said on the two server drivers.
+  `TestAncillaryAllowancesMatchRealStorage` now holds all six to real disk on all three drivers, in
+  the mould of `TestRowOverheadMatchesRealStorage`.
+
 ## [0.48.0] - 2026-09-20
 
 ### Added

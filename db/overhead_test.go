@@ -302,7 +302,7 @@ func TestRowOverheadMatchesRealStorage(t *testing.T) {
 
 				plain := fillForOverhead(t, database, test.bodyBytes)
 
-				checkOverhead(t, database, plain, postgresRelationBytes(t, database))
+				checkOverhead(t, database, plain, postgresRelationBytes(t, database, countedTables(database)))
 			})
 		}
 	})
@@ -327,7 +327,7 @@ func TestRowOverheadMatchesRealStorage(t *testing.T) {
 
 				plain := fillForOverhead(t, database, test.bodyBytes)
 
-				checkOverhead(t, database, plain, mysqlTablespaceBytes(t, database))
+				checkOverhead(t, database, plain, mysqlTablespaceBytes(t, database, countedTables(database)))
 			})
 		}
 	})
@@ -374,10 +374,10 @@ func openForOverhead(t *testing.T, open func(...Option) (*DB, error), test overh
 	return database
 }
 
-// postgresRelationBytes reports what the counted relations really occupy, indexes and TOAST
+// postgresRelationBytes reports what the named relations really occupy, indexes and TOAST
 // included. VACUUM FULL first, or the dead tuples an earlier case left behind are counted as this
 // one's overhead - which inflated the first reading anybody took here by 44%.
-func postgresRelationBytes(t *testing.T, database *DB) int64 {
+func postgresRelationBytes(t *testing.T, database *DB, tables []string) int64 {
 	t.Helper()
 
 	if _, err := database.sql.Exec(`VACUUM (FULL, ANALYZE)`); err != nil {
@@ -386,7 +386,7 @@ func postgresRelationBytes(t *testing.T, database *DB) int64 {
 
 	var total int64
 
-	for _, table := range countedTables(database) {
+	for _, table := range tables {
 		var bytes int64
 
 		if err := database.sql.QueryRow(`SELECT pg_total_relation_size($1)`, table).Scan(&bytes); err != nil {
@@ -402,10 +402,10 @@ func postgresRelationBytes(t *testing.T, database *DB) int64 {
 // mysqlTablespaceBytes reports the same for MySQL, from the tablespace files rather than from
 // information_schema.tables: a FULLTEXT index's auxiliary tables are tablespaces of their own and
 // appear in no other accounting, and they are a large part of what that index costs.
-func mysqlTablespaceBytes(t *testing.T, database *DB) int64 {
+func mysqlTablespaceBytes(t *testing.T, database *DB, tables []string) int64 {
 	t.Helper()
 
-	for _, table := range countedTables(database) {
+	for _, table := range tables {
 		if _, err := database.sql.Exec(`OPTIMIZE TABLE ` + table); err != nil {
 			t.Fatalf("OPTIMIZE TABLE %s: %s", table, err)
 		}
@@ -430,7 +430,7 @@ func mysqlTablespaceBytes(t *testing.T, database *DB) int64 {
 
 	counted := map[string]bool{}
 
-	for _, table := range countedTables(database) {
+	for _, table := range tables {
 		counted[table] = true
 	}
 

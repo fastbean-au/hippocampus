@@ -717,7 +717,7 @@ func bodyDelivery(id string, body string) CallbackDelivery {
 func queueBytes(t *testing.T, d *DB) int64 {
 	t.Helper()
 
-	measured, err := d.AncillaryStorage(context.Background())
+	measured, err := d.AncillaryStorage(context.Background(), AncillaryBounds{})
 	if err != nil {
 		t.Fatalf("AncillaryStorage: %s", err.Error())
 	}

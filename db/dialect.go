@@ -211,6 +211,38 @@ type dialect struct {
 	// rounder one that was not.
 	rowOverheadBytes int64
 
+	// tombstoneRowBytes and outboxRowBytes are what one row of the forgotten log and one row of the
+	// search outbox cost this dialect, structurally: the row, its columns, and the entries it earns
+	// in the surrogate primary key and the table's two (one, for the outbox) secondary indexes.
+	// These are the only two tables in the store whose bytes ARE their row count times an allowance,
+	// which is what lets a byte cap on either convert to a row cap exactly (rowsWithinBytes).
+	//
+	// Per dialect for the reason memoryRowOverheadBytes is: they were one pair of constants shared
+	// by all three until they were measured, at which point a tombstone cost 163 bytes on the
+	// embedded dialect and 342 on MySQL against a flat 192 charged to both.
+	// TestAncillaryAllowancesMatchRealStorage is what holds them to real disk.
+	//
+	// They are STRUCTURAL - what the rows and their indexes occupy after a compaction - and
+	// deliberately do not allow for space the engine has not reclaimed. That is not an omission: the
+	// same figure feeds rowsWithinBytes, and a cap that grew with a table's dead tuples would prune
+	// harder, leave more dead tuples, and prune harder again. It is the death spiral
+	// usedBytesLiveRows refuses a file-size measure to avoid, and the reason AncillaryTable reports
+	// unreclaimed space as DiskBytes beside this rather than inside it.
+	tombstoneRowBytes int64
+	outboxRowBytes    int64
+
+	// relationBytes measures what one named table and everything built over it really occupy,
+	// indexes and space the engine has not returned included. It takes the table name as its one
+	// bind parameter and returns a single count, and it must be a CATALOGUE lookup: this runs once
+	// per sleep cycle, where a scan would not be affordable.
+	//
+	// Empty where the dialect cannot answer that way, which is two of the three and for opposite
+	// reasons - see each row for which. The embedded one has nothing to report; MySQL has something
+	// to report and no current way to read it.
+	//
+	// Reported and never regulated on, for the reason the structural figures above give.
+	relationBytes string
+
 	// idCollationMigration is set where an id column's collation is a property that can be wrong on
 	// a database created by an older version and has to be corrected in place. Only the dialect
 	// whose default collation is case-insensitive has one - the others compare byte-for-byte with no
@@ -260,9 +292,15 @@ var dialects = map[driver]*dialect{
 		contentIndexRowOverheadBytes: 95,
 		contentIndexPayloadPerMille:  190,
 		rowOverheadBytes:             290,
-		instanceRegistry:             false,
-		countsChangedRows:            false,
-		idCollationMigration:         false,
+		// The narrowest of the three, and the only one where the figure is exact rather than a
+		// floor: a page freed by a prune returns to the freelist, which UsedBytes already excludes,
+		// so there is no unreclaimed space for relationBytes to report - hence none here.
+		tombstoneRowBytes:    165,
+		outboxRowBytes:       75,
+		relationBytes:        "",
+		instanceRegistry:     false,
+		countsChangedRows:    false,
+		idCollationMigration: false,
 	},
 
 	driverPostgres: {
@@ -302,9 +340,17 @@ var dialects = map[driver]*dialect{
 		contentIndexRowOverheadBytes: 750,
 		contentIndexPayloadPerMille:  420,
 		rowOverheadBytes:             400,
-		instanceRegistry:             true,
-		countsChangedRows:            false,
-		idCollationMigration:         false,
+		// A 24-byte tuple header and an item pointer before any column, then three btree entries -
+		// the identity primary key and the two secondary indexes - of which the one on id carries a
+		// 37-byte key.
+		tombstoneRowBytes: 255,
+		outboxRowBytes:    120,
+		// to_regclass answers NULL rather than raising for a table this store does not have, which
+		// is the read-only opens and any store that never enabled the feature.
+		relationBytes:        `SELECT COALESCE(pg_total_relation_size(to_regclass(?)), 0)`,
+		instanceRegistry:     true,
+		countsChangedRows:    false,
+		idCollationMigration: false,
 	},
 
 	driverMySQL: {
@@ -347,9 +393,33 @@ var dialects = map[driver]*dialect{
 		contentIndexRowOverheadBytes: 2030,
 		contentIndexPayloadPerMille:  1639,
 		rowOverheadBytes:             1050,
-		instanceRegistry:             true,
-		countsChangedRows:            true,
-		idCollationMigration:         true,
+		// The largest of the three for the reason the memory row's allowance is: the id columns are
+		// VARCHAR(255) under utf8mb4, so an index entry over one reserves four bytes per character,
+		// and InnoDB's clustered index carries the whole row in its leaf pages.
+		tombstoneRowBytes: 345,
+		outboxRowBytes:    185,
+		// Deliberately none, which leaves this dialect reporting the structural estimate alone.
+		//
+		// MySQL has two per-relation readings and neither is a measurement of NOW.
+		// information_schema.TABLES serves DATA_LENGTH and INDEX_LENGTH from a cache that
+		// information_schema_stats_expiry refreshes at most every 86,400 seconds by default - so it
+		// answers with yesterday's size, which is exactly wrong for the reading this exists for: a
+		// queue that started growing this morning because a receiver went down. (It was measured
+		// reporting 16 KiB for a ten-thousand-row table, having last been looked at while that table
+		// was empty.) Making it current means a session variable this store would have to pin a
+		// connection to set, or an ANALYZE TABLE per cycle, which is a write on the consolidating
+		// path. The other reading, INNODB_TABLESPACES.FILE_SIZE, needs the PROCESS privilege and is
+		// allocation granularity - InnoDB extends a file four megabytes at a time, so a narrow table
+		// measures mostly slack.
+		//
+		// A stale figure presented as what the disk holds is worse than no figure, so this dialect
+		// reports Bytes and leaves DiskBytes at 0, exactly as the embedded one does - for a
+		// different reason, and with a different consequence: here the unreclaimed space is real and
+		// simply not visible from inside the service.
+		relationBytes:        "",
+		instanceRegistry:     true,
+		countsChangedRows:    true,
+		idCollationMigration: true,
 	},
 }
 

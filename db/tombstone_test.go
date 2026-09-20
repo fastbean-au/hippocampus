@@ -837,7 +837,11 @@ func TestTombstoneBytesUnavailable(t *testing.T) {
 // at all - PruneTombstones reads its bounds off the policy rather than taking them as parameters,
 // so a byte cap that never reached the policy would leave every existing test passing.
 func TestPruneTombstonesByBytes(t *testing.T) {
-	d := recordingDB(t, TombstonePolicy{Enabled: true, MaxBytes: 3 * tombstoneRowBytes})
+	// The allowance is per dialect, so the cap is expressed in it rather than in a literal: three
+	// rows' worth on whichever store this suite is running against.
+	rowBytes := newTestDB(t).dialect().tombstoneRowBytes
+
+	d := recordingDB(t, TombstonePolicy{Enabled: true, MaxBytes: 3 * rowBytes})
 
 	ctx := context.Background()
 
@@ -853,7 +857,7 @@ func TestPruneTombstonesByBytes(t *testing.T) {
 		t.Fatalf("PruneTombstones: %s", err)
 	}
 
-	measured, err := d.AncillaryStorage(ctx)
+	measured, err := d.AncillaryStorage(ctx, AncillaryBounds{})
 	if err != nil {
 		t.Fatalf("AncillaryStorage: %s", err)
 	}
@@ -862,8 +866,8 @@ func TestPruneTombstonesByBytes(t *testing.T) {
 		t.Errorf("a cap of three rows' worth of bytes left %d records, want 3", measured.ForgottenLog.Rows)
 	}
 
-	if measured.ForgottenLog.Bytes > 3*tombstoneRowBytes {
+	if measured.ForgottenLog.Bytes > 3*rowBytes {
 		t.Errorf("the trimmed log reports %d bytes, over its %d-byte cap",
-			measured.ForgottenLog.Bytes, 3*tombstoneRowBytes)
+			measured.ForgottenLog.Bytes, 3*rowBytes)
 	}
 }

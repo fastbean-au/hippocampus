@@ -158,7 +158,7 @@ func TestSearchOutboxBytesGrowsWithTheQueue(t *testing.T) {
 		t.Fatalf("DeleteMemories: %s", err)
 	}
 
-	if bytes := database.searchOutboxBytes(ctx); bytes != outboxRowBytes {
-		t.Errorf("expected one row's allowance (%d), got %d", outboxRowBytes, bytes)
+	if bytes := database.searchOutboxBytes(ctx); bytes != database.dialect().outboxRowBytes {
+		t.Errorf("expected one row's allowance (%d), got %d", database.dialect().outboxRowBytes, bytes)
 	}
 }

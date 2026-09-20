@@ -52,14 +52,6 @@ const tombstonesTable = "memory_tombstones"
 // declared again here because the storage layer cannot import the service that sits above it.
 const dayInNanoseconds int64 = 86400 * 1000000000
 
-// tombstoneRowBytes is the flat allowance UsedBytes charges each tombstone when excluding the log
-// from the store's measured size on SQLite (see tombstoneBytes). It is an estimate rather than a
-// measurement on purpose: the alternative is summing the stored string lengths, which is a scan of
-// the whole log on every reading - a cost item 25.9 is the standing reminder about - to refine a
-// figure that is only ever subtracted from a page-count approximation anyway. It covers the two
-// ids, the group, the numeric columns and the two index entries.
-const tombstoneRowBytes = 192
-
 // tombstoneChunkSize caps how many tombstones are written in one INSERT. It matches
 // deleteChunkSize because the two run in lockstep - one insert per delete chunk - and the column
 // count keeps the bound parameters well inside every driver's limit.
@@ -74,8 +66,10 @@ const tombstoneChunkSize = deleteChunkSize
 // which is supported but warned about at startup, since it is the shape that eats the store.
 //
 // MaxBytes is a row cap in the unit an operator sizes a disk in, and nothing more: a tombstone is a
-// fixed-width row, so the log's bytes are its row count times tombstoneRowBytes at the report, at
-// the exclusion and here. Where both are set the tighter wins (rowsWithinBytes).
+// fixed-width row, so the log's bytes are its row count times the dialect's tombstoneRowBytes at the
+// report, at the exclusion and here. Where both are set the tighter wins (rowsWithinBytes). It
+// bounds the log's STRUCTURAL size and not the space the engine has not reclaimed beside it - see
+// dialect.tombstoneRowBytes for why a cap that chased the latter would spiral.
 type TombstonePolicy struct {
 	Enabled      bool
 	MaxRows      int
@@ -83,9 +77,15 @@ type TombstonePolicy struct {
 	MaxAgeInDays int
 }
 
-// bounds projects the policy onto the shape the byte cap arithmetic is written against.
+// bounds projects the policy onto the shape the cap arithmetic and the report are written against.
+// The age cap converts here and nowhere else, so the cutoff PruneTombstones applies and the window
+// the report states are one number expressed once.
 func (p TombstonePolicy) bounds() QueueBounds {
-	return QueueBounds{MaxRows: int64(p.MaxRows), MaxBytes: p.MaxBytes}
+	return QueueBounds{
+		MaxAge:   time.Duration(p.MaxAgeInDays) * time.Duration(dayInNanoseconds),
+		MaxRows:  int64(p.MaxRows),
+		MaxBytes: p.MaxBytes,
+	}
 }
 
 // SetTombstonePolicy installs the forgotten log's policy. Called once at startup from main, before
@@ -674,8 +674,10 @@ func (d *DB) PruneTombstones(ctx context.Context) (int64, error) {
 
 	var pruned int64
 
-	if d.tombstones.MaxAgeInDays > 0 {
-		cutoff := time.Now().UnixNano() - int64(d.tombstones.MaxAgeInDays)*dayInNanoseconds
+	bounds := d.tombstones.bounds()
+
+	if bounds.MaxAge > 0 {
+		cutoff := time.Now().Add(-bounds.MaxAge).UnixNano()
 
 		removed, err := d.DeleteForgottenMemories(ctx, cutoff, nil)
 		if err != nil {
@@ -685,7 +687,7 @@ func (d *DB) PruneTombstones(ctx context.Context) (int64, error) {
 		pruned += removed
 	}
 
-	maxRows := rowsWithinBytes(d.tombstones.bounds(), tombstoneRowBytes)
+	maxRows := rowsWithinBytes(bounds, d.dialect().tombstoneRowBytes)
 
 	if maxRows <= 0 {
 		return pruned, nil
@@ -740,8 +742,9 @@ func (d *DB) PruneTombstones(ctx context.Context) (int64, error) {
 // rows explicitly, so the log is outside it already.
 //
 // It is a count multiplied by a flat allowance rather than a sum of the stored lengths: see
-// tombstoneRowBytes. The same measurement is what AncillaryStorage reports, so the figure the
-// capacity target ignores and the figure an operator is shown are one figure (db/ancillary.go).
+// dialect.tombstoneRowBytes. The same measurement is what AncillaryStorage reports as Bytes, so the
+// figure the capacity target ignores and the figure an operator is shown are one figure
+// (db/ancillary.go).
 func (d *DB) tombstoneBytes(ctx context.Context) int64 {
 	return d.excludedBytes(ctx, d.tombstoneProbe())
 }

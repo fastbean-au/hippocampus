@@ -247,7 +247,7 @@ func (d *DB) PruneSearchOutbox(ctx context.Context, bounds QueueBounds) (int64, 
 
 	var pruned int64
 
-	maxRows := rowsWithinBytes(bounds, outboxRowBytes)
+	maxRows := rowsWithinBytes(bounds, d.dialect().outboxRowBytes)
 
 	if bounds.MaxAge > 0 {
 		res, err := d.exec(
@@ -314,12 +314,6 @@ func (d *DB) SearchOutboxDepth(ctx context.Context) (int64, error) {
 
 	return n, nil
 }
-
-// outboxRowBytes is the flat per-row allowance searchOutboxBytes charges the queue, in the mould of
-// tombstoneRowBytes: an id, a timestamp, a surrogate key and their page overhead. A rough figure is
-// the right kind of figure here - it is subtracted from a whole-file measurement to keep the queue
-// from influencing eviction, not reported to anybody.
-const outboxRowBytes = 96
 
 // searchOutboxBytes estimates what the queue occupies, for UsedBytes to subtract on SQLite.
 //

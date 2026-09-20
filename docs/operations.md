@@ -536,9 +536,12 @@ Each of them takes a `maxBytes` beside its row cap, all three unset by default. 
 differs by table, and the difference is worth knowing before setting one:
 
 - **The forgotten log and the delete outbox have fixed-width rows**, so their row caps are already
-  byte caps — roughly **19 MB** and **96 MB** at the defaults, at 192 and 96 bytes a row. `maxBytes`
-  there is the same bound stated in the unit a disk is sized in, and reaching it trims exactly as
-  the row cap does; where both are set, the tighter wins.
+  byte caps. What a row costs differs per driver — a tombstone measures **165 B** on SQLite, **255 B**
+  on PostgreSQL and **345 B** on MySQL, an outbox row **75 / 120 / 185 B** — so the 100,000-row
+  default log is roughly **17 / 26 / 35 MB** and the 1,000,000-row default outbox **75 / 120 /
+  185 MB**. `maxBytes` there is the same bound stated in the unit a disk is sized in, converted at
+  the driver's own allowance, and reaching it trims exactly as the row cap does; where both are set,
+  the tighter wins.
 - **The callback queue's rows have no fixed size**, and that is the case the key exists for. A
   delivery carries up to `callbacks.maxIdsPerDelivery` items (500), each of which may carry a memory
   body up to `callbacks.maxBodyBytes` (64 KiB) under `callbacks.includeBodies` — so
@@ -564,19 +567,49 @@ is the one that matters, since it is the arrangement in which nothing bounds the
 labelled by `component` (`forgotten_log`, `search_outbox`, `callback_queue`), measured once per sleep
 cycle; sum over the label for the figure to add to `capacityBytes` when sizing a disk. The console's
 Deployment tab shows the same reading under the callback queue, and `hippo consolidation status`
-carries it as the response's `ancillary` block — where each table also reports its `limit_bytes`, so
-the figure has the bound it is approaching beside it rather than standing alone. The shipped alert
+carries it as the response's `ancillary` block — where each table also reports its caps, so the
+figure has the bound it is approaching beside it rather than standing alone. The shipped alert
 [`HippocampusAncillaryStorageHigh`](../deploy/observability/README.md) fires when the three together
 exceed a quarter of `capacityBytes`.
 
-Three things to know about the figure. For the two fixed-width tables it is a **row count times a
-flat per-row allowance**, not a measurement — scanning them to add up what their count already says
-would put a cost on the path that exists to bound the store — so it is the right order of magnitude
-and not more than that; the callback queue is the exception, and its bytes are summed from a size
-recorded at insert, a count there saying nothing about a row that may carry five hundred memory
-bodies. It is the **same** figure the capacity target subtracts and the same one `maxBytes` is
-enforced against, so what the console shows, what eviction ignores and what gets trimmed cannot be
-three different numbers. And a component reporting `enabled: false` beside a row count is a table
+Four things to know about the figure. There are **two byte columns and they answer different
+questions**. `bytes` is the table's *structural* size — its rows and indexes compacted — computed for
+the two fixed-width tables as a row count times a per-row allowance rather than measured, since
+scanning them to add up what their count already says would put a cost on the path that exists to
+bound the store; the callback queue is the exception, and its bytes are summed from a size recorded
+at insert, a count there saying nothing about a row that may carry five hundred memory bodies.
+`disk_bytes` is what the engine says the relation is *really* holding, including space it has not
+reclaimed — a catalogue lookup (`pg_total_relation_size`) on **PostgreSQL**, and `0` on the other
+two. On **SQLite** that is because there is nothing to report: a page a prune frees returns to the
+freelist `used_bytes` already excludes, so `bytes` is the whole truth there. On **MySQL** it is a
+genuine gap: `information_schema.TABLES` serves its sizes from a cache that
+`information_schema_stats_expiry` refreshes at most once a day, so it answers with whatever the table
+was the last time anything looked — which is exactly wrong for a queue that started growing this
+morning — and the alternatives are a session variable the service would have to pin a connection to
+set, an `ANALYZE TABLE` per cycle, or a tablespace file size that is mostly allocation slack. A stale
+figure presented as what the disk holds is worse than none, so MySQL reports the structural estimate
+and nothing else; watch that instance's disk directly. On PostgreSQL under steady churn `disk_bytes`
+is routinely around twice `bytes`, and that gap is the reading: it is disk no other figure this
+service publishes can see. The metric and the response's `total_bytes` carry the larger of the two,
+because sizing a disk is a question about what the engine is holding.
+
+`bytes` is the **same** figure the capacity target subtracts and the same one `maxBytes` is enforced
+against, so what eviction ignores and what gets trimmed cannot be two different numbers. That
+deliberately excludes the unreclaimed part: a cap that grew with a table's dead rows would prune
+harder, leave more dead rows, and prune harder again.
+
+Each table also reports **which of its caps is actually in force** (`binding_limit`: `rows`, `bytes`,
+`age` or `none`), its effective row cap (`limit_rows` — the tighter of the row cap and whatever
+`maxBytes` resolves to at this driver's allowance) and how far back it reaches (`oldest_at`). This
+exists because the caps are independent bounds with no precedence between them, and which one binds
+depends on how fast the store is forgetting — a rate you cannot see when choosing them. A log
+configured `maxRows: 100000` with `maxAgeInDays: 30` on a store forgetting 19,000 memories a day
+holds **five days**, not thirty: both caps are enforced, neither is violated, and nothing else in any
+reading says so. `binding_limit` of `rows` or `bytes` while an age cap is also set is that state; the
+console flags it, and the service logs it at Warn when the binding changes (at Info when the cap
+acting is the one that was asked for).
+
+And a component reporting `enabled: false` beside a row count is a table
 that has been switched off and still holds what it wrote: disabling any of the three stops the
 writing _and_ the trimming, so those rows stay until `DeleteForgottenMemories` or
 `DeleteCallbackQueue` discards them.
@@ -764,7 +797,7 @@ means nothing today.
 **Bodies are never kept.** A tombstone records that a memory was forgotten, not what it said; this
 is not an undelete, and building one on top of it is a different feature entirely.
 
-Four things to know before turning it on.
+Five things to know before turning it on.
 
 - **It records forgetting, not deletion.** The two decay paths write records; `Clear` (which
   deletes memories an `Export`/`Transfer` has already moved elsewhere) and the client-initiated
@@ -774,11 +807,18 @@ Four things to know before turning it on.
   unbounded one would slowly consume the headroom that drives forgetting. `maxRows`, `maxBytes` and
   `maxAgeInDays` are applied at the end of every cycle and a record past any of them is trimmed;
   setting all three to 0 removes the bounds, which is supported and warned about at startup. A
-  tombstone is a fixed-width row, so `maxBytes` is the row cap in another unit — 192 bytes a row —
-  and where both are set the tighter wins. The log is
+  tombstone is a fixed-width row, so `maxBytes` is the row cap in another unit — 165 bytes a row on
+  SQLite, 255 on PostgreSQL, 345 on MySQL — and where both are set the tighter wins. The log is
   excluded from the store's measured size, so it never raises capacity pressure or triggers
   eviction — but it does still occupy disk, and is one of the tables [the disk budget has to cover
   on top of `capacityBytes`](#the-capacity-target-bounds-the-memories-not-the-database).
+- **The row cap will usually be the one that binds, and it is not the one you meant.** These bounds
+  have no precedence between them: which one acts depends on how fast the store is forgetting, and
+  at 19,000 memories a day a 100,000-row cap is five days of history whatever `maxAgeInDays` says.
+  `GetConsolidationStatus` reports each table's `binding_limit` and how far back it actually reaches,
+  the console's Deployment tab shows it, and the service logs a Warn when a row or byte cap is what
+  holds a log that also has an age cap set. **If a retention window is the point, raise `maxRows`
+  until the age cap is the one binding** — and budget the disk for it.
 - **Turning it off does not delete anything.** Disabling stops the writing _and_ the trimming, so
   what was already recorded stays readable. Emptying the log is always an explicit request
   (`hippo forgotten clear`, `POST /v1/memories/forgotten/delete`) — a configuration change must

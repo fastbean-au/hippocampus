@@ -191,12 +191,6 @@ type Consolidation struct {
 	// own copy of the one flag because GetForgottenMemories has to report whether the service is
 	// recording: an empty log otherwise cannot be told from a log nobody is writing.
 	tombstones bool
-
-	// tombstoneMaxBytes (consolidation.tombstones.maxBytes) is mirrored for the same kind of
-	// reason: the log's cap is enforced in the storage layer, and GetConsolidationStatus has to
-	// REPORT it beside the figure it bounds. A byte count with no bound beside it is the state the
-	// reporting half of item 112.3 ended for the figure and would have left standing for the cap.
-	tombstoneMaxBytes int64
 }
 
 type Server struct {
@@ -587,7 +581,6 @@ func New(deps Dependencies) *Server {
 			summarisationMaxCandidates:         viper.GetInt("consolidation.summarisationMaxCandidates"),
 			autoSummarise:                      viper.GetBool("llm.autoSummarise"),
 			tombstones:                         viper.GetBool("consolidation.tombstones.enabled"),
-			tombstoneMaxBytes:                  viper.GetInt64("consolidation.tombstones.maxBytes"),
 		},
 	}
 
