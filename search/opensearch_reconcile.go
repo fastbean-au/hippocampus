@@ -284,3 +284,125 @@ func hitTimestamp(hit opensearchapi.SearchHit) (int64, error) {
 
 	return fields.Timestamp[0].Int64()
 }
+
+// presenceProbeChunk is how many ids one _mget carries. The reconciliation sweep reads the primary
+// store a page at a time (opensearch.reconcileBatchSize, 500 by default) and asks about that page in
+// one request; a larger page is split, so the request size stays bounded by this rather than by a
+// configuration key whose reason for existing is the database read.
+const presenceProbeChunk = 500
+
+// AbsentIds reports which of the given memory ids the index does not hold, preserving the order they
+// were given in.
+//
+// It exists so the reconciliation sweep can heal what is missing instead of re-writing everything.
+// The sweep used to enqueue an unconditional re-index for every live memory, which on a large store
+// is the dominant load on the very queue it exists to compensate for: a page of 500 every 200ms is
+// ~2,500 operations a second offered to a worker that applies one document per round trip, so nearly
+// all of it was dropped at a full queue - the backstop was the load. Worse, each re-index that DID
+// land is a delete plus an insert in Lucene even when the document is byte-identical, so an hourly
+// sweep tombstoned the whole index once an hour and the cluster spent its merge budget on documents
+// nothing had changed.
+//
+// One _mget answers for a whole page, so a healthy index costs one request per page and enqueues
+// nothing at all.
+//
+// _mget rather than a search over the ids, deliberately: a GET is realtime - it reads the translog -
+// while a search sees only what has been refreshed, so a memory written within the last
+// refresh_interval would come back absent from a search and be re-indexed for no reason, which is
+// exactly the churn this removes.
+//
+// What it deliberately does NOT answer is whether a present document is up to date. A body that
+// changed is propagated by UpdateMemory's own write-through, and a document present but missing its
+// vector (indexed while the embedder was down) stays that way until --backfill-search --reindex: the
+// sweep heals absences, and asking the cluster to return every document's vector to compare them
+// would cost ~3 KiB per memory per sweep to find a case a rebuild already covers.
+func (o *OpenSearch) AbsentIds(ctx context.Context, ids []string) ([]string, error) {
+	log.Trace("func() search.AbsentIds")
+
+	if len(ids) == 0 {
+
+		return nil, nil
+	}
+
+	// One round trip per chunk, so the deadline has to cover every chunk - the same reasoning
+	// DeleteMemoriesSync applies to its own batching.
+	chunks := (len(ids) + presenceProbeChunk - 1) / presenceProbeChunk
+
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(chunks)*o.applyTimeout)
+	defer cancel()
+
+	if !o.indexReady.Load() {
+		if err := o.ensureIndex(ctx); err != nil {
+
+			return nil, err
+		}
+	}
+
+	out := make([]string, 0, len(ids))
+
+	for start := 0; start < len(ids); start += presenceProbeChunk {
+		end := min(start+presenceProbeChunk, len(ids))
+
+		absent, err := o.absentInChunk(ctx, ids[start:end])
+		if err != nil {
+
+			return nil, err
+		}
+
+		out = append(out, absent...)
+	}
+
+	return out, nil
+}
+
+// absentInChunk asks about one chunk of ids in a single _mget.
+//
+// A document the cluster answers about with neither found nor an error is treated as present, which
+// is the safe direction here: reporting it absent would enqueue a re-index, and this whole path
+// exists to stop the sweep writing documents that do not need writing. A genuinely missing document
+// is reported by the next sweep.
+func (o *OpenSearch) absentInChunk(ctx context.Context, ids []string) ([]string, error) {
+	body, err := json.Marshal(map[string]any{"ids": ids})
+	if err != nil {
+
+		return nil, fmt.Errorf("building the presence probe: %w", err)
+	}
+
+	// _source false: the question is existence, and a page of bodies - with vectors in them - would
+	// be orders of magnitude larger than the answer.
+	resp, err := o.client.MGet(ctx, opensearchapi.MGetReq{
+		Index:  o.index,
+		Body:   strings.NewReader(string(body)),
+		Params: opensearchapi.MGetParams{Source: false},
+	})
+	if err != nil {
+
+		return nil, fmt.Errorf("probing the index for %d documents: %w", len(ids), err)
+	}
+
+	if resp == nil {
+
+		return nil, fmt.Errorf("probing the index for %d documents returned no response", len(ids))
+	}
+
+	// Keyed by id rather than read positionally. _mget does answer in request order, but the sweep's
+	// decision is "re-index this memory", and a response read by position that had shifted would
+	// re-index the wrong ones - a cost that is invisible because the result still converges.
+	found := make(map[string]bool, len(resp.Docs))
+
+	for _, doc := range resp.Docs {
+		if doc.Found {
+			found[doc.ID] = true
+		}
+	}
+
+	out := make([]string, 0, len(ids))
+
+	for _, id := range ids {
+		if !found[id] {
+			out = append(out, id)
+		}
+	}
+
+	return out, nil
+}

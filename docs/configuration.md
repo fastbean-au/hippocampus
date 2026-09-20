@@ -1719,10 +1719,12 @@ Three further consequences worth knowing before enabling it:
   is ~3 KiB per memory, which would compete for the capacity [compression](#body-compression)
   exists to save. The trade is that rebuilding the index **re-embeds** rather than re-reads, so
   `--backfill-search` then needs the model server up.
-- **The reconciliation sweep re-embeds too.** It must, or it would replace documents with
-  vectorless copies and silently strip them from semantic search — but that makes it far more
-  expensive than the plain re-index it used to be. Raise
-  `opensearch.reconcileIntervalSeconds`, or rely on `--backfill-search` instead.
+- **The reconciliation sweep re-embeds what it heals.** It must, or it would replace documents with
+  vectorless copies and silently strip them from semantic search. Since it asks the index which
+  documents are actually missing before writing anything, that cost is now paid for the absences
+  rather than for the whole store on every pass — it used to re-embed every memory, every sweep. A
+  document that is present but *vectorless* (indexed while the model server was down) is not healed
+  by the sweep; `--backfill-search --reindex` is what covers that.
 
 **Enabling it on an existing OpenSearch deployment requires a rebuild.** `index.knn` is a static
 setting fixed at index creation, so an index built before semantic search cannot gain a vector
@@ -1882,9 +1884,13 @@ for every existence, consolidation, and recall decision:
   merges, and summarisation) propagate to the index asynchronously and best-effort: an
   unreachable or lagging cluster never fails or slows a primary operation. The worker retries a
   transient cluster failure a few times with backoff before giving up, so a brief blip does not
-  lose a write. A full propagation queue (`opensearch.queueSize`) still drops operations with a
-  warning rather than blocking — but see [Self-healing](#self-healing-reconciliation) below, which
-  recovers anything dropped.
+  lose a write. A full propagation queue (`opensearch.queueSize`, 1024) still drops operations rather
+  than blocking — but see [Self-healing](#self-healing-reconciliation) below, which recovers anything
+  dropped. Each drop is counted on `hippocampus.search.dropped` with a `reason` of `queue_full` or
+  `apply_failed`; the log line is a summary every 30 seconds rather than one line per drop, which at
+  the rate this actually fires was measured filling a 4 GB journal with one repeated sentence. Sizing
+  the queue on evidence, and why a bigger one is usually not the answer, is in
+  [Running the OpenSearch content index](operations.md#running-the-opensearch-content-index).
 - Search results are always re-read from the primary store; ids the index returns that the
   primary no longer holds are silently dropped. A stale index can therefore miss recent writes
   (indexing is asynchronous on top of OpenSearch's ~1s near-real-time refresh) or carry leftover
@@ -1941,17 +1947,30 @@ Because propagation is asynchronous, a document can still go missing — an oper
 queue overflow, lost to a crash before the worker drained, or missed while the cluster was
 unreachable long enough to exhaust the worker's retries. Rather than leave that gap open until an
 operator runs a manual backfill, the **consolidating instance** runs a periodic reconciliation
-sweep that re-indexes every non-binary memory from the primary store, keyed by id (idempotent, so
-it only ever _adds back_ what was missing). It is controlled by two keys:
+sweep. For each page of memories it asks the index which of those ids it does **not** hold, in one
+request, and writes only those. It is controlled by two keys:
 
 - `opensearch.reconcileIntervalSeconds` (default `3600`) — how often a sweep runs; the interval is
   measured from the end of one sweep to the start of the next. `0` (or negative) disables it.
-- `opensearch.reconcileBatchSize` (default `500`) — how many memories each page reads; the sweep
-  pauses briefly between pages so it trickles into the async index queue rather than flooding it.
+- `opensearch.reconcileBatchSize` (default `500`) — how many memories each page reads, and how many
+  ids one presence probe asks about; the sweep pauses briefly between pages.
+
+**Asking first is what makes the sweep affordable**, and it writes nothing at all against a healthy
+index. Re-indexing every memory unconditionally — which is what it used to do — cost three things
+that all grew with the store: it became the dominant producer on the very queue it exists to
+compensate for, so live writes were the operations dropped to make room for re-writes of documents
+already present; with semantic search on it re-embedded the entire store on every pass; and in Lucene
+a re-index is a delete plus an insert **even when the document is byte-identical**, so an hourly sweep
+tombstoned the whole index once an hour. `hippocampus.search.documents_healed` counts what it
+now writes, which is the first direct measure of how much is being lost in propagation. See
+[Running the OpenSearch content index](operations.md#running-the-opensearch-content-index) for the
+deleted-document accounting that follows from all this.
 
 The sweep runs only on the instance with `consolidation.enabled: true` (the single owner of index
 maintenance), so replicas never duplicate it, and it starts a short while after launch so a sparse
-index is healed soon after a restart rather than a whole interval later.
+index is healed soon after a restart rather than a whole interval later. It runs for the **OpenSearch
+backend only**: the [store's own content index](#content-search) is maintained inside the primary
+write, so nothing there can be dropped and there is nothing to reconcile.
 
 It runs in **both directions**. The forward pass above heals _missing_ documents. The **stale pass**
 enumerates the index and removes documents whose memory the primary store no longer holds:
@@ -1959,7 +1978,7 @@ enumerates the index and removes documents whose memory the primary store no lon
 - `opensearch.staleSweep` (default `true`) — set `false` to run the forward pass only.
 
 The stale pass shares `reconcileBatchSize` and the same pacing, and removes only what the primary
-store says is gone — so the two directions converge rather than fight (the forward pass re-indexes
+store says is gone — so the two directions converge rather than fight (the forward pass indexes
 anything the stale pass should not have removed). Turning it off leaves stale documents to
 `--backfill-search --reindex`, as before.
 

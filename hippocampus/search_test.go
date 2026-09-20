@@ -43,6 +43,40 @@ type fakeIndex struct {
 
 	calls []string
 	docs  []search.Doc
+
+	// held is the set of ids the fake claims to already hold, for AbsentIds. A nil set means the
+	// index holds nothing, which is what most tests want: the reconcile sweep then indexes
+	// everything it is shown, exactly as it did before it learned to ask.
+	held map[string]bool
+
+	// absentErr makes the presence probe fail, so the sweep's refusal to fall back can be asserted.
+	absentErr error
+
+	// absentCalls counts the probe requests, so a test can assert one per page rather than one per
+	// memory.
+	absentCalls int
+}
+
+// AbsentIds makes the fake a presenceProbe - the capability that gates the reconciliation sweep, and
+// which only the OpenSearch backend really has.
+func (f *fakeIndex) AbsentIds(ctx context.Context, ids []string) ([]string, error) {
+	f.absentCalls++
+
+	if f.absentErr != nil {
+		return nil, f.absentErr
+	}
+
+	out := make([]string, 0, len(ids))
+
+	for _, id := range ids {
+		if f.held[id] {
+			continue
+		}
+
+		out = append(out, id)
+	}
+
+	return out, nil
 }
 
 func (f *fakeIndex) IndexMemory(doc search.Doc) {

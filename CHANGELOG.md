@@ -71,6 +71,15 @@ itself which service version it was built against.
   memories a day, held **five days** of the thirty it had been asked for — both caps enforced,
   neither violated, and nothing anywhere that said so.
 
+- **Three instruments for the OpenSearch apply queue and the sweep that backs it up.**
+  `hippocampus.search.queue_depth` and `hippocampus.search.queue_capacity` are the pair
+  `opensearch.queueSize` is tuned on — a queue that is spiky and near zero between bursts is one a
+  larger size fixes, while one pinned at capacity is being outrun and no size will help, and nothing
+  previously distinguished the two. `hippocampus.search.documents_healed` counts what the
+  reconciliation sweep had to write, which is the first direct measure of how much propagation is
+  actually losing. `hippocampus.search.dropped` gains a `reason` attribute (`queue_full` or
+  `apply_failed`), because the two have unrelated remedies: one is a rate, the other is a cluster.
+
 - **`consolidation.significanceLevels.unusedRetentionInDays`** (default 7) — how long the
   significance registry keeps a value nothing carries any more, before the sleep cycle reaps it. 0
   keeps every value the store has ever seen, which is what previous releases did. Two instruments
@@ -78,6 +87,33 @@ itself which service version it was built against.
   anything is being reaped) and `hippocampus.significance_levels.reaped`.
 
 ### Changed
+
+- **The search-index reconciliation sweep asks the index what it holds before writing anything.**
+  For each page of memories it sends one `_mget` and indexes only the ids that came back missing, so a
+  healthy index costs one request per page and no writes at all. It used to re-index every live memory
+  on every pass, which cost three things that all grew with the store: it was the dominant producer on
+  the very queue it exists to compensate for, so live writes were the operations dropped to make room
+  for re-writes of documents already present; with semantic search on it re-embedded the entire store
+  every pass; and in Lucene a re-index is a delete plus an insert **even when the document is
+  byte-identical**, so an hourly sweep tombstoned the whole index once an hour. One live deployment
+  held 921,741 deleted documents against 147,496 live ones, 341 MB that a force-merge took to 215 MB.
+
+  A failed probe now indexes nothing rather than falling back to indexing the page: a probe fails for
+  the same reasons a write does, so the fallback would offer a full page of writes at exactly the
+  moment nothing can be applied. The next sweep asks again. One thing the sweep no longer heals is a
+  document that is present but missing its embedding vector — `--backfill-search --reindex` covers
+  that — since comparing vectors would mean fetching ~3 KiB per memory per pass.
+
+  The sweep also no longer runs at all against the store's own content index, which maintains itself
+  inside the primary write and has nothing to reconcile. Every deployment on the default content index
+  was paging its entire store every hour to call a no-op on each row.
+
+- **The dropped-index-operation warning is now one summary every 30 seconds** naming the total and the
+  breakdown by reason and operation, rather than one line per drop. Measured on a live deployment, the
+  per-drop line ran at 113,377 in thirty minutes — 63 a second — filling a 4 GB systemd journal with
+  one repeated sentence and rotating away everything else the service had to say. A warning that fires
+  63 times a second is not a warning. The metric still counts every drop; a counter loses nothing to
+  aggregation, and the summary states more than any single line it replaces.
 
 - **`hippocampus.ancillary_bytes` and `ancillary.total_bytes` now report what the engine is
   holding** rather than what the rows would occupy compacted, where the driver can say — a catalogue

@@ -287,6 +287,10 @@ type OpenSearch struct {
 	stop  chan struct{}
 	done  chan struct{}
 
+	// drops aggregates dropped operations into one periodic log line. See dropreport.go: the
+	// per-drop warning this replaced ran at 63 lines a second on a live deployment.
+	drops *dropReporter
+
 	// Worker tuning, resolved from Config (or the package defaults) once at construction.
 	applyTimeout          time.Duration
 	applyMaxAttempts      int
@@ -374,6 +378,7 @@ func NewOpenSearch(cfg Config) (*OpenSearch, error) {
 		applyRetryBaseBackoff: cfg.ApplyRetryBaseBackoff,
 		closeDrainTimeout:     cfg.CloseDrainTimeout,
 		vectorDimension:       cfg.VectorDimension,
+		drops:                 newDropReporter(),
 	}
 
 	if err := o.ensureIndex(context.Background()); err != nil {
@@ -533,17 +538,29 @@ func (o *OpenSearch) enqueue(v op) {
 	case o.queue <- v:
 
 	default:
-		log.Warnf("opensearch queue full - dropping %s operation", v.kind)
-		tel.dropped.Add(context.Background(), 1, metric.WithAttributes(attribute.String("op", v.kind.String())))
+		o.drops.note(v.kind, dropQueueFull, nil)
 	}
 }
 
 // worker applies queued operations in FIFO order until stopped, then drains what remains.
+//
+// It also publishes the queue's depth on a ticker, from inside the select rather than from a
+// goroutine of its own. Depth is the signal opensearch.queueSize is tuned on, and the only one that
+// separates a queue absorbing bursts (depth spiky, near zero between them) from one being outrun
+// (depth pinned at capacity), which is the distinction that decides whether widening the queue would
+// help at all. Go's select picks uniformly among ready cases, so the tick is not starved by a busy
+// queue.
 func (o *OpenSearch) worker() {
 	defer close(o.done)
 
+	depth := time.NewTicker(queueDepthInterval)
+	defer depth.Stop()
+
 	for {
 		select {
+
+		case <-depth.C:
+			o.recordQueueDepth()
 
 		case <-o.stop:
 			for {
@@ -596,8 +613,7 @@ RETRY:
 		}
 	}
 
-	log.Warnf("dropping opensearch %s operation after %d attempts: %s", v.kind, o.applyMaxAttempts, err.Error())
-	tel.dropped.Add(context.Background(), 1, metric.WithAttributes(attribute.String("op", v.kind.String())))
+	o.drops.note(v.kind, dropApplyFailed, fmt.Errorf("after %d attempts: %w", o.applyMaxAttempts, err))
 }
 
 // applyOnce runs a single attempt at one operation: it makes sure the index exists, then applies
@@ -1072,11 +1088,32 @@ func (o *OpenSearch) Close() error {
 	select {
 
 	case <-o.done:
+		o.drops.flush()
+
 		return nil
 
 	case <-time.After(o.closeDrainTimeout):
+		o.drops.flush()
+
 		return fmt.Errorf("timed out draining the opensearch queue")
 	}
+}
+
+// queueDepthInterval is how often the worker publishes the queue's depth. A var so tests can
+// shorten it.
+var queueDepthInterval = 10 * time.Second
+
+// recordQueueDepth publishes the queue's depth and capacity.
+//
+// Capacity is published beside depth rather than left to the reader's copy of the configuration, on
+// the same reasoning that exports hippocampus.capacity_bytes beside used_bytes: a utilisation query
+// that hard-codes the limit is wrong from the moment the limit is changed, and it is the utilisation
+// rather than the depth that says whether the next operation will be dropped.
+func (o *OpenSearch) recordQueueDepth() {
+	ctx := context.Background()
+
+	tel.queueDepth.Record(ctx, int64(len(o.queue)))
+	tel.queueCapacity.Record(ctx, int64(cap(o.queue)))
 }
 
 // Compile-time check that *OpenSearch satisfies Index.

@@ -231,8 +231,8 @@ groups:
           service: hippocampus
         annotations:
           summary: "Hippocampus is dropping search index operations"
-          description: "Index operations are being dropped - the apply queue is full, or every retry against the cluster failed - so the search index is going sparse and SearchMemories will miss memories that exist in the store. Check the OpenSearch cluster's health first. The periodic reconciliation sweep heals missing documents; --backfill-search --reindex rebuilds the index outright."
-          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
+          description: "Index operations are being dropped, so the search index is going sparse and SearchMemories will miss memories that exist in the store until the reconciliation sweep heals them. Break it down by the reason label, because the two have unrelated remedies: apply_failed means the cluster refused or did not answer on every retry, so check its health first; queue_full means this service is offering work faster than one apply worker can drain it. For queue_full, compare hippocampus_search_queue_depth against hippocampus_search_queue_capacity - a queue that is spiky and near zero between bursts is one opensearch.queueSize can fix, while one pinned at capacity is being outrun and no size will help. hippocampus_search_documents_healed is what the sweep then has to write, and --backfill-search --reindex rebuilds the index outright."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#the-index-is-fed-by-a-queue-that-drops-and-that-is-the-design"
 
       # The delete outbox backing up. Deletions are durable once recorded, so this is backlog rather
       # than loss - but the index holds documents for forgotten memories until it drains, and a

@@ -776,10 +776,17 @@ func (s *Server) logForgettingMode() {
 }
 
 // startReconcile launches the periodic search-index reconciliation sweep when it is warranted: a
-// real search index is configured, this is the single consolidating instance (so replicas do not
-// duplicate the sweep, and there is exactly one owner of index maintenance), and a positive
-// opensearch.reconcileIntervalSeconds is set. Otherwise it is a no-op and Stop has nothing extra to
-// drain. See reconcile.go.
+// real search index is configured whose propagation can actually lose an operation, this is the
+// single consolidating instance (so replicas do not duplicate the sweep, and there is exactly one
+// owner of index maintenance), and a positive opensearch.reconcileIntervalSeconds is set. Otherwise
+// it is a no-op and Stop has nothing extra to drain. See reconcile.go.
+//
+// The capability check is what confines it to the OpenSearch backend, and it is a fix rather than
+// tidiness. The SQL backend maintains its content index inside the primary write itself - its own doc
+// comment says it has "no reconciliation sweep to run" - yet this started one, so every deployment on
+// the default content index paged its entire store every hour to call a no-op on each row. The sweep
+// needs both halves of the OpenSearch-only capability pair (a presence probe forward, an id
+// enumeration back), and the probe is the one the forward pass cannot do without.
 func (s *Server) startReconcile(searchIndex search.Index) {
 	s.reconcileInterval = time.Duration(viper.GetInt("opensearch.reconcileIntervalSeconds")) * time.Second
 	s.reconcileBatchSize = viper.GetInt("opensearch.reconcileBatchSize")
@@ -790,6 +797,12 @@ func (s *Server) startReconcile(searchIndex search.Index) {
 	}
 
 	if !s.consolidationEnabled || s.reconcileInterval <= 0 || searchIndex == nil || !searchIndex.Enabled() {
+		return
+	}
+
+	if _, ok := searchIndex.(presenceProbe); !ok {
+		log.Debug("search reconcile: this backend indexes inside the primary write, so there is nothing to reconcile")
+
 		return
 	}
 

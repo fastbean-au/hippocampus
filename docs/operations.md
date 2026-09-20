@@ -996,6 +996,121 @@ not probed either — this instance holds no address it could dial one on. What 
 it was writing to the shared store recently, which is the property that actually matters about a
 peer: one that has stopped writing has stopped serving from here whether or not its port answers.
 
+## Running the OpenSearch content index
+
+Only under `opensearch.enabled` — the built-in content index (`search.contentIndex`, the default on
+every driver) is maintained inside the primary write and has none of what follows. See
+[Content search](configuration.md#content-search) for the keys.
+
+Two things about this index are unusual, and both follow from what the store is for rather than from
+how it is configured.
+
+### The index is fed by a queue that drops, and that is the design
+
+Every index write, delete and event move is handed to a bounded in-memory queue
+(`opensearch.queueSize`, 1024) drained by **one** worker. One worker is a correctness property, not a
+limit: the delete-then-index pair a summary replacement emits must never be reordered. When the queue
+is full the operation is **dropped rather than blocking the caller** — a store must not stop accepting
+memories because a secondary index is behind — and the reconciliation sweep is what puts the index
+back in step afterwards.
+
+So a non-zero `hippocampus.search.dropped` is not by itself a fault. What it means depends on the
+`reason` attribute, and the two have unrelated remedies:
+
+| `reason`       | What it says                                                   | What to do                                                                      |
+| -------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `queue_full`   | This service is offering work faster than one worker drains it | Compare `queue_depth` against `queue_capacity` (below)                          |
+| `apply_failed` | The cluster refused or did not answer, on every retry          | The cluster's problem: check its health, then `applyTimeout`/`applyMaxAttempts` |
+
+**`queueSize` is not the answer to a sustained `queue_full` rate.** A bounded queue absorbs *bursts*;
+it cannot absorb a rate mismatch, and raising it past what the worker can drain only moves the drop
+later and costs memory in the meantime. The two cases are distinguishable, which is what
+`queue_depth` is for: a queue absorbing bursts is spiky and near zero between them, and widening it
+helps; a queue **pinned at capacity** is being outrun, and no size helps. Utilisation is
+`hippocampus_search_queue_depth / hippocampus_search_queue_capacity` — the capacity is exported so a
+dashboard need not carry its own copy of the configuration.
+
+When the queue is genuinely being outrun, the levers are the write rate, `opensearch.applyTimeout`
+(a shorter timeout fails a stuck round trip sooner, so the worker moves on), and the cluster's own
+ingest latency, which is what a single-document-per-request worker is bounded by.
+
+The drop **log line is aggregated**: one summary every 30 seconds naming the total and the breakdown
+by reason and operation, not one line per drop. The per-drop warning was measured at 113,377 lines in
+thirty minutes on a live deployment — 63 a second, filling a 4 GB journal with one repeated sentence
+and rotating away everything else the service had to say. The metric still counts every single drop;
+a counter loses nothing to aggregation, and a log line read by a person repeats nothing useful after
+the first.
+
+### The sweep asks before it writes
+
+`opensearch.reconcileIntervalSeconds` (3600) sets how often the consolidating instance reconciles the
+index against the store, in both directions:
+
+- **Forward** — for each page of memories, one `_mget` asks which ids the index does **not** hold, and
+  only those are written. `hippocampus.search.documents_healed` counts them, and it is the
+  number that says how much is actually being lost between the store and the cluster. A healthy index
+  costs one request per page and writes nothing at all.
+- **Backward** — `opensearch.staleSweep` (on) enumerates the index and removes documents whose memory
+  the store no longer holds, counted by `hippocampus.search.stale_documents_removed`.
+
+The forward pass asks first because re-indexing unconditionally — which is what it used to do — costs
+three things that all scale with the store. It made the sweep the dominant producer on the queue it
+exists to compensate for, so live writes were the operations dropped to make room for re-writes of
+documents already present. With semantic search on it re-embedded every memory in the store on every
+pass. And in Lucene a re-index is a delete plus an insert **even when the document is byte-identical**,
+so an hourly sweep tombstoned the whole index once an hour — see below.
+
+One thing the sweep deliberately does not heal: a document that is present but missing its embedding
+vector, indexed while the model server was down. It heals *absences*; comparing vectors would mean
+fetching ~3 KiB per memory per pass to find a case `--backfill-search --reindex` already covers.
+
+### Deleted documents accumulate, because this store deletes by design
+
+Lucene does not remove a deleted document; it marks it, and the space comes back only when the
+segment holding it is merged. Every other index is fed by a system that mostly appends, so the
+default merge policy is tuned for that. **This one is fed by a store whose whole purpose is
+forgetting**: every consolidation, every eviction, and every summary replacement deletes documents,
+at whatever rate the decay settings dictate, indefinitely.
+
+The result is an index whose deleted fraction reaches a steady state well above what merging clears.
+Measured on live deployments: 147,496 live documents against **921,741 deleted** (341 MB), and — on an
+index whose store had almost entirely turned over — 813 live against **533,861 deleted**, 99.85%
+tombstoned in 313 MB. A `_forcemerge` took the two to 215 MB and 57 MB.
+
+Check the deleted fraction rather than assuming it:
+
+```bash
+curl -s 'http://opensearch:9200/_cat/indices/hippocampus-memories?v&h=index,docs.count,docs.deleted,store.size'
+```
+
+Two remedies, and the first is the one to reach for:
+
+- **Merge away the deletions, on a schedule.** `only_expunge_deletes` merges just the segments holding
+  them, so it is far cheaper than a full force-merge and safe to run beside live traffic (it is still
+  I/O, so run it off-peak):
+
+  ```bash
+  curl -sX POST 'http://opensearch:9200/hippocampus-memories/_forcemerge?only_expunge_deletes=true'
+  ```
+
+  Daily is a reasonable starting point; a store turning over faster than it grows wants it more often.
+  Do **not** force-merge to a single segment (`max_num_segments=1`) on an index that is still being
+  written — that produces one very large segment which future deletions can then never get out of.
+
+- **Make the merge policy expunge sooner.** `index.merge.policy.deletes_pct_allowed` (default 20,
+  minimum 5) is the deleted fraction above which OpenSearch will merge for the sake of the deletions
+  alone. Lowering it trades continuous merge I/O for a smaller index:
+
+  ```bash
+  curl -sX PUT 'http://opensearch:9200/hippocampus-memories/_settings' \
+    -H 'Content-Type: application/json' \
+    -d '{"index.merge.policy.deletes_pct_allowed": 8}'
+  ```
+
+Rebuilding is the third option and rarely the right one: `--backfill-search --reindex` deletes the
+index and repopulates it from the store, which does clear every tombstone, but it re-embeds every
+memory if semantic search is on and leaves searches answering from an incomplete index while it runs.
+
 ## Backup, restore, and migration
 
 Two complementary approaches:
@@ -1342,11 +1457,14 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.records.cleared`                | counter       | `kind`                                | Rows deleted by a manifest-scoped clear                                                                                |
 | `hippocampus.search.indexed`                 | counter       | `success`                             | Documents written to the OpenSearch index                                                                              |
 | `hippocampus.search.deleted`                 | counter       | `success`                             | Deletes applied to it                                                                                                  |
-| `hippocampus.search.dropped`                 | counter       | `op`                                  | Index operations abandoned — queue full, or every retry failed                                                         |
+| `hippocampus.search.dropped`                 | counter       | `op`, `reason`                        | Index operations abandoned — `reason` is `queue_full` or `apply_failed`                                                |
+| `hippocampus.search.queue_depth`             | gauge         |                                       | Operations queued for the apply worker — what `opensearch.queueSize` is tuned on                                       |
+| `hippocampus.search.queue_capacity`          | gauge         |                                       | `opensearch.queueSize`, exported so utilisation need not hard-code it                                                  |
 | `hippocampus.search.outbox_depth`            | gauge         |                                       | Index deletions recorded but not yet applied — the backpressure signal                                                 |
 | `hippocampus.search.outbox.applied`          | counter       |                                       | Queued deletions drained and accepted by the index                                                                     |
 | `hippocampus.search.outbox.abandoned`        | counter       |                                       | Queued deletions discarded at the caps, left to the stale sweep                                                        |
 | `hippocampus.search.stale_documents_removed` | counter       |                                       | Documents the sweep removed because the store no longer holds the memory                                               |
+| `hippocampus.search.documents_healed`        | counter       |                                       | Documents the sweep wrote because the index did not hold a memory the store does                                       |
 | `hippocampus.search.queries`                 | counter       | `success`                             | Content searches served by it                                                                                          |
 | `hippocampus.callbacks.queue_depth`          | gauge         |                                       | [Callback](configuration.md#outbound-callbacks) deliveries recorded but not yet accepted — the backpressure signal     |
 | `hippocampus.callbacks.delivered`            | counter       | `kind`, `outcome`                     | Callback delivery attempts, by what they were about and whether they landed                                            |
@@ -1354,10 +1472,10 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.callbacks.delivery.duration`    | histogram (s) | `outcome`                             | How long one delivery attempt took                                                                                     |
 | `hippocampus.forgetting.stalls`              | counter       | `reason`                              | Sleep cycles whose decay passes were held off — the store has stopped forgetting                                       |
 
-Three things the shape of this list says. The **four `search.*` counters exist only under
-`opensearch.enabled`** — the built-in FTS5 backend runs inside the primary write and has no queue to
-drop from, so `hippocampus.search.dropped` staying absent is the healthy state on a default
-deployment rather than a gap. **`used_bytes`, `capacity_bytes`, `memories.retained`,
+Three things the shape of this list says. The **`search.*` instruments exist only under
+`opensearch.enabled`** — the built-in content index runs inside the primary write and has no queue to
+drop from and no sweep to run, so `hippocampus.search.dropped` staying absent is the healthy state on
+a default deployment rather than a gap. **`used_bytes`, `capacity_bytes`, `memories.retained`,
 `retained_bytes` and `tombstones` are published only when the setting behind each is on**, which is
 what lets an alert over them stay silent rather than broken on a store that does not use them. And
 the **gauges are recorded once per sleep cycle**, not on a scrape interval: between cycles they

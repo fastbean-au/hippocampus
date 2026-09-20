@@ -68,6 +68,7 @@ type telemetry struct {
 	searchOutboxApplied   metric.Int64Counter
 	searchOutboxAbandoned metric.Int64Counter
 	staleDocumentsRemoved metric.Int64Counter
+	documentsHealed       metric.Int64Counter
 
 	forgettingStalls   metric.Int64Counter
 	callbackQueueDepth metric.Int64Gauge
@@ -153,6 +154,12 @@ func newTelemetry() *telemetry {
 		searchOutboxApplied:   newInt64Counter(meter, "hippocampus.search.outbox.applied", "Index deletions drained from the outbox and accepted by the search index."),
 		searchOutboxAbandoned: newInt64Counter(meter, "hippocampus.search.outbox.abandoned", "Queued index deletions discarded by the outbox caps before the index accepted them, leaving them to the reconciliation sweep."),
 		staleDocumentsRemoved: newInt64Counter(meter, "hippocampus.search.stale_documents_removed", "Search-index documents removed by the reconciliation sweep because the primary store no longer holds the memory."),
+
+		// The forward direction's counterpart, and the one number that says how much the apply queue
+		// is actually losing. It only became measurable when the sweep started asking the index what
+		// it held: while every memory was re-indexed on every pass, a document that had gone missing
+		// and one that was already there were written identically.
+		documentsHealed: newInt64Counter(meter, "hippocampus.search.documents_healed", "Search-index documents written by the reconciliation sweep because the index did not hold a memory the primary store does. Sustained non-zero means index operations are being lost between the store and the cluster."),
 
 		// The outbound callback queue. Depth answers the question the delivered counter cannot: a
 		// receiver that is refusing everything still produces delivery attempts, so a failure rate
