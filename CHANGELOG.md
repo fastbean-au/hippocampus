@@ -57,6 +57,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-09-21
+
 ### Added
 
 - **The ancillary storage report says which cap is actually in force, and what the disk really
@@ -3442,7 +3444,8 @@ This release added the delivery and production-readiness layer around it:
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
 
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/fastbean-au/hippocampus/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/fastbean-au/hippocampus/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/fastbean-au/hippocampus/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/fastbean-au/hippocampus/compare/v0.46.0...v0.47.0
