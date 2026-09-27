@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -106,7 +108,12 @@ func listServices(t *testing.T, port int) ([]string, error) {
 		MessageRequest: &reflectionpb.ServerReflectionRequest_ListServices{},
 	}
 
-	if err := stream.Send(request); err != nil {
+	// A Send whose stream the server has already aborted returns io.EOF rather than the reason:
+	// per the gRPC contract the status is only discoverable from the next Recv. An instance that
+	// never registered reflection aborts immediately, so on a loaded machine the rejection routinely
+	// arrives first and the raw io.EOF would be reported in place of the Unimplemented that caused
+	// it. Fall through to Recv in that case and let it produce the status.
+	if err := stream.Send(request); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 
