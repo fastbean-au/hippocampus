@@ -6,8 +6,8 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/fastbean-au/hippocampus v0.0.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/nats-io/nats-server/v2 v2.14.7
-	github.com/nats-io/nats.go v1.54.0
+	github.com/nats-io/nats-server/v2 v2.15.0
+	github.com/nats-io/nats.go v1.53.1
 	github.com/rabbitmq/amqp091-go v1.15.0
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/sirupsen/logrus v1.10.2
@@ -16,7 +16,7 @@ require (
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/metric v1.46.0
 	go.opentelemetry.io/otel/sdk/metric v1.46.0
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
 
