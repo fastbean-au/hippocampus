@@ -152,8 +152,8 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   never touches `~/.hippocampus` (a personal instance's real store) or the Go module cache
 - Administer the **family of repositories** (the service plus `hippocampus-demo-site`,
   `-gen`, `-llamaindex`, `-obsidian`, `-otel-collector` and `homebrew-tap`), all from this
-  repository because it is the hub the other six are satellites of. Three scripts, each idempotent
-  and each taking `--dry-run`:
+  repository because it is the hub the other six are satellites of. Four scripts — the first three
+  idempotent and each taking `--dry-run`, the fourth read-only:
   - `scripts/apply-rulesets.sh` — the `protect-main` branch ruleset on every repository: `deletion`
     and `non_fast_forward`, no bypass actors, targeting `~DEFAULT_BRANCH`. **What it leaves out is
     the design**: required pull requests, required status checks and required linear history would
@@ -170,6 +170,26 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
     `hippocampus-` are indistinguishable at the size a link preview renders. **Uploading is not
     scriptable** — GitHub exposes no API field for a repository's social preview — so the PNG is
     committed and set by hand under Settings → General.
+  - `scripts/family-status.py` — reports, per repository, the latest release, the service version
+    pinned **at that release** and on `main`, and how many commits no release carries; `--check`
+    exits non-zero when anything is outstanding, `--verbose` lists the commits. It exists because
+    the dispatch above ended at a merged pull request: nothing tagged, nothing published, and
+    nothing said so, which left all three satellites carrying two unreleased service bumps at
+    0.49.0. Two things carry it. (1) **The `pin@release` column is the point** — it reads the pin
+    out of the release tag itself, because the two satellites whose version line continues this
+    one's had both tagged before their bump merged (`v0.48.0` pinning `v0.47.0` in each), and a
+    number claiming a correspondence it does not have is worse than no number. (2) It is **read-only
+    and needs no token** (every repository is public; one only raises the rate limit), so it is safe
+    in the release checklist and in the weekly `family-status` workflow, which keeps one standing
+    issue open — reopened and closed, never one issue per run — while anything is outstanding.
+    `hippocampus-llamaindex` and `hippocampus-otel-collector` now tag themselves from the pin when a
+    bump lands (`release-on-bump` in each, dispatching their own `Release` because a
+    `GITHUB_TOKEN`-created tag triggers no `push: tags:` event); `hippocampus-obsidian` is
+    deliberately manual, its tag being a user-facing plugin version.
+    [`cmd/hippocampus/family_test.go`](cmd/hippocampus/family_test.go) holds this script's
+    repository table against the release workflow's dispatch loop in both directions — a satellite
+    in the loop and not the table is one whose staleness nobody is told about, which is
+    `hippocampus-gen`'s condition made general.
   The two shell scripts need `GITHUB_TOKEN` with `administration: write` (and `discussions: write`
   for the second)
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit

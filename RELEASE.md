@@ -305,6 +305,20 @@ while the work is in flight — that is what stands the contract gate down (see
    what `hippocampus-gen` has been doing for eleven releases — it is not a reason to fail a release
    that has already published everything else.
 
+   **What happens after that dispatch is the satellite's own business, and for two of them it is
+   now automatic.** `hippocampus-llamaindex` and `hippocampus-otel-collector` each carry a
+   `release-on-bump` workflow: when a raised pin lands on `main` it re-runs that repository's tests,
+   derives the tag **from the pin**, tags it, and dispatches its own `Release`. That derivation is
+   the point rather than the convenience — both declare that their version line continues this
+   one's, and cut by hand it did not: `hippocampus-llamaindex v0.48.0` pins service `v0.47.0` and
+   `hippocampus-otel-collector v0.48.0` requires `v0.47.0`, both having been tagged before their
+   v0.48.0 bump merged. A number claiming a correspondence it does not have is worse than no number,
+   because nothing about it looks wrong. `hippocampus-obsidian` is deliberately **not** automated:
+   its tag is a user-facing plugin version on Obsidian's community registry, and its bump also
+   raises the minimum service version the plugin declares, so releasing it is a judgement call.
+   (A tag created with the built-in `GITHUB_TOKEN` does not trigger `on: push: tags:`, which is why
+   those workflows dispatch `Release` explicitly rather than relying on the tag push.)
+
 The release therefore runs **nine** jobs, and this section described five of them until 2026-09-12 —
 `publish-llamaindex`, `publish-ingestor` and `publish-objectstore-agents` were absent outright, and
 two others were named in a trailing clause that also called five brokers four. That is the drift
@@ -331,6 +345,18 @@ nothing executes is exactly what drifts.
   `HOMEBREW_TAP_TOKEN` is not configured.
 - Confirm the coverage update on Coveralls — it lands from the CI run for the merge to `main`, not
   from the tag push.
+- **Check what the family still owes a release** — run `scripts/family-status.py` (with
+  `GITHUB_TOKEN=$(gh auth token)` in the environment, to avoid the anonymous rate limit). It reports,
+  per repository, the latest release, the service version pinned **at that release** and on `main`,
+  and how many commits no release carries; `--check` exits non-zero when anything is outstanding.
+  Two satellites tag themselves when a bump lands, so most of the time this should report nothing —
+  a gap there means a `release-on-bump` job did not run — re-run **Release on bump** from that
+  repository's Actions tab, which derives the tag from the pin again and does the rest — while
+  `hippocampus-obsidian` is always a decision rather than a gap. The same script runs weekly in the `family-status` workflow, which
+  keeps one standing issue open while anything is outstanding, so forgetting this check costs a week
+  rather than seven releases. **Ask the day after the release, not the minute after:** a satellite's
+  bump pull request has to merge before its own release can follow, so asking immediately reports
+  the one answer that is guaranteed to be "not yet".
 - **If step 7 was answered "yes", deploy the site.** Commit the paragraphs in
   `hippocampus-demo-site`, then `sudo ./showcase/deploy-site.sh` on the host. Writing them and
   shipping them are separate acts and the second is the one that is forgotten: the copy catching the

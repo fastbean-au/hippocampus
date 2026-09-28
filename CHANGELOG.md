@@ -57,6 +57,40 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/family-status.py`, and a release that the satellites finish** — the release workflow has
+  dispatched its tag to the three satellite repositories since 0.48.0, and each opens a pull request
+  re-pinning what it tracks of this one. That pull request was where the machinery stopped: it merged
+  to `main` and nothing tagged, nothing published, and nothing anywhere reported the gap. At 0.49.0
+  all three were carrying **two** unreleased service bumps.
+
+  The number they carried was also false. `hippocampus-llamaindex` and `hippocampus-otel-collector`
+  both declare that their version line continues this one's — which is what makes
+  `hippocampus-otel-collector v0.48.0` mean "the collector built against service v0.48.0" — and cut
+  by hand it meant nothing of the kind: both `v0.48.0` tags were pushed before their v0.48.0 bump
+  merged, so both pin service `v0.47.0`. A version claiming a correspondence it does not have is
+  worse than no version, because nothing about it looks wrong.
+
+  Three things close that. (1) Each of those two repositories gained a **`release-on-bump`** workflow
+  that fires when a raised pin lands on `main`, re-runs its tests, derives the tag **from the pin**,
+  tags it and dispatches its own `Release` — so the claim is true by construction, the way
+  `hippocampus-client X.Y.Z` is by construction the client of `vX.Y.Z`'s contract. Merging the bump
+  pull request remains the human act of consent, and the tests are re-run on `main` rather than
+  trusted from that pull request, whose verification is `continue-on-error` by design.
+  (2) `scripts/family-status.py` reports the whole family's position — latest release, the service
+  version pinned at that release and on `main`, and how many commits no release carries — with
+  `--check` for a non-zero exit when anything is outstanding. (3) A weekly **`family-status`**
+  workflow runs it and keeps one standing issue open, reopened and closed rather than one issue per
+  run, so a missed release costs a week rather than seven of them.
+
+  `hippocampus-obsidian` is deliberately left manual: its tag is a user-facing plugin version on
+  Obsidian's community registry and its bump raises the minimum service version the plugin declares,
+  so releasing it is a judgement call rather than a mechanical consequence. `RELEASE.md` gains the
+  check as a closing step, and `cmd/hippocampus/family_test.go` holds the status script's repository
+  table against the dispatch loop in both directions — a satellite in the loop and not the table is
+  one whose staleness nobody is told about.
+
 ### Fixed
 
 - **The shipped alert rules name the wrong store when a Prometheus holds more than one.** Every
