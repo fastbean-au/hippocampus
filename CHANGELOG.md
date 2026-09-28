@@ -57,6 +57,41 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The shipped alert rules name the wrong store when a Prometheus holds more than one.** Every
+  expression aggregated with a bare `sum()`/`max()` over the whole datasource, and the files' own
+  headers told the reader to add `by (job)` themselves if that was not their deployment. That advice
+  went untaken on this project's own public demo, which runs five independent stores into one
+  collector — and what it costs is not the dilution it was described as. Measured there,
+  `HippocampusStoreDiskFarAboveEstimate` evaluated to `max(disk_bytes) / max(used_bytes)` = one
+  store's disk over a **different** store's estimate, a ratio belonging to neither (4.3 against the
+  4.9 the affected store actually had); and `HippocampusStoreOverCapacity`, being
+  `max(used) > max(capacity)`, could not fire for a small store standing behind a larger one's
+  target.
+
+  All twenty-nine rules now aggregate `by (service_name)` — `observability.serviceName`, added in
+  0.48.0, which names the **store** rather than the process: replicas of one store share an OTEL
+  `service.name` and re-aggregate into a single alert, exactly as before, while separate stores stay
+  separate. Give each store its own `observability.serviceName` (an unset one falls back to
+  `hippocampus`, which merges them again).
+
+  Two rules needed more than a grouping key. `HippocampusStoreGrowing` now compares against
+  `consolidated or evicted` rather than `consolidated + evicted`, because a store with no capacity
+  target publishes no evicted series at all and `+` dropped that store from the comparison
+  entirely — which is precisely the decay-only deployment the rule exists for. And
+  `HippocampusConsolidatorAbsent` asks its question twice: `absent_over_time` only fires when the
+  metric leaves the whole deployment, so it could never fire with more than one store reporting, and
+  even with one it missed a consolidator that is up but wedged — the counter is still there, it has
+  simply stopped advancing. A `count` over stores whose success counter has not advanced in an hour
+  covers that. What neither half catches is one store's instance disappearing while others still
+  report: its series go stale and drop out, which needs an inventory of what *should* be reporting
+  that Prometheus does not have and a liveness probe does.
+
+- **`docs/operations.md` said eighteen alert rules ship where twenty-nine do**, a fourth copy of a
+  count that nothing executed. It is now held by `TestOperationsRuleCountIsCurrent`, alongside the
+  guards already covering `CLAUDE.md` and `deploy/observability/README.md`.
+
 ## [0.49.0] - 2026-09-21
 
 ### Added

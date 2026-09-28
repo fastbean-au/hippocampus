@@ -106,13 +106,27 @@ Four properties worth knowing before you deploy them:
   search rules read metrics the service only publishes when the corresponding setting is on, and an
   expression over an absent metric returns nothing. The one rule that is _about_ absence
   (`HippocampusConsolidatorAbsent`, which is how the instance-lock keepalive exiting the
-  consolidator becomes visible) says so in PromQL with `absent_over_time` rather than relying on an
-  alerting engine's no-data policy — so it behaves the same in Prometheus and in Grafana.
-- **Every expression aggregates over the whole datasource**, which is right for the
-  one-instance-per-store deployment model. If one Prometheus holds several Hippocampus deployments,
-  add `by (job)` — or whatever label separates them — to each expression. The bridge rules already
-  aggregate `by (broker)` so one wedged bridge is not diluted by a healthy one; if you run more than
-  one bridge of the _same_ broker, add the `hippocampus_group` label (their `--metrics-group`) too.
+  consolidator becomes visible) says so in PromQL rather than relying on an alerting engine's
+  no-data policy — so it behaves the same in Prometheus and in Grafana. It asks the question twice:
+  `absent_over_time` covers the metric vanishing from the whole deployment, and a `count` over
+  stores whose success counter has not advanced in an hour covers a consolidator that is up but
+  wedged, which `absent_over_time` cannot see because the counter is still there.
+- **Every expression aggregates `by (service_name)`** — `observability.serviceName`, the OTEL
+  `service.name` the process reports itself under. That names the **store**, not the process:
+  replicas of one store share a name and are re-aggregated into a single alert, while separate
+  stores sharing one Prometheus stay separate. Give each store its own `observability.serviceName`,
+  or these rules will name the wrong one. The bridge rules additionally aggregate `by (broker)` so
+  one wedged bridge is not diluted by a healthy one; if you run more than one bridge of the _same_
+  broker, give each its own service name (or add the `hippocampus_group` label, their
+  `--metrics-group`).
+
+  These rules used to aggregate over the whole datasource and tell you to add `by (job)` yourself.
+  That advice was not taken even on this project's own public demo, which runs five independent
+  stores into one collector, and the result is worse than the dilution it was described as: measured
+  there, `HippocampusStoreDiskFarAboveEstimate` was computing one store's disk over a *different*
+  store's estimate — a ratio belonging to neither — and `HippocampusStoreOverCapacity`, being
+  `max(used) > max(capacity)`, could not fire for a small store standing behind a larger one's
+  target.
 - **A bridge that has _exited_ is not caught here**, and cannot be: a process that publishes nothing
   is indistinguishable from a deployment that runs no bridge at all, so `HippocampusBridgeNotConsuming`
   only fires while one is up and idle. Declare the bridge under the service's `topology.components`

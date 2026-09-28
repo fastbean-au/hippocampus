@@ -1452,19 +1452,26 @@ Three things to know before deploying them, and the file repeats each at the rul
 - **A rule for a feature you have not configured stays silent rather than broken.** The capacity,
   retention, and search rules read metrics the service only publishes when the corresponding setting
   is on, and an expression over an absent metric returns nothing.
-- **Every expression aggregates over the whole datasource**, which is right for the
-  [one-instance-per-store model](#deployment-model-one-consolidating-instance-per-store). If one
-  Prometheus holds several Hippocampus deployments, add `by (job)` to each.
+- **Every expression aggregates `by (service_name)`** — `observability.serviceName`, which names the
+  store rather than the process: replicas of one store share a name and re-aggregate into one alert
+  ([the one-instance-per-store model](#deployment-model-one-consolidating-instance-per-store)),
+  while separate stores sharing one Prometheus stay separate. Give each store its own
+  `observability.serviceName`, or an alert will name the wrong one.
 
 The one rule that is _about_ absence is `HippocampusConsolidatorAbsent`, and it is how the
 [instance-lock keepalive](#the-instance-lock-keepalive-server-drivers) exiting the consolidator
 becomes visible: a process that has exited publishes nothing, so no counter of failures can catch
-it, and the question has to be asked the other way round — has _any_ instance completed a cycle in
-the last hour. Keep that window comfortably above `sleep.periodSeconds`. It asks in PromQL
-(`absent_over_time`) rather than through an alerting engine's no-data policy, so Prometheus and
-Grafana answer it identically.
+it, and the question has to be asked the other way round — has a cycle completed for this store in
+the last hour. Keep that window comfortably above `sleep.periodSeconds`. It asks in PromQL rather
+than through an alerting engine's no-data policy, so Prometheus and Grafana answer it identically,
+and it asks twice: `absent_over_time` for the metric vanishing from the whole deployment, and a
+`count` over stores whose success counter has not advanced for a consolidator that is up but
+wedged — which `absent_over_time` cannot see, the counter still being there. What neither half
+catches is one store's instance disappearing while others still report: its series simply go stale
+and drop out. That needs an inventory of what _should_ be reporting, which Prometheus does not have
+and a liveness probe does.
 
-The same eighteen rules are provisioned into the bundled Grafana below, so the demo stack alerts as
+The same twenty-nine rules are provisioned into the bundled Grafana below, so the demo stack alerts as
 well as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
 provisions a contact point — where alerts should be delivered is deployment-specific.
 

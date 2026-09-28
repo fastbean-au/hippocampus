@@ -406,13 +406,24 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   tables every rule and states the counts in prose — and the same guard now holds it too: a rule
   with no row, a row naming no rule, a severity that disagrees, an order that does not match the
   file, or a stale count all fail. It was added because that page had drifted by six rules, which
-  is what a documentation table that copies a table in the code does when nothing executes it. Two
+  is what a documentation table that copies a table in the code does when nothing executes it. There
+  is a **fourth** copy of the count in `docs/operations.md`, guarded the same way since it was found
+  eleven rules out of date. Three
   decisions carry the
   pair: the comparison lives in the **PromQL** on both sides (Grafana adds only a `gt 0` threshold
   over an instant query, hence `noDataState: OK` on every rule), so the two engines behave
-  identically; and absence — a consolidator that has exited publishes no counter to alert on — is
-  asked with `absent_over_time` inside the expression rather than through a no-data policy, for the
-  same reason. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
+  identically; absence — a consolidator that has exited publishes no counter to alert on — is
+  asked inside the expression rather than through a no-data policy, for the
+  same reason (and asked **twice**, since `absent_over_time` only sees the metric leave the whole
+  deployment and cannot see a consolidator that is up but wedged, whose counter is still there but
+  no longer advancing); and every expression aggregates **`by (service_name)`**, which is
+  `observability.serviceName` and so names the STORE rather than the process — replicas of one store
+  share a name and re-aggregate into one alert, while separate stores sharing a datasource stay
+  apart. That grouping replaced a bare `sum()`/`max()` plus a header telling the reader to add
+  `by (job)` themselves: the advice went untaken even on this project's own demo, where five stores
+  share a collector, and the result was not the dilution it was described as but genuine
+  cross-wiring — `HippocampusStoreDiskFarAboveEstimate` computing one store's disk over another
+  store's estimate. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
   hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the twenty-nine are a second group,

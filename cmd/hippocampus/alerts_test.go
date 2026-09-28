@@ -666,6 +666,12 @@ func sortedKeys(in map[string]bool) []string {
 
 const alertsReadmePath = "../../deploy/observability/README.md"
 
+// operationsPath is checked for the same reason claudeMdPath is: docs/operations.md also states how
+// many rules ship, in prose, which makes it a FOURTH copy of a number nothing executes. It had
+// drifted by eleven - it said eighteen while twenty-nine shipped - which is the same failure the
+// README guard was written for, one page over.
+const operationsPath = "../../docs/operations.md"
+
 var (
 	// readmeRowPattern matches a table row whose first cell is an alert name in backticks, and
 	// captures the name and the last cell - the severity.
@@ -826,6 +832,28 @@ func TestReadmeMentionsOnlyShippedAlerts(t *testing.T) {
 // TestReadmeRuleCountsAreCurrent holds the counts the README states in prose, the same way
 // TestClaudeMdRuleCountIsCurrent holds CLAUDE.md's. There are three of them here: the total, each
 // group's share, and the total again where the Grafana copy is introduced.
+// TestOperationsRuleCountIsCurrent holds the rule count docs/operations.md states, in words, to the
+// number of rules that actually ship.
+func TestOperationsRuleCountIsCurrent(t *testing.T) {
+	source, err := os.ReadFile(operationsPath)
+	if err != nil {
+		t.Fatalf("failed to read the operations guide: %s", err.Error())
+	}
+
+	operations := string(source)
+
+	total, _ := ruleCounts(t)
+
+	// Quoted with enough of its surroundings that only the real sentence can match - a bare number
+	// word appears throughout that page, and a guard that cannot fail is what this file exists to
+	// avoid.
+	want := "The same " + numberWord(t, total) + " rules are provisioned into the bundled Grafana"
+
+	if !strings.Contains(operations, want) {
+		t.Errorf("%s does not say %q, but %d rules ship", operationsPath, want, total)
+	}
+}
+
 func TestReadmeRuleCountsAreCurrent(t *testing.T) {
 	source, err := os.ReadFile(alertsReadmePath)
 	if err != nil {

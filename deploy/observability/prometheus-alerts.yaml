@@ -28,11 +28,19 @@
 #   * Thresholds are starting points, not universal truths. In particular the latency budget in
 #     HippocampusRequestLatencyHigh and the ratio in HippocampusServerErrorRateHigh are whatever
 #     your SLO says they are.
-#   * Every expression aggregates over the whole datasource, which is right for the one-instance-
-#     per-store deployment model (docs/operations.md#deployment-model-one-consolidating-instance-per-store).
-#     If one Prometheus holds several Hippocampus deployments, add `by (job)` - or a matcher on
-#     whatever label separates them - to each expression, or an alert on one deployment will be
-#     diluted by the others' healthy traffic.
+#   * Every expression aggregates `by (service_name)`, which is observability.serviceName - the
+#     OTEL service.name this process reports itself under. That is the store, not the process:
+#     replicas of one store share a name and are re-aggregated into one alert, while separate
+#     deployments sharing a Prometheus stay separate. If you run several stores into one datasource,
+#     give each its own observability.serviceName or every alert here will name the wrong one.
+#
+#     These rules used to aggregate over the whole datasource and tell the reader to add `by (job)`
+#     themselves. That advice was never taken - not even on this project's own public demo, which
+#     runs five independent stores into one collector - and the failure is worse than the dilution
+#     it was described as. Measured there, HippocampusStoreDiskFarAboveEstimate evaluated to
+#     `max(disk_bytes) / max(used_bytes)` = one store's disk over a DIFFERENT store's estimate, a
+#     ratio belonging to neither; and HippocampusStoreOverCapacity, being
+#     `max(used) > max(capacity)`, could not fire for a small store behind a larger one's target.
 
 groups:
   - name: hippocampus
@@ -46,7 +54,7 @@ groups:
       # fix. The denominator is clamped so that no traffic at all reads as a 0 ratio rather than
       # NaN.
       - alert: HippocampusServerErrorRateHigh
-        expr: sum(rate(hippocampus_rpc_requests_total{outcome="server_error"}[5m])) / clamp_min(sum(rate(hippocampus_rpc_requests_total[5m])), 0.001) > 0.01
+        expr: sum by (service_name) (rate(hippocampus_rpc_requests_total{outcome="server_error"}[5m])) / clamp_min(sum by (service_name) (rate(hippocampus_rpc_requests_total[5m])), 0.001) > 0.01
         for: 10m
         labels:
           severity: critical
@@ -68,7 +76,7 @@ groups:
       # this alert fired permanently, on every deployment with traffic, until 2026-08-29.
       # cmd/hippocampus/rpcbuckets_test.go is what holds the two together.
       - alert: HippocampusRequestLatencyHigh
-        expr: histogram_quantile(0.95, sum by (le) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories"}[5m]))) > 1
+        expr: histogram_quantile(0.95, sum by (le, service_name) (rate(hippocampus_rpc_duration_seconds_bucket{rpc!~"Sleep|Purge|Export|Import|ImportBatch|Transfer|Clear|PreviewConsolidation|SummariseMemories"}[5m]))) > 1
         for: 15m
         labels:
           severity: warning
@@ -83,7 +91,7 @@ groups:
       # Consolidation is the only thing that bounds the store. A run of failing cycles means
       # nothing is being forgotten, so the store grows until it hits its disk or capacity limit.
       - alert: HippocampusSleepCycleFailing
-        expr: sum(rate(hippocampus_sleeps_total{success="false"}[15m])) > 0
+        expr: sum by (service_name) (rate(hippocampus_sleeps_total{success="false"}[15m])) > 0
         for: 15m
         labels:
           severity: critical
@@ -100,17 +108,26 @@ groups:
       # false. Absence is expressed in PromQL rather than left to the alerting engine's no-data
       # policy, so Prometheus and Grafana behave identically.
       #
+      # It asks the question twice because neither half is sufficient. absent_over_time() only fires
+      # when the metric is gone from the WHOLE deployment, so with more than one store reporting it
+      # can never fire, and even with one it misses a consolidator that is up but wedged - the
+      # counter still exists, it has simply stopped advancing. The count() half is that case, per
+      # store. What is left uncovered is a single store's instance disappearing outright while
+      # others still report: its series go stale and it drops out of the count rather than reading
+      # as zero. Catching that needs an inventory of what SHOULD be reporting, which Prometheus does
+      # not have - a liveness probe does, and that is the thing to rely on for it.
+      #
       # The 1h window must stay comfortably above sleep.periodSeconds, or a slow cycle reads as an
       # absent one.
       - alert: HippocampusConsolidatorAbsent
-        expr: absent_over_time(hippocampus_sleeps_total{success="true"}[1h])
+        expr: count by (service_name) (sum by (service_name) (increase(hippocampus_sleeps_total{success="true"}[1h])) == 0) > 0 or absent_over_time(hippocampus_sleeps_total{success="true"}[1h])
         for: 15m
         labels:
           severity: critical
           service: hippocampus
         annotations:
-          summary: "No Hippocampus instance has completed a sleep cycle in an hour"
-          description: "No successful consolidation has been reported for an hour, which usually means the consolidating instance is gone rather than slow - on postgres/mysql, most often the instance-lock keepalive exiting because the lock session died. Confirm exactly one instance is running with consolidation.enabled: true, and that its sleep.periodSeconds is below this rule's window."
+          summary: "A Hippocampus store has completed no sleep cycle in an hour"
+          description: "No successful consolidation has been reported for this store in an hour, which usually means the consolidating instance is gone rather than slow - on postgres/mysql, most often the instance-lock keepalive exiting because the lock session died. The alert names the store through its service_name label, which is observability.serviceName. Confirm exactly one instance is running against it with consolidation.enabled: true, and that its sleep.periodSeconds is below this rule's window."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#the-instance-lock-keepalive-server-drivers"
 
       # --- Capacity ------------------------------------------------------------------------
@@ -124,13 +141,17 @@ groups:
       #
       # Sustained, a no means the store will grow until the decay settings catch up, which for a
       # stationary arrival rate they eventually do and for a growing one they do not. Both sides are
-      # summed so the comparison matches on no labels at all: the three counters carry different
-      # attribute sets, and a bare vector match between them would silently never fire.
+      # summed down to service_name and nothing else: the three counters carry different attribute
+      # sets, so a bare vector match between them would silently never fire, and service_name is the
+      # one label all three share. The forgetting side is `consolidated or evicted` rather than
+      # `consolidated + evicted` because a store with no capacity target publishes no evicted series
+      # at all, and `+` would drop that store from the comparison entirely - which is precisely the
+      # decay-only deployment this rule exists for.
       #
       # The 1h windows must stay comfortably above sleep.periodSeconds - forgetting arrives in
       # per-cycle bursts, so a window near the period reads every gap between cycles as a shortfall.
       - alert: HippocampusStoreGrowing
-        expr: sum(rate(hippocampus_memories_stored_total[1h])) > sum(rate(hippocampus_memories_consolidated_total[1h])) + sum(rate(hippocampus_memories_evicted_total[1h]))
+        expr: sum by (service_name) (rate(hippocampus_memories_stored_total[1h])) > sum by (service_name) (rate(hippocampus_memories_consolidated_total[1h]) or rate(hippocampus_memories_evicted_total[1h]))
         for: 6h
         labels:
           severity: warning
@@ -145,7 +166,7 @@ groups:
       # capacity target is configured - so this cannot fire on a deployment that has set none. At
       # the default exponent of 1, 1.9 is 90% of the target.
       - alert: HippocampusCapacityPressureHigh
-        expr: max(hippocampus_capacity_pressure) > 1.9
+        expr: max by (service_name) (hippocampus_capacity_pressure) > 1.9
         for: 30m
         labels:
           severity: warning
@@ -159,7 +180,7 @@ groups:
       # target is set, so the comparison has nothing to match against and this stays inert on a
       # decay-only store. HippocampusStoreGrowing below is that mode's counterpart.
       - alert: HippocampusStoreOverCapacity
-        expr: max(hippocampus_used_bytes) > max(hippocampus_capacity_bytes)
+        expr: max by (service_name) (hippocampus_used_bytes) > max by (service_name) (hippocampus_capacity_bytes)
         for: 1h
         labels:
           severity: warning
@@ -173,7 +194,7 @@ groups:
       # once retained bytes reach capacity the target has become unreachable however hard eviction
       # runs. Only published when both minimumRetentionInDays and capacityBytes are set.
       - alert: HippocampusRetentionNearCapacity
-        expr: max(hippocampus_retained_bytes) / clamp_min(max(hippocampus_capacity_bytes), 1) > 0.9
+        expr: max by (service_name) (hippocampus_retained_bytes) / clamp_min(max by (service_name) (hippocampus_capacity_bytes), 1) > 0.9
         for: 30m
         labels:
           severity: critical
@@ -189,7 +210,7 @@ groups:
       # Silent on a decay-only deployment, which publishes no capacity_bytes for the ratio to match
       # against; there the absolute figure is the thing to watch on a dashboard instead.
       - alert: HippocampusAncillaryStorageHigh
-        expr: sum(hippocampus_ancillary_bytes) / clamp_min(max(hippocampus_capacity_bytes), 1) > 0.25
+        expr: sum by (service_name) (hippocampus_ancillary_bytes) / clamp_min(max by (service_name) (hippocampus_capacity_bytes), 1) > 0.25
         for: 1h
         labels:
           severity: warning
@@ -207,7 +228,7 @@ groups:
       # keyed on a UUID never refills one. Silent on SQLite and MySQL, which publish no disk_bytes,
       # and on a deployment with no capacity target, which publishes no used_bytes.
       - alert: HippocampusStoreDiskFarAboveEstimate
-        expr: max(hippocampus_disk_bytes) / (max(hippocampus_used_bytes) > 0) > 4
+        expr: max by (service_name) (hippocampus_disk_bytes) / (max by (service_name) (hippocampus_used_bytes) > 0) > 4
         for: 6h
         labels:
           severity: warning
@@ -225,7 +246,7 @@ groups:
       # empty B-tree is a metapage and a leaf whatever it holds, which divides into a large ratio
       # that means nothing.
       - alert: HippocampusIndexBloated
-        expr: max by (table, index) (hippocampus_index_bytes{table!="memories_fts"} / (hippocampus_index_entries{table!="memories_fts"} > 500)) > 512
+        expr: max by (service_name, table, index) (hippocampus_index_bytes{table!="memories_fts"} / (hippocampus_index_entries{table!="memories_fts"} > 500)) > 512
         for: 6h
         labels:
           severity: warning
@@ -244,7 +265,7 @@ groups:
       # a whole class of caller is. Silent unless rate limiting is configured, since nothing
       # publishes the counter otherwise.
       - alert: HippocampusRateLimitRejecting
-        expr: sum(rate(hippocampus_ratelimit_rejected_total[5m])) > 1
+        expr: sum by (service_name) (rate(hippocampus_ratelimit_rejected_total[5m])) > 1
         for: 10m
         labels:
           severity: warning
@@ -260,7 +281,7 @@ groups:
       # are survivable - but a sustained drop rate means the index is going sparse and searches are
       # quietly missing memories that exist.
       - alert: HippocampusSearchIndexDropping
-        expr: sum(rate(hippocampus_search_dropped_total[10m])) > 0
+        expr: sum by (service_name) (rate(hippocampus_search_dropped_total[10m])) > 0
         for: 10m
         labels:
           severity: warning
@@ -274,7 +295,7 @@ groups:
       # than loss - but the index holds documents for forgotten memories until it drains, and a
       # backlog that never drains eventually reaches the caps below.
       - alert: HippocampusSearchOutboxBacklog
-        expr: max(hippocampus_search_outbox_depth) > 10000
+        expr: max by (service_name) (hippocampus_search_outbox_depth) > 10000
         for: 30m
         labels:
           severity: warning
@@ -288,7 +309,7 @@ groups:
       # behind this queue, so a delivery discarded at the caps is a notification nobody will ever
       # receive.
       - alert: HippocampusCallbackQueueBacklog
-        expr: max(hippocampus_callbacks_queue_depth) > 10000
+        expr: max by (service_name) (hippocampus_callbacks_queue_depth) > 10000
         for: 30m
         labels:
           severity: warning
@@ -302,7 +323,7 @@ groups:
       # from the backlog above because it fires first: a failing receiver shows here within minutes,
       # while the depth takes as long as the deletion rate needs to build ten thousand deliveries.
       - alert: HippocampusCallbackDeliveriesFailing
-        expr: sum(rate(hippocampus_callbacks_delivered_total{outcome="failed"}[15m])) > 0
+        expr: sum by (service_name) (rate(hippocampus_callbacks_delivered_total{outcome="failed"}[15m])) > 0
         for: 15m
         labels:
           severity: warning
@@ -316,7 +337,7 @@ groups:
       # took. Critical rather than warning, because unlike every other discard in this file there is
       # no backstop - no sweep, no rebuild, no way to ask again.
       - alert: HippocampusCallbacksAbandoning
-        expr: sum(rate(hippocampus_callbacks_abandoned_total[15m])) > 0
+        expr: sum by (service_name) (rate(hippocampus_callbacks_abandoned_total[15m])) > 0
         for: 5m
         labels:
           severity: critical
@@ -332,7 +353,7 @@ groups:
       # this and HippocampusCallbacksAbandoning are alternatives, never both: one deployment has
       # chosen to lose the notifications, the other to stop forgetting until they land.
       - alert: HippocampusForgettingStalled
-        expr: sum(rate(hippocampus_forgetting_stalls_total[15m])) > 0
+        expr: sum by (service_name) (rate(hippocampus_forgetting_stalls_total[15m])) > 0
         for: 5m
         labels:
           severity: critical
@@ -346,7 +367,7 @@ groups:
       # took. This is the one condition here that leaves the index knowingly wrong until a sweep
       # finds it.
       - alert: HippocampusSearchOutboxAbandoning
-        expr: sum(rate(hippocampus_search_outbox_abandoned_total[15m])) > 0
+        expr: sum by (service_name) (rate(hippocampus_search_outbox_abandoned_total[15m])) > 0
         for: 5m
         labels:
           severity: critical
@@ -359,7 +380,7 @@ groups:
       # Any non-zero value here is a bug: the request got Internal/500 and the process survived,
       # but a handler reached a state it was not written to reach.
       - alert: HippocampusPanicsRecovered
-        expr: sum(increase(hippocampus_panics_recovered_total[15m])) > 0
+        expr: sum by (service_name) (increase(hippocampus_panics_recovered_total[15m])) > 0
         for: 5m
         labels:
           severity: warning
@@ -395,7 +416,7 @@ groups:
       # duplicates of a POLLED source are not counted - only a message handled off the stream is -
       # so a feed poller re-reading the same page every minute does not trip this.
       - alert: HippocampusBridgeDuplicateStream
-        expr: sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) / clamp_min(sum by (broker) (rate(hippocampus_bridge_messages_total[15m])), 0.001) > 0.8 and sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) > 0.1
+        expr: sum by (service_name, broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) / clamp_min(sum by (service_name, broker) (rate(hippocampus_bridge_messages_total[15m])), 0.001) > 0.8 and sum by (service_name, broker) (rate(hippocampus_bridge_messages_total{outcome="exists"}[15m])) > 0.1
         for: 15m
         labels:
           severity: warning
@@ -416,7 +437,7 @@ groups:
       # is zero evaluates identically in Prometheus and never fires in Grafana. Every rule in both
       # files has to return a positive number while it should be firing.
       - alert: HippocampusBridgeNotConsuming
-        expr: count by (broker) (sum by (broker) (rate(hippocampus_bridge_messages_total[15m])) == 0) > 0
+        expr: count by (service_name, broker) (sum by (service_name, broker) (rate(hippocampus_bridge_messages_total[15m])) == 0) > 0
         for: 15m
         labels:
           severity: warning
@@ -431,7 +452,7 @@ groups:
       # cannot write. On the at-least-once adapters the messages are redelivered and pile up; on NATS
       # they are gone.
       - alert: HippocampusBridgeWriteFailing
-        expr: sum by (broker) (rate(hippocampus_bridge_messages_total{outcome="failed"}[10m])) / clamp_min(sum by (broker) (rate(hippocampus_bridge_messages_total[10m])), 0.001) > 0.05
+        expr: sum by (service_name, broker) (rate(hippocampus_bridge_messages_total{outcome="failed"}[10m])) / clamp_min(sum by (service_name, broker) (rate(hippocampus_bridge_messages_total[10m])), 0.001) > 0.05
         for: 10m
         labels:
           severity: critical
@@ -448,7 +469,7 @@ groups:
       # service-side error rate calls it a client fault because that is what it is. This is the only
       # rule that names a code rather than an outcome, for exactly that reason.
       - alert: HippocampusClientTokenRejected
-        expr: sum by (endpoint) (rate(hippocampus_client_rpc_requests_total{code=~"Unauthenticated|PermissionDenied"}[10m])) > 0
+        expr: sum by (service_name, endpoint) (rate(hippocampus_client_rpc_requests_total{code=~"Unauthenticated|PermissionDenied"}[10m])) > 0
         for: 10m
         labels:
           severity: critical
@@ -465,7 +486,7 @@ groups:
       # whether the loop is stalled, deadlocked or dead, which is why it is the staleness signal
       # rather than the absence of promotions.
       - alert: HippocampusIngestorPassStale
-        expr: max(hippocampus_ingestor_seconds_since_last_pass) > 900
+        expr: max by (service_name) (hippocampus_ingestor_seconds_since_last_pass) > 900
         for: 10m
         labels:
           severity: critical
@@ -480,7 +501,7 @@ groups:
       # erroring on every event silently changes what is promoted, so any sustained rate is worth a
       # look at the rules file.
       - alert: HippocampusIngestorRuleErrors
-        expr: sum by (rule) (rate(hippocampus_ingestor_rule_errors_total[15m])) > 0
+        expr: sum by (service_name, rule) (rate(hippocampus_ingestor_rule_errors_total[15m])) > 0
         for: 15m
         labels:
           severity: warning
@@ -499,7 +520,7 @@ groups:
       # one of them is reinforcing anything, which is either a derivation mismatch or a store that
       # has genuinely forgotten everything being served.
       - alert: HippocampusObjectTapNotReinforcing
-        expr: sum(rate(hippocampus_objectstore_recalls_total{outcome="missing"}[15m])) > 0 and sum(rate(hippocampus_objectstore_recalls_total{outcome="reinforced"}[15m])) == 0
+        expr: sum by (service_name) (rate(hippocampus_objectstore_recalls_total{outcome="missing"}[15m])) > 0 and sum by (service_name) (rate(hippocampus_objectstore_recalls_total{outcome="reinforced"}[15m])) == 0
         for: 30m
         labels:
           severity: warning
@@ -514,7 +535,7 @@ groups:
       # sustained rate means neither is getting there - most often the agent's credentials cannot
       # delete from the bucket, which no amount of retrying fixes.
       - alert: HippocampusObjectDeletionsFailing
-        expr: sum by (path) (rate(hippocampus_objectstore_deletions_total{outcome="failed"}[15m])) > 0
+        expr: sum by (service_name, path) (rate(hippocampus_objectstore_deletions_total{outcome="failed"}[15m])) > 0
         for: 15m
         labels:
           severity: critical
@@ -530,7 +551,7 @@ groups:
       # unless callbacks.backlogPolicy is retain or stall - and under stall the store stops
       # forgetting altogether while it waits for this agent.
       - alert: HippocampusObjectDeliveriesRejected
-        expr: sum(rate(hippocampus_objectstore_deliveries_total{outcome="rejected"}[15m])) > 0
+        expr: sum by (service_name) (rate(hippocampus_objectstore_deliveries_total{outcome="rejected"}[15m])) > 0
         for: 30m
         labels:
           severity: warning
