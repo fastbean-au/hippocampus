@@ -294,16 +294,22 @@ while the work is in flight — that is what stands the contract gate down (see
      through the one `COMMAND`-parameterised Dockerfile.
 
 7. **`notify-satellites` job** (gated on `release`) — fires a `repository_dispatch` carrying the tag
-   at each of the three satellite repositories, so each can re-pin what it tracks of this one and
-   open a pull request carrying the result of building against it. What each re-pins differs, so the
+   at each of the four repositories that track this one, so each can re-pin what it tracks and open
+   a pull request carrying the result of building against it. What each re-pins differs, so the
    payload is only the tag: `hippocampus-obsidian` re-vendors the OpenAPI document and runs its
    conformance suite, `hippocampus-otel-collector` raises its `require` and tidies,
-   `hippocampus-llamaindex` raises the client wheel its tests install. Authentication is the
-   `SATELLITE_DISPATCH_TOKEN` PAT, because the built-in `GITHUB_TOKEN` is scoped to this repository
-   and cannot dispatch to another; without the secret the job logs a notice and skips, and one
-   unreachable satellite never fails the release. A satellite that is not told bumps late, which is
-   what `hippocampus-gen` has been doing for eleven releases — it is not a reason to fail a release
-   that has already published everything else.
+   `hippocampus-llamaindex` raises the client wheel its tests install, and `hippocampus-gen` raises
+   the same `require` the collector does. Authentication is the `SATELLITE_DISPATCH_TOKEN` PAT,
+   because the built-in `GITHUB_TOKEN` is scoped to this repository and cannot dispatch to another;
+   without the secret the job logs a notice and skips, and one unreachable satellite never fails the
+   release. A repository that is not told bumps late — which is what `hippocampus-gen` did for
+   eleven releases on v0.36.1, and why it is on this list at all — but that is not a reason to fail
+   a release which has already published everything else.
+
+   `hippocampus-gen` is the one receiver with **no release to cut**: its five generator images
+   publish from `main` on push, so merging its bump pull request is the whole release. That also
+   makes its bump the only build the new pin gets — there is no CI workflow in that repository — so
+   a red one there matters more than elsewhere, not less.
 
    **What happens after that dispatch is the satellite's own business, and for two of them it is
    now automatic.** `hippocampus-llamaindex` and `hippocampus-otel-collector` each carry a

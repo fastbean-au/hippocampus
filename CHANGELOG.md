@@ -84,6 +84,13 @@ itself which service version it was built against.
   workflow runs it and keeps one standing issue open, reopened and closed rather than one issue per
   run, so a missed release costs a week rather than seven of them.
 
+  `hippocampus-gen` joined the dispatch at the same time, with a bump workflow of its own. It was
+  the family's cautionary tale — pinned at v0.36.1, eleven releases behind, cited in every other
+  satellite's bump workflow as what happens without one — and the last repository here tracking the
+  contract with nothing to raise it. It has no release to cut (its five generator images publish
+  from `main` on push, so merging the bump is the release) and no CI workflow, which makes that
+  bump the only build its new pin gets.
+
   `hippocampus-obsidian` is deliberately left manual: its tag is a user-facing plugin version on
   Obsidian's community registry and its bump raises the minimum service version the plugin declares,
   so releasing it is a judgement call rather than a mechanical consequence. It is also judged on

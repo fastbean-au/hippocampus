@@ -702,15 +702,18 @@ jobs:
   #
   # This is the other half of splitting three subprojects out (TODO-2 item 113). Each satellite
   # depends on a RELEASED version of this repository rather than a working tree, which is the point
-  # - the dependency is finally visible - but it also means nothing updates it. hippocampus-gen is
-  # the cautionary case: it pins v0.36.1 and has sat eleven releases behind, because nothing ever
-  # told it otherwise. What each satellite re-pins differs, so the payload is just the tag and each
-  # receiver decides:
+  # - the dependency is finally visible - but it also means nothing updates it. hippocampus-gen was
+  # the cautionary case: it pinned v0.36.1 and sat eleven releases behind, because nothing ever told
+  # it otherwise - which is why it is on this list too now, being the last repository in the family
+  # that tracked the contract with nothing to raise it. What each receiver re-pins differs, so the
+  # payload is just the tag and each one decides:
   #
   #   hippocampus-obsidian        re-vendors contract/hippocampus.swagger.json (and its stated
   #                               minimum service version) and runs its conformance suite
   #   hippocampus-otel-collector  raises `require github.com/fastbean-au/hippocampus` and tidies
   #   hippocampus-llamaindex      raises the hippocampus-client release wheel its tests install
+  #   hippocampus-gen             raises the same `require`, and merging that is its whole release:
+  #                               its images publish from main on push, so it has no tag to cut
   #
   # Authentication is a PAT, not GITHUB_TOKEN: the built-in token is scoped to THIS repository and
   # cannot dispatch to another. Without the secret the step is skipped with a notice rather than
@@ -718,8 +721,8 @@ jobs:
   # condition this repository was in for every one of those eleven releases, and not a reason to
   # fail a release that has already published everything else.
   #
-  # Best-effort per repository: one unreachable satellite must not stop the other two being told,
-  # and none of them can stop the release.
+  # Best-effort per repository: one unreachable satellite must not stop the others being told, and
+  # none of them can stop the release.
   #
   # Gated on publish-python as well as release, because whatever a satellite re-pins to has to
   # exist by the time it is told. hippocampus-llamaindex pins the release WHEEL, which publish-python
@@ -745,7 +748,7 @@ jobs:
             exit 0
           fi
 
-          for repo in hippocampus-obsidian hippocampus-otel-collector hippocampus-llamaindex; do
+          for repo in hippocampus-obsidian hippocampus-otel-collector hippocampus-llamaindex hippocampus-gen; do
             if gh api "repos/fastbean-au/${repo}/dispatches" \
                  --method POST \
                  --field event_type=hippocampus-release \

@@ -81,9 +81,10 @@ REPOS = [
     ("hippocampus-llamaindex", "SERVICE_VERSION", "file", "service", True),
     ("hippocampus-otel-collector", "hippocampusexporter/go.mod", "gomod", "service", True),
     ("hippocampus-obsidian", "contract/SERVICE_VERSION", "file", "own", True),
-    # Built from `main` as containers, with no release train and - still - no bump workflow, which
-    # is why it is the cautionary tale every satellite's contract-bump.yaml names in its header.
-    ("hippocampus-gen", "go.mod", "gomod", "none", False),
+    # Built from `main` as containers rather than from tags, so merging its bump IS its release -
+    # which is why it is dispatched to but has no release line. It was the family's cautionary tale
+    # until it gained a bump workflow, having sat eleven releases behind on v0.36.1.
+    ("hippocampus-gen", "go.mod", "gomod", "none", True),
     # Bumped by the service's own `bump-homebrew` job, so a stale pin here means that job did not
     # run rather than that somebody forgot.
     ("homebrew-tap", "Formula/hippocampus.rb", "formula", "none", False),
@@ -109,6 +110,12 @@ REPOS = [
 # being true, so `ships_nothing` asks that question of the file rather than assuming the answer.
 SHIPS = {
     "hippocampus-obsidian": ("src/", "styles.css", "manifest.json"),
+}
+
+# What raises the pin, for a repository nothing dispatches to. Without this a stale pin there
+# reports the cause it does not have ("nothing will raise this"), when in fact something should have.
+RAISED_BY = {
+    "homebrew-tap": "the service's own bump-homebrew job",
 }
 
 # The file whose runtime dependencies are bundled into what ships. Read whenever it is among what
@@ -447,10 +454,16 @@ def main():
                 f"unmerged or was never opened. Re-run its bump workflow with tag {hub_tag}."
             )
 
-        if s.pin_is_stale and not s.dispatched and s.line == "none":
+        if s.pin_is_stale and not s.dispatched:
+            raiser = RAISED_BY.get(s.name)
+
             actions.append(
-                f"{s.name}: pins {s.pin_on_main}, behind {hub_tag} — it receives no dispatch, so "
-                f"nothing will raise this on its own."
+                f"{s.name}: pins {s.pin_on_main}, behind {hub_tag} — "
+                + (
+                    f"{raiser} should have raised it, so check that it ran."
+                    if raiser
+                    else "it receives no dispatch, so nothing will raise this on its own."
+                )
             )
 
     # Reported, never actioned: a repository whose unreleased commits ship nothing is information

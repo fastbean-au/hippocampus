@@ -193,9 +193,12 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
     `Release` because a `GITHUB_TOKEN`-created tag triggers no `push: tags:` event);
     `hippocampus-obsidian` is deliberately manual, its tag being a user-facing plugin version.
     [`cmd/hippocampus/family_test.go`](cmd/hippocampus/family_test.go) holds this script's
-    repository table against the release workflow's dispatch loop in both directions — a satellite
-    in the loop and not the table is one whose staleness nobody is told about, which is
-    `hippocampus-gen`'s condition made general.
+    repository table against the release workflow's dispatch loop in both directions — a repository
+    in the loop and not the table is one whose staleness nobody is told about, which was
+    `hippocampus-gen`'s condition until it gained a bump workflow of its own (it had sat eleven
+    releases behind on v0.36.1). It is dispatched to and has **no release line**: its five generator
+    images publish from `main` on push, so merging its bump is the release, and that bump is also
+    the only build the new pin gets, there being no CI workflow there.
   The two shell scripts need `GITHUB_TOKEN` with `administration: write` (and `discussions: write`
   for the second)
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
