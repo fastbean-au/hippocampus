@@ -182,10 +182,16 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
     and needs no token** (every repository is public; one only raises the rate limit), so it is safe
     in the release checklist and in the weekly `family-status` workflow, which keeps one standing
     issue open — reopened and closed, never one issue per run — while anything is outstanding.
-    `hippocampus-llamaindex` and `hippocampus-otel-collector` now tag themselves from the pin when a
-    bump lands (`release-on-bump` in each, dispatching their own `Release` because a
-    `GITHUB_TOKEN`-created tag triggers no `push: tags:` event); `hippocampus-obsidian` is
-    deliberately manual, its tag being a user-facing plugin version.
+    (3) A repository on its **own** version line is judged on what a release would actually **ship**
+    (`SHIPS`), not on commit count: `hippocampus-obsidian` receives a re-vendored contract every
+    service release and ships `main.js` built from `src/`, so counting those would leave it
+    permanently red — and a report that is always red stops being read, which is the same failure by
+    the other door. Only a complete comparison can prove nothing shipped, so a truncated file list,
+    an empty one, or a `package.json` whose runtime `dependencies` are bundled into the release all
+    report rather than go quiet. `hippocampus-llamaindex` and `hippocampus-otel-collector` now tag
+    themselves from the pin when a bump lands (`release-on-bump` in each, dispatching their own
+    `Release` because a `GITHUB_TOKEN`-created tag triggers no `push: tags:` event);
+    `hippocampus-obsidian` is deliberately manual, its tag being a user-facing plugin version.
     [`cmd/hippocampus/family_test.go`](cmd/hippocampus/family_test.go) holds this script's
     repository table against the release workflow's dispatch loop in both directions — a satellite
     in the loop and not the table is one whose staleness nobody is told about, which is

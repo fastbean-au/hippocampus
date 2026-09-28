@@ -92,6 +92,29 @@ REPOS = [
     ("hippocampus-demo-site", None, None, "none", False),
 ]
 
+# What a release actually ships, for a repository where that is not "everything on main". Only the
+# repositories on their OWN version line need this: for the two whose line follows the service's,
+# releasing is mechanical and any commit is worth carrying, and they tag themselves anyway.
+#
+# WHY IT MATTERS. `hippocampus-obsidian` receives a re-vendored contract on every service release,
+# and vendoring it changes nothing a user runs: `main.js` is built from `src/` at release time, and
+# the contract document is read by the conformance suite, not by the plugin. Reported as work
+# awaiting a release it becomes a permanently red line, and a report that is always red is one that
+# stops being read - which is the failure this whole check exists to avoid, arriving by the other
+# door.
+#
+# `package.json` is deliberately ABSENT, and that is the one entry worth re-examining if this list
+# is ever edited: the plugin declares no runtime `dependencies`, so esbuild bundles nothing from it
+# and a dependency bump there is build tooling. The moment a runtime dependency appears that stops
+# being true, so `ships_nothing` asks that question of the file rather than assuming the answer.
+SHIPS = {
+    "hippocampus-obsidian": ("src/", "styles.css", "manifest.json"),
+}
+
+# The file whose runtime dependencies are bundled into what ships. Read whenever it is among what
+# changed, which is the only case where its answer can matter.
+BUNDLED_MANIFEST = "package.json"
+
 GOMOD_PIN = re.compile(r"^\s*github\.com/fastbean-au/hippocampus (v\S+)$", re.MULTILINE)
 FORMULA_PIN = re.compile(r"/releases/download/(v[^/]+)/")
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
@@ -189,11 +212,38 @@ class Status:
         self.pin_on_main = None
         self.unreleased = 0
         self.commits = []
+        self.changed = []
+        self.files_truncated = False
+        self.bundles_dependencies = False
         self.pin_behind = False
 
     @property
+    def ships_nothing(self):
+        """Is everything unreleased here invisible to whoever installs the release?
+
+        Only asked of a repository on its own version line, and only when the comparison was
+        complete: a truncated file list cannot show that nothing shipped, and the honest answer to
+        "I could not tell" is to report it rather than to go quiet.
+        """
+        ships = SHIPS.get(self.name)
+
+        if self.line != "own" or not ships or self.unreleased == 0:
+            return False
+
+        if self.files_truncated or not self.changed:
+            return False
+
+        if self.bundles_dependencies:
+            return False
+
+        return not any(f.startswith(prefix) for f in self.changed for prefix in ships)
+
+    @property
     def needs_release(self):
-        return self.line in ("service", "own") and self.unreleased > 0
+        if self.line not in ("service", "own"):
+            return False
+
+        return self.unreleased > 0 and not self.ships_nothing
 
     @property
     def pin_is_stale(self):
@@ -238,6 +288,30 @@ def collect(repo, pin_path, pin_kind, line, dispatched, hub_latest, token):
             status.commits = [
                 c["commit"]["message"].splitlines()[0] for c in compare.get("commits", [])
             ]
+            status.changed = [f["filename"] for f in compare.get("files", [])]
+
+            # The comparison endpoint caps both lists - 300 files, 250 commits - and says so only by
+            # arriving at the cap, so an incomplete answer has to be inferred. It matters in one
+            # direction: a partial file list can never prove that nothing shipped.
+            status.files_truncated = (
+                len(status.changed) >= 300 or compare.get("total_commits", 0) > len(status.commits)
+            )
+
+    # One extra read, and only where it can change the verdict: a repository on its own line whose
+    # manifest is among what changed. A build-tooling bump leaves the release identical; a runtime
+    # dependency is bundled into it and does not.
+    if SHIPS.get(repo) and BUNDLED_MANIFEST in status.changed:
+        manifest = file_at(repo, BUNDLED_MANIFEST, "main", token)
+
+        if manifest is None:
+            # Unreadable means unknown, and unknown must not read as "nothing shipped".
+            status.bundles_dependencies = True
+        else:
+            try:
+                status.bundles_dependencies = bool(json.loads(manifest).get("dependencies"))
+
+            except json.JSONDecodeError:
+                status.bundles_dependencies = True
 
     pinned = version(status.pin_on_main)
     status.pin_behind = bool(pinned and hub_latest and pinned < hub_latest)
@@ -324,7 +398,7 @@ def main():
             f"{s.released_days}d" if s.released_days is not None else "—",
             dash(s.pin_at_release) + ("!" if s.tag_disagrees else ""),
             dash(s.pin_on_main) + ("↓" if s.pin_is_stale else ""),
-            str(s.unreleased) if s.unreleased else "—",
+            (str(s.unreleased) + ("*" if s.ships_nothing else "")) if s.unreleased else "—",
         )
         for s in statuses
     ]
@@ -336,6 +410,9 @@ def main():
 
     if any(s.pin_is_stale for s in statuses):
         legend.append(f"↓  main is pinned behind {dash(hub_tag)}")
+
+    if any(s.ships_nothing for s in statuses):
+        legend.append("*  unreleased, but none of it changes what a release ships")
 
     report(rows, dash(hub_tag), legend, statuses if args.verbose else None)
 
@@ -376,13 +453,29 @@ def main():
                 f"nothing will raise this on its own."
             )
 
+    # Reported, never actioned: a repository whose unreleased commits ship nothing is information
+    # about why its number is behind, not a task. Keeping the two apart is what lets the standing
+    # issue close.
+    noted = [
+        f"{s.name}: {s.unreleased} unreleased, none of it touching {', '.join(SHIPS[s.name])} — "
+        f"a release would ship an identical plugin, so there is nothing here to cut."
+        for s in statuses
+        if s.ships_nothing
+    ]
+
     if actions:
         print("\nAction needed:\n")
 
         for action in actions:
             print(f"  - {action}")
     else:
-        print("\nNothing outstanding: every release line is level with its pin.")
+        print("\nNothing outstanding: every release line is level with what it would ship.")
+
+    if noted:
+        print("\nNoted:\n")
+
+        for note in noted:
+            print(f"  - {note}")
 
     if args.check and actions:
         return OUTSTANDING

@@ -86,7 +86,12 @@ itself which service version it was built against.
 
   `hippocampus-obsidian` is deliberately left manual: its tag is a user-facing plugin version on
   Obsidian's community registry and its bump raises the minimum service version the plugin declares,
-  so releasing it is a judgement call rather than a mechanical consequence. `RELEASE.md` gains the
+  so releasing it is a judgement call rather than a mechanical consequence. It is also judged on
+  what a release would **ship** rather than on how many commits are unreleased — a re-vendored
+  contract changes nothing a user installs, and reporting it as work awaiting a release leaves that
+  line permanently red, which is how a report stops being read. Proving that nothing shipped needs a
+  complete comparison, so a truncated file list or a bundled runtime dependency reports instead of
+  going quiet. `RELEASE.md` gains the
   check as a closing step, and `cmd/hippocampus/family_test.go` holds the status script's repository
   table against the dispatch loop in both directions — a satellite in the loop and not the table is
   one whose staleness nobody is told about.
