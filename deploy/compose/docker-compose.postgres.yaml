@@ -34,7 +34,7 @@ services:
       HIPPOCAMPUS_OBSERVABILITY_PROMETHEUS_ENABLED: "${PROMETHEUS:-false}"
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: hippocampus
       POSTGRES_PASSWORD: hippocampus
