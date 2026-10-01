@@ -438,7 +438,7 @@ groups:
       # estimate on the server drivers and has to stay one, so the estimate can be exactly right
       # while the database is several times larger - a store that forgets is a store whose indexes
       # bloat. Silent on SQLite and MySQL, which publish no disk_bytes.
-      - uid: hippocampus-store-disk-far-above-estimate
+      - uid: hippocampus-disk-far-above-estimate
         title: HippocampusStoreDiskFarAboveEstimate
         condition: B
         for: 6h
