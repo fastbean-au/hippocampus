@@ -105,6 +105,20 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **One alert rule's uid was too long for Grafana, and the cost of that is the whole Grafana.**
+  `hippocampus-store-disk-far-above-estimate`, shipped in 0.49.0 with the storage-footprint alert, is
+  41 characters; Grafana's provisioning validation refuses a uid over 40 (`UID is longer than 40
+  symbols`), the alerting provisioner then fails to start, and **a failed provisioner takes the whole
+  server down** - so one over-long uid cost every rule in the file plus Grafana itself, which exits
+  rather than serving without them. Renamed to `hippocampus-disk-far-above-estimate` (35), and
+  `TestGrafanaAlertRulesAreWellFormed` now holds every uid to the limit. Three of the remaining
+  twenty-eight sit at 38 and 39 characters, so the guard is not theoretical.
+
+  It survived review because nothing in the YAML looks wrong and the file had never been provisioned
+  anywhere that would have noticed: the drift guard checked the wiring Grafana needs (dangling
+  conditions, datasource uids, no-data policy) but not the identifiers, and this project's own demo
+  had never mounted the file at all. Found by mounting it.
+
 - **The shipped alert rules name the wrong store when a Prometheus holds more than one.** Every
   expression aggregated with a bare `sum()`/`max()` over the whole datasource, and the files' own
   headers told the reader to add `by (job)` themselves if that was not their deployment. That advice

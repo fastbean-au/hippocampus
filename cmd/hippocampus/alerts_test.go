@@ -543,6 +543,21 @@ func TestGrafanaAlertRulesAreWellFormed(t *testing.T) {
 
 		uids[rule.UID] = name
 
+		// Grafana refuses a provisioning file carrying a uid over 40 characters, and then refuses to
+		// START - the alerting provisioner failing takes the whole server down, so one over-long uid
+		// costs an operator their entire Grafana rather than one rule. That is exactly what shipped
+		// in 0.49.0: hippocampus-store-disk-far-above-estimate is 41, and the file had never been
+		// provisioned anywhere that would have noticed. Nothing in the YAML looks wrong, which is
+		// why this is a test and not a comment.
+		if len(rule.UID) > grafanaMaxUIDLength {
+			t.Errorf("grafana rule '%s' has a %d-character uid '%s': Grafana refuses a uid over %d and fails to start, taking every other rule with it",
+				name,
+				len(rule.UID),
+				rule.UID,
+				grafanaMaxUIDLength,
+			)
+		}
+
 		// The query returns a value only while the alert should fire (the comparison is in the
 		// PromQL, as Prometheus evaluates it), so no data is the healthy state and must read as OK.
 		if rule.NoDataState != "OK" {
@@ -663,6 +678,10 @@ func sortedKeys(in map[string]bool) []string {
 // disagrees with the file, and a count in the prose that no longer matches. What they deliberately
 // do not check is the "Fires when" column - a prose gloss of an expression cannot be derived from
 // it, and a guard that could only compare it to itself would be theatre.
+
+// grafanaMaxUIDLength is Grafana's own limit on an alert rule's uid, from its provisioning
+// validation ("UID is longer than 40 symbols").
+const grafanaMaxUIDLength = 40
 
 const alertsReadmePath = "../../deploy/observability/README.md"
 
