@@ -68,7 +68,9 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - corporate-postgres-data:/var/lib/postgresql/data
+      # Mounted at /var/lib/postgresql rather than .../data - see docker-compose.postgres.yaml for
+      # why 18+ refuses the latter.
+      - corporate-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hippocampus -d hippocampus"]
       interval: 5s

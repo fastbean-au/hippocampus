@@ -105,6 +105,21 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **The Postgres and corporate compose stacks would not start on `postgres:18-alpine`.** Both
+  mounted their volume at `/var/lib/postgresql/data`, which every image up to 17 expected and
+  which 18 **refuses outright**: from that release the official image keeps the cluster in a
+  major-version-specific subdirectory (`/var/lib/postgresql/18/docker`) so that `pg_upgrade --link`
+  can see both versions under one mount, and it exits non-zero when `.../data` is a mount of its own
+  rather than quietly initialising a cluster the volume would not persist. The weekly image bump to
+  `18-alpine` therefore broke the `docker` CI job and both stacks at once — the container exited
+  within half a second and the service behind `depends_on` never started. Both now mount at
+  `/var/lib/postgresql`.
+
+  An existing `postgres-data` volume holding a pre-18 cluster is still refused after this change,
+  and deliberately so: that is a `pg_upgrade`, not a restart. Either run one with both versions
+  available, or dump and reload — a store that forgets is not one to discard a volume from by
+  accident.
+
 - **One alert rule's uid was too long for Grafana, and the cost of that is the whole Grafana.**
   `hippocampus-store-disk-far-above-estimate`, shipped in 0.49.0 with the storage-footprint alert, is
   41 characters; Grafana's provisioning validation refuses a uid over 40 (`UID is longer than 40
