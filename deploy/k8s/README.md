@@ -117,6 +117,61 @@ instance (edit the DSN in the two deployments, or override it from your own Secr
 same way — set `storage.driver: mysql` and `storage.mysql.dsn` (`HIPPOCAMPUS_STORAGE_MYSQL_DSN`);
 requires MySQL 8.0.20+.
 
+### Upgrading the bundled Postgres across a major version
+
+The bundled Postgres runs `postgres:18-alpine`, the same major as the compose files. **Changing
+that tag on a volume that already holds a cluster is a data migration, not an image bump**: a
+cluster one major wrote cannot be read by the next, and the pod crash-loops on
+`database files are incompatible with server version`. That message is the good outcome, and the
+manifest is arranged to produce it. The compose files moved to 18's layout instead, with the volume
+at `/var/lib/postgresql` and the cluster in a major-specific subdirectory. Here that layout would
+find an empty directory beside the old cluster and initialise a new one. The service would then
+start against an empty store with nothing saying why. `postgres.yaml` keeps `PGDATA` fixed for that
+reason; its comment has the detail.
+
+`pg_upgrade --link` is what 18's layout exists to enable, but it needs both majors' binaries in one
+container, which the alpine images do not carry. So the path is dump and restore:
+
+```sh
+NS=hippocampus
+
+# 1. Stop every writer. The service pods are stateless, so scaling them to zero loses nothing.
+kubectl -n "$NS" scale deployment/hippocampus-consolidator deployment/hippocampus-replica --replicas=0
+
+# 2. Dump from the OLD cluster, while the old image is still the one running. Then check the dump
+#    can be read back before anything is deleted - the next step is the irreversible one.
+kubectl -n "$NS" exec hippocampus-postgres-0 -- pg_dump -U hippocampus -d hippocampus -Fc > hippocampus.dump
+kubectl -n "$NS" exec -i hippocampus-postgres-0 -- pg_restore --list < hippocampus.dump > /dev/null
+
+# 3. Remove the old cluster: the StatefulSet, then its volume.
+kubectl -n "$NS" delete statefulset hippocampus-postgres
+kubectl -n "$NS" delete pvc pgdata-hippocampus-postgres-0
+
+# 4. Bring up ONLY the new Postgres. A plain `apply -k` would also restore the service's replica
+#    counts, and the consolidator would create its schema in the empty database before the restore
+#    could, which the restore then collides with.
+kubectl kustomize deploy/k8s/overlays/postgres \
+  | kubectl apply -f - --selector app.kubernetes.io/name=hippocampus-postgres
+kubectl -n "$NS" rollout status statefulset/hippocampus-postgres
+
+# 5. Restore, then bring the service back with the whole overlay.
+kubectl -n "$NS" exec -i hippocampus-postgres-0 -- \
+  pg_restore -U hippocampus -d hippocampus --no-owner --exit-on-error < hippocampus.dump
+kubectl apply -k deploy/k8s/overlays/postgres
+kubectl -n "$NS" rollout status deployment/hippocampus-consolidator
+```
+
+Keep `hippocampus.dump` until the service is serving again. Nothing in the store depends on the
+downtime: decay is measured against wall-clock time, so the memories age through the outage exactly
+as they would have while it ran.
+
+A side effect worth knowing: a restore rebuilds every index packed, so it is also the most thorough
+reindex this store can get. See
+[index bloat on the server drivers](../../docs/operations.md#index-bloat-on-the-server-drivers) for
+how much that recovers, and how quickly it comes back.
+
+A managed Postgres has its provider's own major-upgrade path. None of this section applies to it.
+
 ## Observability
 
 Metrics reach a backend by either of two routes, and the overlays ship with the **pull** one on

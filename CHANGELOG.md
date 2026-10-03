@@ -122,6 +122,28 @@ itself which service version it was built against.
   13.6 MB rather than growing. It is a high-water mark that `OPTIMIZE TABLE` returns, not a daily
   job.
 
+- **The Grafana alert rules are now provisioned into a real Grafana on every push.**
+  `scripts/check-grafana-alerts.sh`, run by the new `grafana-alerts` CI job, boots the same
+  `grafana/otel-lgtm` image the compose stacks run, with the rule file mounted where they mount it.
+  It fails unless Grafana starts, holds exactly the rules `prometheus-alerts.yaml` declares, and
+  evaluates each one cleanly. `alerts_test.go` holds the two rule files and the README to each other,
+  but three copies can agree on something Grafana refuses, which is how the over-long uid below
+  shipped. Run against that uid, the script fails with Grafana's own `UID is longer than 40 symbols`;
+  run against an unparseable expression, it names the rule and the parse error.
+
+### Changed
+
+- **The Kubernetes Postgres overlay runs `postgres:18-alpine`**, the major the compose files moved to.
+  **On a volume that already holds a cluster this is a data migration, not an image bump**: 18
+  cannot read what 17 wrote, and the pod crash-loops on `database files are incompatible with
+server version` until the data is dumped and restored. `deploy/k8s/README.md` gains the procedure.
+  The overlay deliberately keeps its explicit `PGDATA` rather than taking 18's layout. Tested
+  against a 17 volume, 18's default layout found its own subdirectory empty and initialised a new
+  cluster beside the old one, so the service would have started on an empty store with no error
+  anywhere. Keeping `PGDATA` fixed turns the same mistake into a refusal. The config wizard's
+  generated compose file, the CI and release workflows' test databases, and the overlay's
+  `wait-for-postgres` init containers move to 18 with it. The `db` conformance suite passes on 18.
+
 ### Fixed
 
 - **The Postgres and corporate compose stacks would not start on `postgres:18-alpine`.** Both
@@ -142,7 +164,7 @@ itself which service version it was built against.
 - **One alert rule's uid was too long for Grafana, and the cost of that is the whole Grafana.**
   `hippocampus-store-disk-far-above-estimate`, shipped in 0.49.0 with the storage-footprint alert, is
   41 characters; Grafana's provisioning validation refuses a uid over 40 (`UID is longer than 40
-  symbols`), the alerting provisioner then fails to start, and **a failed provisioner takes the whole
+symbols`), the alerting provisioner then fails to start, and **a failed provisioner takes the whole
   server down** - so one over-long uid cost every rule in the file plus Grafana itself, which exits
   rather than serving without them. Renamed to `hippocampus-disk-far-above-estimate` (35), and
   `TestGrafanaAlertRulesAreWellFormed` now holds every uid to the limit. Three of the remaining
@@ -179,8 +201,18 @@ itself which service version it was built against.
   even with one it missed a consolidator that is up but wedged — the counter is still there, it has
   simply stopped advancing. A `count` over stores whose success counter has not advanced in an hour
   covers that. What neither half catches is one store's instance disappearing while others still
-  report: its series go stale and drop out, which needs an inventory of what *should* be reporting
+  report: its series go stale and drop out, which needs an inventory of what _should_ be reporting
   that Prometheus does not have and a liveness probe does.
+
+- **Two capacity alerts fired on stores too small for their ratio to mean anything.**
+  `HippocampusStoreDiskFarAboveEstimate` (disk over 4x the estimate) and `HippocampusIndexBloated`
+  (over 512 bytes an index entry) are right for a store whose own rows dominate its file. They are
+  meaningless for a nearly empty one, whose few megabytes of catalogue and empty-index pages divide
+  into a large ratio. Measured on the demo with every rule evaluating, the disk alert sat pending at
+  13.2x on a 403 KB estimate and 8.9x on 835 KB, against 4.5x on 151 MB, and the last is the only one
+  that meant anything. The index alert fired on a 2,000-memory store. Both now carry an absolute
+  floor, 64 MiB of database and 16 MiB of index, rather than a higher ratio, which would have hidden
+  the large store too. A promtool test of the measured figures fires on the large store alone.
 
 - **`docs/operations.md` said eighteen alert rules ship where twenty-nine do**, a fourth copy of a
   count that nothing executed. It is now held by `TestOperationsRuleCountIsCurrent`, alongside the
@@ -318,7 +350,7 @@ itself which service version it was built against.
   `unusedRetentionInDays` to 0 for the previous behaviour.
 
   A level is marked on the cycle that first finds it unused and removed only by a later one, rather
-  than deleted on sight. That is not tidiness: a level is handed out *before* anything references
+  than deleted on sight. That is not tidiness: a level is handed out _before_ anything references
   it, and there is no foreign key, so deleting one in that window would leave a memory pointing at a
   level that no longer exists — which every read resolves to unranked, silently costing that memory
   its significance in a store that decides what to forget by significance.
@@ -384,11 +416,11 @@ itself which service version it was built against.
   lists a repository whose **root** holds `manifest.json`, which a monorepo cannot offer, so the
   plugin could not be listed from here at all.
 
-  | Was | Now |
-  | --- | --- |
-  | `integrations/obsidian` | [fastbean-au/hippocampus-obsidian][obsidian-repo] |
+  | Was                       | Now                                                   |
+  | ------------------------- | ----------------------------------------------------- |
+  | `integrations/obsidian`   | [fastbean-au/hippocampus-obsidian][obsidian-repo]     |
   | `integrations/llamaindex` | [fastbean-au/hippocampus-llamaindex][llamaindex-repo] |
-  | `integrations/otel` | [fastbean-au/hippocampus-otel-collector][otel-repo] |
+  | `integrations/otel`       | [fastbean-au/hippocampus-otel-collector][otel-repo]   |
 
   For consumers: the plugin's releases continue from `0.3.0` in its own repository (BRAT cannot
   follow the move — remove it and re-add `fastbean-au/hippocampus-obsidian`), and
@@ -3572,7 +3604,6 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-
 [Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.49.0...HEAD
 [0.49.0]: https://github.com/fastbean-au/hippocampus/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/fastbean-au/hippocampus/compare/v0.47.1...v0.48.0

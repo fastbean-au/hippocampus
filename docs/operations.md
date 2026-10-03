@@ -518,18 +518,18 @@ outside** the target: each grows precisely when something is going wrong, so cou
 capacity pressure and evict live memories to make room for the record of memories being evicted.
 They are excluded from the capacity target; they are not excluded from the disk.
 
-The tables the target *does* count are also not excluded from the disk in the way their estimate
+The tables the target _does_ count are also not excluded from the disk in the way their estimate
 implies — on the server drivers `used_bytes` describes a compacted store, and a store that forgets
 never stays compacted. See [index bloat on the server
 drivers](#index-bloat-on-the-server-drivers).
 
-| Feature                                                                  | Table               | Bounded by                                                                             | Default cap                              |
-| ------------------------------------------------------------------------ | ------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------- |
-| [Forgotten log](#what-was-forgotten--the-forgotten-log)                  | `memory_tombstones` | `consolidation.tombstones.maxRows` / `.maxBytes` / `.maxAgeInDays`, trimmed each cycle | 100,000 rows or 30 days (feature is off) |
-| [Delete outbox](configuration.md#the-delete-outbox)                      | `search_outbox`     | `opensearch.outbox.maxRows` / `.maxBytes` / `.maxAgeHours`                             | 1,000,000 rows or 24 hours               |
-| [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue`    | `callbacks.maxRows` / `.maxBytes` / `.maxAgeHours`                                     | 1,000,000 rows or 24 hours               |
-| [Peer registry](#seeing-the-deployment) (server drivers)                 | `instances`         | one row per live instance, each pruned against its own heartbeat interval              | negligible                               |
-| [Significance registry](configuration.md#the-registry-forgets-too)       | `significance_levels` | `consolidation.significanceLevels.unusedRetentionInDays`, reaped each cycle          | 7 days after a value falls out of use    |
+| Feature                                                                  | Table                 | Bounded by                                                                             | Default cap                              |
+| ------------------------------------------------------------------------ | --------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------- |
+| [Forgotten log](#what-was-forgotten--the-forgotten-log)                  | `memory_tombstones`   | `consolidation.tombstones.maxRows` / `.maxBytes` / `.maxAgeInDays`, trimmed each cycle | 100,000 rows or 30 days (feature is off) |
+| [Delete outbox](configuration.md#the-delete-outbox)                      | `search_outbox`       | `opensearch.outbox.maxRows` / `.maxBytes` / `.maxAgeHours`                             | 1,000,000 rows or 24 hours               |
+| [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue`      | `callbacks.maxRows` / `.maxBytes` / `.maxAgeHours`                                     | 1,000,000 rows or 24 hours               |
+| [Peer registry](#seeing-the-deployment) (server drivers)                 | `instances`           | one row per live instance, each pruned against its own heartbeat interval              | negligible                               |
+| [Significance registry](configuration.md#the-registry-forgets-too)       | `significance_levels` | `consolidation.significanceLevels.unusedRetentionInDays`, reaped each cycle            | 7 days after a value falls out of use    |
 
 The significance registry is the odd one out and is listed here for one reason: it is the only table
 that grew with the store's **history** rather than its contents, gaining a row per distinct
@@ -588,12 +588,12 @@ figure has the bound it is approaching beside it rather than standing alone. The
 exceed a quarter of `capacityBytes`.
 
 Four things to know about the figure. There are **two byte columns and they answer different
-questions**. `bytes` is the table's *structural* size — its rows and indexes compacted — computed for
+questions**. `bytes` is the table's _structural_ size — its rows and indexes compacted — computed for
 the two fixed-width tables as a row count times a per-row allowance rather than measured, since
 scanning them to add up what their count already says would put a cost on the path that exists to
 bound the store; the callback queue is the exception, and its bytes are summed from a size recorded
 at insert, a count there saying nothing about a row that may carry five hundred memory bodies.
-`disk_bytes` is what the engine says the relation is *really* holding, including space it has not
+`disk_bytes` is what the engine says the relation is _really_ holding, including space it has not
 reclaimed — a catalogue lookup (`pg_total_relation_size`) on **PostgreSQL**, and `0` on
 **SQLite**, because there is nothing to report: a page a prune frees returns to the freelist
 `used_bytes` already excludes, so `bytes` is the whole truth there. On **MySQL** it is read from `information_schema.TABLES` with the session's `information_schema_stats_expiry` at 0. The
@@ -671,17 +671,17 @@ direct cost of the thing the service exists to do.**
 
 `VACUUM` marks a B-tree page that a delete emptied as reusable; it never repacks it. A store keyed
 on a UUID, writing steadily and deleting most of what it writes, essentially never refills a page it
-emptied — so the index grows with what the store has *forgotten* rather than with what it *holds*.
+emptied — so the index grows with what the store has _forgotten_ rather than with what it _holds_.
 A measured instance:
 
-| figure                                      | reading    |
-| ------------------------------------------- | ---------: |
-| `used_bytes` (the store's own accounting)   |     153 MB |
-| `consolidation.capacityBytes`               |     160 MB |
-| `pg_database_size`                          | **892 MB** |
-| …of which heap                              |      78 MB |
-| …of which indexes on `memories`             |     687 MB |
-| …of which `idx_memories_consolidation_v3`   |     533 MB |
+| figure                                    |    reading |
+| ----------------------------------------- | ---------: |
+| `used_bytes` (the store's own accounting) |     153 MB |
+| `consolidation.capacityBytes`             |     160 MB |
+| `pg_database_size`                        | **892 MB** |
+| …of which heap                            |      78 MB |
+| …of which indexes on `memories`           |     687 MB |
+| …of which `idx_memories_consolidation_v3` |     533 MB |
 
 That index was at 5.03% average leaf density with 20,183 deleted pages. The heap was never the
 problem and autovacuum was keeping up: 17,145 runs and 18,000 dead tuples. A single
@@ -704,11 +704,11 @@ worst affected.
 measure never shrinks after a delete on PostgreSQL, so eviction driven by one would chase a figure
 that cannot drop, evicting live memories every cycle while the reading never moves (see
 [`capacityBytes` is measured on stored logical bytes](#capacitybytes-is-measured-on-stored-logical-bytes)).
-The estimate is not wrong; it describes a *compacted* store. What was missing was any comparison
+The estimate is not wrong; it describes a _compacted_ store. What was missing was any comparison
 between it and the disk, so the service now reports one:
 
 - **`hippocampus.disk_bytes`** — what the engine says the tables inside the capacity target really
-  occupy. Read it *against* `used_bytes`; the **ratio** is the finding. On the instance above it was
+  occupy. Read it _against_ `used_bytes`; the **ratio** is the finding. On the instance above it was
   5.8.
 - **`hippocampus.index_bytes`** and **`hippocampus.index_entries`**, by `table` and `index` — divide
   one by the other. The widest key in this store is a 37-character id and seven numeric columns, so
@@ -783,15 +783,32 @@ psql "$DSN" -c 'REINDEX TABLE CONCURRENTLY memories_fts'
 Two cautions. A `REINDEX ... CONCURRENTLY` that is interrupted leaves an **invalid** index behind
 (`SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid`) — drop it and run again; the
 original is still in place and still being used, so nothing is broken meanwhile. And it needs room
-for a second copy of the largest index while it runs, which on a bloated one is the *bloated* size,
+for a second copy of the largest index while it runs, which on a bloated one is the _bloated_ size,
 not the packed one.
+
+#### A major-version upgrade is a reindex too
+
+A Postgres cluster one major wrote cannot be read by the next, so moving majors on a self-run
+Postgres means a dump and a restore. `pg_upgrade --link` avoids that, but it needs both majors'
+binaries in one place, which the official alpine images do not carry. The bundled Kubernetes
+Postgres has the
+[procedure written out](../deploy/k8s/README.md#upgrading-the-bundled-postgres-across-a-major-version),
+including why that manifest fails loudly rather than starting an empty cluster beside the old one.
+
+The restore rebuilds every B-tree packed, which makes it the most complete reindex this store gets.
+Measured on the demo's 17 → 18 move, two stores of 663 MB and 664 MB came back at 118 MB and 128 MB,
+and the volume went from 2.2 GB to 577 MB. **It does not stay that way.** Five days later the larger
+store's disk-to-estimate ratio was back to 4.5x, which is the daily cadence above confirmed from the
+other direction. A dump and restore resets the bloat. It is not a substitute for the job.
 
 The shipped alerts [`HippocampusStoreDiskFarAboveEstimate` and
 `HippocampusIndexBloated`](../deploy/observability/README.md) fire on the two halves of this: the
 database holding more than four times what the accounting counts, and any single index spending more
 than 512 bytes an entry. The content index is excluded from the second — its entries are a `tsvector`
 that grows with the bodies it indexes, so its cost per entry is a property of the stored text rather
-than a number with a right answer.
+than a number with a right answer. Each also carries an absolute floor (64 MiB of database, 16 MiB of
+index), because a nearly empty store's catalogue and empty-index pages make its ratio large for no
+reason worth acting on; a store under those sizes can still be reindexed, it is just never paged for.
 
 ### Sleep cadence vs. write rate
 
@@ -1154,7 +1171,7 @@ So a non-zero `hippocampus.search.dropped` is not by itself a fault. What it mea
 | `queue_full`   | This service is offering work faster than one worker drains it | Compare `queue_depth` against `queue_capacity` (below)                          |
 | `apply_failed` | The cluster refused or did not answer, on every retry          | The cluster's problem: check its health, then `applyTimeout`/`applyMaxAttempts` |
 
-**`queueSize` is not the answer to a sustained `queue_full` rate.** A bounded queue absorbs *bursts*;
+**`queueSize` is not the answer to a sustained `queue_full` rate.** A bounded queue absorbs _bursts_;
 it cannot absorb a rate mismatch, and raising it past what the worker can drain only moves the drop
 later and costs memory in the meantime. The two cases are distinguishable, which is what
 `queue_depth` is for: a queue absorbing bursts is spiky and near zero between them, and widening it
@@ -1193,7 +1210,7 @@ pass. And in Lucene a re-index is a delete plus an insert **even when the docume
 so an hourly sweep tombstoned the whole index once an hour — see below.
 
 One thing the sweep deliberately does not heal: a document that is present but missing its embedding
-vector, indexed while the model server was down. It heals *absences*; comparing vectors would mean
+vector, indexed while the model server was down. It heals _absences_; comparing vectors would mean
 fetching ~3 KiB per memory per pass to find a case `--backfill-search --reindex` already covers.
 
 ### Deleted documents accumulate, because this store deletes by design
@@ -1580,7 +1597,7 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.external_bytes`                 | gauge         |                                       | Payload the store points at elsewhere (only with an external capacity set)                                             |
 | `hippocampus.capacity_external_bytes`        | gauge         |                                       | The configured external target, alongside `external_bytes`                                                             |
 | `hippocampus.ancillary_bytes`                | gauge         | `component`                           | Estimated bytes in the tables _outside_ the capacity target — the forgotten log, the search outbox, the callback queue |
-| `hippocampus.disk_bytes`                     | gauge         |                                       | What the engine says the counted tables _really_ occupy — read against `used_bytes` (PostgreSQL, MySQL)               |
+| `hippocampus.disk_bytes`                     | gauge         |                                       | What the engine says the counted tables _really_ occupy — read against `used_bytes` (PostgreSQL, MySQL)                |
 | `hippocampus.index_bytes`                    | gauge         | `table`, `index`                      | Bytes one index really occupies (PostgreSQL only)                                                                      |
 | `hippocampus.index_entries`                  | gauge         | `table`, `index`                      | Entries that index holds — divide `index_bytes` by it (PostgreSQL only)                                                |
 | `hippocampus.purges`                         | counter       | `success`                             | `Purge` calls                                                                                                          |

@@ -9,7 +9,7 @@ on:
 # Least privilege for the whole workflow, set here rather than per job because every job in it only
 # ever reads the repository: nothing pushes a commit, publishes an image, or comments on a PR. The
 # default GITHUB_TOKEN is otherwise write-capable on a push to the default branch, so a compromised
-# third-party action or dependency in any of these ten jobs would inherit that. Coveralls and the
+# third-party action or dependency in any of these eleven jobs would inherit that. Coveralls and the
 # Homebrew tap authenticate with their own secrets, not this token, so neither needs more.
 permissions:
   contents: read
@@ -25,7 +25,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: hippocampus
           POSTGRES_PASSWORD: hippocampus
@@ -653,3 +653,20 @@ jobs:
       - name: Test the embedded console
         working-directory: cmd/hippocampus/webuitest
         run: node --test
+
+  # Provision the shipped Grafana alert rules into the same grafana/otel-lgtm image the compose
+  # stacks and demo/run.sh run, and assert Grafana starts, holds every rule the Prometheus file
+  # declares, and evaluates each one cleanly. cmd/hippocampus/alerts_test.go holds the rule files to
+  # each other and to the README, but three copies can agree perfectly on something Grafana refuses -
+  # 0.49.0 shipped a 41-character uid that did exactly that, and a refused provisioning file takes the
+  # whole server down rather than one rule. This is the one check in that class that asks Grafana
+  # itself (TODO-2 item 132.1). The image is pulled from latest, as the stacks pull it, so a Grafana
+  # release that starts refusing something here fails this job rather than an operator's deployment.
+  grafana-alerts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Provision the alert rules into Grafana
+        run: scripts/check-grafana-alerts.sh

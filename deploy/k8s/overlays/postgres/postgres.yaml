@@ -49,7 +49,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: postgres
-          image: postgres:17-alpine
+          # A major-version bump here is a DATA MIGRATION, not an image bump: a cluster written by
+          # one major cannot be read by the next. See "Upgrading the bundled Postgres across a major
+          # version" in deploy/k8s/README.md before changing this tag on a volume that holds data.
+          image: postgres:18-alpine
           imagePullPolicy: IfNotPresent
           ports:
             - name: postgres
@@ -66,6 +69,16 @@ spec:
                   key: postgres-password
             # The default mount is the volume root; point PGDATA at a subdirectory so initdb does
             # not trip over the volume's lost+found.
+            #
+            # This deliberately does NOT follow the compose files' 18 layout (volume at
+            # /var/lib/postgresql, cluster in the image's default /var/lib/postgresql/18/docker).
+            # From 18 the image puts PGDATA in a major-specific subdirectory, so on a volume already
+            # carrying a 17 cluster at .../data/pgdata that layout would find its own directory empty
+            # and initialise a NEW cluster beside the old one - and the service would start, apply
+            # its schema, and serve an empty store with nothing anywhere saying why. Keeping PGDATA
+            # fixed makes the same mistake fail loudly instead ("database files are incompatible
+            # with server version"). The cost is pg_upgrade --link, which that layout exists to
+            # enable, and which the alpine images cannot run anyway: it needs both majors' binaries.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           livenessProbe:

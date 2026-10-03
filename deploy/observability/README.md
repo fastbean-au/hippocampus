@@ -37,8 +37,8 @@ actually goes wrong:
 | `HippocampusStoreOverCapacity`         | used bytes above `capacityBytes` for an hour                                | warning  |
 | `HippocampusRetentionNearCapacity`     | retained bytes exceed 90% of `capacityBytes` for 30m                        | critical |
 | `HippocampusAncillaryStorageHigh`      | the tables outside the capacity target exceed 25% of `capacityBytes` for 1h | warning  |
-| `HippocampusStoreDiskFarAboveEstimate` | the database holds >4x what the store's own accounting counts, for 6h       | warning  |
-| `HippocampusIndexBloated`              | an index is spending >512 bytes on each entry it holds, for 6h              | warning  |
+| `HippocampusStoreDiskFarAboveEstimate` | a database over 64 MiB holds >4x what the store's accounting counts, for 6h | warning  |
+| `HippocampusIndexBloated`              | an index over 16 MiB is spending >512 bytes on each entry it holds, for 6h  | warning  |
 | `HippocampusRateLimitRejecting`        | a rate limit is refusing >1 request/second for 10m                          | warning  |
 | `HippocampusSearchIndexDropping`       | index operations are being dropped for 10m                                  | warning  |
 | `HippocampusSearchOutboxBacklog`       | queued index deletions exceed 10,000 for 30m                                | warning  |
@@ -58,6 +58,13 @@ and never repacks it. The first rule says the gap has opened; the second says wh
 `REINDEX`. Both are silent on SQLite, which publishes no `disk_bytes`; on MySQL only the first
 fires, since it reports its indexes per table rather than per index — see
 [index bloat on the server drivers](../../docs/operations.md#index-bloat-on-the-server-drivers).
+
+Both carry an absolute floor — 64 MiB of disk for the first, 16 MiB of index for the second — and
+the floor is not a softer ratio. A nearly empty store still occupies a few megabytes of catalogue
+and empty-index pages, so its ratio is large precisely because there is nothing in it: measured on
+the demo, 13.2x on a 403 KB estimate and 8.9x on 835 KB, against 4.5x on 151 MB, and the last is the
+only one of the three that means anything. Raising the ratio to quieten the small stores would hide
+the large one too. Below the floor the ratio has no meaning; above it, it is the question.
 
 The last six of those are the two durable queues — the search delete outbox and the callback
 queue — and they come in pairs by design: a backlog rule that fires while nothing is yet lost, and
@@ -124,10 +131,11 @@ Four properties worth knowing before you deploy them:
   These rules used to aggregate over the whole datasource and tell you to add `by (job)` yourself.
   That advice was not taken even on this project's own public demo, which runs five independent
   stores into one collector, and the result is worse than the dilution it was described as: measured
-  there, `HippocampusStoreDiskFarAboveEstimate` was computing one store's disk over a *different*
+  there, `HippocampusStoreDiskFarAboveEstimate` was computing one store's disk over a _different_
   store's estimate — a ratio belonging to neither — and `HippocampusStoreOverCapacity`, being
   `max(used) > max(capacity)`, could not fire for a small store standing behind a larger one's
   target.
+
 - **A bridge that has _exited_ is not caught here**, and cannot be: a process that publishes nothing
   is indistinguishable from a deployment that runs no bridge at all, so `HippocampusBridgeNotConsuming`
   only fires while one is up and idle. Declare the bridge under the service's `topology.components`
@@ -147,6 +155,17 @@ rule files by the same guard**: a rule that ships without a row here, a row nami
 not ship, a severity that disagrees with the file, or a count in the prose that no longer matches,
 all fail that test. This page had drifted by six rules before it was added, which is what a
 documentation table that is a second copy of a table in the code does when nothing executes it.
+
+**That guard can only check what somebody thought to check, so a second check asks Grafana
+itself.** `scripts/check-grafana-alerts.sh` (the `grafana-alerts` CI job) boots the same
+`grafana/otel-lgtm` image the stacks run, with this file mounted where they mount it, and fails
+unless Grafana starts, holds exactly the rules the Prometheus file declares, and evaluates every one
+cleanly against its empty Prometheus. It exists because 0.49.0 shipped a 41-character uid that
+every test here accepted and Grafana refused (its limit is 40). A refused provisioning file does
+not cost one rule: the alerting provisioner fails and takes the whole server down with it. The
+image also discards Grafana's output unless `ENABLE_LOGS_GRAFANA=true`, so on a running stack that
+failure is a container reporting `running` with no Grafana in it and no error anywhere. The script
+sets the variable, and prints Grafana's last lines when it fails.
 
 One consequence of the Grafana copy is worth knowing before writing a rule: each of its rules is an
 instant query thresholded at `gt 0`, so **an expression must return a positive number while it

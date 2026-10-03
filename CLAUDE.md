@@ -62,6 +62,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `cmd/hippocampus/rpcmetrics.go`, `hippocampus/server.go`), each held to the generated descriptor
   by a `TestServicePrefixMatchesDescriptor`, because a stale copy fails **open** in the auth
   interceptor and the purge gate. `buf lint` is deliberately not wired up — see `contract/buf.yaml`
+- Provision the shipped Grafana alert rules into a real Grafana: `scripts/check-grafana-alerts.sh`
+  (docker or podman; boots `grafana/otel-lgtm` with `deploy/compose/observability/alerting-rules.yaml`
+  mounted as the stacks mount it, and fails unless Grafana starts, holds exactly the rules
+  `prometheus-alerts.yaml` declares, and evaluates each cleanly). CI runs it as the `grafana-alerts`
+  job. It exists because `alerts_test.go` only checks what somebody thought to check, and a
+  provisioning file Grafana refuses takes the **whole server** down, which is what 0.49.0's
+  41-character uid did (TODO-2 item 132.1)
 - Demo/soak test: `./demo/run.sh` (builds and launches the service plus a load generator; see
   `demo/README.md`). By default it also launches a `grafana/otel-lgtm` collector (docker or
   podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on `:3000`); set
@@ -199,8 +206,8 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
     releases behind on v0.36.1). It is dispatched to and has **no release line**: its five generator
     images publish from `main` on push, so merging its bump is the release, and that bump is also
     the only build the new pin gets, there being no CI workflow there.
-  The two shell scripts need `GITHUB_TOKEN` with `administration: write` (and `discussions: write`
-  for the second)
+    The two shell scripts need `GITHUB_TOKEN` with `administration: write` (and `discussions: write`
+    for the second)
 - Release compatibility: `CHANGELOG.md` is the curated record (the GitHub release notes are a commit
   list); its **Compatibility** section states what a version number covers — contract, config keys
   **and the values they accept**, stored schema — and what is exempt. `RELEASE.md` carries the
@@ -1715,6 +1722,7 @@ github.com/fastbean-au/hippocampus => ../..`), which is what keeps the AWS SDK o
     `COMMAND`-parameterised Dockerfile. Registration is **not** here: writing the pointer-memories is
     the producer's, being the only party that knows an object's significance and group. See
     `docs/objectstore.md`.
+
 - `observability/` — the shared OTEL bootstrap and probe endpoints, in the root module so the
   service, the ingestor and the four broker bridges use one implementation (it began as
   `cmd/hippocampus/observability.go` and was promoted, not copied; the integration modules already

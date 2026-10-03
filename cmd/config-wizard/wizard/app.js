@@ -1375,7 +1375,10 @@ const STEPS = [
             options: [
               ["abandon", "abandon — discard the oldest undelivered callbacks"],
               ["retain", "retain — keep forget-callbacks; let the queue grow"],
-              ["stall", "stall — keep them, and stop forgetting until they drain"],
+              [
+                "stall",
+                "stall — keep them, and stop forgetting until they drain",
+              ],
             ],
             help: "The caps above are right for a notification: a day-old summary of a cycle helps nobody. A memory_forgotten callback is different when the receiver is the system holding what the memory pointed at — it is an instruction to delete a payload this store cannot see, and discarding it orphans that payload permanently. Suggested as stall wherever an external capacity target is set, because that is exactly the deployment where it is an instruction. Under stall the caps stop trimming and start gating: past them, consolidation and eviction do not run, the store grows past its target, and every cycle says so. Under retain nothing stops and nothing is lost — the queue simply grows until the receiver comes back. Keep the forgotten log on with either: it is the catch-up path for a receiver that was rebuilt.",
           },
@@ -1746,7 +1749,7 @@ const STEPS = [
             when: (s) =>
               value(s, "observability.tracing.enabled") ||
               value(s, "observability.metrics.enabled"),
-            help: "Names this instance in the telemetry. Give every instance sharing a collector its own name — the OTLP-to-Prometheus translation puts only this, the version and the job on each series, so instances sharing a name publish one series between them and a dashboard reads whichever exported last. Empty falls back to \"hippocampus\".",
+            help: 'Names this instance in the telemetry. Give every instance sharing a collector its own name — the OTLP-to-Prometheus translation puts only this, the version and the job on each series, so instances sharing a name publish one series between them and a dashboard reads whichever exported last. Empty falls back to "hippocampus".',
           },
           {
             key: "observability.tracing.enabled",
@@ -3233,14 +3236,18 @@ function composeFile() {
       "  # Demo-grade database. Point storage.postgres.dsn at a managed instance for anything real,",
       "  # and delete this service.",
       "  postgres:",
-      "    image: postgres:17-alpine",
+      "    image: postgres:18-alpine",
       "    restart: unless-stopped",
       "    environment:",
       "      POSTGRES_DB: hippocampus",
       "      POSTGRES_USER: hippocampus",
       "      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}",
       "    volumes:",
-      "      - postgres-data:/var/lib/postgresql/data",
+      "      # Mounted at /var/lib/postgresql, NOT .../data: from 18 the image keeps the cluster in a",
+      "      # major-specific subdirectory and refuses to start when .../data is a mount of its own.",
+      "      # A volume holding an older major's cluster is refused too - that is a dump and restore",
+      "      # (or pg_upgrade), not a restart.",
+      "      - postgres-data:/var/lib/postgresql",
       "    healthcheck:",
       '      test: ["CMD-SHELL", "pg_isready -U hippocampus"]',
       "      interval: 10s",

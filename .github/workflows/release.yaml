@@ -42,7 +42,7 @@ jobs:
     # Coveralls should be the real one, not the subset that runs without dependencies.
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: hippocampus
           POSTGRES_PASSWORD: hippocampus

@@ -449,7 +449,7 @@ groups:
           service: hippocampus
         annotations:
           summary: "Hippocampus is holding several times the disk its own accounting counts"
-          description: "The tables inside consolidation.capacityBytes now occupy over four times what used_bytes estimates for them. That estimate is not wrong and must not be changed to a file-size measure: it describes a compacted store, and eviction driven by a reading that never drops after a delete would evict every cycle without the figure moving. The gap is space the engine has marked reusable and will not return - overwhelmingly index, since VACUUM never repacks a B-tree page a delete emptied. Break it down with hippocampus_index_bytes / hippocampus_index_entries by index: an entry costing more than a few hundred bytes over a 37-character id is air. The remedy is REINDEX INDEX CONCURRENTLY on the indexes that show it, which is online but is a maintenance decision the service deliberately does not take for itself. On a high-churn store it is a DAILY job, not an occasional one: a reindexed instance was measured back from 13 MB to 393 MB on one index in nine hours. On MySQL there is no per-index breakdown and the gap has a different shape: InnoDB keeps its B-trees dense and holds what forgetting freed as tablespace free space (DATA_FREE), which it reuses rather than growing without bound - the file keeps its high-water mark, and OPTIMIZE TABLE returns it if that peak is not coming back."
+          description: "The tables inside consolidation.capacityBytes now occupy over four times what used_bytes estimates for them. That estimate is not wrong and must not be changed to a file-size measure: it describes a compacted store, and eviction driven by a reading that never drops after a delete would evict every cycle without the figure moving. The gap is space the engine has marked reusable and will not return - overwhelmingly index, since VACUUM never repacks a B-tree page a delete emptied. Break it down with hippocampus_index_bytes / hippocampus_index_entries by index: an entry costing more than a few hundred bytes over a 37-character id is air. The remedy is REINDEX INDEX CONCURRENTLY on the indexes that show it, which is online but is a maintenance decision the service deliberately does not take for itself. On a high-churn store it is a DAILY job, not an occasional one: a reindexed instance was measured back from 13 MB to 393 MB on one index in nine hours. On MySQL there is no per-index breakdown and the gap has a different shape: InnoDB keeps its B-trees dense and holds what forgetting freed as tablespace free space (DATA_FREE), which it reuses rather than growing without bound - the file keeps its high-water mark, and OPTIMIZE TABLE returns it if that peak is not coming back. Stores under 64 MiB on disk are exempt: an almost empty database still carries a few megabytes of catalogue and empty-index pages, so its ratio is large precisely because there is nothing in it."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#index-bloat-on-the-server-drivers"
         data:
           - refId: A
@@ -462,7 +462,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: "max by (service_name) (hippocampus_disk_bytes) / (max by (service_name) (hippocampus_used_bytes) > 0) > 4"
+              expr: "max by (service_name) (hippocampus_disk_bytes > 67108864) / (max by (service_name) (hippocampus_used_bytes) > 0) > 4"
           - refId: B
             datasourceUid: __expr__
             model:
@@ -497,7 +497,7 @@ groups:
           service: hippocampus
         annotations:
           summary: "A Hippocampus index is mostly empty pages"
-          description: "This index is spending over 512 bytes on each entry it holds, against a key of an id and a few numbers that should cost tens. The space is pages a delete emptied: VACUUM marks them reusable and never repacks them, and a store keyed on a UUID that forgets by design never refills one - so this grows with what the store has forgotten rather than with what it holds, and it is unbounded. It is not a large-store phenomenon: bloat tracks churn, and a store of a thousand memories was measured carrying a listing index 2.7 times the size of its own heap. Fix it with REINDEX INDEX CONCURRENTLY on the named index, which is online and takes seconds to minutes; there is no configuration change that prevents it and the service deliberately does not do it on a timer. Schedule it daily on a store under sustained write load."
+          description: "This index is spending over 512 bytes on each entry it holds, against a key of an id and a few numbers that should cost tens. The space is pages a delete emptied: VACUUM marks them reusable and never repacks them, and a store keyed on a UUID that forgets by design never refills one - so this grows with what the store has forgotten rather than with what it holds, and it is unbounded. It tracks churn rather than size, but an index under 16 MiB is exempt: a nearly empty B-tree costs a few pages whatever it holds, so a small one's ratio is high without being bloat, and what a reindex would return there is not worth anyone's attention. Fix it with REINDEX INDEX CONCURRENTLY on the named index, which is online and takes seconds to minutes; there is no configuration change that prevents it and the service deliberately does not do it on a timer. Schedule it daily on a store under sustained write load."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#index-bloat-on-the-server-drivers"
         data:
           - refId: A
@@ -510,7 +510,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: "max by (service_name, table, index) (hippocampus_index_bytes{table!=\"memories_fts\"} / (hippocampus_index_entries{table!=\"memories_fts\"} > 500)) > 512"
+              expr: 'max by (service_name, table, index) ((hippocampus_index_bytes{table!="memories_fts"} > 16777216) / (hippocampus_index_entries{table!="memories_fts"} > 500)) > 512'
           - refId: B
             datasourceUid: __expr__
             model:

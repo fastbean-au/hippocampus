@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: wait-for-postgres
-          image: postgres:17-alpine
+          image: postgres:18-alpine
           command:
             - sh
             - -c
