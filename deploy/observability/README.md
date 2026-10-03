@@ -55,7 +55,8 @@ has to stay one — eviction driven by a file-size measure would chase a reading
 after a delete — so the estimate can be exactly right while the database is several times larger.
 A store that forgets is a store whose indexes bloat, because `VACUUM` marks a B-tree page reusable
 and never repacks it. The first rule says the gap has opened; the second says which index to
-`REINDEX`. Both are silent on SQLite and MySQL, which publish no `disk_bytes` — see
+`REINDEX`. Both are silent on SQLite, which publishes no `disk_bytes`; on MySQL only the first
+fires, since it reports its indexes per table rather than per index — see
 [index bloat on the server drivers](../../docs/operations.md#index-bloat-on-the-server-drivers).
 
 The last six of those are the two durable queues — the search delete outbox and the callback

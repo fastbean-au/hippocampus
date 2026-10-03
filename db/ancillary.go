@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	sqldriver "database/sql/driver"
 	"fmt"
 	"time"
 
@@ -266,19 +268,22 @@ func (d *DB) AncillaryStorage(ctx context.Context, bounds AncillaryBounds) (Anci
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
+	sizes := d.catalogue()
+	defer sizes.close()
+
 	var out AncillaryStorage
 
-	forgotten, err := d.ancillaryTable(ctx, d.tombstoneProbe(), d.tombstones.bounds())
+	forgotten, err := d.ancillaryTable(ctx, sizes, d.tombstoneProbe(), d.tombstones.bounds())
 	if err != nil {
 		return AncillaryStorage{}, err
 	}
 
-	outbox, err := d.ancillaryTable(ctx, d.outboxProbe(), bounds.SearchOutbox)
+	outbox, err := d.ancillaryTable(ctx, sizes, d.outboxProbe(), bounds.SearchOutbox)
 	if err != nil {
 		return AncillaryStorage{}, err
 	}
 
-	callbacks, err := d.ancillaryTable(ctx, d.callbackProbe(), bounds.CallbackQueue)
+	callbacks, err := d.ancillaryTable(ctx, sizes, d.callbackProbe(), bounds.CallbackQueue)
 	if err != nil {
 		return AncillaryStorage{}, err
 	}
@@ -359,6 +364,7 @@ func (d *DB) callbackProbe() ancillaryProbe {
 // one, and a catalogue lookup rather than a scan - see dialect.relationBytes.
 func (d *DB) ancillaryTable(
 	ctx context.Context,
+	sizes *catalogue,
 	probe ancillaryProbe,
 	bounds QueueBounds,
 ) (AncillaryTable, error) {
@@ -389,7 +395,7 @@ func (d *DB) ancillaryTable(
 		return AncillaryTable{}, fmt.Errorf("counting %s: %w", probe.table, err)
 	}
 
-	disk, err := d.relationBytes(ctx, probe.table)
+	disk, err := sizes.relationBytes(ctx, probe.table)
 	if err != nil {
 
 		return AncillaryTable{}, err
@@ -410,6 +416,94 @@ func (d *DB) ancillaryTable(
 	}, nil
 }
 
+// catalogueQuerier is what the catalogue readings go through: the pool, or a connection pinned for
+// the measurement. Both *sql.DB and *sql.Conn satisfy it.
+type catalogueQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// catalogue reads relation sizes for one measurement - one sleep cycle's footprint, or its
+// ancillary report - and owns whatever connection the dialect needs pinned to make that reading
+// current. See dialect.catalogueSession.
+//
+// The connection is taken on the first reading rather than when the catalogue is opened, so a
+// measurement that turns out to have nothing to read (a deployment running none of the ancillary
+// tables) pins nothing.
+type catalogue struct {
+	d    *DB
+	conn *sql.Conn
+}
+
+// catalogue opens a reader for one measurement. The caller must close it.
+func (d *DB) catalogue() *catalogue {
+	return &catalogue{d: d}
+}
+
+// querier returns what to read through, pinning a connection and preparing its session on the
+// first call where the dialect asks for one.
+func (c *catalogue) querier(ctx context.Context) (catalogueQuerier, error) {
+	prepare := c.d.dialect().catalogueSession
+
+	if prepare == "" {
+
+		return c.d.sql, nil
+	}
+
+	if c.conn != nil {
+
+		return c.conn, nil
+	}
+
+	conn, err := c.d.sql.Conn(ctx)
+	if err != nil {
+
+		return nil, fmt.Errorf("pinning a connection to read the catalogue: %w", err)
+	}
+
+	if _, err := conn.ExecContext(ctx, prepare); err != nil {
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("preparing the catalogue session: %w", err)
+	}
+
+	c.conn = conn
+
+	return conn, nil
+}
+
+// close puts the session back and returns the connection to the pool.
+//
+// Where the setting cannot be put back the connection is discarded rather than returned: a pooled
+// connection carrying a session setting nobody asked for is a difference between connections that
+// would surface somewhere unrelated, and a new connection costs one handshake. The reset runs on a
+// fresh context because the measurement's own may be the reason it is being closed.
+func (c *catalogue) close() {
+	if c.conn == nil {
+
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), catalogueResetTimeout)
+	defer cancel()
+
+	if _, err := c.conn.ExecContext(ctx, c.d.dialect().catalogueSessionReset); err != nil {
+		log.Debugf("discarding the catalogue connection, its session could not be reset: %s", err.Error())
+
+		_ = c.conn.Raw(func(any) error {
+
+			return sqldriver.ErrBadConn
+		})
+	}
+
+	_ = c.conn.Close()
+	c.conn = nil
+}
+
+// catalogueResetTimeout bounds putting a catalogue connection's session back. A server that cannot
+// answer a SET inside it cannot be trusted with the connection either, which is then discarded.
+const catalogueResetTimeout = 5 * time.Second
+
 // relationBytes asks the engine what one table and everything built over it really occupy. It
 // answers 0 where the dialect has no cheap way to say, which is the embedded one - and where the
 // answer would be the structural estimate anyway, since a page a prune frees goes to the freelist
@@ -420,17 +514,35 @@ func (d *DB) ancillaryTable(
 // publishes, and on a table under the constant insert-and-prune churn these three are it is a large
 // share of what they cost. It is reported and never regulated on - a control input reading this
 // would prune harder, leave more dead rows, and prune harder again. See dialect.relationBytes.
-func (d *DB) relationBytes(ctx context.Context, table string) (int64, error) {
-	query := d.dialect().relationBytes
+func (c *catalogue) relationBytes(ctx context.Context, table string) (int64, error) {
 
+	return c.count(ctx, c.d.dialect().relationBytes, table)
+}
+
+// relationIndexBytes totals what the indexes over one table occupy, for a dialect that reports them
+// only as a total. 0 where the dialect does not. See dialect.relationIndexBytes.
+func (c *catalogue) relationIndexBytes(ctx context.Context, table string) (int64, error) {
+
+	return c.count(ctx, c.d.dialect().relationIndexBytes, table)
+}
+
+// count runs one of the dialect's single-count catalogue readings for one table, answering 0 for a
+// reading the dialect does not declare.
+func (c *catalogue) count(ctx context.Context, query string, table string) (int64, error) {
 	if query == "" {
 
 		return 0, nil
 	}
 
+	q, err := c.querier(ctx)
+	if err != nil {
+
+		return 0, err
+	}
+
 	var bytes int64
 
-	if err := d.queryRow(ctx, d.rebind(query), table).Scan(&bytes); err != nil {
+	if err := q.QueryRowContext(ctx, c.d.rebind(query), table).Scan(&bytes); err != nil {
 
 		return 0, fmt.Errorf("measuring %s: %w", table, err)
 	}
@@ -455,7 +567,10 @@ func (d *DB) relationBytes(ctx context.Context, table string) (int64, error) {
 func (d *DB) excludedBytes(ctx context.Context, probe ancillaryProbe) int64 {
 	// The bounds are not read on this path - only Bytes is - so the zero value is passed rather than
 	// threading a set of caps through UsedBytes to be discarded.
-	measured, err := d.ancillaryTable(ctx, probe, QueueBounds{})
+	sizes := d.catalogue()
+	defer sizes.close()
+
+	measured, err := d.ancillaryTable(ctx, sizes, probe, QueueBounds{})
 	if err != nil {
 		log.Warnf("failed to measure %s, counting it as stored bytes: %s", probe.table, err.Error())
 

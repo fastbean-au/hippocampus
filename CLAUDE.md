@@ -649,9 +649,13 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     travels with the measurement** — the cycle's own cached `UsedBytes`, never a second scan — since
     `used_bytes` is published only under a byte capacity target and the **ratio** is the finding.
     (5) A driver that cannot answer publishes **nothing**, not a `measured:false` block: a zeroed
-    footprint reads as a store occupying no disk, and that is the ordinary state on two drivers of
-    three (SQLite has nothing to report, its page accounting already counting every index inside the
-    target; MySQL's `information_schema` sizes come from a cache refreshed at most once a day).
+    footprint reads as a store occupying no disk, and that is the ordinary state on SQLite, which has
+    nothing to report, its page accounting already counting every index inside the target. MySQL
+    answers **per table only** (per-index sizes need a grant an application user lacks), and only
+    because `dialect.catalogueSession` pins one connection per measurement with
+    `information_schema_stats_expiry = 0` and resets it after. Left at the default, that cache answers
+    with a size up to a day old. It is a session statement rather than a DSN parameter so that a server
+    refusing the variable fails the reading, not every connection.
     (6) The set of tables is exactly `usedBytesLiveRows`' plus the content index, because a footprint
     covering tables the estimate excludes would report a gap that was never the estimate's to close.
     Published as `hippocampus.disk_bytes` plus `hippocampus.index_bytes`/`.index_entries`

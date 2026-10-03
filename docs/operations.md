@@ -594,16 +594,13 @@ scanning them to add up what their count already says would put a cost on the pa
 bound the store; the callback queue is the exception, and its bytes are summed from a size recorded
 at insert, a count there saying nothing about a row that may carry five hundred memory bodies.
 `disk_bytes` is what the engine says the relation is *really* holding, including space it has not
-reclaimed — a catalogue lookup (`pg_total_relation_size`) on **PostgreSQL**, and `0` on the other
-two. On **SQLite** that is because there is nothing to report: a page a prune frees returns to the
-freelist `used_bytes` already excludes, so `bytes` is the whole truth there. On **MySQL** it is a
-genuine gap: `information_schema.TABLES` serves its sizes from a cache that
-`information_schema_stats_expiry` refreshes at most once a day, so it answers with whatever the table
-was the last time anything looked — which is exactly wrong for a queue that started growing this
-morning — and the alternatives are a session variable the service would have to pin a connection to
-set, an `ANALYZE TABLE` per cycle, or a tablespace file size that is mostly allocation slack. A stale
-figure presented as what the disk holds is worse than none, so MySQL reports the structural estimate
-and nothing else; watch that instance's disk directly. On PostgreSQL under steady churn `disk_bytes`
+reclaimed — a catalogue lookup (`pg_total_relation_size`) on **PostgreSQL**, and `0` on
+**SQLite**, because there is nothing to report: a page a prune frees returns to the freelist
+`used_bytes` already excludes, so `bytes` is the whole truth there. On **MySQL** it is read from `information_schema.TABLES` with the session's `information_schema_stats_expiry` at 0. The
+default cache would answer with whatever the table was the last time anything looked, which is exactly
+wrong for a queue that started growing this morning. It includes the table's `DATA_FREE`, which is
+where InnoDB keeps the space a prune emptied (see [index bloat on the server
+drivers](#index-bloat-on-the-server-drivers)). On PostgreSQL under steady churn `disk_bytes`
 is routinely around twice `bytes`, and that gap is the reading: it is disk no other figure this
 service publishes can see. The metric and the response's `total_bytes` carry the larger of the two,
 because sizing a disk is a question about what the engine is holding.
@@ -728,11 +725,30 @@ every page of the index, which is not a cost to pay once a cycle on the index th
 needs an extension a managed instance may not have. Bytes against entries says the same thing for
 free.
 
-**PostgreSQL only.** SQLite has nothing to report — page accounting already counts every index
-inside the capacity target, so the same `capacityBytes` simply holds fewer memories. MySQL has
-something to report and no current way to read it: `information_schema` serves relation sizes from a
-cache that `information_schema_stats_expiry` refreshes at most once a day by default, so it would
-answer with yesterday's size. Watch a MySQL instance's disk directly.
+**SQLite has nothing to report** — page accounting already counts every index inside the capacity
+target, so the same `capacityBytes` simply holds fewer memories.
+
+**MySQL reports per table, and its gap has a different shape.** The reading comes from
+`information_schema.TABLES` (`DATA_LENGTH + INDEX_LENGTH + DATA_FREE`), which serves sizes from a
+cache that `information_schema_stats_expiry` refreshes at most once a day by default — read as it
+stands, it reported a ten-thousand-row table at 16 KiB. So the measurement pins one connection, sets
+that variable to 0 for its own session, and puts it back afterwards. The variable needs no privilege.
+The setting is scoped to the measurement rather than put in the DSN, so a server that refuses it
+fails only the reading and never the store's connections. What it can't give is a per-index
+breakdown: those sizes live in `mysql.innodb_index_stats`, which an application user is normally not
+granted. `hippocampus.index_bytes` is therefore not published on MySQL, `HippocampusIndexBloated`
+never fires there, and the console shows one row per table.
+
+InnoDB does not bloat the way PostgreSQL does. It merges a page that a purge leaves under half full
+and returns emptied pages to the tablespace, so its B-trees stay dense; what forgetting frees shows
+up as `DATA_FREE`, which the table reuses for new rows and keeps on disk. Measured: six rounds of
+inserting 30,000 rows and deleting the oldest 27,000 held `DATA_LENGTH` at 2.1 MB and `INDEX_LENGTH`
+at 1 MB for 3,000 rows, while `DATA_FREE` levelled off at 13.6 MB. That is a **high-water mark, not
+growth without bound**, so MySQL has no daily job. `OPTIMIZE TABLE memories` (an online rebuild for
+InnoDB) gives the space back when the peak it records will not recur. `DATA_FREE` assumes each table
+has its own tablespace, which is the default and how this store creates them. On a server with
+`innodb_file_per_table` off it reports the shared tablespace's free space against every table and
+over-reads.
 
 **The service will not reindex itself.** `REINDEX INDEX CONCURRENTLY` is online, but it is still a
 maintenance decision — it needs disk headroom for a second copy of the index, it can fail and leave
@@ -742,7 +758,7 @@ both server drivers and stays one.
 
 #### The maintenance job
 
-Run this daily against a store under sustained write load. It is online: readers and writers are not
+On PostgreSQL, run this daily against a store under sustained write load. It is online: readers and writers are not
 blocked, and each index takes seconds to minutes.
 
 ```sql
@@ -1564,7 +1580,7 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.external_bytes`                 | gauge         |                                       | Payload the store points at elsewhere (only with an external capacity set)                                             |
 | `hippocampus.capacity_external_bytes`        | gauge         |                                       | The configured external target, alongside `external_bytes`                                                             |
 | `hippocampus.ancillary_bytes`                | gauge         | `component`                           | Estimated bytes in the tables _outside_ the capacity target — the forgotten log, the search outbox, the callback queue |
-| `hippocampus.disk_bytes`                     | gauge         |                                       | What the engine says the counted tables _really_ occupy — read against `used_bytes` (PostgreSQL only)                  |
+| `hippocampus.disk_bytes`                     | gauge         |                                       | What the engine says the counted tables _really_ occupy — read against `used_bytes` (PostgreSQL, MySQL)               |
 | `hippocampus.index_bytes`                    | gauge         | `table`, `index`                      | Bytes one index really occupies (PostgreSQL only)                                                                      |
 | `hippocampus.index_entries`                  | gauge         | `table`, `index`                      | Entries that index holds — divide `index_bytes` by it (PostgreSQL only)                                                |
 | `hippocampus.purges`                         | counter       | `success`                             | `Purge` calls                                                                                                          |

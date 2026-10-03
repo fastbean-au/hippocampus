@@ -177,8 +177,8 @@ func reportBloat(previous *footprintSnapshot, current *footprintSnapshot) {
 
 	log.Warnf(
 		"the store occupies %d bytes on disk against the %d its own accounting counts (%.1fx), of "+
-			"which %d is indexes%s - a B-tree page emptied by forgetting is marked reusable and "+
-			"never repacked, so this grows with what the store has forgotten. See "+
+			"which %d is indexes%s - the engine keeps the space forgetting frees rather than "+
+			"handing it back, and on PostgreSQL it grows with what the store has forgotten. See "+
 			"docs/operations.md, \"Index bloat on the server drivers\"",
 		current.footprint.Bytes,
 		current.estimated,
@@ -192,8 +192,9 @@ func reportBloat(previous *footprintSnapshot, current *footprintSnapshot) {
 // always the largest: the largest index on a large store may be the honest cost of holding it, while
 // an entry costing a kilobyte over a 37-byte key is air at any size.
 //
-// Returns an empty string where nothing can be said - no indexes, or a catalogue that has not
-// analysed them - so the line above reads as a complete sentence without it.
+// Returns an empty string where nothing can be said - no indexes listed (MySQL totals them per
+// table), or a catalogue that has not analysed them - so the line above reads as a complete
+// sentence without it.
 func describeWorstIndex(footprint db.StorageFootprint) string {
 	var worst db.IndexFootprint
 

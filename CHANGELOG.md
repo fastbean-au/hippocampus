@@ -103,6 +103,25 @@ itself which service version it was built against.
   table against the dispatch loop in both directions — a satellite in the loop and not the table is
   one whose staleness nobody is told about.
 
+- **MySQL now reports what the store really occupies.** 0.49.0's storage footprint
+  (`hippocampus.disk_bytes`, `GetConsolidationStatus.footprint`) and the ancillary tables'
+  `disk_bytes` reported nothing on MySQL. `information_schema.TABLES` serves relation sizes from a
+  cache that `information_schema_stats_expiry` refreshes at most once a day, and a stale size
+  presented as the disk is worse than no size. The measurement now pins one connection, sets that
+  variable to 0 for its own session and puts it back afterwards. A server refusing the variable
+  fails the reading, not the store. The reading is `DATA_LENGTH + INDEX_LENGTH + DATA_FREE` per
+  table, with the secondary indexes as one total. MySQL's per-index sizes need a grant an
+  application user does not normally have, so `hippocampus.index_bytes` and
+  `HippocampusIndexBloated` stay PostgreSQL-only, and the console's card shows one row per table.
+  `HippocampusStoreDiskFarAboveEstimate` now applies to MySQL as well.
+
+  InnoDB's gap is a different shape from PostgreSQL's, and
+  [docs/operations.md](docs/operations.md#index-bloat-on-the-server-drivers) now says so. Its
+  B-trees stay dense under churn, and what forgetting frees is held as tablespace free space that
+  it reuses. Measured under repeated insert-and-forget rounds, that free space levelled off at
+  13.6 MB rather than growing. It is a high-water mark that `OPTIMIZE TABLE` returns, not a daily
+  job.
+
 ### Fixed
 
 - **The Postgres and corporate compose stacks would not start on `postgres:18-alpine`.** Both

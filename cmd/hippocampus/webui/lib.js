@@ -974,12 +974,38 @@ export function footprintRows(footprint) {
   return rows.sort((a, b) => b.bytes - a.bytes);
 }
 
+// footprintTableRows is the card's fallback for a driver that totals its indexes per table rather
+// than listing them, which is MySQL: its per-index sizes live in a table an application user is
+// not normally granted. Only the tables that list no indexes are returned, so a footprint carrying
+// both shapes never shows one table twice. Largest first, for footprintRows' reason.
+export function footprintTableRows(footprint) {
+  if (!footprint) return [];
+
+  const rows = [];
+
+  for (const table of footprint.tables || []) {
+    if ((table.indexes || []).length) continue;
+
+    const bytes = Number(table.bytes || 0);
+    const indexBytes = Number(table.indexBytes || 0);
+
+    rows.push({
+      table: table.table || "",
+      bytes,
+      indexBytes,
+      heapBytes: Math.max(bytes - indexBytes, 0),
+    });
+  }
+
+  return rows.sort((a, b) => b.bytes - a.bytes);
+}
+
 // footprintSummary is the headline: the ratio, which is the finding, and never either figure alone.
 //
 // Three absences have to stay apart and all three render as no card content. A replica measures
-// nothing. A consolidating instance that has not yet run a cycle has nothing measured YET. And two
-// drivers of three cannot answer at all - which is derived from a cycle having run and produced no
-// footprint, since an absence with no explanation reads as a store occupying no disk.
+// nothing. A consolidating instance that has not yet run a cycle has nothing measured YET. And the
+// embedded driver has nothing to answer at all - which is derived from a cycle having run and
+// produced no footprint, since an absence with no explanation reads as a store occupying no disk.
 export function footprintSummary(status, now) {
   if (!status) return "Nothing loaded yet.";
 
@@ -998,10 +1024,9 @@ export function footprintSummary(status, now) {
     }
 
     return (
-      "This driver does not report what the store really occupies. SQLite has nothing to " +
-      "report - its page accounting already counts every index inside the capacity target - and " +
-      "MySQL serves relation sizes from a cache refreshed at most once a day, which would answer " +
-      "with yesterday's size. Watch the disk directly there."
+      "This driver does not report what the store really occupies, and has nothing to report: " +
+      "SQLite's page accounting already counts every index inside the capacity target, so the " +
+      "estimate is the disk."
     );
   }
 
@@ -1025,8 +1050,8 @@ export function footprintSummary(status, now) {
     formatBytes(estimated) +
     " for the same tables — a factor of " +
     (bytes / estimated).toFixed(1) +
-    ". The estimate is not wrong; it describes a compacted store, and nothing repacks a B-tree " +
-    "page that forgetting emptied."
+    ". The estimate is not wrong; it describes a compacted store, and the engine keeps the " +
+    "space forgetting freed rather than handing it back."
   );
 }
 

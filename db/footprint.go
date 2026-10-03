@@ -65,7 +65,8 @@ const maxIndexesPerTable = 16
 // conclusion about which of the two is the measurement.
 //
 // Entries is the catalogue's own estimate (pg_class.reltuples), refreshed by ANALYZE rather than
-// maintained per write, so it lags a heavy burst. That is acceptable here and would not be if this
+// maintained per write, so it lags a heavy burst. Only PostgreSQL lists its indexes at all; see
+// TableFootprint for the dialect that totals them instead. That is acceptable here and would not be if this
 // drove anything: the quantity being judged moves over days.
 type IndexFootprint struct {
 	Table   string
@@ -90,7 +91,12 @@ func (i IndexFootprint) BytesPerEntry() float64 {
 //
 // Bytes is pg_total_relation_size - heap, out-of-line storage and indexes together - so it is the
 // figure to compare against the store's estimate of that table. IndexBytes sums the indexes below
-// it, and the difference is what the rows themselves are holding. Reporting the split is what
+// it, and the difference is what the rows themselves are holding.
+//
+// On MySQL Bytes is DATA_LENGTH + INDEX_LENGTH + DATA_FREE, Indexes is empty because the per-index
+// sizes live in a table an application user is not normally granted, and IndexBytes is
+// INDEX_LENGTH - the SECONDARY indexes, since InnoDB's primary key is the clustered index that holds
+// the rows and so belongs to what HeapBytes reports. Reporting the split is what
 // separates the two findings this exists for: a heap growing past its estimate is a store that is
 // not forgetting fast enough, while indexes growing past it is a store that is forgetting exactly
 // as designed and paying for it in space nothing reclaims.
@@ -113,9 +119,9 @@ func (t TableFootprint) HeapBytes() int64 {
 //
 // Measured separates the two zeroes, on AncillaryTable.Enabled's reasoning: a dialect that cannot
 // answer cheaply reports nothing, and a nothing that rendered as 0 bytes would read as a store
-// occupying no disk. Only one of the three dialects can answer, for the reasons dialect.relationBytes
-// gives - and on the embedded one there is nothing to answer, since page accounting already counts
-// every index inside the target.
+// occupying no disk. The two server dialects answer - PostgreSQL per index, MySQL per table, for the
+// reason dialect.indexFootprint gives - and on the embedded one there is nothing to answer, since
+// page accounting already counts every index inside the target.
 //
 // The tables are exactly the ones usedBytesLiveRows counts, plus the content index where the store
 // carries one, because the comparison is only meaningful against the same set: this figure is read
@@ -172,7 +178,9 @@ func (d *DB) countedTables() []string {
 //
 // Catalogue lookups only - two statements per table, neither of which reads a row of data - so it
 // costs a handful of round trips per sleep cycle and no scan. That bound is the whole reason the
-// authoritative reading is not taken here; see dialect.indexFootprint.
+// authoritative reading is not taken here; see dialect.indexFootprint. Where the dialect's catalogue
+// is current only for a prepared session, every reading shares one pinned connection - see
+// dialect.catalogueSession.
 //
 // A dialect with no catalogue to ask returns an unmeasured footprint rather than an error: there is
 // nothing wrong with a store on the embedded driver, and a caller that had to distinguish "failed"
@@ -188,10 +196,13 @@ func (d *DB) StorageFootprint(ctx context.Context) (StorageFootprint, error) {
 	ctx, cancel := d.opContext(ctx)
 	defer cancel()
 
+	sizes := d.catalogue()
+	defer sizes.close()
+
 	out := StorageFootprint{Measured: true}
 
 	for _, table := range d.countedTables() {
-		measured, err := d.tableFootprint(ctx, table)
+		measured, err := d.tableFootprint(ctx, sizes, table)
 		if err != nil {
 
 			return StorageFootprint{}, err
@@ -211,16 +222,16 @@ func (d *DB) StorageFootprint(ctx context.Context) (StorageFootprint, error) {
 	return out, nil
 }
 
-// tableFootprint measures one table: what the engine holds for it, and what each of its indexes
-// holds inside that.
-func (d *DB) tableFootprint(ctx context.Context, table string) (TableFootprint, error) {
-	total, err := d.relationBytes(ctx, table)
+// tableFootprint measures one table: what the engine holds for it, and what its indexes hold inside
+// that - one by one where the dialect can list them, as a total where it can only sum them.
+func (d *DB) tableFootprint(ctx context.Context, sizes *catalogue, table string) (TableFootprint, error) {
+	total, err := sizes.relationBytes(ctx, table)
 	if err != nil {
 
 		return TableFootprint{}, err
 	}
 
-	indexes, err := d.indexFootprints(ctx, table)
+	indexes, err := d.indexFootprints(ctx, sizes, table)
 	if err != nil {
 
 		return TableFootprint{}, err
@@ -232,6 +243,16 @@ func (d *DB) tableFootprint(ctx context.Context, table string) (TableFootprint, 
 		out.IndexBytes += index.Bytes
 	}
 
+	if d.dialect().indexFootprint == "" {
+		indexBytes, err := sizes.relationIndexBytes(ctx, table)
+		if err != nil {
+
+			return TableFootprint{}, err
+		}
+
+		out.IndexBytes = indexBytes
+	}
+
 	return out, nil
 }
 
@@ -240,7 +261,7 @@ func (d *DB) tableFootprint(ctx context.Context, table string) (TableFootprint, 
 // The truncation is applied here rather than in the SQL so the dialect's query stays a description
 // of what the catalogue holds and the bound stays one number in one place. The rows it drops are the
 // smallest, which is what a reader would have skipped.
-func (d *DB) indexFootprints(ctx context.Context, table string) ([]IndexFootprint, error) {
+func (d *DB) indexFootprints(ctx context.Context, sizes *catalogue, table string) ([]IndexFootprint, error) {
 	query := d.dialect().indexFootprint
 
 	if query == "" {
@@ -248,7 +269,13 @@ func (d *DB) indexFootprints(ctx context.Context, table string) ([]IndexFootprin
 		return nil, nil
 	}
 
-	rows, err := d.query(ctx, d.rebind(query), table)
+	q, err := sizes.querier(ctx)
+	if err != nil {
+
+		return nil, err
+	}
+
+	rows, err := q.QueryContext(ctx, d.rebind(query), table)
 	if err != nil {
 
 		return nil, fmt.Errorf("measuring the indexes on %s: %w", table, err)

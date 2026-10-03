@@ -10,6 +10,7 @@ import {
   ancillarySummary,
   footprintRows,
   footprintSummary,
+  footprintTableRows,
   b64url,
   bodyClassesFor,
   callbackKindLabel,
@@ -3986,7 +3987,7 @@ function renderFootprint(status) {
   const rows = footprintRows(status && status.footprint);
 
   if (!rows.length) {
-    $("footprint-indexes").innerHTML = "";
+    renderFootprintTables(footprintTableRows(status && status.footprint));
 
     return;
   }
@@ -4013,6 +4014,34 @@ function renderFootprint(status) {
      <thead><tr><th>Index</th><th>On disk</th><th>Entries</th><th>Per entry</th></tr></thead>
      <tbody>${body}</tbody>
    </table></div>`;
+}
+
+// renderFootprintTables is the card for a driver that totals its indexes per table rather than
+// listing them. There is no cost per entry to show, so there is nothing here to flag - the summary's
+// ratio is the reading, and this says which table it lives in.
+function renderFootprintTables(rows) {
+  if (!rows.length) {
+    $("footprint-indexes").innerHTML = "";
+
+    return;
+  }
+
+  const body = rows
+    .map(
+      (row) => `<tr>
+    <td>${esc(row.table)}</td>
+    <td>${esc(formatBytes(row.bytes))}</td>
+    <td>${esc(formatBytes(row.heapBytes))}</td>
+    <td>${esc(formatBytes(row.indexBytes))}</td>
+  </tr>`,
+    )
+    .join("");
+
+  $("footprint-indexes").innerHTML = `<div class="tablewrap"><table>
+     <thead><tr><th>Table</th><th>On disk</th><th>Rows</th><th>Secondary indexes</th></tr></thead>
+     <tbody>${body}</tbody>
+   </table></div>
+   <div class="muted fs-12">This driver reports each table's indexes as one total.</div>`;
 }
 
 async function loadTopology() {

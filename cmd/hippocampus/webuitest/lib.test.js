@@ -22,6 +22,7 @@ import {
   ancillarySummary,
   footprintRows,
   footprintSummary,
+  footprintTableRows,
   indexCost,
   capacityMeter,
   countdownFraction,
@@ -2074,8 +2075,8 @@ test("footprintSummary separates 'no cycle yet' from 'this driver cannot answer'
     /No cycle has measured this/,
   );
 
-  // A cycle HAS run and still produced no footprint, which is the ordinary state on two drivers of
-  // three - and the one a bare empty card would render as a store occupying nothing.
+  // A cycle HAS run and still produced no footprint, which is the ordinary state on the embedded
+  // driver - and the one a bare empty card would render as a store occupying nothing.
   const unsupported = footprintSummary(
     { consolidationEnabled: true, lastCycle: { startedAt: HOUR_AGO } },
     Date.now(),
@@ -2083,7 +2084,10 @@ test("footprintSummary separates 'no cycle yet' from 'this driver cannot answer'
 
   assert.match(unsupported, /does not report what the store really occupies/);
   assert.match(unsupported, /SQLite/);
-  assert.match(unsupported, /MySQL/);
+
+  // MySQL answers since its catalogue was made current, so it must not be named as a driver that
+  // cannot - that sentence would send an operator to watch a disk the card is already measuring.
+  assert.doesNotMatch(unsupported, /MySQL/);
 });
 
 test("footprintSummary reports nothing loaded when there is no status at all", () => {
@@ -2183,4 +2187,45 @@ test("indexCost refuses to judge a nearly empty index, or one never analysed", (
   assert.equal(unanalysed.bytesPerEntry, null);
   assert.equal(unanalysed.suspect, false);
   assert.match(unanalysed.note, /not yet analysed/);
+});
+
+// A MySQL footprint: the tables are measured, the indexes only as a total per table.
+const totalledOnly = () => ({
+  measured: true,
+  bytes: "30000000",
+  indexBytes: "9000000",
+  estimatedBytes: "6000000",
+  tables: [
+    { table: "events", bytes: "4000000", indexBytes: "1000000" },
+    { table: "memories", bytes: "26000000", indexBytes: "8000000" },
+  ],
+});
+
+test("footprintRows lists nothing for a driver that totals its indexes", () => {
+  assert.deepEqual(footprintRows(totalledOnly()), []);
+});
+
+test("footprintTableRows lists each totalled table, largest first, with its split", () => {
+  assert.deepEqual(footprintTableRows(totalledOnly()), [
+    { table: "memories", bytes: 26000000, indexBytes: 8000000, heapBytes: 18000000 },
+    { table: "events", bytes: 4000000, indexBytes: 1000000, heapBytes: 3000000 },
+  ]);
+});
+
+test("footprintTableRows leaves out a table whose indexes are listed", () => {
+  // The per-index card already shows it; a table row as well would show the same bytes twice.
+  assert.deepEqual(footprintTableRows(bloated().footprint), []);
+});
+
+test("footprintTableRows tolerates a footprint that is missing entirely", () => {
+  assert.deepEqual(footprintTableRows(null), []);
+  assert.deepEqual(footprintTableRows({}), []);
+});
+
+test("footprintTableRows floors the heap at zero", () => {
+  // Two statements against a live store: a table that gained an index between them must not render
+  // a negative row count.
+  const [row] = footprintTableRows({ tables: [{ table: "memories", bytes: "10", indexBytes: "20" }] });
+
+  assert.equal(row.heapBytes, 0);
 });

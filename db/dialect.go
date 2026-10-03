@@ -236,9 +236,9 @@ type dialect struct {
 	// bind parameter and returns a single count, and it must be a CATALOGUE lookup: this runs once
 	// per sleep cycle, where a scan would not be affordable.
 	//
-	// Empty where the dialect cannot answer that way, which is two of the three and for opposite
-	// reasons - see each row for which. The embedded one has nothing to report; MySQL has something
-	// to report and no current way to read it.
+	// Empty on the embedded dialect, which has nothing to report: a page a delete frees returns to
+	// the freelist UsedBytes already excludes. MySQL answers only once catalogueSession has made its
+	// catalogue current.
 	//
 	// Reported and never regulated on, for the reason the structural figures above give.
 	relationBytes string
@@ -255,8 +255,29 @@ type dialect struct {
 	// Bytes against entries is measured, exact, free, and says the same thing: an index costing
 	// 2,700 bytes an entry over a 37-byte key is air, whatever the density figure would have been.
 	//
-	// Empty on the same two dialects relationBytes is empty on, for the same two reasons.
+	// Empty on the embedded dialect, which has nothing to report, and on MySQL, whose per-index
+	// sizes live only in mysql.innodb_index_stats - a table an application user is ordinarily not
+	// granted. MySQL reports its indexes as one total instead; see relationIndexBytes.
 	indexFootprint string
+
+	// relationIndexBytes totals what the indexes over one named table occupy, for a dialect that
+	// can say that much and not which index holds it. Consulted only where indexFootprint is empty,
+	// so a dialect that lists its indexes derives the total from the list and the two cannot
+	// disagree. Same bind parameter and the same catalogue-only rule as relationBytes.
+	relationIndexBytes string
+
+	// catalogueSession is a statement run on a pinned connection before relationBytes and
+	// relationIndexBytes are read through it, for a dialect whose catalogue is not current until a
+	// session setting says so; catalogueSessionReset puts the setting back before the connection
+	// returns to the pool. Empty where the catalogue is current as it stands, and then nothing is
+	// pinned at all - which matters on the embedded dialect, whose pool is one connection.
+	//
+	// A session setting rather than a DSN parameter, though the driver would apply one to every
+	// connection it opens: a server refusing the variable would then refuse every CONNECTION, and a
+	// reading that exists to be reported must not be able to stop the store from opening. Scoped
+	// to the measurement, a refusal fails the measurement and nothing else.
+	catalogueSession      string
+	catalogueSessionReset string
 
 	// idCollationMigration is set where an id column's collation is a property that can be wrong on
 	// a database created by an older version and has to be corrected in place. Only the dialect
@@ -310,13 +331,16 @@ var dialects = map[driver]*dialect{
 		// The narrowest of the three, and the only one where the figure is exact rather than a
 		// floor: a page freed by a prune returns to the freelist, which UsedBytes already excludes,
 		// so there is no unreclaimed space for relationBytes to report - hence none here.
-		tombstoneRowBytes:    165,
-		outboxRowBytes:       75,
-		relationBytes:        "",
-		indexFootprint:       "",
-		instanceRegistry:     false,
-		countsChangedRows:    false,
-		idCollationMigration: false,
+		tombstoneRowBytes:     165,
+		outboxRowBytes:        75,
+		relationBytes:         "",
+		indexFootprint:        "",
+		relationIndexBytes:    "",
+		catalogueSession:      "",
+		catalogueSessionReset: "",
+		instanceRegistry:      false,
+		countsChangedRows:     false,
+		idCollationMigration:  false,
 	},
 
 	driverPostgres: {
@@ -372,9 +396,13 @@ var dialects = map[driver]*dialect{
 			JOIN pg_class i ON i.oid = x.indexrelid
 			WHERE x.indrelid = to_regclass(?)
 			ORDER BY pg_relation_size(i.oid) DESC, i.relname ASC`,
-		instanceRegistry:     true,
-		countsChangedRows:    false,
-		idCollationMigration: false,
+		// The pg_class catalogue is current as it stands, so nothing is pinned to read it.
+		relationIndexBytes:    "",
+		catalogueSession:      "",
+		catalogueSessionReset: "",
+		instanceRegistry:      true,
+		countsChangedRows:     false,
+		idCollationMigration:  false,
 	},
 
 	driverMySQL: {
@@ -422,29 +450,52 @@ var dialects = map[driver]*dialect{
 		// and InnoDB's clustered index carries the whole row in its leaf pages.
 		tombstoneRowBytes: 345,
 		outboxRowBytes:    185,
-		// Deliberately none, which leaves this dialect reporting the structural estimate alone.
+		// Both readings come from information_schema.TABLES, which is current only with
+		// information_schema_stats_expiry at 0 - see catalogueSession. What they report is what
+		// InnoDB's own statistics say, recalculated in the background once a tenth of a table's
+		// rows have changed, so a reading lags a burst by seconds. That is the same lag as
+		// pg_class.reltuples and acceptable for the same reason: nothing acts on it.
 		//
-		// MySQL has two per-relation readings and neither is a measurement of NOW.
-		// information_schema.TABLES serves DATA_LENGTH and INDEX_LENGTH from a cache that
-		// information_schema_stats_expiry refreshes at most every 86,400 seconds by default - so it
-		// answers with yesterday's size, which is exactly wrong for the reading this exists for: a
-		// queue that started growing this morning because a receiver went down. (It was measured
-		// reporting 16 KiB for a ten-thousand-row table, having last been looked at while that table
-		// was empty.) Making it current means a session variable this store would have to pin a
-		// connection to set, or an ANALYZE TABLE per cycle, which is a write on the consolidating
-		// path. The other reading, INNODB_TABLESPACES.FILE_SIZE, needs the PROCESS privilege and is
-		// allocation granularity - InnoDB extends a file four megabytes at a time, so a narrow table
-		// measures mostly slack.
+		// The relation is DATA_LENGTH + INDEX_LENGTH + DATA_FREE. The first two are the pages the
+		// clustered index (which IS the table) and the secondary indexes have reserved; DATA_FREE is
+		// what the tablespace holds and no index is using. That third term is where this dialect's
+		// unreclaimed space lives, and it is a different shape from PostgreSQL's: InnoDB merges a
+		// page that a purge leaves under half full and returns emptied pages to the tablespace, so
+		// its B-trees stay dense under churn - measured, six rounds of inserting 30,000 rows and
+		// deleting the oldest 27,000 held DATA_LENGTH at 2.1 MB for 3,000 rows while DATA_FREE
+		// levelled off at 13.6 MB. The space is reused rather than growing without bound, but the
+		// file keeps its high-water mark until OPTIMIZE TABLE, and that is real disk.
 		//
-		// A stale figure presented as what the disk holds is worse than no figure, so this dialect
-		// reports Bytes and leaves DiskBytes at 0, exactly as the embedded one does - for a
-		// different reason, and with a different consequence: here the unreclaimed space is real and
-		// simply not visible from inside the service.
-		relationBytes:        "",
-		indexFootprint:       "",
-		instanceRegistry:     true,
-		countsChangedRows:    true,
-		idCollationMigration: true,
+		// DATA_FREE assumes a table in its own tablespace, the default since 5.6 and how this store
+		// creates every table. A table created into the shared system tablespace reports THAT
+		// tablespace's free space, the same figure on every such table - so on a server configured
+		// with innodb_file_per_table off this over-reads. Not detectable here without the PROCESS
+		// privilege, which is what INFORMATION_SCHEMA.INNODB_TABLES needs.
+		//
+		// Two readings this deliberately does not take. INNODB_TABLESPACES.FILE_SIZE needs that
+		// same privilege and is allocation granularity. And a FULLTEXT index's inverted index lives
+		// in auxiliary tables that information_schema.TABLES does not list at all, so the content
+		// index's figure here is its column and its document-id index - an under-reading, stated so
+		// nobody mistakes it for the whole.
+		relationBytes: `SELECT COALESCE(SUM(DATA_LENGTH + INDEX_LENGTH + DATA_FREE), 0)
+			FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+		indexFootprint: "",
+		// The secondary indexes only: the primary key is the clustered index, which is the table's
+		// rows, and so is counted in what TableFootprint calls the heap.
+		relationIndexBytes: `SELECT COALESCE(SUM(INDEX_LENGTH), 0)
+			FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+		// information_schema.TABLES serves its sizes from a cache information_schema_stats_expiry
+		// refreshes at most every 86,400 seconds by default, so read as it stands it answers with
+		// yesterday's size - it was measured reporting 16 KiB for a ten-thousand-row table, having
+		// last been looked at while that table was empty. At 0 it asks InnoDB instead. It cannot be
+		// set per statement (SET_VAR refuses it, warning 3637), and ANALYZE TABLE would be a write
+		// on the consolidating path, so it is a session setting on a connection pinned for the
+		// measurement. The variable needs no privilege to set.
+		catalogueSession:      `SET SESSION information_schema_stats_expiry = 0`,
+		catalogueSessionReset: `SET SESSION information_schema_stats_expiry = DEFAULT`,
+		instanceRegistry:      true,
+		countsChangedRows:     true,
+		idCollationMigration:  true,
 	},
 }
 

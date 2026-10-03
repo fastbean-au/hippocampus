@@ -437,7 +437,7 @@ groups:
       # The other direction: what the store's own accounting cannot see. used_bytes is a live-row
       # estimate on the server drivers and has to stay one, so the estimate can be exactly right
       # while the database is several times larger - a store that forgets is a store whose indexes
-      # bloat. Silent on SQLite and MySQL, which publish no disk_bytes.
+      # bloat. Silent on SQLite, which publishes no disk_bytes.
       - uid: hippocampus-disk-far-above-estimate
         title: HippocampusStoreDiskFarAboveEstimate
         condition: B
@@ -449,7 +449,7 @@ groups:
           service: hippocampus
         annotations:
           summary: "Hippocampus is holding several times the disk its own accounting counts"
-          description: "The tables inside consolidation.capacityBytes now occupy over four times what used_bytes estimates for them. That estimate is not wrong and must not be changed to a file-size measure: it describes a compacted store, and eviction driven by a reading that never drops after a delete would evict every cycle without the figure moving. The gap is space the engine has marked reusable and will not return - overwhelmingly index, since VACUUM never repacks a B-tree page a delete emptied. Break it down with hippocampus_index_bytes / hippocampus_index_entries by index: an entry costing more than a few hundred bytes over a 37-character id is air. The remedy is REINDEX INDEX CONCURRENTLY on the indexes that show it, which is online but is a maintenance decision the service deliberately does not take for itself. On a high-churn store it is a DAILY job, not an occasional one: a reindexed instance was measured back from 13 MB to 393 MB on one index in nine hours."
+          description: "The tables inside consolidation.capacityBytes now occupy over four times what used_bytes estimates for them. That estimate is not wrong and must not be changed to a file-size measure: it describes a compacted store, and eviction driven by a reading that never drops after a delete would evict every cycle without the figure moving. The gap is space the engine has marked reusable and will not return - overwhelmingly index, since VACUUM never repacks a B-tree page a delete emptied. Break it down with hippocampus_index_bytes / hippocampus_index_entries by index: an entry costing more than a few hundred bytes over a 37-character id is air. The remedy is REINDEX INDEX CONCURRENTLY on the indexes that show it, which is online but is a maintenance decision the service deliberately does not take for itself. On a high-churn store it is a DAILY job, not an occasional one: a reindexed instance was measured back from 13 MB to 393 MB on one index in nine hours. On MySQL there is no per-index breakdown and the gap has a different shape: InnoDB keeps its B-trees dense and holds what forgetting freed as tablespace free space (DATA_FREE), which it reuses rather than growing without bound - the file keeps its high-water mark, and OPTIMIZE TABLE returns it if that peak is not coming back."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#index-bloat-on-the-server-drivers"
         data:
           - refId: A
@@ -485,7 +485,7 @@ groups:
       # The per-index half, and the only one that says what to act on. The content index is excluded
       # (its entries grow with the bodies they index, so its cost per entry has no right answer) and
       # so are indexes under 500 entries, where a nearly empty B-tree divides into a large ratio
-      # that means nothing.
+      # that means nothing. PostgreSQL only: MySQL publishes no per-index series.
       - uid: hippocampus-index-bloated
         title: HippocampusIndexBloated
         condition: B

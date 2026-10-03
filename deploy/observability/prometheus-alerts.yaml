@@ -225,8 +225,9 @@ groups:
       # would chase a figure that never drops after a delete - so the estimate can be exactly right
       # while the database is several times larger. A store that forgets is a store whose indexes
       # bloat: a B-tree page emptied by a delete is marked reusable and never repacked, and a store
-      # keyed on a UUID never refills one. Silent on SQLite and MySQL, which publish no disk_bytes,
-      # and on a deployment with no capacity target, which publishes no used_bytes.
+      # keyed on a UUID never refills one. On MySQL the gap is the tablespace's high-water mark
+      # instead. Silent on SQLite, which publishes no disk_bytes, and on a deployment with no
+      # capacity target, which publishes no used_bytes.
       - alert: HippocampusStoreDiskFarAboveEstimate
         expr: max by (service_name) (hippocampus_disk_bytes) / (max by (service_name) (hippocampus_used_bytes) > 0) > 4
         for: 6h
@@ -235,7 +236,7 @@ groups:
           service: hippocampus
         annotations:
           summary: "Hippocampus is holding several times the disk its own accounting counts"
-          description: "The tables inside consolidation.capacityBytes now occupy over four times what used_bytes estimates for them. That estimate is not wrong and must not be changed to a file-size measure: it describes a compacted store, and eviction driven by a reading that never drops after a delete would evict every cycle without the figure moving. The gap is space the engine has marked reusable and will not return - overwhelmingly index, since VACUUM never repacks a B-tree page a delete emptied. Break it down with hippocampus_index_bytes / hippocampus_index_entries by index: an entry costing more than a few hundred bytes over a 37-character id is air. The remedy is REINDEX INDEX CONCURRENTLY on the indexes that show it, which is online but is a maintenance decision the service deliberately does not take for itself. On a high-churn store it is a DAILY job, not an occasional one: a reindexed instance was measured back from 13 MB to 393 MB on one index in nine hours."
+          description: "The tables inside consolidation.capacityBytes now occupy over four times what used_bytes estimates for them. That estimate is not wrong and must not be changed to a file-size measure: it describes a compacted store, and eviction driven by a reading that never drops after a delete would evict every cycle without the figure moving. The gap is space the engine has marked reusable and will not return - overwhelmingly index, since VACUUM never repacks a B-tree page a delete emptied. Break it down with hippocampus_index_bytes / hippocampus_index_entries by index: an entry costing more than a few hundred bytes over a 37-character id is air. The remedy is REINDEX INDEX CONCURRENTLY on the indexes that show it, which is online but is a maintenance decision the service deliberately does not take for itself. On a high-churn store it is a DAILY job, not an occasional one: a reindexed instance was measured back from 13 MB to 393 MB on one index in nine hours. On MySQL there is no per-index breakdown and the gap has a different shape: InnoDB keeps its B-trees dense and holds what forgetting freed as tablespace free space (DATA_FREE), which it reuses rather than growing without bound - the file keeps its high-water mark, and OPTIMIZE TABLE returns it if that peak is not coming back."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#index-bloat-on-the-server-drivers"
 
       # The per-index half, and the only one that says what to act on. The content index is excluded
@@ -244,7 +245,8 @@ groups:
       # answer. Every other index here is keyed on an id and a handful of numbers, so an entry over
       # half a kilobyte is mostly empty page. Indexes under 500 entries are excluded too - a nearly
       # empty B-tree is a metapage and a leaf whatever it holds, which divides into a large ratio
-      # that means nothing.
+      # that means nothing. PostgreSQL only: MySQL's per-index sizes live in a table an application
+      # user is not normally granted, so it publishes no per-index series.
       - alert: HippocampusIndexBloated
         expr: max by (service_name, table, index) (hippocampus_index_bytes{table!="memories_fts"} / (hippocampus_index_entries{table!="memories_fts"} > 500)) > 512
         for: 6h

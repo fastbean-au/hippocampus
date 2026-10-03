@@ -307,15 +307,16 @@ func openForAncillary(t *testing.T, open func(...Option) (*DB, error)) *DB {
 // mysqlRelationBytes reports what the named tables and their indexes occupy, from
 // information_schema.TABLES rather than from the tablespace files mysqlTablespaceBytes reads.
 //
-// Two things about this reading, and they are why the MySQL dialect declares no relationBytes of its
-// own. The tablespace file is the wrong measure for a narrow table - InnoDB extends one four
-// megabytes at a time, so ten thousand of these rows measured nine megabytes where the pages in use
-// were two - and information_schema.TABLES is served from a cache that
+// It compacts first, because the question here is the STRUCTURAL size the per-row allowances claim,
+// not what the table occupies after churn - which is what the dialect's own relationBytes reports,
+// DATA_FREE included. The tablespace file is the wrong measure for a narrow table - InnoDB extends
+// one four megabytes at a time, so ten thousand of these rows measured nine megabytes where the
+// pages in use were two. And information_schema.TABLES is served from a cache that
 // information_schema_stats_expiry refreshes at most once a day, so read as it stands it answers with
-// whatever the table was the last time anything looked. It reported 16 KiB for these ten thousand
-// rows in a suite where an earlier test had seen the table empty. ANALYZE TABLE is what refreshes
-// that cache, and running it here is affordable in a way that running it once per sleep cycle - a
-// write, on the consolidating path - is not.
+// whatever the table was the last time anything looked: it reported 16 KiB for these ten thousand
+// rows in a suite where an earlier test had seen the table empty. ANALYZE TABLE refreshes that
+// cache, and running it here is affordable in a way that running it once per sleep cycle - a write,
+// on the consolidating path - is not; the service's reading sets the session variable instead.
 func mysqlRelationBytes(t *testing.T, database *DB, tables []string) int64 {
 	t.Helper()
 

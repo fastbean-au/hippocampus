@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/fastbean-au/hippocampus/types"
 )
@@ -117,6 +118,20 @@ func TestStorageFootprintCoversTheTablesTheTargetCounts(t *testing.T) {
 
 	if memories.HeapBytes() <= 0 {
 		t.Errorf("memories heap = %d, want the rows to occupy something", memories.HeapBytes())
+	}
+
+	// A dialect that can only total its indexes says so by listing none, and still carries the
+	// total: the heap/index split is half of what the reading is for.
+	if d.dialect().indexFootprint == "" {
+		if len(memories.Indexes) != 0 {
+			t.Errorf("a dialect that lists no indexes reported %d of them", len(memories.Indexes))
+		}
+
+		if memories.IndexBytes <= 0 {
+			t.Errorf("memories index bytes = %d, want the secondary indexes to occupy something", memories.IndexBytes)
+		}
+
+		return
 	}
 
 	// Three indexes: the primary key, the covering index and the listing index. Naming them is the
@@ -276,5 +291,71 @@ func TestCountedTablesFollowTheCapacityTarget(t *testing.T) {
 		if slices.Contains(tables, excluded) {
 			t.Errorf("%s is outside the capacity target but is counted inside the footprint", excluded)
 		}
+	}
+}
+
+// footprintFollowWindow is how long TestStorageFootprintFollowsTheStore waits for a reading to move.
+// InnoDB recalculates a table's statistics in the background once a tenth of its rows have changed,
+// checking every ten seconds, so a current reading arrives within about that; a cached one never
+// does inside any window a test could afford.
+const footprintFollowWindow = 45 * time.Second
+
+// TestStorageFootprintFollowsTheStore is the reading being CURRENT, which is a different property
+// from it being taken at all. A figure served from a cache answers with whatever the table was the
+// last time anything looked - MySQL's information_schema did exactly that by default, reporting a
+// ten-thousand-row table at 16 KiB - and a stale size presented as what the disk holds is worse than
+// no size, because it is believed.
+//
+// So: take a reading, grow the store well past it, and require the reading to follow.
+func TestStorageFootprintFollowsTheStore(t *testing.T) {
+	d := newTestDB(t)
+
+	if d.dialect().relationBytes == "" {
+		t.Skipf("%s reports no footprint", d.dialect().name)
+	}
+
+	ctx := context.Background()
+
+	seedForFootprint(t, d, 10)
+
+	before, err := d.StorageFootprint(ctx)
+	if err != nil {
+		t.Fatalf("StorageFootprint: %s", err)
+	}
+
+	for i := range 4000 {
+		if _, err := d.CreateMemory(ctx, types.Memory{
+			Id:           fmt.Sprintf("follows-%08d-aaaa-bbbb-cccc-dddddddddddd", i),
+			Body:         "a body long enough that four thousand of them occupy more than a page or two",
+			Significance: 5,
+			TimeStamp:    int64(1700000000000000000) + int64(i),
+		}); err != nil {
+			t.Fatalf("CreateMemory: %s", err)
+		}
+	}
+
+	deadline := time.Now().Add(footprintFollowWindow)
+
+	for {
+		after, err := d.StorageFootprint(ctx)
+		if err != nil {
+			t.Fatalf("StorageFootprint: %s", err)
+		}
+
+		if after.Bytes > before.Bytes {
+			t.Logf("footprint followed the store: %d -> %d bytes", before.Bytes, after.Bytes)
+
+			return
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf(
+				"the footprint still reads %d bytes %s after four thousand memories were written - "+
+					"it is being served from a cache, not measured",
+				after.Bytes, footprintFollowWindow,
+			)
+		}
+
+		time.Sleep(time.Second)
 	}
 }

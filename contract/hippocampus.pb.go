@@ -6873,12 +6873,9 @@ type AncillaryTable struct {
 	// other figure this service publishes can see it. The caps deliberately do NOT chase it; see
 	// limit_bytes.
 	//
-	// 0 where the driver cannot answer, which is two of the three and for opposite reasons. The
-	// embedded driver has nothing to report: a page a prune frees returns to the freelist used_bytes
-	// already excludes, so bytes is the whole truth there. MySQL has something to report and no
-	// current way to read it - information_schema serves its sizes from a cache refreshed at most
-	// once a day by default, which would answer with yesterday's size exactly when a queue started
-	// growing today - so it reports nothing rather than something stale.
+	// 0 on the embedded driver, which has nothing to report: a page a prune frees returns to the
+	// freelist used_bytes already excludes, so bytes is the whole truth there. On MySQL it includes
+	// the tablespace's free space (DATA_FREE), which is where InnoDB keeps what a prune emptied.
 	DiskBytes int64 `protobuf:"varint,5,opt,name=disk_bytes,json=diskBytes,proto3" json:"disk_bytes,omitempty"`
 	// oldest_at is the UnixNano of the oldest row, or 0 when the table is empty. It is what turns a
 	// row count into a retention window: a log sitting at its row cap says nothing about how much
@@ -7195,6 +7192,10 @@ type TableFootprint struct {
 	// indexes is largest first, and capped - an index name is a metric attribute on the gauge that
 	// carries the same figures, and while the indexes this store creates are a fixed set, an
 	// operator may add their own. Truncation drops the smallest, which is what a reader would skip.
+	//
+	// Empty on MySQL, whose per-index sizes live in mysql.innodb_index_stats - a table an
+	// application user is not normally granted. There index_bytes is the secondary indexes as one
+	// total, and the primary key, being InnoDB's clustered index, is counted with the rows.
 	Indexes       []*IndexFootprint `protobuf:"bytes,4,rep,name=indexes,proto3" json:"indexes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -7272,9 +7273,9 @@ func (x *TableFootprint) GetIndexes() []*IndexFootprint {
 // decision rather than something a memory store should do to itself on a timer. This reports the
 // figure that says when; docs/operations.md carries the runbook.
 //
-// measured is false where the driver cannot answer cheaply, which separates it from a store
-// occupying no disk. Only PostgreSQL can, for the reasons AncillaryTable.disk_bytes gives - and on
-// SQLite there is nothing to answer, page accounting already counting every index inside the target.
+// measured is false where the driver has nothing to answer, which separates it from a store
+// occupying no disk. That is SQLite, whose page accounting already counts every index inside the
+// target. PostgreSQL answers per index and MySQL per table (see TableFootprint.indexes).
 type StorageFootprint struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	Measured   bool                   `protobuf:"varint,1,opt,name=measured,proto3" json:"measured,omitempty"`

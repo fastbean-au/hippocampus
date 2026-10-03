@@ -449,7 +449,10 @@ func TestRelationBytesIsSilentWhereTheDialectCannotAnswer(t *testing.T) {
 		t.Skip("this dialect measures its relations; the case under test is the one that does not")
 	}
 
-	bytes, err := d.relationBytes(context.Background(), tombstonesTable)
+	sizes := d.catalogue()
+	defer sizes.close()
+
+	bytes, err := sizes.relationBytes(context.Background(), tombstonesTable)
 	if err != nil {
 		t.Fatalf("relationBytes: %s", err)
 	}
@@ -467,8 +470,124 @@ func TestRelationBytesReportsAFailure(t *testing.T) {
 
 	mock.ExpectQuery(`pg_total_relation_size`).WillReturnError(errors.New("boom"))
 
-	if _, err := d.relationBytes(context.Background(), tombstonesTable); err == nil {
+	sizes := d.catalogue()
+	defer sizes.close()
+
+	if _, err := sizes.relationBytes(context.Background(), tombstonesTable); err == nil {
 		t.Fatal("a failed relation measurement was reported as zero bytes")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// TestCatalogueSessionWrapsTheMeasurement pins MySQL's half of the footprint. information_schema
+// serves relation sizes from a cache refreshed at most once a day unless the session says
+// otherwise, so the readings must run on one pinned connection whose session was prepared first -
+// and the setting must be put back before that connection returns to the pool, where it would
+// otherwise be a difference between connections that nothing else knows about.
+//
+// One preparation for any number of readings: a measurement is a dozen catalogue statements, and
+// re-preparing per statement would double them.
+func TestCatalogueSessionWrapsTheMeasurement(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectExec(`SET SESSION information_schema_stats_expiry = 0`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(`DATA_LENGTH \+ INDEX_LENGTH \+ DATA_FREE`).
+		WithArgs("memories").
+		WillReturnRows(sqlmock.NewRows([]string{"bytes"}).AddRow(int64(9000)))
+
+	mock.ExpectQuery(`SUM\(INDEX_LENGTH\)`).
+		WithArgs("memories").
+		WillReturnRows(sqlmock.NewRows([]string{"bytes"}).AddRow(int64(4000)))
+
+	mock.ExpectExec(`SET SESSION information_schema_stats_expiry = DEFAULT`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	sizes := d.catalogue()
+
+	total, err := sizes.relationBytes(context.Background(), "memories")
+	if err != nil {
+		t.Fatalf("relationBytes: %s", err)
+	}
+
+	indexes, err := sizes.relationIndexBytes(context.Background(), "memories")
+	if err != nil {
+		t.Fatalf("relationIndexBytes: %s", err)
+	}
+
+	sizes.close()
+
+	if total != 9000 || indexes != 4000 {
+		t.Errorf("read %d total and %d index bytes, want 9000 and 4000", total, indexes)
+	}
+
+	expectationsMet(t, mock)
+}
+
+// TestCatalogueDiscardsAConnectionItCannotReset covers the reset failing. The connection then
+// carries a session setting nobody asked for, so it is closed rather than handed back to the pool.
+func TestCatalogueDiscardsAConnectionItCannotReset(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectExec(`SET SESSION information_schema_stats_expiry = 0`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(`DATA_LENGTH`).
+		WillReturnRows(sqlmock.NewRows([]string{"bytes"}).AddRow(int64(1)))
+
+	mock.ExpectExec(`SET SESSION information_schema_stats_expiry = DEFAULT`).
+		WillReturnError(errors.New("connection reset"))
+
+	// Closing the driver connection is what discarding it means; returned to the pool, it would
+	// stay open until the pool itself was closed.
+	mock.ExpectClose()
+
+	sizes := d.catalogue()
+
+	if _, err := sizes.relationBytes(context.Background(), "memories"); err != nil {
+		t.Fatalf("relationBytes: %s", err)
+	}
+
+	sizes.close()
+
+	expectationsMet(t, mock)
+}
+
+// TestCatalogueSessionRefusedFailsOnlyTheMeasurement is why the setting is a session statement and
+// not a DSN parameter: a server refusing the variable must cost the reading, not the store.
+func TestCatalogueSessionRefusedFailsOnlyTheMeasurement(t *testing.T) {
+	d, mock := newMockDB(t, driverMySQL)
+
+	mock.ExpectExec(`SET SESSION information_schema_stats_expiry = 0`).
+		WillReturnError(errors.New("Unknown system variable 'information_schema_stats_expiry'"))
+
+	if _, err := d.StorageFootprint(context.Background()); err == nil {
+		t.Fatal("a refused session setting produced a footprint, which could only be a stale one")
+	}
+
+	expectationsMet(t, mock)
+}
+
+// TestCatalogueDoesNotPinWhereTheCatalogueIsCurrent covers the other two dialects. Nothing is
+// pinned there, which on the embedded one is not a nicety: its pool is a single connection, and a
+// pinned one would leave nothing for the readings to run on.
+func TestCatalogueDoesNotPinWhereTheCatalogueIsCurrent(t *testing.T) {
+	d, mock := newMockDB(t, driverPostgres)
+
+	mock.ExpectQuery(`pg_total_relation_size`).
+		WillReturnRows(sqlmock.NewRows([]string{"bytes"}).AddRow(int64(8192)))
+
+	sizes := d.catalogue()
+	defer sizes.close()
+
+	if _, err := sizes.relationBytes(context.Background(), "memories"); err != nil {
+		t.Fatalf("relationBytes: %s", err)
+	}
+
+	if sizes.conn != nil {
+		t.Error("a connection was pinned for a dialect whose catalogue needs no session")
 	}
 
 	expectationsMet(t, mock)
