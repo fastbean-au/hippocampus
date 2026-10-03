@@ -654,6 +654,13 @@ jobs:
         working-directory: cmd/hippocampus/webuitest
         run: node --test
 
+      # The configuration wizard's script, executed rather than text-scanned: its starting points run
+      # through its own validate(), and held to docs/use-cases.md. Same rule as above - nothing to
+      # install.
+      - name: Test the configuration wizard
+        working-directory: cmd/config-wizard/wizardtest
+        run: node --test
+
   # Provision the shipped Grafana alert rules into the same grafana/otel-lgtm image the compose
   # stacks and demo/run.sh run, and assert Grafana starts, holds every rule the Prometheus file
   # declares, and evaluates each one cleanly. cmd/hippocampus/alerts_test.go holds the rule files to

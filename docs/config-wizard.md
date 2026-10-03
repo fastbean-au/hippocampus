@@ -59,6 +59,22 @@ when the configuration needs one), the manifests mirror [`deploy/k8s/`](../deplo
 [`deploy/systemd/`](../deploy/systemd/) and [`deploy/launchd/`](../deploy/launchd/), hardening and
 all.
 
+## Starting points
+
+The first step offers a starting point per [use case](use-cases.md#when-hippocampus-fits) — agent
+memory, personal knowledge, operational and audit history, edge telemetry, a retention controller, a
+shared service for many teams, and one for trying it out. Each sets only the keys that use case
+moves away from the service defaults and picks a deployment target, and each tile says who it
+suits. Choosing one names what it cannot know — a DSN, an identity provider's issuer, a callback
+receiver's URL — and links to the section of [Use cases](use-cases.md) explaining why each value was
+chosen. The target can be changed independently afterwards.
+
+A starting point raises none of the wizard's own warnings except the ones it acknowledges (TLS
+terminated upstream, mostly), and no errors except for what it leaves you to supply. That is held by
+a test that runs the wizard's checks over every starting point (`cmd/config-wizard/wizardtest`,
+`node --test`, nothing to install), which also requires each one to name a section of the use-cases
+page that names it back.
+
 ## The forgetting preview
 
 The **Memory & forgetting** step charts the decay curve for the chosen algorithm, aggressiveness,
@@ -78,7 +94,7 @@ outright refusals (`consolidation.unitsOfAgeInDays` at 0, method 3's aggressiven
 without an issuer or JWKS, semantic search without OpenSearch, an `openai` provider still pointed at
 the Ollama default, a scrape port already in use) as well as the things the service only warns about
 at startup or does not mention at all: a short HMAC secret, auth without TLS, a capacity target with
-no eviction floor, both capacity axes disabled, a disabled gateway under a target whose probes need
+no eviction floor, every capacity axis disabled, a disabled gateway under a target whose probes need
 it.
 
 Beyond those it flags **combinations that start cleanly and then do not do what they look like they

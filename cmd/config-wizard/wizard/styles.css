@@ -353,6 +353,13 @@ input.invalid {
   font-size: 12px;
 }
 
+.tile em {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
 /* ---- issues, notes, pills ------------------------------------------------------------------ */
 
 .issue {

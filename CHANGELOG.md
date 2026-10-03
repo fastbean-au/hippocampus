@@ -144,8 +144,33 @@ server version` until the data is dumped and restored. `deploy/k8s/README.md` ga
   generated compose file, the CI and release workflows' test databases, and the overlay's
   `wait-for-postgres` init containers move to 18 with it. The `db` conformance suite passes on 18.
 
+- **The configuration wizard's starting points are use cases, not deployment shapes** (TODO-2
+  item 131). The five it had — local, single VM, scaled, edge, archive — mostly restated the
+  deployment-target tiles beneath them, covered two of the five use cases `docs/use-cases.md`
+  describes, and three of them tripped the wizard's own checks: "scaled" ran OpenSearch to answer
+  keyword searches every driver answers itself, "archive" configured a store with no capacity bound,
+  and "archive" again set a minimum age its own retention floor made meaningless. There are now
+  seven — **Agent / assistant memory**, **Personal knowledge (Obsidian)**, **Operational & audit
+  history**, **Edge / device telemetry**, **Retention controller**, **Shared service, many teams**
+  and **Trying it out** — each saying who it suits, naming what only the operator can supply (a DSN,
+  an issuer, a receiver URL), and linking to the section of `docs/use-cases.md` that explains its
+  values. That page gains a "who it suits" and a "wizard starting point" for every use case.
+  `cmd/config-wizard/wizardtest` is new: it **executes** the wizard's script under `node:vm` (nothing
+  to install, like the console's tests) and fails on any starting point raising an error or a
+  warning it has not declared, on a value its field would not accept, and on a starting point and a
+  use-cases section that do not name each other. A browser holding one of the old starting points
+  in `localStorage` keeps its answers; only the tile highlight is lost.
+
 ### Fixed
 
+- **The configuration wizard told a store bounded only by `consolidation.capacityExternalBytes` that
+  it was unbounded.** The "no capacity axis" warning asked about two of the three, so the one
+  configuration that sets only the external axis — a retention controller — was warned that it
+  would grow until the disk ran out. The service's own decay-only check already counted all three.
+- **The configuration wizard advised an unauthenticated instance to bind to loopback after it had.**
+  The "Authentication is off" warning ends "Bind to loopback or set auth.method", and fired whatever
+  the bind addresses were. It is now quiet when the gRPC listener is on loopback and the gateway is
+  either off or on loopback too.
 - **The Postgres and corporate compose stacks would not start on `postgres:18-alpine`.** Both
   mounted their volume at `/var/lib/postgresql/data`, which every image up to 17 expected and
   which 18 **refuses outright**: from that release the official image keeps the cluster in a

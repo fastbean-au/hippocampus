@@ -1,0 +1,9 @@
+{
+  "name": "hippocampus-config-wizard-test",
+  "private": true,
+  "type": "module",
+  "description": "Tests that EXECUTE the configuration wizard's script (cmd/config-wizard/wizard/app.js) rather than scanning it as text. Deliberately has no dependencies: node's built-in test runner and vm module are enough, so there is nothing to install, nothing to audit, and no node_modules inside a Go source tree.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -183,13 +183,33 @@ const targetById = (id) =>
 
 // A preset is a starting point, not a lock: it sets values the operator then edits. Each lists only
 // the keys it moves away from the service default.
+//
+// Presets are USE CASES - what the data is and how it should be forgotten - rather than deployment
+// shapes, which the target tiles below them already choose. Each one names the section of
+// docs/use-cases.md it implements (`useCase`), and that page names the preset back, so a reader of
+// either finds the other; cmd/config-wizard/wizardtest holds the two to each other.
+//
+// Two lists keep a preset honest about what it cannot know. `supply` names the keys only the
+// operator can fill - a DSN, an issuer, the receiver's URL - and is shown when the preset is chosen.
+// `accepts` acknowledges a warning the preset raises on purpose, with the reason. The test runs
+// validate() over every preset and fails on any error that names no `supply` key, and on any warning
+// that names none and is not acknowledged - so a starting point can never quietly ship a
+// configuration the wizard's own checks would have talked an operator out of.
+const USE_CASES_DOC =
+  "https://github.com/fastbean-au/hippocampus/blob/main/docs/use-cases.md";
+
 const PRESETS = [
   {
     id: "local",
-    label: "Local development",
+    label: "Trying it out",
+    useCase: "trying-it-out",
     blurb:
       "Embedded SQLite, HTTP gateway on 8080, no auth, a short sleep cycle so forgetting is visible.",
+    suits:
+      "Anyone evaluating it on their own machine, or developing a client against it.",
     target: "binary",
+    supply: [],
+    accepts: [],
     values: {
       "gateway.port": 8080,
       "sleep.periodSeconds": 300,
@@ -198,45 +218,109 @@ const PRESETS = [
     },
   },
   {
-    id: "single-vm",
-    label: "Single VM service",
+    id: "agent",
+    label: "Agent / assistant memory",
+    useCase: "agent--assistant-memory",
     blurb:
-      "SQLite under systemd with a byte capacity target, WAL-triggered checkpoints, and HMAC tokens.",
-    target: "systemd",
+      "Recall is the main signal: it counts double, spreads to linked memories, and quiet events are offered for summarisation.",
+    suits:
+      "A team giving an LLM agent or assistant long-term memory over MCP, the Python client or LlamaIndex.",
+    target: "compose",
+    supply: ["auth.signingSecret"],
+    accepts: [
+      {
+        match: "TLS is off",
+        why: "the agent reaches the store over the compose network; turn TLS on before the port leaves it",
+      },
+    ],
     values: {
       "gateway.port": 8080,
       "auth.method": "hmac",
-      "consolidation.capacityBytes": 5 * 1024 ** 3,
-      "consolidation.capacityBytesFloor": Math.round(4.5 * 1024 ** 3),
-      "consolidation.walTriggerBytes": 256 * 1024 * 1024,
-      "storage.queryTimeoutSeconds": 60,
+      "sleep.periodSeconds": 1800,
+      "consolidation.method": 5,
+      "consolidation.aggressiveness": 2,
+      "consolidation.minimumAgeInDays": 3,
+      "consolidation.recallSignificanceWeight": 2,
+      "consolidation.linkRecallPropagation": 0.25,
+      "consolidation.summarisationMinMemories": 20,
+      "consolidation.summarisationMinAgeInDays": 7,
+      "consolidation.capacityBytes": 2 * 1024 ** 3,
+      "consolidation.capacityBytesFloor": Math.round(1.7 * 1024 ** 3),
+      "search.recallWeight": 0.3,
     },
   },
   {
-    id: "scaled",
-    label: "Scaled (PostgreSQL)",
+    id: "pkm",
+    label: "Personal knowledge (Obsidian)",
+    useCase: "personal-knowledge-management",
     blurb:
-      "One consolidator plus read/write replicas over a shared database, IdP tokens, content search on.",
-    target: "k8s",
-    scale: "consolidator",
+      "A loopback-only instance that starts at login, forgets slowly, and lets linked notes keep each other alive.",
+    suits:
+      "One person with a note vault who wants an assistant to read the durable part of it.",
+    target: "launchd",
+    supply: [],
+    accepts: [],
     values: {
-      "storage.driver": "postgres",
+      bindAddress: "127.0.0.1",
       "gateway.port": 8080,
+      "gateway.bindAddress": "127.0.0.1",
+      "sleep.periodSeconds": 21600,
+      "consolidation.method": 5,
+      "consolidation.minimumAgeInDays": 30,
+      "consolidation.linkRecallPropagation": 0.25,
+      "consolidation.capacityBytes": 1024 ** 3,
+      "consolidation.capacityBytesFloor": Math.round(0.85 * 1024 ** 3),
+    },
+  },
+  {
+    id: "audit",
+    label: "Operational & audit history",
+    useCase: "operational--audit-event-history",
+    blurb:
+      "Long-tail decay over a compliance floor, a record of everything forgotten, and tokens bound to each team's group.",
+    suits:
+      "A platform or SRE team keeping deploys, incidents and changes for as long as they matter, under an audit window.",
+    target: "compose",
+    supply: ["storage.postgres.dsn", "auth.issuer"],
+    accepts: [
+      {
+        match: "TLS is off",
+        why: "TLS is normally terminated at the ingress in front of a shared store",
+      },
+    ],
+    values: {
+      "gateway.port": 8080,
+      "storage.driver": "postgres",
       "auth.method": "idp",
-      "opensearch.enabled": true,
+      "auth.requireGroupScope": true,
+      "consolidation.method": 5,
+      "consolidation.aggressiveness": 1.5,
+      "consolidation.minimumAgeInDays": 0,
+      "consolidation.minimumRetentionInDays": 90,
+      "consolidation.capacityMemories": 0,
+      "consolidation.capacityBytes": 50 * 1024 ** 3,
+      "consolidation.capacityBytesFloor": Math.round(42.5 * 1024 ** 3),
+      "consolidation.tombstones.enabled": true,
+      "consolidation.tombstones.maxRows": 1000000,
+      "consolidation.tombstones.maxAgeInDays": 365,
       "observability.metrics.enabled": true,
-      "observability.tracing.enabled": true,
-      "consolidation.capacityMemories": 5000000,
     },
   },
   {
     id: "edge",
-    label: "Edge / IoT collector",
+    label: "Edge / device telemetry",
+    useCase: "per-device--edge-telemetry",
     blurb:
-      "A small SQLite store that forgets hard and transfers what it keeps to a central instance.",
+      "A small SQLite store that forgets hard, takes writes only from the device itself, and transfers what it keeps to a central instance.",
+    suits:
+      "A fleet of devices or sites, each keeping its own significant history within a fixed disk budget.",
     target: "systemd",
+    supply: ["transfer.targetAddress", "transfer.token"],
+    accepts: [],
     values: {
+      bindAddress: "127.0.0.1",
       "gateway.port": 8080,
+      "gateway.bindAddress": "127.0.0.1",
       "sleep.periodSeconds": 900,
       "consolidation.method": 4,
       "consolidation.aggressiveness": 0.5,
@@ -245,24 +329,64 @@ const PRESETS = [
       "consolidation.capacityBytesFloor": 192 * 1024 * 1024,
       "consolidation.walTriggerBytes": 32 * 1024 * 1024,
       "transfer.targetAddress": "central.example.com:50051",
+      "transfer.tls.enabled": true,
       "transfer.maxManifestRows": 200000,
     },
   },
   {
-    id: "archive",
-    label: "Archive / audit store",
+    id: "controller",
+    label: "Retention controller",
+    useCase: "retention-controller-the-payload-stays-where-it-is",
     blurb:
-      "Long-tail decay and a hard retention floor: almost everything is kept, for a long time.",
+      "Pointer-memories sized by the payload they stand for, with forget-callbacks that are never discarded.",
+    suits:
+      "Anyone deciding what a bucket, column store or index keeps, where disk is the constraint and traffic is spiky.",
     target: "compose",
+    supply: ["auth.signingSecret", "callbacks.url"],
+    accepts: [
+      {
+        match: "TLS is off",
+        why: "the producer and the receiver share the compose network; turn TLS on before the port leaves it",
+      },
+    ],
     values: {
       "gateway.port": 8080,
-      "storage.driver": "postgres",
-      "consolidation.method": 5,
-      "consolidation.aggressiveness": 2,
-      "consolidation.minimumAgeInDays": 90,
-      "consolidation.minimumRetentionInDays": 365,
+      "auth.method": "hmac",
       "consolidation.capacityMemories": 0,
-      "sleep.periodSeconds": 86400,
+      "consolidation.capacityExternalBytes": 1024 ** 4,
+      "consolidation.capacityExternalBytesFloor": Math.round(0.85 * 1024 ** 4),
+      "consolidation.tombstones.enabled": true,
+      "callbacks.enabled": true,
+      "callbacks.backlogPolicy": "retain",
+    },
+  },
+  {
+    id: "shared",
+    label: "Shared service, many teams",
+    useCase: "centralised--corporate-postgres-or-mysql-optional-opensearch",
+    blurb:
+      "One consolidator plus read/write replicas over Postgres, IdP tokens scoped to groups, and a per-client rate limit.",
+    suits:
+      "A platform team hosting one memory service for many applications or agents.",
+    target: "k8s",
+    supply: ["storage.postgres.dsn", "auth.issuer"],
+    accepts: [
+      {
+        match: "TLS is off",
+        why: "TLS is normally terminated at the ingress in front of the replicas",
+      },
+    ],
+    values: {
+      "storage.driver": "postgres",
+      "gateway.port": 8080,
+      "auth.method": "idp",
+      "auth.requireGroupScope": true,
+      "rateLimit.enabled": true,
+      "rateLimit.perClient.requestsPerSecond": 50,
+      "rateLimit.perClient.burst": 100,
+      "observability.metrics.enabled": true,
+      "observability.tracing.enabled": true,
+      "consolidation.capacityMemories": 5000000,
     },
   },
 ];
@@ -2203,6 +2327,8 @@ function validate() {
   };
   const on = (key) => active(key) && Boolean(val(key));
   const num = (key) => (active(key) ? Number(val(key)) : 0);
+  const loopback = (address) =>
+    /^(127\.\d|::1|localhost)$|^127\./.test(String(address).trim());
 
   if (driver === "sqlite" && !String(val("storage.directory")).trim()) {
     add(
@@ -2441,14 +2567,18 @@ function validate() {
     );
   }
 
+  // Three axes, not two: the external one bounds the store as surely as the other two do - it is
+  // the only one a retention controller sets - and the service's own decay-only line counts all
+  // three. Asking about two warned exactly that deployment that its store was unbounded.
   if (
     capacityBytes === 0 &&
-    Number(val("consolidation.capacityMemories")) === 0
+    Number(val("consolidation.capacityMemories")) === 0 &&
+    Number(val("consolidation.capacityExternalBytes")) === 0
   ) {
     add(
       "warn",
       "memory",
-      "Both capacity axes are 0, so there is no capacity pressure and no eviction: the store grows until the disk does not. Set at least consolidation.capacityBytes for a bounded store.",
+      "All three capacity axes are 0, so there is no capacity pressure and no eviction: the store grows until the disk does not. Set at least consolidation.capacityBytes for a bounded store.",
     );
   }
 
@@ -2599,9 +2729,6 @@ function validate() {
   // warning on those two targets: the artefacts generated here publish a port and probe over HTTP,
   // and both would simply fail to connect.
   if (state.target === "compose" || state.target === "k8s") {
-    const loopback = (address) =>
-      /^(127\.\d|::1|localhost)$|^127\./.test(String(address).trim());
-
     for (const key of [
       "bindAddress",
       "gateway.bindAddress",
@@ -2641,7 +2768,7 @@ function validate() {
       add(
         "warn",
         "security",
-        "No signing secret is set here. That is fine if you inject HIPPOCAMPUS_AUTH_SIGNINGSECRET at runtime — but the service will not verify a token without one.",
+        "auth.signingSecret is not set here. That is fine if you inject it at runtime as HIPPOCAMPUS_AUTH_SIGNINGSECRET — but the service will not verify a token without one.",
       );
     } else if (secret.length < 32) {
       add(
@@ -2712,7 +2839,14 @@ function validate() {
     );
   }
 
-  if (authMethod === "none" && state.target !== "binary") {
+  // The advice below is to bind to loopback, so an instance that already has must not be told it -
+  // both listeners, since an open gateway serves every RPC the gRPC port does. Inside a container a
+  // loopback bind is its own error, raised above.
+  const loopbackOnly =
+    loopback(val("bindAddress")) &&
+    (gatewayPort === 0 || loopback(val("gateway.bindAddress")));
+
+  if (authMethod === "none" && state.target !== "binary" && !loopbackOnly) {
     add(
       "warn",
       "security",
@@ -4547,9 +4681,38 @@ function renderStart() {
         },
         el("strong", { text: preset.label }),
         el("span", { text: preset.blurb }),
+        el("em", { text: `Suits: ${preset.suits}` }),
       ),
     ),
   );
+
+  // What the chosen starting point cannot know. Stated here rather than left to the issue list,
+  // where a missing DSN reads as a mistake in the preset rather than as the operator's half of it.
+  const chosen = PRESETS.find((preset) => preset.id === state.preset);
+  const supplyNote =
+    chosen && chosen.supply.length > 0
+      ? el("p", {
+          class: "note",
+          text: `"${chosen.label}" leaves ${joinList(chosen.supply)} for you to supply — set ${chosen.supply.length === 1 ? "it" : "them"} in the steps that follow, or inject ${chosen.supply.length === 1 ? "it" : "them"} at runtime as HIPPOCAMPUS_* overrides.`,
+        })
+      : null;
+  const useCaseNote = chosen
+    ? el(
+        "p",
+        { class: "note" },
+        "Why these settings: ",
+        el(
+          "a",
+          {
+            href: `${USE_CASES_DOC}#${chosen.useCase}`,
+            target: "_blank",
+            rel: "noopener",
+          },
+          "the use case they come from",
+        ),
+        ".",
+      )
+    : null;
 
   const targetTiles = el(
     "div",
@@ -4582,6 +4745,8 @@ function renderStart() {
         text: "Pick a starting point, then change whatever you like. Every question has a sensible default, so you can also skip straight to the last step and take the defaults.",
       }),
       presetTiles,
+      supplyNote,
+      useCaseNote,
       el("p", {
         class: "note",
         text: "Choosing a starting point replaces the answers you have given so far.",

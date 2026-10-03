@@ -499,7 +499,14 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   set and every issue's step id against the declared steps. Each field records `def` (what the wizard suggests) and, where the service
   has one of its own, `svc` (the `viper.SetDefault` value) — that distinction is what makes the
   "minimal" config safe, since a key the service does not default reads as zero and several of those
-  are fatal; `defaults_test.go` cross-checks the two files so they cannot drift. Ships as its own
+  are fatal; `defaults_test.go` cross-checks the two files so they cannot drift. The
+  **starting points** (`PRESETS`) are use cases, not deployment shapes (the target tiles already
+  choose those): each names its `docs/use-cases.md` section, which names it back, and declares what
+  only the operator can `supply` and which warnings it `accepts` on purpose. `wizardtest/` (run with
+  `node --test`, nothing to install, a step in the `webui` CI job) is the only test that
+  **executes** `app.js` — under `node:vm`, with the trailing `init()` cut off — and runs `validate()`
+  over every starting point, because a preset that trips the wizard's own checks is the wizard
+  advising against its own suggestion, which three of the original five did. Ships as its own
   image (`Dockerfile` `target: config-wizard` → `ghcr.io/fastbean-au/hippocampus-config-wizard`) and
   a per-OS/arch release binary; the hosted copy is `config-builder.hippocampus-demo.com`, a service
   in the separate demo-site repo's combined showcase stack. See `docs/config-wizard.md`.

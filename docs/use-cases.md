@@ -12,28 +12,107 @@ is also needed — keep everything for at least N days no matter what — an opt
 data is never reaped early.
 
 It suits data that has a long tail of value: most of it becomes irrelevant quickly, a fraction stays
-important for a long time, and which is which is not known up front. Some shapes that fit:
+important for a long time, and which is which is not known up front. The shapes below fit. Each says
+who it tends to suit, and names the [configuration wizard](config-wizard.md) starting point that
+implements it — a set of values chosen for that use case, which you then edit. The wizard links back
+here, and a test holds the two to each other.
 
-- **Operational / audit event history** — keep every deploy, incident, and config change while they
-  matter; let routine, low-significance chatter decay; reinforce (recall) the records an
-  investigation touches so they survive. `group` labels scope events to a system or team, and
-  [group scoping](configuration.md#group-scoping) can bind a token to them so each team reaches only
-  its own. Where a compliance window applies, a retention floor guarantees nothing is dropped before
-  it elapses.
-- **Agent / assistant memory** — a bounded long-term memory for an LLM agent: store observations as
-  memories, group them into events, recall the relevant ones on each interaction (which reinforces
-  them), and let the unused ones fade. Summarisation condenses a pile of related-but-quiet memories
-  into a single "gist" memory rather than dropping the detail outright.
-- **Per-device / edge telemetry** — retain a device's own significant history locally within a fixed
-  storage budget, and periodically transfer it to a central store.
-- **Personal knowledge management (Obsidian / Logseq)** — a memory layer for a note vault, so an AI
-  assistant reads a distilled set of durable facts instead of years of raw daily notes: notes that
-  get recalled are reinforced and survive, trivial ones decay. See the
-  [Obsidian integration](obsidian.md).
-- **Deciding what _another_ system keeps** — the payload stays in the bucket, column store or index
-  that already holds it, and one pointer-memory per record carries its significance, its links and
-  its size. This store runs the decay and says what should go; the far system does the deleting. See
-  [Retention controller](#retention-controller-the-payload-stays-where-it-is) below.
+### Operational / audit event history
+
+Keep every deploy, incident, and config change while it matters; let routine, low-significance
+chatter decay; reinforce (recall) the records an investigation touches so they survive. `group`
+labels scope events to a system or team, and [group scoping](configuration.md#group-scoping) can
+bind a token to them so each team reaches only its own. Where a compliance window applies, a
+retention floor guarantees nothing is dropped before it elapses.
+
+**Who it suits:** a platform, SRE or security team keeping operational history for as long as it is
+useful rather than for a fixed TTL, usually under an audit window someone else sets.
+
+**Wizard starting point: Operational & audit history.** Postgres behind an identity provider, with
+`auth.requireGroupScope` so every token is bound to its team's groups. Long-tail decay (method 5,
+aggressiveness 1.5), so a record that mattered once fades slowly rather than falling off a cliff: on
+the default scale, everything outlives the floor and the most significant records last about two
+years unrecalled. A 90-day `minimumRetentionInDays` as the compliance floor — and no `minimumAgeInDays`, which the floor
+would make meaningless. The [forgotten log](operations.md#what-was-forgotten--the-forgotten-log) is
+on and kept for a year, because an audit store has to be able to say what it forgot and why. A 50
+GiB byte target bounds the store, since a history store left unbounded is a database that grows
+until the disk does not. Metrics are on. You supply the DSN and the IdP's issuer.
+
+### Agent / assistant memory
+
+A bounded long-term memory for an LLM agent: store observations as memories, group them into events,
+recall the relevant ones on each interaction (which reinforces them), and let the unused ones fade.
+Summarisation condenses a pile of related-but-quiet memories into a single "gist" memory rather than
+dropping the detail outright.
+
+**Who it suits:** a team giving an agent or assistant memory that outlives a context window — over
+[MCP](mcp.md), the [Python client](python.md) or
+[LlamaIndex](https://github.com/fastbean-au/hippocampus-llamaindex) — where what the agent keeps
+coming back to is the best evidence of what matters.
+
+**Wizard starting point: Agent / assistant memory.** Long-tail decay (method 5, aggressiveness 2):
+on the default scale, trivia goes in three days, a middling memory in about ten, and the most
+significant in about five months — each unrecalled, since every recall resets the clock. Recall is
+the main signal, so
+`recallSignificanceWeight` is doubled and `linkRecallPropagation` spreads a quarter of each recall to
+the memory's direct neighbours, the way recalling one thing brings its associations along. Search
+ranks recall a little higher (`search.recallWeight` 0.3). Events of twenty or more memories that
+have gone quiet for a week are offered as
+[summarisation candidates](consolidation.md#summarisation), and the sleep cycle runs every half
+hour with a three-day minimum age, so a session's working notes survive long enough to be recalled
+before they are judged. A 2 GiB byte target with HMAC tokens; you supply the signing secret.
+
+### Per-device / edge telemetry
+
+Retain a device's own significant history locally within a fixed storage budget, and periodically
+transfer it to a central store.
+
+**Who it suits:** a fleet of devices, vehicles or sites, each producing more than it can keep or
+send, where the interesting part is not known until later.
+
+**Wizard starting point: Edge / device telemetry.** SQLite under systemd on a 256 MiB byte target
+with a WAL-triggered checkpoint, so a burst cannot outgrow the disk between cycles. Exponential
+half-life decay (method 4) that forgets hard, and a fifteen-minute cycle. Both listeners are bound to
+loopback, because the only writers are on the device itself — which is also why authentication can
+stay off. `Transfer` ships what survives to a central instance over TLS; you supply its address and
+token.
+
+### Personal knowledge management
+
+A memory layer for a note vault (Obsidian, Logseq), so an AI assistant reads a distilled set of
+durable facts instead of years of raw daily notes: notes that get recalled are reinforced and
+survive, trivial ones decay. See the [Obsidian integration](obsidian.md).
+
+**Who it suits:** one person, one machine, a vault measured in years — and an assistant that should
+read the part of it that still matters.
+
+**Wizard starting point: Personal knowledge (Obsidian).** A macOS LaunchAgent that starts at login,
+with both listeners on loopback and authentication off (nothing but the vault and the assistant on
+the same machine can reach it). The HTTP gateway is on, since the Obsidian plugin speaks it.
+Long-tail decay (method 5), a thirty-day minimum age and a six-hourly cycle, because a note is not
+worthless for having gone unread for a week. Spreading activation is on, so linked notes keep each
+other alive. A 1 GiB byte target. Nothing to supply.
+
+### Deciding what _another_ system keeps
+
+The payload stays in the bucket, column store or index that already holds it, and one pointer-memory
+per record carries its significance, its links and its size. This store runs the decay and says what
+should go; the far system does the deleting. See
+[Retention controller](#retention-controller-the-payload-stays-where-it-is) below, which names its
+starting point.
+
+**Who it suits:** anyone who would otherwise reach for a flat expiry on object storage or a column
+store, where disk is the binding constraint and traffic is spiky.
+
+### Trying it out
+
+**Who it suits:** anyone evaluating Hippocampus on their own machine, or developing a client against
+it.
+
+**Wizard starting point: Trying it out.** Embedded SQLite as a plain binary, the HTTP gateway (and
+so the [web console](console.md)) on 8080, no authentication, debug logging, no minimum age and a
+five-minute cycle, so forgetting happens while you watch rather than over days. Not a configuration
+to expose: the wizard will say so once you pick a container or service target.
 
 It is **not** a general-purpose database, a cache, or a system of record for data you must never
 lose: forgetting is the point, and the service has no visibility into memory _content_ (bodies are
@@ -114,6 +193,15 @@ sizing (notably the MySQL InnoDB buffer-pool note).
 One instance runs consolidation (`consolidation.enabled: true`, the single owner of Sleep and
 eviction); any number of stateless read/write replicas (`consolidation.enabled: false`) share the
 same database to scale request throughput horizontally.
+
+**Who it suits:** a platform team hosting one memory service for many applications or agents.
+
+**Wizard starting point: Shared service, many teams.** Postgres on Kubernetes, the consolidator plus
+replicas, behind an identity provider with `auth.requireGroupScope` so no token reaches the whole
+store, a per-client rate limit so one caller cannot starve the rest, and metrics and tracing on. It
+deliberately does **not** enable OpenSearch: every driver answers keyword search from its own index,
+so the cluster earns its place only for semantic search or for search that has to scale past the
+store. You supply the DSN and the IdP's issuer.
 
 ```mermaid
 flowchart TB
@@ -204,6 +292,12 @@ an _instruction_, and the default `abandon` discards deletions at the queue's ca
 payload behind each one permanently. Keep the [forgotten
 log](operations.md#what-was-forgotten--the-forgotten-log) on as well — it is the pull path behind the
 push one, so a rebuilt receiver pages `GetForgottenMemories` back to its own cursor and catches up.
+
+**Wizard starting point: Retention controller.** Exactly that, and nothing that would compete with
+it: a 1 TiB external target with an 85% floor, the memory-count axis off (a pointer is not the scarce
+resource) and no byte target, so the external axis alone bounds the store. Callbacks are on with
+`backlogPolicy: retain`, and the forgotten log is on. You supply the receiver's `callbacks.url` and
+the HMAC signing secret.
 
 **Against a bucket, both halves are built.** [`docs/objectstore.md`](objectstore.md) covers the two
 agents that implement this mode over S3 (or MinIO): `object-gateway` fronts the bucket and reinforces
