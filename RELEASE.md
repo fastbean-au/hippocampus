@@ -37,6 +37,38 @@ pre-flight plus the one command that starts all of that.
   fork or a repo without the tap configured is unaffected. If the tap's `main` is branch-protected to
   require PRs, exempt this credential or the direct push will fail.
 
+- **`SATELLITE_DISPATCH_TOKEN` repository secret** — a cross-repo credential used by the
+  `notify-satellites` job to `POST /repos/fastbean-au/<repo>/dispatches` at each repository that
+  tracks this one, so each re-pins and opens its own bump pull request. The built-in `GITHUB_TOKEN`
+  is scoped to this repository and cannot dispatch to another, which is the whole reason this
+  exists. **The secret carries no scope of its own** — it is an encrypted value, and GitHub will
+  never show it to you again — so everything below is about the credential stored _in_ it, which is
+  what the dispatch is actually authorised by. It lives in your account
+  (**github.com/settings/personal-access-tokens** for fine-grained, **/settings/tokens** for
+  classic), not in the repository, and that page is where its repository list and its expiry are.
+  - **The targets it must reach** are every repository in the job's dispatch loop:
+    `hippocampus-obsidian`, `hippocampus-otel-collector`, `hippocampus-llamaindex` and
+    `hippocampus-gen`. **Adding a dispatch target is therefore three edits, not one**: the loop in
+    `release.yaml`, the table in [`scripts/family-status.py`](scripts/family-status.py) — which
+    [`family_test.go`](cmd/hippocampus/family_test.go) will fail the build over if you forget — and
+    this token's repository list, which nothing can check for you. `hippocampus-gen` was added in
+    0.50.0 and is exactly that case.
+  - **Fine-grained PAT:** resource owner `fastbean-au`, _Only select repositories_ → the four above,
+    permission **Contents: Read and write** (what the dispatch endpoint requires; Metadata:
+    Read-only is mandatory and auto-added). Grant nothing else. A target missing from the
+    repository list fails as a **404**, indistinguishable in the log from a repository that does not
+    exist.
+  - **Classic PAT:** `public_repo` covers every public repository in the family, so a new target
+    needs no token change at all — broader than the fine-grained option, and that breadth is the
+    trade.
+
+  **Optional, and silent when absent**, which is the part worth knowing: with no secret the job
+  logs a notice and skips, and a single unreachable target logs a warning — neither fails a release
+  that has already published everything else. So the symptom of a lapsed or under-scoped token is
+  not a red release, it is pins that quietly stop moving. That is what `scripts/family-status.py`
+  and the weekly `family-status` workflow are there to catch, but they catch it up to a week later,
+  so set an expiry you will notice and rotate it deliberately.
+
 - **`PUBLISH_PYPI` repository variable** — set it to `true` to have the `publish-python` job upload
   the `hippocampus-client` package to PyPI. Authentication is **trusted publishing** (OIDC), so
   there is no API token to store: configure the publisher on PyPI first (project
