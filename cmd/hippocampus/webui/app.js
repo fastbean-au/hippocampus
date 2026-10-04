@@ -458,6 +458,14 @@ async function api(method, path, body, _retried) {
     headers["Authorization"] = "Bearer " + tok;
   }
 
+  // The console is a client of this service like any other, and on the Deployment tab it is drawn
+  // as one - under the client id it signed in with. It is embedded in the binary it talks to, so
+  // its version IS the service's, known once WhoAmI has answered; the header (the contract's
+  // ClientVersionHeader) is what puts it on the console's own box.
+  if (caps.version) {
+    headers["Hippocampus-Client-Version"] = "hippocampus-console/" + caps.version;
+  }
+
   const opts = { method, headers };
 
   if (body !== undefined) {

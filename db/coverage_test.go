@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/fastbean-au/hippocampus/types"
@@ -22,6 +23,32 @@ func TestPing(t *testing.T) {
 
 	if err := db.Ping(context.Background()); err == nil {
 		t.Fatal("expected Ping to fail after Close")
+	}
+}
+
+// TestServerVersion verifies the store names its engine and a version on every dialect - this suite
+// runs on all three under HIPPOCAMPUS_TEST_DIALECT, so each row's versionQuery is executed for real
+// - and that a closed store reports an error rather than an empty version.
+func TestServerVersion(t *testing.T) {
+	db := newTestDB(t)
+
+	version, err := db.ServerVersion(context.Background())
+	if err != nil {
+		t.Fatalf("ServerVersion on a live database: %s", err)
+	}
+
+	engine := map[string]string{"sqlite": "SQLite ", "postgres": "PostgreSQL ", "mysql": "MySQL "}[db.dialect().name]
+
+	if !strings.HasPrefix(version, engine) || len(version) <= len(engine) {
+		t.Errorf("expected a version beginning %q followed by a number, got %q", engine, version)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	if _, err := db.ServerVersion(context.Background()); err == nil {
+		t.Fatal("expected ServerVersion to fail after Close")
 	}
 }
 

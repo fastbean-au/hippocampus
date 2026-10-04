@@ -1303,10 +1303,11 @@ export function topologySvg(layout) {
   for (const box of layout.boxes) {
     const status = topologyStatus(box.node.status);
     const detail = box.node.detail || "";
+    const version = box.node.version || "";
 
     boxes +=
       `<g class="tnode ${status.cls}" data-act="topology-select" data-node="${esc(box.id)}" tabindex="0" role="button">` +
-      `<title>${esc(box.node.name)} — ${esc(status.label)}${detail ? " — " + esc(detail) : ""}</title>` +
+      `<title>${esc(box.node.name)} — ${esc(status.label)}${version ? " — " + esc(version) : ""}${detail ? " — " + esc(detail) : ""}</title>` +
       `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="8"></rect>` +
       `<circle class="tdot" cx="${box.x + 14}" cy="${box.y + 18}" r="4"></circle>` +
       `<text class="tname" x="${box.x + 26}" y="${box.y + 22}">${nameTspans(box)}</text>` +

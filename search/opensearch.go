@@ -1075,6 +1075,35 @@ func (o *OpenSearch) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Version reports the cluster's distribution and version ("opensearch 2.19.1"), for the deployment
+// topology view. Like Ping it is reached through an optional-interface assertion rather than the
+// Index interface, and for the same reason.
+//
+// It reads the root endpoint, which is a separate request from Ping's cluster health - neither
+// carries what the other does - so the prober asks for it only occasionally rather than every round.
+func (o *OpenSearch) Version(ctx context.Context) (string, error) {
+	log.Trace("func() search.Version")
+
+	info, err := o.client.Info(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to read the cluster version: %w", err)
+	}
+
+	distribution := info.Version.Distribution
+
+	// Only OpenSearch sets distribution; an Elasticsearch-compatible endpoint leaves it empty, and
+	// the number alone would then say nothing about what it is a version of.
+	if distribution == "" {
+		distribution = "elasticsearch"
+	}
+
+	if info.Version.Number == "" {
+		return "", fmt.Errorf("the cluster reported no version")
+	}
+
+	return distribution + " " + info.Version.Number, nil
+}
+
 // Close stops accepting operations and waits for the worker to drain the queue, up to a timeout.
 func (o *OpenSearch) Close() error {
 	log.Trace("func() search.Close")

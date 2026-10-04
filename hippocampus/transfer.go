@@ -864,9 +864,7 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 
 	client := contract.NewHippocampusClient(conn)
 
-	if s.transfer.token != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+s.transfer.token)
-	}
+	ctx = s.transferOutgoingContext(ctx)
 
 	manifest, events, memories, err := s.walkStore(
 		ctx,
@@ -971,4 +969,20 @@ func (s *Server) Clear(ctx context.Context, in *contract.ClearRequest) (*contrac
 	res.EventsCleared = int32(eventsCleared)
 
 	return &res, nil
+}
+
+// transferOutgoingContext prepares a context for a call to the Transfer target: the bearer token,
+// when one is configured, and this instance's own version, so the target's deployment view can show
+// which build is transferring into it - from there this instance is a caller it holds no address
+// for, and the header is the only way its version reaches that diagram.
+func (s *Server) transferOutgoingContext(ctx context.Context) context.Context {
+	if s.transfer.token != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+s.transfer.token)
+	}
+
+	if s.topology.version != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, contract.ClientVersionHeader, "hippocampus/"+s.topology.version)
+	}
+
+	return ctx
 }

@@ -229,8 +229,11 @@ func TestObservedCallersAreBounded(t *testing.T) {
 
 	for i := range maxObservedCallers + 10 {
 		// Ascending last-seen, so the first client inserted is the one eviction should choose.
-		s.observed.record("client-"+strconv.Itoa(i), []string{"reader"}, false, observedTransportGRPC,
-			now.Add(time.Duration(i)*time.Second))
+		s.observed.record(observedCall{
+			id:        "client-" + strconv.Itoa(i),
+			roles:     []string{"reader"},
+			transport: observedTransportGRPC,
+		}, now.Add(time.Duration(i)*time.Second))
 	}
 
 	records, evicted := s.observed.snapshot()
@@ -411,8 +414,12 @@ func TestObservedCallersConcurrent(t *testing.T) {
 			defer wg.Done()
 
 			for j := range 50 {
-				s.observed.record("client-"+strconv.Itoa(j%4), []string{"writer"}, false,
-					observedTransportGRPC, time.Now())
+				s.observed.record(observedCall{
+					id:        "client-" + strconv.Itoa(j%4),
+					roles:     []string{"writer"},
+					transport: observedTransportGRPC,
+					version:   "hippo/" + strconv.Itoa(j%3),
+				}, time.Now())
 			}
 
 			_, _ = s.observed.snapshot()

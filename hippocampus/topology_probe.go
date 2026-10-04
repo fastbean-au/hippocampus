@@ -47,18 +47,47 @@ const (
 	// round (40 probes at the 2s default) around 20 seconds, inside the 30s default interval, while
 	// keeping the burst to something a network notices as nothing.
 	topologyProbeConcurrency = 4
+
+	// topologyVersionRefresh is how long a dependency's reported version is reused before the
+	// prober asks for it again.
+	//
+	// A version is asked for separately because, for most dependencies, nothing a health check
+	// returns carries it - OpenSearch's cluster health, Ollama's model list and a database ping all
+	// say nothing about the build - so reading it every round would double the requests this
+	// process makes to everything it depends on, to learn something that changes on an upgrade.
+	// Long, then, but not forever: a rolling upgrade behind a load balancer never fails a probe, so
+	// the "ask again after a failure" rule alone would leave the old version on the diagram for the
+	// life of the process.
+	topologyVersionRefresh = 10 * time.Minute
 )
 
 // topologyProbe is one dependency's health check. A nil error is healthy; an error wrapping one of
 // the packages' ErrDegraded sentinels means "answered, but reporting a problem of its own", and any
 // other error means unreachable.
-type topologyProbe func(ctx context.Context) error
+//
+// It also returns the dependency's version where it learned one. wantVersion says the prober would
+// like it asked for (see wantTopologyVersion): a probe whose dependency needs a request of its own
+// to answer that makes it only when asked, while one that learns the version from the health check
+// itself - a declared component's /readyz body - returns it every round regardless. Failing to read
+// a version is never a probe failure: it returns "" and a nil error, because a dependency serving
+// correctly and declining to say which build it is is healthy.
+type topologyProbe func(ctx context.Context, wantVersion bool) (string, error)
 
 // topologyProbeResult is what the prober publishes for one node.
 type topologyProbeResult struct {
 	status    contract.TopologyStatus
 	detail    string
 	checkedAt time.Time
+
+	// version is the most recent version the dependency reported, carried from round to round -
+	// including across a failed probe, since "what build was the thing that just went unreachable" is
+	// a question an incident asks, and the status beside it already says the reading is not live.
+	version string
+
+	// versionAskedAt is when the prober last asked for the version, whatever came back. Recorded
+	// separately from version so that a dependency with nothing to report (a proxy answering 404
+	// for the version endpoint) is asked once per refresh rather than once per round.
+	versionAskedAt time.Time
 }
 
 // startTopologyProber launches the background prober, if there is anything to probe.
@@ -130,6 +159,10 @@ func (s *Server) probeTopologyOnce(probers map[string]topologyProbe) {
 	outcomes := make(chan outcome, len(probers))
 	slots := make(chan struct{}, topologyProbeConcurrency)
 
+	// The previous round is what the version cache lives in. Only this goroutine ever publishes a
+	// round, so reading the last one and building the next from it needs no lock.
+	previous := s.topologyProbeResults()
+
 	var wg sync.WaitGroup
 
 	for id, probe := range probers {
@@ -141,8 +174,11 @@ func (s *Server) probeTopologyOnce(probers map[string]topologyProbe) {
 			slots <- struct{}{}
 			defer func() { <-slots }()
 
+			last, seen := previous[id]
+			wantVersion := wantTopologyVersion(last, seen, time.Now())
+
 			ctx, cancel := context.WithTimeout(context.Background(), s.topology.probeTimeout)
-			err := probe(ctx)
+			version, err := probe(ctx, wantVersion)
 
 			cancel()
 
@@ -152,11 +188,23 @@ func (s *Server) probeTopologyOnce(probers map[string]topologyProbe) {
 				log.Debugf("topology probe %q: %s", id, err.Error())
 			}
 
-			outcomes <- outcome{id: id, result: topologyProbeResult{
-				status:    status,
-				detail:    detail,
-				checkedAt: time.Now(),
-			}}
+			result := topologyProbeResult{
+				status:         status,
+				detail:         detail,
+				checkedAt:      time.Now(),
+				version:        last.version,
+				versionAskedAt: last.versionAskedAt,
+			}
+
+			if wantVersion {
+				result.versionAskedAt = result.checkedAt
+			}
+
+			if version != "" {
+				result.version = version
+			}
+
+			outcomes <- outcome{id: id, result: result}
 		}(id, probe)
 	}
 
@@ -170,6 +218,25 @@ func (s *Server) probeTopologyOnce(probers map[string]topologyProbe) {
 	}
 
 	s.topologyProbes.Store(&results)
+}
+
+// wantTopologyVersion decides whether this round should ask a dependency for its version: when it
+// has never been asked, when the last round did not find it healthy (a restart is usually an
+// upgrade, and passes through unreachable on the way), and otherwise once per
+// topologyVersionRefresh.
+func wantTopologyVersion(last topologyProbeResult, seen bool, now time.Time) bool {
+	switch {
+
+	case !seen:
+		return true
+
+	case last.status != contract.TopologyStatus_TOPOLOGY_STATUS_OK:
+		return true
+
+	default:
+		return now.Sub(last.versionAskedAt) >= topologyVersionRefresh
+
+	}
 }
 
 // topologyProbeResults returns the latest published round, or an empty map before the first has
@@ -210,6 +277,26 @@ type topologyPinger interface {
 	Ping(ctx context.Context) error
 }
 
+// topologyVersioner is the optional interface a dependency implements to report its version, for
+// the same reasons topologyPinger is optional: OpenSearch and Ollama have a version endpoint to
+// ask, while an OpenAI-compatible provider, an S3 bucket and a directory have nothing to say.
+type topologyVersioner interface {
+	Version(ctx context.Context) (string, error)
+}
+
+// askTopologyVersion reads a dependency's version, swallowing a failure: see topologyProbe for why a
+// version that cannot be read does not make the dependency unhealthy.
+func askTopologyVersion(ctx context.Context, id string, ask func(context.Context) (string, error)) string {
+	version, err := ask(ctx)
+	if err != nil {
+		log.Debugf("topology probe %q: version not read: %s", id, err.Error())
+
+		return ""
+	}
+
+	return version
+}
+
 // topologyProbers builds the probe for each node that has one, keyed by node id. A node whose
 // dependency is disabled, or whose implementation cannot be pinged, simply gets no entry - and its
 // spec then reports its static status instead.
@@ -234,19 +321,19 @@ func (s *Server) probeFor(id string) topologyProbe {
 	switch id {
 
 	case topologyNodeStore:
-		return s.db.Ping
+		return s.probeStore
 
 	case topologyNodeSearch:
-		return pingerProbe(s.searchIdx())
+		return pingerProbe(id, s.searchIdx())
 
 	case topologyNodeSummariser:
-		return pingerProbe(s.summariser())
+		return pingerProbe(id, s.summariser())
 
 	case topologyNodeEmbedder:
-		return pingerProbe(s.embedder())
+		return pingerProbe(id, s.embedder())
 
 	case topologyNodeObjects:
-		return pingerProbe(s.objects)
+		return pingerProbe(id, s.objects)
 
 	case topologyNodeTransfer:
 		return s.probeTransferTarget
@@ -272,7 +359,9 @@ func (s *Server) declaredProbe(name string) topologyProbe {
 
 		url := healthProbeURL(component.HealthURL)
 
-		return func(ctx context.Context) error {
+		// The version comes back in the /readyz body every round, so wantVersion is ignored: asking
+		// for it costs nothing here, and a component that reports one is always current.
+		return func(ctx context.Context, _ bool) (string, error) {
 			return probeHealthEndpoint(ctx, url)
 		}
 	}
@@ -281,13 +370,48 @@ func (s *Server) declaredProbe(name string) topologyProbe {
 }
 
 // pingerProbe adapts a dependency to a probe when it can be pinged, and returns nil when it cannot.
-func pingerProbe(dependency any) topologyProbe {
+// Its version is read only after a successful ping, and only where the dependency can report one.
+func pingerProbe(id string, dependency any) topologyProbe {
 	pinger, ok := dependency.(topologyPinger)
 	if !ok {
 		return nil
 	}
 
-	return pinger.Ping
+	versioner, _ := dependency.(topologyVersioner)
+
+	return func(ctx context.Context, wantVersion bool) (string, error) {
+		if err := pinger.Ping(ctx); err != nil {
+			return "", err
+		}
+
+		if !wantVersion || versioner == nil {
+			return "", nil
+		}
+
+		return askTopologyVersion(ctx, id, versioner.Version), nil
+	}
+}
+
+// storeVersioner is what the concrete store implements to report its engine's version. Asserted for
+// rather than declared on db.Store, so the interface every test fake satisfies stays as it is.
+type storeVersioner interface {
+	ServerVersion(ctx context.Context) (string, error)
+}
+
+// probeStore pings the primary store and, when asked, reads the engine's version. It is not a
+// pingerProbe because the store's version method is named for what it reports - ServerVersion - so
+// that it cannot be mistaken for the store's SCHEMA version, which is a different number entirely.
+func (s *Server) probeStore(ctx context.Context, wantVersion bool) (string, error) {
+	if err := s.db.Ping(ctx); err != nil {
+		return "", err
+	}
+
+	versioner, ok := s.db.(storeVersioner)
+	if !wantVersion || !ok {
+		return "", nil
+	}
+
+	return askTopologyVersion(ctx, topologyNodeStore, versioner.ServerVersion), nil
 }
 
 // probeTransferTarget checks that the Transfer target is up and serving, using the same credentials
@@ -299,20 +423,43 @@ func pingerProbe(dependency any) topologyProbe {
 // short-lived one every interval is only a cost. It asks the gRPC health service, which is exempt
 // from the target's auth interceptor and driven by the target's own database readiness - so "ready"
 // there means it could serve an ImportBatch, not that a socket opened.
-func (s *Server) probeTransferTarget(ctx context.Context) error {
+//
+// The version comes from the target's WhoAmI, which is the one gRPC-reachable place an instance
+// reports its build. Unlike the health check it is authenticated, so it carries the same token a
+// transfer would - and a token the target refuses is a version not read rather than a target
+// reported unhealthy, since a transfer target answering its health check is ready whether or not
+// this instance's token may ask it anything else.
+func (s *Server) probeTransferTarget(ctx context.Context, wantVersion bool) (string, error) {
 	creds, err := s.transfer.clientCredentials()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	conn, err := grpc.NewClient(s.transfer.targetAddress, grpc.WithTransportCredentials(creds))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	defer func() { _ = conn.Close() }()
 
-	return observability.GRPCHealthCheck(conn)(ctx)
+	if err := observability.GRPCHealthCheck(conn)(ctx); err != nil {
+		return "", err
+	}
+
+	if !wantVersion {
+		return "", nil
+	}
+
+	ask := func(ctx context.Context) (string, error) {
+		res, err := contract.NewHippocampusClient(conn).WhoAmI(s.transferOutgoingContext(ctx), &contract.EmptyRequest{})
+		if err != nil {
+			return "", err
+		}
+
+		return res.GetVersion(), nil
+	}
+
+	return askTopologyVersion(ctx, topologyNodeTransfer, ask), nil
 }
 
 // stopTopologyProber shuts the prober down and waits for it, like the sleep and reconcile loops.
@@ -360,8 +507,8 @@ func healthProbeURL(raw string) string {
 }
 
 // healthResponse is the body the shared health server serves at /readyz
-// (observability/health.go): a state, the component's own name for itself, and a per-dependency
-// breakdown naming WHICH end is unreachable. Parsing it is what makes a declared bridge report
+// (observability/health.go): a state, the component's own name for itself and its version, and a
+// per-dependency breakdown naming WHICH end is unreachable. Parsing it is what makes a declared bridge report
 // "cannot reach the broker" rather than an opaque red box - and it costs nothing on either side,
 // since every bridge and the ingestor already serve exactly this.
 //
@@ -370,6 +517,7 @@ func healthProbeURL(raw string) string {
 type healthResponse struct {
 	Status       string            `json:"status"`
 	Component    string            `json:"component"`
+	Version      string            `json:"version"`
 	Dependencies map[string]string `json:"dependencies"`
 }
 
@@ -405,19 +553,23 @@ func (h healthResponse) failing() []string {
 // The body is read with a bound: a health endpoint returns a few hundred bytes, and a probe must not
 // be a way for a misconfigured URL pointing at something large to consume this process's memory on a
 // timer.
-func probeHealthEndpoint(ctx context.Context, address string) error {
+//
+// The version the body carries is returned on a 2xx and a 503 alike - a component reporting itself
+// not ready has still said which build it is - and passed through the same sanitising a
+// client-reported version gets, since it is equally the far end's own claim.
+func probeHealthEndpoint(ctx context.Context, address string) (string, error) {
 	if address == "" {
-		return fmt.Errorf("no health URL is configured for this component")
+		return "", fmt.Errorf("no health URL is configured for this component")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return fmt.Errorf("failed to build the health request: %w", err)
+		return "", fmt.Errorf("failed to build the health request: %w", err)
 	}
 
 	res, err := declaredProbeClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("unreachable: %w", err)
+		return "", fmt.Errorf("unreachable: %w", err)
 	}
 
 	defer func() { _ = res.Body.Close() }()
@@ -426,20 +578,22 @@ func probeHealthEndpoint(ctx context.Context, address string) error {
 
 	_ = json.NewDecoder(io.LimitReader(res.Body, maxHealthBodyBytes)).Decode(&body)
 
+	version := sanitiseReportedVersion(body.Version)
+
 	switch {
 
 	case res.StatusCode >= 200 && res.StatusCode <= 299:
-		return nil
+		return version, nil
 
 	case res.StatusCode == http.StatusServiceUnavailable:
 		if failing := body.failing(); len(failing) > 0 {
-			return fmt.Errorf("%w: cannot reach %s", errDeclaredDegraded, strings.Join(failing, ", "))
+			return version, fmt.Errorf("%w: cannot reach %s", errDeclaredDegraded, strings.Join(failing, ", "))
 		}
 
-		return fmt.Errorf("%w: reports itself not ready", errDeclaredDegraded)
+		return version, fmt.Errorf("%w: reports itself not ready", errDeclaredDegraded)
 
 	default:
-		return fmt.Errorf("health endpoint returned %s", res.Status)
+		return "", fmt.Errorf("health endpoint returned %s", res.Status)
 
 	}
 }

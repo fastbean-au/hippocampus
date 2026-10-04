@@ -964,6 +964,43 @@ Probing inside the RPC was rejected: it would make one console page open a conne
 dependency, let a single hung one hang the request, and multiply both by the number of people
 looking.
 
+**Every component that can say which build it is, does.** The version shown on each component
+comes from the most direct source available for it:
+
+| Component | Version from |
+| --- | --- |
+| This instance (`self`) | its own build, as `--version` and `/healthz` report it |
+| A peer on a shared store | the version it writes into its registry row |
+| The primary store | the engine itself: `SQLite 3.x` (the library compiled in), `PostgreSQL 16.x`, `MySQL 8.x` |
+| The OpenSearch index | the cluster's distribution and version number |
+| An Ollama summariser or embedder | the server's `/api/version` |
+| The transfer target (when probed) | its `WhoAmI` version, asked with the transfer token |
+| A declared component | the `version` field of its `/readyz` body |
+| An observed caller | the `hippocampus-client-version` header it sends |
+
+The last row is also the fallback for a **declared** component that has no health port of its own
+(an MCP bridge on stdio, say): when its `/readyz` reports no version, the one it sent as a caller is
+used. Every client in this repository sends the header — `hippo`, the MCP bridge, the event-source
+bridges, the ingestor, the object-storage agents, the Python client, the console, and an instance's
+own `Transfer` — and the shared health server every one of those daemons uses reports its version on
+`/readyz`. A client of your own can send it too; see [Clients](clients.md#reporting-a-client-version).
+
+Some components have **no version to report**, and show none: an S3 bucket or archive directory, an
+OpenAI-compatible provider (that API has no version endpoint), and the OTLP collector, identity
+provider and callback receiver, which are never probed at all.
+
+A version that costs a request of its own — the store's, the cluster's, Ollama's, the transfer
+target's — is asked for on the first probe, again after any round that did not find the component
+healthy (a restart is usually an upgrade), and otherwise every ten minutes, so the view does not
+double the requests it makes to everything this instance depends on. A version that cannot be read
+does not make a component unhealthy, and a component that goes unreachable keeps showing the last
+version it reported, beside a status that already says the reading is not live.
+
+A version reported by the far end — a caller's header or a `/readyz` body — is that component's own
+**claim**, and is treated as one: anything that is not printable ASCII, or longer than 64 bytes, is
+dropped rather than edited, and it is only ever displayed. It identifies nothing — a caller is still
+identified by its token alone, for the reasons given above.
+
 Two components are deliberately **never probed**. The OTLP collector, because export is
 fire-and-forget and a probe would mean opening a second connection to learn something no exporter
 acts on; and the identity provider, because the verifier already refreshes its key set on its own

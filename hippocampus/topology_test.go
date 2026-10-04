@@ -441,7 +441,7 @@ func TestProbeTransferTargetReportsAnUnreachableTarget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if err := s.probeTransferTarget(ctx); err == nil {
+	if _, err := s.probeTransferTarget(ctx, true); err == nil {
 		t.Error("probing an address with nothing listening reported success")
 	}
 }
@@ -556,11 +556,11 @@ func TestTopologyProberPublishesResults(t *testing.T) {
 	s.topology.probeTimeout = 50 * time.Millisecond
 
 	probers := map[string]topologyProbe{
-		topologyNodeStore: func(context.Context) error { return nil },
-		topologyNodeSearch: func(ctx context.Context) error {
+		topologyNodeStore: func(context.Context, bool) (string, error) { return "", nil },
+		topologyNodeSearch: func(ctx context.Context, _ bool) (string, error) {
 			<-ctx.Done()
 
-			return ctx.Err()
+			return "", ctx.Err()
 		},
 	}
 
@@ -894,17 +894,26 @@ func TestProbeHealthEndpoint(t *testing.T) {
 		wantErr      bool
 		wantDegraded bool
 		wantDetail   string
+		wantVersion  string
 	}{
 		"ready": {
-			status: http.StatusOK,
-			body:   `{"status":"ready","component":"nats-bridge","dependencies":{"hippocampus":"ok"}}`,
+			status:      http.StatusOK,
+			body:        `{"status":"ready","component":"nats-bridge","version":"v0.52.0","dependencies":{"hippocampus":"ok"}}`,
+			wantVersion: "v0.52.0",
 		},
+		// A component reporting itself not ready has still said which build it is.
 		"not ready, and says which end": {
 			status:       http.StatusServiceUnavailable,
-			body:         `{"status":"not ready","component":"nats-bridge","dependencies":{"hippocampus":"unreachable","broker":"ok"}}`,
+			body:         `{"status":"not ready","component":"nats-bridge","version":"v0.52.0","dependencies":{"hippocampus":"unreachable","broker":"ok"}}`,
 			wantErr:      true,
 			wantDegraded: true,
 			wantDetail:   "hippocampus",
+			wantVersion:  "v0.52.0",
+		},
+		// The version is the far end's claim, and gets the same sanitising a caller's does.
+		"a version not fit to show": {
+			status: http.StatusOK,
+			body:   `{"status":"ready","version":"v1\nInjected: yes"}`,
 		},
 		"not ready with no breakdown": {
 			status:       http.StatusServiceUnavailable,
@@ -942,7 +951,11 @@ func TestProbeHealthEndpoint(t *testing.T) {
 
 			t.Cleanup(server.Close)
 
-			err := probeHealthEndpoint(context.Background(), server.URL+"/readyz")
+			version, err := probeHealthEndpoint(context.Background(), server.URL+"/readyz")
+
+			if version != tc.wantVersion {
+				t.Errorf("version = %q, want %q", version, tc.wantVersion)
+			}
 
 			if tc.wantErr && err == nil {
 				t.Fatal("the probe reported success")
@@ -966,7 +979,7 @@ func TestProbeHealthEndpoint(t *testing.T) {
 // TestProbeHealthEndpointUnreachable covers a component that is not answering at all - which must be
 // distinguishable from one answering 503, since they are different problems with different owners.
 func TestProbeHealthEndpointUnreachable(t *testing.T) {
-	err := probeHealthEndpoint(context.Background(), "http://127.0.0.1:1/readyz")
+	_, err := probeHealthEndpoint(context.Background(), "http://127.0.0.1:1/readyz")
 
 	if err == nil {
 		t.Fatal("the probe reported success against a port with nothing listening")
@@ -976,7 +989,7 @@ func TestProbeHealthEndpointUnreachable(t *testing.T) {
 		t.Error("an unreachable component was reported as degraded")
 	}
 
-	if err := probeHealthEndpoint(context.Background(), ""); err == nil {
+	if _, err := probeHealthEndpoint(context.Background(), ""); err == nil {
 		t.Error("an empty health URL reported success")
 	}
 }
@@ -1025,10 +1038,10 @@ func TestProbeRoundRunsConcurrently(t *testing.T) {
 	probers := make(map[string]topologyProbe, topologyProbeConcurrency)
 
 	for i := range topologyProbeConcurrency {
-		probers[strconv.Itoa(i)] = func(ctx context.Context) error {
+		probers[strconv.Itoa(i)] = func(ctx context.Context, _ bool) (string, error) {
 			<-ctx.Done()
 
-			return ctx.Err()
+			return "", ctx.Err()
 		}
 	}
 

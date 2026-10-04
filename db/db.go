@@ -1200,6 +1200,24 @@ func (d *DB) Ping(ctx context.Context) error {
 	return d.sql.PingContext(ctx)
 }
 
+// ServerVersion reports the database engine's name and version ("PostgreSQL 16.4", "SQLite
+// 3.46.0"), for the store's node in the deployment topology view. It is deliberately not part of the
+// Store interface: only the topology prober asks, and it asserts for it optionally, as it does Ping
+// on the other dependencies.
+func (d *DB) ServerVersion(ctx context.Context) (string, error) {
+	log.Trace("func() db.ServerVersion")
+
+	var version string
+
+	if err := d.sql.QueryRowContext(ctx, d.dialect().versionQuery).Scan(&version); err != nil {
+		log.Debugf("failed to read the database version: %s", err.Error())
+
+		return "", fmt.Errorf("failed to read the database version: %w", err)
+	}
+
+	return version, nil
+}
+
 // Close checkpoints and closes the database. For the server drivers it also releases the
 // instance lock by closing the session that holds it.
 func (d *DB) Close() error {

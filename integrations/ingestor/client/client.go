@@ -49,6 +49,12 @@ type Config struct {
 	// tell which of the ingestor's two ends is slow or failing. Empty omits the interceptor
 	// entirely, which is what a caller that does not want the instrumentation gets.
 	Endpoint string
+
+	// ClientVersion, when set, is reported to the service on every RPC in the
+	// contract.ClientVersionHeader header ("<product>/<version>"), which is how this process's
+	// build reaches the service's deployment view - from there it is a caller the service holds no
+	// address for, and so cannot ask. Empty sends nothing.
+	ClientVersion string
 }
 
 // Dial opens a gRPC client connection to the service described by cfg and returns it alongside a
@@ -74,6 +80,10 @@ func Dial(cfg Config) (*grpc.ClientConn, contract.HippocampusClient, error) {
 
 	if cfg.Token != "" {
 		interceptors = append(interceptors, bearerTokenInterceptor(cfg.Token))
+	}
+
+	if cfg.ClientVersion != "" {
+		interceptors = append(interceptors, contract.UnaryClientVersionInterceptor(cfg.ClientVersion))
 	}
 
 	if len(interceptors) > 0 {

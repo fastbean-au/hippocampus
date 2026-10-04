@@ -135,3 +135,70 @@ func TestOpenSearch_PingNamesTheIndex(t *testing.T) {
 		t.Errorf("the error does not report the unassigned shards: %s", err)
 	}
 }
+
+// infoTransport answers the root endpoint with a chosen body and every other request (construction's
+// index setup) with "{}".
+type infoTransport struct {
+	body string
+}
+
+func (i *infoTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body := `{}`
+
+	if req.URL.Path == "/" || req.URL.Path == "" {
+		body = i.body
+	}
+
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}, nil
+}
+
+// TestOpenSearch_Version covers the topology view's version read: the distribution names what the
+// number is a version of, an endpoint that does not set one is labelled rather than left as a bare
+// number, and a body carrying no version is an error rather than an empty label.
+func TestOpenSearch_Version(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body    string
+		want    string
+		wantErr bool
+	}{
+		"opensearch": {
+			body: `{"version":{"distribution":"opensearch","number":"2.19.1"}}`,
+			want: "opensearch 2.19.1",
+		},
+		"no distribution": {
+			body: `{"version":{"number":"7.10.2"}}`,
+			want: "elasticsearch 7.10.2",
+		},
+		"no version": {
+			body:    `{"version":{}}`,
+			wantErr: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			idx := newPingIndex(t, &infoTransport{body: tc.body})
+
+			got, err := idx.Version(context.Background())
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Version: %s", err)
+			}
+
+			if got != tc.want {
+				t.Errorf("Version = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

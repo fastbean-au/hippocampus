@@ -330,6 +330,43 @@ func (o *Ollama) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Version reports the Ollama server's version ("Ollama 0.6.2"), for the deployment topology view.
+// Like Ping it is reached through an optional-interface assertion, and it is a request of its own -
+// /api/tags carries no server version - so the prober asks for it only occasionally.
+func (o *Ollama) Version(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.address+"/api/version", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to build the request: %w", err)
+	}
+
+	setBearer(req, o.apiKey)
+
+	res, err := o.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ollama is unreachable at %s: %w", o.address, err)
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return "", fmt.Errorf("ollama at %s returned %s for its version", o.address, res.Status)
+	}
+
+	var body struct {
+		Version string `json:"version"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(res.Body, 4<<10)).Decode(&body); err != nil {
+		return "", fmt.Errorf("failed to read the version from %s: %w", o.address, err)
+	}
+
+	if body.Version == "" {
+		return "", fmt.Errorf("ollama at %s reported no version", o.address)
+	}
+
+	return "Ollama " + body.Version, nil
+}
+
 // tagsResponse is the response from Ollama's GET /api/tags: the models the server has pulled.
 type tagsResponse struct {
 	Models []struct {

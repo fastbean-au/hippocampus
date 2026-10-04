@@ -137,9 +137,17 @@ func run(ctx context.Context) error {
 	// A bearer token, when configured, is attached to every outgoing RPC as "authorization: Bearer
 	// <token>" metadata - exactly what the service's auth interceptor reads - via a client
 	// interceptor, so no individual tool handler has to remember to send it.
+	//
+	// The bridge's own version rides along in the same chain, so the service's deployment view can
+	// say which build of the bridge is calling it - from there this is a caller with no address to
+	// probe, and the header is the only way its version arrives.
+	interceptors := []grpc.UnaryClientInterceptor{contract.UnaryClientVersionInterceptor("hippocampus-mcp/" + version)}
+
 	if token := viper.GetString("token"); token != "" {
-		dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(bearerTokenInterceptor(token)))
+		interceptors = append(interceptors, bearerTokenInterceptor(token))
 	}
+
+	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(interceptors...))
 
 	address := viper.GetString("address")
 

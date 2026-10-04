@@ -59,8 +59,16 @@ func TestLivenessIgnoresDependencies(t *testing.T) {
 	}
 
 	// The same server reports not-ready, which is where a dead dependency belongs.
-	if code, _ := probe(t, h, "/readyz"); code != http.StatusServiceUnavailable {
+	code, body = probe(t, h, "/readyz")
+
+	if code != http.StatusServiceUnavailable {
 		t.Errorf("expected readiness to be 503, got %d", code)
+	}
+
+	// The version rides on /readyz too, because that is the endpoint the service's topology prober
+	// asks a declared component - without it the component's build never reaches the diagram.
+	if body["version"] != "v1.2.3" {
+		t.Errorf("expected /readyz to report the version, got %+v", body)
 	}
 }
 

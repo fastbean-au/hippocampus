@@ -37,6 +37,10 @@ type Config struct {
 	Token     string // bearer token attached to every request when set
 	Timeout   time.Duration
 	TLS       TLSConfig
+
+	// ClientVersion is reported to the service on every request in contract.ClientVersionHeader, on
+	// either transport, so the service's deployment view can say which build of the CLI is calling.
+	ClientVersion string
 }
 
 // newClient builds a transport-agnostic contract.HippocampusClient from cfg, plus a closer to
@@ -67,9 +71,13 @@ func newGRPCClient(cfg Config) (contract.HippocampusClient, func() error, error)
 
 	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
 
+	interceptors := []grpc.UnaryClientInterceptor{contract.UnaryClientVersionInterceptor(cfg.ClientVersion)}
+
 	if cfg.Token != "" {
-		dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(bearerTokenInterceptor(cfg.Token)))
+		interceptors = append(interceptors, bearerTokenInterceptor(cfg.Token))
 	}
+
+	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(interceptors...))
 
 	conn, err := grpc.NewClient(cfg.Address, dialOpts...)
 	if err != nil {
@@ -99,8 +107,9 @@ func newHTTPClient(cfg Config) (contract.HippocampusClient, func() error, error)
 	}
 
 	client := &httpClient{
-		baseURL: strings.TrimRight(base, "/"),
-		token:   cfg.Token,
+		baseURL:       strings.TrimRight(base, "/"),
+		token:         cfg.Token,
+		clientVersion: cfg.ClientVersion,
 		http: &http.Client{
 			Transport: transport,
 			Timeout:   cfg.Timeout,

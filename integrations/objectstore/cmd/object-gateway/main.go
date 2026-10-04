@@ -190,6 +190,7 @@ func run(ctx context.Context) error {
 		TLSKeyFile:            viper.GetString("tls-key"),
 		TLSInsecureSkipVerify: viper.GetBool("tls-insecure-skip-verify"),
 		Endpoint:              "hippocampus",
+		ClientVersion:         component + "/" + version,
 	})
 	if err != nil {
 		return fmt.Errorf("dialling the hippocampus service: %w", err)

@@ -18,6 +18,7 @@ from typing import Any, Iterable, List, Mapping, Optional, Sequence
 import grpc
 
 from hippocampus import _convert, errors
+from hippocampus._version import __version__
 from hippocampus._proto import hippocampus_pb2 as pb
 from hippocampus._proto import hippocampus_pb2_grpc as rpc
 from hippocampus.models import (
@@ -38,6 +39,10 @@ from hippocampus.models import (
     link_protos,
     memories_page,
 )
+
+# CLIENT_VERSION_HEADER is the contract's ClientVersionHeader (contract/clientversion.go): the request
+# header a client reports its own build in, for the service's deployment view.
+CLIENT_VERSION_HEADER = "hippocampus-client-version"
 
 DEFAULT_TIMEOUT = 30.0
 
@@ -101,7 +106,15 @@ class Hippocampus:
         # channel only, so binding them to the channel would work against a TLS deployment and
         # raise against a plaintext one - and plaintext behind a TLS-terminating sidecar is a
         # supported deployment here, not a mistake to guard against.
-        self._metadata = (("authorization", f"Bearer {token}"),) if token else ()
+        #
+        # The package's own version rides along on every call (CLIENT_VERSION_HEADER), so the
+        # service's deployment view can say which build of this client is calling it: from there a
+        # client is a caller it holds no address for, and the header is the only way its version
+        # arrives.
+        self._metadata = ((CLIENT_VERSION_HEADER, f"hippocampus-client-python/{__version__}"),)
+
+        if token:
+            self._metadata += (("authorization", f"Bearer {token}"),)
 
     # ---------------------------------------------------------------- lifecycle
 

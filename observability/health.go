@@ -39,7 +39,7 @@ type HealthConfig struct {
 	// BindAddress restricts the interface; empty binds all of them.
 	BindAddress string
 
-	// Version is reported in the /healthz body, as the service's own /healthz does.
+	// Version is reported in the /healthz and /readyz bodies, as the service's own /healthz does.
 	Version string
 
 	// Component names the binary in log lines and in the probe bodies.
@@ -218,9 +218,13 @@ func (h *HealthServer) readiness(w http.ResponseWriter, r *http.Request) {
 		state = "not ready"
 	}
 
+	// The version rides on /readyz as well as /healthz because /readyz is what the service's
+	// topology prober asks a declared component - so carrying it here puts the component's build on
+	// the deployment diagram at no cost of a second request.
 	writeJSON(w, status, map[string]any{
 		"status":       state,
 		"component":    h.cfg.Component,
+		"version":      h.cfg.Version,
 		"dependencies": statuses,
 	})
 }

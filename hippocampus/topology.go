@@ -150,9 +150,10 @@ type topologyNodeSpec struct {
 	// instances side by side should not have to hunt for the same row in a different place.
 	attributes []topologyAttribute
 
-	// version is what the component reports of its own build. Only two kinds of node can carry one:
-	// this instance, and a peer that wrote its own into the registry. Everything else would have to
-	// return it from a probe, which none of them asks for.
+	// version is what the component reports of its own build, where that is known when the spec is
+	// built: this instance, a peer that wrote its own into the registry, and a caller that reported
+	// one in the observed-callers header. A probed dependency's version arrives with its probe
+	// result instead (topologyProbeResult.version) and is merged per call.
 	version string
 
 	// probe says this node has an entry in the prober's map; staticStatus is what to report when it
@@ -275,7 +276,15 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 				node.Status = result.status
 				node.StatusDetail = result.detail
 				node.CheckedAt = result.checkedAt.UnixNano()
+
+				if result.version != "" {
+					node.Version = result.version
+				}
 			}
+		}
+
+		if node.Version == "" {
+			node.Version = observed.versions[spec.id]
 		}
 
 		attributes := spec.attributes

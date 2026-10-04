@@ -57,6 +57,36 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **Every component on the deployment view now shows its version, wherever it has one to give**
+  (TODO-2 item 134). `TopologyNode.version` has been in the contract since the view shipped, but only
+  two kinds of node ever filled it: the instance answering and its peers on a shared store. Everything
+  else was drawn with no version, which left "which build is that bridge running" a question for
+  somebody with a shell on its host.
+
+  The view now asks. The primary store reports its engine's version (`SQLite 3.x`, `PostgreSQL 16.x`,
+  `MySQL 8.x`), OpenSearch its distribution and number, an Ollama summariser or embedder its server
+  version, and an opted-in transfer target the version its `WhoAmI` reports. Those are requests of
+  their own, so the prober asks for them on the first round, after any round that found the
+  component unhealthy, and otherwise every ten minutes, rather than doubling what it sends to every
+  dependency. A version that cannot be read is not a failure, and an unreachable component keeps
+  showing the last version it reported.
+
+  The components that dial **in** get theirs two ways. The shared health server now reports
+  `version` on `/readyz` as well as `/healthz`, so a declared component's version arrives with the
+  probe that already runs. And a new optional request header, `hippocampus-client-version`
+  (`contract.ClientVersionHeader`), lets any client say which build it is; the service shows it on
+  that client's observed node, or on its declared node when that node has no health port of its own.
+  Every client in this repository now sends it — `hippo` on both transports, the MCP bridge, the five
+  event-source bridges, the ingestor, both object-storage agents, the Python client, the console, and
+  an instance's own `Transfer`. A reported version is a claim and treated as one: kept only if it is
+  printable ASCII of at most 64 bytes, and only ever displayed.
+
+  The console also puts a component's version in its diagram box's tooltip. An S3 bucket, an
+  archive directory, an OpenAI-compatible provider, the OTLP collector, the identity provider and the
+  callback receiver have no version to report, and show none.
+
 ## [0.50.0] - 2026-10-04
 
 ### Added

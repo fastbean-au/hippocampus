@@ -1044,6 +1044,39 @@ test("topologySvg escapes every value it renders", () => {
   assert.ok(svg.includes("&amp;"));
 });
 
+// The version is a value the far end reported, so it is escaped like every other, and it is in the
+// box's tooltip because the box itself has no room for it - the component list below carries it too.
+test("topologySvg puts a node's version in its tooltip, escaped", () => {
+  const svg = topologySvg(
+    topologyLayout({
+      nodes: [
+        {
+          id: "declared:nats",
+          kind: "TOPOLOGY_NODE_KIND_BRIDGE",
+          name: "nats",
+          version: "v0.52.0<b>",
+          status: "TOPOLOGY_STATUS_OK",
+        },
+        {
+          id: "store",
+          kind: "TOPOLOGY_NODE_KIND_STORE",
+          name: "bucket",
+          status: "TOPOLOGY_STATUS_OK",
+        },
+      ],
+      edges: [],
+    }),
+  );
+
+  assert.match(svg, /<title>nats — [^<—]+ — v0\.52\.0&lt;b&gt;<\/title>/);
+  assert.ok(!svg.includes("<b>"));
+  assert.match(
+    svg,
+    /<title>bucket — [^<—]+<\/title>/,
+    "a node with no version carries no empty separator",
+  );
+});
+
 test("topologySvg marks an optional edge and colours by status", () => {
   const svg = topologySvg(topologyLayout(topologyResponse()));
 

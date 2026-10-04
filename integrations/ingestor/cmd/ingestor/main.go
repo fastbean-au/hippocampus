@@ -330,5 +330,6 @@ func endpointConfig(endpoint string) client.Config {
 		TLSCertFile:           viper.GetString(client.Key(endpoint, "tls-cert")),
 		TLSKeyFile:            viper.GetString(client.Key(endpoint, "tls-key")),
 		TLSInsecureSkipVerify: viper.GetBool(client.Key(endpoint, "tls-insecure-skip-verify")),
+		ClientVersion:         "hippocampus-ingestor/" + version,
 	}
 }

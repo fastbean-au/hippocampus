@@ -216,10 +216,11 @@ func configFromFlags(fs *pflag.FlagSet) (Config, error) {
 	}
 
 	cfg := Config{
-		Transport: transport,
-		Address:   address,
-		Token:     v.GetString("token"),
-		Timeout:   time.Duration(v.GetInt("timeout-seconds")) * time.Second,
+		Transport:     transport,
+		Address:       address,
+		Token:         v.GetString("token"),
+		Timeout:       time.Duration(v.GetInt("timeout-seconds")) * time.Second,
+		ClientVersion: "hippo/" + version,
 		TLS: TLSConfig{
 			Enabled:            v.GetBool("tls"),
 			CACert:             v.GetString("tls-ca-cert"),

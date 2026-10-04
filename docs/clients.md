@@ -259,6 +259,26 @@ A missing or invalid token is `UNAUTHENTICATED` (`401`); a valid token whose
 [role](configuration.md#authorisation) is too low for the RPC is `PERMISSION_DENIED` (`403`). Call
 `WhoAmI` to learn the tier a token actually resolves to rather than discovering it from a rejection.
 
+### Reporting a client version
+
+A client may say which build it is in a `hippocampus-client-version` header — request metadata on
+gRPC, an ordinary header on the gateway — conventionally `<product>/<version>`:
+
+```python
+stub.WhoAmI(pb.EmptyRequest(), metadata=(
+    ("authorization", f"Bearer {token}"),
+    ("hippocampus-client-version", "my-client/1.4.0"),
+))
+```
+
+It is optional and changes nothing about how a call is handled. Where authentication is on, the
+service shows it on the client's component in the [deployment topology](configuration.md#deployment-topology)
+(the console's **Deployment** tab and `hippo topology`) — which, because the service holds no address
+for a client and so cannot probe it, is the only way a client's version reaches that view. It is
+displayed and never used for anything else: printable ASCII up to 64 bytes is kept, and anything else
+is dropped. Every client in this repository sends it; a Go client can install
+`contract.UnaryClientVersionInterceptor`.
+
 ## The JSON gateway
 
 Base path `/v1`, JSON bodies, field names lowerCamelCase. The full mapping of RPC to method and path

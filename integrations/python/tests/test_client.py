@@ -350,6 +350,17 @@ def test_no_token_sends_no_authorization_header(client, service):
     assert "authorization" not in service.metadata["WhoAmI"]
 
 
+def test_the_client_reports_its_version(client, service):
+    """Every call carries the package's version, which is how a client the service cannot probe
+    gets a version on its deployment view."""
+
+    client.who_am_i()
+
+    reported = service.metadata["WhoAmI"]["hippocampus-client-version"]
+
+    assert reported == f"hippocampus-client-python/{hp.__version__}"
+
+
 def test_a_supplied_channel_is_not_closed(server, service):
     """The channel belongs to whoever built it."""
 

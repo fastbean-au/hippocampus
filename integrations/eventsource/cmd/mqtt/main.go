@@ -111,6 +111,7 @@ func run(ctx context.Context) error {
 		TLSKeyFile:            viper.GetString("tls-key"),
 		TLSInsecureSkipVerify: viper.GetBool("tls-insecure-skip-verify"),
 		Endpoint:              "hippocampus",
+		ClientVersion:         "hippocampus-mqtt-bridge/" + version,
 
 		// A set client id selects the client-credentials grant over --token; see bridge/oidc.go.
 		OIDC: bridge.OIDCConfig{

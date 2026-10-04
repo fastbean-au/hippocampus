@@ -816,7 +816,16 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     token is valid and whose role is refused every call is exactly who an operator is looking for
     here, and behind the authoriser it would never appear. It is the one part of the view written on
     the request path, so the registry is an RWMutex taken only to insert plus atomics per entry,
-    rather than a snapshot pointer like the prober's and the heartbeat's. TODO 75, phases 1-4.
+    rather than a snapshot pointer like the prober's and the heartbeat's. (10) **Every node that can
+    report a version does** (TODO-2 item 134): a probe is `func(ctx, wantVersion bool) (string,
+    error)`, and a version that costs its own request (store engine via `dialect.versionQuery`,
+    OpenSearch `GET /`, Ollama `/api/version`, the transfer target's `WhoAmI`) is asked for only on the
+    first round, after a non-OK round, or every `topologyVersionRefresh`, cached in the previous
+    published round. An unreadable version is never a failure, and a failed probe keeps the last one.
+    Declared components report theirs on `/readyz` for free. Callers send
+    `contract.ClientVersionHeader`, which lives in `contract` so the CLI and MCP bridge stay off the
+    OTEL tree, deliberately is not the user agent, is sanitised by `sanitiseReportedVersion`, and is
+    display-only, never identity. TODO 75, phases 1-4.
   - **Deletion by predicate** (`hippocampus/predicate.go` + `hippocampus/selection.go` +
     `db/predicate.go`, TODO 98.2) is `DeleteMemoriesByFilter`/`DeleteEventsByFilter`: what
     offboarding a group actually needs, the deletion surface having been by-id, one-event,

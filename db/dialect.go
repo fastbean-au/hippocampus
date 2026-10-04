@@ -284,6 +284,14 @@ type dialect struct {
 	// whose default collation is case-insensitive has one - the others compare byte-for-byte with no
 	// collation to state. See the id_collation migration.
 	idCollationMigration bool
+
+	// versionQuery returns the database's own name and version as one display string, for the
+	// store's node in the deployment topology view. It names the product as well as the number
+	// because the number alone does not say which engine it belongs to, and it is the engine's own
+	// answer rather than the driver's: what is reported is what an operator would be told by the
+	// server they would have to upgrade. On the embedded dialect that is the SQLite library compiled
+	// into this binary, which is the same thing.
+	versionQuery string
 }
 
 // dialects is the table. One row per dialect; a fourth is a fourth row plus whatever structural
@@ -341,6 +349,7 @@ var dialects = map[driver]*dialect{
 		instanceRegistry:      false,
 		countsChangedRows:     false,
 		idCollationMigration:  false,
+		versionQuery:          `SELECT 'SQLite ' || sqlite_version()`,
 	},
 
 	driverPostgres: {
@@ -403,6 +412,9 @@ var dialects = map[driver]*dialect{
 		instanceRegistry:      true,
 		countsChangedRows:     false,
 		idCollationMigration:  false,
+		// server_version rather than version(): the latter carries the compiler and the platform
+		// the server was built on, which is a paragraph where a label is wanted.
+		versionQuery: `SELECT 'PostgreSQL ' || current_setting('server_version')`,
 	},
 
 	driverMySQL: {
@@ -496,6 +508,7 @@ var dialects = map[driver]*dialect{
 		instanceRegistry:      true,
 		countsChangedRows:     true,
 		idCollationMigration:  true,
+		versionQuery:          `SELECT CONCAT('MySQL ', VERSION())`,
 	},
 }
 

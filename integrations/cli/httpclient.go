@@ -25,9 +25,10 @@ import (
 // and body binding exactly as the google.api.http annotations in hippocampus.proto declare them;
 // requests and responses are (un)marshalled with protojson so field naming matches the gateway.
 type httpClient struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL       string
+	token         string
+	clientVersion string
+	http          *http.Client
 }
 
 var _ contract.HippocampusClient = (*httpClient)(nil)
@@ -352,6 +353,10 @@ func (c *httpClient) do(
 
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	if c.clientVersion != "" {
+		req.Header.Set(contract.ClientVersionHeader, c.clientVersion)
 	}
 
 	resp, err := c.http.Do(req)

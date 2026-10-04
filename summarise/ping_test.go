@@ -128,3 +128,56 @@ func TestOllama_PingUnbuildableRequest(t *testing.T) {
 		t.Error("Ping reported success for an address that cannot be requested")
 	}
 }
+
+// TestOllama_Version covers the topology view's version read, including the two ways it can fail
+// without the server being down: an endpoint that does not answer it, and one that answers without
+// a version.
+func TestOllama_Version(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status  int
+		body    string
+		want    string
+		wantErr bool
+	}{
+		"reported":   {status: http.StatusOK, body: `{"version":"0.6.2"}`, want: "Ollama 0.6.2"},
+		"empty":      {status: http.StatusOK, body: `{}`, wantErr: true},
+		"not json":   {status: http.StatusOK, body: "nope", wantErr: true},
+		"not served": {status: http.StatusNotFound, body: "404", wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/version" {
+					t.Errorf("Version requested %q, want /api/version", r.URL.Path)
+				}
+
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+
+			t.Cleanup(server.Close)
+
+			o, err := NewOllama(Config{Address: server.URL, Model: "llama3.2"})
+			if err != nil {
+				t.Fatalf("NewOllama: %s", err)
+			}
+
+			got, err := o.Version(context.Background())
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Version: %s", err)
+			}
+
+			if got != tc.want {
+				t.Errorf("Version = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

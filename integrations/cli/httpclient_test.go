@@ -21,11 +21,12 @@ import (
 // capturedRequest records what the fake gateway received so a test can assert the httpClient built
 // the right HTTP method, path, query, and body for an RPC.
 type capturedRequest struct {
-	method string
-	path   string
-	query  url.Values
-	body   []byte
-	auth   string
+	method  string
+	path    string
+	query   url.Values
+	body    []byte
+	auth    string
+	version string
 }
 
 // newTestHTTPClient stands up a fake gateway that records each request and replies with respBody
@@ -43,6 +44,7 @@ func newTestHTTPClient(t *testing.T, respStatus int, respBody proto.Message) (*h
 		captured.query = r.URL.Query()
 		captured.body = body
 		captured.auth = r.Header.Get("Authorization")
+		captured.version = r.Header.Get(contract.ClientVersionHeader)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(respStatus)
@@ -56,9 +58,10 @@ func newTestHTTPClient(t *testing.T, respStatus int, respBody proto.Message) (*h
 	t.Cleanup(server.Close)
 
 	client := &httpClient{
-		baseURL: server.URL,
-		token:   "test-token",
-		http:    &http.Client{Timeout: 5 * time.Second},
+		baseURL:       server.URL,
+		token:         "test-token",
+		clientVersion: "hippo/test",
+		http:          &http.Client{Timeout: 5 * time.Second},
 	}
 
 	return client, captured
@@ -82,6 +85,12 @@ func TestHTTPClientStoreMemory(t *testing.T) {
 
 	if captured.auth != "Bearer test-token" {
 		t.Fatalf("auth header = %q", captured.auth)
+	}
+
+	// The CLI's own version rides on every gateway request, so the service's deployment view can
+	// name the build calling it.
+	if captured.version != "hippo/test" {
+		t.Fatalf("%s header = %q", contract.ClientVersionHeader, captured.version)
 	}
 
 	sent := &contract.Memory{}

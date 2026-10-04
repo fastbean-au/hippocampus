@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/fastbean-au/hippocampus/auth"
 	"github.com/fastbean-au/hippocampus/contract"
@@ -91,6 +92,13 @@ type observedCaller struct {
 	// change. A token is re-minted with different roles often enough that pinning the first one seen
 	// would be wrong, and comparing before storing keeps the steady state allocation-free.
 	identity atomic.Pointer[observedIdentity]
+
+	// version is the build the client last reported in contract.ClientVersionHeader, already
+	// sanitised. Replaced only when it changes, for the reason identity is, and NOT cleared by a
+	// call that omits the header: one process can make calls through two clients, only one of which
+	// sends it, and a value that flapped to empty on every other call would be worse than one that
+	// says what the client last said.
+	version atomic.Pointer[string]
 }
 
 // observedIdentity is immutable once published, which is what lets it be swapped under an atomic
@@ -121,8 +129,21 @@ type observedCallers struct {
 	evicted bool
 }
 
+// observedCall is what one request tells the registry about its caller.
+type observedCall struct {
+	id        string
+	roles     []string
+	scoped    bool
+	transport observedTransport
+
+	// version is the client's own report of its build, already sanitised; empty when it sent none.
+	version string
+}
+
 // record notes one call from a verified client.
-func (o *observedCallers) record(id string, roles []string, scoped bool, transport observedTransport, now time.Time) {
+func (o *observedCallers) record(call observedCall, now time.Time) {
+	id, roles, scoped, transport := call.id, call.roles, call.scoped, call.transport
+
 	o.mu.RLock()
 	caller, ok := o.callers[id]
 	o.mu.RUnlock()
@@ -140,6 +161,15 @@ func (o *observedCallers) record(id string, roles []string, scoped bool, transpo
 	// kept here must be its own.
 	if current := caller.identity.Load(); current == nil || current.scoped != scoped || !slices.Equal(current.roles, roles) {
 		caller.identity.Store(&observedIdentity{roles: slices.Clone(roles), scoped: scoped})
+	}
+
+	if call.version == "" {
+		return
+	}
+
+	if current := caller.version.Load(); current == nil || *current != call.version {
+		version := call.version
+		caller.version.Store(&version)
 	}
 }
 
@@ -212,6 +242,7 @@ type observedRecord struct {
 	transports observedTransport
 	roles      []string
 	scoped     bool
+	version    string
 }
 
 // snapshot copies the registry out, sorted by client id.
@@ -239,6 +270,10 @@ func (o *observedCallers) snapshot() ([]observedRecord, bool) {
 			record.scoped = identity.scoped
 		}
 
+		if version := caller.version.Load(); version != nil {
+			record.version = *version
+		}
+
 		out = append(out, record)
 	}
 
@@ -254,7 +289,10 @@ func (o *observedCallers) snapshot() ([]observedRecord, bool) {
 // Everything this feature does not do is in the guards: no topology means no view to feed, and no
 // client_id means either that authentication is off or that the token identifies its bearer by
 // something this service does not treat as a client - in both cases there is nothing honest to draw.
-func (s *Server) observeCaller(ctx context.Context, transport observedTransport) {
+//
+// reportedVersion is the raw ClientVersionHeader value, sanitised here so neither transport's
+// adapter has to remember to.
+func (s *Server) observeCaller(ctx context.Context, transport observedTransport, reportedVersion string) {
 	if !s.topology.enabled {
 		return
 	}
@@ -264,7 +302,13 @@ func (s *Server) observeCaller(ctx context.Context, transport observedTransport)
 		return
 	}
 
-	s.observed.record(claims.ClientID, claims.Roles, len(claims.Groups) > 0, transport, time.Now())
+	s.observed.record(observedCall{
+		id:        claims.ClientID,
+		roles:     claims.Roles,
+		scoped:    len(claims.Groups) > 0,
+		transport: transport,
+		version:   sanitiseReportedVersion(reportedVersion),
+	}, time.Now())
 }
 
 // InterceptorObserveCaller records the verified caller of each RPC.
@@ -283,7 +327,13 @@ func (s *Server) InterceptorObserveCaller(ctx context.Context,
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
 	if strings.HasPrefix(info.FullMethod, hippocampusServicePrefix) {
-		s.observeCaller(ctx, observedTransportGRPC)
+		var version string
+
+		if values := metadata.ValueFromIncomingContext(ctx, contract.ClientVersionHeader); len(values) > 0 {
+			version = values[0]
+		}
+
+		s.observeCaller(ctx, observedTransportGRPC, version)
 	}
 
 	return handler(ctx, req)
@@ -301,7 +351,7 @@ func (s *Server) InterceptorObserveCaller(ctx context.Context,
 // it would make a client that only reads this view invisible in it.
 func (s *Server) HTTPMiddlewareObserveCaller(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.observeCaller(r.Context(), observedTransportHTTP)
+		s.observeCaller(r.Context(), observedTransportHTTP, r.Header.Get(contract.ClientVersionHeader))
 
 		next.ServeHTTP(w, r)
 	})
@@ -317,6 +367,11 @@ type observedSnapshot struct {
 	// many callers have been seen (and why none have, where authentication is off), and a declared
 	// component whose name matches an observed client_id - see buildObservedSnapshot.
 	attributes map[string][]topologyAttribute
+
+	// versions are the versions declared components reported as callers, by node id. Merged only
+	// where the component's own health endpoint reported none, which is the case for a declared
+	// component with no health port of its own - an MCP bridge on stdio, a script.
+	versions map[string]string
 }
 
 // buildObservedSnapshot turns the registry into nodes, edges and attributes.
@@ -330,7 +385,7 @@ type observedSnapshot struct {
 func (s *Server) buildObservedSnapshot(now time.Time) observedSnapshot {
 	records, evicted := s.observed.snapshot()
 
-	snapshot := observedSnapshot{attributes: map[string][]topologyAttribute{}}
+	snapshot := observedSnapshot{attributes: map[string][]topologyAttribute{}, versions: map[string]string{}}
 
 	declared := make(map[string]bool, len(s.topology.components))
 	for _, component := range s.topology.components {
@@ -347,6 +402,10 @@ func (s *Server) buildObservedSnapshot(now time.Time) observedSnapshot {
 				{key: "last_call", value: agoDescription(now, record.lastSeen)},
 				{key: "calls", value: strconv.FormatInt(record.calls, 10)},
 				{key: "transport", value: transportDescription(record.transports)},
+			}
+
+			if record.version != "" {
+				snapshot.versions[topologyDeclaredPrefix+record.id] = record.version
 			}
 
 			continue
@@ -378,6 +437,10 @@ func observedNodeSpec(record observedRecord, now time.Time) topologyNodeSpec {
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_CLIENT,
 		name:   record.id,
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_OBSERVED,
+
+		// The client's own claim, and shown as one: the source already says this node is OBSERVED,
+		// which is the weakest provenance the view has.
+		version: record.version,
 
 		// Never probed, and so no status and no checked_at - see property 1 at the top of this file.
 		staticStatus: contract.TopologyStatus_TOPOLOGY_STATUS_UNSPECIFIED,
