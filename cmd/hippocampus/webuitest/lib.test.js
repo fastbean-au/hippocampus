@@ -53,6 +53,11 @@ import {
   topologyCheckedLabel,
   topologyLayout,
   topologySource,
+  topologySourceHelp,
+  topologyStatusHelp,
+  topologyLegendHtml,
+  TOPOLOGY_STATUS,
+  TOPOLOGY_SOURCE,
   topologyStatus,
   topologySvg,
   topologyWarningsHtml,
@@ -1137,13 +1142,14 @@ test("topologyCheckedLabel says how fresh a status is", () => {
     /^checked /,
   );
 
-  // Never probed is not the same as probed and healthy.
+  // Never probed says nothing here: the status chip beside it already reads "not checked", and
+  // saying it twice is what made the row unreadable.
   assert.equal(
     topologyCheckedLabel(now, {
       status: "TOPOLOGY_STATUS_UNSPECIFIED",
       checkedAt: 0,
     }),
-    "not checked",
+    "",
   );
 
   // A healthy status with no check time behind it was asserted rather than probed, so saying
@@ -1417,9 +1423,10 @@ test("topologyLayout places an observed caller in the inbound column", () => {
   assert.equal(edge.toId, "self");
   assert.ok(edge.path.length > 0);
 
-  // Never probed, and the label has to say so rather than leaving the row blank - a blank reads as
-  // "checked, and fine".
-  assert.equal(topologyCheckedLabel(Date.now(), caller), "not checked");
+  // Never probed, and the row has to say so rather than leaving it blank - a blank reads as
+  // "checked, and fine". The status chip is what says it, not the freshness label.
+  assert.equal(topologyStatus(caller.node.status).label, "not checked");
+  assert.equal(topologyCheckedLabel(Date.now(), caller.node), "");
 });
 
 // The warnings are the only part of the response with no node to render them on, so losing them
@@ -2261,4 +2268,71 @@ test("footprintTableRows floors the heap at zero", () => {
   const [row] = footprintTableRows({ tables: [{ table: "memories", bytes: "10", indexBytes: "20" }] });
 
   assert.equal(row.heapBytes, 0);
+});
+
+// Every chip on the components card carries a tooltip, and a label with no explanation behind it is
+// exactly the complaint this exists to answer - so each wire value must have one.
+test("every topology status and source has help text", () => {
+  for (const [status, entry] of Object.entries(TOPOLOGY_STATUS)) {
+    assert.ok(entry.help && entry.help.length > 0, status);
+  }
+
+  for (const source of Object.keys(TOPOLOGY_SOURCE)) {
+    assert.notEqual(
+      topologySourceHelp(source),
+      topologySourceHelp("TOPOLOGY_NODE_SOURCE_FUTURE"),
+      source,
+    );
+  }
+});
+
+// The general meaning of "not checked" is not enough on its own - the reader wants to know why THIS
+// node is unchecked, and the server already says, in the spec's "probing" attribute.
+test("topologyStatusHelp gives the node's own reason", () => {
+  const collector = {
+    status: "TOPOLOGY_STATUS_UNSPECIFIED",
+    attributes: [
+      { key: "traces", value: "enabled" },
+      { key: "probing", value: "off (export is fire-and-forget)" },
+    ],
+  };
+
+  assert.match(topologyStatusHelp(collector), /^Nothing checks/);
+  assert.match(topologyStatusHelp(collector), /fire-and-forget/);
+
+  const disabled = {
+    status: "TOPOLOGY_STATUS_DISABLED",
+    attributes: [{ key: "enable_with", value: "callbacks.enabled" }],
+  };
+
+  assert.match(topologyStatusHelp(disabled), /Enable with callbacks\.enabled\./);
+
+  const failing = {
+    status: "TOPOLOGY_STATUS_UNREACHABLE",
+    statusDetail: "connection refused",
+    attributes: [{ key: "probing", value: "ignored" }],
+  };
+
+  assert.match(topologyStatusHelp(failing), /connection refused$/);
+
+  // A healthy node's tooltip is the definition alone; a stray attribute must not be read as a reason.
+  assert.equal(
+    topologyStatusHelp({
+      status: "TOPOLOGY_STATUS_OK",
+      attributes: [{ key: "probing", value: "on" }],
+    }),
+    TOPOLOGY_STATUS.TOPOLOGY_STATUS_OK.help,
+  );
+});
+
+test("topologyLegendHtml lists every status and source", () => {
+  const html = topologyLegendHtml();
+
+  for (const entry of Object.values(TOPOLOGY_STATUS)) {
+    assert.ok(html.includes(entry.label), entry.label);
+  }
+
+  for (const label of Object.values(TOPOLOGY_SOURCE)) {
+    assert.ok(html.includes(label), label);
+  }
 });

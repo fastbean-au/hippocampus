@@ -983,6 +983,50 @@ svg.topology .off .tdetail {
 .tstatus.off {
   color: var(--muted);
 }
+/* As chips, only the status carries colour: it is the one label about health. The source is a
+   neutral chip, and "not checked"/"not configured" are dashed so they read as an absence of a
+   reading rather than as a reading of their own. */
+.pill.tstatus {
+  font-size: 11px;
+}
+.pill.tstatus.ok {
+  border-color: var(--good);
+}
+.pill.tstatus.degraded {
+  border-color: var(--warn);
+}
+.pill.tstatus.bad {
+  border-color: var(--bad);
+}
+.pill.tstatus.off {
+  border-style: dashed;
+}
+.tcomp-head .pill[title] {
+  cursor: help;
+}
+.tlegend {
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.tlegend summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.tlegend h4 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.tlegend dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  align-items: baseline;
+}
+.tlegend dd {
+  margin: 0;
+}
 .tcomp {
   border: 1px solid var(--border);
   border-radius: 8px;

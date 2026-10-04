@@ -39,8 +39,11 @@ import {
   topologyCheckedLabel,
   topologyLayout,
   topologyWarningsHtml,
+  topologyLegendHtml,
   topologySource,
+  topologySourceHelp,
   topologyStatus,
+  topologyStatusHelp,
   topologySvg,
   tourPlacement,
   tourProgress,
@@ -4131,11 +4134,13 @@ function renderTopologyComponents(nodes) {
       `<div class="tcomp" data-node="${esc(node.id)}">` +
       `<div class="tcomp-head">` +
       `<h3>${esc(node.name)}</h3>` +
-      `<span class="tstatus ${status.cls}">${esc(status.label)}</span>` +
-      `<span class="muted fs-12">${esc(topologySource(node.source))}</span>` +
-      (checked ? `<span class="muted fs-12">${esc(checked)}</span>` : "") +
+      `<span class="pill tstatus ${status.cls}" title="${esc(topologyStatusHelp(node))}">${esc(status.label)}</span>` +
+      `<span class="pill tsource" title="${esc(topologySourceHelp(node.source))}">${esc(topologySource(node.source))}</span>` +
       (node.version
-        ? `<span class="pill meta">${esc(node.version)}</span>`
+        ? `<span class="pill meta" title="The version this component reports">${esc(node.version)}</span>`
+        : "") +
+      (checked
+        ? `<span class="muted fs-12" title="${esc(checkedTitle(node))}">${esc(checked)}</span>`
         : "") +
       `</div>` +
       (node.detail
@@ -4148,7 +4153,15 @@ function renderTopologyComponents(nodes) {
       `</div>`;
   }
 
-  $("topology-components").innerHTML = html;
+  $("topology-components").innerHTML = topologyLegendHtml() + html;
+}
+
+// checkedTitle is the absolute time behind "checked 40s ago", for a reader comparing this view with
+// a log line or an alert.
+function checkedTitle(node) {
+  const ms = Number(BigInt(node.checkedAt || 0) / 1000000n);
+
+  return "Last checked " + new Date(ms).toLocaleString();
 }
 
 // selectTopologyNode ties the two panels together: clicking a box in the diagram highlights and

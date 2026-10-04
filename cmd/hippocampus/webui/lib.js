@@ -1077,20 +1077,67 @@ export function tierAtLeast(role, required) {
   return held >= want;
 }
 
-// TOPOLOGY_STATUS describes each wire status: the word to show, and the class that colours it.
-// UNSPECIFIED is not an error - it is "nothing is checking this", which several nodes report by
-// design (the collector, the identity provider), so it reads as a plain statement rather than as a
-// warning.
+// TOPOLOGY_STATUS describes each wire status: the word to show, the class that colours it, and the
+// sentence its chip carries as a tooltip. UNSPECIFIED is not an error - it is "nothing is checking
+// this", which several nodes report by design (the collector, the identity provider), so it reads as
+// a plain statement rather than as a warning.
+//
+// The help exists because each label is a terse answer to a question the page never asks out loud:
+// "not checked" beside a box reads as "nobody got round to it" unless something says it is policy.
 export const TOPOLOGY_STATUS = {
-  TOPOLOGY_STATUS_OK: { label: "reachable", cls: "ok" },
-  TOPOLOGY_STATUS_DEGRADED: { label: "degraded", cls: "degraded" },
-  TOPOLOGY_STATUS_UNREACHABLE: { label: "unreachable", cls: "bad" },
-  TOPOLOGY_STATUS_DISABLED: { label: "not configured", cls: "off" },
-  TOPOLOGY_STATUS_UNSPECIFIED: { label: "not checked", cls: "off" },
+  TOPOLOGY_STATUS_OK: {
+    label: "reachable",
+    cls: "ok",
+    help: "The last background check reached this component and it answered normally.",
+  },
+  TOPOLOGY_STATUS_DEGRADED: {
+    label: "degraded",
+    cls: "degraded",
+    help: "The component answered, but reported a problem of its own.",
+  },
+  TOPOLOGY_STATUS_UNREACHABLE: {
+    label: "unreachable",
+    cls: "bad",
+    help: "The last background check could not reach this component.",
+  },
+  TOPOLOGY_STATUS_DISABLED: {
+    label: "not configured",
+    cls: "off",
+    help: "Switched off in this instance's configuration, so there is nothing to check.",
+  },
+  TOPOLOGY_STATUS_UNSPECIFIED: {
+    label: "not checked",
+    cls: "off",
+    help: "Nothing checks this component's health, deliberately. It is shown because it is configured or was seen, not because it was found to be working.",
+  },
 };
 
 export function topologyStatus(status) {
   return TOPOLOGY_STATUS[status] || TOPOLOGY_STATUS.TOPOLOGY_STATUS_UNSPECIFIED;
+}
+
+// topologyStatusHelp is the tooltip for one node's status chip: what the status means in general,
+// then why it holds for THIS node. The reason is the server's, never composed here - a failing
+// node's status_detail, or for an unprobed one the "probing" attribute its spec already carries
+// ("off (export is fire-and-forget)"), which is the per-node answer to "why is nobody checking?".
+export function topologyStatusHelp(node) {
+  const help = topologyStatus(node.status).help;
+  let reason = node.statusDetail || "";
+
+  if (!reason && node.status !== "TOPOLOGY_STATUS_OK") {
+    const attribute = (node.attributes || []).find(
+      (a) => a.key === "probing" || a.key === "enable_with",
+    );
+
+    if (attribute) {
+      reason =
+        attribute.key === "enable_with"
+          ? "Enable with " + attribute.value + "."
+          : "Probing " + attribute.value + ".";
+    }
+  }
+
+  return reason ? help + " " + reason : help;
 }
 
 // TOPOLOGY_SOURCE explains where a node came from. This is the legend the whole view turns on: an
@@ -1104,8 +1151,54 @@ export const TOPOLOGY_SOURCE = {
   TOPOLOGY_NODE_SOURCE_OBSERVED: "seen calling this instance",
 };
 
+// TOPOLOGY_SOURCE_HELP is each source's tooltip, and says what the source does and does NOT prove -
+// the second half being the part a reader most often gets wrong, an observed caller above all.
+export const TOPOLOGY_SOURCE_HELP = {
+  TOPOLOGY_NODE_SOURCE_SELF: "The instance serving this page.",
+  TOPOLOGY_NODE_SOURCE_CONFIGURED:
+    "Named in this instance's own configuration: something it dials out to.",
+  TOPOLOGY_NODE_SOURCE_DISCOVERED:
+    "Another instance on the same store, found through the heartbeat each one writes there.",
+  TOPOLOGY_NODE_SOURCE_DECLARED:
+    "Listed by an operator in topology.components, and checked over its /readyz.",
+  TOPOLOGY_NODE_SOURCE_OBSERVED:
+    "Inferred from authenticated calls arriving here. A call proves it was alive then, not that it is healthy now.",
+};
+
 export function topologySource(source) {
   return TOPOLOGY_SOURCE[source] || "unknown";
+}
+
+export function topologySourceHelp(source) {
+  return (
+    TOPOLOGY_SOURCE_HELP[source] ||
+    "This console does not recognise where this component came from."
+  );
+}
+
+// topologyLegendHtml renders the same tooltips as a list, for the readers a tooltip never reaches -
+// a touch screen has no hover. Built from the two tables above rather than written into the page,
+// so the legend and the chips cannot say different things.
+export function topologyLegendHtml() {
+  let statuses = "";
+
+  for (const status of Object.values(TOPOLOGY_STATUS)) {
+    statuses += `<dt><span class="pill tstatus ${status.cls}">${esc(status.label)}</span></dt><dd>${esc(status.help)}</dd>`;
+  }
+
+  let sources = "";
+
+  for (const [source, label] of Object.entries(TOPOLOGY_SOURCE)) {
+    sources += `<dt><span class="pill tsource">${esc(label)}</span></dt><dd>${esc(TOPOLOGY_SOURCE_HELP[source])}</dd>`;
+  }
+
+  return (
+    `<details class="tlegend"><summary>What these labels mean</summary>` +
+    `<h4>Status: its health at the last background check</h4><dl>${statuses}</dl>` +
+    `<h4>Source: how this instance knows about it</h4><dl>${sources}</dl>` +
+    `<p class="muted fs-12">A <span class="pill meta">version</span> chip is the version the component itself reports.</p>` +
+    `</details>`
+  );
 }
 
 // TOPOLOGY_COLUMNS places each node kind in one of three columns: what calls this instance, the
@@ -1307,7 +1400,7 @@ export function topologySvg(layout) {
 
     boxes +=
       `<g class="tnode ${status.cls}" data-act="topology-select" data-node="${esc(box.id)}" tabindex="0" role="button">` +
-      `<title>${esc(box.node.name)} — ${esc(status.label)}${version ? " — " + esc(version) : ""}${detail ? " — " + esc(detail) : ""}</title>` +
+      `<title>${esc(box.node.name)} — ${esc(status.label)}, ${esc(topologySource(box.node.source))}${version ? " — " + esc(version) : ""}${detail ? " — " + esc(detail) : ""}</title>` +
       `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="8"></rect>` +
       `<circle class="tdot" cx="${box.x + 14}" cy="${box.y + 18}" r="4"></circle>` +
       `<text class="tname" x="${box.x + 26}" y="${box.y + 22}">${nameTspans(box)}</text>` +
@@ -1480,11 +1573,9 @@ export function topologyCheckedLabel(nowMs, node) {
   // A status with no check time behind it was asserted rather than probed - the store-backed search
   // index is the case, since it shares the store's connection and the store node already reports
   // whether that is up. Saying "reachable, not checked" of it reads as a contradiction, so nothing
-  // is said. An UNSPECIFIED status with no check time is the genuinely unprobed case, and that one
-  // is worth saying out loud.
-  if (!checked) {
-    return node.status === "TOPOLOGY_STATUS_OK" ? "" : "not checked";
-  }
+  // is said. Nor is anything said of the genuinely unprobed case: its status chip already reads "not
+  // checked", and repeating it beside the chip was the console saying the same thing twice.
+  if (!checked) return "";
 
   return "checked " + ageLabel(nowMs, node.checkedAt);
 }

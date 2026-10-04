@@ -57,6 +57,20 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Changed
+
+- **The deployment view's labels now explain themselves.** Each component's status and source are
+  chips with a tooltip saying what the label means and, for a status, why it holds for that node —
+  the server's own `status_detail`, or for an unprobed node its `probing` reason ("export is
+  fire-and-forget"). A collapsible legend above the components lists every label, for readers a
+  tooltip never reaches. Only the status chip is coloured; the source is neutral and the version
+  keeps its monospace chip.
+
+### Fixed
+
+- **"not checked" no longer appears twice on an unprobed component.** The freshness label repeated
+  what the status already said; it is now shown only for a status that a check actually produced.
+
 ## [0.51.0] - 2026-10-04
 
 ### Added
