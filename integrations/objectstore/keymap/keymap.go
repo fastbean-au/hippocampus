@@ -24,9 +24,16 @@
 //
 // # What is not mappable
 //
-// The id column is VARCHAR(255) under utf8mb4 on MySQL, so an id is bounded at 255 characters. An
-// object whose bucket and key do not fit, or whose key is not valid UTF-8 (a proto3 string must
-// be), has no id here and cannot be managed by this integration at all.
+// An id is bounded at types.MaxIdBytes, the longest id the service will store (128 bytes - bytes, so
+// a key of multi-byte characters reaches it sooner). An object whose bucket and key do not fit, or
+// whose key is not valid UTF-8 (a proto3 string must be), has no id here and cannot be managed by
+// this integration at all.
+//
+// The bound has to be the SERVICE's, and not merely a bound. It was once MySQL's 255-character id
+// column, which is wider than what StoreMemory accepts, so an object whose id fell between the two
+// was mapped here, could never be registered by its producer, was reported absent by the existence
+// check - and was deleted by an armed sweep: exactly the outcome the next paragraph rules out
+// (TODO-3 item 142).
 //
 // Such an object is not an error to be retried, and it is specifically NOT a candidate for
 // deletion: the reverse sweep cannot tell an object it failed to map from an object nobody ever
@@ -40,12 +47,13 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/fastbean-au/hippocampus/types"
 )
 
-// MaxIdRunes bounds a derived id. It is MySQL's id column width (VARCHAR(255) under utf8mb4, so
-// 255 characters rather than bytes); SQLite and Postgres have no such bound, but an id that only
-// works on two of the three dialects is not one this integration is prepared to mint.
-const MaxIdRunes = 255
+// MaxIdBytes bounds a derived id, in bytes. It is the service's own id limit rather than a copy of
+// it, so the two cannot drift: an id this package mints is one a producer can always register.
+const MaxIdBytes = types.MaxIdBytes
 
 // ErrUnmappable reports an object this integration cannot address: one whose derived id would be
 // too long, or whose bucket or key holds something an id may not. Callers match it with errors.Is
@@ -69,9 +77,9 @@ func MemoryId(bucket string, key string) (string, error) {
 
 	id := bucket + "/" + key
 
-	if n := utf8.RuneCountInString(id); n > MaxIdRunes {
-		return "", fmt.Errorf("%w: the id would be %d characters, over the %d the store allows",
-			ErrUnmappable, n, MaxIdRunes)
+	if n := len(id); n > MaxIdBytes {
+		return "", fmt.Errorf("%w: the id would be %d bytes, over the %d the store allows",
+			ErrUnmappable, n, MaxIdBytes)
 	}
 
 	return id, nil
@@ -97,8 +105,8 @@ func Object(id string) (string, string, error) {
 		return "", "", err
 	}
 
-	if n := utf8.RuneCountInString(id); n > MaxIdRunes {
-		return "", "", fmt.Errorf("%w: %d characters is over the %d the store allows", ErrUnmappable, n, MaxIdRunes)
+	if n := len(id); n > MaxIdBytes {
+		return "", "", fmt.Errorf("%w: %d bytes is over the %d the store allows", ErrUnmappable, n, MaxIdBytes)
 	}
 
 	return bucket, key, nil

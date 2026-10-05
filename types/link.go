@@ -18,7 +18,7 @@ import (
 const (
 	MaxLinks            = 128
 	MaxLinkSignificance = 1_000_000
-	maxLinkIdLength     = 128
+	maxLinkIdLength     = MaxIdBytes
 )
 
 // Link is one directed edge from the item carrying it to the item it names. The near end is

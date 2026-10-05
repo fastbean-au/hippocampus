@@ -47,10 +47,14 @@ using a different id scheme produces no error, no warning and no reinforcement. 
 its own hit rate for that; see [when the tap reinforces
 nothing](#when-the-tap-reinforces-nothing).
 
-**A key over 255 characters cannot be managed.** The store's id column is `VARCHAR(255)` on MySQL, so
-an id that does not fit is refused rather than hashed. Such objects are skipped by the tap and — this
-is the important half — are **never** deleted by the sweep, which cannot tell an object it failed to
-map from one nobody asked it to manage.
+**An object whose id would be over 128 bytes cannot be managed.** That is the longest id the service
+will store, and the id is `<bucket>/<key>`, so the key gets 128 bytes less the bucket name and the
+slash — fewer characters if the key uses multi-byte ones. An id that does not fit is refused rather
+than hashed. Such objects are skipped by the tap and — this is the important half — are **never**
+deleted by the sweep, which cannot tell an object it failed to map from one nobody asked it to
+manage. (In 0.51.1 and earlier the bound was MySQL's 255-character id column, which is wider than what the
+service accepts: an object whose id fell between the two could never be registered, and an armed
+sweep deleted it.)
 
 ## The gateway
 

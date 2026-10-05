@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 func TestMemoryIdRoundTrips(t *testing.T) {
@@ -76,7 +78,7 @@ func TestMemoryIdRefusesWhatCannotBeAnId(t *testing.T) {
 		{name: "a key with a newline", bucket: "payloads", key: "a\nb"},
 		{name: "a key with a NUL", bucket: "payloads", key: "a\x00b"},
 		{name: "a key that is not valid UTF-8", bucket: "payloads", key: "a\xffb"},
-		{name: "a key too long to be an id", bucket: "payloads", key: strings.Repeat("k", MaxIdRunes)},
+		{name: "a key too long to be an id", bucket: "payloads", key: strings.Repeat("k", MaxIdBytes)},
 	}
 
 	for _, v := range cases {
@@ -92,22 +94,46 @@ func TestMemoryIdRefusesWhatCannotBeAnId(t *testing.T) {
 	}
 }
 
-// The bound is on CHARACTERS rather than bytes, because that is what MySQL's VARCHAR(255) under
-// utf8mb4 counts - a key of multi-byte runes that fits must not be refused.
-func TestTheLengthBoundCountsCharacters(t *testing.T) {
+// TestMappableIsExactlyWhatTheServiceAccepts pins the keymap's bound to the service's own id check.
+// An id the keymap maps but the service refuses is the dangerous mismatch: the producer can never
+// register its pointer-memory, the existence check reports it absent, and an armed sweep deletes the
+// object after --sweep-min-age - the one thing the package promises never to do to an object it
+// cannot manage (TODO-3 item 142). The keymap once bounded ids at MySQL's 255 characters while the
+// service refused anything over 128 bytes.
+func TestMappableIsExactlyWhatTheServiceAccepts(t *testing.T) {
 	bucket := "b"
-	key := strings.Repeat("é", MaxIdRunes-len(bucket)-1)
 
-	id, err := MemoryId(bucket, key)
-	if err != nil {
-		t.Fatalf("expected a %d-character id to be accepted: %s", MaxIdRunes, err.Error())
+	keys := map[string]string{
+		"127 bytes":                     strings.Repeat("k", 125),
+		"128 bytes":                     strings.Repeat("k", 126),
+		"129 bytes":                     strings.Repeat("k", 127),
+		"200 bytes":                     strings.Repeat("k", 198),
+		"255 characters":                strings.Repeat("k", 253),
+		"multi-byte, 100 runes":         strings.Repeat("é", 98),
+		"multi-byte, exactly 128 bytes": strings.Repeat("é", 63),
+		"multi-byte, one byte too many": strings.Repeat("é", 63) + "x",
 	}
 
-	if _, err := MemoryId(bucket, key+"x"); !errors.Is(err, ErrUnmappable) {
-		t.Errorf("expected one character more to be refused, got %v", err)
-	}
+	for name, key := range keys {
+		t.Run(name, func(t *testing.T) {
+			id := bucket + "/" + key
+			memory := types.Memory{Id: id, Body: "pointer"}
+			serviceAccepts := memory.ValidateInsert(0, false) == nil
 
-	if _, _, err := Object(id); err != nil {
-		t.Errorf("expected the longest legal id to reverse: %s", err.Error())
+			_, err := MemoryId(bucket, key)
+			keymapMaps := err == nil
+
+			if keymapMaps != serviceAccepts {
+				t.Errorf("a %d-byte id: keymap maps it = %t, the service accepts it = %t", len(id), keymapMaps, serviceAccepts)
+			}
+
+			if !serviceAccepts && !errors.Is(err, ErrUnmappable) {
+				t.Errorf("a %d-byte id the service refuses must be ErrUnmappable, got %v", len(id), err)
+			}
+
+			if _, _, err := Object(id); (err == nil) != serviceAccepts {
+				t.Errorf("a %d-byte id: Object accepts it = %t, the service accepts it = %t", len(id), err == nil, serviceAccepts)
+			}
+		})
 	}
 }

@@ -131,6 +131,14 @@ itself which service version it was built against.
   2,147,483,647 wrapped to a negative value: below every deletion threshold, and first in line for
   eviction. The two are now added as floating point. Preview, explain and the forgotten log, which
   report the same value, were wrong in the same way and are fixed with it.
+- **The object-reaper no longer deletes objects whose pointer-memory could never be registered.**
+  The keymap bounded a `<bucket>/<key>` id at MySQL's 255-character column, but the service refuses
+  any id over 128 bytes, so an object whose id fell between the two was treated as manageable,
+  could never be registered by its producer, read as forgotten, and was deleted by an armed sweep
+  after `--sweep-min-age`. The keymap's bound is now the service's own (`types.MaxIdBytes`, counted
+  in bytes), so such objects are unmappable: skipped by the tap and never deleted. An id in that range
+  registered through `ImportBatch`, which does not apply the length check, is now unmappable too and
+  is left alone rather than reinforced.
 
 ## [0.51.1] - 2026-10-05
 

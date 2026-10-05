@@ -112,6 +112,12 @@ func (m *Memory) ToProto() *contract.Memory {
 	}
 }
 
+// MaxIdBytes is the longest id a memory or an event may have, in BYTES (len, not runes). It is
+// exported because it is a contract beyond this package: anything that derives an id - the
+// object-storage keymap, which mints an id from a bucket and key - must refuse what this refuses,
+// or it will mint ids no producer can ever register (TODO-3 item 142).
+const MaxIdBytes = 128
+
 func (m *Memory) ValidateInsert(maxMemoryBodyLength int, update bool) error {
 	switch {
 	case update && len(m.Id) == 0:
@@ -121,7 +127,7 @@ func (m *Memory) ValidateInsert(maxMemoryBodyLength int, update bool) error {
 		// place on the significance scale, to be ranked later via UpdateMemory or a placement. Only
 		// a negative value is rejected: ranks are non-negative by design.
 		return fmt.Errorf("memory not valid - significance must not be < 0")
-	case len(m.Id) > 128:
+	case len(m.Id) > MaxIdBytes:
 		return fmt.Errorf("memory not valid - id too long")
 	case !update && len(m.Body) == 0:
 		return fmt.Errorf("memory not valid - no body provided")

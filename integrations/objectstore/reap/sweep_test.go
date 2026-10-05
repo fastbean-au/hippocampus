@@ -3,6 +3,7 @@ package reap
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +141,28 @@ func TestAnUnmappableObjectIsSkipped(t *testing.T) {
 
 	if store.Len() != 1 {
 		t.Error("expected the unmappable object to survive")
+	}
+}
+
+// TestAKeyTheServiceCannotRegisterIsNeverDeleted is the same promise for a key inside the gap
+// item 142 closed: longer than the service accepts as an id, shorter than the keymap's old bound. A
+// producer can never register a memory for such an object, so the store never holds one - and while
+// the keymap mapped it, an armed sweep read that absence as "forgotten" and deleted the object.
+func TestAKeyTheServiceCannotRegisterIsNeverDeleted(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+
+	key := strings.Repeat("k", 150)
+
+	store := objects.NewMemory("payloads")
+	store.Put(key, []byte("payload"), old)
+
+	summary, err := newSweep(t, store, &fakeHeld{holds: map[string]bool{}}, SweepConfig{}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run failed: %s", err.Error())
+	}
+
+	if summary.Result.Deleted != 0 || store.Len() != 1 {
+		t.Errorf("an armed sweep deleted an object no producer could register: %+v", summary)
 	}
 }
 

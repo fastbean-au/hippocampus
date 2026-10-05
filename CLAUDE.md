@@ -1712,9 +1712,11 @@ github.com/fastbean-au/hippocampus => ../..`), which is what keeps the AWS SDK o
     `keymap.MemoryId` is `<bucket>/<key>`, not a hash, and the reason is the catch-up path rather
     than anything about the tap — a `ForgottenMemory` carries an id and deliberately never a body, so
     an agent holding only a hash could read the log, learn that forty thousand memories went, and be
-    unable to name one object. The cost is a 255-character bound (MySQL's id column), and a key over
-    it is **unmappable**: skipped by the tap and never deleted by the sweep, which cannot tell an
-    object it failed to map from one nobody asked it to manage. (2) **Reinforcement is stateless and
+    unable to name one object. The cost is a length bound, and it must be the **service's** id
+    limit (`types.MaxIdBytes`, 128 bytes) rather than MySQL's 255-character column: an id the keymap
+    maps but the service refuses can never be registered, reads as absent, and is deleted by an armed
+    sweep (TODO-3 item 142). A key over it is **unmappable**: skipped by the tap and never deleted by
+    the sweep, which cannot tell an object it failed to map from one nobody asked it to manage. (2) **Reinforcement is stateless and
     its failure is silent**: recall is an `UPDATE ... WHERE id IN (...)` that matches nothing on a
     miss, which is what lets the tap hold no lookup table — and means a producer using any other id
     scheme produces no error and no reinforcement, forever. So the hit rate is a metric, a sustained

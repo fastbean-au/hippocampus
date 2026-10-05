@@ -80,7 +80,7 @@ func (e *Event) Validate(update bool) error {
 		// place on the significance scale, to be ranked later via UpdateEventSignificance or a
 		// placement. Only a negative value is rejected: ranks are non-negative by design.
 		return fmt.Errorf("event not valid - significance must not be < 0")
-	case len(e.Id) > 128:
+	case len(e.Id) > MaxIdBytes:
 		return fmt.Errorf("event not valid - id too long")
 	case !update && len(e.Name) == 0:
 		return fmt.Errorf("event not valid - no name provided")
