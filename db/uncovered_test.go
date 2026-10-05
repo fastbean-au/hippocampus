@@ -91,7 +91,7 @@ func TestDeleteEventMemories(t *testing.T) {
 	mustCreateMemory(t, db, types.Memory{Id: "m2", TimeStamp: 100, Significance: 1, EventId: "e1", Body: "b"})
 	mustCreateMemory(t, db, types.Memory{Id: "m3", TimeStamp: 100, Significance: 1, EventId: "e2", Body: "c"})
 
-	n, err := db.DeleteEventMemories(context.Background(), "e1")
+	n, err := db.DeleteEventMemories(context.Background(), "e1", nil)
 	if err != nil {
 		t.Fatalf("DeleteEventMemories: %s", err)
 	}

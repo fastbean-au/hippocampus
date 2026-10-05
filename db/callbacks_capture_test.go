@@ -250,7 +250,7 @@ func TestAllDeletionsWidensTheFeed(t *testing.T) {
 		t.Fatalf("DeleteMemories: %s", err.Error())
 	}
 
-	if _, err := d.DeleteEventMemories(ctx, "e1"); err != nil {
+	if _, err := d.DeleteEventMemories(ctx, "e1", nil); err != nil {
 		t.Fatalf("DeleteEventMemories: %s", err.Error())
 	}
 

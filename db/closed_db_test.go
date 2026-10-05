@@ -45,7 +45,7 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 		{"DeleteMemories", func() error { _, err := db.DeleteMemories(ctx, []string{"m1"}); return err }},
 		{"RecallMemories", func() error { _, err := db.RecallMemories(ctx, []string{"m1"}); return err }},
 		{"ReplaceMemoriesWithSummary", func() error {
-			_, err := db.ReplaceMemoriesWithSummary(ctx, "e1", types.Memory{Id: "s1", Significance: 1, TimeStamp: 1, Body: "x"})
+			_, err := db.ReplaceMemoriesWithSummary(ctx, "e1", nil, types.Memory{Id: "s1", Significance: 1, TimeStamp: 1, Body: "x"})
 
 			return err
 		}},
@@ -70,7 +70,7 @@ func TestStoreMethods_ErrorOnClosedDB(t *testing.T) {
 		{"GetEvents", func() error { _, err := db.GetEvents(ctx, EventFilter{}); return err }},
 		{"CountEventsFiltered", func() error { _, err := db.CountEventsFiltered(ctx, EventFilter{}); return err }},
 		{"MergeEventMemories", func() error { return db.MergeEventMemories(ctx, "e1", "e2") }},
-		{"DeleteEventMemories", func() error { _, err := db.DeleteEventMemories(ctx, "e1"); return err }},
+		{"DeleteEventMemories", func() error { _, err := db.DeleteEventMemories(ctx, "e1", nil); return err }},
 		{"UnsetMemoriesEventId", func() error { _, err := db.UnsetMemoriesEventId(ctx, "e1"); return err }},
 		{"CalculateSignificancePercentile", func() error { _, err := db.CalculateSignificancePercentile(ctx, 50); return err }},
 		{"ResolveSignificanceLevel", func() error {

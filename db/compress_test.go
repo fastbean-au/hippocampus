@@ -588,7 +588,7 @@ func TestReplaceMemoriesWithSummaryCompresses(t *testing.T) {
 
 	summary := types.Memory{Id: "s1", TimeStamp: 200, Significance: 6, EventId: "e1", Body: body, IsSummary: true}
 
-	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", summary); err != nil {
+	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, summary); err != nil {
 		t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
 	}
 

@@ -370,12 +370,64 @@ func (s *Server) DeleteEventsByFilter(
 	return res, nil
 }
 
-// clearEventMemories empties one event ahead of its deletion, either by deleting its memories or by
-// clearing their event_id, and reports how many memories it moved. It is the same choice
-// DeleteEvent makes, and it keeps the search index in step exactly as that handler does.
+// clearEventMemories empties one event as it is deleted, either by deleting its memories or by
+// clearing their event_id, and reports how many memories it moved. DeleteEvent and
+// DeleteEventsByFilter both go through it, and it keeps the search index in step.
+//
+// For a group-scoped caller it acts on the caller's memories only (TODO-3 item 139). An event in
+// their scope can still hold another group's memory - an unscoped or multi-group writer can attach
+// one - and deleting the caller's event must not delete that memory. The memory is detached instead,
+// since a memory naming a deleted event is the one state no consolidation pass can see through. The
+// count covers the caller's memories only, so it does not tell them the other one exists - which is
+// also why this does not refuse instead: a refusal would say the same thing.
 func (s *Server) clearEventMemories(ctx context.Context, eventId string, deleteMemories bool) (int64, error) {
+	groups, bound := s.scopedGroups(ctx)
+
+	if !bound {
+		return s.clearAllEventMemories(ctx, eventId, deleteMemories)
+	}
+
+	// Read before anything moves: these are the ids the index has to be told about, and the count
+	// the caller is given.
+	inScope, err := s.db.MemoryIdsMatching(ctx, db.MemoryFilter{EventId: eventId, Groups: groups})
+	if err != nil {
+		return 0, err
+	}
+
+	var deleted int64
+
 	if deleteMemories {
-		cnt, err := s.db.DeleteEventMemories(ctx, eventId)
+		cnt, err := s.db.DeleteEventMemories(ctx, eventId, groups)
+		if err != nil {
+			return 0, err
+		}
+
+		deleted = int64(cnt)
+
+		tel.memoriesDeleted.Add(ctx, deleted)
+		s.searchIdx().DeleteMemories(inScope)
+	}
+
+	// Whatever is left is either the caller's own (when not deleting) or another group's: detached
+	// either way, because the event is going.
+	if _, err := s.db.UnsetMemoriesEventId(ctx, eventId); err != nil {
+		return deleted, err
+	}
+
+	s.searchIdx().SetEventId(eventId, "")
+
+	if deleteMemories {
+		return deleted, nil
+	}
+
+	return int64(len(inScope)), nil
+}
+
+// clearAllEventMemories is clearEventMemories for an unscoped caller: every memory of the event,
+// whatever its group.
+func (s *Server) clearAllEventMemories(ctx context.Context, eventId string, deleteMemories bool) (int64, error) {
+	if deleteMemories {
+		cnt, err := s.db.DeleteEventMemories(ctx, eventId, nil)
 		if err != nil {
 			return 0, err
 		}

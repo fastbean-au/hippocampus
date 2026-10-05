@@ -664,7 +664,7 @@ func TestPostgres_ConsolidationAndSummarisation(t *testing.T) {
 		t.Errorf("expected e1 as the sole candidate with 3 memories, got %+v", candidates)
 	}
 
-	replaced, err := database.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "sum", TimeStamp: 300, Significance: 5, EventId: "e1", Body: "summary", IsSummary: true})
+	replaced, err := database.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, types.Memory{Id: "sum", TimeStamp: 300, Significance: 5, EventId: "e1", Body: "summary", IsSummary: true})
 	if err != nil {
 		t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
 	}

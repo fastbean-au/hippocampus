@@ -892,11 +892,15 @@ func scanIds(rows *sql.Rows) ([]string, error) {
 	return ids, rows.Err()
 }
 
-// DeleteEventMemories deletes every memory belonging to an event. It reads the ids first rather
-// than deleting straight off event_id: the link graph is keyed on memory id, so pruning needs to
-// know what went. The read and the delete share one transaction, so a memory attached to the event
-// in between is not deleted with its links left behind.
-func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, error) {
+// DeleteEventMemories deletes every memory belonging to an event, within the caller's group scope.
+// It reads the ids first rather than deleting straight off event_id: the link graph is keyed on
+// memory id, so pruning needs to know what went. The read and the delete share one transaction, so
+// a memory attached to the event in between is not deleted with its links left behind.
+//
+// groups is the caller's scope (see MemoryFilter.Groups), empty meaning unrestricted. An event can
+// hold another group's memory - only an unscoped or multi-group writer can attach one, but nothing
+// stops them - and a scoped caller deleting their own event must not take it (TODO-3 item 139).
+func (d *DB) DeleteEventMemories(ctx context.Context, eventId string, groups []string) (int, error) {
 	log.Trace("func() db.DeleteEventMemories")
 
 	tx, cancel, err := d.beginTx(ctx)
@@ -905,7 +909,7 @@ func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, erro
 	}
 	defer cancel()
 
-	ids, err := d.memoryIdsForEvent(tx, eventId)
+	ids, err := d.memoryIdsForEvent(tx, eventId, groups)
 	if err != nil {
 		_ = tx.Rollback()
 
@@ -921,7 +925,9 @@ func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, erro
 		return 0, err
 	}
 
-	res, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE event_id = ?`), eventId)
+	deleteQuery, deleteArgs := appendGroupScope(`DELETE FROM memories WHERE event_id = ?`, []any{eventId}, "", groups)
+
+	res, err := tx.Exec(d.rebind(deleteQuery), deleteArgs...)
 	if err != nil {
 		_ = tx.Rollback()
 
@@ -965,8 +971,10 @@ func (d *DB) DeleteEventMemories(ctx context.Context, eventId string) (int, erro
 // memoryIdsForEvent lists an event's memory ids inside a transaction, for the delete paths that
 // need to prune links but only know the event. Rows are drained and closed before the caller
 // issues its own write - the SQLite pool holds one connection.
-func (d *DB) memoryIdsForEvent(tx *sql.Tx, eventId string) ([]string, error) {
-	rows, err := tx.Query(d.rebind(`SELECT id FROM memories WHERE event_id = ?`), eventId)
+func (d *DB) memoryIdsForEvent(tx *sql.Tx, eventId string, groups []string) ([]string, error) {
+	query, args := appendGroupScope(`SELECT id FROM memories WHERE event_id = ?`, []any{eventId}, "", groups)
+
+	rows, err := tx.Query(d.rebind(query), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1441,7 +1449,10 @@ func (d *DB) MergeEventMemories(ctx context.Context, toEventId string, fromEvent
 // ReplaceMemoriesWithSummary deletes every memory associated with eventId and inserts the given
 // summary memory in their place, all within a single transaction. Returns the number of memories
 // replaced.
-func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error) {
+//
+// groups is the caller's scope, empty meaning unrestricted, exactly as for DeleteEventMemories: only
+// the caller's memories of the event are replaced, and another group's are left where they are.
+func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, groups []string, summary types.Memory) (int, error) {
 	// Deletes an event's memories and prunes their links in one transaction - the same table order,
 	// and so the same retry. Replaying is safe: the summary is inserted by id, so a replayed attempt
 	// writes the same row rather than a second one. See withTxRetry.
@@ -1450,7 +1461,7 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 	err := d.withTxRetry(ctx, "replace memories with summary", func() error {
 		var attemptErr error
 
-		replaced, attemptErr = d.replaceMemoriesWithSummaryOnce(ctx, eventId, summary)
+		replaced, attemptErr = d.replaceMemoriesWithSummaryOnce(ctx, eventId, groups, summary)
 
 		return attemptErr
 	})
@@ -1460,7 +1471,7 @@ func (d *DB) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, sum
 
 // replaceMemoriesWithSummaryOnce is one attempt at the transaction above; it owns its transaction
 // from BEGIN to COMMIT so a caller can replay it, and must not be called directly.
-func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string, summary types.Memory) (int, error) {
+func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string, groups []string, summary types.Memory) (int, error) {
 	log.Trace("func() db.ReplaceMemoriesWithSummary")
 
 	// Resolve the summary's significance level before the delete/insert transaction (level
@@ -1480,7 +1491,7 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 
 	// Read the ids before the delete: the summary replaces these memories, so their links go with
 	// them, and the link graph is keyed on memory id rather than on the event.
-	replacedIds, err := d.memoryIdsForEvent(tx, eventId)
+	replacedIds, err := d.memoryIdsForEvent(tx, eventId, groups)
 	if err != nil {
 		_ = tx.Rollback()
 
@@ -1497,7 +1508,9 @@ func (d *DB) replaceMemoriesWithSummaryOnce(ctx context.Context, eventId string,
 		return 0, err
 	}
 
-	res, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE event_id = ?`), eventId)
+	deleteQuery, deleteArgs := appendGroupScope(`DELETE FROM memories WHERE event_id = ?`, []any{eventId}, "", groups)
+
+	res, err := tx.Exec(d.rebind(deleteQuery), deleteArgs...)
 	if err != nil {
 		_ = tx.Rollback()
 

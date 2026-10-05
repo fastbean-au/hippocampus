@@ -509,6 +509,17 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 	summary.EventId = eventId
 	summary.IsSummary = true
 
+	// Stamped and checked exactly as StoreMemory's group is. Without it a scoped caller could file
+	// the summary - a new record - in any group simply by naming one (TODO-3 item 139).
+	group, err := s.writeGroup(ctx, summary.Group)
+	if err != nil {
+		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "invalid")))
+
+		return "", 0, err
+	}
+
+	summary.Group = group
+
 	// The summary is a fresh memory: like StoreMemory it must not inherit client-supplied recall
 	// state, or it would start already reinforced.
 	summary.TimeRecalled = 0
@@ -537,7 +548,21 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 
 	summary.SetDefaults()
 
-	replaced, err := s.db.ReplaceMemoriesWithSummary(ctx, eventId, summary)
+	// A scoped caller replaces their own memories of the event only, and leaves another group's in
+	// place (see clearEventMemories). Their ids are read first for the search index, which would
+	// otherwise be told to drop the whole event.
+	groups, bound := s.scopedGroups(ctx)
+
+	var inScope []string
+
+	if bound {
+		inScope, err = s.db.MemoryIdsMatching(ctx, db.MemoryFilter{EventId: eventId, Groups: groups})
+		if err != nil {
+			return "", 0, mapError(err)
+		}
+	}
+
+	replaced, err := s.db.ReplaceMemoriesWithSummary(ctx, eventId, groups, summary)
 	if err != nil {
 		return "", 0, mapError(err)
 	}
@@ -551,9 +576,14 @@ func (s *Server) insertSummary(ctx context.Context, eventId string, summaryProto
 	// where "a snapshot that may have gone stale" is something it can simply not be wrong about.
 	s.dropSummarisationCandidate(eventId)
 
-	// The single FIFO worker guarantees the event-scoped delete lands before the summary's
-	// index write, so the replaced memories cannot outlive the summary in the index.
-	s.searchIdx().DeleteByEventId(eventId)
+	// The single FIFO worker guarantees the delete lands before the summary's index write, so the
+	// replaced memories cannot outlive the summary in the index.
+	if bound {
+		s.searchIdx().DeleteMemories(inScope)
+	} else {
+		s.searchIdx().DeleteByEventId(eventId)
+	}
+
 	s.indexMemory(ctx, summary)
 
 	return summary.Id, replaced, nil

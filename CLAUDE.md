@@ -884,7 +884,10 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     write naming none, so a bound writer never creates a record it cannot read back; and an
     **upsert** (`Import`/`ImportBatch`) is checked against the row it would replace as well as the
     group it writes to (`scopeImport`), since stamping the incoming row says nothing about whose row
-    an id already names (TODO-3 item 136). Two things
+    an id already names (TODO-3 item 136). An event-wide operation (`DeleteEvent`, the predicate
+    event delete, summary replacement) acts on the caller's own memories of an in-scope event only,
+    detaching another group's from a deleted event rather than refusing - a refusal would reveal
+    them (`clearEventMemories`, item 139). Two things
     deliberately cross the boundary, both consequences of the partition being _soft_:
     `link_significance` is scope-blind (it is the denormalised aggregate in the covering index, and
     recomputing per-scope would mean joining the link tables in the consolidation scans), and the

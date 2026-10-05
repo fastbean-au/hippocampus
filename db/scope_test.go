@@ -378,3 +378,86 @@ func assertSameIds(t *testing.T, got []string, want []string) {
 		}
 	}
 }
+
+// TestEventWideDeletesRespectGroupScope pins the storage half of TODO-3 item 139: an event can hold
+// memories of several groups, and the two event-wide deletes take only those in the scope they are
+// given - empty meaning all of them, as everywhere else in the package.
+func TestEventWideDeletesRespectGroupScope(t *testing.T) {
+	seed := func(t *testing.T) *DB {
+		t.Helper()
+
+		d := newTestDB(t)
+		ctx := context.Background()
+
+		if _, err := d.CreateEvent(ctx, types.Event{Id: "e1", Name: "e1", TimeStart: 100, Significance: 5, Group: "a"}); err != nil {
+			t.Fatalf("CreateEvent: %s", err)
+		}
+
+		for _, group := range []string{"a", "b"} {
+			if _, err := d.CreateMemory(ctx, types.Memory{
+				Id:           "m-" + group,
+				Body:         "body",
+				TimeStamp:    100,
+				Significance: 5,
+				EventId:      "e1",
+				Group:        group,
+			}); err != nil {
+				t.Fatalf("CreateMemory(m-%s): %s", group, err)
+			}
+		}
+
+		return d
+	}
+
+	remaining := func(t *testing.T, d *DB) []string {
+		t.Helper()
+
+		ids, err := d.MemoryIdsMatching(context.Background(), MemoryFilter{})
+		if err != nil {
+			t.Fatalf("MemoryIdsMatching: %s", err)
+		}
+
+		return ids
+	}
+
+	t.Run("DeleteEventMemories", func(t *testing.T) {
+		d := seed(t)
+
+		n, err := d.DeleteEventMemories(context.Background(), "e1", []string{"a"})
+		if err != nil {
+			t.Fatalf("DeleteEventMemories: %s", err)
+		}
+
+		if got := remaining(t, d); n != 1 || len(got) != 1 || got[0] != "m-b" {
+			t.Errorf("deleted %d, left %v; want 1 deleted and m-b left", n, got)
+		}
+	})
+
+	t.Run("ReplaceMemoriesWithSummary", func(t *testing.T) {
+		d := seed(t)
+
+		summary := types.Memory{Id: "s1", Body: "summary", TimeStamp: 200, Significance: 5, EventId: "e1", Group: "a", IsSummary: true}
+
+		n, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", []string{"a"}, summary)
+		if err != nil {
+			t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
+		}
+
+		if got := remaining(t, d); n != 1 || len(got) != 2 || got[0] != "m-b" || got[1] != "s1" {
+			t.Errorf("replaced %d, left %v; want 1 replaced and [m-b s1] left", n, got)
+		}
+	})
+
+	t.Run("an empty scope takes every memory", func(t *testing.T) {
+		d := seed(t)
+
+		n, err := d.DeleteEventMemories(context.Background(), "e1", nil)
+		if err != nil {
+			t.Fatalf("DeleteEventMemories: %s", err)
+		}
+
+		if got := remaining(t, d); n != 2 || len(got) != 0 {
+			t.Errorf("deleted %d, left %v; want 2 deleted and none left", n, got)
+		}
+	})
+}

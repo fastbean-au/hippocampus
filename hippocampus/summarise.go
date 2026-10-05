@@ -84,10 +84,17 @@ func (s *Server) summariseEvent(ctx context.Context, eventId string, significanc
 		return "", 0, "", mapError(err)
 	}
 
-	memories, err := s.db.GetMemoriesByEventId(ctx, eventId)
+	stored, err := s.db.GetMemoriesByEventId(ctx, eventId)
 	if err != nil {
 		return "", 0, "", mapError(err)
 	}
+
+	// A scoped caller summarises their own memories of the event only. Another group's would
+	// otherwise be sent to the model and come back to the caller inside the summary text - a read of
+	// records they cannot see - and then be replaced by it (TODO-3 item 139). Unscoped, this is a
+	// no-op, which covers the sleep cycle's auto-summarisation.
+	scoped := s.filterMemoriesToScope(ctx, *stored)
+	memories := &scoped
 
 	// Collect the text bodies for the prompt and the highest significance among all the memories
 	// being replaced (binary ones count toward significance but cannot be summarised).

@@ -353,20 +353,10 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 
 	tel.eventsDeleted.Add(ctx, 1)
 
-	if in.GetMemories() {
-		cnt, err := s.db.DeleteEventMemories(ctx, eid)
-		if err != nil {
-			return &res, mapError(err)
-		}
-
-		tel.memoriesDeleted.Add(ctx, int64(cnt))
-		s.searchIdx().DeleteByEventId(eid)
-	} else {
-		if _, err := s.db.UnsetMemoriesEventId(ctx, eid); err != nil {
-			return &res, mapError(err)
-		}
-
-		s.searchIdx().SetEventId(eid, "")
+	// Shared with DeleteEventsByFilter, and scope-aware: a scoped caller's deletion takes only their
+	// own memories of the event, detaching any other group's (TODO-3 item 139).
+	if _, err := s.clearEventMemories(ctx, eid, in.GetMemories()); err != nil {
+		return &res, mapError(err)
 	}
 
 	res.Ok = true

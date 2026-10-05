@@ -633,7 +633,7 @@ func TestReplaceMemoriesWithSummary(t *testing.T) {
 
 	summary := types.Memory{Id: "s1", TimeStamp: 200, Significance: 5, EventId: "e1", Body: "the gist", IsSummary: true}
 
-	replaced, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", summary)
+	replaced, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, summary)
 	if err != nil {
 		t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
 	}

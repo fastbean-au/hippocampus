@@ -899,6 +899,189 @@ func TestGroupScopeIsolation_ImportCollisions(t *testing.T) {
 	})
 }
 
+// seedCrossGroupEvent builds the attachment item 139 is about: group a's event e-a holding a memory
+// of its own (m-a) and one of group b's (m-b). Only an unscoped or multi-group writer can make it,
+// so it is written unscoped here.
+func seedCrossGroupEvent(t *testing.T) *Server {
+	t.Helper()
+
+	s := newTestServer(t)
+	ctx := context.Background()
+
+	if _, err := s.db.CreateEvent(ctx, types.Event{Id: "e-a", Name: "event a", TimeStart: 100, Significance: 5, Group: "a"}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	for _, group := range []string{"a", "b"} {
+		if _, err := s.db.CreateMemory(ctx, types.Memory{
+			Id:           "m-" + group,
+			Body:         "secret belonging to " + group,
+			TimeStamp:    100,
+			Significance: 5,
+			EventId:      "e-a",
+			Group:        group,
+		}); err != nil {
+			t.Fatalf("CreateMemory(m-%s): %s", group, err)
+		}
+	}
+
+	return s
+}
+
+// assertDetached requires that a memory still exists and no longer names an event.
+func assertDetached(t *testing.T, s *Server, id string) {
+	t.Helper()
+
+	stored, err := s.db.GetMemoriesByIds(context.Background(), []string{id})
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds(%s): %s", id, err)
+	}
+
+	if len(*stored) != 1 {
+		t.Fatalf("%s was deleted by a caller who cannot see it", id)
+	}
+
+	if got := (*stored)[0].EventId; got != "" {
+		t.Errorf("%s still names event %q, which was deleted", id, got)
+	}
+}
+
+// TestGroupScopeIsolation_EventCascades pins what an event-wide operation may do to the memories of
+// an in-scope event that belong to another group. The event is the caller's, so the operation is
+// allowed - but it acts on the caller's memories only. Another group's memory is never deleted,
+// read, or summarised away; if its event is deleted it is detached, since a memory naming a deleted
+// event is the one state no consolidation pass can see through. Counts reported back cover the
+// caller's memories only, so none of this tells them the other memory exists (TODO-3 item 139).
+func TestGroupScopeIsolation_EventCascades(t *testing.T) {
+	ctx := scopedContext("a")
+
+	t.Run("DeleteEvent with memories deletes only the caller's", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		if _, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a", Memories: true}); err != nil {
+			t.Fatalf("DeleteEvent: %s", err)
+		}
+
+		assertMemoryAbsent(t, s, "m-a")
+		assertDetached(t, s, "m-b")
+	})
+
+	t.Run("DeleteEvent without memories detaches both", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		if _, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a"}); err != nil {
+			t.Fatalf("DeleteEvent: %s", err)
+		}
+
+		assertDetached(t, s, "m-a")
+		assertDetached(t, s, "m-b")
+	})
+
+	t.Run("DeleteEventsByFilter with memories deletes and counts only the caller's", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		res, err := s.DeleteEventsByFilter(ctx, &contract.DeleteEventsByFilterRequest{Group: "a", DeleteMemories: true})
+		if err != nil {
+			t.Fatalf("DeleteEventsByFilter: %s", err)
+		}
+
+		if res.GetMemoriesDeleted() != 1 {
+			t.Errorf("memories_deleted = %d, want 1 (the caller's only)", res.GetMemoriesDeleted())
+		}
+
+		assertMemoryAbsent(t, s, "m-a")
+		assertDetached(t, s, "m-b")
+	})
+
+	t.Run("DeleteEventsByFilter without memories counts only the caller's orphans", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		res, err := s.DeleteEventsByFilter(ctx, &contract.DeleteEventsByFilterRequest{Group: "a"})
+		if err != nil {
+			t.Fatalf("DeleteEventsByFilter: %s", err)
+		}
+
+		// Two memories were detached, but reporting 2 would tell the caller about m-b.
+		if res.GetMemoriesOrphaned() != 1 {
+			t.Errorf("memories_orphaned = %d, want 1 (the caller's only)", res.GetMemoriesOrphaned())
+		}
+
+		assertDetached(t, s, "m-a")
+		assertDetached(t, s, "m-b")
+	})
+
+	t.Run("ReplaceMemoriesWithSummary replaces only the caller's", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		res, err := s.ReplaceMemoriesWithSummary(ctx, &contract.ReplaceMemoriesWithSummaryRequest{
+			EventId: "e-a",
+			Summary: &contract.Memory{Body: "summary", Significance: 5},
+		})
+		if err != nil {
+			t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
+		}
+
+		if res.GetMemoriesReplaced() != 1 {
+			t.Errorf("memories_replaced = %d, want 1 (the caller's only)", res.GetMemoriesReplaced())
+		}
+
+		assertMemoryAbsent(t, s, "m-a")
+		assertMemoryUntouched(t, s, "m-b", "b", "secret belonging to b")
+	})
+
+	t.Run("ReplaceMemoriesWithSummary cannot file the summary in another group", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		_, err := s.ReplaceMemoriesWithSummary(ctx, &contract.ReplaceMemoriesWithSummaryRequest{
+			EventId: "e-a",
+			Summary: &contract.Memory{Id: "sum-b", Body: "summary", Significance: 5, Group: "b"},
+		})
+
+		// The same refusal StoreMemory gives a write naming a group outside the scope.
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("ReplaceMemoriesWithSummary(summary group=b) = %v, want PermissionDenied", err)
+		}
+
+		assertMemoryAbsent(t, s, "sum-b")
+		assertMemoryUntouched(t, s, "m-a", "a", "secret belonging to a")
+	})
+
+	t.Run("SummariseMemories neither reads nor replaces another group's memory", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		summariser := &fakeSummariser{enabled: true, reply: "condensed"}
+		s.summarise = summariser
+
+		res, err := s.SummariseMemories(ctx, &contract.SummariseMemoriesRequest{EventId: "e-a"})
+		if err != nil {
+			t.Fatalf("SummariseMemories: %s", err)
+		}
+
+		for _, body := range summariser.lastReq.Bodies {
+			if strings.Contains(body, "belonging to b") {
+				t.Errorf("group b's memory body was sent to the summariser: %q", body)
+			}
+		}
+
+		if res.GetMemoriesReplaced() != 1 {
+			t.Errorf("memories_replaced = %d, want 1 (the caller's only)", res.GetMemoriesReplaced())
+		}
+
+		assertMemoryUntouched(t, s, "m-b", "b", "secret belonging to b")
+	})
+
+	t.Run("an unscoped DeleteEvent still takes every memory", func(t *testing.T) {
+		s := seedCrossGroupEvent(t)
+
+		if _, err := s.DeleteEvent(context.Background(), &contract.DeleteEventRequest{Id: "e-a", Memories: true}); err != nil {
+			t.Fatalf("DeleteEvent: %s", err)
+		}
+
+		assertMemoryAbsent(t, s, "m-a")
+		assertMemoryAbsent(t, s, "m-b")
+	})
+}
+
 // assertMemoryUntouched reads a memory back unscoped and requires its group and body.
 func assertMemoryUntouched(t *testing.T, s *Server, id string, group string, body string) {
 	t.Helper()
@@ -917,7 +1100,7 @@ func assertMemoryUntouched(t *testing.T, s *Server, id string, group string, bod
 	}
 }
 
-// assertMemoryAbsent requires that no memory with the id was written.
+// assertMemoryAbsent requires that no memory with the id exists.
 func assertMemoryAbsent(t *testing.T, s *Server, id string) {
 	t.Helper()
 
@@ -927,7 +1110,7 @@ func assertMemoryAbsent(t *testing.T, s *Server, id string) {
 	}
 
 	if len(*stored) != 0 {
-		t.Errorf("%s was written by a refused import", id)
+		t.Errorf("%s exists, but should have been deleted or never written", id)
 	}
 }
 
@@ -1133,5 +1316,71 @@ func TestSearchMemories_GroupScope(t *testing.T) {
 		if m.GetId() != "m-a" {
 			t.Errorf("SearchMemories returned %q, want only m-a", m.GetId())
 		}
+	}
+}
+
+// TestGroupScopeIsolation_EventCascadeStoreFailures drives the scoped cascade's storage failures:
+// each must surface as an error rather than be skipped, since a skipped step here is either a
+// memory left naming a deleted event or a summary written over memories that were never removed.
+func TestGroupScopeIsolation_EventCascadeStoreFailures(t *testing.T) {
+	ctx := scopedContext("a")
+
+	cases := []struct {
+		name  string
+		store func(db.Store) db.Store
+		call  func(s *Server) error
+	}{
+		{
+			name:  "DeleteEvent cannot read the caller's memories",
+			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failMemoryIds: true} },
+			call: func(s *Server) error {
+				_, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a", Memories: true})
+
+				return err
+			},
+		},
+		{
+			name:  "DeleteEvent cannot delete the caller's memories",
+			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failEventMemories: true} },
+			call: func(s *Server) error {
+				_, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a", Memories: true})
+
+				return err
+			},
+		},
+		{
+			name:  "DeleteEvent cannot detach the rest",
+			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failUnsetEventId: true} },
+			call: func(s *Server) error {
+				_, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a", Memories: true})
+
+				return err
+			},
+		},
+		{
+			name:  "ReplaceMemoriesWithSummary cannot read the caller's memories",
+			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failMemoryIds: true} },
+			call: func(s *Server) error {
+				_, err := s.ReplaceMemoriesWithSummary(ctx, &contract.ReplaceMemoriesWithSummaryRequest{
+					EventId: "e-a",
+					Summary: &contract.Memory{Body: "summary", Significance: 5},
+				})
+
+				return err
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := seedCrossGroupEvent(t)
+			s.db = c.store(s.db)
+
+			if err := c.call(s); err == nil {
+				t.Error("the call succeeded over a failed storage step")
+			}
+
+			assertMemoryUntouched(t, s, "m-b", "b", "secret belonging to b")
+		})
 	}
 }

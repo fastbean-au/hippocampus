@@ -101,6 +101,14 @@ itself which service version it was built against.
   documented at-least-once guarantee. The bridge now retries the same message until it is stored,
   fetching nothing past it; a message that can never be stored holds its partition, with a Warn line
   per attempt, as RabbitMQ's requeue already does.
+- **A group-scoped caller's event-wide operations no longer reach another group's memories.** An
+  event can hold memories of several groups when an unscoped or multi-group token attached them, and
+  `DeleteEvent`, `DeleteEventsByFilter`, `ReplaceMemoriesWithSummary` and `SummariseMemories` acted
+  on every memory of an in-scope event — deleting another group's, sending its bodies to the
+  summariser (and so back to the caller inside the summary), and reporting counts that included it.
+  They now act on the caller's own memories only; another group's are detached from a deleted event
+  rather than deleted. `ReplaceMemoriesWithSummary` also no longer lets a scoped caller file the
+  summary in a group outside their scope. Unscoped callers are unchanged.
 
 ## [0.51.1] - 2026-10-05
 

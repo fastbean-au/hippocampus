@@ -573,7 +573,7 @@ func TestDeleteEventMemories_Failures(t *testing.T) {
 			d, mock := newMockDB(t, driverSQLite)
 			test.expect(mock)
 
-			if _, err := d.DeleteEventMemories(context.Background(), "e1"); err == nil {
+			if _, err := d.DeleteEventMemories(context.Background(), "e1", nil); err == nil {
 				t.Fatal("expected the failure to propagate")
 			}
 
@@ -821,7 +821,7 @@ func TestReplaceMemoriesWithSummary_Failures(t *testing.T) {
 
 			test.expect(mock)
 
-			if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", summary); err == nil {
+			if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, summary); err == nil {
 				t.Fatal("expected the failure to propagate")
 			}
 		})

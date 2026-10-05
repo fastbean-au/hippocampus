@@ -971,12 +971,12 @@ func (f failingPredicateStore) DeleteEventIfEmpty(ctx context.Context, id string
 	return f.Store.DeleteEventIfEmpty(ctx, id, cause)
 }
 
-func (f failingPredicateStore) DeleteEventMemories(ctx context.Context, eventId string) (int, error) {
+func (f failingPredicateStore) DeleteEventMemories(ctx context.Context, eventId string, groups []string) (int, error) {
 	if f.failEventMemories {
 		return 0, errStoreFailed
 	}
 
-	return f.Store.DeleteEventMemories(ctx, eventId)
+	return f.Store.DeleteEventMemories(ctx, eventId, groups)
 }
 
 func (f failingPredicateStore) UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error) {

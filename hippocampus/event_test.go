@@ -1058,12 +1058,12 @@ func (f eventFaultStore) CreateEvent(ctx context.Context, event types.Event) (st
 	return f.Store.CreateEvent(ctx, event)
 }
 
-func (f eventFaultStore) DeleteEventMemories(ctx context.Context, eventId string) (int, error) {
+func (f eventFaultStore) DeleteEventMemories(ctx context.Context, eventId string, groups []string) (int, error) {
 	if f.deleteEventMemoriesErr != nil {
 		return 0, f.deleteEventMemoriesErr
 	}
 
-	return f.Store.DeleteEventMemories(ctx, eventId)
+	return f.Store.DeleteEventMemories(ctx, eventId, groups)
 }
 
 func (f eventFaultStore) GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error) {

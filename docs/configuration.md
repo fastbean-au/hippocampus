@@ -1411,6 +1411,14 @@ whose `event_id` is another group's event (`NOT_FOUND`). Both are checked before
 written, so a refused batch leaves nothing behind. A link whose far end is outside the token's scope
 is dropped, as `LinkMemories` drops one, rather than refused.
 
+**An event can hold another group's memories**, if an unscoped or multi-group token attached them.
+A scoped caller operating on their own event acts on their own memories of it and never on the
+others: `DeleteEvent` and `DeleteEventsByFilter` with memories delete only the caller's, and
+**detach** the rest (their `event_id` is cleared, since the event is going); `ReplaceMemoriesWithSummary`
+and `SummariseMemories` replace only the caller's, and the summariser is never sent another group's
+bodies. Every count in those responses covers the caller's memories only. A summary's own `group` is
+stamped and checked exactly as a stored memory's is.
+
 That matters for the embedded-ingestor pattern (a fleet of single-tenant edge instances transferring
 into one centralised store). It works with no configuration at all when the edge's records carry no
 group — they are stamped with the edge's own group on arrival — but an edge that sets group labels

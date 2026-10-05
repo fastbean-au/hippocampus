@@ -85,7 +85,7 @@ func TestReplaceMemoriesWithSummary_RollsBackOnInsertConflict(t *testing.T) {
 	// leaves it in place and the insert violates the primary key.
 	summary := types.Memory{Id: "keep", TimeStamp: 200, Significance: 5, EventId: "e1", Body: "gist", IsSummary: true}
 
-	if _, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", summary); err == nil {
+	if _, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, summary); err == nil {
 		t.Fatal("expected a primary-key conflict on the summary insert")
 	}
 
@@ -143,7 +143,7 @@ func TestMutations_ErrorOnClosedDB(t *testing.T) {
 		t.Error("expected DeleteMemories to error on a closed database")
 	}
 
-	if _, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "s1", TimeStamp: 1, Significance: 1, Body: "x"}); err == nil {
+	if _, err := db.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, types.Memory{Id: "s1", TimeStamp: 1, Significance: 1, Body: "x"}); err == nil {
 		t.Error("expected ReplaceMemoriesWithSummary to error on a closed database")
 	}
 }

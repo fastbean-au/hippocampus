@@ -249,7 +249,7 @@ func TestPruneOnEventMemoryDeletePaths(t *testing.T) {
 		{
 			name: "DeleteEventMemories",
 			delete: func(t *testing.T, db *DB) {
-				if _, err := db.DeleteEventMemories(ctx, "e1"); err != nil {
+				if _, err := db.DeleteEventMemories(ctx, "e1", nil); err != nil {
 					t.Fatalf("DeleteEventMemories: %s", err)
 				}
 			},
@@ -259,7 +259,7 @@ func TestPruneOnEventMemoryDeletePaths(t *testing.T) {
 			delete: func(t *testing.T, db *DB) {
 				summary := types.Memory{Id: "sum", TimeStamp: 300, Significance: 5, EventId: "e1", Body: "summary", IsSummary: true}
 
-				if _, err := db.ReplaceMemoriesWithSummary(ctx, "e1", summary); err != nil {
+				if _, err := db.ReplaceMemoriesWithSummary(ctx, "e1", nil, summary); err != nil {
 					t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
 				}
 			},

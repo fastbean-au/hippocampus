@@ -608,7 +608,7 @@ type Store interface {
 	UpdateMemory(ctx context.Context, memory types.Memory) (bool, error)
 	DeleteMemories(ctx context.Context, ids []string) (int, error)
 	RecallMemories(ctx context.Context, ids []string) (*[]types.Memory, error)
-	ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error)
+	ReplaceMemoriesWithSummary(ctx context.Context, eventId string, groups []string, summary types.Memory) (int, error)
 	GetMemories(ctx context.Context, filter MemoryFilter) (*[]types.Memory, error)
 	GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error)
 	GetMemoriesByEventIds(ctx context.Context, eventIds []string) (*[]types.Memory, error)
@@ -630,7 +630,7 @@ type Store interface {
 	CountEventsFiltered(ctx context.Context, filter EventFilter) (int, error)
 	EventIdsMatching(ctx context.Context, filter EventFilter) ([]string, error)
 	MergeEventMemories(ctx context.Context, toEventId string, fromEventId string) error
-	DeleteEventMemories(ctx context.Context, eventId string) (int, error)
+	DeleteEventMemories(ctx context.Context, eventId string, groups []string) (int, error)
 	UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error)
 	CalculateSignificancePercentile(ctx context.Context, percent float64) (float64, error)
 

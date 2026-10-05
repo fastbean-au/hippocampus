@@ -749,12 +749,12 @@ func (f memoryFaultStore) GetEvent(ctx context.Context, id string) (*types.Event
 	return f.Store.GetEvent(ctx, id)
 }
 
-func (f memoryFaultStore) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, summary types.Memory) (int, error) {
+func (f memoryFaultStore) ReplaceMemoriesWithSummary(ctx context.Context, eventId string, groups []string, summary types.Memory) (int, error) {
 	if f.replaceMemoriesWithSummaryErr != nil {
 		return 0, f.replaceMemoriesWithSummaryErr
 	}
 
-	return f.Store.ReplaceMemoriesWithSummary(ctx, eventId, summary)
+	return f.Store.ReplaceMemoriesWithSummary(ctx, eventId, groups, summary)
 }
 
 func (f memoryFaultStore) CountMemoriesFiltered(ctx context.Context, filter db.MemoryFilter) (int, error) {

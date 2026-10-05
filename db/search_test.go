@@ -410,7 +410,7 @@ func TestContentSearchTriggerCoversEveryDeletePath(t *testing.T) {
 			t.Fatalf("CreateMemory: %s", err)
 		}
 
-		if _, err := d.DeleteEventMemories(ctx, "e1"); err != nil {
+		if _, err := d.DeleteEventMemories(ctx, "e1", nil); err != nil {
 			t.Fatalf("DeleteEventMemories: %s", err)
 		}
 
@@ -440,7 +440,7 @@ func TestContentSearchFollowsSummaryReplacement(t *testing.T) {
 	}
 
 	summary := types.Memory{Id: "s1", TimeStamp: 2, Significance: 5, Body: "the condensed overview", EventId: "e1", IsSummary: true}
-	if _, err := d.ReplaceMemoriesWithSummary(ctx, "e1", summary); err != nil {
+	if _, err := d.ReplaceMemoriesWithSummary(ctx, "e1", nil, summary); err != nil {
 		t.Fatalf("ReplaceMemoriesWithSummary: %s", err)
 	}
 

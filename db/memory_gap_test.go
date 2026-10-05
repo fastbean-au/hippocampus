@@ -64,7 +64,7 @@ func TestReplaceMemoriesWithSummary_BeginTxError(t *testing.T) {
 	// only expectation needed is the failing Begin.
 	mock.ExpectBegin().WillReturnError(errors.New("boom"))
 
-	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "s1", Body: "x"}); err == nil {
+	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, types.Memory{Id: "s1", Body: "x"}); err == nil {
 		t.Fatal("expected an error")
 	}
 
@@ -80,7 +80,7 @@ func TestReplaceMemoriesWithSummary_DeleteExecError(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM memories WHERE event_id`).WillReturnError(errors.New("boom"))
 	mock.ExpectRollback()
 
-	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "s1", Body: "x"}); err == nil {
+	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, types.Memory{Id: "s1", Body: "x"}); err == nil {
 		t.Fatal("expected an error")
 	}
 
@@ -96,7 +96,7 @@ func TestReplaceMemoriesWithSummary_DeleteRowsAffectedError(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM memories WHERE event_id`).WillReturnResult(sqlmock.NewErrorResult(errors.New("boom")))
 	mock.ExpectRollback()
 
-	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "s1", Body: "x"}); err == nil {
+	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, types.Memory{Id: "s1", Body: "x"}); err == nil {
 		t.Fatal("expected an error")
 	}
 
@@ -113,7 +113,7 @@ func TestReplaceMemoriesWithSummary_CommitError(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO memories`).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit().WillReturnError(errors.New("boom"))
 
-	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", types.Memory{Id: "s1", Body: "x"}); err == nil {
+	if _, err := d.ReplaceMemoriesWithSummary(context.Background(), "e1", nil, types.Memory{Id: "s1", Body: "x"}); err == nil {
 		t.Fatal("expected an error")
 	}
 
