@@ -15,11 +15,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   surface; gRPC by default, `--transport http` for the `/v1` gateway; `go test ./...` in that dir;
   see `docs/cli.md`)
 - Test the Python client (its own project, not a Go module — run from its directory):
-  `cd integrations/python && pip install -e '.[dev]' && python -m pytest` (the published
-  `hippocampus-client` package; the gRPC stubs are generated from `contract/hippocampus.proto` at
-  build time and are **not committed** — the build hook runs on an editable install too, so there is
-  no separate setup step, and `python scripts/generate_stubs.py` regenerates them after a contract
-  edit without reinstalling; see `docs/python.md`)
+  `cd integrations/python && pip install -e '.[dev]' && python -m pytest` (the `hippocampus-client`
+  package - built and verified per release but **not yet uploaded to PyPI** (`vars.PUBLISH_PYPI`
+  unset; TODO-2 item 123.1), so the docs give the git+tag install; the gRPC stubs are generated from
+  `contract/hippocampus.proto` at build time and are **not committed** — the build hook runs on an
+  editable install too, so there is no separate setup step, and `python scripts/generate_stubs.py`
+  regenerates them after a contract edit without reinstalling; see `docs/python.md`)
 - Run an event-sourcing bridge (separate module — run from its directory):
   `cd integrations/eventsource && go run ./cmd/nats --subject 'events.>' --address localhost:50051`
   (one `cmd/<broker>` each for `nats`/`mqtt`/`rabbitmq`/`kafka`/`bluesky`; consumes from the broker
@@ -1509,7 +1510,8 @@ github.com/fastbean-au/hippocampus => ../..`, so its client dependency tree stay
     tested by its own `cli` CI job (self-contained: fake gRPC client plus an httptest gateway, no
     service container); the release cross-compiles the `hippo` binary for every OS/arch onto the
     GitHub release. See `docs/cli.md` and the module README.
-  - `integrations/python/` — the **published** Python client, `hippocampus-client` on PyPI (its own
+  - `integrations/python/` — the Python client, `hippocampus-client`, released for PyPI but not yet
+    uploaded there (its own
     project, not a Go module and not imported by anything here). A thin wrapper over generated gRPC
     stubs covering the **full** RPC surface, unlike the MCP bridge's curated one - it is a client
     library, and what a token may actually do is the service's tiers to enforce;

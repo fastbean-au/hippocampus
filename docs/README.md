@@ -49,7 +49,7 @@ The load generator and the compressed-clock demo stack are in [`demo/`](../demo/
 | Guide                               | What it answers                                                                         |
 | :---------------------------------- | :-------------------------------------------------------------------------------------- |
 | **[CLI (`hippo`)](cli.md)**         | Drive a running service from the shell, over gRPC or the JSON gateway.                  |
-| **[Python client](python.md)**      | `pip install hippocampus-client` — the published client, covering the full RPC surface. |
+| **[Python client](python.md)**      | The Python client, covering the full RPC surface; installed from a release tag for now. |
 | **[Clients & codegen](clients.md)** | Generate a TypeScript, Java, Rust or any-language client from the proto or OpenAPI doc. |
 | **[MCP server](mcp.md)**            | Give an LLM host memory tools via the Model Context Protocol.                           |
 
@@ -59,7 +59,7 @@ The load generator and the compressed-clock demo stack are in [`demo/`](../demo/
 | :----------------------------------- | :---------------------------------------------------------------------------------------- |
 | **[Event sourcing](eventsource.md)** | Bridge NATS, MQTT, RabbitMQ, Kafka or the Bluesky firehose in, one memory per message.    |
 | **[Ingestor](ingestor.md)**          | Stage data at the edge and promote completed events into a central store under CEL rules. |
-| **[LlamaIndex](llamaindex.md)**      | `pip install llama-index-memory-hippocampus` — an agent's memory, reinforced by use.      |
+| **[LlamaIndex](llamaindex.md)**      | An agent's memory, reinforced by use (`llama-index-memory-hippocampus`; not on PyPI yet). |
 | **[Obsidian](obsidian.md)**          | Use the store as a memory layer for a note vault, via the plugin or the MCP bridge.       |
 | **[Object storage](objectstore.md)** | Govern a bucket you do not hold: reinforce on read, delete on forget.                     |
 

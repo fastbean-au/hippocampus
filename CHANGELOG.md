@@ -47,7 +47,9 @@ bridges, the ingestor, the object-storage agents and the `hippocampus-client` Py
 released from this same tag and tracks the service. For the Python package that coupling is stronger
 than convention — its stubs are generated from the contract during the build, and its version is
 stamped from the tag, so `hippocampus-client==X.Y.Z` is the client of `vX.Y.Z`'s contract by
-construction.
+construction. (It is not yet uploaded to PyPI; until it is, install it from the tag itself, which
+carries the same contract but reports its version as `0.0.0.dev0` — see
+[the Python client](docs/python.md).)
 
 Three subprojects have **their own repositories and their own version lines**, and a release here
 makes no promise about them: the [Obsidian plugin][obsidian-repo], the [LlamaIndex
@@ -184,6 +186,12 @@ itself which service version it was built against.
   the scan to take most of the timeout, the cleanups after it failed with "context deadline
   exceeded" on every cycle — one log line per event, and the cycle reported as failed. The deadline
   now covers the scan alone, and each later operation gets its own.
+- **The docs no longer tell you to `pip install` packages that are not on PyPI.** `hippocampus-client`
+  and `llama-index-memory-hippocampus` are built and verified on every release but have never been
+  uploaded, so the advertised `pip install` failed on a new user's first command. The Python pages
+  now give the install from a release tag, which works (the package reports its version as
+  `0.0.0.dev0` that way), and `docs/llamaindex.md` gives the one route that currently installs the
+  adapter, since its `hippocampus-client>=0.43` requirement cannot be met by a tag install.
 ## [0.51.1] - 2026-10-05
 
 ### Changed

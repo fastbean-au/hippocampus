@@ -192,8 +192,8 @@ grpcurl -plaintext -proto contract/hippocampus.proto \
 The `-proto` flag is optional on a default instance: with `auth.method` unset the service registers
 gRPC server reflection, so `grpcurl -plaintext localhost:50051 list` discovers the schema on its own.
 It becomes necessary once authentication is enabled, where reflection defaults off — see
-[Server reflection](configuration.md#server-reflection). From Python, `pip install
-hippocampus-client` and skip the generation entirely — see [The Python client](python.md). For any
+[Server reflection](configuration.md#server-reflection). From Python, install the client package
+and skip the generation entirely — see [The Python client](python.md). For any
 other language, generate stubs from either the proto or the OpenAPI document: see [Clients in other
 languages](clients.md).
 
@@ -214,7 +214,8 @@ See [Authentication](configuration.md#authentication) and [TLS](configuration.md
 
 ## Next steps
 
-- [The Python client](python.md) — `pip install hippocampus-client`, the one published package.
+- [The Python client](python.md) — the one ready-made client package (installed from a release
+  tag until it is on PyPI).
 - [Clients in other languages](clients.md) — generate a TypeScript, Java, Rust, or any-language
   client from the proto or the OpenAPI document.
 - [Operations & deployment guide](operations.md) — driver choice, sizing/tuning, backup, shutdown,

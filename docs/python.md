@@ -1,12 +1,20 @@
 # The Python client
 
-`hippocampus-client` is the published client package. It is the one language with a published
-artefact — every other language generates its own, and [Clients in other
-languages](clients.md) is that recipe.
+`hippocampus-client` is the Python client package. It is the one language with a ready-made
+client — every other language generates its own, and [Clients in other languages](clients.md) is
+that recipe.
+
+**It is not on PyPI yet.** The release workflow builds and verifies the package on every tag, but
+the upload has not been switched on, so `pip install hippocampus-client` finds nothing. Until it is,
+install it from the tag of the service you run — the stubs are generated from that tag's contract
+during the install:
 
 ```sh
-pip install hippocampus-client
+pip install "hippocampus-client @ git+https://github.com/fastbean-au/hippocampus@vX.Y.Z#subdirectory=integrations/python"
 ```
+
+A package installed this way reports its version as `0.0.0.dev0`, because the version is stamped
+only when a release is published; the contract it carries is still the tag's.
 
 The distribution is `hippocampus-client` because `hippocampus` on PyPI is an unrelated
 memoisation library that predates this project. The **import name is `hippocampus`**, which is

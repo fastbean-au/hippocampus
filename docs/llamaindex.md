@@ -11,8 +11,18 @@ It lives in its own repository:
 
 which is where its documentation, releases and install instructions are. It moved there because it
 tracks `llama-index-core`, whose release cadence is not this project's, and because it depends on the
-**published** `hippocampus-client` rather than on the contract — so it was already a downstream
-consumer rather than a part of the service. See TODO-2 item 113.
+`hippocampus-client` package rather than on the contract — so it was already a downstream consumer
+rather than a part of the service.
+
+**Neither package is on PyPI yet, and that makes the adapter awkward to install.** It requires
+`hippocampus-client>=0.43`, and a client installed from a git tag reports `0.0.0.dev0`, so pip refuses
+the pair. Until both are published, install the client from a tag (see
+[the Python client](python.md)), then the adapter without its dependency check:
+
+```sh
+pip install "llama-index-core>=0.12.36"
+pip install --no-deps "llama-index-memory-hippocampus @ git+https://github.com/fastbean-au/hippocampus-llamaindex"
+```
 
 ## What is still this repository's
 

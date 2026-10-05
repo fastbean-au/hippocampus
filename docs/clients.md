@@ -1,14 +1,15 @@
 # Clients in other languages
 
 Two languages need no generation. Go stubs ship in the repository (`contract/`), so a Go program
-imports `contract.NewHippocampusClient` and is done, and **Python has a published package**:
+imports `contract.NewHippocampusClient` and is done, and **Python has a client package**, not yet
+on PyPI, so installed from the service's tag:
 
 ```sh
-pip install hippocampus-client
+pip install "hippocampus-client @ git+https://github.com/fastbean-au/hippocampus@vX.Y.Z#subdirectory=integrations/python"
 ```
 
-See [The Python client](python.md) — it covers the full RPC surface, ships from the same tag the
-contract does, and removes the encoding traps described [below](#json-encoding-notes) rather than
+See [The Python client](python.md) — it covers the full RPC surface, is built from the same tag the
+contract is, and removes the encoding traps described [below](#json-encoding-notes) rather than
 leaving each caller to meet them. Nothing is published to npm, Maven or NuGet.
 
 **Every other language generates its own client.** This page is that recipe: how to turn the
