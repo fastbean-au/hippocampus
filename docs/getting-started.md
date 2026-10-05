@@ -61,10 +61,12 @@ saying so. That is enough to make requests against, and nothing to write first. 
 off unless a port is given, so add `--gateway-port 8080` to get the JSON API and the browser console
 as well.
 
-It is a starting point, not a deployment: there is no authentication, no TLS, no capacity target,
-and — because `sleep.periodSeconds` has no default, deliberately — no automatic consolidation cycle,
-so nothing is forgotten until you ask for it with the `Sleep` RPC. The configuration below is the
-one to grow from.
+It is a starting point, not a deployment: there is no authentication, no TLS and no capacity target.
+It **does forget**, though. A consolidation cycle runs every hour (`sleep.periodSeconds: 3600`) and
+deletes whatever has decayed below the default `deletionThreshold` of 10, so the first cycle after
+you start writing can remove memories you have stored. To keep everything while you experiment, set
+`sleep.periodSeconds` to `0`, which disables the timed cycle and leaves the `Sleep` RPC as the only
+way to run one. The configuration below is the one to grow from.
 
 ## A minimal configuration
 
@@ -81,7 +83,7 @@ config.json` from a clone works as-is. To write your own:
     "method": 1,
     "aggressiveness": 1.0,
     "unitsOfAgeInDays": 1.0,
-    "deletionThreshold": 5,
+    "deletionThreshold": 10,
     "minimumAgeInDays": 0
   }
 }

@@ -166,6 +166,12 @@ itself which service version it was built against.
   `reflection.enabled`). The list now states the real limits instead — identity never comes from a
   client certificate, and reflection cannot be put behind a token — and a test fails if either
   denial returns while the service still reads the key that proves the feature exists.
+- **The first-run pages no longer say nothing is forgotten until `Sleep` is called.**
+  `docs/getting-started.md` and `docs/install.md` described an instance on the built-in defaults as
+  having no automatic consolidation cycle; it has run one hourly, against a deletion threshold of
+  10, since those defaults were made functional. Both pages now say so and how to turn it off
+  (`sleep.periodSeconds: 0`), `docs/consolidation.md` states the default, and a test reads the
+  default from the code and fails if either page denies the cycle while it runs.
 
 ## [0.51.1] - 2026-10-05
 

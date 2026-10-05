@@ -123,8 +123,9 @@ already.
 With no `config.json` on the default path the service starts on its built-in defaults — SQLite in
 `./data`, gRPC on `50051`, the power-law decay algorithm, no authentication — and logs a warning
 naming them. That's enough to make requests against, but it's a starting point rather than a
-deployment: there's no authentication, no TLS, no capacity target, and no automatic consolidation
-cycle, so nothing is forgotten until you ask for it.
+deployment: there's no authentication, no TLS and no capacity target. It does forget: a
+consolidation cycle runs every hour and deletes whatever has decayed below the default threshold.
+Set `sleep.periodSeconds` to `0` to turn the timed cycle off while you experiment.
 
 [Getting started](getting-started.md) picks up from here with the first requests and a configuration
 worth growing from, and [Security](security.md) is the pass anything reachable beyond localhost
