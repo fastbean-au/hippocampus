@@ -31,6 +31,7 @@
 #   scripts/family-status.py --check            # exit non-zero when a repository needs releasing
 #   scripts/family-status.py --verbose          # list the unreleased commits
 #   scripts/family-status.py hippocampus-obsidian
+#   scripts/family-status.py --dispatch-targets v1.2.3   # which satellites a release should tell
 #
 import argparse
 import base64
@@ -110,6 +111,34 @@ REPOS = [
 # being true, so `ships_nothing` asks that question of the file rather than assuming the answer.
 SHIPS = {
     "hippocampus-obsidian": ("src/", "styles.css", "manifest.json"),
+}
+
+# What each satellite actually CONSUMES of the service, as path prefixes in this repository. A pin is
+# behind only when one of these paths changed between it and the newer tag - not merely when the
+# version number is lower - and the same question decides whether `notify-satellites` tells the
+# satellite about a release at all (`--dispatch-targets`). One answer for both is the point: a report
+# that called a pin stale for a release nobody dispatched would be a standing issue with no action.
+#
+# WHY. Most releases, and almost every patch, change nothing a satellite builds against: v0.51.1 was
+# console-only, and dispatching it would have opened four pull requests re-pinning an identical
+# contract, republished hippocampus-gen's five images, and raised the MINIMUM service version the
+# Obsidian plugin declares for no reason. Judging by the paths rather than by the increment is also
+# what keeps the one real exception right - a patch fixing a `types` bound is compiled into the
+# collector only through its pin, and it is dispatched because `types/` moved, whatever the number.
+#
+# Go satellites get their imports' packages and nothing else: `go list -deps ./contract ./types`
+# reaches no other package in this module. The root go.mod is deliberately absent - a dependency bump
+# here raises nothing a satellite needs, and each satellite keeps its own dependencies current.
+#
+# A repository with no entry falls back to the version comparison, which is the safe direction: it
+# is told about every release. cmd/hippocampus/family_test.go requires every dispatched satellite to
+# have one anyway, and every prefix to exist, because a misspelt prefix fails the OTHER way - it
+# matches nothing, and the satellite is never told again.
+SURFACE = {
+    "hippocampus-llamaindex": ("contract/hippocampus.proto", "integrations/python/"),
+    "hippocampus-otel-collector": ("contract/", "types/"),
+    "hippocampus-obsidian": ("contract/hippocampus.swagger.json",),
+    "hippocampus-gen": ("contract/",),
 }
 
 # What raises the pin, for a repository nothing dispatches to. Without this a stale pin there
@@ -196,6 +225,83 @@ def version(tag):
     return tuple(int(g) for g in found.groups()) if found else None
 
 
+_moved = {}
+
+
+def surface_moved(repo, pin, target, token):
+    """Has anything `repo` consumes changed between the service version it pins and `target`?
+
+    Every uncertainty answers yes - an unreadable pin, a comparison GitHub cannot make, a file list
+    at the endpoint's cap - because the cost of a needless bump is a pull request, while the cost of
+    a missed one is a satellite built against a contract that has moved under it.
+    """
+    pinned, wanted = version(pin), version(target)
+
+    if not pinned or not wanted:
+        return True
+
+    if pinned >= wanted:
+        return False
+
+    surface = SURFACE.get(repo)
+
+    if not surface:
+        return True
+
+    key = (pin, target)
+
+    if key not in _moved:
+        compare = api(f"repos/{OWNER}/{HUB}/compare/{pin}...{target}", token, allow_missing=True)
+
+        if compare is None:
+            _moved[key] = None
+        else:
+            files = compare.get("files", [])
+
+            # The endpoint stops at 300 files without saying so, and a partial list cannot show that
+            # a path did NOT change.
+            if len(files) >= 300:
+                _moved[key] = None
+            else:
+                paths = set()
+
+                for f in files:
+                    paths.add(f["filename"])
+
+                    # A rename moves a path away as well as to somewhere.
+                    if f.get("previous_filename"):
+                        paths.add(f["previous_filename"])
+
+                _moved[key] = paths
+
+    paths = _moved[key]
+
+    if paths is None:
+        return True
+
+    return any(p.startswith(prefix) for p in paths for prefix in surface)
+
+
+def dispatch_targets(tag, token):
+    """The dispatched satellites a release of `tag` changes something for, one per line."""
+    if not version(tag):
+        fail(f"{tag} is not a vX.Y.Z service tag")
+
+    for name, pin_path, pin_kind, _line, dispatched in REPOS:
+        if not dispatched:
+            continue
+
+        pin = extract_pin(pin_kind, file_at(name, pin_path, "main", token))
+
+        if surface_moved(name, pin, tag, token):
+            print(name)
+            print(f"{name}: pinned {dash(pin)}, and what it consumes changed by {tag}", file=sys.stderr)
+        else:
+            print(f"{name}: pinned {dash(pin)}, and nothing it consumes changed by {tag}", file=sys.stderr)
+
+    return 0
+
+
 def age_in_days(stamp):
     if not stamp:
         return None
@@ -266,7 +372,7 @@ class Status:
         return version(self.release) != version(self.pin_at_release)
 
 
-def collect(repo, pin_path, pin_kind, line, dispatched, hub_latest, token):
+def collect(repo, pin_path, pin_kind, line, dispatched, hub_tag, token):
     status = Status(repo, line, dispatched)
 
     latest = api(f"repos/{OWNER}/{repo}/releases/latest", token, allow_missing=True)
@@ -320,8 +426,15 @@ def collect(repo, pin_path, pin_kind, line, dispatched, hub_latest, token):
             except json.JSONDecodeError:
                 status.bundles_dependencies = True
 
-    pinned = version(status.pin_on_main)
-    status.pin_behind = bool(pinned and hub_latest and pinned < hub_latest)
+    # Behind by number is not behind: a pin that only misses releases changing nothing it consumes
+    # is current, and is not dispatched to either (see SURFACE).
+    pinned, hub_latest = version(status.pin_on_main), version(hub_tag)
+    status.pin_behind = bool(
+        pinned
+        and hub_latest
+        and pinned < hub_latest
+        and surface_moved(repo, status.pin_on_main, hub_tag, token)
+    )
 
     return status
 
@@ -376,10 +489,19 @@ def main():
     parser.add_argument(
         "--verbose", action="store_true", help="list the unreleased commits for each repository"
     )
+    parser.add_argument(
+        "--dispatch-targets",
+        metavar="TAG",
+        help="print the dispatched satellites for which a release of TAG changes something they "
+        "consume, one per line, and exit (the notify-satellites job's filter)",
+    )
     parser.add_argument("repos", nargs="*", help="limit the report to these repositories")
     args = parser.parse_args()
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+
+    if args.dispatch_targets:
+        return dispatch_targets(args.dispatch_targets, token)
 
     selected = REPOS
 
@@ -394,9 +516,8 @@ def main():
 
     hub = api(f"repos/{OWNER}/{HUB}/releases/latest", token, allow_missing=True) or {}
     hub_tag = hub.get("tag_name")
-    hub_latest = version(hub_tag)
 
-    statuses = [collect(*repo, hub_latest, token) for repo in selected]
+    statuses = [collect(*repo, hub_tag, token) for repo in selected]
 
     rows = [
         (
@@ -416,7 +537,7 @@ def main():
         legend.append("!  the release tag names a service version its own pin does not carry")
 
     if any(s.pin_is_stale for s in statuses):
-        legend.append(f"↓  main is pinned behind {dash(hub_tag)}")
+        legend.append(f"↓  main is pinned behind {dash(hub_tag)} on something it consumes")
 
     if any(s.ships_nothing for s in statuses):
         legend.append("*  unreleased, but none of it changes what a release ships")

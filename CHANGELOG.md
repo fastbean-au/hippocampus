@@ -57,6 +57,17 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Changed
+
+- **A release is dispatched only to the satellites it changes something for.** `notify-satellites`
+  now asks `scripts/family-status.py --dispatch-targets` which satellites' consumed paths (a new
+  per-repository `SURFACE` table: the OpenAPI document, `contract/`, `types/`, the Python client)
+  moved between the pin on their `main` and the release tag, and tells only those. A patch touching
+  none of them — v0.51.1 was console-only — no longer opens four pull requests re-pinning an
+  identical contract, republishes `hippocampus-gen`'s images, or raises the Obsidian plugin's
+  declared minimum service version. The weekly status report judges a pin stale by the same test,
+  and `family_test.go` requires every dispatched satellite to declare a surface whose paths exist.
+
 ## [0.51.1] - 2026-10-05
 
 ### Changed

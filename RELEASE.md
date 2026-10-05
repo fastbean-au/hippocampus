@@ -338,6 +338,17 @@ while the work is in flight — that is what stands the contract gate down (see
    eleven releases on v0.36.1, and why it is on this list at all — but that is not a reason to fail
    a release which has already published everything else.
 
+   **Only a satellite whose consumed surface moved is told.** Each satellite's entry in
+   `scripts/family-status.py`'s `SURFACE` table names the paths it builds against (the OpenAPI
+   document for the plugin, `contract/` and `types/` for the collector, `contract/` for the
+   generators, the proto plus `integrations/python/` for the LlamaIndex adapter), and the job asks
+   `--dispatch-targets` which of them changed between the pin on each satellite's `main` and this
+   tag. So a release changing none of them — most patches — re-pins nothing, and in particular does
+   not raise the plugin's declared minimum service version for no reason; a patch that _does_ touch
+   one (a `types` bound the collector compiles in) is dispatched like any other release. The same
+   table decides whether the weekly status report calls a pin stale, so the two cannot disagree. Any
+   uncertainty — the filter failing, a comparison at GitHub's 300-file cap — tells the satellite.
+
    `hippocampus-gen` is the one receiver with **no release to cut**: its five generator images
    publish from `main` on push, so merging its bump pull request is the whole release. That also
    makes its bump the only build the new pin gets — there is no CI workflow in that repository — so

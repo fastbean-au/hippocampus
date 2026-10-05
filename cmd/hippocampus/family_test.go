@@ -185,3 +185,71 @@ func TestEverySatelliteNamedInTheWorkflowIsDescribed(t *testing.T) {
 		}
 	}
 }
+
+// familySurfaceBlock matches scripts/family-status.py's SURFACE table, and familySurfaceRow one
+// entry of it: the repository name and its tuple of path prefixes.
+var (
+	familySurfaceBlock = regexp.MustCompile(`(?ms)^SURFACE = \{\n(.*?)^\}`)
+	familySurfaceRow   = regexp.MustCompile(`(?m)^\s*"([^"]+)":\s*\(([^)]*)\),\s*$`)
+	quotedString       = regexp.MustCompile(`"([^"]+)"`)
+)
+
+// familySurfaces are the path prefixes each satellite consumes, as the status script declares them.
+func familySurfaces(t *testing.T) map[string][]string {
+	t.Helper()
+
+	raw, err := os.ReadFile(familyStatusScriptPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", familyStatusScriptPath, err)
+	}
+
+	block := familySurfaceBlock.FindStringSubmatch(string(raw))
+	if block == nil {
+		t.Fatalf("%s has no `SURFACE = {` table; this guard cannot read it", familyStatusScriptPath)
+	}
+
+	out := map[string][]string{}
+
+	for _, row := range familySurfaceRow.FindAllStringSubmatch(block[1], -1) {
+		for _, prefix := range quotedString.FindAllStringSubmatch(row[2], -1) {
+			out[row[1]] = append(out[row[1]], prefix[1])
+		}
+	}
+
+	if len(out) == 0 {
+		t.Fatalf("%s's SURFACE table declares nothing; the guard would pass vacuously", familyStatusScriptPath)
+	}
+
+	return out
+}
+
+// TestEveryDispatchedSatelliteDeclaresWhatItConsumes holds the table that decides whether a release
+// is dispatched at all. The two failures differ in direction: a satellite with no entry is told
+// about every release, which is merely noisy, but a prefix naming no path in this repository
+// matches no change ever again, so that satellite is silently never told - which is why the second
+// check is the one that matters.
+func TestEveryDispatchedSatelliteDeclaresWhatItConsumes(t *testing.T) {
+	surfaces := familySurfaces(t)
+
+	for _, name := range sortedKeys(dispatchedSatellites(t)) {
+		if len(surfaces[name]) == 0 {
+			t.Errorf(
+				"%s dispatches to %q, which %s's SURFACE table does not describe\n"+
+					"(declare the paths it builds against, so a release changing none of them is not dispatched)",
+				releaseWorkflowPath, name, familyStatusScript,
+			)
+		}
+	}
+
+	for name, prefixes := range surfaces {
+		for _, prefix := range prefixes {
+			if _, err := os.Stat("../../" + strings.TrimSuffix(prefix, "/")); err != nil {
+				t.Errorf(
+					"%s's SURFACE says %q consumes %q, which does not exist in this repository - "+
+						"no change would ever match it, so that satellite would never be told about a release",
+					familyStatusScript, name, prefix,
+				)
+			}
+		}
+	}
+}

@@ -724,6 +724,15 @@ jobs:
   # Best-effort per repository: one unreachable satellite must not stop the others being told, and
   # none of them can stop the release.
   #
+  # Only a satellite whose consumed surface moved is told. `scripts/family-status.py
+  # --dispatch-targets` compares the pin on each satellite's main against this tag over the paths
+  # that satellite builds against (its SURFACE table), so a release changing nothing a satellite
+  # consumes - most patches - opens no pull request re-pinning an identical contract, and does not
+  # raise the Obsidian plugin's declared minimum service version for nothing. The same table decides
+  # whether the weekly family-status report calls a pin stale, so the two cannot disagree. If the
+  # filter itself fails, every satellite is told: a needless bump costs a pull request, a missed one
+  # costs a satellite built against a contract that moved.
+  #
   # Gated on publish-python as well as release, because whatever a satellite re-pins to has to
   # exist by the time it is told. hippocampus-llamaindex pins the release WHEEL, which publish-python
   # attaches - and on v0.47.1 this job dispatched twenty seconds before that upload landed, so the
@@ -734,12 +743,20 @@ jobs:
     needs: [release, publish-python]
     runs-on: ubuntu-latest
 
-    permissions: {} # dispatches elsewhere with a PAT; needs nothing here
+    permissions:
+      contents: read # the filter script; dispatching elsewhere uses the PAT
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          sparse-checkout: scripts
+
       - name: Dispatch the release to each satellite
         env:
           GH_TOKEN: ${{ secrets.SATELLITE_DISPATCH_TOKEN }}
+          # The filter only reads public repositories; this token just raises its rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
 
@@ -748,7 +765,17 @@ jobs:
             exit 0
           fi
 
+          if ! targets="$(python3 scripts/family-status.py --dispatch-targets "${RELEASE_TAG}")"; then
+            echo "::warning::could not work out which satellites ${RELEASE_TAG} changes anything for - telling all of them"
+            targets="all"
+          fi
+
           for repo in hippocampus-obsidian hippocampus-otel-collector hippocampus-llamaindex hippocampus-gen; do
+            if [ "${targets}" != "all" ] && ! printf '%s\n' "${targets}" | grep -qx "${repo}"; then
+              echo "not telling ${repo}: nothing it consumes changed since the release it pins"
+              continue
+            fi
+
             if gh api "repos/fastbean-au/${repo}/dispatches" \
                  --method POST \
                  --field event_type=hippocampus-release \

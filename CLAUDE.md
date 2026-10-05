@@ -199,6 +199,12 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
     themselves from the pin when a bump lands (`release-on-bump` in each, dispatching their own
     `Release` because a `GITHUB_TOKEN`-created tag triggers no `push: tags:` event);
     `hippocampus-obsidian` is deliberately manual, its tag being a user-facing plugin version.
+    (4) A pin is stale only when something the satellite **consumes** moved — its `SURFACE` entry,
+    path prefixes in this repository — not when its number is lower, and `--dispatch-targets` asks
+    the same question for the release workflow's `notify-satellites`, so a patch changing no
+    satellite's surface dispatches nothing and the report and the dispatch cannot disagree. A
+    misspelt prefix would match nothing and silently stop that satellite being told, which is why
+    `family_test.go` requires every prefix to exist.
     [`cmd/hippocampus/family_test.go`](cmd/hippocampus/family_test.go) holds this script's
     repository table against the release workflow's dispatch loop in both directions — a repository
     in the loop and not the table is one whose staleness nobody is told about, which was
