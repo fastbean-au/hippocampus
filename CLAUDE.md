@@ -140,7 +140,13 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   first run found spreading activation silently inert on Postgres (a float bound into an
   integer-inferred parameter arriving as 0). A test that legitimately cannot run on a server dialect
   calls `requireSQLite`; one that opens its own store instead of `newTestDB` is refused by
-  `TestSharedSuiteOpensThroughNewTestDB` unless its file is on that guard's allow-list
+  `TestSharedSuiteOpensThroughNewTestDB` unless its file is on that guard's allow-list. The same
+  variable reruns the **service layer**: `HIPPOCAMPUS_TEST_DIALECT=postgres go test ./hippocampus`
+  points `newTestServer` at `db/dbtest`, which gives every test a scratch schema (Postgres, from
+  `HIPPOCAMPUS_TEST_POSTGRES_DSN`) or database (MySQL, from `HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN`) of
+  its own, dropped afterwards - isolated rather than shared and emptied, because emptying from
+  outside the package would need an exported "delete everything" on the production type. CI runs
+  both packages this way and merges the three coverage profiles
 - Cut a release: `scripts/release.sh --minor` (or `--patch`/`--major`/`--version X.Y.Z`) — runs the
   pre-flight, rolls `[Unreleased]` into a dated version section, rewrites both link references,
   commits and tags. It deliberately does **not** push (that is what starts the release workflow) and

@@ -78,8 +78,26 @@ func TestSleepMeasuresTheStorageOutsideTheTarget(t *testing.T) {
 		t.Error("a log holding rows reported no bytes")
 	}
 
-	if ancillary.GetTotalBytes() != log.GetBytes() {
-		t.Errorf("total_bytes = %d with only the log holding anything, want %d", ancillary.GetTotalBytes(), log.GetBytes())
+	// The total is the sum of each table's FOOTPRINT: the engine's own measurement where the dialect
+	// takes one, and the structural estimate where it does not. On SQLite, which takes none, that is
+	// just the log's bytes; on a server dialect an empty table still occupies the pages the engine
+	// allocated it, so the total is more than the log's rows alone. Asserting the rule rather than
+	// one dialect's arithmetic is what lets this run on all three (TODO-3 item 153).
+	footprint := func(table interface {
+		GetBytes() int64
+		GetDiskBytes() int64
+	}) int64 {
+		if table.GetDiskBytes() > 0 {
+			return table.GetDiskBytes()
+		}
+
+		return table.GetBytes()
+	}
+
+	want := footprint(log) + footprint(ancillary.GetSearchOutbox()) + footprint(ancillary.GetCallbackQueue())
+
+	if ancillary.GetTotalBytes() != want {
+		t.Errorf("total_bytes = %d, want %d, the three tables' footprints summed", ancillary.GetTotalBytes(), want)
 	}
 
 	// The other two are reported whatever their state, because an omitted table reads as a table

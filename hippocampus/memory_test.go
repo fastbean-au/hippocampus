@@ -16,6 +16,7 @@ import (
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
+	"github.com/fastbean-au/hippocampus/db/dbtest"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -110,16 +111,14 @@ func TestDeleteMemories_DuplicateIdsReportOk(t *testing.T) {
 }
 
 // newTestServer builds a Server over an in-memory database, ready for RPC-level tests.
+// newTestServer builds a Server over an empty store. The store is on the dialect
+// HIPPOCAMPUS_TEST_DIALECT selects - SQLite by default - so the tests built on this one constructor
+// (the group-scope isolation suite, predicate deletion, the import and event-cascade checks, and
+// the rest) run on PostgreSQL and MySQL too when CI asks them to (TODO-3 item 153).
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	database, err := db.New("")
-	if err != nil {
-		t.Fatalf("failed to create in-memory DB: %s", err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-
-	return &Server{db: database}
+	return &Server{db: dbtest.Open(t)}
 }
 
 // TestReplaceMemoriesWithSummary_RPC verifies the happy path end to end: the event's memories are

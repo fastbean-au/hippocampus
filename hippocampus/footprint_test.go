@@ -12,6 +12,7 @@ import (
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
+	"github.com/fastbean-au/hippocampus/types"
 )
 
 // measuredFootprintStore answers with a fixed reading, leaving the rest of the store real. The
@@ -372,6 +373,19 @@ func TestSleepReportsTheFootprintAgainstTheCycleEstimate(t *testing.T) {
 	s.consolidation.capacityBytes = 160_000_000
 
 	seedDoomed(t, s, 2)
+
+	// One memory the cycle keeps. Without it the store is empty after the cycle, and the server
+	// dialects' live-row estimate of an empty store is - correctly - zero, which the assertion below
+	// could not tell from an estimate nobody took. SQLite's page accounting is never zero, which is
+	// why this only showed once the test ran on the other two (TODO-3 item 153).
+	if _, err := s.db.CreateMemory(context.Background(), types.Memory{
+		Id:           "survivor",
+		Body:         "kept",
+		TimeStamp:    time.Now().UnixNano(),
+		Significance: 1000,
+	}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
 
 	if err := s.sleep(triggerManual); err != nil {
 		t.Fatalf("sleep: %s", err)

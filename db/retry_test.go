@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -213,4 +214,135 @@ func TestIsDuplicateKey(t *testing.T) {
 			t.Errorf("expected a real SQLite duplicate insert to be classified as a duplicate key, got %v", err)
 		}
 	})
+}
+
+// withTxRetry is withWriteRetry's transaction-level counterpart, and its retry loop only runs on the
+// server dialects (SQLite admits one writer, so it returns after one attempt). The cross-dialect
+// suite reaches it only when a real deadlock happens to occur, so its coverage read 41.7% however
+// often that suite ran (TODO-3 item 153). These drive each branch directly.
+
+// TestWithTxRetry_ReplaysAFailedTransaction: a deadlock aborts the whole transaction, so the body is
+// replayed from BEGIN until it commits.
+func TestWithTxRetry_ReplaysAFailedTransaction(t *testing.T) {
+	for name, drv := range map[string]driver{"mysql": driverMySQL, "postgres": driverPostgres} {
+		t.Run(name, func(t *testing.T) {
+			d := &DB{driver: drv}
+
+			conflict := error(&mysql.MySQLError{Number: mysqlErrDeadlock, Message: "Deadlock found"})
+			if drv == driverPostgres {
+				conflict = &pgconn.PgError{Code: pgDeadlockDetected}
+			}
+
+			attempts := 0
+
+			err := d.withTxRetry(context.Background(), "test", func() error {
+				attempts++
+
+				if attempts < 3 {
+					return conflict
+				}
+
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("expected the replay to eventually commit, got: %v", err)
+			}
+
+			if attempts != 3 {
+				t.Errorf("expected 3 attempts (two conflicts then a commit), got %d", attempts)
+			}
+		})
+	}
+}
+
+// TestWithTxRetry_ExhaustionWrapsErrWriteConflict: a conflict that never clears is reported as a
+// write conflict, which the RPC layer maps to a retryable Aborted, naming what failed.
+func TestWithTxRetry_ExhaustionWrapsErrWriteConflict(t *testing.T) {
+	d := &DB{driver: driverMySQL}
+
+	attempts := 0
+
+	err := d.withTxRetry(context.Background(), "replace memories with summary", func() error {
+		attempts++
+
+		return &mysql.MySQLError{Number: mysqlErrLockWaitTimeout, Message: "Lock wait timeout"}
+	})
+	if !errors.Is(err, ErrWriteConflict) {
+		t.Fatalf("expected ErrWriteConflict after exhausting retries, got: %v", err)
+	}
+
+	if attempts != writeRetryMaxAttempts {
+		t.Errorf("expected %d attempts, got %d", writeRetryMaxAttempts, attempts)
+	}
+
+	if !strings.Contains(err.Error(), "replace memories with summary") {
+		t.Errorf("expected the error to name the transaction, got: %v", err)
+	}
+}
+
+// TestWithTxRetry_NonRetryableReturnsImmediately: an ordinary error is not a conflict, and replaying
+// a transaction that failed for a real reason would only fail again.
+func TestWithTxRetry_NonRetryableReturnsImmediately(t *testing.T) {
+	d := &DB{driver: driverPostgres}
+
+	attempts := 0
+	want := errors.New("constraint violated")
+
+	err := d.withTxRetry(context.Background(), "test", func() error {
+		attempts++
+
+		return want
+	})
+	if !errors.Is(err, want) || errors.Is(err, ErrWriteConflict) {
+		t.Fatalf("expected the original error, unwrapped, got: %v", err)
+	}
+
+	if attempts != 1 {
+		t.Errorf("expected one attempt, got %d", attempts)
+	}
+}
+
+// TestWithTxRetry_SingleWriterDoesNotRetry: SQLite admits one writer, so there is no conflict to
+// wait out and the body runs exactly once, whatever it returns.
+func TestWithTxRetry_SingleWriterDoesNotRetry(t *testing.T) {
+	d := &DB{driver: driverSQLite}
+
+	attempts := 0
+
+	err := d.withTxRetry(context.Background(), "test", func() error {
+		attempts++
+
+		return &mysql.MySQLError{Number: mysqlErrDeadlock, Message: "Deadlock found"}
+	})
+	if err == nil || errors.Is(err, ErrWriteConflict) {
+		t.Fatalf("expected the body's own error, unwrapped, got: %v", err)
+	}
+
+	if attempts != 1 {
+		t.Errorf("expected one attempt on a single-writer dialect, got %d", attempts)
+	}
+}
+
+// TestWithTxRetry_StopsOnContextCancellation: a cancelled caller is not kept waiting through the
+// backoff for a transaction it no longer wants.
+func TestWithTxRetry_StopsOnContextCancellation(t *testing.T) {
+	d := &DB{driver: driverMySQL}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	attempts := 0
+
+	err := d.withTxRetry(ctx, "test", func() error {
+		attempts++
+
+		return &mysql.MySQLError{Number: mysqlErrDeadlock, Message: "Deadlock found"}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+
+	if attempts != 1 {
+		t.Errorf("expected the loop to stop after the first attempt on a cancelled context, got %d", attempts)
+	}
 }

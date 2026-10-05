@@ -105,19 +105,26 @@ jobs:
       # forgotten log and the search outbox with no test that had ever run the branch; the first run
       # of this step found spreading activation to be silently inert on Postgres.
       #
+      # The service layer reruns too. The same variable re-points newTestServer through db/dbtest,
+      # which gives each test a scratch schema (Postgres) or database (MySQL - hence the admin DSN)
+      # of its own, so the group-scope isolation suite, predicate deletion and the import and
+      # event-cascade checks run on every dialect: a composition of storage calls can be wrong on
+      # one dialect while each call is right on all three (TODO-3 item 153).
+      #
       # A separate step rather than a matrix dimension: the two servers are already up for the step
-      # above, the run is under a minute each, and keeping it here means one job reports the whole
-      # root module. Coverage is deliberately not collected - the SQLite run above is the coverage
-      # baseline, and three profiles of the same lines would only obscure it.
-      - name: Test the db suite against each server dialect
+      # above, and keeping it here means one job reports the whole root module. Coverage IS collected
+      # here and merged with the SQLite run's in the report below, because code only a server dialect
+      # executes - the catalogue footprint queries, the transaction retry loop - otherwise reads as
+      # untested however thoroughly this step runs it. A line counts as covered if any dialect ran it.
+      - name: Test the db and service suites against each server dialect
         env:
           HIPPOCAMPUS_TEST_POSTGRES_DSN: postgres://hippocampus:hippocampus@localhost:5432/hippocampus_test?sslmode=disable
           HIPPOCAMPUS_TEST_MYSQL_DSN: hippocampus:hippocampus@tcp(localhost:3306)/hippocampus_test
           HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN: root:hippocampus@tcp(localhost:3306)/hippocampus_test
         run: |
           for dialect in postgres mysql; do
-            echo "::group::db suite on $dialect"
-            HIPPOCAMPUS_TEST_DIALECT="$dialect" go test -count=1 ./db
+            echo "::group::db and service suites on $dialect"
+            HIPPOCAMPUS_TEST_DIALECT="$dialect" go test -count=1 -coverprofile="coverage-$dialect.out" ./db ./hippocampus
             echo "::endgroup::"
           done
 
@@ -128,16 +135,20 @@ jobs:
       # including cmd/; the separate integration modules (integrations/mcp, otel, eventsource) are
       # tested in their own jobs and not reported here. Only the generated protobuf/gateway code
       # (contract/hippocampus*.pb*.go and *_grpc.pb.go) is filtered out, because coverage of
-      # generated getters is noise rather than a signal about our code.
+      # generated getters is noise rather than a signal about our code - and so is db/dbtest, the
+      # test-support opener, which only ever runs inside OTHER packages' tests and so always reads as
+      # untested to a coverage profile that credits the package under test.
       - name: Report coverage to Coveralls
         if: github.event_name == 'push'
         env:
           # Repository secret; goveralls reads it via -service=github. Never inline the token.
           COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
         run: |
-          grep -vE '/contract/hippocampus[^/]*\.go:' coverage.out > coverage.filtered.out
+          for profile in coverage coverage-postgres coverage-mysql; do
+            grep -vE '/contract/hippocampus[^/]*\.go:|/db/dbtest/' "$profile.out" > "$profile.filtered.out"
+          done
           go install github.com/mattn/goveralls@latest
-          goveralls -coverprofile=coverage.filtered.out -service=github
+          goveralls -coverprofile=coverage.filtered.out,coverage-postgres.filtered.out,coverage-mysql.filtered.out -service=github
 
   # The root module under the race detector. Its own job rather than a flag on the test job, for two
   # reasons. The run takes several minutes - the db package alone is over four under -race - which
