@@ -3,6 +3,8 @@ package hippocampus
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"reflect"
 	"testing"
 
@@ -898,4 +900,68 @@ func TestDocFromMemoryCarriesMetadataTerms(t *testing.T) {
 	if got := search.DocFromMemory(types.Memory{Id: "m1", Body: "a"}).Metadata; got != nil {
 		t.Errorf("expected no terms for a memory without metadata, got %v", got)
 	}
+}
+
+// TestSearchMemories_ClampsTheLimit pins that a search page is bounded like every other listing.
+// It was the one listing RPC without a cap, so a reader - or, under the default auth.method: none,
+// anyone - could ask for MaxInt32 and be handed every matching memory with its body in one
+// response, and a writer setting reinforce could reset the decay clock on all of them in one call
+// (TODO-3 item 143). 200 is GetMemories' cap.
+func TestSearchMemories_ClampsTheLimit(t *testing.T) {
+	const want = 200
+
+	ids := make([]string, 0, want+50)
+
+	for i := range want + 50 {
+		ids = append(ids, fmt.Sprintf("m%03d", i))
+	}
+
+	t.Run("the backend is asked for at most the cap", func(t *testing.T) {
+		idx := &fakeIndex{enabled: true, searchIds: ids}
+		s := newSearchTestServer(t, idx)
+
+		if _, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "hello", Limit: math.MaxInt32}); err != nil {
+			t.Fatalf("SearchMemories: %s", err)
+		}
+
+		if idx.searchLimit != want {
+			t.Errorf("index was asked for %d candidates, want the cap of %d", idx.searchLimit, want)
+		}
+	})
+
+	t.Run("ranking over-fetches from the cap, not from the request", func(t *testing.T) {
+		idx := &fakeIndex{enabled: true, searchIds: ids}
+		s := newSearchTestServer(t, idx)
+		s.ranking = rankingWeights{significance: 0.3}
+
+		if _, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "hello", Limit: math.MaxInt32}); err != nil {
+			t.Fatalf("SearchMemories: %s", err)
+		}
+
+		if idx.searchLimit != want*rankingOverFetch {
+			t.Errorf("index was asked for %d candidates, want %d", idx.searchLimit, want*rankingOverFetch)
+		}
+	})
+
+	t.Run("at most the cap is returned", func(t *testing.T) {
+		ctx := context.Background()
+
+		idx := &fakeIndex{enabled: true, searchIds: ids}
+		s := newSearchTestServer(t, idx)
+
+		for _, id := range ids {
+			if _, err := s.db.CreateMemory(ctx, types.Memory{Id: id, TimeStamp: 100, Significance: 1, Body: "hello"}); err != nil {
+				t.Fatalf("CreateMemory(%s): %s", id, err)
+			}
+		}
+
+		res, err := s.SearchMemories(ctx, &contract.SearchMemoriesRequest{Query: "hello", Limit: math.MaxInt32})
+		if err != nil {
+			t.Fatalf("SearchMemories: %s", err)
+		}
+
+		if len(res.Memories) != want {
+			t.Errorf("returned %d memories, want the cap of %d", len(res.Memories), want)
+		}
+	})
 }

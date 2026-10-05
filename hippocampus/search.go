@@ -20,6 +20,12 @@ import (
 // positive limit.
 const defaultSearchLimit = 10
 
+// maxSearchLimit caps a search page, as maxMemoryPageSize caps GetMemories': a larger limit is
+// clamped rather than refused. Without it a single call could return every matching memory with its
+// body, and a reinforcing one could reset the decay clock on all of them at once (TODO-3 item 143).
+// The ranking over-fetch multiplies the clamped value, never the requested one.
+const maxSearchLimit = 200
+
 // searchIdx returns the configured search index, or the disabled no-op when none was injected
 // (as in tests constructing a Server directly), so callers never need a nil check.
 func (s *Server) searchIdx() search.Index {
@@ -62,6 +68,10 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 	limit := int(in.GetLimit())
 	if limit <= 0 {
 		limit = defaultSearchLimit
+	}
+
+	if limit > maxSearchLimit {
+		limit = maxSearchLimit
 	}
 
 	// When ranking is active the backend is asked for more candidates than the caller wanted, so

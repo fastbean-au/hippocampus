@@ -2638,7 +2638,7 @@ func (x *RecallMemoriesRequest) GetIncludeLinked() bool {
 type SearchMemoriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Query         string                 `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`
-	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`                                      // maximum results; a value <= 0 selects the default (10)
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`                                      // maximum results; a value <= 0 selects the default (10), and a value over 200 is clamped to 200, as GetMemories clamps its page
 	EventId       string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                    // optional: restrict matches to a single event
 	Reinforce     bool                   `protobuf:"varint,4,opt,name=reinforce,proto3" json:"reinforce,omitempty"`                              // route matches through recall, reinforcing them
 	Group         string                 `protobuf:"bytes,5,opt,name=group,proto3" json:"group,omitempty"`                                       // optional: restrict matches to memories carrying this group label

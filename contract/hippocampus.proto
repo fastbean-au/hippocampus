@@ -885,7 +885,7 @@ enum SearchMode {
 // reinforced.
 message SearchMemoriesRequest {
 	string                                 query                     = 1;
-	int32                                  limit                     = 2; // maximum results; a value <= 0 selects the default (10)
+	int32                                  limit                     = 2; // maximum results; a value <= 0 selects the default (10), and a value over 200 is clamped to 200, as GetMemories clamps its page
 	string                                 event_id                  = 3; // optional: restrict matches to a single event
 	bool                                   reinforce                 = 4; // route matches through recall, reinforcing them
 	string                                 group                     = 5; // optional: restrict matches to memories carrying this group label

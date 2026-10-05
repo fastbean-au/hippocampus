@@ -550,7 +550,7 @@ func (b *bridge) recallMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 
 type searchMemoriesInput struct {
 	Query     string `json:"query" jsonschema:"the content to search for (required)"`
-	Limit     int32  `json:"limit,omitempty" jsonschema:"maximum results; 0 selects the service default (10)"`
+	Limit     int32  `json:"limit,omitempty" jsonschema:"maximum results; 0 selects the service default (10), and the service caps it at 200"`
 	Group     string `json:"group,omitempty" jsonschema:"optional: restrict matches to memories carrying this group label"`
 	EventId   string `json:"event_id,omitempty" jsonschema:"optional: restrict matches to a single event"`
 	Reinforce bool   `json:"reinforce,omitempty" jsonschema:"when true, recall (reinforce) the matched memories rather than merely fetching them"`

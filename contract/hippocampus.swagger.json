@@ -3848,7 +3848,7 @@
         "limit": {
           "type": "integer",
           "format": "int32",
-          "title": "maximum results; a value \u003c= 0 selects the default (10)"
+          "title": "maximum results; a value \u003c= 0 selects the default (10), and a value over 200 is clamped to 200, as GetMemories clamps its page"
         },
         "eventId": {
           "type": "string",

@@ -139,6 +139,12 @@ itself which service version it was built against.
   in bytes), so such objects are unmappable: skipped by the tap and never deleted. An id in that range
   registered through `ImportBatch`, which does not apply the length check, is now unmappable too and
   is left alone rather than reinforced.
+- **`SearchMemories` caps its page at 200, as `GetMemories` does.** It was the one listing RPC with
+  no bound on `limit`, so a single call — from a reader, or from anyone on an instance with
+  `auth.method: none` — could return every matching memory with its body in one response, and a
+  reinforcing one could reset the decay clock on all of them. A larger `limit` is now clamped to 200
+  rather than refused, and the ranking over-fetch multiplies the clamped value. A caller relying on
+  more than 200 results per search gets 200.
 
 ## [0.51.1] - 2026-10-05
 
