@@ -1776,6 +1776,11 @@ func (d *DB) memoryFilterConditions(filter MemoryFilter) (string, []any) {
 		return query, args
 	}
 
+	if filter.SignificanceEquals != nil {
+		query += ` AND significance = ?`
+		args = append(args, *filter.SignificanceEquals)
+	}
+
 	if filter.SignificanceMin > 0 {
 		query += ` AND significance >= ?`
 		args = append(args, filter.SignificanceMin)
@@ -1798,6 +1803,7 @@ func (d *DB) memoryFilterConditions(filter MemoryFilter) (string, []any) {
 // join the page cannot.
 func filterNeedsSignificance(filter MemoryFilter) bool {
 	return filter.SignificanceExtremum != SignificanceExtremumNone ||
+		filter.SignificanceEquals != nil ||
 		filter.SignificanceMin > 0 ||
 		filter.SignificanceMax > 0
 }

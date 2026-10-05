@@ -102,6 +102,72 @@ func TestMemoryIdsMatching_SignificanceFilter(t *testing.T) {
 	}
 }
 
+// TestIdsMatching_SignificanceEquals pins the pinned-tier filter a delete by significance_extremum
+// resolves to, on both selections and on the listing and count paths that share the predicate. The
+// unranked tier is the case it exists for: 0 is "no bound" to the range fields, so only this field
+// can select it (TODO-3 item 137).
+func TestIdsMatching_SignificanceEquals(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	for i, significance := range []int32{0, 0, 3, 5} {
+		id := fmt.Sprintf("s%d", i)
+
+		if _, err := d.CreateMemory(ctx, types.Memory{Id: id, Body: "body", TimeStamp: 100, Significance: significance}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+
+		if _, err := d.CreateEvent(ctx, types.Event{Id: id, Name: id, TimeStart: 100, Significance: significance}); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", id, err)
+		}
+	}
+
+	cases := []struct {
+		significance int32
+		want         []string
+	}{
+		{0, []string{"s0", "s1"}},
+		{3, []string{"s2"}},
+		{4, nil},
+	}
+
+	for _, c := range cases {
+		significance := c.significance
+
+		memoryIds, err := d.MemoryIdsMatching(ctx, MemoryFilter{SignificanceEquals: &significance})
+		if err != nil {
+			t.Fatalf("MemoryIdsMatching(=%d): %s", significance, err)
+		}
+
+		if fmt.Sprint(memoryIds) != fmt.Sprint(c.want) {
+			t.Errorf("MemoryIdsMatching(=%d) = %v, want %v", significance, memoryIds, c.want)
+		}
+
+		eventIds, err := d.EventIdsMatching(ctx, EventFilter{SignificanceEquals: &significance})
+		if err != nil {
+			t.Fatalf("EventIdsMatching(=%d): %s", significance, err)
+		}
+
+		if fmt.Sprint(eventIds) != fmt.Sprint(c.want) {
+			t.Errorf("EventIdsMatching(=%d) = %v, want %v", significance, eventIds, c.want)
+		}
+
+		memoryCount, err := d.CountMemoriesFiltered(ctx, MemoryFilter{SignificanceEquals: &significance})
+		if err != nil {
+			t.Fatalf("CountMemoriesFiltered(=%d): %s", significance, err)
+		}
+
+		eventCount, err := d.CountEventsFiltered(ctx, EventFilter{SignificanceEquals: &significance})
+		if err != nil {
+			t.Fatalf("CountEventsFiltered(=%d): %s", significance, err)
+		}
+
+		if memoryCount != len(c.want) || eventCount != len(c.want) {
+			t.Errorf("counts at =%d are memories %d events %d, want %d", significance, memoryCount, eventCount, len(c.want))
+		}
+	}
+}
+
 // TestEventIdsMatching is MemoryIdsMatching's counterpart.
 func TestEventIdsMatching(t *testing.T) {
 	d := newTestDB(t)

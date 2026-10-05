@@ -1107,7 +1107,7 @@ message DeleteMemoriesByFilterRequest {
 	int32                                  significance_min          = 3;  // inclusive lower bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
 	int32                                  significance_max          = 4;  // inclusive upper bound on significance; 0 (the default) means no bound, NOT a literal significance-of-zero filter
 	string                                 group                     = 5;  // restrict to memories carrying this group label - the field that makes offboarding a group one call
-	SignificanceExtremum                   significance_extremum     = 6;  // when set, ignore significance_min/significance_max and delete only the memories tied at that significance value among the other filters; 0 (default) applies no extremum
+	SignificanceExtremum                   significance_extremum     = 6;  // when set, ignore significance_min/significance_max and delete only the memories tied at that significance value among the other filters, resolved once when the call starts so the deletion cannot move on to the next tier; 0 (default) applies no extremum
 	repeated string                        metadata                  = 7;  // restrict to memories whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata
 	Bool                                   recalled                  = 8;  // FALSE selects only never-recalled memories, TRUE only those recalled at least once; UNSPECIFIED (default) applies no restriction
 	int32                                  recall_count_min          = 9;  // inclusive lower bound on recall_count; 0 (the default) means no bound
@@ -1146,7 +1146,7 @@ message DeleteEventsByFilterRequest {
 	int32                                  significance_min          = 5;  // inclusive lower bound on significance; 0 (the default) means no bound
 	int32                                  significance_max          = 6;  // inclusive upper bound on significance; 0 (the default) means no bound
 	string                                 group                     = 7;  // restrict to events carrying this group label
-	SignificanceExtremum                   significance_extremum     = 8;  // when set, ignore significance_min/significance_max and delete only the events tied at that significance value among the other filters
+	SignificanceExtremum                   significance_extremum     = 8;  // when set, ignore significance_min/significance_max and delete only the events tied at that significance value among the other filters, resolved once when the call starts so the deletion cannot move on to the next tier
 	repeated string                        metadata                  = 9;  // restrict to events whose metadata carries every one of these "key=value" pairs (AND, exact match)
 	Bool                                   ended                     = 10; // FALSE selects only events that have not ended, TRUE only those that have; UNSPECIFIED (default) applies no restriction
 	string                                 name_contains             = 11; // restrict to events whose name contains this substring, case-insensitively

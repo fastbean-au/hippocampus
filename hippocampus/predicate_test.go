@@ -278,6 +278,164 @@ func TestDeleteMemoriesByFilter_MatchesTheListing(t *testing.T) {
 	}
 }
 
+// seedSignificances writes one memory per significance into the group, in order, and returns their
+// ids. A significance of 0 is unranked, which is a tier like any other to an extremum filter.
+func seedSignificances(t *testing.T, s *Server, group string, significances ...int32) []string {
+	t.Helper()
+
+	ids := make([]string, 0, len(significances))
+
+	for i, v := range significances {
+		id := fmt.Sprintf("%s-s%d-%d", group, v, i)
+
+		if _, err := s.db.CreateMemory(context.Background(), types.Memory{
+			Id:           id,
+			Body:         "body " + id,
+			TimeStamp:    int64(1000 + i),
+			Significance: v,
+			Group:        group,
+		}); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", id, err)
+		}
+
+		ids = append(ids, id)
+	}
+
+	return ids
+}
+
+// remainingMemoryIds lists every memory left in the store, unscoped.
+func remainingMemoryIds(t *testing.T, s *Server) map[string]bool {
+	t.Helper()
+
+	res, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{Limit: 200})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	ids := make(map[string]bool, len(res.GetMemories()))
+	for _, v := range res.GetMemories() {
+		ids[v.GetId()] = true
+	}
+
+	return ids
+}
+
+// TestDeleteMemoriesByFilter_SignificanceExtremum pins that an extremum names ONE tier for the
+// whole deletion. The extremum is a sub-select over the store as it stands, so evaluating it afresh
+// for each batch made the next tier the extremum as soon as the first was gone, and the deletion ran
+// on until nothing matched - a listing of one memory as the dry run, and a deletion of all of them
+// (TODO-3 item 137).
+func TestDeleteMemoriesByFilter_SignificanceExtremum(t *testing.T) {
+	cases := []struct {
+		name          string
+		extremum      contract.SignificanceExtremum
+		significances []int32
+		wantDeleted   []int // indexes into significances
+	}{
+		{"lowest", contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST, []int32{2, 1, 3, 1, 4}, []int{1, 3}},
+		{"highest", contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_HIGHEST, []int32{2, 4, 3, 1, 4}, []int{1, 4}},
+
+		// Unranked memories are the lowest tier, and 0 is the value the significance range filters
+		// read as "no bound" - so a fix that pinned the resolved tier through those would match
+		// every memory here.
+		{"lowest is the unranked tier", contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST, []int32{0, 3, 0, 5}, []int{0, 2}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newTestServer(t)
+			ctx := context.Background()
+
+			ids := seedSignificances(t, s, "a", c.significances...)
+
+			listed, err := s.GetMemories(ctx, &contract.GetMemoriesRequest{SignificanceExtremum: c.extremum, Limit: 200})
+			if err != nil {
+				t.Fatalf("GetMemories: %s", err)
+			}
+
+			res, err := s.DeleteMemoriesByFilter(ctx, &contract.DeleteMemoriesByFilterRequest{SignificanceExtremum: c.extremum})
+			if err != nil {
+				t.Fatalf("DeleteMemoriesByFilter: %s", err)
+			}
+
+			if int64(listed.GetTotalCount()) != res.GetMemoriesDeleted() {
+				t.Errorf(
+					"the listing matched %d memories and the deletion removed %d - the dry run does not describe the deletion",
+					listed.GetTotalCount(), res.GetMemoriesDeleted(),
+				)
+			}
+
+			if !res.GetComplete() {
+				t.Error("complete = false on an unbounded call")
+			}
+
+			deleted := make(map[string]bool, len(c.wantDeleted))
+			for _, v := range c.wantDeleted {
+				deleted[ids[v]] = true
+			}
+
+			remaining := remainingMemoryIds(t, s)
+
+			for _, id := range ids {
+				if remaining[id] == deleted[id] {
+					t.Errorf("%s: remaining=%t, want %t", id, remaining[id], !deleted[id])
+				}
+			}
+		})
+	}
+}
+
+// TestDeleteMemoriesByFilter_SignificanceExtremumWithinTheFilter: the extremum is taken over what
+// the rest of the filter selects, not over the store, as the listing takes it.
+func TestDeleteMemoriesByFilter_SignificanceExtremumWithinTheFilter(t *testing.T) {
+	s := newTestServer(t)
+	ctx := context.Background()
+
+	a := seedSignificances(t, s, "a", 3, 5, 3)
+	b := seedSignificances(t, s, "b", 1, 2)
+
+	res, err := s.DeleteMemoriesByFilter(ctx, &contract.DeleteMemoriesByFilterRequest{
+		Group:                "a",
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+	})
+	if err != nil {
+		t.Fatalf("DeleteMemoriesByFilter: %s", err)
+	}
+
+	if res.GetMemoriesDeleted() != 2 {
+		t.Errorf("deleted %d memories, want group a's two at significance 3", res.GetMemoriesDeleted())
+	}
+
+	remaining := remainingMemoryIds(t, s)
+
+	for _, id := range []string{a[1], b[0], b[1]} {
+		if !remaining[id] {
+			t.Errorf("%s was deleted, but is not in group a's lowest tier", id)
+		}
+	}
+}
+
+// TestDeleteMemoriesByFilter_SignificanceExtremumMatchingNothing: a filter whose other fields
+// select nothing has no extremum to resolve, and is simply complete.
+func TestDeleteMemoriesByFilter_SignificanceExtremumMatchingNothing(t *testing.T) {
+	s := newTestServer(t)
+
+	seedSignificances(t, s, "a", 1, 2)
+
+	res, err := s.DeleteMemoriesByFilter(context.Background(), &contract.DeleteMemoriesByFilterRequest{
+		Group:                "nobody",
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+	})
+	if err != nil {
+		t.Fatalf("DeleteMemoriesByFilter: %s", err)
+	}
+
+	if res.GetMemoriesDeleted() != 0 || !res.GetComplete() {
+		t.Errorf("got deleted=%d complete=%t, want 0 and true", res.GetMemoriesDeleted(), res.GetComplete())
+	}
+}
+
 // TestDeleteMemoriesByFilter_MaxDeletions checks the bound and, more importantly, that a bounded
 // call reports itself incomplete - otherwise an operator taking a hundred rows at a time would
 // have no way to know when to stop.
@@ -502,6 +660,46 @@ func TestDeleteEventsByFilter_DeleteMemories(t *testing.T) {
 	}
 }
 
+// TestDeleteEventsByFilter_SignificanceExtremum is TestDeleteMemoriesByFilter_SignificanceExtremum
+// for events, whose deletion loop had the same shape and so the same fault.
+func TestDeleteEventsByFilter_SignificanceExtremum(t *testing.T) {
+	s := newTestServer(t)
+	ctx := context.Background()
+
+	for i, v := range []int32{2, 1, 3, 1} {
+		id := fmt.Sprintf("e%d", i)
+
+		if _, err := s.db.CreateEvent(ctx, types.Event{Id: id, Name: id, TimeStart: 100, Significance: v, Group: "a"}); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", id, err)
+		}
+	}
+
+	listed, err := s.GetEvents(ctx, &contract.GetEventsRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+		Limit:                200,
+	})
+	if err != nil {
+		t.Fatalf("GetEvents: %s", err)
+	}
+
+	res, err := s.DeleteEventsByFilter(ctx, &contract.DeleteEventsByFilterRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+	})
+	if err != nil {
+		t.Fatalf("DeleteEventsByFilter: %s", err)
+	}
+
+	if listed.GetTotalCount() != 2 || res.GetEventsDeleted() != 2 {
+		t.Errorf("listing matched %d and deletion removed %d events, want 2 and 2", listed.GetTotalCount(), res.GetEventsDeleted())
+	}
+
+	for _, id := range []string{"e0", "e2"} {
+		if _, err := s.db.GetEvent(ctx, id); err != nil {
+			t.Errorf("%s was deleted, but is not in the lowest tier: %s", id, err)
+		}
+	}
+}
+
 // TestDeleteEventsByFilter_OrphansMemories: without delete_memories the memories outlive their
 // event with no event_id, exactly as DeleteEvent's default does.
 func TestDeleteEventsByFilter_OrphansMemories(t *testing.T) {
@@ -653,6 +851,49 @@ func TestGroupScopeIsolation_DeleteByFilter(t *testing.T) {
 			t.Errorf("memories_deleted = %d, want 2 - an unscoped caller sees the whole store", res.GetMemoriesDeleted())
 		}
 	})
+}
+
+// vanishingStore loses the row an extremum was probed on before it can be read, as a concurrent
+// deletion of exactly that row would.
+type vanishingStore struct {
+	db.Store
+}
+
+func (vanishingStore) GetMemoriesByIds(context.Context, []string) (*[]types.Memory, error) {
+	return &[]types.Memory{}, nil
+}
+
+func (vanishingStore) GetEvent(_ context.Context, id string) (*types.Event, error) {
+	return nil, fmt.Errorf("event '%s': %w", id, db.ErrEventNotFound)
+}
+
+// TestDeleteByFilter_SignificanceExtremumRowVanishes: when the probed row goes before its tier can
+// be read, the call is Aborted and deletes nothing, rather than guessing a tier.
+func TestDeleteByFilter_SignificanceExtremumRowVanishes(t *testing.T) {
+	s := newTestServer(t)
+	ctx := context.Background()
+
+	seedSignificances(t, s, "a", 1, 2)
+
+	if _, err := s.db.CreateEvent(ctx, types.Event{Id: "e1", Name: "e1", TimeStart: 100, Significance: 1}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	s.db = vanishingStore{Store: s.db}
+
+	memories, err := s.DeleteMemoriesByFilter(ctx, &contract.DeleteMemoriesByFilterRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+	})
+	if status.Code(err) != codes.Aborted || memories.GetMemoriesDeleted() != 0 {
+		t.Errorf("DeleteMemoriesByFilter = %d deleted, %v; want 0 and Aborted", memories.GetMemoriesDeleted(), err)
+	}
+
+	events, err := s.DeleteEventsByFilter(ctx, &contract.DeleteEventsByFilterRequest{
+		SignificanceExtremum: contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST,
+	})
+	if status.Code(err) != codes.Aborted || events.GetEventsDeleted() != 0 {
+		t.Errorf("DeleteEventsByFilter = %d deleted, %v; want 0 and Aborted", events.GetEventsDeleted(), err)
+	}
 }
 
 // failingPredicateStore wraps a real store and fails one of the methods a predicate deletion uses,

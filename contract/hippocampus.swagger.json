@@ -2581,7 +2581,7 @@
         },
         "significanceExtremum": {
           "$ref": "#/definitions/v1SignificanceExtremum",
-          "title": "when set, ignore significance_min/significance_max and delete only the events tied at that significance value among the other filters"
+          "title": "when set, ignore significance_min/significance_max and delete only the events tied at that significance value among the other filters, resolved once when the call starts so the deletion cannot move on to the next tier"
         },
         "metadata": {
           "type": "array",
@@ -2687,7 +2687,7 @@
         },
         "significanceExtremum": {
           "$ref": "#/definitions/v1SignificanceExtremum",
-          "title": "when set, ignore significance_min/significance_max and delete only the memories tied at that significance value among the other filters; 0 (default) applies no extremum"
+          "title": "when set, ignore significance_min/significance_max and delete only the memories tied at that significance value among the other filters, resolved once when the call starts so the deletion cannot move on to the next tier; 0 (default) applies no extremum"
         },
         "metadata": {
           "type": "array",

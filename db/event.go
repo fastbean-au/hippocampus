@@ -518,6 +518,11 @@ func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 		return query, args
 	}
 
+	if filter.SignificanceEquals != nil {
+		query += ` AND significance = ?`
+		args = append(args, *filter.SignificanceEquals)
+	}
+
 	if filter.SignificanceMin > 0 {
 		query += ` AND significance >= ?`
 		args = append(args, filter.SignificanceMin)
@@ -537,6 +542,7 @@ func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 // significance column is all eventsFrom's join provides, and only these three predicates read it.
 func eventFilterNeedsSignificance(filter EventFilter) bool {
 	return filter.SignificanceExtremum != SignificanceExtremumNone ||
+		filter.SignificanceEquals != nil ||
 		filter.SignificanceMin > 0 ||
 		filter.SignificanceMax > 0
 }

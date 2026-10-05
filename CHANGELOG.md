@@ -88,6 +88,12 @@ itself which service version it was built against.
   whose `event_id` is another group's event (`NOT_FOUND`), checked before anything is written, and
   drop link far ends outside the token's scope as `LinkMemories` does. Unscoped imports, which is
   every deployment not using group scoping, are unchanged.
+- **A deletion by `significance_extremum` no longer deletes past the tier it names.**
+  `DeleteMemoriesByFilter` and `DeleteEventsByFilter` evaluated the extremum afresh for every
+  batch, so once the lowest (or highest) tier was gone the next one became the extremum, and the
+  call ran on until nothing the rest of the filter selected was left. The listing — the documented
+  dry run — showed one tier, and the deletion took everything. The extremum is now resolved once
+  when the call starts and that one tier is deleted, including the unranked tier (significance 0).
 
 ## [0.51.1] - 2026-10-05
 

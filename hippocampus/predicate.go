@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"errors"
 	"reflect"
 
 	log "github.com/sirupsen/logrus"
@@ -111,9 +112,18 @@ func (s *Server) DeleteMemoriesByFilter(
 		return res, mapWriteError(mapError(err))
 	}
 
+	// An extremum names one tier for the whole deletion, resolved once here. found is false when
+	// the rest of the filter selects nothing, so there is no tier to name and nothing to delete.
+	filter, found, err := s.pinMemoryExtremum(ctx, filter)
+	if err != nil {
+		return fail(err)
+	}
+
+	complete = !found
+
 	maxDeletions := in.GetMaxDeletions()
 
-	for {
+	for found {
 		batch := deleteByFilterBatch
 
 		if maxDeletions > 0 {
@@ -270,9 +280,17 @@ func (s *Server) DeleteEventsByFilter(
 		return res, mapWriteError(mapError(err))
 	}
 
+	// See DeleteMemoriesByFilter: an extremum is resolved once, to one tier.
+	filter, found, err := s.pinEventExtremum(ctx, filter)
+	if err != nil {
+		return fail(err)
+	}
+
+	complete = !found
+
 	maxDeletions := in.GetMaxDeletions()
 
-	for {
+	for found {
 		batch := deleteByFilterBatch
 
 		if maxDeletions > 0 {
@@ -376,6 +394,82 @@ func (s *Server) clearEventMemories(ctx context.Context, eventId string, deleteM
 	s.searchIdx().SetEventId(eventId, "")
 
 	return int64(cnt), nil
+}
+
+// pinMemoryExtremum resolves a filter's significance_extremum to the one significance it names
+// now, and returns the filter selecting exactly that tier instead. A filter without an extremum is
+// returned unchanged, with found true.
+//
+// This is what keeps the listing the dry run when an extremum is set. The extremum is a sub-select
+// over the store as it stands, and the deletion loop selects again after every batch, so left
+// unresolved each batch's deletion made the next tier the extremum and the loop ran on until
+// nothing matched at all - the listing showing one tier and the deletion taking every memory the
+// rest of the filter selected (TODO-3 item 137).
+//
+// The tier is read off one matching row rather than asked for as an aggregate, because the
+// matching query already IS that aggregate: any row it returns carries the extremum. found is
+// false when nothing matches. A row that vanishes between the two reads - a concurrent deletion of
+// the one row probed - is reported as Aborted rather than retried, since the request can simply be
+// sent again and will resolve against whatever the store then holds.
+func (s *Server) pinMemoryExtremum(ctx context.Context, filter db.MemoryFilter) (db.MemoryFilter, bool, error) {
+	if filter.SignificanceExtremum == db.SignificanceExtremumNone {
+		return filter, true, nil
+	}
+
+	probe := filter
+	probe.Limit = 1
+
+	ids, err := s.db.MemoryIdsMatching(ctx, probe)
+	if err != nil || len(ids) == 0 {
+		return filter, false, err
+	}
+
+	memories, err := s.db.GetMemoriesByIds(ctx, ids)
+	if err != nil {
+		return filter, false, err
+	}
+
+	if len(*memories) == 0 {
+		return filter, false, status.Error(grpccodes.Aborted, "the store changed while resolving significance_extremum; retry the request")
+	}
+
+	significance := (*memories)[0].Significance
+
+	filter.SignificanceExtremum = db.SignificanceExtremumNone
+	filter.SignificanceEquals = &significance
+
+	return filter, true, nil
+}
+
+// pinEventExtremum is pinMemoryExtremum for events.
+func (s *Server) pinEventExtremum(ctx context.Context, filter db.EventFilter) (db.EventFilter, bool, error) {
+	if filter.SignificanceExtremum == db.SignificanceExtremumNone {
+		return filter, true, nil
+	}
+
+	probe := filter
+	probe.Limit = 1
+
+	ids, err := s.db.EventIdsMatching(ctx, probe)
+	if err != nil || len(ids) == 0 {
+		return filter, false, err
+	}
+
+	event, err := s.db.GetEvent(ctx, ids[0])
+	if err != nil {
+		if errors.Is(err, db.ErrEventNotFound) {
+			return filter, false, status.Error(grpccodes.Aborted, "the store changed while resolving significance_extremum; retry the request")
+		}
+
+		return filter, false, err
+	}
+
+	significance := event.Significance
+
+	filter.SignificanceExtremum = db.SignificanceExtremumNone
+	filter.SignificanceEquals = &significance
+
+	return filter, true, nil
 }
 
 // isZeroFilter reports whether a built filter selects nothing at all - that is, whether it is

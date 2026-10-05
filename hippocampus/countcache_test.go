@@ -67,6 +67,34 @@ func TestFilterCacheKeyCoversEveryField(t *testing.T) {
 	}
 }
 
+// TestFilterCacheKeyReadsThroughPointers: a pointer field must contribute what it points AT. %v
+// on a pointer formats its address, so two requests asking for the same value would miss each
+// other's entry - and, worse, once an address is reused, two requests asking for different values
+// could share one and be told each other's totals.
+func TestFilterCacheKeyReadsThroughPointers(t *testing.T) {
+	three := int32(3)
+	alsoThree := int32(3)
+	five := int32(5)
+	zero := int32(0)
+
+	key := func(v *int32) string {
+		return filterCacheKey("p", db.MemoryFilter{SignificanceEquals: v})
+	}
+
+	if key(&three) != key(&alsoThree) {
+		t.Errorf("equal values behind different pointers produced different keys: %q, %q", key(&three), key(&alsoThree))
+	}
+
+	if key(&three) == key(&five) {
+		t.Errorf("different values produced the same key %q", key(&three))
+	}
+
+	// Zero is a value here (the unranked tier) and must not read as unset.
+	if key(&zero) == key(nil) {
+		t.Errorf("a pointer to zero and a nil pointer produced the same key %q", key(nil))
+	}
+}
+
 // nonZeroValue returns a value distinguishable from the zero value for the kinds a filter uses.
 func nonZeroValue(t reflect.Type) reflect.Value {
 	switch t.Kind() {
@@ -91,6 +119,18 @@ func nonZeroValue(t reflect.Type) reflect.Value {
 		slice.Index(0).Set(element)
 
 		return slice
+
+	case reflect.Pointer:
+		element := nonZeroValue(t.Elem())
+
+		if !element.IsValid() {
+			return reflect.Value{}
+		}
+
+		pointer := reflect.New(t.Elem())
+		pointer.Elem().Set(element)
+
+		return pointer
 
 	case reflect.Map:
 		m := reflect.MakeMap(t)

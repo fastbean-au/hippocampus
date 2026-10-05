@@ -458,6 +458,14 @@ type MemoryFilter struct {
 	RecallCountMax  int32
 	TimeRecalledMin int64
 	TimeRecalledMax int64
+
+	// SignificanceEquals, when non-nil, selects exactly one significance - including 0, the unranked
+	// tier, which SignificanceMin/SignificanceMax cannot ask for since they read 0 as "no bound". It
+	// exists for a deletion by significance_extremum: the extremum is a sub-select over the store as
+	// it stands, so a loop that deletes in batches has to resolve it to a value ONCE and pin that,
+	// or each batch's deletion makes the next tier the extremum (TODO-3 item 137). Like the range
+	// fields it is ignored when SignificanceExtremum is set.
+	SignificanceEquals *int32
 }
 
 // EventFilter narrows a GetEvents query. A zero value on any field leaves that dimension
@@ -491,6 +499,10 @@ type EventFilter struct {
 	// for the same caller: the linked-to filter resolves an event's neighbours and passes them here
 	// so traversal composes with the other filters and with pagination. Empty means unrestricted.
 	Ids []string
+
+	// SignificanceEquals selects exactly one significance, as MemoryFilter.SignificanceEquals does
+	// for memories and for the same deletion loop.
+	SignificanceEquals *int32
 
 	// NameContains restricts the result to events whose name contains this substring, matched
 	// case-insensitively. Empty means unrestricted. It is unindexed, exactly as Group and Metadata

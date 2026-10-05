@@ -166,7 +166,8 @@ func (c *countCache) evictOldest() {
 // where it is most useful.
 //
 // fmt's %v is deterministic for the types a filter carries, maps included - it sorts map keys - so
-// two equal filters always render identically.
+// two equal filters always render identically. Pointers are the exception, since %v renders their
+// address, so a pointer field is dereferenced first.
 func filterCacheKey(prefix string, filter any) string {
 	value := reflect.ValueOf(filter)
 	if value.Kind() == reflect.Pointer {
@@ -190,7 +191,22 @@ func filterCacheKey(prefix string, filter any) string {
 			continue
 		}
 
-		fmt.Fprintf(&b, "|%s=%v", field.Name, value.Field(i).Interface())
+		fieldValue := value.Field(i)
+
+		// A pointer contributes what it points at: %v on a pointer formats the address, which would
+		// give equal filters different keys and, once an address is reused, different filters the
+		// same one. nil is spelled out so it cannot collide with a pointer to a zero value.
+		if fieldValue.Kind() == reflect.Pointer {
+			if fieldValue.IsNil() {
+				fmt.Fprintf(&b, "|%s=<nil>", field.Name)
+
+				continue
+			}
+
+			fieldValue = fieldValue.Elem()
+		}
+
+		fmt.Fprintf(&b, "|%s=%v", field.Name, fieldValue.Interface())
 	}
 
 	return b.String()
