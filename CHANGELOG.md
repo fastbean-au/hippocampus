@@ -192,6 +192,14 @@ itself which service version it was built against.
   now give the install from a release tag, which works (the package reports its version as
   `0.0.0.dev0` that way), and `docs/llamaindex.md` gives the one route that currently installs the
   adapter, since its `hippocampus-client>=0.43` requirement cannot be met by a tag install.
+- **The security guide names every route memory content leaves by, and every secret.** Its list of
+  where bodies leave the process omitted semantic search, which sends every indexed body (and every
+  semantic query) to the embedding provider, and `callbacks.includeBodies`; its secrets table omitted
+  both model API keys and both callback credentials, and abbreviated the MySQL DSN's variable. Both
+  are now complete, a test fails if a credential-named key the service reads has no row in that
+  table, and the hardening checklist gains the six controls the guide documents elsewhere (mTLS,
+  reflection, the metrics bind address, `topology.minimumTier`, CORS and the OpenAPI document, and
+  `auth.readerRecallReinforces`).
 ## [0.51.1] - 2026-10-05
 
 ### Changed

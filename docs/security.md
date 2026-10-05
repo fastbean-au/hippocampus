@@ -244,7 +244,7 @@ guide](console.md).
 ## Where memory content can leave the process
 
 The service is deliberately blind to memory bodies — it never reads one during consolidation, and
-the covering index exists partly so the decay scans cannot. Four features are the exceptions, and
+the covering index exists partly so the decay scans cannot. Six features are the exceptions, and
 each is a decision to let content out:
 
 - **The embedded LLM summariser** (`llm.enabled`, off by default) is the one component that reads
@@ -259,6 +259,19 @@ each is a decision to let content out:
   memories automatically during sleep, so leave it off unless that is intended. See
   [Embedded LLM (Ollama)](consolidation.md#embedded-llm-ollama) and
   [Model providers](configuration.md#model-providers).
+- **Semantic search embeds every indexed body** (`llm.embedding.enabled`, off by default). Each
+  memory written while it is on is sent to the embedding model server, and so is every memory the
+  reconcile sweep re-indexes and every one `--backfill-search` rebuilds — which is the whole store,
+  more than once over its life. The text of every semantic or hybrid **search query** goes there too.
+  That is a larger and steadier flow than the summariser's, and the same reasoning applies:
+  `llm.embedding.address` is a data-handling decision, and under the `openai` provider the bodies
+  leave your infrastructure unless the endpoint is one you run. See
+  [Model providers](configuration.md#model-providers).
+- **Callback deliveries can carry bodies** (`callbacks.includeBodies`, off by default). With it on, a
+  `memory_forgotten` delivery includes each forgotten memory's body, so the receiver at
+  `callbacks.url` holds a copy of everything the store forgets — and a queue backing up holds those
+  copies too, in the store's own database. Leave it off unless the receiver genuinely needs the
+  content, which an object-storage reaper, say, does not.
 - **The OpenSearch index holds a copy of every indexed body**, so the cluster is a second store of
   the same data and needs the same access control — authentication, TLS
   ([`opensearch.tls`](configuration.md#content-search)), and network isolation. The store's own
@@ -286,13 +299,21 @@ Any config key can be supplied as an environment variable (`HIPPOCAMPUS_<KEY>` w
 underscores), and **that is the recommended way to supply secrets** — inject them as Docker or
 Kubernetes secrets rather than committing them to `config.json`. The ones that matter:
 
-| Secret                           | Env override                                         |
-| :------------------------------- | :--------------------------------------------------- |
-| HMAC signing secret              | `HIPPOCAMPUS_AUTH_SIGNINGSECRET`                     |
-| Database DSN (with its password) | `HIPPOCAMPUS_STORAGE_POSTGRES_DSN` / `..._MYSQL_DSN` |
-| OpenSearch password              | `HIPPOCAMPUS_OPENSEARCH_PASSWORD`                    |
-| Transfer token                   | `HIPPOCAMPUS_TRANSFER_TOKEN`                         |
-| OAuth2 client secret             | `HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET`               |
+| Secret                               | Env override                           |
+| :----------------------------------- | :------------------------------------- |
+| HMAC signing secret                  | `HIPPOCAMPUS_AUTH_SIGNINGSECRET`       |
+| PostgreSQL DSN (with its password)   | `HIPPOCAMPUS_STORAGE_POSTGRES_DSN`     |
+| MySQL DSN (with its password)        | `HIPPOCAMPUS_STORAGE_MYSQL_DSN`        |
+| OpenSearch password                  | `HIPPOCAMPUS_OPENSEARCH_PASSWORD`      |
+| Transfer token                       | `HIPPOCAMPUS_TRANSFER_TOKEN`           |
+| OAuth2 client secret                 | `HIPPOCAMPUS_AUTH_OAUTH2_CLIENTSECRET` |
+| Summariser model API key             | `HIPPOCAMPUS_LLM_APIKEY`               |
+| Embedding model API key              | `HIPPOCAMPUS_LLM_EMBEDDING_APIKEY`     |
+| Callback bearer token                | `HIPPOCAMPUS_CALLBACKS_TOKEN`          |
+| Callback signing secret              | `HIPPOCAMPUS_CALLBACKS_SIGNINGSECRET`  |
+
+A test holds this table to the code: every key the service reads whose name says it is a credential
+must have a row here.
 
 `auth.signingKeys` is a structured list and so is config-file-only — it cannot be injected through a
 single environment variable, so a deployment rotating keys needs a mounted config file.
@@ -349,6 +370,17 @@ For anything beyond localhost, in the order they matter:
 8. **Secrets as environment variables**, not in `config.json`.
 9. **Volume or database encryption**, since the service provides none.
 10. **`/ui` behind your ingress' access controls**, or not exposed at all.
+11. **Mutual TLS** (`tls.clientCaFile`, `tls.requireClientCert`) where every caller is a process you
+    deploy — see [Mutual TLS](#mutual-tls).
+12. **`reflection.enabled: false`** on any gRPC port reachable without authentication.
+13. **The metrics endpoint off the shared network** — `observability.prometheus.bindAddress` — see
+    [the metrics endpoint](#the-metrics-endpoint).
+14. **`topology.minimumTier: admin`** if readers should not see how the deployment is put together.
+    Addresses are redacted either way, but the shape is not.
+15. **`gateway.corsOrigins` empty and `gateway.openapi.enabled: false`** unless a browser client on
+    another origin, or someone generating a client, needs them.
+16. **`auth.readerRecallReinforces` left `false`**, its default, so a reader can read memories but
+    cannot keep them alive.
 
 ## Reporting a vulnerability
 

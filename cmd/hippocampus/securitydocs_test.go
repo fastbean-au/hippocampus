@@ -56,3 +56,69 @@ func TestSecurityDocsDoNotDenyShippedFeatures(t *testing.T) {
 		}
 	}
 }
+
+// secretKeyPattern matches a configuration key read through viper whose name says it holds a
+// credential. It is a heuristic over names, deliberately broad: a key it catches that is not really
+// secret costs one table row, while a secret it misses is one an operator is never told to keep out
+// of a committed config file.
+var secretKeyPattern = regexp.MustCompile(`viper\.Get[A-Za-z]*\("([A-Za-z0-9.]*(?:[Ss]ecret|[Pp]assword|[Tt]oken|[Aa]piKey|[Dd]sn)[A-Za-z0-9.]*)"\)`)
+
+// TestEverySecretIsInTheSecretsTable holds docs/security.md's secrets table to the code. The table
+// is the page's answer to "what must I inject rather than commit", and it had fallen four keys
+// behind - both model API keys and both callback credentials (TODO-3 item 155) - because nothing
+// compared it with what the service reads. Each secret-like key read in the service's own packages
+// must appear in the table as its HIPPOCAMPUS_* environment override.
+func TestEverySecretIsInTheSecretsTable(t *testing.T) {
+	root := filepath.Join("..", "..")
+
+	page, err := os.ReadFile(filepath.Join(root, "docs", "security.md"))
+	if err != nil {
+		t.Fatalf("reading docs/security.md: %s", err)
+	}
+
+	start := strings.Index(string(page), "## Secrets")
+	if start < 0 {
+		t.Fatal("docs/security.md has no Secrets section")
+	}
+
+	section := string(page)[start:]
+	if end := strings.Index(section[len("## Secrets"):], "\n## "); end >= 0 {
+		section = section[:len("## Secrets")+end]
+	}
+
+	keys := map[string]bool{}
+
+	for _, dir := range []string{"cmd/hippocampus", "hippocampus", "auth"} {
+		files, err := filepath.Glob(filepath.Join(root, dir, "*.go"))
+		if err != nil {
+			t.Fatalf("listing %s: %s", dir, err)
+		}
+
+		for _, file := range files {
+			if strings.HasSuffix(file, "_test.go") {
+				continue
+			}
+
+			source, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("reading %s: %s", file, err)
+			}
+
+			for _, match := range secretKeyPattern.FindAllStringSubmatch(string(source), -1) {
+				keys[match[1]] = true
+			}
+		}
+	}
+
+	if len(keys) == 0 {
+		t.Fatal("found no secret-like keys at all, so the scan is broken rather than the table complete")
+	}
+
+	for key := range keys {
+		env := "HIPPOCAMPUS_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+
+		if !strings.Contains(section, "`"+env+"`") {
+			t.Errorf("the service reads %s, but the secrets table does not list %s", key, env)
+		}
+	}
+}
