@@ -351,8 +351,15 @@ func TestDrainSkipsWhenTheEventChangedUnderneath(t *testing.T) {
 	p := newPromoter(t, source, target, `{"defaultAction":"promote","rules":[]}`, Config{})
 
 	// The judgement saw one memory; the drain's re-check will see two.
-	if err := p.drainAfterInsert(source, "e1", 1, memory("m2", "e1", "landed late", 5)); err != nil {
+	drained, err := p.drainAfterInsert(source, "e1", 1, memory("m2", "e1", "landed late", 5))
+	if err != nil {
 		t.Fatalf("drain: %s", err)
+	}
+
+	// Leaving the event is deliberate, so it is not an error - but it is not a drain either, and the
+	// pass pages by the difference.
+	if drained {
+		t.Error("drain reported the changed event as drained")
 	}
 
 	if got := source.eventIds(); !reflect.DeepEqual(got, []string{"e1"}) {
@@ -366,7 +373,7 @@ func TestDrainSkipsWhenTheEventChangedUnderneath(t *testing.T) {
 
 // drainAfterInsert writes a memory and then drains against the pre-insert count, which is the race
 // the re-check exists for.
-func (p *Promoter) drainAfterInsert(source *fakeStore, eventId string, expected int, late *contract.Memory) error {
+func (p *Promoter) drainAfterInsert(source *fakeStore, eventId string, expected int, late *contract.Memory) (bool, error) {
 	source.putMemory(late)
 
 	return p.drain(context.Background(), eventId, expected)
@@ -554,6 +561,77 @@ func TestPassStopsWhenNothingNewCanBeDrained(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Pass did not terminate with an undrainable event")
 
+	}
+}
+
+// TestPassReachesEventsBehindAPageOfStuckOnes is the head-of-line stall (TODO-3 item 150). Events a
+// pass leaves on the source - over the memory cap here; equally a failing rule mutation, a failed
+// promotion or a drain re-check mismatch - stay at the head of the listing. The pass re-read the
+// first page and stopped as soon as it held nothing new, so once a page's worth of them had piled up
+// at the head, nothing behind them was ever judged again, while the edge kept filling.
+func TestPassReachesEventsBehindAPageOfStuckOnes(t *testing.T) {
+	source := newFakeStore()
+	target := newFakeStore()
+
+	// e0-e2 sort first and each holds two memories, over the cap of one.
+	for i := range 3 {
+		id := fmt.Sprintf("e%d", i)
+		source.putEvent(endedEvent(id, "stuck", nil))
+		source.putMemory(memory("m"+id+"a", id, "body", 1))
+		source.putMemory(memory("m"+id+"b", id, "body", 1))
+	}
+
+	for i := 3; i < 5; i++ {
+		id := fmt.Sprintf("e%d", i)
+		source.putEvent(endedEvent(id, "fine", nil))
+		source.putMemory(memory("m"+id, id, "body", 1))
+	}
+
+	p := newPromoter(t, source, target, `{"defaultAction":"promote","rules":[]}`, Config{PageSize: 2, MaxEventMemories: 1})
+
+	stats, err := p.Pass(context.Background())
+	if err != nil {
+		t.Fatalf("Pass: %s", err)
+	}
+
+	if stats.Skipped != 3 || stats.EventsPromoted != 2 {
+		t.Errorf("expected 3 stuck events skipped and the 2 behind them promoted, got %+v", stats)
+	}
+
+	if got := target.eventIds(); !reflect.DeepEqual(got, []string{"e3", "e4"}) {
+		t.Errorf("expected e3 and e4 on the target, got %v", got)
+	}
+
+	if got := source.eventIds(); !reflect.DeepEqual(got, []string{"e0", "e1", "e2"}) {
+		t.Errorf("expected only the stuck events left on the source, got %v", got)
+	}
+}
+
+// TestDryRunJudgesEveryPage: a dry run drains nothing, so every page survives whole and the offset
+// alone carries the pass forward. Every event is still judged exactly once.
+func TestDryRunJudgesEveryPage(t *testing.T) {
+	source := newFakeStore()
+	target := newFakeStore()
+
+	for i := range 5 {
+		id := fmt.Sprintf("e%d", i)
+		source.putEvent(endedEvent(id, "one of many", nil))
+		source.putMemory(memory("m"+id, id, "body", 1))
+	}
+
+	p := newPromoter(t, source, target, `{"defaultAction":"promote","rules":[]}`, Config{PageSize: 2, DryRun: true})
+
+	stats, err := p.Pass(context.Background())
+	if err != nil {
+		t.Fatalf("Pass: %s", err)
+	}
+
+	if stats.EventsJudged != 5 {
+		t.Errorf("expected all 5 events judged once in a dry run, got %+v", stats)
+	}
+
+	if got := len(source.eventIds()); got != 5 {
+		t.Errorf("a dry run drained %d events", 5-got)
 	}
 }
 

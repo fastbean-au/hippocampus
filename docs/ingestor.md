@@ -590,6 +590,12 @@ promoted.
   deciding where it runs.
 - **An event over `--max-event-memories` is left unjudged**, reported, and never promoted or dropped.
   Judging a truncated view of an event would decide its fate on facts that are not its own.
+- **An event the pass leaves behind does not hold up the rest.** One that is over the cap, whose
+  rule `set` block or promotion fails, or that changed underneath its judgement stays on the edge
+  for the next pass, and the pass reads on past it. (In 0.51.1 and earlier it did not: once a page's
+  worth of such events — `--page-size`, 100 by default — had collected at the head of the listing,
+  nothing behind them was judged again.) They are counted in `skipped` and `errors`; a number that
+  only grows is the sign to look at them.
 - **Orphans are never scored.** Rules key on events, so a memory carrying no `event_id` bypasses the
   ruleset entirely — including any `set` block. `--orphans promote` promotes it exactly as the edge
   held it. If orphans need re-ranking, the fix is to give the writer an event to write against.

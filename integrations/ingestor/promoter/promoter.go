@@ -264,11 +264,18 @@ func logStats(stats Stats) {
 
 // Pass judges every settled, completed event on the source once.
 //
-// It re-reads the FIRST page each time rather than paging with an offset, because a judged event is
-// deleted and every later event shifts back into the window an offset would have skipped past. The
-// ids already seen bound the loop: a page yielding nothing new means the remaining events are ones
-// this pass could not drain (over cap, changed underneath it, or erroring), and they belong to the
-// next pass.
+// It pages with an offset that counts only the events still THERE. A judged event is drained, and
+// every later event shifts back into the space it left, so a plain offset would skip past them; but
+// an event the pass leaves behind - over the cap, changed underneath it, a failed promotion or rule
+// mutation, any dry run - stays exactly where it was. So after a page is judged, its surviving
+// events occupy the next positions of the listing, and the next page starts just past them.
+//
+// The pass once re-read the FIRST page each time instead and stopped when it held nothing new. That
+// is correct only while fewer than a page of events are stuck: once a page's worth had piled up at
+// the head, every pass saw only those, and nothing behind them was ever judged again (TODO-3 item
+// 150). The ids already seen still guard against judging an event twice if concurrent writes shift
+// the listing. The loop ends at a short page, and cannot run on forever: the cutoff is fixed for the
+// pass, and every round either drains an event or moves the offset past one.
 func (p *Promoter) Pass(ctx context.Context) (Stats, error) {
 	log.Trace("func() Promoter.Pass")
 
@@ -285,31 +292,38 @@ func (p *Promoter) Pass(ctx context.Context) (Stats, error) {
 
 	cutoff := p.now().Add(-p.cfg.settle()).UnixNano()
 	seen := make(map[string]struct{})
+	pageSize := int(p.cfg.pageSize())
+	offset := 0
 
 	for {
-		events, err := p.completedEvents(ctx, cutoff)
+		events, err := p.completedEvents(ctx, cutoff, offset)
 		if err != nil {
 			p.recordPass(ctx, start, false)
 
 			return stats, err
 		}
 
-		fresh := 0
+		remaining := 0
 
 		for _, event := range events {
 			if _, already := seen[event.GetId()]; already {
+				remaining++
+
 				continue
 			}
 
 			seen[event.GetId()] = struct{}{}
-			fresh++
 
-			p.judge(ctx, ruleset, event, &stats)
+			if !p.judge(ctx, ruleset, event, &stats) {
+				remaining++
+			}
 		}
 
-		if fresh == 0 {
+		if len(events) < pageSize {
 			break
 		}
+
+		offset += remaining
 	}
 
 	p.handleOrphans(ctx, &stats)
@@ -358,7 +372,10 @@ func (p *Promoter) observeStaleness(ctx context.Context) {
 // completedEvents reads one page of events that have ended at or before the cutoff. TimeEndMin of 1
 // excludes events still open: an open event stores a time_end of 0, and 0 in this API means "no
 // bound" rather than a literal zero.
-func (p *Promoter) completedEvents(ctx context.Context, cutoff int64) ([]*contract.Event, error) {
+//
+// offset skips that many events at the head of the listing - the ones this pass has already left
+// behind (see Pass).
+func (p *Promoter) completedEvents(ctx context.Context, cutoff int64, offset int) ([]*contract.Event, error) {
 	callCtx, cancel := p.callContext(ctx)
 	defer cancel()
 
@@ -367,6 +384,7 @@ func (p *Promoter) completedEvents(ctx context.Context, cutoff int64) ([]*contra
 		TimeEndMax: cutoff,
 		OrderBy:    "timestamp",
 		Limit:      p.cfg.pageSize(),
+		Offset:     int32(offset),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing completed events: %w", err)
@@ -378,10 +396,10 @@ func (p *Promoter) completedEvents(ctx context.Context, cutoff int64) ([]*contra
 // judge evaluates one event and acts on the decision, recording the outcome. Every failure here is
 // logged and counted rather than returned: one bad event must not stop the pass, and the event stays
 // on the source to be retried.
-func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *contract.Event, stats *Stats) {
+func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *contract.Event, stats *Stats) bool {
 	memories, ok := p.eventMemories(ctx, event, stats)
 	if !ok {
-		return
+		return false
 	}
 
 	facts := buildFacts(event, memories, ruleset.NeedsMemories())
@@ -412,28 +430,33 @@ func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *con
 	if p.cfg.DryRun {
 		p.dryRun(ctx, judged, stats)
 
-		return
+		return false
 	}
 
 	switch decision.Action {
 
 	case rules.ActionPromote:
-		p.promote(ctx, judged, stats)
+		return p.promote(ctx, judged, stats)
 
 	case rules.ActionDrop:
-		if err := p.drain(ctx, event.GetId(), len(memories)); err != nil {
+		drained, err := p.drain(ctx, event.GetId(), len(memories))
+		if err != nil {
 			log.Errorf("dropping event '%s': %s", event.GetId(), err.Error())
 
 			stats.Errors++
 			p.recordEvent(ctx, decision, outcomeFailed)
 
-			return
+			return false
 		}
 
 		stats.EventsDropped++
 		p.recordEvent(ctx, decision, outcomeDropped)
 
+		return drained
+
 	}
+
+	return false
 }
 
 // failEvent reports a failure that leaves the event where it is, to be re-judged next pass.
@@ -646,7 +669,7 @@ func (p *Promoter) readEventMemories(ctx context.Context, eventId string) ([]*co
 // event from the source. The order is deliberate: the target is written first and the source is
 // emptied only once it has accepted everything, so a failure anywhere leaves the records where they
 // still exist rather than nowhere.
-func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats) {
+func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats) bool {
 	event := judged.event
 	decision := judged.decision
 
@@ -655,7 +678,7 @@ func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats)
 	if err := p.applyEventSet(ctx, judged); err != nil {
 		p.failEvent(ctx, judged, stats, err)
 
-		return
+		return false
 	}
 
 	// onSource is what the event is expected to hold when the drain re-checks it, which is NOT the
@@ -667,13 +690,13 @@ func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats)
 	if err != nil {
 		p.failEvent(ctx, judged, stats, fmt.Errorf("reducing event '%s': %w", event.GetId(), err))
 
-		return
+		return false
 	}
 
 	if err := p.sendEvent(ctx, event); err != nil {
 		p.failEvent(ctx, judged, stats, fmt.Errorf("promoting event '%s': %w", event.GetId(), err))
 
-		return
+		return false
 	}
 
 	sent, err := p.sendMemories(ctx, memories)
@@ -692,7 +715,7 @@ func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats)
 			err,
 		))
 
-		return
+		return false
 	}
 
 	// The drain is separate from the promotion and may legitimately not happen (a memory landed
@@ -703,11 +726,16 @@ func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats)
 
 	p.recordEvent(ctx, decision, outcomePromoted)
 
-	if err := p.drain(ctx, event.GetId(), onSource); err != nil {
+	drained, err := p.drain(ctx, event.GetId(), onSource)
+	if err != nil {
 		log.Errorf("draining promoted event '%s': %s", event.GetId(), err.Error())
 
 		stats.Errors++
+
+		return false
 	}
+
+	return drained
 }
 
 // reduce applies the decision's memory-scoped mutation and then its reduction, returning the
@@ -887,10 +915,14 @@ func (p *Promoter) sendMemories(ctx context.Context, memories []*contract.Memory
 // still looks the way it did when it was judged. A memory landing against an already-ended event
 // after the settle window would otherwise be deleted without ever having been judged - so the count
 // is re-read and a change leaves the whole event for the next pass, where it is re-judged whole.
-func (p *Promoter) drain(ctx context.Context, eventId string, expected int) error {
+//
+// drained reports whether the event actually left the source, which a nil error alone does not: a
+// changed event is left in place deliberately and is not a failure. Pass needs the difference to
+// know where the next page of the listing starts.
+func (p *Promoter) drain(ctx context.Context, eventId string, expected int) (bool, error) {
 	current, err := p.memoryCount(ctx, eventId)
 	if err != nil {
-		return fmt.Errorf("re-checking event %q before draining: %w", eventId, err)
+		return false, fmt.Errorf("re-checking event %q before draining: %w", eventId, err)
 	}
 
 	if current != expected {
@@ -901,17 +933,17 @@ func (p *Promoter) drain(ctx context.Context, eventId string, expected int) erro
 			expected,
 		)
 
-		return nil
+		return false, nil
 	}
 
 	callCtx, cancel := p.callContext(ctx)
 	defer cancel()
 
 	if _, err := p.source.DeleteEvent(callCtx, &contract.DeleteEventRequest{Id: eventId, Memories: true}); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
 
 // memoryCount reads how many memories an event currently holds, without reading any of them: a page

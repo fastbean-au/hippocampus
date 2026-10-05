@@ -148,6 +148,11 @@ func (f *fakeStore) GetEvents(
 
 	total := len(matched)
 
+	// Offset before limit, as the service applies them.
+	if offset := int(in.GetOffset()); offset > 0 {
+		matched = matched[min(offset, len(matched)):]
+	}
+
 	if limit := int(in.GetLimit()); limit > 0 && len(matched) > limit {
 		matched = matched[:limit]
 	}

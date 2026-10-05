@@ -172,6 +172,12 @@ itself which service version it was built against.
   10, since those defaults were made functional. Both pages now say so and how to turn it off
   (`sleep.periodSeconds: 0`), `docs/consolidation.md` states the default, and a test reads the
   default from the code and fails if either page denies the cycle while it runs.
+- **The ingestor no longer stalls behind events it cannot drain.** A pass re-read the first page of
+  completed events and stopped as soon as that page held nothing new, so once `--page-size` (100)
+  events had been left on the edge — over `--max-event-memories`, a failing `set` mutation or
+  promotion, a drain re-check mismatch — every later pass saw only those, and nothing behind them was
+  promoted or dropped again while the edge kept filling. The pass now pages past the events it
+  leaves behind.
 
 ## [0.51.1] - 2026-10-05
 
