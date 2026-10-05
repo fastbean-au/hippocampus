@@ -38,7 +38,8 @@ broker ─▶ adapter (nats/mqtt/rabbitmq/kafka/bluesky) ─▶ bridge.Store ─
 
 A delivery that fails to store (a transform error or a gRPC transport failure) is treated as failed
 so the adapter can redeliver it — NATS drops it (no ack exists), MQTT leaves it unacked, RabbitMQ
-nacks with requeue, and Kafka leaves the offset uncommitted. A memory dropped for significance below
+nacks with requeue, and Kafka retries the same message without fetching past it, so its offset is
+never committed over. A memory dropped for significance below
 the service's threshold is a _success_, not a failure.
 
 ## Install
@@ -596,7 +597,9 @@ store local and gitignored.
   running multiple bridges on the same queue.
 - **Kafka** commits the offset only after a successful store. Run multiple bridges sharing
   `--consumer-group` to split a topic's partitions between them; a store failure backs off
-  (`--error-backoff-seconds`) and re-reads rather than skipping.
+  (`--error-backoff-seconds`) and retries the same message, fetching nothing past it until it is
+  stored. A message that can never be stored therefore holds its partition, with a Warn line on
+  every attempt — the same trade RabbitMQ's requeue makes.
 - **Bluesky** advances its cursor only after a frame is fully handled, so a failure replays from
   there on reconnect; see [Bluesky](#bluesky-the-firehose-bridge) for the batched-recall caveat and
   the bounded cursor lookback. It does **not** scale by running several instances: they would each

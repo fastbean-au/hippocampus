@@ -1,8 +1,8 @@
 // Package kafka is the Apache Kafka broker adapter for the Hippocampus event-sourcing bridges. It
 // reads a topic as part of a consumer group and hands every message to a bridge.Store, committing
 // the message's offset only after the store succeeds. That gives at-least-once semantics: a store
-// failure leaves the offset uncommitted so the message is re-read on the next fetch (after a
-// backoff), rather than being silently skipped.
+// failure is retried on the same message (after a backoff) and nothing past it is fetched until it
+// is stored, so its offset is never committed over.
 package kafka
 
 import (
@@ -33,8 +33,8 @@ type Config struct {
 	MinBytes int
 	MaxBytes int
 
-	// ErrorBackoff is how long to wait after a store failure before re-reading the uncommitted
-	// message, so a persistently failing service is not hammered. <= 0 uses one second.
+	// ErrorBackoff is how long to wait after a store failure before retrying the same message, so a
+	// persistently failing service is not hammered. <= 0 uses one second.
 	ErrorBackoff time.Duration
 }
 
@@ -110,19 +110,8 @@ func (b *Bridge) consume(ctx context.Context, r reader) error {
 			return fmt.Errorf("fetching from topic %q: %w", b.cfg.Topic, err)
 		}
 
-		if err := b.store.Handle(ctx, toMessage(m)); err != nil {
-			log.WithError(err).WithFields(log.Fields{
-				"topic":     m.Topic,
-				"partition": m.Partition,
-				"offset":    m.Offset,
-			}).
-				Warn("storing Kafka message failed; offset not committed, will retry after backoff")
-
-			if sleepErr := sleep(ctx, backoff); sleepErr != nil {
-				return nil
-			}
-
-			continue
+		if !b.storeUntilStored(ctx, m, backoff) {
+			return nil
 		}
 
 		if err := r.CommitMessages(ctx, m); err != nil {
@@ -131,6 +120,43 @@ func (b *Bridge) consume(ctx context.Context, r reader) error {
 			}
 
 			return fmt.Errorf("committing offset for topic %q: %w", b.cfg.Topic, err)
+		}
+	}
+}
+
+// storeUntilStored stores one message, retrying it in place after each failure until it is stored
+// or ctx is cancelled, and reports whether it was stored.
+//
+// In place is the whole point. A kafka-go group reader's position advances on every fetch whether
+// or not the message was committed, so fetching again after a failure returns the NEXT message, and
+// committing that one commits the partition past the failed one as well - which was lost for good
+// unless the process happened to restart before the next successful commit (TODO-3 item 138). Not
+// fetching past an unstored message is what makes the commit-after-store rule mean at-least-once.
+//
+// The cost is that a message which can never be stored holds its partition until it can be, the
+// same trade the other at-least-once adapters make by redelivering it. Each attempt is logged, so a
+// stuck partition is visible rather than merely quiet.
+func (b *Bridge) storeUntilStored(ctx context.Context, m kafkago.Message, backoff time.Duration) bool {
+	for attempt := 1; ; attempt++ {
+		err := b.store.Handle(ctx, toMessage(m))
+		if err == nil {
+			return true
+		}
+
+		if ctx.Err() != nil {
+			return false
+		}
+
+		log.WithError(err).WithFields(log.Fields{
+			"topic":     m.Topic,
+			"partition": m.Partition,
+			"offset":    m.Offset,
+			"attempt":   attempt,
+		}).
+			Warn("storing Kafka message failed; offset not committed, retrying the same message after backoff")
+
+		if err := sleep(ctx, backoff); err != nil {
+			return false
 		}
 	}
 }

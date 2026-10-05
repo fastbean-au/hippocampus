@@ -94,6 +94,13 @@ itself which service version it was built against.
   call ran on until nothing the rest of the filter selected was left. The listing — the documented
   dry run — showed one tier, and the deletion took everything. The extremum is now resolved once
   when the call starts and that one tier is deleted, including the unranked tier (significance 0).
+- **The Kafka bridge no longer loses a message whose store failed.** After a failed store it backed
+  off and fetched again, but a kafka-go group reader has already moved past the message by then, so
+  the next fetch returned the following one — and committing that committed the partition past the
+  failed message too. Whenever the service blipped, the message in flight was dropped despite the
+  documented at-least-once guarantee. The bridge now retries the same message until it is stored,
+  fetching nothing past it; a message that can never be stored holds its partition, with a Warn line
+  per attempt, as RabbitMQ's requeue already does.
 
 ## [0.51.1] - 2026-10-05
 

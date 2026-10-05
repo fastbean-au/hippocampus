@@ -90,7 +90,7 @@ type Transformer interface {
 
 Returning an error from `Transform` (or a transport failure storing a memory) makes the adapter
 treat the delivery as failed: NATS drops it (no ack exists), MQTT leaves it unacked, RabbitMQ nacks
-with requeue, and Kafka leaves the offset uncommitted so it is re-read.
+with requeue, and Kafka retries the same message without fetching past it.
 
 ## Running a bridge
 
@@ -129,7 +129,8 @@ Run `--help` on any command for the full flag list, or `--version` to print the 
   strict ordering. Scale by running multiple bridges on the same queue.
 - **Kafka** commits the offset only after a successful store, giving at-least-once. Run multiple
   bridges sharing `--consumer-group` to split partitions between them; a store failure backs off
-  (`--error-backoff-seconds`) and re-reads rather than skipping.
+  (`--error-backoff-seconds`) and retries the same message, fetching nothing past it until it is
+  stored, so a message that can never be stored holds its partition.
 
 ## Observability
 

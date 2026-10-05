@@ -121,15 +121,28 @@ func TestConsume_CommitsAfterSuccessfulStore(t *testing.T) {
 	}
 }
 
+// TestConsume_DoesNotCommitOnStoreFailure: a message that keeps failing is retried in place, never
+// fetched past and never committed, until the context ends.
 func TestConsume_DoesNotCommitOnStoreFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fr := &fakeReader{
 		cancel: cancel,
-		msgs:   []kafkago.Message{{Topic: "t", Value: []byte("a"), Offset: 1}},
+		msgs: []kafkago.Message{
+			{Topic: "t", Value: []byte("a"), Offset: 1},
+			{Topic: "t", Value: []byte("b"), Offset: 2},
+		},
 	}
 
+	var attempts []string
+
 	failing := bridge.TransformerFunc(func(msg bridge.Message) ([]*contract.Memory, error) {
+		attempts = append(attempts, string(msg.Data))
+
+		if len(attempts) == 3 {
+			cancel()
+		}
+
 		return nil, errors.New("boom")
 	})
 
@@ -140,8 +153,77 @@ func TestConsume_DoesNotCommitOnStoreFailure(t *testing.T) {
 		t.Fatalf("consume = %v, want nil", err)
 	}
 
+	if len(attempts) != 3 || attempts[0] != "a" || attempts[1] != "a" || attempts[2] != "a" {
+		t.Errorf("store attempts = %q, want three on a and none on b", attempts)
+	}
+
+	if fr.idx != 1 {
+		t.Errorf("fetched %d messages, want 1: the failing message was fetched past", fr.idx)
+	}
+
 	if len(fr.committed) != 0 {
 		t.Errorf("committed %d messages, want 0 on store failure", len(fr.committed))
+	}
+}
+
+// recordingStorer records the body of every memory it is asked to store, in order.
+type recordingStorer struct {
+	contract.HippocampusClient
+
+	stored *[]string
+}
+
+func (r recordingStorer) StoreMemory(ctx context.Context, in *contract.Memory, opts ...grpc.CallOption) (*contract.StoreMemoryResponse, error) {
+	*r.stored = append(*r.stored, in.GetBody())
+
+	return &contract.StoreMemoryResponse{Id: in.GetId()}, nil
+}
+
+// TestConsume_RetriesAFailedMessageBeforeMovingOn pins the at-least-once claim against kafka-go's
+// actual semantics, which fakeReader models: a group reader's position advances on every fetch,
+// committed or not, so fetching again after a failed store returns the NEXT message - and committing
+// that one commits the partition past the failed one too. The failed message has to be retried in
+// place, never fetched past (TODO-3 item 138).
+func TestConsume_RetriesAFailedMessageBeforeMovingOn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	fr := &fakeReader{
+		cancel: cancel,
+		msgs: []kafkago.Message{
+			{Topic: "t", Value: []byte("a"), Offset: 1},
+			{Topic: "t", Value: []byte("b"), Offset: 2},
+		},
+	}
+
+	// "a" fails on its first attempt only, as a store does when the service blips.
+	failures := map[string]int{"a": 1}
+	inner := bridge.NewDefaultTransformer(bridge.TransformConfig{})
+
+	flaky := bridge.TransformerFunc(func(msg bridge.Message) ([]*contract.Memory, error) {
+		if failures[string(msg.Data)] > 0 {
+			failures[string(msg.Data)]--
+
+			return nil, errors.New("service unavailable")
+		}
+
+		return inner.Transform(msg)
+	})
+
+	var stored []string
+
+	store := bridge.NewStore(recordingStorer{stored: &stored}, flaky, 0, "test")
+	b := New(Config{Topic: "t", ErrorBackoff: time.Millisecond}, store)
+
+	if err := b.consume(ctx, fr); err != nil {
+		t.Fatalf("consume = %v, want nil", err)
+	}
+
+	if len(stored) != 2 || stored[0] != "a" || stored[1] != "b" {
+		t.Fatalf("stored %q, want [a b]: a message whose store failed was skipped", stored)
+	}
+
+	if len(fr.committed) != 2 || fr.committed[0].Offset != 1 || fr.committed[1].Offset != 2 {
+		t.Errorf("committed %v, want offsets 1 then 2", fr.committed)
 	}
 }
 
