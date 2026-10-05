@@ -66,7 +66,8 @@ They are still worth a report if you can show the documented boundary being *cro
 - **The web console keeps its token in `localStorage`**, and hides controls a role may not use. The
   hiding is a convenience — the server enforces every tier on every RPC — so a hidden control being
   reachable is not itself a finding; a *server* accepting the call would be.
-- **The service does not encrypt data at rest**, verify client certificates on its listeners, or
+- **The service does not encrypt data at rest**, derive a client's identity from a client
+  certificate (mutual TLS is supported, but identity and authority come from the bearer token), or
   keep an audit log separate from its request log. See
   [what the service does not do](docs/security.md#what-the-service-does-not-do).
 

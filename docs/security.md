@@ -305,15 +305,20 @@ Stated plainly, because each is a thing an operator might otherwise assume:
   volume encryption, or the database's own encryption, and treat a SQLite file or a `pg_dump` as
   plaintext.
 - **It has no per-record ACLs.** Access is tier plus group scope; there is nothing finer.
-- **There is no server-side mutual TLS.** The listeners present a certificate; they do not verify
-  client certificates. Client identity is the bearer token. (Outbound mTLS _is_ supported — to
-  OpenSearch and to a transfer target.)
+- **It never derives a client's identity from its certificate.** [Mutual TLS](#mutual-tls) is
+  supported on both listeners, but a certificate only says which process is connecting: who the
+  client is, what tier it holds and which groups it may reach all come from the bearer token, so a
+  certificate without a token is still refused on an authenticated instance. (Outbound mTLS is
+  supported too — to OpenSearch, to a transfer target and to the callback sink.)
 - **There is no separate audit log.** The request log carries the verified `client_id` and the RPC,
   which is the audit trail; ship it somewhere durable if you need one. For a record of what the
   service _forgot_, the [forgotten log](operations.md#what-was-forgotten--the-forgotten-log) is the
   purpose-built answer.
-- **It registers no gRPC reflection service**, so a client needs the proto or the OpenAPI document
-  rather than discovering the schema from a running instance.
+- **It cannot put gRPC reflection behind a token.** Reflection is a streaming RPC and the auth
+  interceptors are unary, so it is either registered or not: on by default without authentication,
+  off with it, and set either way by `reflection.enabled` (see
+  [schema discovery](#rate-limiting-and-transport-hardening)). Where it is off, a client needs the
+  proto or the OpenAPI document.
 - **A `client_id` is never used as a metric attribute** — it arrives in a token, so it is unbounded
   cardinality and, in the wrong dashboard, an inventory of your callers. It appears in logs and in
   the topology view's observed callers (capped at 32, least-recently-seen evicted), and nowhere else.

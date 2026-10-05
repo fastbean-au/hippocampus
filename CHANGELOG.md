@@ -160,6 +160,12 @@ itself which service version it was built against.
   decoded as JSON. A state-changing request authenticated by the session cookie must now come from
   the gateway's own origin, or it is refused with `403`. Reads, and requests carrying a bearer
   `Authorization` header, are unaffected.
+- **The security guide no longer denies two features the service has.** `docs/security.md`'s "what
+  the service does not do" said there was no server-side mutual TLS and that no gRPC reflection
+  service was registered, and `SECURITY.md` repeated the first; both shipped (`tls.clientCaFile`,
+  `reflection.enabled`). The list now states the real limits instead — identity never comes from a
+  client certificate, and reflection cannot be put behind a token — and a test fails if either
+  denial returns while the service still reads the key that proves the feature exists.
 
 ## [0.51.1] - 2026-10-05
 
