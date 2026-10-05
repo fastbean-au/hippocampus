@@ -92,10 +92,11 @@ func TestRun_HappyPathReturnsOnCancel(t *testing.T) {
 // TestRun_ConfiguredPathsReturnOnCancel drives thread mode, a post-less collection list and a valid
 // client-credentials config through run() in ONE call.
 //
-// Deliberately one rather than three: each run() builds a gRPC client and installs and tears down
-// the global OTEL providers, and stacking several of those alongside the TestRealMain cases below
-// (which drive signal.NotifyContext) has tripped a runtime fatal in os/signal. The branches under
-// test are independent of each other, so exercising them together loses nothing.
+// One rather than three: each run() builds a gRPC client and installs and tears down the global
+// OTEL providers. This was first done to dodge a runtime fatal in os/signal, whose real cause was
+// realMain installing a signal handler on every call (fixed by moving that into main - TODO-3 item
+// 148). The branches under test are independent of each other, so exercising them together loses
+// nothing.
 func TestRun_ConfiguredPathsReturnOnCancel(t *testing.T) {
 	setupFlags(t, []string{
 		"--events", "thread",
@@ -242,7 +243,7 @@ func TestSlicesContain(t *testing.T) {
 func TestRealMain_VersionReturnsZero(t *testing.T) {
 	resetCommandLine()
 
-	if code := realMain([]string{"--version"}); code != 0 {
+	if code := realMain(context.Background(), []string{"--version"}); code != 0 {
 		t.Errorf("realMain --version = %d, want 0", code)
 	}
 }
@@ -250,7 +251,7 @@ func TestRealMain_VersionReturnsZero(t *testing.T) {
 func TestRealMain_FlagErrorReturnsOne(t *testing.T) {
 	resetCommandLine()
 
-	if code := realMain([]string{"--not-a-flag"}); code != 1 {
+	if code := realMain(context.Background(), []string{"--not-a-flag"}); code != 1 {
 		t.Errorf("realMain with a bad flag = %d, want 1", code)
 	}
 }
@@ -258,7 +259,7 @@ func TestRealMain_FlagErrorReturnsOne(t *testing.T) {
 func TestRealMain_ServeErrorReturnsOne(t *testing.T) {
 	resetCommandLine()
 
-	if code := realMain([]string{"--log-level", "bogus"}); code != 1 {
+	if code := realMain(context.Background(), []string{"--log-level", "bogus"}); code != 1 {
 		t.Errorf("realMain with a bad log level = %d, want 1", code)
 	}
 }

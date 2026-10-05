@@ -108,7 +108,7 @@ func TestTransformConfig(t *testing.T) {
 func TestRealMain_VersionReturnsZero(t *testing.T) {
 	resetCommandLine()
 
-	if code := realMain([]string{"--version"}); code != 0 {
+	if code := realMain(context.Background(), []string{"--version"}); code != 0 {
 		t.Errorf("realMain --version = %d, want 0", code)
 	}
 }
@@ -116,7 +116,7 @@ func TestRealMain_VersionReturnsZero(t *testing.T) {
 func TestRealMain_FlagErrorReturnsOne(t *testing.T) {
 	resetCommandLine()
 
-	if code := realMain([]string{"--not-a-flag"}); code != 1 {
+	if code := realMain(context.Background(), []string{"--not-a-flag"}); code != 1 {
 		t.Errorf("realMain with a bad flag = %d, want 1", code)
 	}
 }
@@ -124,7 +124,7 @@ func TestRealMain_FlagErrorReturnsOne(t *testing.T) {
 func TestRealMain_ServeErrorReturnsOne(t *testing.T) {
 	resetCommandLine()
 
-	if code := realMain([]string{"--log-level", "bogus", "--queue", "q"}); code != 1 {
+	if code := realMain(context.Background(), []string{"--log-level", "bogus", "--queue", "q"}); code != 1 {
 		t.Errorf("realMain with a bad log level = %d, want 1", code)
 	}
 }

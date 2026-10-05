@@ -28,21 +28,26 @@ var version = "dev"
 const brokerName = "rabbitmq"
 
 func main() {
-	os.Exit(realMain(os.Args[1:]))
+	// The signal handler is installed here, once per process, and never in realMain. Tests drive
+	// realMain many times in one process, and installing and tearing down os/signal's process-wide
+	// handler on every call tripped a runtime fatal ("signal_recv: inconsistent state") in up to two
+	// runs in five under -race (TODO-3 item 148).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := realMain(ctx, os.Args[1:])
+
+	stop()
+	os.Exit(code)
 }
 
-// realMain is the testable body of main: it registers flags, installs the signal handler, and runs
-// serve, returning a process exit code rather than calling os.Exit itself so tests can drive every
-// branch.
-func realMain(args []string) int {
+// realMain is the testable body of main: it registers flags and runs serve on the given context
+// (main supplies one cancelled by SIGINT/SIGTERM), returning a process exit code rather than
+// calling os.Exit itself so tests can drive every branch.
+func realMain(ctx context.Context, args []string) int {
 	if err := registerFlags(pflag.CommandLine, args); err != nil {
 		log.Errorf("failed to register command line flags: %s", err.Error())
 
 		return 1
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	if err := serve(ctx); err != nil {
 		log.Errorf("rabbitmq bridge exited with an error: %s", err.Error())
