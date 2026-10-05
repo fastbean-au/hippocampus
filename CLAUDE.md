@@ -129,7 +129,9 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   containers so the `db/postgres_test.go` and `db/mysql_test.go` integration tests run instead
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN=<dsn>`/`HIPPOCAMPUS_TEST_MYSQL_DSN=<dsn>` `go test ./db`
-  against any disposable database. The `proto-breaking` job gates the contract (above)
+  against any disposable database. The `proto-breaking` job gates the contract (above). The `race`
+  job runs the root module under `-race` (SQLite only, a separate job because `db` alone takes over
+  four minutes under it), and every integration module's job tests with `-race` too
 - Run the `db` suite against a server dialect: `HIPPOCAMPUS_TEST_DIALECT=postgres go test ./db`
   (or `mysql`), with that dialect's DSN set. It re-points `newTestDB` (`db/conformance_test.go`), so
   the **same ~190 shared tests** execute there rather than on SQLite alone; CI runs all three. This

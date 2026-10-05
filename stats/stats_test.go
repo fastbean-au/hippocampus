@@ -3,6 +3,7 @@ package stats
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,21 +19,25 @@ import (
 // countingStore is a db.Store stub that counts CountEvents/CountMemories calls, so the cache's
 // de-duplication can be asserted without a real database. Embedding db.Store means only the two
 // count methods need implementing.
+//
+// The counters are atomic because Start's ticker goroutine increments them while the test reads
+// them; as plain ints that was a data race the race detector failed the package on (TODO-3 item
+// 149).
 type countingStore struct {
 	db.Store
 
-	events   int
-	memories int
+	events   atomic.Int64
+	memories atomic.Int64
 }
 
 func (c *countingStore) CountEvents(ctx context.Context) int {
-	c.events++
+	c.events.Add(1)
 
 	return 7
 }
 
 func (c *countingStore) CountMemories(ctx context.Context) (int, int) {
-	c.memories++
+	c.memories.Add(1)
 
 	return 5, 3
 }
@@ -273,7 +278,7 @@ func TestStart_TickerFires(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 
 	for time.Now().Before(deadline) {
-		if store.events > 0 && store.memories > 0 {
+		if store.events.Load() > 0 && store.memories.Load() > 0 {
 			return
 		}
 
@@ -330,8 +335,8 @@ func TestCountCache_SharesReadWithinMaxAge(t *testing.T) {
 	// A second read within the window must reuse the cached value.
 	_ = cache.get()
 
-	if store.events != 1 || store.memories != 1 {
-		t.Fatalf("expected the store queried once within max-age, got events=%d memories=%d", store.events, store.memories)
+	if store.events.Load() != 1 || store.memories.Load() != 1 {
+		t.Fatalf("expected the store queried once within max-age, got events=%d memories=%d", store.events.Load(), store.memories.Load())
 	}
 
 	// Expire the cache and read again: the store is queried a second time.
@@ -339,7 +344,7 @@ func TestCountCache_SharesReadWithinMaxAge(t *testing.T) {
 
 	_ = cache.get()
 
-	if store.events != 2 || store.memories != 2 {
-		t.Fatalf("expected a refresh past max-age, got events=%d memories=%d", store.events, store.memories)
+	if store.events.Load() != 2 || store.memories.Load() != 2 {
+		t.Fatalf("expected a refresh past max-age, got events=%d memories=%d", store.events.Load(), store.memories.Load())
 	}
 }
