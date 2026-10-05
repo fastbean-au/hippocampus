@@ -32,12 +32,28 @@ func HTTPMiddleware(v Verifier, next http.Handler, openPaths []string, sessionCo
 			return
 		}
 
-		token, err := tokenFromRequest(r, sessionCookie)
+		token, fromCookie, err := tokenFromRequest(r, sessionCookie)
 		if err != nil {
 			log.Trace("rejecting request - no bearer token in header or session cookie")
 			unauthorized(w)
 
 			return
+		}
+
+		// A cookie is ambient authority: the browser attaches it to whatever request a page makes,
+		// and SameSite=Lax stops that only across SITES - a page on another port of this host, or on
+		// a sibling subdomain, is same-site, and its plain-text POST arrives with the cookie and is
+		// decoded as JSON. So a cookie-borne write must come from this origin (TODO-3 item 145).
+		// CrossOriginProtection reads the Sec-Fetch-Site the browser sets (else Origin against Host),
+		// passes safe methods, and passes a request carrying neither header, which no browser sends.
+		if fromCookie {
+			if err := crossOrigin.Check(r); err != nil {
+				log.WithField("path", r.URL.Path).
+					Warn("refused a cross-origin write authenticated by the session cookie")
+				forbiddenCrossOrigin(w)
+
+				return
+			}
 		}
 
 		claims, err := v.Verify(token)
@@ -52,6 +68,18 @@ func HTTPMiddleware(v Verifier, next http.Handler, openPaths []string, sessionCo
 		// can attribute the request to the authenticated client.
 		next.ServeHTTP(w, r.WithContext(ContextWithClaims(r.Context(), claims)))
 	})
+}
+
+// crossOrigin is the CSRF check applied to cookie-authenticated requests. It is stateless and safe
+// for concurrent use, so one instance serves every middleware.
+var crossOrigin = http.NewCrossOriginProtection()
+
+// forbiddenCrossOrigin writes the 403 a refused cross-origin cookie write gets, in the same JSON
+// shape as unauthorized.
+func forbiddenCrossOrigin(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "cross-origin request refused"})
 }
 
 // unauthorized writes a 401 response carrying the WWW-Authenticate header RFC 6750 requires for

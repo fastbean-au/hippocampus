@@ -227,6 +227,15 @@ console calls `GET /v1/whoami` and adapts what it offers to the effective role �
 controls for a `reader` — but a hidden control is a convenience, not a boundary; the server enforces
 the tier on every RPC.
 
+Under the [server-side login](configuration.md#authentication) the token instead lives in an
+`HttpOnly` session cookie, which a browser attaches to requests on its own — including ones a hostile
+page makes. `SameSite=Lax` keeps it off cross-**site** requests, but a page on another port of the
+same host, or on a sibling subdomain, is same-site. So the gateway refuses any state-changing request
+authenticated by that cookie unless it came from the gateway's own origin (the browser's
+`Sec-Fetch-Site`, or `Origin` against `Host` for an older one); such a request gets `403`. Reads are
+unaffected, and so is a bearer `Authorization` header, which a browser cannot attach to a
+cross-origin request on a page's behalf.
+
 Because the token lives in the browser, serve `/ui` **only over TLS**, treat it as a trusted-operator
 tool rather than a public endpoint, and put it behind your ingress' access controls if the gateway is
 internet-facing. What the console actually shows, tab by tab, is in the [console

@@ -153,6 +153,13 @@ itself which service version it was built against.
   delivery nor a stale one — an object re-uploaded and re-registered under the same key since — can
   delete a live object. Such ids are counted as `outcome="held"`; a store that cannot be asked makes
   the push path answer `5xx` so the delivery is replayed.
+- **A console signed in through the server-side login is no longer open to forged writes from
+  same-site pages.** The session cookie was protected only by `SameSite=Lax`, which stops cross-site
+  requests but not a page on another port of the same host or on a sibling subdomain; such a page
+  could send a plain-text `POST /v1/purge` that arrived with the signed-in admin's cookie and was
+  decoded as JSON. A state-changing request authenticated by the session cookie must now come from
+  the gateway's own origin, or it is refused with `403`. Reads, and requests carrying a bearer
+  `Authorization` header, are unaffected.
 
 ## [0.51.1] - 2026-10-05
 

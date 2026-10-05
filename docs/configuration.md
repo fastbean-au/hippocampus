@@ -1163,7 +1163,9 @@ fresh access token), and `GET /auth/logout` (clear the cookies and, when the pro
 `end_session_endpoint`, RP-initiated logout) — all reachable without a token. The session cookie
 (`hippo_session`) is `HttpOnly`, `SameSite=Lax`, and `Secure` (following the `redirectUrl` scheme
 unless `cookieSecure` overrides); the refresh cookie is scoped to `/auth` so it is never sent to the
-API. `/ui/config` reports `loginMode: "server"`, and the console shows a **Sign in** button that
+API. A state-changing `/v1` request authenticated by the session cookie must come from the gateway's
+own origin and is otherwise refused with `403` — `SameSite=Lax` alone admits a same-site page on
+another port or subdomain (see [the web console](security.md#the-web-console-ui)). `/ui/config` reports `loginMode: "server"`, and the console shows a **Sign in** button that
 navigates to `/auth/login` instead of running the in-page flow. The `redirectUrl` **must** point at
 the service's own `…/auth/callback` and be registered as an allowed redirect on the provider's
 client. Because the client secret is a secret, inject it via

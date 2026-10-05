@@ -36,16 +36,22 @@ func ExtractBearerToken(headerValue string) (string, error) {
 // configured. The header always wins, so an explicit Authorization header (an API client, or a
 // grpc-gateway caller) is never overridden by a stale cookie. It is shared by the HTTP auth
 // middleware so header and cookie callers authenticate through the identical Verify path.
-func tokenFromRequest(r *http.Request, sessionCookie string) (string, error) {
+//
+// fromCookie reports which of the two it was, because they are not equally trustworthy as evidence
+// of intent: a browser attaches a cookie to a request a hostile page makes, but cannot attach an
+// Authorization header to a cross-origin request without a preflight the gateway does not grant.
+func tokenFromRequest(r *http.Request, sessionCookie string) (token string, fromCookie bool, err error) {
 	if header := r.Header.Get("Authorization"); header != "" {
-		return ExtractBearerToken(header)
+		token, err := ExtractBearerToken(header)
+
+		return token, false, err
 	}
 
 	if sessionCookie != "" {
 		if cookie, err := r.Cookie(sessionCookie); err == nil && cookie.Value != "" {
-			return cookie.Value, nil
+			return cookie.Value, true, nil
 		}
 	}
 
-	return "", fmt.Errorf("auth: missing bearer token")
+	return "", false, fmt.Errorf("auth: missing bearer token")
 }

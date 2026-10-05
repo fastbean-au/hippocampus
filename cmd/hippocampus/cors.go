@@ -135,11 +135,13 @@ func isCORSPath(path string) bool {
 // shipped alert rules read. And it sits INSIDE recoverMiddleware, so a panic here is still a clean
 // 500.
 //
-// Access-Control-Allow-Credentials is deliberately never sent. That is what keeps the console's
-// HttpOnly session cookie unusable from another origin: without it a browser will not attach
-// credentials to a cross-origin request, so enabling this cannot turn a logged-in console session
-// into ambient authority for a hostile page. Tokens still work, because a bearer token is sent
-// explicitly by the caller rather than attached by the browser.
+// Access-Control-Allow-Credentials is deliberately never sent, so a page on a configured origin
+// cannot READ a response to a request that carried the console's session cookie. It does not stop
+// the cookie being SENT - a browser attaches it to a cross-origin "simple" request regardless, and
+// SameSite=Lax permits that from any same-site page - so it is not what protects a cookie session
+// from a forged write. auth.HTTPMiddleware's cross-origin check is (TODO-3 item 145). Tokens still
+// work from a configured origin, because a bearer token is sent explicitly by the caller rather than
+// attached by the browser.
 func corsMiddleware(origins []string, next http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(origins))
 
