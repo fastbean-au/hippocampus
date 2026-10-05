@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/auth"
+	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -122,7 +123,9 @@ var scopes = map[string]scopeMode{
 	"SummariseMemories":          scopeIds,
 
 	// Writes stamp the group. Import and ImportBatch are writes too, not filtered reads: they upsert
-	// rows carrying a group of their own, which must be one the caller holds.
+	// rows carrying a group of their own, which must be one the caller holds - and, being upserts,
+	// they additionally refuse an id held in another group (scopeImport), since stamping the
+	// incoming row says nothing about whose row it would replace.
 	"StoreEvent":    scopeWrite,
 	"StoreMemory":   scopeWrite,
 	"StoreMemories": scopeWrite,
@@ -315,6 +318,117 @@ func (s *Server) eventIdsOutsideScope(ctx context.Context, ids []string) ([]stri
 	}
 
 	return s.db.EventIdsOutsideGroups(ctx, ids, groups)
+}
+
+// heldOutsideScope reports which of the named ids are held by the store in a group outside the
+// caller's scope. It differs from kind.outside, which also counts an id the store does not hold at
+// all - right for a read, where an absent record and an invisible one must look the same, but wrong
+// for an upsert, where an absent id is simply a new row the caller is free to create.
+//
+// An unbound caller gets an empty result without a query.
+func (s *Server) heldOutsideScope(ctx context.Context, kind linkKind, ids []string) ([]string, error) {
+	outside, err := kind.outside(ctx, ids)
+	if err != nil || len(outside) == 0 {
+		return nil, err
+	}
+
+	missing, err := kind.missing(ctx, outside)
+	if err != nil {
+		return nil, err
+	}
+
+	absent := make(map[string]bool, len(missing))
+	for _, v := range missing {
+		absent[v] = true
+	}
+
+	held := make([]string, 0, len(outside))
+
+	for _, id := range outside {
+		if !absent[id] {
+			held = append(held, id)
+		}
+	}
+
+	return held, nil
+}
+
+// scopeImport refuses an import batch that would reach a record outside the caller's scope. It is
+// the check writeGroup cannot make on its own: Import and ImportBatch are UPSERTS by id, so stamping
+// the caller's group on each incoming row says only where the row goes, not whose row it replaces.
+// Without this, a writer scoped to one group could overwrite another group's record by naming its
+// id, and the re-stamp would then move that record into their own partition (TODO-3 item 136).
+//
+// Three things are checked, all before anything is written so a refused batch leaves no partial
+// state behind - events are ingested before memories, so a per-kind check would already have
+// committed the batch's events by the time one of its memories was refused:
+//
+//   - an event or memory id held in another group is refused with AlreadyExists, the answer
+//     StoreEvent/StoreMemory already give a scoped caller whose id collides, so the refusal tells
+//     the caller nothing a plain write would not;
+//   - a memory's event_id naming another group's event is refused with NotFound, as StoreMemory
+//     refuses it, rather than attaching the memory to an event the caller cannot see.
+//
+// Link far ends are not checked here: they are the caller's to name but not to refuse on, and are
+// dropped after the rows are written instead (see applyImportedLinks).
+func (s *Server) scopeImport(ctx context.Context, events []*contract.Event, memories []*contract.Memory) error {
+	if _, bound := s.scopedGroups(ctx); !bound {
+		return nil
+	}
+
+	eventIds := make([]string, 0, len(events))
+	for _, v := range events {
+		eventIds = append(eventIds, v.GetId())
+	}
+
+	memoryIds := make([]string, 0, len(memories))
+	referenced := make([]string, 0, len(memories))
+	seen := make(map[string]bool)
+
+	for _, memory := range memories {
+		memoryIds = append(memoryIds, memory.GetId())
+
+		if id := memory.GetEventId(); id != "" && !seen[id] {
+			seen[id] = true
+
+			referenced = append(referenced, id)
+		}
+	}
+
+	if err := s.refuseHeldOutsideScope(ctx, s.eventLinks(), eventIds); err != nil {
+		return err
+	}
+
+	if err := s.refuseHeldOutsideScope(ctx, s.memoryLinks(), memoryIds); err != nil {
+		return err
+	}
+
+	held, err := s.heldOutsideScope(ctx, s.eventLinks(), referenced)
+	if err != nil {
+		return mapError(err)
+	}
+
+	if len(held) > 0 {
+		return status.Errorf(codes.NotFound, "no such event: %s", strings.Join(held, ", "))
+	}
+
+	return nil
+}
+
+// refuseHeldOutsideScope is scopeImport's collision check for one kind of record.
+func (s *Server) refuseHeldOutsideScope(ctx context.Context, kind linkKind, ids []string) error {
+	held, err := s.heldOutsideScope(ctx, kind, ids)
+	if err != nil {
+		return mapError(err)
+	}
+
+	if len(held) > 0 {
+		log.Debugf("import refused: %s ids %s are held outside the caller's scope", kind.name, strings.Join(held, ","))
+
+		return status.Errorf(codes.AlreadyExists, "a record with that id already exists: %s", strings.Join(held, ", "))
+	}
+
+	return nil
 }
 
 // filterMemoriesToScope drops memories outside the caller's scope from a result set.

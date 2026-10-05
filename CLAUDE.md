@@ -45,6 +45,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   or the schema; they pin that the consolidation scans never read memory bodies, eviction's
   scan+sort cost, and `UsedBytes` on all three drivers — the Postgres/MySQL ones need
   `HIPPOCAMPUS_TEST_POSTGRES_DSN`/`HIPPOCAMPUS_TEST_MYSQL_DSN`)
+- Vulnerability scan: `scripts/govulncheck.sh` (all six Go modules; needs `govulncheck` and `jq`;
+  fails on a reachable finding not on its reviewed-exception list, and on an exception no longer
+  reported; CI runs it as the `govulncheck` job)
 - Lint: `trunk check` (config in `.trunk/trunk.yaml`: golangci-lint, gofmt, markdownlint, etc.)
 - Regenerate protobuf/gRPC/gateway code after editing `contract/hippocampus.proto`:
   `go generate ./contract` (the `//go:generate` directive lives in `contract/generate.go`)
@@ -874,11 +877,14 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     `scope_isolation_test.go`, whose own descriptor check is the reminder. The table is
     documentation and a checklist, never consulted at request time; what verifies the handlers is
     `TestGroupScopeIsolation*`, which drives every RPC as a caller bound to one group (disabling
-    `scopedGroups` fails 34 of its subtests). Three rules the code holds to: an out-of-scope id the
+    `scopedGroups` fails 46 of its subtests). Four rules the code holds to: an out-of-scope id the
     caller **named** reports `NotFound`, never `PermissionDenied`, which would confirm it exists;
     an id the caller did **not** name (a link's far end, an unlink target) is dropped silently, since
     refusing would reveal the crossing; and `writeGroup` stamps a scoped caller's sole group on a
-    write naming none, so a bound writer never creates a record it cannot read back. Two things
+    write naming none, so a bound writer never creates a record it cannot read back; and an
+    **upsert** (`Import`/`ImportBatch`) is checked against the row it would replace as well as the
+    group it writes to (`scopeImport`), since stamping the incoming row says nothing about whose row
+    an id already names (TODO-3 item 136). Two things
     deliberately cross the boundary, both consequences of the partition being _soft_:
     `link_significance` is scope-blind (it is the denormalised aggregate in the covering index, and
     recomputing per-scope would mean joining the link tables in the consolidation scans), and the

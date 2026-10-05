@@ -486,6 +486,10 @@ func (s *Server) importArchive(ctx context.Context, body io.Reader) (int, int, e
 	memoryLinks := make(map[string][]types.Link)
 
 	flush := func() error {
+		if err := s.scopeImport(ctx, eventBatch, memoryBatch); err != nil {
+			return err
+		}
+
 		n, err := s.ingestEvents(ctx, eventBatch)
 		events += n
 
@@ -563,6 +567,10 @@ func (s *Server) ImportBatch(ctx context.Context, in *contract.ImportBatchReques
 
 	var res contract.ImportBatchResponse
 
+	if err := s.scopeImport(ctx, in.GetEvents(), in.GetMemories()); err != nil {
+		return &res, err
+	}
+
 	events, err := s.ingestEvents(ctx, in.GetEvents())
 	res.EventsImported = int32(events)
 
@@ -615,11 +623,20 @@ func (s *Server) ingestLinks(ctx context.Context, events []*contract.Event, memo
 
 // applyImportedLinks writes the collected link sets, shared by the batch and streaming import
 // paths.
+//
+// A scoped caller's far ends outside their scope are dropped first, as LinkMemories/LinkEvents drop
+// them: the imported rows themselves were scope-checked by scopeImport, but a link names a record
+// the caller does not otherwise touch, and an edge into another group would both add to that
+// record's significance and be readable back from it. Dropped rather than refused, because refusing
+// would confirm the far end exists. A no-op for an unbound caller.
 func (s *Server) applyImportedLinks(
 	ctx context.Context,
 	eventLinks map[string][]types.Link,
 	memoryLinks map[string][]types.Link,
 ) {
+	s.dropOutOfScopeLinks(ctx, s.eventLinks(), eventLinks)
+	s.dropOutOfScopeLinks(ctx, s.memoryLinks(), memoryLinks)
+
 	if len(eventLinks) > 0 {
 		written, dropped, err := s.db.ImportEventLinks(ctx, eventLinks)
 		if err != nil {

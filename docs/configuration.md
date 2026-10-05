@@ -1405,6 +1405,12 @@ in it would let a scoped caller place records in any partition by editing one. `
 resolve the group from the verified claim instead: absent, the caller's sole group is stamped; if the
 record names a group the token does not hold, the call is **refused** rather than silently re-filed.
 
+An import is an upsert by id, so it is also refused if it names an id the store already holds in
+another group (`ALREADY_EXISTS`, the answer a plain write with a colliding id gets), or a memory
+whose `event_id` is another group's event (`NOT_FOUND`). Both are checked before anything is
+written, so a refused batch leaves nothing behind. A link whose far end is outside the token's scope
+is dropped, as `LinkMemories` drops one, rather than refused.
+
 That matters for the embedded-ingestor pattern (a fleet of single-tenant edge instances transferring
 into one centralised store). It works with no configuration at all when the edge's records carry no
 group — they are stamped with the edge's own group on arrival — but an edge that sets group labels

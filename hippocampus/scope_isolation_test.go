@@ -1,6 +1,7 @@
 package hippocampus
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -758,6 +759,176 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 			t.Errorf("ImportBatch stamped group %q, want %q", got, "a")
 		}
 	})
+}
+
+// TestGroupScopeIsolation_ImportCollisions pins what an import may do to a row it does not own.
+// Import and ImportBatch are upserts by id, so a scope check on the group a row is written TO is not
+// enough: an id already held in another group would be overwritten, re-stamped into the caller's
+// group, and so handed to them (TODO-3 item 136). Each case gets its own store, since a case that
+// failed would otherwise have moved the record the next one relies on.
+func TestGroupScopeIsolation_ImportCollisions(t *testing.T) {
+	ctx := scopedContext("a")
+
+	t.Run("ImportBatch cannot take over another group's memory", func(t *testing.T) {
+		s := seedTwoGroups(t)
+
+		_, err := s.ImportBatch(ctx, &contract.ImportBatchRequest{
+			Memories: []*contract.Memory{{Id: "m-b", Body: "overwritten by a", Significance: 5, TimeStamp: 100}},
+		})
+
+		// AlreadyExists is the answer StoreMemory already gives a scoped caller whose id collides,
+		// so refusing with it tells the caller nothing a plain write would not.
+		if status.Code(err) != codes.AlreadyExists {
+			t.Errorf("ImportBatch(id=m-b) = %v, want AlreadyExists", err)
+		}
+
+		assertMemoryUntouched(t, s, "m-b", "b", "secret belonging to b")
+	})
+
+	t.Run("ImportBatch cannot take over another group's event", func(t *testing.T) {
+		s := seedTwoGroups(t)
+
+		_, err := s.ImportBatch(ctx, &contract.ImportBatchRequest{
+			Events: []*contract.Event{{Id: "e-b", Name: "taken", TimeStart: 100, Significance: 5}},
+		})
+
+		if status.Code(err) != codes.AlreadyExists {
+			t.Errorf("ImportBatch(event id=e-b) = %v, want AlreadyExists", err)
+		}
+
+		event, err := s.db.GetEvent(context.Background(), "e-b")
+		if err != nil {
+			t.Fatalf("GetEvent(e-b): %s", err)
+		}
+
+		if event.Group != "b" || event.Name != "event b" {
+			t.Errorf("e-b is now group %q named %q, want group b named \"event b\"", event.Group, event.Name)
+		}
+	})
+
+	t.Run("ImportBatch refuses another group's event as a memory's event", func(t *testing.T) {
+		s := seedTwoGroups(t)
+
+		_, err := s.ImportBatch(ctx, &contract.ImportBatchRequest{
+			Memories: []*contract.Memory{{Id: "m-new", Body: "x", Significance: 5, TimeStamp: 100, EventId: "e-b"}},
+		})
+
+		// The same answer StoreMemory gives for an event outside the caller's scope.
+		assertNotFound(t, "ImportBatch(event_id=e-b)", err)
+
+		assertMemoryAbsent(t, s, "m-new")
+	})
+
+	t.Run("a refused ImportBatch writes nothing", func(t *testing.T) {
+		s := seedTwoGroups(t)
+
+		_, err := s.ImportBatch(ctx, &contract.ImportBatchRequest{
+			Events:   []*contract.Event{{Id: "e-new", Name: "fresh", TimeStart: 100, Significance: 5}},
+			Memories: []*contract.Memory{{Id: "m-b", Body: "overwritten by a", Significance: 5, TimeStamp: 100}},
+		})
+
+		if status.Code(err) != codes.AlreadyExists {
+			t.Fatalf("ImportBatch = %v, want AlreadyExists", err)
+		}
+
+		// Events are written before memories, so a check made per kind as each was ingested would
+		// already have committed e-new by the time m-b was refused.
+		if _, err := s.db.GetEvent(context.Background(), "e-new"); err == nil {
+			t.Error("e-new was written by a batch that was refused")
+		}
+	})
+
+	t.Run("ImportBatch drops a link to another group's memory", func(t *testing.T) {
+		s := seedTwoGroups(t)
+
+		if _, err := s.ImportBatch(ctx, &contract.ImportBatchRequest{
+			Memories: []*contract.Memory{{
+				Id:           "m-linked",
+				Body:         "x",
+				Significance: 5,
+				TimeStamp:    100,
+				Links:        []*contract.Link{{Id: "m-b", Significance: 3}, {Id: "m-a", Significance: 3}},
+			}},
+		}); err != nil {
+			t.Fatalf("ImportBatch: %s", err)
+		}
+
+		// Dropped rather than refused, as LinkMemories' far ends are: the link is supplementary to
+		// the row, and refusing would confirm that m-b exists.
+		edges, _, err := s.db.GetMemoryLinks(context.Background(), "m-linked", types.LinkDirectionOutbound)
+		if err != nil {
+			t.Fatalf("GetMemoryLinks: %s", err)
+		}
+
+		if len(edges) != 1 || edges[0].Id != "m-a" {
+			t.Errorf("m-linked has links %v, want only the in-scope m-a", edges)
+		}
+	})
+
+	t.Run("an unscoped ImportBatch still upserts any id", func(t *testing.T) {
+		s := seedTwoGroups(t)
+
+		if _, err := s.ImportBatch(context.Background(), &contract.ImportBatchRequest{
+			Memories: []*contract.Memory{{Id: "m-b", Body: "restored", Significance: 5, TimeStamp: 100, Group: "b"}},
+		}); err != nil {
+			t.Fatalf("ImportBatch (unscoped): %s", err)
+		}
+
+		assertMemoryUntouched(t, s, "m-b", "b", "restored")
+	})
+
+	t.Run("Import cannot take over another group's memory", func(t *testing.T) {
+		s := seedTwoGroups(t)
+
+		objects := newFakeObjectStore()
+		s.objects = objects
+
+		body := buildArchive(t, nil, []*contract.Memory{{Id: "m-b", Body: "overwritten by a", Significance: 5, TimeStamp: 100}})
+
+		if err := objects.Put(context.Background(), "hostile", bytes.NewReader(body)); err != nil {
+			t.Fatalf("Put: %s", err)
+		}
+
+		_, err := s.Import(ctx, &contract.ImportRequest{ObjectKey: "hostile"})
+
+		if status.Code(err) != codes.AlreadyExists {
+			t.Errorf("Import(id=m-b) = %v, want AlreadyExists", err)
+		}
+
+		assertMemoryUntouched(t, s, "m-b", "b", "secret belonging to b")
+	})
+}
+
+// assertMemoryUntouched reads a memory back unscoped and requires its group and body.
+func assertMemoryUntouched(t *testing.T, s *Server, id string, group string, body string) {
+	t.Helper()
+
+	stored, err := s.db.GetMemoriesByIds(context.Background(), []string{id})
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds(%s): %s", id, err)
+	}
+
+	if len(*stored) != 1 {
+		t.Fatalf("GetMemoriesByIds(%s) returned %d memories, want 1", id, len(*stored))
+	}
+
+	if got := (*stored)[0]; got.Group != group || got.Body != body {
+		t.Errorf("%s is now group %q body %q, want group %q body %q", id, got.Group, got.Body, group, body)
+	}
+}
+
+// assertMemoryAbsent requires that no memory with the id was written.
+func assertMemoryAbsent(t *testing.T, s *Server, id string) {
+	t.Helper()
+
+	stored, err := s.db.GetMemoriesByIds(context.Background(), []string{id})
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds(%s): %s", id, err)
+	}
+
+	if len(*stored) != 0 {
+		t.Errorf("%s was written by a refused import", id)
+	}
 }
 
 // TestGroupScopeIsolation_UnscopedCallerIsUnchanged is the other half of the guarantee: everything

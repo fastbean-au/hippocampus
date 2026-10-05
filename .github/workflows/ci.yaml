@@ -9,7 +9,7 @@ on:
 # Least privilege for the whole workflow, set here rather than per job because every job in it only
 # ever reads the repository: nothing pushes a commit, publishes an image, or comments on a PR. The
 # default GITHUB_TOKEN is otherwise write-capable on a push to the default branch, so a compromised
-# third-party action or dependency in any of these eleven jobs would inherit that. Coveralls and the
+# third-party action or dependency in any of these twelve jobs would inherit that. Coveralls and the
 # Homebrew tap authenticate with their own secrets, not this token, so neither needs more.
 permissions:
   contents: read
@@ -677,3 +677,25 @@ jobs:
 
       - name: Provision the alert rules into Grafana
         run: scripts/check-grafana-alerts.sh
+
+  # Known vulnerabilities the code actually reaches, across all six Go modules - `./...` from the root
+  # never descends into the five under integrations/. scripts/govulncheck.sh fails on any
+  # symbol-level finding not on its list of reviewed exceptions, and on an exception that is no
+  # longer reported, so the list expires on its own when a dependency moves (TODO-3 item 135).
+  # govulncheck is pinned so a scanner release cannot change the verdict between two runs of the
+  # same commit; the vulnerability database is not, which is the point.
+  govulncheck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+      - name: Scan every module
+        run: scripts/govulncheck.sh

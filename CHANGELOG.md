@@ -57,6 +57,16 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **Every Go module is scanned for reachable known vulnerabilities.** `scripts/govulncheck.sh`, run
+  by a new `govulncheck` CI job, runs govulncheck over the root module and the five under
+  `integrations/` (which a root `./...` never reaches) and fails on any symbol-level finding not on a
+  short list of reviewed exceptions. An exception has to say why it does not apply, and one that is
+  no longer reported fails the run, so the list cannot outlive the dependency it was for. The one
+  entry today is GO-2026-6443 in grpc-go v1.84.0: its panic is in xDS server routing, which nothing
+  here links, and it comes out when v1.85.0 is tagged.
+
 ### Changed
 
 - **A release is dispatched only to the satellites it changes something for.** `notify-satellites`
@@ -67,6 +77,17 @@ itself which service version it was built against.
   identical contract, republishes `hippocampus-gen`'s images, or raises the Obsidian plugin's
   declared minimum service version. The weekly status report judges a pin stale by the same test,
   and `family_test.go` requires every dispatched satellite to declare a surface whose paths exist.
+
+### Fixed
+
+- **A group-scoped token can no longer take over another group's records through an import.**
+  `Import` and `ImportBatch` upsert by id, and stamped the caller's group on each incoming row
+  without checking whose row that id already named — so a writer scoped to one group could
+  overwrite a record in another by naming its id, which also moved it into their own partition and
+  made it theirs to read. Both now refuse an id held in another group (`ALREADY_EXISTS`) and a memory
+  whose `event_id` is another group's event (`NOT_FOUND`), checked before anything is written, and
+  drop link far ends outside the token's scope as `LinkMemories` does. Unscoped imports, which is
+  every deployment not using group scoping, are unchanged.
 
 ## [0.51.1] - 2026-10-05
 
