@@ -626,11 +626,16 @@ func (d *DB) GetEvents(ctx context.Context, filter EventFilter) (*[]types.Event,
 func (d *DB) ConsolidateEvents(ctx context.Context, s Server) (int, error) {
 	log.Trace("func() db.ConsolidateEvents")
 
-	ctx, cancel := d.opContext(ctx)
+	// The query timeout bounds the SCAN, and only the scan. Everything after it - the delete
+	// transaction and each per-event cleanup - runs on the cycle's own context and takes its own
+	// opContext, so one slow scan cannot eat the budget of the operations that follow it. Sharing
+	// one deadline across the pass made every cleanup after a long scan fail, on every cycle
+	// (TODO-3 item 151).
+	scanCtx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	rows, err := d.query(
-		ctx,
+		scanCtx,
 		`SELECT e.id, e.time_start, e.time_end, COALESCE(l.level_rank, 0), e.link_significance,
 			e.memories_consolidated
 		FROM events e LEFT JOIN significance_levels l ON l.id = e.significance_level_id

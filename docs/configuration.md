@@ -1525,6 +1525,8 @@ benchmarked sizes, so a hung or unreachable database fails an operation after a 
 of blocking the request goroutine — and its pooled connection — indefinitely. Raise it above the
 longest legitimate operation on a larger store, notably a full consolidation scan, or a sleep cycle
 could be aborted mid-scan; set it to 0 to disable the bound (reasonable for embedded SQLite).
+Within a sleep cycle the bound applies to each step on its own — a pass's scan, its delete
+transaction, each per-event cleanup — never to the cycle as a whole.
 
 On the `sqlite` driver `storage.directory` holds the database (`hippocampus.db` and its WAL
 sidecars) plus a `hippocampus.lock` file. The service holds an exclusive operating system lock on

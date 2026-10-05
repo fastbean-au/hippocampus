@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 
@@ -311,6 +312,51 @@ func TestConsolidateEventMemories_PerEventCleanupErrorsAreBestEffort(t *testing.
 
 	if memories != 1 || events != 1 || eventsDeleted != 0 {
 		t.Fatalf("got (memories=%d, events=%d, eventsDeleted=%d), want (1, 1, 0)", memories, events, eventsDeleted)
+	}
+
+	expectationsMet(t, mock)
+}
+
+// TestConsolidateEventMemories_EachStepHasItsOwnDeadline pins that storage.queryTimeoutSeconds
+// bounds each operation of a consolidation pass, not the pass as a whole (TODO-3 item 151). The
+// pass took one opContext at the top and reused it for the scan, the delete transaction and every
+// per-event cleanup, so on a store large enough for the scan to take most of the timeout, every
+// cleanup after it failed with "context deadline exceeded" - on every cycle, and one log line per
+// event. Here the scan and the last cleanup each take two thirds of the timeout: fine apart, too
+// long together.
+func TestConsolidateEventMemories_EachStepHasItsOwnDeadline(t *testing.T) {
+	d, mock := newMockDB(t, driverSQLite)
+	d.queryTimeout = 150 * time.Millisecond
+
+	emptyRanksQuery(mock)
+
+	mock.ExpectQuery(`FROM memories m LEFT JOIN events e`).
+		WillDelayFor(100 * time.Millisecond).
+		WillReturnRows(sqlmock.NewRows(consolidateEventMemoriesColumns).
+			AddRow("m1", int64(1), nil, int64(0), int32(0), "e1", nil, int64(0), int64(0), false, "e1"))
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM memories WHERE id`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT 1 FROM memory_links LIMIT 1`).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+	mock.ExpectExec(`INSERT INTO search_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	// The event survives its emptiness check here, so having lost a memory it is flagged - the
+	// cleanup step the slow scan used to starve.
+	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	mock.ExpectExec(`UPDATE events SET memories_consolidated`).
+		WillDelayFor(100 * time.Millisecond).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	memories, _, _, err := d.ConsolidateEventMemories(context.Background(), &stubServer{consolidateMemories: true})
+	if err != nil {
+		t.Fatalf("a pass whose steps each fit the timeout failed: %s", err)
+	}
+
+	if memories != 1 {
+		t.Errorf("deleted %d memories, want 1", memories)
 	}
 
 	expectationsMet(t, mock)

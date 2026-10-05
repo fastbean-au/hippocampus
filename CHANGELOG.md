@@ -178,7 +178,12 @@ itself which service version it was built against.
   promotion, a drain re-check mismatch — every later pass saw only those, and nothing behind them was
   promoted or dropped again while the edge kept filling. The pass now pages past the events it
   leaves behind.
-
+- **`storage.queryTimeoutSeconds` now bounds each step of a consolidation pass, as documented,
+  rather than the whole pass.** Each of the four passes took one deadline at the start and reused it
+  for its scan, its delete transaction and every per-event cleanup, so on a store large enough for
+  the scan to take most of the timeout, the cleanups after it failed with "context deadline
+  exceeded" on every cycle — one log line per event, and the cycle reported as failed. The deadline
+  now covers the scan alone, and each later operation gets its own.
 ## [0.51.1] - 2026-10-05
 
 ### Changed

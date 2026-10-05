@@ -1943,7 +1943,12 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 		return 0, err
 	}
 
-	ctx, cancel := d.opContext(ctx)
+	// The query timeout bounds the SCAN, and only the scan. Everything after it - the delete
+	// transaction and each per-event cleanup - runs on the cycle's own context and takes its own
+	// opContext, so one slow scan cannot eat the budget of the operations that follow it. Sharing
+	// one deadline across the pass made every cleanup after a long scan fail, on every cycle
+	// (TODO-3 item 151).
+	scanCtx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// significance_level_id is read from the covering index and translated to its rank via the
@@ -1951,7 +1956,7 @@ func (d *DB) ConsolidateMemories(ctx context.Context, s Server) (int, error) {
 	// link_significance is in that index for the same reason: it is a per-row input to the value
 	// calculation, so reading it from the index keeps the scan off the table entirely.
 	rows, err := d.query(
-		ctx,
+		scanCtx,
 		`SELECT id, timestamp, significance_level_id, time_recalled, recall_count, link_significance
 		FROM memories WHERE event_id = ''`,
 	)
@@ -2096,14 +2101,19 @@ func (d *DB) EvictMemories(ctx context.Context, s Server, target EvictionTarget)
 		return EvictionResult{}, err
 	}
 
-	ctx, cancel := d.opContext(ctx)
+	// The query timeout bounds the SCAN, and only the scan. Everything after it - the delete
+	// transaction and each per-event cleanup - runs on the cycle's own context and takes its own
+	// opContext, so one slow scan cannot eat the budget of the operations that follow it. Sharing
+	// one deadline across the pass made every cleanup after a long scan fail, on every cycle
+	// (TODO-3 item 151).
+	scanCtx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// The memories_consolidated fallback is bound rather than a literal: the column is INTEGER
 	// on SQLite but BOOLEAN on Postgres, and a bound false coalesces cleanly against both. The
 	// memory and event significance level ids are translated to ranks via the registry snapshot.
 	rows, err := d.query(
-		ctx,
+		scanCtx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance,
 			COALESCE(e.memories_consolidated, ?), length(m.body) + `+d.metadataBytesExpr("m.")+`,
@@ -2326,7 +2336,12 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 		return 0, 0, 0, err
 	}
 
-	ctx, cancel := d.opContext(ctx)
+	// The query timeout bounds the SCAN, and only the scan. Everything after it - the delete
+	// transaction and each per-event cleanup - runs on the cycle's own context and takes its own
+	// opContext, so one slow scan cannot eat the budget of the operations that follow it. Sharing
+	// one deadline across the pass made every cleanup after a long scan fail, on every cycle
+	// (TODO-3 item 151).
+	scanCtx, cancel := d.opContext(ctx)
 	defer cancel()
 
 	// LEFT JOIN, not INNER: an INNER JOIN silently drops memories whose event no longer exists, so
@@ -2336,7 +2351,7 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 	// to tell a real event (non-null) from a dangling reference (null). The memory and event
 	// significance level ids are translated to ranks via the registry snapshot.
 	rows, err := d.query(
-		ctx,
+		scanCtx,
 		`SELECT m.id, m.timestamp, m.significance_level_id, m.time_recalled, m.recall_count, m.event_id,
 			e.significance_level_id, COALESCE(e.link_significance, 0), m.link_significance,
 			COALESCE(e.memories_consolidated, ?), e.id
