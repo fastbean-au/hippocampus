@@ -38,7 +38,7 @@ func (f *fakeHeld) Held(ctx context.Context, ids []string) (map[string]bool, err
 func newSweep(t *testing.T, store *objects.Memory, held *fakeHeld, cfg SweepConfig) *Sweep {
 	t.Helper()
 
-	reaper, err := New(Config{Store: store, Delete: true})
+	reaper, err := New(Config{Store: store, Memories: held, Delete: true})
 	if err != nil {
 		t.Fatalf("New failed: %s", err.Error())
 	}
@@ -255,7 +255,7 @@ func TestABatchSizeOverTheServiceCapIsClamped(t *testing.T) {
 func TestNewSweepValidatesItsConfiguration(t *testing.T) {
 	store := objects.NewMemory("payloads")
 
-	reaper, err := New(Config{Store: store})
+	reaper, err := New(Config{Store: store, Memories: &fakeHeld{}})
 	if err != nil {
 		t.Fatalf("New failed: %s", err.Error())
 	}

@@ -71,7 +71,7 @@ func (c *CatchUp) Run(ctx context.Context) (Result, error) {
 	since := time.Now().Add(-c.window)
 
 	enabled, err := c.memories.Forgotten(ctx, since, func(page []*contract.ForgottenMemory) error {
-		result, err := c.reaper.Reap(ctx, PathCatchUp, c.actionable(page))
+		result, err := c.reaper.ReapForgotten(ctx, PathCatchUp, c.actionable(page))
 		total.Add(result)
 
 		return err

@@ -162,12 +162,12 @@ func (r *Receiver) handle(w http.ResponseWriter, request *http.Request, delivery
 		ids = append(ids, v.Id)
 	}
 
-	result, err := r.reaper.Reap(request.Context(), PathCallback, ids)
+	result, err := r.reaper.ReapForgotten(request.Context(), PathCallback, ids)
 	if err != nil {
 		r.recordDelivery(request, string(delivery.Kind), OutcomeRejected)
 
 		log.WithError(err).WithField("items", len(ids)).
-			Error("failed to delete the objects behind a forgotten batch; the service will retry the delivery")
+			Error("could not act on a forgotten batch (the store could not be asked, or a deletion failed); the service will retry the delivery")
 
 		// A 5xx is the only way to keep the instruction alive: the queue replays what it cannot
 		// deliver, and the deletes that did succeed are idempotent on replay.
@@ -183,6 +183,7 @@ func (r *Receiver) handle(w http.ResponseWriter, request *http.Request, delivery
 		"deleted":  result.Deleted,
 		"shadowed": result.Shadowed,
 		"skipped":  result.Foreign + result.Unmappable,
+		"held":     result.Held,
 		"cause":    delivery.Cause,
 	}).
 		Debug("handled a forgotten-memory delivery")

@@ -46,11 +46,18 @@ func forgotten(id string, rule contract.ForgetRule) *contract.ForgottenMemory {
 func newCatchUp(t *testing.T, log *fakeLog, window time.Duration) (*CatchUp, *objects.Memory) {
 	t.Helper()
 
+	return newCatchUpHolding(t, log, window, &fakeHeld{})
+}
+
+// newCatchUpHolding is newCatchUp over a store that reports the given memories as still held.
+func newCatchUpHolding(t *testing.T, log *fakeLog, window time.Duration, held *fakeHeld) (*CatchUp, *objects.Memory) {
+	t.Helper()
+
 	store := objects.NewMemory("payloads")
 	store.Put("one.json", []byte("one"), time.Now())
 	store.Put("two.json", []byte("two"), time.Now())
 
-	reaper, err := New(Config{Store: store, Delete: true})
+	reaper, err := New(Config{Store: store, Memories: held, Delete: true})
 	if err != nil {
 		t.Fatalf("New failed: %s", err.Error())
 	}
@@ -112,7 +119,7 @@ func TestTheCatchUpHonoursTheCauseFilter(t *testing.T) {
 		t.Fatalf("NewCauses failed: %s", err.Error())
 	}
 
-	reaper, err := New(Config{Store: store, Delete: true, Causes: causes})
+	reaper, err := New(Config{Store: store, Memories: &fakeHeld{}, Delete: true, Causes: causes})
 	if err != nil {
 		t.Fatalf("New failed: %s", err.Error())
 	}
@@ -178,7 +185,7 @@ func TestADisabledLogIsNotSilent(t *testing.T) {
 func TestNewCatchUpValidatesItsArguments(t *testing.T) {
 	store := objects.NewMemory("payloads")
 
-	reaper, err := New(Config{Store: store})
+	reaper, err := New(Config{Store: store, Memories: &fakeHeld{}})
 	if err != nil {
 		t.Fatalf("New failed: %s", err.Error())
 	}
@@ -203,5 +210,52 @@ func TestTheRuleMapsOntoACause(t *testing.T) {
 
 	if got := cause(contract.ForgetRule_FORGET_RULE_UNSPECIFIED); got != "" {
 		t.Errorf("expected an unspecified rule to carry no cause, got %q", got)
+	}
+}
+
+// TestTheCatchUpLeavesAReRegisteredObjectAlone: the forgotten log is a record of what WENT, and an
+// object can be uploaded again under the same key and its memory registered again afterwards. The
+// log still names the old memory, so the catch-up asks the store first, as the sweep does, rather
+// than delete the live object behind the new one (TODO-3 item 144).
+func TestTheCatchUpLeavesAReRegisteredObjectAlone(t *testing.T) {
+	log := &fakeLog{
+		enabled: true,
+		records: []*contract.ForgottenMemory{
+			forgotten("payloads/one.json", contract.ForgetRule_FORGET_RULE_CONSOLIDATION),
+			forgotten("payloads/two.json", contract.ForgetRule_FORGET_RULE_CONSOLIDATION),
+		},
+	}
+
+	held := &fakeHeld{holds: map[string]bool{"payloads/one.json": true}}
+	catchUp, store := newCatchUpHolding(t, log, time.Hour, held)
+
+	if _, err := catchUp.Run(context.Background()); err != nil {
+		t.Fatalf("Run failed: %s", err.Error())
+	}
+
+	if !store.Has("one.json") {
+		t.Error("the catch-up deleted the object behind a memory the store holds again")
+	}
+
+	if store.Has("two.json") {
+		t.Error("expected the object behind a memory that is gone to be deleted")
+	}
+}
+
+// TestTheCatchUpStopsWhenTheStoreCannotBeAsked: nothing is deleted on a guess.
+func TestTheCatchUpStopsWhenTheStoreCannotBeAsked(t *testing.T) {
+	log := &fakeLog{
+		enabled: true,
+		records: []*contract.ForgottenMemory{forgotten("payloads/one.json", contract.ForgetRule_FORGET_RULE_CONSOLIDATION)},
+	}
+
+	catchUp, store := newCatchUpHolding(t, log, time.Hour, &fakeHeld{err: fmt.Errorf("unavailable")})
+
+	if _, err := catchUp.Run(context.Background()); err == nil {
+		t.Error("expected the catch-up to fail when the store cannot be asked")
+	}
+
+	if !store.Has("one.json") {
+		t.Error("an object was deleted although the store could not be asked whether it was held")
 	}
 }

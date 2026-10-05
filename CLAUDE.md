@@ -1742,10 +1742,16 @@ github.com/fastbean-au/hippocampus => ../..`), which is what keeps the AWS SDK o
     any cause outside `--causes` (default `consolidation,eviction,cascade`) — `clear` is a MOVE,
     `purge` would empty the bucket on one administrative command, `summary_replace` is a judgement,
     and `client` only arrives when `callbacks.allDeletions` is set, which is a visibility key rather
-    than consent. The sweep additionally never judges an object younger than `--sweep-min-age`
-    (24h, **not** disableable — without it the sweep races every producer write), and **stops**
-    outright if the store cannot be asked what it holds, since reading "cannot ask" as "not held"
-    empties the bucket on the first outage. (7) **Readiness is deliberately asymmetric**: the
+    than consent. **Every path asks the store first**: the sweep of its own enumeration, and the push
+    and catch-up paths through `Reaper.ReapForgotten`, because neither a delivery nor a log entry
+    proves a memory is gone now - one can be forged, and either can be stale once an object is
+    re-uploaded and re-registered under the same key (item 144; a held id counts as
+    `outcome="held"`). An armed reaper also refuses to start with an unauthenticated listener unless
+    `--allow-unauthenticated-callbacks`, mirroring the gateway's `--allow-anonymous`. The sweep
+    additionally never judges an object younger than `--sweep-min-age` (24h, **not** disableable —
+    without it the sweep races every producer write), and every path **stops** if the store cannot be
+    asked what it holds, since reading "cannot ask" as "not held" empties the bucket on the first
+    outage. (7) **Readiness is deliberately asymmetric**: the
     gateway's `/readyz` covers the bucket ONLY (its job is serving objects; pulling it from a load
     balancer because a memory store is down turns a lost decay-clock update into an outage for every
     reader), the reaper's covers both ends. Tests need no bucket and no service — the S3 driver runs

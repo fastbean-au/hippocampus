@@ -20,10 +20,17 @@ import (
 func newReceiver(t *testing.T, cfg ReceiverConfig) (*Receiver, *objects.Memory) {
 	t.Helper()
 
+	return newReceiverHolding(t, cfg, &fakeHeld{})
+}
+
+// newReceiverHolding is newReceiver over a store that reports the given memories as still held.
+func newReceiverHolding(t *testing.T, cfg ReceiverConfig, held *fakeHeld) (*Receiver, *objects.Memory) {
+	t.Helper()
+
 	store := objects.NewMemory("payloads")
 	store.Put("traces/one.json", []byte("one"), time.Now())
 
-	reaper, err := New(Config{Store: store, Delete: true})
+	reaper, err := New(Config{Store: store, Memories: held, Delete: true})
 	if err != nil {
 		t.Fatalf("New failed: %s", err.Error())
 	}
@@ -94,6 +101,44 @@ func TestAFailedDeletionAsksForARetry(t *testing.T) {
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 so the queue replays the delivery, got %d", recorder.Code)
+	}
+}
+
+// TestADeliveryNamingAHeldMemoryDeletesNothing: the store is asked before anything is deleted, as
+// the sweep already asks it. A delivery naming a memory the store still holds is wrong - forged by
+// something that reached the port, or stale, naming an object that has since been re-registered
+// under the same key - and acting on it deletes a live object (TODO-3 item 144). It is acknowledged,
+// since replaying it would only be told the same thing.
+func TestADeliveryNamingAHeldMemoryDeletesNothing(t *testing.T) {
+	held := &fakeHeld{holds: map[string]bool{"payloads/traces/one.json": true}}
+	receiver, store := newReceiverHolding(t, ReceiverConfig{}, held)
+
+	recorder := post(t, receiver, delivery(notify.KindMemoryForgotten, notify.CauseConsolidation, "payloads/traces/one.json"), nil)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", recorder.Code)
+	}
+
+	if !store.Has("traces/one.json") {
+		t.Error("the object behind a memory the store still holds was deleted")
+	}
+}
+
+// TestADeliveryIsRetriedWhenTheStoreCannotBeAsked: "cannot ask" is never read as "not held", here
+// any more than in the sweep. The delivery is refused with a 5xx so the queue replays it once the
+// store answers.
+func TestADeliveryIsRetriedWhenTheStoreCannotBeAsked(t *testing.T) {
+	held := &fakeHeld{err: fmt.Errorf("unavailable")}
+	receiver, store := newReceiverHolding(t, ReceiverConfig{}, held)
+
+	recorder := post(t, receiver, delivery(notify.KindMemoryForgotten, notify.CauseConsolidation, "payloads/traces/one.json"), nil)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 so the queue replays the delivery, got %d", recorder.Code)
+	}
+
+	if !store.Has("traces/one.json") {
+		t.Error("an object was deleted although the store could not be asked whether it was held")
 	}
 }
 

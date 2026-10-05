@@ -88,6 +88,7 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.String("callback-path", "/callbacks", "path the service's callback sink posts to")
 	fs.String("callback-token", "", "bearer token required on every delivery, matching callbacks.token on the service")
 	fs.String("callback-secret", "", "shared secret the delivery signature is verified with, matching callbacks.signingSecret on the service")
+	fs.Bool("allow-unauthenticated-callbacks", false, "with --delete, accept deliveries on an endpoint with neither --callback-token nor --callback-secret: anything that can reach it can then ask for objects to be deleted")
 	fs.Int("callback-max-age-seconds", 300, "how old a signed delivery may be before it is refused as a replay")
 	fs.String("listen-tls-cert", "", "certificate for serving the callback endpoint over HTTPS (requires --listen-tls-key)")
 	fs.String("listen-tls-key", "", "private key for serving the callback endpoint over HTTPS (requires --listen-tls-cert)")
@@ -157,6 +158,19 @@ func validate() (reap.Causes, error) {
 		viper.GetDuration("catch-up") <= 0 &&
 		viper.GetDuration("sweep-interval") <= 0 {
 		return nil, fmt.Errorf("every path is disabled: set --listen-port, --catch-up or --sweep-interval")
+	}
+
+	// An armed listener with no credential is an endpoint that deletes objects for anybody who can
+	// reach it. The read-only gateway refuses the equivalent without --allow-anonymous; the half of
+	// this integration that destroys data must not be the one that merely warns (TODO-3 item 144).
+	// Shadow mode deletes nothing, so there it stays the warning listen gives.
+	if viper.GetBool("delete") &&
+		viper.GetInt("listen-port") != 0 &&
+		viper.GetString("callback-token") == "" &&
+		viper.GetString("callback-secret") == "" &&
+		!viper.GetBool("allow-unauthenticated-callbacks") {
+		return nil, fmt.Errorf("with --delete, the callback listener needs --callback-token, --callback-secret or both, " +
+			"or pass --allow-unauthenticated-callbacks to accept deletion instructions from anybody who can reach it")
 	}
 
 	causes, err := reap.NewCauses(viper.GetString("causes"))
@@ -229,16 +243,17 @@ func run(ctx context.Context) error {
 
 	defer func() { _ = conn.Close() }()
 
+	memories := client.NewMemories(hippo, time.Duration(viper.GetInt("call-timeout-seconds"))*time.Second)
+
 	reaper, err := reap.New(reap.Config{
-		Store:  store,
-		Delete: viper.GetBool("delete"),
-		Causes: causes,
+		Store:    store,
+		Memories: memories,
+		Delete:   viper.GetBool("delete"),
+		Causes:   causes,
 	})
 	if err != nil {
 		return fmt.Errorf("building the reaper: %w", err)
 	}
-
-	memories := client.NewMemories(hippo, time.Duration(viper.GetInt("call-timeout-seconds"))*time.Second)
 
 	sweep, err := reap.NewSweep(reap.SweepConfig{
 		Store:    store,

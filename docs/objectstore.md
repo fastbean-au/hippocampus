@@ -174,12 +174,25 @@ timestamp is outside `--callback-max-age-seconds` in either direction. It answer
 it could not carry out, which is what makes the service's queue replay it, and `2xx` for anything it
 deliberately did not act on, which is what stops the queue replaying that forever.
 
+**An armed reaper will not listen unauthenticated.** With `--delete`, a callback listener needs
+`--callback-token`, `--callback-secret` or both, or the reaper refuses to start: without either,
+anything that can reach the port can name any object in the bucket for deletion. Pass
+`--allow-unauthenticated-callbacks` to accept that deliberately — a listener on a loopback address
+behind a proxy that authenticates for it, say. In shadow mode nothing is deleted, so an
+unauthenticated listener is only warned about.
+
 ### What it refuses to delete
 
 - **An id that is not an object reference** — a UUID from another producer sharing the store.
 - **An id naming another bucket** — an agent pointed at the wrong one.
 - **A key too long to have been minted here.**
 - **A cause outside `--causes`** (default `consolidation,eviction,cascade`).
+- **An object whose memory the store still holds.** The push and catch-up paths ask the store
+  before deleting, exactly as the sweep does, because neither a delivery nor a log entry proves the
+  memory is gone *now*: a delivery can be forged, and either can be stale — an object uploaded again
+  under the same key, its memory registered again, is named by the same id as the one forgotten
+  before. Such an id is counted as `outcome="held"` and logged at Warn. If the store cannot be asked,
+  the push path answers `5xx` and the catch-up stops, rather than delete on a guess.
 
 That last one is worth reading carefully, because each omission is a way to destroy data that is
 still wanted:
@@ -267,7 +280,7 @@ at Warn, and `HippocampusObjectTapNotReinforcing` alerts on the same condition. 
 | `hippocampus.objectstore.recall.batch_size` | Ids per call, for tuning the window against the RPC rate it saves                    |
 | `hippocampus.objectstore.requests`          | Object reads, by mode and outcome                                                    |
 | `hippocampus.objectstore.request.duration`  | Time to serve one read                                                               |
-| `hippocampus.objectstore.deletions`         | Objects acted on, by path and outcome — `shadow` is what a dry run reports           |
+| `hippocampus.objectstore.deletions`         | Objects acted on, by path and outcome — `shadow` is a dry run, `held` an instruction the store contradicted |
 | `hippocampus.objectstore.deliveries`        | Callbacks received, by kind and outcome                                              |
 | `hippocampus.objectstore.sweep.examined`    | Objects enumerated; compare with deletions — swept millions, deleted none is healthy |
 | `hippocampus.objectstore.sweep.duration`    | Time for one pass                                                                    |

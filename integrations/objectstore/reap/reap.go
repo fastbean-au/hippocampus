@@ -142,6 +142,10 @@ type Config struct {
 	// Store is the bucket being managed. Required.
 	Store objects.Store
 
+	// Memories says which memories the store still holds. Required: it is what ReapForgotten asks
+	// before deleting anything on the strength of an instruction it did not derive itself.
+	Memories HeldReader
+
 	// Delete arms the agent. False - the default - selects shadow mode, where every deletion is
 	// selected, counted and logged, and none is carried out.
 	Delete bool
@@ -152,15 +156,20 @@ type Config struct {
 
 // Reaper deletes the objects behind forgotten memories.
 type Reaper struct {
-	store  objects.Store
-	delete bool
-	causes Causes
+	store    objects.Store
+	memories HeldReader
+	delete   bool
+	causes   Causes
 }
 
 // New builds a Reaper.
 func New(cfg Config) (*Reaper, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("a bucket is required")
+	}
+
+	if cfg.Memories == nil {
+		return nil, fmt.Errorf("a reader of the memories the store holds is required")
 	}
 
 	causes := cfg.Causes
@@ -173,9 +182,10 @@ func New(cfg Config) (*Reaper, error) {
 	}
 
 	return &Reaper{
-		store:  cfg.Store,
-		delete: cfg.Delete,
-		causes: causes,
+		store:    cfg.Store,
+		memories: cfg.Memories,
+		delete:   cfg.Delete,
+		causes:   causes,
 	}, nil
 }
 
@@ -186,11 +196,65 @@ func (r *Reaper) Armed() bool {
 
 // Result is what one call to Reap did.
 type Result struct {
+	Held       int
 	Deleted    int
 	Shadowed   int
 	Foreign    int
 	Unmappable int
 	Failed     int
+}
+
+// ReapForgotten reaps the memories an instruction names as forgotten, having first asked the store
+// which of them it still holds, and leaves those alone.
+//
+// It is for the two paths that act on somebody else's word: the push path, on a delivery to an HTTP
+// endpoint, and the catch-up path, on the forgotten log. Neither word is proof the memory is gone
+// NOW. A delivery can be forged by anything that reaches the port, and either can be stale - an
+// object uploaded again under the same key and its memory registered again since names the same id,
+// and deleting on the old record deletes the live object (TODO-3 item 144). The sweep asks the same
+// question of its own enumeration and so calls Reap directly.
+//
+// A store that cannot be asked is an error, never "not held": that reading would delete on a guess
+// every time the service was unreachable.
+func (r *Reaper) ReapForgotten(ctx context.Context, path string, ids []string) (Result, error) {
+	log.Trace("func() reap.Reaper.ReapForgotten")
+
+	if len(ids) == 0 {
+		return Result{}, nil
+	}
+
+	held, err := r.memories.Held(ctx, ids)
+	if err != nil {
+		return Result{}, fmt.Errorf("asking the store which memories it holds: %w", err)
+	}
+
+	gone := make([]string, 0, len(ids))
+	stillHeld := 0
+
+	for _, id := range ids {
+		if held[id] {
+			stillHeld++
+
+			continue
+		}
+
+		gone = append(gone, id)
+	}
+
+	if stillHeld > 0 {
+		r.record(ctx, path, OutcomeHeld, stillHeld)
+
+		log.WithFields(log.Fields{
+			"path": path,
+			"held": stillHeld,
+		}).
+			Warn("an instruction named memories the store still holds; their objects were left alone")
+	}
+
+	result, err := r.Reap(ctx, path, gone)
+	result.Held = stillHeld
+
+	return result, err
 }
 
 // Reap acts on the memories named by ids, which have already been decided to be gone.
@@ -300,6 +364,7 @@ func (r *Reaper) record(ctx context.Context, path string, outcome string, n int)
 
 // Add accumulates another result, for a caller summing a sweep's pages.
 func (r *Result) Add(other Result) {
+	r.Held += other.Held
 	r.Deleted += other.Deleted
 	r.Shadowed += other.Shadowed
 	r.Foreign += other.Foreign

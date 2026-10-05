@@ -48,6 +48,10 @@ const (
 	OutcomeForeign    = "foreign"
 	OutcomeUnmappable = "unmappable"
 	OutcomeFailed     = "failed"
+
+	// OutcomeHeld counts an id a delivery or the forgotten log named that the store still holds: a
+	// forged instruction, or a stale one naming an object re-registered since. Not deleted.
+	OutcomeHeld = "held"
 )
 
 // Delivery outcomes for the callback receiver.

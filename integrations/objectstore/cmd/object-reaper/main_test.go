@@ -123,3 +123,41 @@ func TestDeletingIsNotTheDefault(t *testing.T) {
 		t.Error("expected shadow mode to be the default")
 	}
 }
+
+// TestAnArmedUnauthenticatedListenerIsRefused: with --delete set, the callback listener is an
+// endpoint that deletes objects, and with neither --callback-token nor --callback-secret anything
+// that can reach it can name any object in the bucket. That was a Warn line; the read-only gateway
+// already refuses the equivalent without --allow-anonymous (TODO-3 item 144).
+func TestAnArmedUnauthenticatedListenerIsRefused(t *testing.T) {
+	setupFlags(t, []string{"--bucket", "payloads", "--delete", "--listen-port", "8089"})
+
+	_, err := validate()
+	if err == nil || !strings.Contains(err.Error(), "--callback-token") {
+		t.Errorf("expected an armed, unauthenticated listener to be refused, got %v", err)
+	}
+}
+
+// The shapes an armed or listening reaper may legitimately take: a credential of either kind, no
+// listener at all, shadow mode (which deletes nothing, so stays a warning), or the explicit opt-out.
+func TestAnAuthenticatedOrHarmlessListenerIsAccepted(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "armed with a token", args: []string{"--delete", "--listen-port", "8089", "--callback-token", "t"}},
+		{name: "armed with a secret", args: []string{"--delete", "--listen-port", "8089", "--callback-secret", "s"}},
+		{name: "armed with no listener", args: []string{"--delete", "--listen-port", "0", "--catch-up", "1h"}},
+		{name: "listening in shadow mode", args: []string{"--listen-port", "8089"}},
+		{name: "armed and explicitly opted out", args: []string{"--delete", "--listen-port", "8089", "--allow-unauthenticated-callbacks"}},
+	}
+
+	for _, v := range cases {
+		t.Run(v.name, func(t *testing.T) {
+			setupFlags(t, append([]string{"--bucket", "payloads"}, v.args...))
+
+			if _, err := validate(); err != nil {
+				t.Errorf("expected this configuration to be accepted, got %s", err.Error())
+			}
+		})
+	}
+}

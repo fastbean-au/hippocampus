@@ -145,6 +145,14 @@ itself which service version it was built against.
   reinforcing one could reset the decay clock on all of them. A larger `limit` is now clamped to 200
   rather than refused, and the ranking over-fetch multiplies the clamped value. A caller relying on
   more than 200 results per search gets 200.
+- **The object-reaper no longer deletes on an instruction it cannot trust.** With `--delete` set and
+  neither `--callback-token` nor `--callback-secret`, its callback endpoint accepted a deletion from
+  anything that could reach it, with only a warning at startup; it now refuses to start unless
+  `--allow-unauthenticated-callbacks` is passed. And the push and catch-up paths now ask the store
+  which memories it still holds before deleting, as the sweep already did, so neither a forged
+  delivery nor a stale one — an object re-uploaded and re-registered under the same key since — can
+  delete a live object. Such ids are counted as `outcome="held"`; a store that cannot be asked makes
+  the push path answer `5xx` so the delivery is replayed.
 
 ## [0.51.1] - 2026-10-05
 

@@ -18,7 +18,7 @@ func newReaper(t *testing.T, deletes bool) (*Reaper, *objects.Memory) {
 	store.Put("traces/one.json", []byte("one"), time.Now())
 	store.Put("traces/two.json", []byte("two"), time.Now())
 
-	reaper, err := New(Config{Store: store, Delete: deletes})
+	reaper, err := New(Config{Store: store, Memories: &fakeHeld{}, Delete: deletes})
 	if err != nil {
 		t.Fatalf("New failed: %s", err.Error())
 	}
@@ -113,6 +113,14 @@ func TestAFailureDoesNotStopTheRestOfTheBatch(t *testing.T) {
 func TestNewRefusesAConfigurationWithNoBucket(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
 		t.Error("expected a reaper with no bucket to be refused")
+	}
+}
+
+// The existence check is what stops the push and catch-up paths deleting on somebody else's word,
+// so a reaper without one is refused rather than built to skip it.
+func TestNewRequiresAReaderOfHeldMemories(t *testing.T) {
+	if _, err := New(Config{Store: objects.NewMemory("payloads")}); err == nil {
+		t.Error("expected a reaper with no existence check to be refused")
 	}
 }
 
