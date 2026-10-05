@@ -259,11 +259,11 @@ func TestConsolidateEventMemories_DeleteMemoriesErrorIsBestEffort(t *testing.T) 
 
 	// The per-event cleanup still runs despite the delete failure: e1 has no undeleted memory, so
 	// DeleteEventIfEmpty is attempted and (here) succeeds with nothing to delete. Nothing was
-	// deleted, so no link prune follows.
+	// deleted, so no link prune follows - and e1 is NOT flagged, since memories_consolidated means
+	// a cycle deleted one of its memories and this one deleted none (TODO-3 item 140).
 	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM events WHERE id`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
-	mock.ExpectExec(`UPDATE events SET memories_consolidated`).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	_, events, _, err := d.ConsolidateEventMemories(context.Background(), &stubServer{consolidateMemories: true})
 	if err == nil {

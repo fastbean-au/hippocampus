@@ -28,6 +28,27 @@ no memories is swept, because value-based consolidation is switched off there an
 would otherwise never be deleted at all. Both are subject to `consolidation.minimumRetentionInDays`,
 which overrides them exactly as it overrides the capacity target.
 
+The flag means one thing: a cycle deleted at least one of that event's memories. Releases up to and
+including 0.51.1 set it on **every** event the evented pass scanned that it did not delete, so a
+store that ran a cycle on one of those releases carries it on almost every event that held a memory
+at the time — and an event carrying it is swept as soon as its memories leave by another route,
+whatever it is worth. Nothing ever clears it. After upgrading to a release with the fix, clear the
+flag on every event that still holds memories, with the service stopped:
+
+```sql
+UPDATE events SET memories_consolidated = FALSE
+WHERE memories_consolidated = TRUE
+  AND EXISTS (SELECT 1 FROM memories WHERE memories.event_id = events.id);
+```
+
+The statement is the same on SQLite, PostgreSQL and MySQL (on SQLite, run it with `sqlite3` against
+`hippocampus.db` in `storage.directory`). Run it only **after** upgrading: an older release flags
+every event again on its next cycle. It cannot tell a spurious flag from a genuine one, so an event
+that really did lose some of its memories loses the flag too — which errs towards keeping data: if
+its remaining memories decay, the cycle that takes the last of them deletes the event then, and if a
+client removes them, the event is judged on its own value instead. An event that is already empty
+keeps its flag and is swept on the next cycle, as before.
+
 The frequency is set by `sleep.periodSeconds`. Setting it to `0` (or any non-positive value) disables the automatic timed cycle entirely: the service then only consolidates when the manual `Sleep` RPC is called, or when the WAL trigger fires (see [Checkpoint-triggered eviction](#checkpoint-triggered-eviction)). This suits an instance that should not forget on its own — for example one used purely for import/archival, or one whose sleep cadence is driven externally.
 
 `consolidation.enabled` (default `true`) is a coarser switch: set it to `false` and the instance runs **no** sleep cycle at all — no timed cycle, no WAL trigger, and the manual `Sleep` RPC is rejected with `FailedPrecondition`. This is the read/write-replica half of [horizontal scaling](operations.md#deployment-model-one-consolidating-instance-per-store): several instances share one PostgreSQL/MySQL database, exactly one runs with `consolidation.enabled: true` (and holds the single-consolidator lock), and the rest run with it `false` to serve reads and writes without ever consolidating.

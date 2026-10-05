@@ -2313,6 +2313,10 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 
 	eventDeletions := make(map[string]EventDeletion)
 	var memoryDeletions []memoryRecallSnapshot
+
+	// The event of each memory selected for deletion, so that once the delete has run, the events
+	// that actually lost one can be told apart from those that merely held a memory.
+	eventOfDeletion := make(map[string]string)
 	reason := d.forgetReasonFor(ForgetRuleConsolidation, CauseConsolidation, s)
 
 	ranks, err := d.loadSignificanceRanks(ctx)
@@ -2397,6 +2401,10 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 			}
 
 			memoryDeletions = append(memoryDeletions, deletion)
+
+			if eventExists {
+				eventOfDeletion[id] = eventId
+			}
 		} else if eventExists {
 			eventDeletion := eventDeletions[eventId]
 			eventDeletion.undeletedMemory = true
@@ -2422,7 +2430,20 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 
 	countMemories := len(deletedIds)
 
-	// Delete events where all memories have been deleted, otherwise, set MemoriesConsolidated.
+	// What memories_consolidated means: a cycle deleted at least one of this event's memories. Read
+	// off what actually went rather than what was selected, since a recall racing the delete keeps
+	// its memory - and flagging every event the scan saw, as this pass once did, set the flag on
+	// practically every event in the store, which item 116's sweep then read as a deletion already
+	// decided (TODO-3 item 140).
+	lostAMemory := make(map[string]bool)
+
+	for _, id := range deletedIds {
+		if eventId, ok := eventOfDeletion[id]; ok {
+			lostAMemory[eventId] = true
+		}
+	}
+
+	// Delete events where all memories have been deleted; otherwise flag those that lost one.
 	// DeleteEventIfEmpty re-checks live state, since a concurrent write can have attached a fresh
 	// memory to the event, or a concurrent recall can have kept one of its memories alive, since
 	// the scan above ran. As in EvictMemories, a failed delete falls through to the flag, and the
@@ -2451,7 +2472,7 @@ func (d *DB) ConsolidateEventMemories(ctx context.Context, s Server) (int, int, 
 			continue
 		}
 
-		if !event.consolidated {
+		if lostAMemory[id] && !event.consolidated {
 			if err := d.setEventConsolidated(ctx, id); err != nil {
 				log.Errorf("failed to set MemoriesConsolidated for event '%s' during memory consolidation: %s", id, err.Error())
 

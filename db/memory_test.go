@@ -226,6 +226,56 @@ func TestConsolidateEventMemories(t *testing.T) {
 	}
 }
 
+// TestConsolidateEventMemories_FlagsOnlyEventsThatLostAMemory pins what memories_consolidated
+// means: a cycle deleted at least one of this event's memories. The pass used to flag every event
+// it scanned that it did not delete, so after one cycle the flag was set on practically every event
+// in the store - and item 116's sweep reads "flagged and empty" as a deletion already decided, so
+// an event the decay maths would keep was swept as soon as its memories left by another route
+// (TODO-3 item 140).
+func TestConsolidateEventMemories_FlagsOnlyEventsThatLostAMemory(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	for _, id := range []string{"untouched", "partial"} {
+		if _, err := db.CreateEvent(ctx, types.Event{Id: id, Name: id, TimeStart: 100, Significance: 1}); err != nil {
+			t.Fatalf("CreateEvent(%s): %s", id, err)
+		}
+	}
+
+	memories := []types.Memory{
+		{Id: "kept-1", TimeStamp: 100, Significance: 10, EventId: "untouched", Body: "x"},
+		{Id: "kept-2", TimeStamp: 100, Significance: 10, EventId: "partial", Body: "x"},
+		{Id: "gone", TimeStamp: 100, Significance: 1, EventId: "partial", Body: "x"},
+	}
+
+	for _, m := range memories {
+		if _, err := db.CreateMemory(ctx, m); err != nil {
+			t.Fatalf("CreateMemory(%s): %s", m.Id, err)
+		}
+	}
+
+	server := &decisionServer{
+		memory: func(candidate MemoryConsolidationCandidate) bool {
+			return candidate.MemorySignificance < 5
+		},
+	}
+
+	if _, _, _, err := db.ConsolidateEventMemories(ctx, server); err != nil {
+		t.Fatalf("ConsolidateEventMemories: %s", err)
+	}
+
+	for id, want := range map[string]bool{"untouched": false, "partial": true} {
+		event, err := db.GetEvent(ctx, id)
+		if err != nil {
+			t.Fatalf("GetEvent(%s): %s", id, err)
+		}
+
+		if event.MemoriesConsolidated != want {
+			t.Errorf("event %q memories_consolidated = %t, want %t", id, event.MemoriesConsolidated, want)
+		}
+	}
+}
+
 // TestConsolidateEventMemories_DanglingSurvivesWhenSignificant is the counterpart to the deletion
 // case: a dangling memory the server chooses to keep must survive the evented pass and must not
 // leave any phantom-event side effect behind (no event row is created or flagged for its absent

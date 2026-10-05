@@ -109,6 +109,23 @@ itself which service version it was built against.
   They now act on the caller's own memories only; another group's are detached from a deleted event
   rather than deleted. `ReplaceMemoriesWithSummary` also no longer lets a scoped caller file the
   summary in a group outside their scope. Unscoped callers are unchanged.
+- **`memories_consolidated` is set only on an event that actually lost a memory.** The evented
+  consolidation pass set it on every event it scanned and did not delete, so after one cycle it was
+  on practically every event in the store. The sweep that deletes a flagged, empty event regardless
+  of value therefore deleted a valuable event as soon as its memories left by another route (a
+  client delete, a move, a predicate delete). **Existing stores keep the flags already set**: after
+  upgrading, clear them on every event that still holds memories, with the service stopped —
+
+  ```sql
+  UPDATE events SET memories_consolidated = FALSE
+  WHERE memories_consolidated = TRUE
+    AND EXISTS (SELECT 1 FROM memories WHERE memories.event_id = events.id);
+  ```
+
+  The statement is the same on all three drivers; see
+  [Consolidation](docs/consolidation.md) for what it does to an event that genuinely lost some of
+  its memories. Running it before upgrading achieves nothing, since the old pass flags every event
+  again on its next cycle.
 
 ## [0.51.1] - 2026-10-05
 

@@ -1615,3 +1615,53 @@ func TestConsolidate_SweepsAnEventTheCycleEmptied(t *testing.T) {
 		t.Error("an event the cycle emptied should not survive once its last memory is gone")
 	}
 }
+
+// TestAValuableEventIsNotSweptAfterACycleThatSparedIt is the consequence item 140 had in practice.
+// A fresh, highly significant event holding one memory goes through a cycle that deletes nothing.
+// A client then removes that memory. The next cycle's bare-event pass must judge the event on its
+// value - and keep it - rather than treat it as a deletion already decided, which it did while the
+// evented pass flagged every event it scanned.
+func TestAValuableEventIsNotSweptAfterACycleThatSparedIt(t *testing.T) {
+	database, err := db.New("")
+	if err != nil {
+		t.Fatalf("db.New: %s", err)
+	}
+
+	t.Cleanup(func() { _ = database.Close() })
+
+	s := &Server{db: database, consolidation: Consolidation{
+		method:                 1,
+		aggressiveness:         1,
+		unitsOfAgeInDays:       1,
+		deletionThreshold:      1,
+		linkSignificanceWeight: 1,
+	}}
+
+	ctx := context.Background()
+	now := time.Now().UnixNano()
+
+	if _, err := database.CreateEvent(ctx, types.Event{Id: "e1", Name: "valuable", TimeStart: now, Significance: 1000}); err != nil {
+		t.Fatalf("CreateEvent: %s", err)
+	}
+
+	if _, err := database.CreateMemory(ctx, types.Memory{Id: "m1", Body: "b", TimeStamp: now, Significance: 1000, EventId: "e1"}); err != nil {
+		t.Fatalf("CreateMemory: %s", err)
+	}
+
+	if deleted, _, _, err := database.ConsolidateEventMemories(ctx, s); err != nil || deleted != 0 {
+		t.Fatalf("ConsolidateEventMemories = %d deleted, %v; want 0 and no error", deleted, err)
+	}
+
+	if _, err := database.DeleteMemories(ctx, []string{"m1"}); err != nil {
+		t.Fatalf("DeleteMemories: %s", err)
+	}
+
+	swept, err := database.ConsolidateEvents(ctx, s)
+	if err != nil {
+		t.Fatalf("ConsolidateEvents: %s", err)
+	}
+
+	if swept != 0 {
+		t.Error("a fresh event of significance 1000 was swept by the bare-event pass")
+	}
+}
