@@ -126,6 +126,11 @@ itself which service version it was built against.
   [Consolidation](docs/consolidation.md) for what it does to an event that genuinely lost some of
   its memories. Running it before upgrading achieves nothing, since the old pass flags every event
   again on its next cycle.
+- **A memory of very high significance is no longer the first to be forgotten.** A memory's value
+  added its own significance and its event's as 32-bit integers, so two significances summing past
+  2,147,483,647 wrapped to a negative value: below every deletion threshold, and first in line for
+  eviction. The two are now added as floating point. Preview, explain and the forgotten log, which
+  report the same value, were wrong in the same way and are fixed with it.
 
 ## [0.51.1] - 2026-10-05
 

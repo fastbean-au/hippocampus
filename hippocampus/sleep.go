@@ -715,7 +715,10 @@ func (s *Server) memorySignificanceUnder(candidate db.MemoryConsolidationCandida
 	// between its own memories.
 	weight := s.consolidation.linkSignificanceWeight
 
-	return float64(eventSignificance+candidate.MemorySignificance) +
+	// Each term is converted before the two are added. Both are int32 and can approach MaxInt32 -
+	// validation refuses only negatives - so their int32 sum could wrap negative, and the most
+	// significant memories in the store would then be the first forgotten (TODO-3 item 141).
+	return float64(eventSignificance) + float64(candidate.MemorySignificance) +
 		linkContribution(weight, candidate.EventLinkSignificance) +
 		linkContribution(weight, candidate.MemoryLinkSignificance) +
 		s.consolidation.recallSignificanceWeight*float64(candidate.RecallCount)

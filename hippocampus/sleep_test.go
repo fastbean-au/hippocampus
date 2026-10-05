@@ -1665,3 +1665,46 @@ func TestAValuableEventIsNotSweptAfterACycleThatSparedIt(t *testing.T) {
 		t.Error("a fresh event of significance 1000 was swept by the bare-event pass")
 	}
 }
+
+// TestMemorySignificanceDoesNotOverflow pins that a memory's significance and its event's are added
+// as float64, not int32. Validation refuses only negative significances, and a level's rank is the
+// absolute value requested, so both can approach MaxInt32 - and their int32 sum wrapped negative,
+// putting the most significant memories in the store below every threshold and first in line for
+// eviction (TODO-3 item 141).
+func TestMemorySignificanceDoesNotOverflow(t *testing.T) {
+	s := &Server{consolidation: Consolidation{
+		method:                        1,
+		aggressiveness:                1,
+		unitsOfAgeInDays:              1,
+		deletionThreshold:             1,
+		defaultEventSignificanceValue: math.MaxInt32,
+	}}
+
+	want := 2 * float64(math.MaxInt32)
+
+	cases := map[string]db.MemoryConsolidationCandidate{
+		"own event": {
+			Timestamp:          time.Now().UnixNano(),
+			MemorySignificance: math.MaxInt32,
+			EventSignificance:  math.MaxInt32,
+		},
+
+		// An event-less memory takes the default event significance in place of an event's.
+		"default event significance": {
+			Timestamp:          time.Now().UnixNano(),
+			MemorySignificance: math.MaxInt32,
+		},
+	}
+
+	for name, candidate := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := s.memorySignificance(candidate); got != want {
+				t.Errorf("memorySignificance = %v, want %v", got, want)
+			}
+
+			if s.ShouldConsolidateMemory(candidate) {
+				t.Error("a fresh memory of the highest possible significance was selected for consolidation")
+			}
+		})
+	}
+}
