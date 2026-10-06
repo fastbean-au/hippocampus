@@ -1,0 +1,41 @@
+# An Ingress for the HTTP gateway (TODO-3 item 170): the JSON API under /v1, the console under /ui,
+# and the probes. It assumes ingress-nginx and cert-manager; change ingressClassName and the
+# annotations for anything else.
+#
+# Before exposing it:
+#   - turn authentication on (auth.method in the overlay's config.json): the demo configs ship with
+#     it off, and this makes the whole store reachable from wherever the Ingress is;
+#   - label the ingress controller's namespace hippocampus.fastbean-au/client: "true", or the base
+#     NetworkPolicy refuses its connections to the pods.
+#
+# gRPC (port 50051) is not routed here: it needs HTTP/2 end to end, which is a different Ingress
+# (ingress-nginx's backend-protocol: GRPC) or a LoadBalancer Service.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hippocampus
+  namespace: hippocampus
+  labels:
+    app.kubernetes.io/name: hippocampus
+    app.kubernetes.io/part-of: hippocampus
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt # CHANGE ME
+    # The gateway bounds a request body at twice the gRPC limit by default (8 MiB); keep the
+    # proxy's own limit at least that, or large ImportBatch bodies fail at the proxy instead.
+    nginx.ingress.kubernetes.io/proxy-body-size: 8m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["memory.example.com"] # CHANGE ME
+      secretName: hippocampus-tls
+  rules:
+    - host: memory.example.com # CHANGE ME
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hippocampus
+                port:
+                  name: http

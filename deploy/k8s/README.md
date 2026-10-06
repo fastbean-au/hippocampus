@@ -9,17 +9,30 @@ repo's two documented deployment models (see [`docs/use-cases.md`](../../docs/us
 | ------------------- | ------------------------------ | ------------------------------------ | ------------------------- |
 | `overlays/sqlite`   | Embedded / instance-per-tenant | one `StatefulSet` (1 replica)        | a `PersistentVolumeClaim` |
 | `overlays/postgres` | Centralised / horizontal scale | consolidator + replica `Deployment`s | shared PostgreSQL         |
+| `overlays/mysql`    | Centralised / horizontal scale | consolidator + replica `Deployment`s | shared MySQL (8.0.20+)    |
 
-Both build on `base/` (namespace, a token-less `ServiceAccount`, and the client-facing `Service`).
+All three build on `base/`: the namespace, a token-less `ServiceAccount`, the client-facing
+`Service`, and a default-deny `NetworkPolicy` with the allowances the service needs (see
+[Network policy](#network-policy)). `examples/` holds an `ExternalSecret` and an `Ingress` to adapt.
+None of them is applied by an overlay.
+
+Every overlay pins the image to a release through kustomize's `images:` stanza (`newTag`), never
+`latest`. A node that pulled `latest` afresh could run a newer build than its peers, and a newer
+build migrates the schema forward, after which rolling back is refused (`ErrSchemaTooNew`).
+`scripts/release.sh` moves the pin as it cuts a release, through `scripts/pin-k8s-image.sh`. To run
+another version, change `newTag`, or run `kustomize edit set image
+ghcr.io/fastbean-au/hippocampus:<version>` in the overlay.
 
 ## Layout
 
 ```text
 deploy/k8s/
-├── base/                     namespace, serviceaccount, service (shared)
+├── base/                     namespace, serviceaccount, service, networkpolicy (shared)
 ├── overlays/
 │   ├── sqlite/               embedded single instance + PVC
-│   └── postgres/             1 consolidator + N replicas over shared Postgres
+│   ├── postgres/             1 consolidator + N replicas over shared Postgres
+│   └── mysql/                1 consolidator + N replicas over shared MySQL
+└── examples/                 an ExternalSecret and an Ingress, applied by hand
 ```
 
 ## Quick start
@@ -46,9 +59,11 @@ kubectl -n hippocampus port-forward svc/hippocampus 8080:8080
 curl -s localhost:8080/healthz
 ```
 
-There is no `Ingress` here on purpose — expose the gRPC and/or HTTP ports through whatever your
-cluster already uses (an `Ingress`/`Gateway`, a `LoadBalancer` Service, a mesh). The gateway's
-`/healthz` (liveness) and `/readyz` (readiness, database-aware) are the probe endpoints.
+No overlay applies an `Ingress`. Expose the gRPC and/or HTTP ports through whatever your cluster
+already uses (an `Ingress`/`Gateway`, a `LoadBalancer` Service, a mesh). `examples/ingress.yaml` is a
+starting point for ingress-nginx with cert-manager, and its header lists what to do before exposing
+anything. The gateway's `/healthz` (liveness) and `/readyz` (readiness, database-aware) are the
+probe endpoints.
 
 ## The two models, and why the workload kind differs
 
@@ -95,10 +110,12 @@ the bundled Postgres and the DSN.
 
 ### Secrets
 
-`overlays/postgres/secret.yaml` is **demo-grade** (placeholder `CHANGE-ME` values) so the overlay
+The server overlays' `secret.yaml` is **demo-grade** (placeholder `CHANGE-ME` values) so the overlay
 applies end to end without extra steps. **Replace it before any real use** — manage the real secret
 with your own tooling (Sealed Secrets, External Secrets, SOPS, a cloud secret store) and never commit
-it. The SQLite overlay needs no secret unless you enable auth.
+it. `examples/external-secret.yaml` is the External Secrets Operator version: it produces the same
+`hippocampus-secrets` Secret with the same keys, so the deployments need no change. The SQLite
+overlay needs no secret unless you enable auth.
 
 ### Authentication
 
@@ -245,6 +262,30 @@ collector instead of (or as well as) serving them for scraping, set
 `otel-collector.observability.svc:4317`) in the overlay's `config.json`, or as
 `HIPPOCAMPUS_OBSERVABILITY_*` env vars. Traces have no scrape equivalent, so a deployment that wants
 them needs a collector whichever way its metrics travel.
+
+### Network policy
+
+`base/networkpolicy.yaml` denies every pod in the namespace all traffic, then allows exactly what the
+shipped shapes need:
+
+- DNS, for every pod;
+- the gRPC and HTTP ports, from this namespace and from any namespace labelled
+  `hippocampus.fastbean-au/client: "true"`;
+- the scrape port, from any namespace labelled `hippocampus.fastbean-au/scrape: "true"`;
+- Hippocampus to the bundled database, and the database from Hippocampus alone.
+
+So label the namespaces your clients, ingress controller and Prometheus run in:
+
+```sh
+kubectl label namespace ingress-nginx hippocampus.fastbean-au/client=true
+kubectl label namespace monitoring hippocampus.fastbean-au/scrape=true
+```
+
+Everything the service dials outside the namespace has to be allowed explicitly, because only the
+deployment knows where it is: a managed database, OpenSearch, an LLM endpoint, an OTLP collector, a
+callbacks receiver, a transfer target, an object store. Add an egress `NetworkPolicy` naming each one,
+for example an `ipBlock` for a managed database's address on 5432. Kubelet probes are host traffic,
+which most CNIs admit regardless of policy; one that does not needs the node CIDR allowed.
 
 ## Security posture
 

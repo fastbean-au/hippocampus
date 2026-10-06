@@ -94,6 +94,10 @@ refuses when that section is empty.
 
 Most of the mechanical checks are also enforced by `hooks/pre-commit`.
 
+The script also moves the Kubernetes overlays' image pin to the version it cuts
+(`scripts/pin-k8s-image.sh`) and commits it with the changelog, so `kubectl apply -k` from the tag
+runs the image that tag publishes.
+
 1. `go mod tidy` — no unexpected `go.mod`/`go.sum` churn.
 2. `go vet ./...`
 3. `golangci-lint run`

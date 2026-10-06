@@ -731,3 +731,31 @@ jobs:
 
       - name: Scan every module
         run: scripts/govulncheck.sh
+
+  # Builds every Kubernetes overlay and validates the result, plus the examples (TODO-3 item 170).
+  # Nothing else executes the manifests, so a typo in one was found by the first person to apply it.
+  # An example naming a CRD (the ExternalSecret) has no schema here and is skipped, not failed.
+  k8s:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install kustomize and kubeconform
+        run: |
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.8.2
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+
+      - name: Build and validate every overlay
+        run: |
+          for overlay in deploy/k8s/overlays/*/; do
+            echo "== $overlay"
+            kustomize build "$overlay" | kubeconform -strict -summary
+          done
+
+      - name: Validate the examples
+        run: kubeconform -strict -summary -ignore-missing-schemas deploy/k8s/examples/*.yaml

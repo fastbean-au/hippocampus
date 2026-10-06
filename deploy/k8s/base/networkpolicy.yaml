@@ -1,0 +1,124 @@
+# Default-deny, then exactly what the service needs (TODO-3 item 170). Without these, every pod in the
+# cluster could reach the gRPC port and the gateway - and with auth.method none, as the demo configs
+# ship, that is the whole store - and the bundled database was reachable by anything at all.
+#
+# What is allowed:
+#   - DNS, for every pod in the namespace;
+#   - hippocampus's gRPC (50051) and HTTP (8080) ports, from this namespace and from any namespace
+#     labelled hippocampus.fastbean-au/client: "true" (label the namespace an ingress controller or
+#     a client runs in);
+#   - the scrape port (9464), from any namespace labelled hippocampus.fastbean-au/scrape: "true";
+#   - hippocampus to the bundled database pods (component: database) on 5432 and 3306, and the
+#     database accepting connections from hippocampus alone.
+#
+# What is NOT allowed, and has to be added for the features that need it: egress to an external
+# managed database, OpenSearch, an Ollama/OpenAI endpoint, an OTLP collector, a callbacks receiver,
+# a transfer target or an object store. Each is a destination only the deployment knows; add an
+# egress rule naming it (see deploy/k8s/README.md → Network policy). Kubelet probes are host traffic,
+# which most CNIs admit regardless of policy - a CNI that does not needs the node CIDR allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  labels:
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  labels:
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hippocampus-ingress
+  labels:
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              hippocampus.fastbean-au/client: "true"
+      ports:
+        - protocol: TCP
+          port: 50051
+        - protocol: TCP
+          port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              hippocampus.fastbean-au/scrape: "true"
+      ports:
+        - protocol: TCP
+          port: 9464
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hippocampus-to-database
+  labels:
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: database
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 3306
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-from-hippocampus
+  labels:
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: database
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hippocampus
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 3306

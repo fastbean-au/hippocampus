@@ -300,9 +300,14 @@ print(f"  rolled [Unreleased] -> [{new_version}] - {today}")
 PY
 
 if [ "$dry_run" = true ]; then
+	note "dry run: would pin the Kubernetes overlays to $new_version"
 	note "dry run: nothing written, nothing tagged"
 	exit 0
 fi
+
+# The overlays pin the image this release publishes (TODO-3 item 170). Before the pre-flight,
+# because its tests hold the overlays to the newest version CHANGELOG.md has released.
+scripts/pin-k8s-image.sh "$new_version"
 
 # ------------------------------------------------------------------- pre-flight
 #
@@ -365,7 +370,7 @@ y | Y | yes | YES) ;;
 	;;
 esac
 
-git add "$changelog"
+git add "$changelog" deploy/k8s/overlays/*/kustomization.yaml
 git commit -m "Release $new_tag"
 git tag -a "$new_tag" -m "$new_tag"
 

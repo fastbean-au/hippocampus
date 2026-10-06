@@ -1,0 +1,18 @@
+# Keep at least one replica serving during voluntary disruptions (node drains, rollouts). Only the
+# replicas get a PDB: the consolidator is deliberately a single instance (one lock holder), so it
+# has no availability to protect — a drain will briefly stop consolidation until it reschedules,
+# which is harmless (the sleep cycle simply runs late).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: hippocampus-replica
+  labels:
+    app.kubernetes.io/name: hippocampus
+    app.kubernetes.io/part-of: hippocampus
+    app.kubernetes.io/component: replica
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus
+      app.kubernetes.io/component: replica

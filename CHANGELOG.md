@@ -61,6 +61,18 @@ itself which service version it was built against.
 
 ### Added
 
+- **Kubernetes manifests closer to production.**
+  - A `mysql` overlay: one consolidator and N replicas over a bundled MySQL 8.4, the postgres
+    overlay's shape.
+  - A default-deny `NetworkPolicy` in the base, with the allowances the service needs: DNS, its own
+    namespace and any namespace labelled `hippocampus.fastbean-au/client`, scraping from one labelled
+    `hippocampus.fastbean-au/scrape`, and the bundled database from Hippocampus alone.
+  - `examples/` holds an `ExternalSecret` that replaces the demo secret, and an `Ingress` for the
+    gateway.
+  - A new `k8s` CI job builds every overlay and validates it with kubeconform.
+  - **Upgrading:** a client in another namespace needs that namespace labelled, and egress to
+    anything outside the cluster needs a policy of its own; `deploy/k8s/README.md` says which.
+
 - **Running a shared store at scale: failover, an audit trail, certificate rotation.**
   - **Automatic consolidator failover.** `consolidation.standby` (with `consolidation.enabled:
     false`, on postgres or mysql) makes a replica poll the single-consolidator lock every
@@ -141,6 +153,10 @@ itself which service version it was built against.
 
 ### Changed
 
+- **The Kubernetes overlays pin the image to a release** through kustomize's `images:` stanza,
+  instead of running `:latest`. A node that pulled afresh could run a newer build than its peers, and
+  a newer build migrates the schema forward, after which a rollback is refused. `scripts/release.sh`
+  moves the pin as it cuts each release.
 - **The HTTP gateway bounds request bodies by default.** `gateway.maxRequestBytes` was opt-in, so
   any caller could stream a body of any size into the gateway, while the same request over gRPC
   stopped at 4 MiB. Left unset, it is now derived from the gRPC transport's own limit: twice

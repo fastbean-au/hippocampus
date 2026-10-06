@@ -129,7 +129,8 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
 - Kubernetes: `kubectl apply -k deploy/k8s/overlays/sqlite` (embedded SQLite: one `StatefulSet` +
   a PVC) or `kubectl apply -k deploy/k8s/overlays/postgres` (centralised: one consolidator
   `Deployment` + N replica `Deployment`s over a shared Postgres, mirroring the horizontal-scaling
-  model). Kustomize base+overlays under `deploy/k8s/` — no Helm; a shared `base/` (namespace,
+  model; `overlays/mysql` is the same over MySQL). The base carries a default-deny `NetworkPolicy`,
+  every overlay pins the image tag, and `examples/` holds an `ExternalSecret` and an `Ingress`. Kustomize base+overlays under `deploy/k8s/` — no Helm; a shared `base/` (namespace,
   token-less ServiceAccount, Service) plus per-overlay `config.json` wired through a
   `configMapGenerator` (content-hashed → auto-rolls on edit). Secrets (DSN, signing key) and the
   consolidator/replica split are injected as `HIPPOCAMPUS_*` env overrides, not baked into the
@@ -139,7 +140,10 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   containers so the `db/postgres_test.go` and `db/mysql_test.go` integration tests run instead
   of skipping) plus compose-stack smoke tests. Postgres/MySQL integration tests run locally with
   `HIPPOCAMPUS_TEST_POSTGRES_DSN=<dsn>`/`HIPPOCAMPUS_TEST_MYSQL_DSN=<dsn>` `go test ./db`
-  against any disposable database. The `proto-breaking` job gates the contract (above). The `race`
+  against any disposable database. The `proto-breaking` job gates the contract (above). The `k8s` job builds every Kustomize
+  overlay and validates it with kubeconform, and `k8s_test.go` holds every overlay's image pin
+  (never `latest`) to the newest released version, which `scripts/pin-k8s-image.sh` moves from
+  `release.sh`. The `race`
   job runs the root module under `-race` (SQLite only, a separate job because `db` alone takes over
   four minutes under it), and every integration module's job tests with `-race` too
 - Run the `db` suite against a server dialect: `HIPPOCAMPUS_TEST_DIALECT=postgres go test ./db`

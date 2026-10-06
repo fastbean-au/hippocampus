@@ -1,0 +1,110 @@
+# DEMO-GRADE in-cluster MySQL so the overlay works end to end with a single `apply`. It is a
+# single-replica StatefulSet with a modest volume and no backups/HA — fine for evaluation, NOT for
+# production. In production, delete this file from the kustomization's resources and point the DSN
+# (the deployments' env) at a managed/HA MySQL instead.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hippocampus-mysql
+  labels:
+    app.kubernetes.io/name: hippocampus-mysql
+    app.kubernetes.io/part-of: hippocampus
+spec:
+  # Headless: gives the single pod a stable DNS name the DSN can target.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: hippocampus-mysql
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: hippocampus-mysql
+  labels:
+    app.kubernetes.io/name: hippocampus-mysql
+    app.kubernetes.io/part-of: hippocampus
+    app.kubernetes.io/component: database
+spec:
+  serviceName: hippocampus-mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hippocampus-mysql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hippocampus-mysql
+        app.kubernetes.io/part-of: hippocampus
+        app.kubernetes.io/component: database
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999 # the mysql user in the official image
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mysql
+          # The 8.4 LTS line rather than the Innovation release the compose stack runs: a cluster
+          # deployment wants the release that is supported for years, and an in-place major change
+          # is a data migration. The service needs 8.0.20 or later (the `AS new` upsert alias).
+          image: mysql:8.4
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MYSQL_DATABASE
+              value: hippocampus
+            - name: MYSQL_USER
+              value: hippocampus
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hippocampus-secrets
+                  key: mysql-password
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hippocampus-secrets
+                  key: mysql-root-password
+          livenessProbe:
+            tcpSocket:
+              port: mysql
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: mysqldata
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: mysqldata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
