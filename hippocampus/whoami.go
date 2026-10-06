@@ -26,7 +26,7 @@ func (s *Server) WhoAmI(ctx context.Context, _ *contract.EmptyRequest) (*contrac
 	// what it forgets.
 	modes := s.searchModes()
 	summariser := s.summariser().Enabled()
-	consolidating := s.consolidationEnabled
+	consolidating := s.consolidating()
 	tombstones := s.consolidation.tombstones
 	callbacks := s.callbacksEnabled
 

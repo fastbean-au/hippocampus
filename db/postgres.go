@@ -140,7 +140,7 @@ func (d *DB) acquireInstanceLock() error {
 	if !locked {
 		_ = conn.Close()
 
-		return fmt.Errorf("another hippocampus instance already holds the advisory lock on this database - the service is single-instance only")
+		return fmt.Errorf("%w (the advisory lock on this database) - the service is single-instance only", ErrInstanceLockHeld)
 	}
 
 	d.lockConn = conn

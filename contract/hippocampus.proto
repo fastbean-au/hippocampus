@@ -1075,6 +1075,7 @@ message ExportResponse {
 	int32                                  memories_exported         = 4;
 	int32                                  memories_cleared          = 5;
 	int32                                  events_cleared            = 6;
+	string                                 instance_id               = 7; // the instance holding the manifest: manifests live in that process's memory, so a deferred Clear must reach it
 }
 
 message ImportRequest {
@@ -1100,6 +1101,7 @@ message TransferResponse {
 	int32                                  memories_transferred      = 3;
 	int32                                  memories_cleared          = 4;
 	int32                                  events_cleared            = 5;
+	string                                 instance_id               = 6; // the instance holding the manifest; see ExportResponse.instance_id
 }
 
 // Clear deletes exactly the records captured by the Export/Transfer run that produced the

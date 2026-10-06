@@ -53,6 +53,7 @@ var metricSourceFiles = []string{
 	"interceptors.go",
 	"ratelimit.go",
 	"rpcmetrics.go",
+	"certreload.go",
 	"../../observability/clientmetrics.go",
 	"../../integrations/eventsource/bridge/telemetry.go",
 	"../../integrations/ingestor/promoter/telemetry.go",

@@ -43,12 +43,12 @@ func (s *Server) GetConsolidationStatus(
 
 	var res contract.GetConsolidationStatusResponse
 
-	res.ConsolidationEnabled = s.consolidationEnabled
+	res.ConsolidationEnabled = s.consolidating()
 
 	// A replica's store is consolidated by whichever instance holds the single-consolidator lock,
 	// under THAT instance's configuration - so this one's schedule would describe a cycle it never
 	// runs. Everything below stays zero rather than reporting a period nothing acts on.
-	if !s.consolidationEnabled {
+	if !s.consolidating() {
 		return &res, nil
 	}
 

@@ -419,6 +419,7 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 	}
 
 	res.ManifestId = result.manifest.id
+	res.InstanceId = s.instanceId()
 	res.ObjectKey = key
 	res.EventsExported = int32(result.events)
 	res.MemoriesExported = int32(result.memories)
@@ -961,6 +962,7 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 	tel.recordsExported.Add(ctx, int64(memories), metric.WithAttributes(attribute.String("kind", "memory")))
 
 	res.ManifestId = manifest.id
+	res.InstanceId = s.instanceId()
 	res.EventsTransferred = int32(events)
 	res.MemoriesTransferred = int32(memories)
 
@@ -1004,7 +1006,17 @@ func (s *Server) Clear(ctx context.Context, in *contract.ClearRequest) (*contrac
 
 	manifest := s.takeManifest(in.GetManifestId())
 	if manifest == nil {
-		return &res, status.Errorf(codes.NotFound, "unknown manifest '%s' (manifests do not survive a restart)", in.GetManifestId())
+		// Manifests are held in the memory of the instance that produced them, so behind a load
+		// balancer a Clear can reach the wrong replica. Saying which instance this is, and that the
+		// producing one returned its own id, turns "unknown" into something an operator can act on
+		// (TODO-3 item 169).
+		return &res, status.Errorf(
+			codes.NotFound,
+			"unknown manifest '%s' on instance '%s': manifests are held in the memory of the instance that produced them "+
+				"(its Export/Transfer response names it as instance_id) and do not survive a restart; send Clear to that instance",
+			in.GetManifestId(),
+			s.instanceId(),
+		)
 	}
 
 	memoriesCleared, eventsCleared, err := s.clearManifest(ctx, manifest)

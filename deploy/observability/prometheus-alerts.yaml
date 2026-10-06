@@ -388,6 +388,19 @@ groups:
           description: "Scheduled exports (archive.scheduledExport.intervalHours) have not completed for more than twice their interval, so the store's own backup is going stale. The consolidating instance takes them, and each failure is logged at Error and retried within 15 minutes - read its log for the reason, which is usually the archive store: a full or unmounted archive.directory, or S3 credentials or permissions. Until this clears, the newest restorable archive is older than the schedule promises."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#backup-restore-and-migration"
 
+      # A certificate the service could not renew itself: it reloads whatever is on disk, so this is
+      # the renewal pipeline having stopped writing one.
+      - alert: HippocampusTLSCertificateExpiring
+        expr: 14 * 86400 - min by (service_name) (hippocampus_tls_certificate_not_after - time()) > 0
+        for: 1h
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus's TLS certificate expires within 14 days, or has expired"
+          description: "The certificate both listeners serve (tls.certFile) expires within 14 days, or already has. The service reloads it from disk within a minute of the files changing, so this means nothing has written a new one: check the issuer that renews it (cert-manager, ACME, or whatever owns the files) and that it writes to the path tls.certFile names. The value is the seconds short of the 14-day margin, so it keeps firing past expiry rather than going quiet, and the log line 'reloaded the rotated TLS certificate' says when a renewal was last picked up."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#certificate-rotation"
+
       # The escalation of the above: the caps have started discarding deletions the index never
       # took. This is the one condition here that leaves the index knowingly wrong until a sweep
       # finds it.

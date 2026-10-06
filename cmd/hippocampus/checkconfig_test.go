@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -432,5 +433,41 @@ func TestConfigProblems_MetricsEndpoint(t *testing.T) {
 
 	if problems := configProblems(); len(problems) != 0 {
 		t.Fatalf("expected a port of its own to be valid, got %v", problems)
+	}
+}
+
+// TestConfigProblems_Standby (TODO-3 item 169): a standby waits for the shared store's lock, so it is
+// meaningless on SQLite (single-instance by construction) and contradictory beside
+// consolidation.enabled true (which takes the lock at startup rather than waiting for it).
+func TestConfigProblems_Standby(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	setStartupDefaults()
+	viper.Set("storage.directory", t.TempDir())
+	viper.Set("consolidation.standby", true)
+
+	problems := configProblems()
+	if len(problems) == 0 {
+		t.Fatal("consolidation.standby on SQLite was accepted")
+	}
+
+	viper.Set("storage.driver", "postgres")
+	viper.Set("storage.postgres.dsn", "postgres://h/db")
+
+	if problems := configProblems(); len(problems) == 0 || !strings.Contains(fmt.Sprint(problems), "consolidation.enabled") {
+		t.Errorf("standby beside consolidation.enabled true = %v, want a refusal naming consolidation.enabled", problems)
+	}
+
+	viper.Set("consolidation.enabled", false)
+
+	if problems := configProblems(); len(problems) != 0 {
+		t.Errorf("a postgres standby replica was refused: %v", problems)
+	}
+
+	viper.Set("consolidation.standbyPollSeconds", -1)
+
+	if problems := configProblems(); len(problems) == 0 {
+		t.Error("a negative consolidation.standbyPollSeconds was accepted")
 	}
 }

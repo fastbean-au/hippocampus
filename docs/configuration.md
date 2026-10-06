@@ -1629,6 +1629,10 @@ scoped to the schema name); a second instance that also has `consolidation.enabl
 to start, rather than silently running concurrent consolidation cycles against shared data.
 Additional instances with `consolidation.enabled: false` skip the lock and run alongside it as
 read/write replicas — see [Deployment model](operations.md#deployment-model-one-consolidating-instance-per-store).
+A replica with `consolidation.standby` set also polls the lock every
+`consolidation.standbyPollSeconds` (15) and takes over consolidation when it wins, which is
+automatic failover; startup refuses it on SQLite, which has no shared lock, and beside
+`consolidation.enabled: true`.
 
 Both capacity axes (`consolidation.capacityMemories` and `consolidation.capacityBytes`) work
 with every driver, but the byte measure differs. SQLite reads the database's pages excluding
@@ -2611,7 +2615,8 @@ itself is the watermark.
 - `Clear` (`POST /v1/clear`, body `{"manifest_id": "..."}`) is the deferred second half of a
   two-phase move: export/transfer first, verify at the receiving end, then clear. Manifests are
   held in memory only (the last 8) — after a restart the records are simply recaptured by the
-  next run.
+  next run. They are held by the instance that produced them, which the Export/Transfer response
+  names as `instance_id`; behind a load balancer, send the `Clear` to that instance.
 
 `Export` and `Transfer` both take an optional **`memories` selection** to move part of the store
 instead of all of it: one group, one tier, one time range, anything a predicate can name.

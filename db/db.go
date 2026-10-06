@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -231,6 +232,38 @@ func (d *DB) opContext(ctx context.Context) (context.Context, context.CancelFunc
 	}
 
 	return context.WithTimeout(ctx, d.queryTimeout)
+}
+
+// ErrInstanceLockHeld is the single-consolidator lock being held by another instance, as distinct
+// from failing to ask for it: a standby polling for the lock reads it as "not yet" (TODO-3 item 169).
+var ErrInstanceLockHeld = errors.New("another hippocampus instance already holds the instance lock")
+
+// TryAcquireInstanceLock takes the single-consolidator lock if no other instance holds it, for a
+// standby (consolidation.standby) waiting to take over a consolidator that has gone (TODO-3 item
+// 169). It reports false, with no error, while the lock is held elsewhere; on winning it starts the
+// same keepalive a consolidator opened with the lock runs, so from then on the two are
+// indistinguishable. Holding the lock already is a win. A single-writer dialect has no shared lock
+// to wait for, and is refused rather than reported as won.
+func (d *DB) TryAcquireInstanceLock() (bool, error) {
+	if d.dialect().singleWriter {
+		return false, errors.New("a standby needs a shared store (postgres or mysql); this one is single-instance by construction")
+	}
+
+	if d.lockConn != nil {
+		return true, nil
+	}
+
+	if err := d.reacquireInstanceLock(); err != nil {
+		if errors.Is(err, ErrInstanceLockHeld) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	d.startLockKeepalive()
+
+	return true, nil
 }
 
 // startLockKeepalive launches the goroutine that keeps the instance lock alive and healthy for a

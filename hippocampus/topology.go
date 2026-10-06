@@ -255,6 +255,13 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 	}
 
 	for _, spec := range concatSpecs(s.topology.nodes, peers.nodes, observed.nodes) {
+		// The self node is rebuilt per call while a promotion is possible, because a standby's role
+		// changes after the specs were built: frozen, a standby that took over would go on telling
+		// the view it is a replica (TODO-3 item 169). It reads no store and opens nothing.
+		if spec.id == topologyNodeSelf && s.standby {
+			spec = s.selfNodeSpec()
+		}
+
 		node := &contract.TopologyNode{
 			Id:           spec.id,
 			Kind:         spec.kind,
@@ -468,7 +475,7 @@ func (s *Server) selfNodeSpec() topologyNodeSpec {
 	hostname := s.topology.hostname
 
 	role := "consolidator"
-	if !s.consolidationEnabled {
+	if !s.consolidating() {
 		role = "replica"
 	}
 
@@ -485,7 +492,7 @@ func (s *Server) selfNodeSpec() topologyNodeSpec {
 	// The consolidation settings are the ones that decide what this store forgets, so they belong
 	// on the instance that runs the cycle. A replica runs none, and reporting numbers it does not
 	// act on would invite an operator to tune the wrong instance.
-	if s.consolidationEnabled {
+	if s.consolidating() {
 		attributes = append(attributes,
 			topologyAttribute{key: "consolidation_method", value: strconv.Itoa(s.consolidation.method)},
 			topologyAttribute{key: "aggressiveness", value: strconv.FormatFloat(s.consolidation.aggressiveness, 'g', -1, 64)},
@@ -553,7 +560,7 @@ func (s *Server) storeNodeSpec() topologyNodeSpec {
 	if driver == "postgres" || driver == "mysql" {
 		spec.attributes = append(spec.attributes, topologyAttribute{
 			key:   "consolidator_lock",
-			value: heldDescription(s.consolidationEnabled),
+			value: heldDescription(s.consolidating()),
 		})
 	}
 

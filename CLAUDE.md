@@ -462,7 +462,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same thirty rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same thirty-one rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -496,7 +496,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   store's estimate. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the thirty are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the thirty-one are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
   broker bridges, the ingestor, the object-storage agents) and read instruments declared in
   `integrations/*`, which
@@ -1838,7 +1838,13 @@ github.com/fastbean-au/hippocampus => ../..`), which is what keeps the AWS SDK o
 - Logging is **logrus** (not zerolog), typically with a `log.Trace("func() ...")` entry line at the
   top of functions — match this existing style rather than global preferences.
 - Errors are logged where they occur and returned unwrapped with `fmt.Errorf`.
-- Exactly one instance may consolidate a given store. SQLite is single-instance (embedded DB),
+- Exactly one instance may consolidate a given store, and on the server drivers a replica with
+  `consolidation.standby` takes over when it wins the lock (`hippocampus/standby.go`; the role is
+  read through `consolidating()`, and the consolidator-only workers start behind
+  `runsConsolidatorWork()`, because `promote` must start them before the role it publishes is
+  visible to an RPC - TODO-3 item 169). Administrative mutations are audited by
+  `hippocampus.Audited`, the decorator both transports serve (`auth.AdminMutations` is the set,
+  and a test drives every member of it through the decorator). SQLite is single-instance (embedded DB),
   enforced by the `hippocampus.lock` file lock described above; on
   the `postgres`/`mysql` drivers a shared database can have one consolidating instance
   (`consolidation.enabled: true`, holds the lock) plus read/write replicas

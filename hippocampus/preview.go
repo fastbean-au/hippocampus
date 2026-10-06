@@ -78,7 +78,7 @@ func (s *Server) PreviewConsolidation(
 	// consolidated by whichever instance holds the single-consolidator lock, under that instance's
 	// configuration rather than this one's. Rejecting matches Sleep, and stops a preview reporting
 	// a forgetting schedule this instance would never carry out.
-	if !s.consolidationEnabled {
+	if !s.consolidating() {
 		return nil, status.Error(grpccodes.FailedPrecondition, "consolidation is disabled on this instance")
 	}
 

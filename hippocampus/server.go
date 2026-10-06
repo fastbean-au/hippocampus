@@ -310,8 +310,21 @@ type Server struct {
 	// runs the sleep cycle - the timed loop, the WAL trigger, and the manual Sleep RPC. False makes
 	// it a read/write replica in a horizontally scaled deployment: New starts no sleep
 	// route and Sleep rejects the RPC, and main.go correspondingly opens the shared database without
-	// the single-consolidator lock.
+	// the single-consolidator lock. Read it through consolidating(), which also answers true for a
+	// standby that has since won the lock.
 	consolidationEnabled bool
+
+	// standby (consolidation.standby) makes a replica poll the single-consolidator lock and take
+	// over consolidation when it wins (TODO-3 item 169); see standby.go. promoted records that it
+	// has, and promoteMu serialises a promotion against Stop.
+	standby        bool
+	standbyPoll    time.Duration
+	promoted       atomic.Bool
+	promoting      atomic.Bool
+	promoteMu      sync.Mutex
+	stopStandby    chan struct{}
+	standbyStopped chan struct{}
+	standbyDeps    Dependencies
 
 	// sleepGroup ensures the autoSleep timer and manual Sleep RPCs never run sleep() concurrently
 	// with each other: a caller arriving while a cycle is already in flight joins it and shares
@@ -630,6 +643,8 @@ func New(deps Dependencies) *Server {
 	}
 
 	s.consolidationEnabled = viper.GetBool("consolidation.enabled")
+	s.standby = viper.GetBool("consolidation.standby")
+	s.standbyPoll = time.Duration(viper.GetInt("consolidation.standbyPollSeconds")) * time.Second
 
 	// Mirror the server-side auth-without-TLS warning for the Transfer client: a token configured
 	// without transfer.tls is sent as a plaintext bearer credential to the target, where anyone on
@@ -649,7 +664,7 @@ func New(deps Dependencies) *Server {
 	// consolidation_enabled false rather than a period of zero.
 	s.sleepPeriod = period
 
-	if !s.consolidationEnabled {
+	if !s.consolidating() {
 		// Read/write replica: no sleep route runs on this instance. Zeroing the period
 		// drops the timed case out of autoSleep's select, and zeroing walTriggerBytes stops it from
 		// setting up the WAL-size poll; the manual Sleep RPC is rejected in Sleep(). autoSleep is
@@ -660,7 +675,7 @@ func New(deps Dependencies) *Server {
 		s.consolidation.walTriggerBytes = 0
 	}
 
-	if s.consolidationEnabled {
+	if s.consolidating() {
 		s.logForgettingMode()
 	}
 
@@ -683,6 +698,9 @@ func New(deps Dependencies) *Server {
 	// After the prober, because it is the half of the view that describes instances this process has
 	// never spoken to - and it needs the topology config the two lines above resolved.
 	s.startInstanceHeartbeat()
+
+	// Last: a standby that wins at once promotes itself through everything started above.
+	s.startStandby(deps)
 
 	return s
 }
@@ -827,7 +845,7 @@ func (s *Server) startReconcile(searchIndex search.Index) {
 		s.reconcileBatchSize = defaultReconcileBatchSize
 	}
 
-	if !s.consolidationEnabled || s.reconcileInterval <= 0 || searchIndex == nil || !searchIndex.Enabled() {
+	if !s.runsConsolidatorWork() || s.reconcileInterval <= 0 || searchIndex == nil || !searchIndex.Enabled() {
 		return
 	}
 
@@ -857,6 +875,13 @@ func (s *Server) Stop() {
 		s.cycleMu.Lock()
 		s.cyclesStopping = true
 		s.cycleMu.Unlock()
+
+		// A standby stops polling before anything else stops, and a promotion in flight finishes
+		// first - so everything it started is there to be stopped below.
+		s.stopStandbyLoop()
+
+		s.promoteMu.Lock()
+		defer s.promoteMu.Unlock()
 
 		// First, so this instance leaves the shared registry while the database is still open: a
 		// clean exit should disappear from its peers' views immediately rather than be reported
@@ -1078,7 +1103,7 @@ func (s *Server) Sleep(ctx context.Context, in *contract.EmptyRequest) (*contrac
 	// single-consolidator lock, so letting it sleep would race the consolidating instance against
 	// shared data. Reject the RPC rather than silently no-op, so a misdirected call is
 	// visible to the caller.
-	if !s.consolidationEnabled {
+	if !s.consolidating() {
 		return &res, status.Error(codes.FailedPrecondition, "consolidation is disabled on this instance")
 	}
 

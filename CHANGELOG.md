@@ -61,6 +61,26 @@ itself which service version it was built against.
 
 ### Added
 
+- **Running a shared store at scale: failover, an audit trail, certificate rotation.**
+  - **Automatic consolidator failover.** `consolidation.standby` (with `consolidation.enabled:
+    false`, on postgres or mysql) makes a replica poll the single-consolidator lock every
+    `consolidation.standbyPollSeconds` (15) and take over the sleep cycle and every
+    consolidator-only worker when it wins. Run every instance as a standby, and the first to poll
+    after a consolidator dies takes over. Before this, a store whose consolidator had died never
+    forgot until somebody restarted a replica with the flag flipped.
+  - **An audit trail.** Every call to an administrative mutation (`Purge`, `Sleep`, both predicate
+    deletes, `DeleteForgottenMemories`, `DeleteCallbackQueue`, `Export`, `Transfer`, `Clear`) leaves
+    one Info line with `audit=true`, the caller's `client_id`, the outcome, the request and the
+    result, on both transports, refused attempts included. Before this, they were logged at Trace if
+    at all.
+  - **TLS certificates reload.** The serving certificate is re-read within a minute of its files
+    changing, so a cert-manager or ACME renewal needs no restart, and a half-written pair is ignored
+    until it reads cleanly. `hippocampus.tls.certificate_not_after` reports the expiry, and a new
+    `HippocampusTLSCertificateExpiring` alert (thirty-one rules now) fires within 14 days of it and
+    past it.
+  - **Export manifests name their instance.** `ExportResponse`/`TransferResponse` gain
+    `instance_id`, the instance holding the manifest in memory. A `Clear` that reaches another
+    replica is refused naming itself, rather than reporting the manifest unknown.
 - **Fuzz targets, and a property test for the decay curves.**
   - Native fuzz targets cover metadata filter keys, search tokens, the archive reader, archive key
     resolution, endpoint redaction, reported versions and the object-storage id mapping. Their seeds

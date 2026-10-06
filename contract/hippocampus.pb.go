@@ -4056,6 +4056,7 @@ type ExportResponse struct {
 	MemoriesExported int32                  `protobuf:"varint,4,opt,name=memories_exported,json=memoriesExported,proto3" json:"memories_exported,omitempty"`
 	MemoriesCleared  int32                  `protobuf:"varint,5,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"`
 	EventsCleared    int32                  `protobuf:"varint,6,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`
+	InstanceId       string                 `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // the instance holding the manifest: manifests live in that process's memory, so a deferred Clear must reach it
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -4130,6 +4131,13 @@ func (x *ExportResponse) GetEventsCleared() int32 {
 		return x.EventsCleared
 	}
 	return 0
+}
+
+func (x *ExportResponse) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
 }
 
 type ImportRequest struct {
@@ -4290,6 +4298,7 @@ type TransferResponse struct {
 	MemoriesTransferred int32                  `protobuf:"varint,3,opt,name=memories_transferred,json=memoriesTransferred,proto3" json:"memories_transferred,omitempty"`
 	MemoriesCleared     int32                  `protobuf:"varint,4,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"`
 	EventsCleared       int32                  `protobuf:"varint,5,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`
+	InstanceId          string                 `protobuf:"bytes,6,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // the instance holding the manifest; see ExportResponse.instance_id
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -4357,6 +4366,13 @@ func (x *TransferResponse) GetEventsCleared() int32 {
 		return x.EventsCleared
 	}
 	return 0
+}
+
+func (x *TransferResponse) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
 }
 
 // Clear deletes exactly the records captured by the Export/Transfer run that produced the
@@ -8461,7 +8477,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\thas_event\x18\x10 \x01(\x0e2\x14.hippocampus.v1.BoolR\bhasEvent\"b\n" +
 	"\rExportRequest\x12\x14\n" +
 	"\x05clear\x18\x01 \x01(\bR\x05clear\x12;\n" +
-	"\bmemories\x18\x02 \x01(\v2\x1f.hippocampus.v1.MemorySelectionR\bmemories\"\xf8\x01\n" +
+	"\bmemories\x18\x02 \x01(\v2\x1f.hippocampus.v1.MemorySelectionR\bmemories\"\x99\x02\n" +
 	"\x0eExportResponse\x12\x1f\n" +
 	"\vmanifest_id\x18\x01 \x01(\tR\n" +
 	"manifestId\x12\x1d\n" +
@@ -8470,7 +8486,9 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x0fevents_exported\x18\x03 \x01(\x05R\x0eeventsExported\x12+\n" +
 	"\x11memories_exported\x18\x04 \x01(\x05R\x10memoriesExported\x12)\n" +
 	"\x10memories_cleared\x18\x05 \x01(\x05R\x0fmemoriesCleared\x12%\n" +
-	"\x0eevents_cleared\x18\x06 \x01(\x05R\reventsCleared\".\n" +
+	"\x0eevents_cleared\x18\x06 \x01(\x05R\reventsCleared\x12\x1f\n" +
+	"\vinstance_id\x18\a \x01(\tR\n" +
+	"instanceId\".\n" +
 	"\rImportRequest\x12\x1d\n" +
 	"\n" +
 	"object_key\x18\x01 \x01(\tR\tobjectKey\"f\n" +
@@ -8479,14 +8497,16 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x11memories_imported\x18\x02 \x01(\x05R\x10memoriesImported\"d\n" +
 	"\x0fTransferRequest\x12\x14\n" +
 	"\x05clear\x18\x01 \x01(\bR\x05clear\x12;\n" +
-	"\bmemories\x18\x02 \x01(\v2\x1f.hippocampus.v1.MemorySelectionR\bmemories\"\xe7\x01\n" +
+	"\bmemories\x18\x02 \x01(\v2\x1f.hippocampus.v1.MemorySelectionR\bmemories\"\x88\x02\n" +
 	"\x10TransferResponse\x12\x1f\n" +
 	"\vmanifest_id\x18\x01 \x01(\tR\n" +
 	"manifestId\x12-\n" +
 	"\x12events_transferred\x18\x02 \x01(\x05R\x11eventsTransferred\x121\n" +
 	"\x14memories_transferred\x18\x03 \x01(\x05R\x13memoriesTransferred\x12)\n" +
 	"\x10memories_cleared\x18\x04 \x01(\x05R\x0fmemoriesCleared\x12%\n" +
-	"\x0eevents_cleared\x18\x05 \x01(\x05R\reventsCleared\"/\n" +
+	"\x0eevents_cleared\x18\x05 \x01(\x05R\reventsCleared\x12\x1f\n" +
+	"\vinstance_id\x18\x06 \x01(\tR\n" +
+	"instanceId\"/\n" +
 	"\fClearRequest\x12\x1f\n" +
 	"\vmanifest_id\x18\x01 \x01(\tR\n" +
 	"manifestId\"a\n" +

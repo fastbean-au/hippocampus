@@ -148,7 +148,7 @@ func (d *DB) acquireMySQLInstanceLock() error {
 	if locked.Int64 != 1 {
 		_ = conn.Close()
 
-		return fmt.Errorf("another hippocampus instance already holds the instance lock on this database - the service is single-instance only")
+		return fmt.Errorf("%w (the GET_LOCK lock on this database) - the service is single-instance only", ErrInstanceLockHeld)
 	}
 
 	d.lockConn = conn

@@ -1117,6 +1117,19 @@ func run(ctx context.Context, version versionInfo) error {
 			return fmt.Errorf("failed to load TLS credentials: %w", err)
 		}
 
+		// Served through GetCertificate rather than as a fixed pair, so a rotated certificate is
+		// picked up without a restart; both listeners share this config (TODO-3 item 169).
+		reloader, err := newCertReloader(viper.GetString("tls.certFile"), viper.GetString("tls.keyFile"))
+		if err != nil {
+			return fmt.Errorf("failed to load TLS credentials: %w", err)
+		}
+
+		cfg.Certificates = nil
+		cfg.GetCertificate = reloader.GetCertificate
+
+		reloader.start()
+		defer reloader.close()
+
 		tlsConf = cfg
 
 		if clientCAFile != "" {
@@ -1376,7 +1389,13 @@ func run(ctx context.Context, version versionInfo) error {
 	hs := health.NewServer()
 	healthgrpc.RegisterHealthServer(s, hs)
 
-	contract.RegisterHippocampusServer(s, hipo)
+	// Both transports serve the audited server: every administrative mutation is one Info line with
+	// audit=true, the caller and what it did (TODO-3 item 169). The gateway calls the server
+	// directly and never runs the gRPC interceptor chain, so wrapping the served value is the one
+	// place that reaches both.
+	served := hippocampus.Audited(hipo)
+
+	contract.RegisterHippocampusServer(s, served)
 
 	// Server reflection lets grpcurl, Postman, Insomnia and every gRPC GUI discover the schema from
 	// a running instance instead of being handed contract/hippocampus.proto. It is the gRPC
@@ -1473,7 +1492,7 @@ func run(ctx context.Context, version versionInfo) error {
 		}
 
 		gwMux := runtime.NewServeMux(muxOpts...)
-		if err := contract.RegisterHippocampusHandlerServer(context.Background(), gwMux, hipo); err != nil {
+		if err := contract.RegisterHippocampusHandlerServer(context.Background(), gwMux, served); err != nil {
 			// The gRPC listener is already serving by this point, so returning straight out would
 			// leave it bound and the database open for the life of the process. main turns this into
 			// an exit, which hides that - a test calling run does not.
@@ -2500,6 +2519,28 @@ func configProblems() []error {
 
 	if aggressiveness := viper.GetFloat64("consolidation.aggressiveness"); aggressiveness <= 0 {
 		problems = append(problems, fmt.Errorf("consolidation.aggressiveness must be greater than 0, got %v", aggressiveness))
+	}
+
+	// A standby waits for the shared store's single-consolidator lock (TODO-3 item 169). SQLite has
+	// no shared lock to wait for, and consolidation.enabled true takes the lock at startup - so the
+	// two together would be a standby that either never promotes or never waits.
+	if viper.GetBool("consolidation.standby") {
+		switch driver := viper.GetString("storage.driver"); driver {
+
+		case "postgres", "mysql":
+
+		default:
+			problems = append(problems, fmt.Errorf("consolidation.standby needs a shared store (storage.driver postgres or mysql), got %q: there is no lock for a standby to wait on", driver))
+
+		}
+
+		if viper.GetBool("consolidation.enabled") {
+			problems = append(problems, fmt.Errorf("consolidation.standby is set with consolidation.enabled true: a standby starts as a replica (consolidation.enabled false) and takes over when the lock is free"))
+		}
+	}
+
+	if poll := viper.GetInt("consolidation.standbyPollSeconds"); poll < 0 {
+		problems = append(problems, fmt.Errorf("consolidation.standbyPollSeconds must not be negative, got %d", poll))
 	}
 
 	// Method 3's decay factor is 1 + ln(aggressiveness), which goes non-positive for any

@@ -80,10 +80,23 @@ Operational notes:
   replicas assume the schema already exists. They are safe if you do not: the migration run takes a
   cross-instance lock, so instances starting together queue rather than racing one another's
   `ALTER TABLE`. Starting the consolidator first simply avoids the wait.
-- Put a load balancer in front of all instances and route reads and writes to any of them.
-- The assignment is static, not dynamic leader election. If the consolidating instance dies,
-  **promote** a replica by restarting it with `consolidation.enabled: true` — it takes the now-free
-  lock. Run every instance under a supervisor so a fail-stop is followed by a restart.
+- Put a load balancer in front of all instances and route reads and writes to any of them. The one
+  exception is the deferred `Clear` of an `Export` or `Transfer`: its manifest lives in the memory
+  of the instance that produced it, whose id the response returns as `instance_id`. Send the
+  `Clear` there, or use the RPC's own `clear` flag, which needs no second call. A `Clear` that
+  reaches another instance is refused naming that instance.
+- **Failover is a standby.** An instance with `consolidation.standby: true` (and
+  `consolidation.enabled: false`) serves as a replica and asks for the consolidator lock every
+  `consolidation.standbyPollSeconds` (15). When it wins, because the consolidator's session ended
+  with its process, it starts the sleep cycle and everything only a consolidator runs: the search
+  reconcile and outbox drain, callback dispatch and scheduled exports. It logs the takeover at `WARN`.
+  **Run every instance as a standby** and the first to poll after a consolidator dies takes over,
+  with no instance configured as the leader. An instance configured with `consolidation.enabled:
+  true` and restarted after a standby took over would instead find the lock held and refuse to
+  start. A promoted instance stays the consolidator for the life of its process.
+- Without standbys the assignment is static. If the consolidating instance dies, **promote** a
+  replica by restarting it with `consolidation.enabled: true`; it takes the now-free lock. Run
+  every instance under a supervisor so a fail-stop is followed by a restart.
 - SQLite cannot be shared, so `consolidation.enabled: false` there is not a scaling replica — it just
   yields an instance that never consolidates. Startup logs a warning to that effect.
 - Each instance registers itself in the shared database every `topology.heartbeatSeconds`, so every
@@ -1523,7 +1536,7 @@ catches is one store's instance disappearing while others still report: its seri
 and drop out. That needs an inventory of what _should_ be reporting, which Prometheus does not have
 and a liveness probe does.
 
-The same thirty rules are provisioned into the bundled Grafana below, so the demo stack alerts as
+The same thirty-one rules are provisioned into the bundled Grafana below, so the demo stack alerts as
 well as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
 provisions a contact point — where alerts should be delivered is deployment-specific.
 
@@ -1590,6 +1603,7 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.panics_recovered`               | counter       | `transport`                           | Handler panics caught by the recovery middleware                                                                       |
 | `hippocampus.ratelimit.rejected`             | counter       | `transport`, `scope`                  | Requests refused by the [rate limiter](#rate-limiting)                                                                 |
 | `hippocampus.ratelimit.clients`              | gauge         |                                       | Principals currently holding a per-client bucket                                                                       |
+| `hippocampus.tls.certificate_not_after`      | gauge         |                                       | Unix seconds at which the serving certificate expires — see [Certificate rotation](#certificate-rotation)              |
 | `hippocampus.memories.stored`                | counter       |                                       | Memories accepted and written                                                                                          |
 | `hippocampus.memories.rejected`              | counter       | `reason` (`invalid`/`insignificant`)  | Writes refused — `insignificant` is the decay model working, not a fault                                               |
 | `hippocampus.memories.recalled`              | counter       |                                       | Memories reinforced by `RecallMemories` or a reinforcing search                                                        |
@@ -1926,8 +1940,8 @@ Authentication, TLS and rate limiting are **off by default**, and nothing here t
 any deployment reachable beyond localhost needs a deliberate pass over
 **[the security guide](security.md)**. It covers authentication and key rotation, the role tiers,
 group scoping, transport and gateway hardening, the console's boundary, where memory content can
-leave the process, what the service does not do (no encryption at rest, no mutual TLS on the
-listeners, no separate audit log), and a hardening checklist to work down.
+leave the process, what the service does not do (no encryption at rest), and a hardening checklist
+to work down.
 
 Two operational notes belong here rather than there:
 
@@ -1935,3 +1949,34 @@ Two operational notes belong here rather than there:
   security guide only says to turn it on.
 - [Seeing the deployment](#seeing-the-deployment) is where the topology view's redaction is
   described in context; the security guide records only that every address it reports is redacted.
+
+### Certificate rotation
+
+With `tls.enabled`, both listeners serve the certificate at `tls.certFile`/`tls.keyFile`, read
+again whenever either file changes, checked once a minute. A renewal by cert-manager, an ACME client
+or anything else that rewrites those files is picked up without a restart. The log says
+`reloaded the rotated TLS certificate` with the new expiry. A pair caught half-written, with the
+certificate renewed and the key not yet, is logged and ignored, and the previous certificate keeps
+serving until both files read cleanly. The client CA bundle (`tls.clientCaFile`) is read only at
+startup.
+
+`hippocampus.tls.certificate_not_after` reports the serving certificate's expiry in unix seconds.
+The shipped `HippocampusTLSCertificateExpiring` alert fires when it is within 14 days, and keeps
+firing past expiry. The service renews nothing itself, so that alert means the renewal pipeline has
+stopped writing the files. Check the issuer, and that it writes to the path `tls.certFile` names.
+
+### The audit trail
+
+Every call to an administrative mutation leaves one Info line carrying `audit=true`. The audited
+RPCs are those the policy table puts at the `admin` tier and that are not reads: `Purge`, `Sleep`,
+`DeleteMemoriesByFilter`, `DeleteEventsByFilter`, `DeleteForgottenMemories`, `DeleteCallbackQueue`,
+`Export`, `Transfer` and `Clear`. Each line names:
+
+- `rpc`, and `client_id` (`none` without auth);
+- `outcome`, the gRPC code;
+- `request`, the call's own JSON (its filter, manifest id or object key);
+- on success, `response`, with what was removed or moved.
+
+A refused or failed attempt is recorded as well as a success. The lines go wherever the service's
+log goes, so ship them somewhere the people they audit cannot edit. A new administrative RPC joins
+the trail by being declared in the policy table, since a test fails until it is audited.

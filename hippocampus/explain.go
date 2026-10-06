@@ -74,7 +74,7 @@ func (s *Server) ExplainConsolidation(
 	// As for PreviewConsolidation: a replica's store is consolidated by whichever instance holds the
 	// single-consolidator lock, under that instance's configuration. Reporting this one's decay
 	// policy would describe a forgetting schedule nothing carries out.
-	if !s.consolidationEnabled {
+	if !s.consolidating() {
 		return nil, status.Error(grpccodes.FailedPrecondition, "consolidation is disabled on this instance")
 	}
 

@@ -73,7 +73,7 @@ func (s *Server) startScheduledExport() {
 		return
 	}
 
-	if !s.consolidationEnabled {
+	if !s.runsConsolidatorWork() {
 		log.Info("scheduled export: this instance is a replica; the consolidating instance takes the exports")
 
 		return

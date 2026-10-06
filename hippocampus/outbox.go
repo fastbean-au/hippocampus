@@ -109,7 +109,7 @@ func (s *Server) startOutboxDrain(searchIndex search.Index) {
 		return
 	}
 
-	if !s.consolidationEnabled {
+	if !s.runsConsolidatorWork() {
 		// A replica must still RECORD: it serves writes, so its deletes are as losable as anyone's,
 		// and the consolidating instance's drain will apply them. It just must not drain.
 		store.SetSearchOutbox(true)

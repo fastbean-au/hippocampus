@@ -227,7 +227,7 @@ func (s *Server) instanceId() string {
 // own configuration says it should.
 func (s *Server) instanceRecord(now time.Time) db.Instance {
 	role := db.InstanceRoleReplica
-	if s.consolidationEnabled {
+	if s.consolidating() {
 		role = db.InstanceRoleConsolidator
 	}
 

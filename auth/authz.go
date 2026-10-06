@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -264,6 +265,23 @@ func RouteRPC(httpMethod string, pattern string) (string, bool) {
 	rpc, ok := routeRPCs[httpMethod+" "+normalisePattern(pattern)]
 
 	return rpc, ok
+}
+
+// AdminMutations returns the RPCs that require the admin tier and are not reads - every route that is
+// not a GET - which is the set whose every call belongs in an audit trail (TODO-3 item 169). It is
+// derived from the policy table so a new administrative RPC joins the trail by being declared.
+func AdminMutations() []string {
+	var out []string
+
+	for rpc, policy := range policies {
+		if policy.tier == TierAdmin && policy.httpMethod != http.MethodGet {
+			out = append(out, rpc)
+		}
+	}
+
+	sort.Strings(out)
+
+	return out
 }
 
 // HasPolicy reports whether an RPC, named as it appears in the service descriptor, has an

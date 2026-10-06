@@ -224,7 +224,7 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 		return
 	}
 
-	if !s.consolidationEnabled {
+	if !s.runsConsolidatorWork() {
 		log.Info("callbacks: this instance does not consolidate, so it neither records nor dispatches")
 
 		return

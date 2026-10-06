@@ -3026,6 +3026,10 @@
         "eventsCleared": {
           "type": "integer",
           "format": "int32"
+        },
+        "instanceId": {
+          "type": "string",
+          "title": "the instance holding the manifest: manifests live in that process's memory, so a deferred Clear must reach it"
         }
       }
     },
@@ -4402,6 +4406,10 @@
         "eventsCleared": {
           "type": "integer",
           "format": "int32"
+        },
+        "instanceId": {
+          "type": "string",
+          "title": "the instance holding the manifest; see ExportResponse.instance_id"
         }
       }
     },

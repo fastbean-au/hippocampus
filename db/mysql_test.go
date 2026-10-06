@@ -883,3 +883,31 @@ func TestMySQL_CompressedBodyRoundTrip(t *testing.T) {
 		t.Error("RecallMemories did not return the original body")
 	}
 }
+
+// TestMySQL_StandbyTakesTheLockWhenItIsReleased: see the Postgres test of the same name.
+func TestMySQL_StandbyTakesTheLockWhenItIsReleased(t *testing.T) {
+	leader := newMySQLTestDB(t)
+
+	standby, err := NewMySQL(os.Getenv(mysqlTestDSNEnv), false)
+	if err != nil {
+		t.Fatalf("standby NewMySQL: %s", err)
+	}
+
+	t.Cleanup(func() { _ = standby.Close() })
+
+	if won, err := standby.TryAcquireInstanceLock(); err != nil || won {
+		t.Fatalf("TryAcquireInstanceLock while the leader holds it = %v, %v; want false, nil", won, err)
+	}
+
+	if err := leader.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	if won, err := standby.TryAcquireInstanceLock(); err != nil || !won {
+		t.Fatalf("TryAcquireInstanceLock after the leader left = %v, %v; want true, nil", won, err)
+	}
+
+	if _, err := NewMySQL(os.Getenv(mysqlTestDSNEnv), true); err == nil {
+		t.Error("the promoted standby's lock did not exclude a new consolidator")
+	}
+}

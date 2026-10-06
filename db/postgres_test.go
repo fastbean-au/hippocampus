@@ -835,3 +835,36 @@ func TestPostgres_CompressedBodyRoundTrip(t *testing.T) {
 		t.Error("RecallMemories did not return the original body")
 	}
 }
+
+// TestPostgres_StandbyTakesTheLockWhenItIsReleased: a standby polls the lock and wins it once the
+// consolidator's session ends (TODO-3 item 169) - "held elsewhere" is an answer, not an error.
+func TestPostgres_StandbyTakesTheLockWhenItIsReleased(t *testing.T) {
+	leader := newPostgresTestDB(t)
+
+	standby, err := NewPostgres(os.Getenv(postgresTestDSNEnv), false)
+	if err != nil {
+		t.Fatalf("standby NewPostgres: %s", err)
+	}
+
+	t.Cleanup(func() { _ = standby.Close() })
+
+	if won, err := standby.TryAcquireInstanceLock(); err != nil || won {
+		t.Fatalf("TryAcquireInstanceLock while the leader holds it = %v, %v; want false, nil", won, err)
+	}
+
+	if err := leader.Close(); err != nil {
+		t.Fatalf("Close: %s", err)
+	}
+
+	if won, err := standby.TryAcquireInstanceLock(); err != nil || !won {
+		t.Fatalf("TryAcquireInstanceLock after the leader left = %v, %v; want true, nil", won, err)
+	}
+
+	if standby.stopKeepalive == nil {
+		t.Error("a standby that won the lock must keep it alive like any consolidator")
+	}
+
+	if _, err := NewPostgres(os.Getenv(postgresTestDSNEnv), true); err == nil {
+		t.Error("the promoted standby's lock did not exclude a new consolidator")
+	}
+}

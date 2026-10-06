@@ -464,6 +464,24 @@ const STEPS = [
             svc: true,
             help: "Exactly one instance per store may consolidate. Replicas set this false: they serve the full read/write surface, skip the instance lock, and reject the Sleep RPC.",
           },
+          {
+            key: "consolidation.standby",
+            label: "Take over if the consolidator goes (standby)",
+            type: "bool",
+            def: false,
+            when: (s) =>
+              ["postgres", "mysql"].includes(value(s, "storage.driver")) &&
+              !value(s, "consolidation.enabled"),
+            help: "A standby serves as a replica and polls the consolidator lock, taking over the sleep cycle when it wins. Run every instance as a standby and the first to poll after a consolidator dies takes over, with no instance configured as the leader.",
+          },
+          {
+            key: "consolidation.standbyPollSeconds",
+            label: "Standby poll (seconds)",
+            type: "int",
+            def: 15,
+            when: (s) => value(s, "consolidation.standby"),
+            help: "How often a standby asks for the lock. A consolidator's lock ends with its process, so this is most of the failover time.",
+          },
         ],
       },
       {

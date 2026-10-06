@@ -674,7 +674,7 @@ func (s *Server) GetSummarisationCandidates(ctx context.Context, in *contract.Em
 	// reasons produced it, and they call for opposite responses from a client: wait, or stop asking.
 	// Both conditions are required - the scan is a step of the sleep cycle, so a replica
 	// (consolidation.enabled false) never populates the cache however the threshold is set.
-	res.ScanEnabled = s.consolidationEnabled && s.consolidation.summarisationMinMemories > 0
+	res.ScanEnabled = s.consolidating() && s.consolidation.summarisationMinMemories > 0
 
 	return &res, nil
 }
