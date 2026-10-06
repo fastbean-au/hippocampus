@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -159,5 +161,42 @@ func TestAnAuthenticatedOrHarmlessListenerIsAccepted(t *testing.T) {
 				t.Errorf("expected this configuration to be accepted, got %s", err.Error())
 			}
 		})
+	}
+}
+
+// The bindings that keep the reaper in shadow mode (TODO-3 item 166) were verified only by reading
+// the code: a --delete that bound to the wrong key, or a --sweep-min-age that never reached the
+// sweep, would arm the agent or let it judge fresh objects with nothing failing.
+func TestReaperConfigDefaultsToShadowMode(t *testing.T) {
+	setupFlags(t, []string{"--bucket", "payloads"})
+
+	if cfg := reaperConfig(nil, nil, nil); cfg.Delete {
+		t.Error("the reaper is armed with no --delete")
+	}
+
+	if got := sweepConfig(nil, nil, nil).MinAge; got != 24*time.Hour {
+		t.Errorf("sweep min age defaults to %s, want 24h", got)
+	}
+}
+
+func TestReaperConfigBindsItsSafetyFlags(t *testing.T) {
+	setupFlags(t, []string{"--bucket", "payloads", "--delete", "--sweep-min-age", "36h", "--sweep-prefix", "tenant/"})
+
+	causes, err := validate()
+	if err == nil || causes != nil {
+		// validate refuses an armed listener with no credential, which is itself a safety binding.
+		if !strings.Contains(fmt.Sprint(err), "--callback-token") {
+			t.Fatalf("validate = %v, %v", causes, err)
+		}
+	}
+
+	if !reaperConfig(nil, nil, nil).Delete {
+		t.Error("--delete did not reach the reaper")
+	}
+
+	sweep := sweepConfig(nil, nil, nil)
+
+	if sweep.MinAge != 36*time.Hour || sweep.Prefix != "tenant/" {
+		t.Errorf("sweep config = %+v, want --sweep-min-age 36h and --sweep-prefix tenant/", sweep)
 	}
 }

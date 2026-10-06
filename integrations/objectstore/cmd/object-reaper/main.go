@@ -245,23 +245,12 @@ func run(ctx context.Context) error {
 
 	memories := client.NewMemories(hippo, time.Duration(viper.GetInt("call-timeout-seconds"))*time.Second)
 
-	reaper, err := reap.New(reap.Config{
-		Store:    store,
-		Memories: memories,
-		Delete:   viper.GetBool("delete"),
-		Causes:   causes,
-	})
+	reaper, err := reap.New(reaperConfig(store, memories, causes))
 	if err != nil {
 		return fmt.Errorf("building the reaper: %w", err)
 	}
 
-	sweep, err := reap.NewSweep(reap.SweepConfig{
-		Store:    store,
-		Memories: memories,
-		Reaper:   reaper,
-		MinAge:   viper.GetDuration("sweep-min-age"),
-		Prefix:   viper.GetString("sweep-prefix"),
-	})
+	sweep, err := reap.NewSweep(sweepConfig(store, memories, reaper))
 	if err != nil {
 		return fmt.Errorf("building the sweep: %w", err)
 	}
@@ -333,6 +322,29 @@ func run(ctx context.Context) error {
 	}
 
 	return agent.listen(ctx)
+}
+
+// reaperConfig binds the flags that decide whether anything is deleted. It is a function of its own
+// so a test can pin that shadow mode is the default and that --delete and --causes reach the reaper
+// (TODO-3 item 166): those bindings are the agent's whole safety story.
+func reaperConfig(store objects.Store, memories *client.Memories, causes reap.Causes) reap.Config {
+	return reap.Config{
+		Store:    store,
+		Memories: memories,
+		Delete:   viper.GetBool("delete"),
+		Causes:   causes,
+	}
+}
+
+// sweepConfig binds the sweep's flags, --sweep-min-age above all, for the same reason.
+func sweepConfig(store objects.Store, memories *client.Memories, reaper *reap.Reaper) reap.SweepConfig {
+	return reap.SweepConfig{
+		Store:    store,
+		Memories: memories,
+		Reaper:   reaper,
+		MinAge:   viper.GetDuration("sweep-min-age"),
+		Prefix:   viper.GetString("sweep-prefix"),
+	}
 }
 
 // announce says what the agent will actually do, at Info, because the difference between shadow and
