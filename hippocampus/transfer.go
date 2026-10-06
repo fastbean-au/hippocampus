@@ -69,14 +69,20 @@ type transferManifest struct {
 }
 
 // walkStore pages the entire store — events first, then memories — through the callbacks in
-// transfer.batchSize pages, building the manifest of what was seen. Writes landing behind the
+// transfer.batchSize pages, building the manifest of what was seen. A non-nil selection walks only
+// the memories it matches and their events instead (walkSelection). Writes landing behind the
 // pagination cursor are simply not captured; they belong to the next run.
 func (s *Server) walkStore(
 	ctx context.Context,
+	selection *db.MemoryFilter,
 	onEvents func([]types.Event) error,
 	onMemories func([]types.Memory) error,
 ) (*transferManifest, int, int, error) {
 	log.Trace("func() walkStore")
+
+	if selection != nil {
+		return s.walkSelection(ctx, *selection, onEvents, onMemories)
+	}
 
 	batchSize := s.transfer.batchSize
 	if batchSize <= 0 {
@@ -301,7 +307,7 @@ type exportResult struct {
 // Export RPC and the scheduled export (TODO-3 item 158); the RPC's clear and manifest handling stay in
 // Export, since a scheduled export never clears anything. scheduled labels the exports counter, so
 // the two can be told apart.
-func (s *Server) exportArchive(ctx context.Context, key string, scheduled bool) (exportResult, error) {
+func (s *Server) exportArchive(ctx context.Context, key string, scheduled bool, selection *db.MemoryFilter) (exportResult, error) {
 	// The header's counts are informational — they are read before the walk and the store can
 	// move underneath; the response carries the exact figures.
 	memoriesWith, memoriesWithout := s.db.CountMemories(ctx)
@@ -326,6 +332,7 @@ func (s *Server) exportArchive(ctx context.Context, key string, scheduled bool) 
 
 			return s.walkStore(
 				ctx,
+				selection,
 				func(events []types.Event) error {
 					for _, event := range events {
 						if err := w.WriteEvent(event.ToProto()); err != nil {
@@ -398,10 +405,15 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 		return &res, status.Error(codes.FailedPrecondition, "no object store is configured (set archive.directory or s3.bucket)")
 	}
 
+	selection, err := s.transferSelection(ctx, in.GetMemories())
+	if err != nil {
+		return &res, err
+	}
+
 	manifestShort := uuid.New().String()[:8]
 	key := fmt.Sprintf("%s%s-%s.archive.gz", s.transfer.keyPrefix, time.Now().UTC().Format("20060102T150405Z"), manifestShort)
 
-	result, err := s.exportArchive(ctx, key, false)
+	result, err := s.exportArchive(ctx, key, false, selection)
 	if err != nil {
 		return &res, mapError(err)
 	}
@@ -882,6 +894,11 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 		return &res, status.Error(codes.FailedPrecondition, "no transfer target is configured (transfer.targetAddress)")
 	}
 
+	selection, err := s.transferSelection(ctx, in.GetMemories())
+	if err != nil {
+		return &res, err
+	}
+
 	creds, err := s.transfer.clientCredentials()
 	if err != nil {
 		tel.transfers.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", false)))
@@ -903,6 +920,7 @@ func (s *Server) Transfer(ctx context.Context, in *contract.TransferRequest) (*c
 
 	manifest, events, memories, err := s.walkStore(
 		ctx,
+		selection,
 		func(events []types.Event) error {
 			batch := make([]*contract.Event, len(events))
 			for i, event := range events {

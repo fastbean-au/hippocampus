@@ -118,6 +118,7 @@ refused — deleting everything is `Purge`.
 
 ```bash
 hippo memory list --group acme --limit 1                                  # how many
+hippo export --group acme                                                 # their copy, if owed
 hippo memory delete-by-filter --group acme --delete-empty-events --yes
 hippo event delete-by-filter --group acme --delete-memories --yes
 ```
@@ -125,9 +126,13 @@ hippo event delete-by-filter --group acme --delete-memories --yes
 Two things to know before relying on it for an erasure request. The **forgotten log**, when enabled,
 keeps a tombstone per memory a decay cycle deleted — id, group, size and significance, never a body
 — so empty it too (`hippo forgotten clear`, which is itself scoped); a client-initiated deletion
-writes no tombstone, but a memory a cycle forgot earlier may already have one. And an **archive
-already written** is a copy outside the store: `Export` preserves full state by design, so an
-offboarding that matters has to account for the object store as well.
+writes no tombstone, but a memory a cycle forgot earlier may already have one. And **erasure
+does not reach an archive already written**: an archive is a copy outside the store, and `Export`
+preserves full state by design. That includes the
+[scheduled exports](configuration.md#scheduled-export), which hold the group until they rotate out
+of `keep`. An offboarding that matters has to account for the object store as well. The
+`hippo export --group` step above is the other half of the same request, a portable copy of exactly
+what is about to be deleted, and `hippo memory list` with the same flags shows what it will hold.
 
 **Hard isolation — one instance per tenant.** Where bleed-through is unacceptable, or a tenant needs
 its own capacity and decay tuning, run a separate instance and a separate store. It isolates the

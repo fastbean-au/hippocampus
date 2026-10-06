@@ -2599,6 +2599,25 @@ itself is the watermark.
   held in memory only (the last 8) — after a restart the records are simply recaptured by the
   next run.
 
+`Export` and `Transfer` both take an optional **`memories` selection** to move part of the store
+instead of all of it: one group, one tier, one time range, anything a predicate can name.
+It carries the same sixteen fields as `DeleteMemoriesByFilter`, built by the same code, so
+`GetMemories` with those fields is the dry run of what the archive will hold. The events carried
+are those the selected memories belong to, plus every event in the selection's `group` when it
+names one, so a group's empty events travel with it. With `clear` set, only what was selected is
+deleted, and an event survives the clear while it still holds a memory the selection did not take.
+An absent or empty selection is the whole store, as before. `transfer.maxManifestRows` bounds what
+a selection captures rather than the size of the store. A selection composes with a group-scoped
+token's scope and never widens it. This is "export, verify, delete" for one group:
+
+```json
+POST /v1/export
+{"memories": {"group": "acme"}, "clear": false}
+```
+
+then verify the archive, then `DeleteMemoriesByFilter` with the same `group`, or the same export
+again with `"clear": true`.
+
 ```json
 "archive": {
     "directory": ""

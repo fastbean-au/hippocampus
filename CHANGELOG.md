@@ -101,6 +101,17 @@ itself which service version it was built against.
   Published as `hippocampus.export.scheduled.last_success`/`.interval`, with a shipped
   `HippocampusScheduledExportStale` alert (thirty rules now). Both object stores gained list and
   delete for the rotation.
+- **Export or transfer part of a store.** `ExportRequest` and `TransferRequest` gain `memories`, a
+  `MemorySelection` carrying the same sixteen selecting fields as `DeleteMemoriesByFilter` and built
+  by the same code, so `GetMemories` with those fields is the dry run. The archive holds the
+  selected memories and their events, plus every event in the selection's `group` when it names
+  one; with `clear` only what was selected is deleted. Before this, exporting one group needed a
+  token scoped to it, and moving part of a store meant moving all of it — so "export, verify,
+  delete" for one group could not be expressed with the predicate deletion that does the delete
+  half. An absent or empty selection is the whole store, as before. Reachable as `hippo export`/
+  `hippo transfer` with `memory delete-by-filter`'s flags, and as
+  `export(selection=Hippocampus.memory_selection(...))` in the Python client.
+
 ### Changed
 
 - **A release is dispatched only to the satellites it changes something for.** `notify-satellites`

@@ -422,6 +422,29 @@ func TestExportClearFlag(t *testing.T) {
 	}
 }
 
+// TestExportAndTransferCarryASelection: the selection flags reach the request, so an export or a
+// transfer of one group is expressible from the command line.
+func TestExportAndTransferCarryASelection(t *testing.T) {
+	req, _, err := runCommand(t, "export", []string{"--group", "billing", "--extremum", "lowest"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	sel := req.(*contract.ExportRequest).GetMemories()
+	if sel.GetGroup() != "billing" || sel.GetSignificanceExtremum() != contract.SignificanceExtremum_SIGNIFICANCE_EXTREMUM_LOWEST {
+		t.Errorf("export selection = %v, want group billing at the lowest tier", sel)
+	}
+
+	req, _, err = runCommand(t, "transfer", []string{"--metadata", "tenant=acme"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+
+	if got := req.(*contract.TransferRequest).GetMemories().GetMetadata(); len(got) != 1 || got[0] != "tenant=acme" {
+		t.Errorf("transfer selection metadata = %v, want [tenant=acme]", got)
+	}
+}
+
 // TestMemoryExplain covers the request shaping: ids from --id and positional args alike, and the
 // curve attached only when a significance was asked for.
 func TestMemoryExplain(t *testing.T) {

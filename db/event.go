@@ -484,6 +484,11 @@ func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 		}
 	}
 
+	if filter.IdAfter != "" {
+		query += ` AND id > ?`
+		args = append(args, filter.IdAfter)
+	}
+
 	// A case-insensitive substring match over the name, LOWER() on both sides rather than relying on
 	// the column's collation: SQLite's LIKE folds ASCII case, Postgres' does not, and MySQL's follows
 	// whatever collation the column carries - three answers to the same query is not a filter anyone

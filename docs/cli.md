@@ -280,11 +280,22 @@ rather than failing, `export` and `clear` included, so a scoped `export` is a pe
 
 | Command        | Purpose                                                                                |
 | -------------- | -------------------------------------------------------------------------------------- |
-| `export`       | snapshot the store into an archive object (`--clear`)                                  |
+| `export`       | snapshot the store, or a selection of it, into an archive object (`--clear`)           |
 | `import`       | import an archive object (`--object-key`)                                              |
 | `import-batch` | upsert full-state rows from a JSON `ImportBatchRequest` file (`--file`, `-` for stdin) |
-| `transfer`     | stream the whole store into a centralised instance (`--clear`)                         |
+| `transfer`     | stream the store, or a selection of it, into a centralised instance (`--clear`)        |
 | `clear`        | delete exactly the records captured by an export/transfer run (`--manifest-id`)        |
+
+`export` and `transfer` take `memory delete-by-filter`'s selecting flags (`--group`, `--metadata`,
+`--significance-max`, `--extremum`, `--recalled` and the rest) to move part of the store. With
+none of them set, they move the whole store. `hippo memory list` with the same flags is the dry
+run, so offboarding one group reads:
+
+```sh
+hippo memory list --group acme           # what will move
+hippo export --group acme                # archive it, then verify the archive
+hippo export --group acme --clear        # or: hippo memory delete-by-filter --group acme --yes
+```
 
 ## Timestamps and significance placement
 

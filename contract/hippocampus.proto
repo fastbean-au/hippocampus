@@ -1037,8 +1037,34 @@ message ImportBatchResponse {
 // Export snapshots every event and memory into an archive object in S3 and records a manifest of
 // exactly what was captured; with clear set, the captured records are deleted after a successful
 // upload (writes and recalls landing mid-run survive, exactly as Clear does).
+// MemorySelection narrows an Export or a Transfer to the memories it matches. Every field means
+// exactly what the same field means on GetMemoriesRequest, and the service builds both predicates
+// with one function, so a GetMemories listing with the same fields is the dry run for the archive.
+// Absent, or present with no field set, the whole store is selected, as before. The events that go
+// with the selected memories are the ones they belong to, plus - when group is set - every event
+// carrying that group, so an archive of one group holds that group's empty events too.
+message MemorySelection {
+	int64                                  timestamp_min             = 1;
+	int64                                  timestamp_max             = 2;
+	int32                                  significance_min          = 3;
+	int32                                  significance_max          = 4;
+	string                                 group                     = 5;
+	SignificanceExtremum                   significance_extremum     = 6;
+	repeated string                        metadata                  = 7;
+	Bool                                   recalled                  = 8;
+	int32                                  recall_count_min          = 9;
+	int32                                  recall_count_max          = 10;
+	int64                                  time_recalled_min         = 11;
+	int64                                  time_recalled_max         = 12;
+	Bool                                   is_summary                = 13;
+	Bool                                   is_binary                 = 14;
+	string                                 event_id                  = 15;
+	Bool                                   has_event                 = 16;
+}
+
 message ExportRequest {
-	bool                                   clear                     = 1;
+	bool                                   clear                     = 1; // delete exactly what this export captured once it is written (see Clear)
+	MemorySelection                        memories                  = 2; // optional: export only these memories and their events, rather than the whole store
 }
 
 message ExportResponse {
@@ -1063,7 +1089,8 @@ message ImportResponse {
 // (address from transfer.targetAddress); like Export it records a manifest, and with clear set
 // deletes the captured records once the target has accepted them all.
 message TransferRequest {
-	bool                                   clear                     = 1;
+	bool                                   clear                     = 1; // delete exactly what this transfer captured once the target has it (see Clear)
+	MemorySelection                        memories                  = 2; // optional: transfer only these memories and their events, rather than the whole store
 }
 
 message TransferResponse {

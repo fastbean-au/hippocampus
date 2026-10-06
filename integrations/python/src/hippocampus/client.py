@@ -1040,19 +1040,73 @@ class Hippocampus:
 
     # ------------------------------------------------------- transfer, archive
 
+    @staticmethod
+    def memory_selection(
+        *,
+        timestamp_min: _convert.Timestamp = None,
+        timestamp_max: _convert.Timestamp = None,
+        significance_min: int = 0,
+        significance_max: int = 0,
+        significance_extremum: Optional[SignificanceExtremum] = None,
+        group: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        event_id: Optional[str] = None,
+        has_event: Optional[bool] = None,
+        recalled: Optional[bool] = None,
+        recall_count_min: int = 0,
+        recall_count_max: int = 0,
+        time_recalled_min: _convert.Timestamp = None,
+        time_recalled_max: _convert.Timestamp = None,
+        is_summary: Optional[bool] = None,
+        binary: Optional[bool] = None,
+    ) -> pb.MemorySelection:
+        """Build the selection `export` and `transfer` narrow to.
+
+        The keyword arguments are `get_memories`' selecting ones, so that listing with the same
+        arguments is the dry run of what the archive will hold. The events carried are those the
+        selected memories belong to, plus every event in `group` when one is named.
+        """
+
+        selection = pb.MemorySelection(
+            timestamp_min=_convert.to_nanos(timestamp_min),
+            timestamp_max=_convert.to_nanos(timestamp_max),
+            significance_min=significance_min,
+            significance_max=significance_max,
+            group=group or "",
+            metadata=_convert.metadata_to_pairs(metadata),
+            event_id=event_id or "",
+            has_event=_convert.to_tristate(has_event),
+            recalled=_convert.to_tristate(recalled),
+            recall_count_min=recall_count_min,
+            recall_count_max=recall_count_max,
+            time_recalled_min=_convert.to_nanos(time_recalled_min),
+            time_recalled_max=_convert.to_nanos(time_recalled_max),
+            is_summary=_convert.to_tristate(is_summary),
+            is_binary=_convert.to_tristate(binary),
+        )
+
+        if significance_extremum is not None:
+            selection.significance_extremum = int(significance_extremum)
+
+        return selection
+
     def export(
         self,
         *,
         clear: bool = False,
+        selection: Optional[pb.MemorySelection] = None,
         timeout: Optional[float] = None,
     ) -> pb.ExportResponse:
-        """Write the whole store to the configured object store.
+        """Write the store to the configured object store - all of it, or only the memories
+        `selection` (see `memory_selection`) matches and their events.
 
         Long - give it its own deadline. With `clear`, exactly the records captured are deleted
         afterwards; a failed clear leaves the manifest cached so `clear(manifest_id)` can retry it.
         """
 
-        return self._call(self.stub.Export, pb.ExportRequest(clear=clear), timeout)
+        request = pb.ExportRequest(clear=clear, memories=selection)
+
+        return self._call(self.stub.Export, request, timeout)
 
     def import_(
         self,
@@ -1091,11 +1145,15 @@ class Hippocampus:
         self,
         *,
         clear: bool = False,
+        selection: Optional[pb.MemorySelection] = None,
         timeout: Optional[float] = None,
     ) -> pb.TransferResponse:
-        """Push the whole store to the configured target instance. Long."""
+        """Push the store - all of it, or only what `selection` matches - to the configured target
+        instance. Long."""
 
-        return self._call(self.stub.Transfer, pb.TransferRequest(clear=clear), timeout)
+        request = pb.TransferRequest(clear=clear, memories=selection)
+
+        return self._call(self.stub.Transfer, request, timeout)
 
     def clear(
         self,

@@ -921,7 +921,6 @@
         "parameters": [
           {
             "name": "body",
-            "description": "Export snapshots every event and memory into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted after a successful\nupload (writes and recalls landing mid-run survive, exactly as Clear does).",
             "in": "body",
             "required": true,
             "schema": {
@@ -2987,10 +2986,14 @@
       "type": "object",
       "properties": {
         "clear": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "delete exactly what this export captured once it is written (see Clear)"
+        },
+        "memories": {
+          "$ref": "#/definitions/v1MemorySelection",
+          "title": "optional: export only these memories and their events, rather than the whole store"
         }
-      },
-      "description": "Export snapshots every event and memory into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted after a successful\nupload (writes and recalls landing mid-run survive, exactly as Clear does)."
+      }
     },
     "v1ExportResponse": {
       "type": "object",
@@ -3602,6 +3605,71 @@
         }
       },
       "description": "Memory is a blob, opaque to the server, with a significance and timestamp, optionally linked to\nan event. Recalling it (RecallMemories) reinforces it: the decay clock resets and its effective\nsignificance rises. is_binary controls whether the body is indexed for content search (see\nSearchMemories) - a binary body is never indexed."
+    },
+    "v1MemorySelection": {
+      "type": "object",
+      "properties": {
+        "timestampMin": {
+          "type": "string",
+          "format": "int64"
+        },
+        "timestampMax": {
+          "type": "string",
+          "format": "int64"
+        },
+        "significanceMin": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "significanceMax": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "group": {
+          "type": "string"
+        },
+        "significanceExtremum": {
+          "$ref": "#/definitions/v1SignificanceExtremum"
+        },
+        "metadata": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recalled": {
+          "$ref": "#/definitions/v1Bool"
+        },
+        "recallCountMin": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "recallCountMax": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "timeRecalledMin": {
+          "type": "string",
+          "format": "int64"
+        },
+        "timeRecalledMax": {
+          "type": "string",
+          "format": "int64"
+        },
+        "isSummary": {
+          "$ref": "#/definitions/v1Bool"
+        },
+        "isBinary": {
+          "$ref": "#/definitions/v1Bool"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "hasEvent": {
+          "$ref": "#/definitions/v1Bool"
+        }
+      },
+      "description": "Export snapshots every event and memory into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted after a successful\nupload (writes and recalls landing mid-run survive, exactly as Clear does).\nMemorySelection narrows an Export or a Transfer to the memories it matches. Every field means\nexactly what the same field means on GetMemoriesRequest, and the service builds both predicates\nwith one function, so a GetMemories listing with the same fields is the dry run for the archive.\nAbsent, or present with no field set, the whole store is selected, as before. The events that go\nwith the selected memories are the ones they belong to, plus - when group is set - every event\ncarrying that group, so an archive of one group holds that group's empty events too."
     },
     "v1MemoryValuation": {
       "type": "object",
@@ -4296,7 +4364,12 @@
       "type": "object",
       "properties": {
         "clear": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "delete exactly what this transfer captured once the target has it (see Clear)"
+        },
+        "memories": {
+          "$ref": "#/definitions/v1MemorySelection",
+          "title": "optional: transfer only these memories and their events, rather than the whole store"
         }
       },
       "description": "Transfer streams every event and memory directly to a centralised instance's ImportBatch RPC\n(address from transfer.targetAddress); like Export it records a manifest, and with clear set\ndeletes the captured records once the target has accepted them all."

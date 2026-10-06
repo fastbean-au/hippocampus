@@ -1696,6 +1696,13 @@ func (d *DB) memoryFilterConditions(filter MemoryFilter) (string, []any) {
 		}
 	}
 
+	// A keyset cursor over id, for a walk of a filtered set in id order (MemoryIdsMatching sorts by
+	// id). The ids compare byte-for-byte on all three dialects, so the cursor and the sort agree.
+	if filter.IdAfter != "" {
+		query += ` AND id > ?`
+		args = append(args, filter.IdAfter)
+	}
+
 	// One event's memories, the paged counterpart to GetMemoriesForEvent. Empty is no restriction,
 	// so HasEvent beside it is what asks for the event-less - an empty event_id is both the stored
 	// value for those and this field's "no bound".

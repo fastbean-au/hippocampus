@@ -189,7 +189,7 @@ func (s *Server) runScheduledExport(ctx context.Context, now time.Time) error {
 
 	key := s.scheduledExportPrefix() + now.UTC().Format(scheduledExportKeyTime) + ".archive.gz"
 
-	result, err := s.exportArchive(ctx, key, true)
+	result, err := s.exportArchive(ctx, key, true, nil)
 	if err != nil {
 		span.RecordError(err)
 

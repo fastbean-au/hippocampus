@@ -218,6 +218,14 @@ call. Pass `timeout` to the constructor to change it globally, or to any method 
 client.export(timeout=600)
 ```
 
+`export` and `transfer` take an optional `selection` to move part of the store. Build it with
+`Hippocampus.memory_selection`, whose keywords are `get_memories`' selecting ones, so the listing
+with the same arguments is the dry run:
+
+```python
+client.export(selection=Hippocampus.memory_selection(group="acme"), timeout=600)
+```
+
 ## Versioning
 
 The package version **is** the service release it was built from: `hippocampus-client==0.43.0` is

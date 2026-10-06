@@ -658,7 +658,7 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 	})
 
 	t.Run("the store walk is narrowed to the caller's partition", func(t *testing.T) {
-		manifest, events, memories, err := s.walkStore(ctx, noopEvents, noopMemories)
+		manifest, events, memories, err := s.walkStore(ctx, nil, noopEvents, noopMemories)
 		if err != nil {
 			t.Fatalf("walkStore: %s", err)
 		}
@@ -681,7 +681,7 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 	})
 
 	t.Run("an unscoped caller still walks the whole store", func(t *testing.T) {
-		_, events, memories, err := s.walkStore(context.Background(), noopEvents, noopMemories)
+		_, events, memories, err := s.walkStore(context.Background(), nil, noopEvents, noopMemories)
 		if err != nil {
 			t.Fatalf("walkStore: %s", err)
 		}

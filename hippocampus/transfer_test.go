@@ -926,14 +926,14 @@ func TestWalkStore_PageReadErrorsPropagate(t *testing.T) {
 	eventsErr := errors.New("events page boom")
 	s := &Server{db: failEventsPageStore{Store: database, err: eventsErr}, transfer: Transfer{batchSize: 2}}
 
-	if _, _, _, err := s.walkStore(context.Background(), noop, noopMem); !errors.Is(err, eventsErr) {
+	if _, _, _, err := s.walkStore(context.Background(), nil, noop, noopMem); !errors.Is(err, eventsErr) {
 		t.Errorf("expected the GetEventsPage failure to propagate, got %v", err)
 	}
 
 	memoriesErr := errors.New("memories page boom")
 	s2 := &Server{db: failMemoriesPageStore{Store: database, err: memoriesErr}, transfer: Transfer{batchSize: 2}}
 
-	if _, _, _, err := s2.walkStore(context.Background(), noop, noopMem); !errors.Is(err, memoriesErr) {
+	if _, _, _, err := s2.walkStore(context.Background(), nil, noop, noopMem); !errors.Is(err, memoriesErr) {
 		t.Errorf("expected the GetMemoriesPage failure to propagate, got %v", err)
 	}
 }
@@ -946,7 +946,7 @@ func TestWalkStore_CallbackErrorsPropagate(t *testing.T) {
 
 	eventsErr := errors.New("onEvents boom")
 
-	if _, _, _, err := s.walkStore(context.Background(),
+	if _, _, _, err := s.walkStore(context.Background(), nil,
 		func(_ []types.Event) error { return eventsErr },
 		func(_ []types.Memory) error { return nil },
 	); !errors.Is(err, eventsErr) {
@@ -955,7 +955,7 @@ func TestWalkStore_CallbackErrorsPropagate(t *testing.T) {
 
 	memoriesErr := errors.New("onMemories boom")
 
-	if _, _, _, err := s.walkStore(context.Background(),
+	if _, _, _, err := s.walkStore(context.Background(), nil,
 		func(_ []types.Event) error { return nil },
 		func(_ []types.Memory) error { return memoriesErr },
 	); !errors.Is(err, memoriesErr) {
@@ -987,7 +987,7 @@ func TestWalkStore_InWalkManifestCapTrips(t *testing.T) {
 	noop := func(_ []types.Event) error { return nil }
 	noopMem := func(_ []types.Memory) error { return nil }
 
-	_, _, _, err := s.walkStore(context.Background(), noop, noopMem)
+	_, _, _, err := s.walkStore(context.Background(), nil, noop, noopMem)
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition from the in-walk cap check, got %v", err)
 	}
@@ -1006,7 +1006,7 @@ func TestWalkStore_InWalkManifestCapTripsDuringMemoriesPass(t *testing.T) {
 	noop := func(_ []types.Event) error { return nil }
 	noopMem := func(_ []types.Memory) error { return nil }
 
-	_, _, _, err := s.walkStore(context.Background(), noop, noopMem)
+	_, _, _, err := s.walkStore(context.Background(), nil, noop, noopMem)
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition from the in-walk cap check during the memories pass, got %v", err)
 	}

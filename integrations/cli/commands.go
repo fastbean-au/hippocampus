@@ -363,10 +363,11 @@ func commands() map[string]command {
 			run: runSummarise,
 		},
 		"export": {
-			summary: "snapshot the store into an archive object",
-			hint:    "[--clear]",
+			summary: "snapshot the store, or a selection of it, into an archive object",
+			hint:    "[--clear] [--group G] [--metadata k=v] [--significance-max N]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.Bool("clear", false, "delete the captured records after a successful upload")
+				memorySelectionFlags(fs)
 			},
 			run: runExport,
 		},
@@ -385,10 +386,11 @@ func commands() map[string]command {
 			run: runImportBatch,
 		},
 		"transfer": {
-			summary: "stream the whole store into a centralised instance",
-			hint:    "[--clear]",
+			summary: "stream the store, or a selection of it, into a centralised instance",
+			hint:    "[--clear] [--group G] [--metadata k=v] [--significance-max N]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.Bool("clear", false, "delete the captured records once the target has accepted them")
+				memorySelectionFlags(fs)
 			},
 			run: runTransfer,
 		},
@@ -502,6 +504,15 @@ func memoryFilterFlags(fs *pflag.FlagSet) {
 // offer a --limit that looks like a bound on the deletion and is not one.
 func memoryDeleteFilterFlags(fs *pflag.FlagSet) {
 	fs.Bool("yes", false, "confirm the irreversible deletion")
+	memorySelectionFlags(fs)
+	fs.Int64("max-deletions", 0, "stop after deleting this many memories (0 = no bound)")
+	fs.Bool("delete-empty-events", false, "also delete each event the deletion leaves with no memories")
+}
+
+// memorySelectionFlags are the predicate a deletion, an export and a transfer all select memories
+// by - the contract's MemorySelection, and the listing's filters minus everything that only shapes
+// a page - so 'hippo memory list' with the same flags is the dry run of each.
+func memorySelectionFlags(fs *pflag.FlagSet) {
 	fs.String("timestamp-min", "", "inclusive lower bound on time_stamp (RFC3339)")
 	fs.String("timestamp-max", "", "inclusive upper bound on time_stamp (RFC3339)")
 	fs.Int32("significance-min", 0, "inclusive lower bound on significance (0 = no bound)")
@@ -518,8 +529,6 @@ func memoryDeleteFilterFlags(fs *pflag.FlagSet) {
 	fs.String("recalled-before", "", "inclusive upper bound on time_recalled (RFC3339); never-recalled memories are excluded")
 	fs.String("event", "", "restrict to one event's memories")
 	fs.String("has-event", "", "'true' for memories associated with an event, 'false' for those with none")
-	fs.Int64("max-deletions", 0, "stop after deleting this many memories (0 = no bound)")
-	fs.Bool("delete-empty-events", false, "also delete each event the deletion leaves with no memories")
 }
 
 func eventDeleteFilterFlags(fs *pflag.FlagSet) {
@@ -929,52 +938,88 @@ func runMemoryDeleteByFilter(ctx context.Context, client contract.HippocampusCli
 		return fmt.Errorf("deleting by filter is irreversible; run 'hippo memory list' with the same filters to see what matches, then re-run with --yes")
 	}
 
-	tsMin, err := parseTime(fs, "timestamp-min")
-	if err != nil {
-		return err
-	}
-
-	tsMax, err := parseTime(fs, "timestamp-max")
-	if err != nil {
-		return err
-	}
-
-	ext, err := extremumFromFlags(fs)
-	if err != nil {
-		return err
-	}
-
-	recalledAfter, err := parseTime(fs, "recalled-after")
-	if err != nil {
-		return err
-	}
-
-	recalledBefore, err := parseTime(fs, "recalled-before")
-	if err != nil {
-		return err
-	}
-
-	recalled, err := triStateFromFlag(fs, "recalled")
-	if err != nil {
-		return err
-	}
-
-	isSummary, err := triStateFromFlag(fs, "summary")
-	if err != nil {
-		return err
-	}
-
-	isBinary, err := triStateFromFlag(fs, "binary")
-	if err != nil {
-		return err
-	}
-
-	hasEvent, err := triStateFromFlag(fs, "has-event")
+	sel, err := memorySelectionFromFlags(fs)
 	if err != nil {
 		return err
 	}
 
 	resp, err := client.DeleteMemoriesByFilter(ctx, &contract.DeleteMemoriesByFilterRequest{
+		TimestampMin:         sel.GetTimestampMin(),
+		TimestampMax:         sel.GetTimestampMax(),
+		SignificanceMin:      sel.GetSignificanceMin(),
+		SignificanceMax:      sel.GetSignificanceMax(),
+		Group:                sel.GetGroup(),
+		SignificanceExtremum: sel.GetSignificanceExtremum(),
+		Metadata:             sel.GetMetadata(),
+		Recalled:             sel.GetRecalled(),
+		RecallCountMin:       sel.GetRecallCountMin(),
+		RecallCountMax:       sel.GetRecallCountMax(),
+		TimeRecalledMin:      sel.GetTimeRecalledMin(),
+		TimeRecalledMax:      sel.GetTimeRecalledMax(),
+		IsSummary:            sel.GetIsSummary(),
+		IsBinary:             sel.GetIsBinary(),
+		EventId:              sel.GetEventId(),
+		HasEvent:             sel.GetHasEvent(),
+		MaxDeletions:         i64(fs, "max-deletions"),
+		DeleteEmptyEvents:    b(fs, "delete-empty-events"),
+	})
+	if err != nil {
+		return err
+	}
+
+	return r.render(resp)
+}
+
+// memorySelectionFromFlags reads memorySelectionFlags into the contract's MemorySelection. Nothing
+// set yields an empty selection, which an export or transfer reads as the whole store and a
+// deletion refuses.
+func memorySelectionFromFlags(fs *pflag.FlagSet) (*contract.MemorySelection, error) {
+	tsMin, err := parseTime(fs, "timestamp-min")
+	if err != nil {
+		return nil, err
+	}
+
+	tsMax, err := parseTime(fs, "timestamp-max")
+	if err != nil {
+		return nil, err
+	}
+
+	ext, err := extremumFromFlags(fs)
+	if err != nil {
+		return nil, err
+	}
+
+	recalledAfter, err := parseTime(fs, "recalled-after")
+	if err != nil {
+		return nil, err
+	}
+
+	recalledBefore, err := parseTime(fs, "recalled-before")
+	if err != nil {
+		return nil, err
+	}
+
+	recalled, err := triStateFromFlag(fs, "recalled")
+	if err != nil {
+		return nil, err
+	}
+
+	isSummary, err := triStateFromFlag(fs, "summary")
+	if err != nil {
+		return nil, err
+	}
+
+	isBinary, err := triStateFromFlag(fs, "binary")
+	if err != nil {
+		return nil, err
+	}
+
+	hasEvent, err := triStateFromFlag(fs, "has-event")
+	if err != nil {
+		return nil, err
+	}
+
+	return &contract.MemorySelection{
 		TimestampMin:         tsMin,
 		TimestampMax:         tsMax,
 		SignificanceMin:      i32(fs, "significance-min"),
@@ -991,14 +1036,7 @@ func runMemoryDeleteByFilter(ctx context.Context, client contract.HippocampusCli
 		IsBinary:             isBinary,
 		EventId:              str(fs, "event"),
 		HasEvent:             hasEvent,
-		MaxDeletions:         i64(fs, "max-deletions"),
-		DeleteEmptyEvents:    b(fs, "delete-empty-events"),
-	})
-	if err != nil {
-		return err
-	}
-
-	return r.render(resp)
+	}, nil
 }
 
 // runEventDeleteByFilter is the events' half; `hippo event list` with the same filters is its dry
@@ -1665,7 +1703,12 @@ func runSummarise(ctx context.Context, client contract.HippocampusClient, fs *pf
 }
 
 func runExport(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
-	resp, err := client.Export(ctx, &contract.ExportRequest{Clear: b(fs, "clear")})
+	sel, err := memorySelectionFromFlags(fs)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Export(ctx, &contract.ExportRequest{Clear: b(fs, "clear"), Memories: sel})
 	if err != nil {
 		return err
 	}
@@ -1712,7 +1755,12 @@ func runImportBatch(ctx context.Context, client contract.HippocampusClient, fs *
 }
 
 func runTransfer(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {
-	resp, err := client.Transfer(ctx, &contract.TransferRequest{Clear: b(fs, "clear")})
+	sel, err := memorySelectionFromFlags(fs)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Transfer(ctx, &contract.TransferRequest{Clear: b(fs, "clear"), Memories: sel})
 	if err != nil {
 		return err
 	}

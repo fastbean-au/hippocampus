@@ -140,6 +140,48 @@ def test_a_predicate_delete_encodes_the_same_filter_as_the_listing(client, servi
         assert getattr(listed, field) == getattr(deleted, field), field
 
 
+def test_an_export_selection_encodes_the_same_filter_as_the_listing(client, service):
+    """A selected export's dry run is the listing, exactly as a predicate delete's is."""
+
+    kwargs = dict(
+        group="acme",
+        metadata={"source": "slack"},
+        recalled=False,
+        is_summary=True,
+        binary=False,
+        significance_max=20,
+        recall_count_max=3,
+    )
+
+    client.get_memories(**kwargs)
+    client.export(clear=True, selection=Hippocampus.memory_selection(**kwargs))
+    client.transfer(selection=Hippocampus.memory_selection(group="acme"))
+
+    listed = service.requests["GetMemories"]
+    exported = service.requests["Export"]
+
+    assert exported.clear is True
+
+    for field in (
+        "group",
+        "metadata",
+        "recalled",
+        "is_summary",
+        "is_binary",
+        "significance_max",
+        "recall_count_max",
+    ):
+        assert getattr(listed, field) == getattr(exported.memories, field), field
+
+    assert service.requests["Transfer"].memories.group == "acme"
+
+
+def test_an_unselected_export_sends_no_selection(client, service):
+    client.export()
+
+    assert not service.requests["Export"].HasField("memories")
+
+
 def test_a_predicate_delete_sends_its_own_two_flags(client, service):
     client.delete_memories_by_filter(group="g", max_deletions=10, delete_empty_events=True)
     client.delete_events_by_filter(group="g", max_deletions=5, delete_memories=True)

@@ -459,6 +459,10 @@ type MemoryFilter struct {
 	TimeRecalledMin int64
 	TimeRecalledMax int64
 
+	// IdAfter, when set, selects only ids sorting after it: the keyset cursor a selected Export or
+	// Transfer walks a filtered set with (TODO-3 item 159). Empty means no restriction.
+	IdAfter string
+
 	// SignificanceEquals, when non-nil, selects exactly one significance - including 0, the unranked
 	// tier, which SignificanceMin/SignificanceMax cannot ask for since they read 0 as "no bound". It
 	// exists for a deletion by significance_extremum: the extremum is a sub-select over the store as
@@ -499,6 +503,10 @@ type EventFilter struct {
 	// for the same caller: the linked-to filter resolves an event's neighbours and passes them here
 	// so traversal composes with the other filters and with pagination. Empty means unrestricted.
 	Ids []string
+
+	// IdAfter is MemoryFilter.IdAfter for events: the keyset cursor a selected Export or Transfer
+	// pages a group's events with (TODO-3 item 159). Empty means no restriction.
+	IdAfter string
 
 	// SignificanceEquals selects exactly one significance, as MemoryFilter.SignificanceEquals does
 	// for memories and for the same deletion loop.
