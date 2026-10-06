@@ -180,7 +180,7 @@ from it, or from the proto.
 ```json
 "gateway": {
     "port": 8080,
-    "maxRequestBytes": 0,
+    "maxRequestBytes": 8388608,
     "openapi": {
         "enabled": true
     },
@@ -188,11 +188,16 @@ from it, or from the proto.
 }
 ```
 
-`gateway.maxRequestBytes` caps the size of a request body the gateway will read (0, the default,
-leaves it unbounded). It is off by default because a legitimate `ImportBatch`/`Transfer` body can be
-large; set a ceiling when the gateway is reachable by untrusted callers, so an oversized body is
-rejected by the transport (with `413`) before a handler buffers it. The native gRPC transport
-already bounds a request at its 4 MiB default. TLS pins a **TLS 1.2 floor** on both listeners (see
+`gateway.maxRequestBytes` caps the size of a request body the gateway will read. A larger body is
+answered `413` before a handler buffers it: at once when the body declares its length, and as soon
+as the read overflows when it is chunked. **Left unset, it is derived** from the gRPC transport's
+own limit: twice `maxRecvMsgBytes`, or twice grpc-go's 4 MiB (8 MiB) when that is 0. That way a
+request is bounded on both transports. The cap is doubled because JSON carries every field name on
+every record, so it runs larger than the protobuf encoding of the same request. Set it explicitly to
+choose another ceiling, or to **0 for unbounded**, which was the previous default. Raise
+`maxRecvMsgBytes` to raise both limits together. The gateway also bounds how long reading a whole
+request may take (two minutes, beyond the 10-second header deadline), so a caller cannot hold a
+connection open by trickling a body. TLS pins a **TLS 1.2 floor** on both listeners (see
 [TLS](#tls)).
 
 #### The OpenAPI document

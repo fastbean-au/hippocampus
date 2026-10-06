@@ -114,6 +114,18 @@ itself which service version it was built against.
 
 ### Changed
 
+- **The HTTP gateway bounds request bodies by default.** `gateway.maxRequestBytes` was opt-in, so
+  any caller could stream a body of any size into the gateway, while the same request over gRPC
+  stopped at 4 MiB. Left unset, it is now derived from the gRPC transport's own limit: twice
+  `maxRecvMsgBytes`, or 8 MiB at grpc-go's default. The cap is doubled because JSON runs larger than
+  protobuf. An explicit `0` still means unbounded. Reading a whole request is now bounded at two
+  minutes (a `ReadTimeout` beside the existing header deadline), so a trickled body cannot hold a
+  connection open. An oversized body is answered `413`, as the docs always said; it had been
+  answered `400`, because the gateway turns a failed body read into InvalidArgument. **Upgrading:**
+  a gateway client sending bodies over 8 MiB (a large `ImportBatch` file through
+  `hippo --transport http import-batch`) needs `gateway.maxRequestBytes` raised, or `0`, or the gRPC
+  transport. The config wizard writes the derived value out explicitly.
+
 - **A release is dispatched only to the satellites it changes something for.** `notify-satellites`
   now asks `scripts/family-status.py --dispatch-targets` which satellites' consumed paths (a new
   per-repository `SURFACE` table: the OpenAPI document, `contract/`, `types/`, the Python client)

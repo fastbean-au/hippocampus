@@ -592,9 +592,13 @@ const STEPS = [
             key: "gateway.maxRequestBytes",
             label: "Max HTTP request body (bytes)",
             type: "int",
-            def: 0,
+            def: (s) => 2 * (value(s, "maxRecvMsgBytes") > 0 ? value(s, "maxRecvMsgBytes") : 4194304),
+            // Always written out. Absent, the service DERIVES this from maxRecvMsgBytes rather than
+            // reading it as a literal, and an explicit 0 means unbounded - so there is no single value
+            // whose omission means the same thing.
+            always: true,
             when: (s) => value(s, "gateway.port") > 0,
-            help: "0 leaves it unbounded, since a legitimate ImportBatch body can be large. Set a ceiling when the gateway is reachable by untrusted callers.",
+            help: "Suggested at twice the gRPC receive limit, which is what the service derives when this is absent: JSON carries every field name on every record, so it runs larger than the protobuf encoding of the same request. A larger body is answered 413. 0 leaves it unbounded.",
           },
           {
             key: "listing.countCacheSeconds",

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -1595,11 +1596,16 @@ func run(ctx context.Context, version versionInfo) error {
 			handler = rateLimitArrivalMiddleware(limiter, handler)
 		}
 
-		// Cap the request body the gateway will read when configured (0, the default, leaves it
-		// unbounded). Outermost so an oversized body is rejected before auth or any handler buffers
-		// it. Off by default because a legitimate ImportBatch/Transfer body can be large; operators
-		// exposing the gateway to untrusted callers should set a ceiling.
-		if maxRequestBytes := viper.GetInt64("gateway.maxRequestBytes"); maxRequestBytes > 0 {
+		// Cap the request body the gateway will read. Outermost so an oversized body is rejected
+		// before auth or any handler buffers it. Unset, the cap follows the gRPC transport's own
+		// (gatewayBodyLimit); an explicit 0 is the deliberate "unbounded".
+		maxRequestBytes := gatewayBodyLimit(
+			viper.IsSet("gateway.maxRequestBytes"),
+			viper.GetInt64("gateway.maxRequestBytes"),
+			viper.GetInt("maxRecvMsgBytes"),
+		)
+
+		if maxRequestBytes > 0 {
 			handler = maxRequestBytesMiddleware(handler, maxRequestBytes)
 		}
 
@@ -2148,14 +2154,42 @@ func resolveMintKey(cfg auth.HMACConfig) (string, string) {
 	return "", kid
 }
 
-// Gateway HTTP server hardening timeouts. ReadHeaderTimeout bounds slow-header (slowloris) clients
-// and IdleTimeout bounds idle keep-alive connections; both are safe to set unconditionally. There
-// is deliberately no WriteTimeout - Export/Import/Transfer responses can legitimately run long, and
-// a write deadline would abort them mid-stream.
+// Gateway HTTP server hardening timeouts. ReadHeaderTimeout bounds slow-header (slowloris) clients,
+// ReadTimeout bounds reading the whole request including its body (the same attack one step later:
+// a header sent promptly and a body trickled), and IdleTimeout bounds idle keep-alive connections.
+// ReadTimeout is generous because it is a ceiling on the slowest legitimate client, not a target:
+// a body at the default cap fits inside it at well under 100 KB/s. There is deliberately no
+// WriteTimeout - Export/Import/Transfer responses can legitimately run long, and a write deadline
+// would abort them mid-stream.
 const (
 	gatewayReadHeaderTimeout = 10 * time.Second
+	gatewayReadTimeout       = 2 * time.Minute
 	gatewayIdleTimeout       = 120 * time.Second
 )
+
+// grpcDefaultMaxRecvMsgBytes is grpc-go's own receive limit, which applies when maxRecvMsgBytes is
+// left at 0.
+const grpcDefaultMaxRecvMsgBytes = 4 << 20
+
+// gatewayBodyLimit resolves the gateway's request-body ceiling (TODO-3 item 161). An explicit
+// gateway.maxRequestBytes wins, and an explicit value of 0 or less is the deliberate "unbounded".
+// Unset, the ceiling follows the gRPC transport's effective receive limit, so one request is bounded
+// alike on both transports - doubled, because the gateway reads JSON, which carries every field name
+// on every record and so runs larger than the protobuf encoding of the same request. Equal limits
+// would refuse over HTTP a batch the gRPC transport accepts.
+func gatewayBodyLimit(set bool, configured int64, maxRecvMsgBytes int) int64 {
+	if set {
+		return max(configured, 0)
+	}
+
+	grpcLimit := int64(grpcDefaultMaxRecvMsgBytes)
+
+	if maxRecvMsgBytes > 0 {
+		grpcLimit = int64(maxRecvMsgBytes)
+	}
+
+	return 2 * grpcLimit
+}
 
 // gatewayMuxOptions returns the ServeMux options every gateway wiring needs, whatever the
 // configuration adds on top (the authoriser and the rate limiter are appended by the caller when
@@ -2194,6 +2228,7 @@ func newGatewayServer(bindAddress string, port int, handler http.Handler) *http.
 		Addr:              bindAddress + ":" + strconv.Itoa(port),
 		Handler:           handler,
 		ReadHeaderTimeout: gatewayReadHeaderTimeout,
+		ReadTimeout:       gatewayReadTimeout,
 		IdleTimeout:       gatewayIdleTimeout,
 	}
 }
@@ -2282,17 +2317,71 @@ func loadServerTLS(certFile string, keyFile string, clientCAFile string, require
 }
 
 // maxRequestBytesMiddleware caps the request body the gateway will read, so an oversized (or
-// deliberately huge) body is rejected by the transport before a handler buffers it into memory. A
-// body that exceeds maxBytes fails the handler's read with a 413. GET requests (health, list) carry
-// no body and are unaffected.
+// deliberately huge) body is rejected by the transport before a handler buffers it into memory. GET
+// requests (health, list) carry no body and are unaffected.
+//
+// An oversized body is answered 413, which takes two routes because the gateway turns any failed
+// body read into InvalidArgument and so would answer 400 - telling the client its request was
+// malformed rather than too large (TODO-3 item 161). A body declaring its length is refused before
+// the handler runs at all; one that does not (chunked) is refused when the read overflows, by
+// replacing the status the handler then writes.
 func maxRequestBytesMiddleware(next http.Handler, maxBytes int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		if r.Body == nil || r.Body == http.NoBody {
+			next.ServeHTTP(w, r)
+
+			return
 		}
 
-		next.ServeHTTP(w, r)
+		if r.ContentLength > maxBytes {
+			http.Error(w, fmt.Sprintf("request body exceeds the %d-byte limit", maxBytes), http.StatusRequestEntityTooLarge)
+
+			return
+		}
+
+		limited := &overflowRecorder{ResponseWriter: w}
+		r.Body = &overflowReader{ReadCloser: http.MaxBytesReader(w, r.Body, maxBytes), overflowed: &limited.overflowed}
+
+		next.ServeHTTP(limited, r)
 	})
+}
+
+// overflowReader notes when the body read has hit the limit, for overflowRecorder to act on.
+type overflowReader struct {
+	io.ReadCloser
+	overflowed *bool
+}
+
+func (o *overflowReader) Read(p []byte) (int, error) {
+	n, err := o.ReadCloser.Read(p)
+
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		*o.overflowed = true
+	}
+
+	return n, err
+}
+
+// overflowRecorder answers 413 in place of whatever error status the handler writes once the body
+// has overflowed. The read and the write happen on the handler's goroutine, so the flag needs no
+// lock.
+type overflowRecorder struct {
+	http.ResponseWriter
+	overflowed bool
+}
+
+func (o *overflowRecorder) WriteHeader(code int) {
+	if o.overflowed && code >= http.StatusBadRequest {
+		code = http.StatusRequestEntityTooLarge
+	}
+
+	o.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer's flusher and deadlines.
+func (o *overflowRecorder) Unwrap() http.ResponseWriter {
+	return o.ResponseWriter
 }
 
 // configureEnvOverrides wires viper to read environment variables so any config key can be

@@ -19,7 +19,7 @@ can leave the process, and what the service deliberately does not do. The exhaus
 | Group scoping         | [`auth.requireGroupScope`](configuration.md#group-scoping) | off                   | Several teams or systems share one store.                                                                            |
 | TLS                   | [`tls.enabled`](configuration.md#tls)                      | off                   | Always, unless a proxy or mesh terminates it for you.                                                                |
 | Rate limiting         | [`rateLimit.enabled`](configuration.md#rate-limiting)      | off                   | Any caller you do not control. Set at least a global ceiling.                                                        |
-| Gateway body cap      | `gateway.maxRequestBytes`                                  | unset                 | The HTTP gateway is reachable by untrusted callers.                                                                  |
+| Gateway body cap      | `gateway.maxRequestBytes`                                  | 2× gRPC's limit       | Lower it when the gateway is reachable by untrusted callers and no legitimate body is that large.                    |
 | gRPC stream/keepalive | `maxConcurrentStreams`, `keepalive.*`                      | grpc-go's             | The gRPC port is exposed beyond trusted callers.                                                                     |
 | Listener binding      | `bindAddress`, `gateway.bindAddress`                       | all                   | A sidecar or mesh fronts the service — bind loopback only.                                                           |
 | Server reflection     | [`reflection.enabled`](configuration.md#server-reflection) | follows `auth.method` | Already handled: on without auth, off with it. Set it off explicitly if an unauthenticated port is reachable at all. |
@@ -214,9 +214,11 @@ direction, and is worth setting explicitly on an unauthenticated instance whose 
 reachable beyond localhost.
 
 **Body-size limits on an exposed gateway.** `memory.limit.sizeBytes` caps a memory body; left unset
-there is no cap. The native gRPC transport bounds a whole request at its 4 MiB default, but the HTTP
-gateway does not by default — set `gateway.maxRequestBytes` when the gateway is reachable by
-untrusted callers, keeping the ceiling above your largest legitimate `ImportBatch`/`Transfer` body.
+there is no cap. The native gRPC transport bounds a whole request at its 4 MiB default, and the
+HTTP gateway follows it at twice that (JSON runs larger than protobuf) unless
+`gateway.maxRequestBytes` says otherwise. An explicit `0` makes the gateway unbounded again, so do
+not set that on a gateway untrusted callers can reach. Reading a whole request is bounded at two
+minutes, so a trickled body cannot hold a connection open.
 
 ## The web console (`/ui`)
 
@@ -368,7 +370,8 @@ For anything beyond localhost, in the order they matter:
 2. **`tls.enabled`**, or terminate TLS upstream and bind both listeners to `127.0.0.1`.
 3. **Role tiers per client** — `reader` for consumers, `admin` only for operators.
 4. **`rateLimit.enabled`** with at least a global ceiling.
-5. **`gateway.maxRequestBytes`** and `memory.limit.sizeBytes` if the gateway is exposed.
+5. **`memory.limit.sizeBytes`**, and `gateway.maxRequestBytes` lowered from its derived default, if
+   the gateway is exposed.
 6. **`maxConcurrentStreams` and a keepalive policy** if gRPC is exposed.
 7. **Group scoping** (with `auth.requireGroupScope`) if several parties share the store — having read
    [the trust boundary](#group-scoping-and-the-trust-boundary) above.

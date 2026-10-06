@@ -337,9 +337,11 @@ func TestMaxRequestBytesMiddleware(t *testing.T) {
 		t.Errorf("expected a body within the limit to read cleanly, got: %s", readErr)
 	}
 
-	// Over the limit: the read fails.
+	// Over the limit, with no declared length (a declared one is refused before the handler runs):
+	// the read fails.
 	readErr = nil
-	req = httptest.NewRequest(http.MethodPost, "/v1/memories", strings.NewReader(strings.Repeat("a", limit+1)))
+	req = httptest.NewRequest(http.MethodPost, "/v1/memories", io.NopCloser(strings.NewReader(strings.Repeat("a", limit+1))))
+	req.ContentLength = -1
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
 	if readErr == nil {
