@@ -82,7 +82,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   podman) with the provisioned dashboard and ships metrics/traces to it (Grafana on `:3000`); set
   `OBSERVABILITY=0` to skip it. The env overrides are exported by `run.sh`, not baked into
   `demo/config.json`
-- Docker: `docker compose up --build` (SQLite), `docker compose -f deploy/compose/docker-compose.postgres.yaml
+- Docker: every compose file publishes its ports on `${PUBLISH_ADDRESS:-127.0.0.1}` (loopback unless
+  that is set; `compose_ports_test.go` refuses a bare `"N:N"`, since published ports bypass a host
+  firewall - TODO-3 item 168). `docker compose up --build` (SQLite), `docker compose -f deploy/compose/docker-compose.postgres.yaml
 up --build` (PostgreSQL), `docker compose -f deploy/compose/docker-compose.mysql.yaml up --build` (MySQL), or
   `docker compose -f deploy/compose/docker-compose.opensearch.yaml up --build` (SQLite + OpenSearch content
   search, security disabled — demo only) or `docker compose -f

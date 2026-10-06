@@ -656,6 +656,17 @@ func redactEndpoint(raw string) string {
 	return redactBareAddress(address)
 }
 
+// webScheme reports whether a scheme is http or https, whose path redaction drops.
+func webScheme(scheme string) bool {
+	return strings.EqualFold(scheme, "http") || strings.EqualFold(scheme, "https")
+}
+
+// RedactEndpoint is redactEndpoint for the startup log lines in main, which name the same addresses
+// the topology view does and must not carry what it strips.
+func RedactEndpoint(raw string) string {
+	return redactEndpoint(raw)
+}
+
 // redactURL keeps the scheme, host and path and discards everything else - userinfo, query and
 // fragment - by building a new URL from only those three.
 func redactURL(address string) string {
@@ -667,6 +678,15 @@ func redactURL(address string) string {
 	}
 
 	clean := url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: parsed.Path}
+
+	// An http(s) address keeps no path. A webhook's secret is routinely its path (a Slack or Teams
+	// incoming hook is nothing but one), and nothing an operator reads off this view needs it - the
+	// host says which receiver. A database URL keeps its path, which is the database name and is the
+	// most useful thing it carries (TODO-3 item 168).
+	if webScheme(parsed.Scheme) {
+		clean.Path = ""
+	}
+
 	out := strings.TrimSuffix(clean.String(), "/")
 
 	// A password that is not percent-encoded can parse "successfully" into the wrong part: a "/" in
@@ -777,6 +797,13 @@ func redactBareAddress(address string) string {
 
 	if at := strings.LastIndex(rest, "@"); at >= 0 {
 		rest = rest[at+1:]
+	}
+
+	// The same rule as redactURL's, for an http(s) address that did not parse.
+	if webScheme(strings.TrimSuffix(prefix, "://")) {
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			rest = rest[:slash]
+		}
 	}
 
 	if question := strings.Index(rest, "?"); question >= 0 {

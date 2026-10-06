@@ -381,3 +381,24 @@ func manyKeys(n int) string {
 
 	return "[" + strings.Join(keys, ",") + "]"
 }
+
+// TestProxyModeServesObjectsInert (TODO-3 item 168): in proxy mode the gateway's origin serves
+// whatever content type the bucket holds - an HTML or SVG object a producer wrote, or one an attacker
+// with write access to the bucket did - so a browser must neither sniff a type into something
+// executable nor run what it is given with the gateway's origin.
+func TestProxyModeServesObjectsInert(t *testing.T) {
+	gw, _, _ := newGateway(t, Config{Mode: ModeProxy})
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		recorder := httptest.NewRecorder()
+		gw.Handler().ServeHTTP(recorder, httptest.NewRequest(method, "/o/traces/one.json", nil))
+
+		if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", method, got)
+		}
+
+		if got := recorder.Header().Get("Content-Security-Policy"); got != "sandbox" {
+			t.Errorf("%s: Content-Security-Policy = %q, want sandbox", method, got)
+		}
+	}
+}

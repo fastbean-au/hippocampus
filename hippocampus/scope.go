@@ -39,6 +39,16 @@ import (
 // another group raises this one's effective significance even though its other end can never be
 // read. Recomputing that per-scope would mean joining the link tables in the consolidation scans,
 // which is precisely what denormalising it exists to avoid. See the decision record at TODO 60.1.
+//
+// And one fact crosses it: an id's existence. Ids are one store-wide namespace, so a scoped writer
+// whose StoreMemory, StoreMemories or StoreEvent names an id another group already holds is answered
+// AlreadyExists - which confirms the id is taken, though nothing about the record behind it (TODO-3
+// item 168). It cannot be answered otherwise without letting two groups hold one id, which every
+// table's primary key and every link, search document and callback keyed on it rules out. Writes
+// that would REPLACE a row are the other matter: Import and ImportBatch check the row an id already
+// names (scopeImport) and refuse to overwrite another group's. A deployment for which a guessable id
+// confirming its existence matters should have clients choose unguessable ids (a UUID, which
+// StoreMemory supplies when none is given), or run one instance per tenant.
 
 // scopeMode is how one RPC honours the caller's group scope.
 type scopeMode int

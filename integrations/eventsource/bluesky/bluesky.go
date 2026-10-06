@@ -1084,12 +1084,29 @@ func (b *Bridge) storePost(ctx context.Context, msg bridge.Message, root string)
 }
 
 // reinforce buffers one engagement, when recall is enabled and there is something to reinforce.
+//
+// Only a post's at:// URI is reinforced (TODO-3 item 168). A like's or reply's subject is whatever
+// its author wrote, on an open network, and this bridge holds an unscoped writer token - so
+// recalling any subject let anyone on Bluesky keep alive any id they could guess in the store,
+// whatever had written it. A post URI is the only shape a memory this bridge writes can have.
 func (b *Bridge) reinforce(ctx context.Context, id string) error {
-	if b.recall == nil || id == "" {
+	if b.recall == nil || !isPostURI(id) {
 		return nil
 	}
 
 	return b.recall.Add(ctx, id)
+}
+
+// isPostURI reports whether id is exactly at://<authority>/app.bsky.feed.post/<rkey>.
+func isPostURI(id string) bool {
+	rest, ok := strings.CutPrefix(id, "at://")
+	if !ok {
+		return false
+	}
+
+	parts := strings.Split(rest, "/")
+
+	return len(parts) == 3 && parts[0] != "" && parts[1] == CollectionPost && parts[2] != ""
 }
 
 // threadEvent is the event a top-level post opens.

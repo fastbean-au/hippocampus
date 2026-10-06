@@ -798,10 +798,13 @@ working never fires the server-error alert.
 **Who is "a caller"** is the authenticated `client_id`, falling back to the token's `sub` and then to
 the caller's address. With authentication off the address is all there is, which is per-host rather
 than per-application — usable, but the reason per-client limits pair naturally with tokens.
-`rateLimit.trustForwardedFor` makes the fallback read the leftmost `X-Forwarded-For` entry instead
+`rateLimit.trustForwardedFor` makes the fallback read the rightmost `X-Forwarded-For` entry instead
 of the connection's address, and is **off by default on purpose**: the header is caller-supplied, so
 believing it on a directly reachable listener lets any caller mint itself an unlimited number of
-buckets. Turn it on only behind a proxy that overwrites the header.
+buckets. Turn it on only when every request arrives through a proxy that writes the header, whether
+it overwrites it or appends to it. The rightmost entry is the one that proxy wrote; anything to its
+left came from the client. Behind a chain of proxies, the rightmost entry is the previous proxy, so
+the chain is limited as one caller unless the outermost proxy overwrites the header.
 
 `rateLimit.maxClients` (0 → 10000) and `rateLimit.clientIdleSeconds` (0 → 300) bound the per-client
 bucket table in size and age, so it cannot itself become the memory-exhaustion surface the feature

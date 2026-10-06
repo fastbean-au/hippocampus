@@ -150,6 +150,26 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **Six smaller hardening fixes.**
+  - **Webhook paths are no longer shown.** The deployment view and the startup log line showed a
+    callback or other `http(s)` URL with its path, and a webhook's secret is routinely its path. Such
+    addresses now show the scheme and host only; a database URL still shows its database name.
+  - **The rate limiter keys on the rightmost `X-Forwarded-For` entry** under
+    `rateLimit.trustForwardedFor`. That is the entry the proxy wrote. The leftmost is the client's to
+    choose, and rotating it bought a fresh bucket per request behind any proxy that appends.
+  - **The Bluesky bridge recalls only post URIs.** It recalled whatever a like's or reply's subject
+    named, so anyone on Bluesky could keep any guessable id in the store alive through the bridge's
+    unscoped writer token.
+  - **The compose stacks publish on loopback.** Every published port now binds
+    `${PUBLISH_ADDRESS:-127.0.0.1}`. Published ports bypass a host firewall such as `ufw`, and these
+    stacks run with auth off. The service also warns at startup when `auth.method` is `none` and a
+    listener binds beyond loopback. **Upgrading:** set `PUBLISH_ADDRESS=0.0.0.0` to reach a stack
+    from another machine.
+  - **The object gateway's proxy mode serves objects inert**, with `X-Content-Type-Options: nosniff`
+    and `Content-Security-Policy: sandbox`, since the bucket's writer chose the content type.
+  - **The id namespace is documented as a scope crossing.** A scoped writer naming an id another
+    group holds is answered `ALREADY_EXISTS`, which confirms the id exists. `scope.go` and the
+    security guide now say so, and what to do about it.
 - **The deployment view no longer shows part of a database password in three address shapes.**
   `GetTopology` is reader-visible by default, and what made that safe was that every address had its
   credentials stripped. Fuzzing that redaction found three shapes where they were not:

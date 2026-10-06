@@ -40,6 +40,13 @@ func TestRedactEndpoint(t *testing.T) {
 		"bare host and port": {raw: "localhost:11434", want: "localhost:11434"},
 		"filesystem path":    {raw: "/var/lib/hippocampus", want: "/var/lib/hippocampus"},
 		"http with no auth":  {raw: "http://opensearch:9200", want: "http://opensearch:9200"},
+		// A webhook's secret is routinely its path (TODO-3 item 168), so an http(s) address keeps
+		// only its scheme and host. A database URL keeps its path, which is the database name.
+		"https webhook with a secret path": {
+			raw:  "https://hooks.slack.com/services/T000/B000/XXXXsecretXXXX",
+			want: "https://hooks.slack.com",
+		},
+		"http path": {raw: "http://receiver:8080/callbacks/abc123", want: "http://receiver:8080"},
 		"https with basic auth": {
 			raw:  "https://admin:hunter2@opensearch.internal:9200",
 			want: "https://opensearch.internal:9200",

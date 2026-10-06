@@ -386,14 +386,32 @@ func TestRateLimitGatewayMiddlewareKeysOnTheRequest(t *testing.T) {
 func TestHTTPPrincipalKeyTrustsForwardedForOnlyWhenTold(t *testing.T) {
 	forwarded := httptest.NewRequest(http.MethodGet, "/v1/memories", nil)
 	forwarded.RemoteAddr = "10.0.0.1:9999"
-	forwarded.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.1")
+	forwarded.Header.Set("X-Forwarded-For", "203.0.113.1, 198.51.100.7")
 
 	if key := httpPrincipalKey(forwarded, false); key != "ip:10.0.0.1" {
 		t.Errorf("untrusted key is '%s', expected the connection's own address", key)
 	}
 
+	// The rightmost entry is the one the trusted proxy appended - the client it actually saw. The
+	// entries to its left arrived from that client, and taking the leftmost let it pick a fresh
+	// bucket per request by rotating one (TODO-3 item 168).
 	if key := httpPrincipalKey(forwarded, true); key != "ip:198.51.100.7" {
-		t.Errorf("trusted key is '%s', expected the leftmost forwarded address", key)
+		t.Errorf("trusted key is '%s', expected the rightmost forwarded address", key)
+	}
+
+	rotated := forwarded.Clone(forwarded.Context())
+	rotated.Header.Set("X-Forwarded-For", "192.0.2.99, 198.51.100.7")
+
+	if key := httpPrincipalKey(rotated, true); key != "ip:198.51.100.7" {
+		t.Errorf("rotating the client-supplied entry moved the key to '%s', a fresh bucket per request", key)
+	}
+
+	// A trailing empty entry is malformed; the walk does not move left, where the client writes.
+	trailing := forwarded.Clone(forwarded.Context())
+	trailing.Header.Set("X-Forwarded-For", "203.0.113.1, ")
+
+	if key := httpPrincipalKey(trailing, true); key != "ip:10.0.0.1" {
+		t.Errorf("a trailing empty entry gave '%s', want the connection's address", key)
 	}
 
 	// A verified identity always wins, so turning the trust on cannot let a header displace a token.

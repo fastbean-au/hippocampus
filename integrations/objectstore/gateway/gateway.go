@@ -281,7 +281,16 @@ func (g *Gateway) proxy(w http.ResponseWriter, r *http.Request, key string, star
 	g.record(r.Context(), OutcomeServed, started)
 }
 
+// writeObjectHeaders forwards the object's own headers, and makes the response inert. In proxy mode
+// this origin serves whatever content type the bucket holds, which is the bucket writer's choice
+// rather than this service's: nosniff stops a browser promoting a type into something executable,
+// and a sandbox policy denies scripts, forms and the gateway's origin to an HTML or SVG object that
+// is rendered anyway (TODO-3 item 168). A redirect hands the read to the store's own origin, so
+// these concern proxy mode alone.
 func writeObjectHeaders(w http.ResponseWriter, reader *objects.Reader) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox")
+
 	if reader.ContentType != "" {
 		w.Header().Set("Content-Type", reader.ContentType)
 	}

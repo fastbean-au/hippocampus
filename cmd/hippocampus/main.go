@@ -1072,7 +1072,9 @@ func run(ctx context.Context, version versionInfo) error {
 
 		notifier = hook
 
-		log.Infof("callbacks enabled, delivering to %s", viper.GetString("callbacks.url"))
+		// Redacted as the topology view redacts it: a webhook's secret is routinely its path, and a
+		// log line outlives the configuration it came from (TODO-3 item 168).
+		log.Infof("callbacks enabled, delivering to %s", hippocampus.RedactEndpoint(viper.GetString("callbacks.url")))
 	}
 
 	// initialise auth and TLS. auth.method selects the verification scheme: "none" (the
@@ -1389,6 +1391,15 @@ func run(ctx context.Context, version versionInfo) error {
 	// unauthenticated and unthrottled, which is enough to keep the default derived rather than a
 	// flat true. Either way the choice is logged: "reflection is not working" is otherwise
 	// indistinguishable from "the tool is wrong".
+	if warning := unauthenticatedExposure(
+		authMethod,
+		viper.GetString("bindAddress"),
+		viper.GetString("gateway.bindAddress"),
+		viper.GetInt("gateway.port"),
+	); warning != "" {
+		log.Warn(warning)
+	}
+
 	reflectionEnabled, reflectionReason := reflectionSetting(authMethod)
 
 	if reflectionEnabled {
@@ -1959,6 +1970,45 @@ func openAPIEnabled() bool {
 // worth their afternoon; an instance configured for anybody but its owner turns it off. viper.IsSet
 // is what makes the derived default overridable in both directions - a plain GetBool could only
 // express "off", since an unset key and an explicit false read the same.
+// unauthenticatedExposure returns a warning when auth.method is none and a listener is bound beyond
+// loopback, naming the listeners, or "" (TODO-3 item 168). That pairing is the whole store open to
+// whoever can route to the host, and is a supported shape - inside a container the listener must
+// bind every interface, and the published port decides the exposure - so it is said, not refused.
+func unauthenticatedExposure(authMethod string, grpcBind string, gatewayBind string, gatewayPort int) string {
+	if authMethod != "none" {
+		return ""
+	}
+
+	var exposed []string
+
+	if !loopbackBind(grpcBind) {
+		exposed = append(exposed, "gRPC")
+	}
+
+	if gatewayPort > 0 && !loopbackBind(gatewayBind) {
+		exposed = append(exposed, "HTTP gateway")
+	}
+
+	if len(exposed) == 0 {
+		return ""
+	}
+
+	return "auth.method is 'none' and the " + strings.Join(exposed, " and ") + " listener binds beyond loopback: " +
+		"anything that can reach it can read, write and delete the whole store. Set auth.method, or bind " +
+		"127.0.0.1 (bindAddress / gateway.bindAddress) - or, in a container, publish the port on 127.0.0.1 only"
+}
+
+// loopbackBind reports whether a bind address reaches only this host. Empty binds every interface.
+func loopbackBind(address string) bool {
+	if address == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(strings.Trim(address, "[]"))
+
+	return ip != nil && ip.IsLoopback()
+}
+
 func reflectionSetting(authMethod string) (bool, string) {
 	if viper.IsSet("reflection.enabled") {
 		return viper.GetBool("reflection.enabled"), "set by reflection.enabled"

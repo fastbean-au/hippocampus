@@ -1202,3 +1202,35 @@ func (f *fakeClient) StoreMemories(ctx context.Context, in *contract.StoreMemori
 
 	return res, nil
 }
+
+// TestConsumeReinforcesOnlyPostURIs (TODO-3 item 168): a like's subject is whatever its author wrote,
+// and the bridge's token is an unscoped writer's - so recalling any subject let anyone on Bluesky
+// keep alive any id they could guess in the store, whatever wrote it. Only a post's at:// URI, the
+// one shape a memory this bridge wrote can have, is recalled.
+func TestConsumeReinforcesOnlyPostURIs(t *testing.T) {
+	client := &fakeClient{}
+	b := testBridge(t, Config{Events: EventsNone, Recall: true}, client)
+
+	post := "at://did:plc:abc/app.bsky.feed.post/a"
+
+	s := &fakeStream{frames: [][]byte{
+		likeJSON(10, post),
+		likeJSON(11, "payloads/invoice-2026.pdf"),
+		likeJSON(12, "at://did:plc:abc/app.bsky.feed.like/a"),
+		likeJSON(13, "at://did:plc:abc/app.bsky.feed.post/a/extra"),
+		likeJSON(14, "at:///app.bsky.feed.post/a"),
+		likeJSON(15, "at://did:plc:abc/app.bsky.feed.post/"),
+		likeJSON(16, "some-memory-id"),
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if _, err := b.consume(ctx, s, 0); err != nil {
+		t.Fatalf("consume: %s", err)
+	}
+
+	if _, _, recalled, _ := client.snapshot(); len(recalled) != 1 || recalled[0] != post {
+		t.Errorf("recalled %v, want only the post URI", recalled)
+	}
+}

@@ -305,10 +305,16 @@ func rejectHTTP(w http.ResponseWriter, r *http.Request, principal string, decisi
 //
 // X-Forwarded-For is consulted only when trustForwardedFor says to, and that default is off on
 // purpose: the header is caller-supplied, so believing it on a directly-reachable listener hands
-// every caller the ability to pick its own bucket - and therefore an unlimited number of them. It
-// is safe only behind a proxy that overwrites rather than appends, which is why the leftmost entry
-// is the one taken (the client the proxy saw) rather than a walk back through a chain the service
-// cannot verify.
+// every caller the ability to pick its own bucket - and therefore an unlimited number of them.
+//
+// The RIGHTMOST entry is taken: it is the one the trusted proxy wrote, naming the client it actually
+// saw. Everything to its left arrived from that client. A proxy that appends (nginx's
+// $proxy_add_x_forwarded_for, most load balancers) keeps the client's own header in front, so the
+// leftmost entry - which this took until TODO-3 item 168 - was the client's to choose, and rotating
+// it bought a fresh bucket per request. A proxy that overwrites leaves one entry, so both readings
+// agree there. Behind a chain of proxies the rightmost is the previous proxy, which limits the chain
+// as one caller; that errs toward limiting, and the remedy is to let the outermost proxy overwrite.
+// A malformed (empty) last entry falls back to the connection rather than walking left.
 func httpPrincipalKey(r *http.Request, trustForwardedFor bool) string {
 	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
 		if claims.ClientID != "" {
@@ -321,8 +327,10 @@ func httpPrincipalKey(r *http.Request, trustForwardedFor bool) string {
 	}
 
 	if trustForwardedFor {
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			if client := strings.TrimSpace(strings.Split(forwarded, ",")[0]); client != "" {
+		if forwarded := r.Header.Values("X-Forwarded-For"); len(forwarded) > 0 {
+			entries := strings.Split(forwarded[len(forwarded)-1], ",")
+
+			if client := strings.TrimSpace(entries[len(entries)-1]); client != "" {
 				return "ip:" + client
 			}
 		}

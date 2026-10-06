@@ -288,6 +288,11 @@ projection of the atproto firehose — and maps it onto both of the store's dyna
 
 So every post arrives with the same significance and what survives is only what people came back to.
 
+Only a subject of the form `at://<did>/app.bsky.feed.post/<rkey>` is recalled. A like's subject is
+whatever its author wrote, on an open network, and the bridge's token is an unscoped writer's.
+Recalling any subject would let anyone on Bluesky keep alive any id they could guess in the store,
+whatever had written it. A post URI is the only id this bridge's memories can have.
+
 ### Why it needs no state
 
 A memory's id **is** the post's `at://` URI, and a like names its target by that same URI. So

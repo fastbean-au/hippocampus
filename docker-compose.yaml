@@ -20,9 +20,9 @@ services:
       args:
         VERSION: "${VERSION:-dev}"
     ports:
-      - "50051:50051" # gRPC
-      - "8080:8080" # HTTP/JSON gateway (+ /healthz)
-      - "9464:9464" # Prometheus scrape endpoint (only listening when PROMETHEUS=true)
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:50051:50051" # gRPC
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:8080:8080" # HTTP/JSON gateway (+ /healthz)
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:9464:9464" # Prometheus scrape endpoint (only listening when PROMETHEUS=true)
     volumes:
       - hippocampus-data:/data
     environment:
@@ -75,7 +75,7 @@ services:
     environment:
       SWAGGER_JSON_URL: "http://localhost:8080/v1/openapi.json"
     ports:
-      - "8082:8080" # Swagger UI
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:8082:8080" # Swagger UI
     depends_on:
       - hippocampus
 
@@ -116,8 +116,8 @@ services:
     image: grafana/otel-lgtm:latest
     profiles: ["observability"]
     ports:
-      - "3000:3000" # Grafana UI
-      - "4317:4317" # OTLP/gRPC ingest
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:3000:3000" # Grafana UI
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:4317:4317" # OTLP/gRPC ingest
     environment:
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json
     volumes:
@@ -140,7 +140,7 @@ services:
     image: ollama/ollama:latest
     profiles: ["ollama"]
     ports:
-      - "11434:11434" # Ollama HTTP API
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:11434:11434" # Ollama HTTP API
     volumes:
       - ollama-models:/root/.ollama
 

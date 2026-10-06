@@ -75,7 +75,10 @@ hippocampus-object-gateway \
 
 Prefer `redirect`. `proxy` exists for a deployment that cannot expose the store's own hostname to
 readers at all; it forwards range requests, because answering one with a whole body and a `200` is a
-wrong answer rather than a degraded one.
+wrong answer rather than a degraded one. In `proxy` mode the gateway's own origin serves a content
+type the bucket's writer chose, so every response carries `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: sandbox`: an HTML or SVG object is never sniffed into something executable
+and, if rendered, runs no script with the gateway's origin.
 
 `HEAD` deliberately does **not** reinforce: asking for an object's metadata is not reading it, and a
 client that HEADs before every GET would otherwise double every recall it makes.

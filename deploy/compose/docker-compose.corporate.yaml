@@ -17,9 +17,9 @@ services:
   hippocampus:
     build: ../..
     ports:
-      - "50051:50051"
-      - "8080:8080"
-      - "9464:9464" # Prometheus scrape endpoint (only listening when PROMETHEUS=true)
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:50051:50051"
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:8080:8080"
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:9464:9464" # Prometheus scrape endpoint (only listening when PROMETHEUS=true)
     volumes:
       - ./config.corporate.json:/etc/hippocampus/config.json:ro
     depends_on:
@@ -66,7 +66,7 @@ services:
       POSTGRES_PASSWORD: hippocampus
       POSTGRES_DB: hippocampus
     ports:
-      - "5432:5432"
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:5432:5432"
     volumes:
       # Mounted at /var/lib/postgresql rather than .../data - see docker-compose.postgres.yaml for
       # why 18+ refuses the latter.
@@ -84,7 +84,7 @@ services:
       DISABLE_SECURITY_PLUGIN: "true"
       OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
     ports:
-      - "9200:9200"
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:9200:9200"
     volumes:
       - corporate-opensearch-data:/usr/share/opensearch/data
     healthcheck:
@@ -103,8 +103,8 @@ services:
     image: grafana/otel-lgtm:latest
     profiles: ["observability"]
     ports:
-      - "3000:3000" # Grafana UI
-      - "4317:4317" # OTLP/gRPC ingest
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:3000:3000" # Grafana UI
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:4317:4317" # OTLP/gRPC ingest
     environment:
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/hippocampus.json
     volumes:
@@ -124,7 +124,7 @@ services:
     image: ollama/ollama:latest
     profiles: ["ollama"]
     ports:
-      - "11434:11434"
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:11434:11434"
     volumes:
       - corporate-ollama-models:/root/.ollama
 

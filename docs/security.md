@@ -21,7 +21,7 @@ can leave the process, and what the service deliberately does not do. The exhaus
 | Rate limiting         | [`rateLimit.enabled`](configuration.md#rate-limiting)      | off                   | Any caller you do not control. Set at least a global ceiling.                                                        |
 | Gateway body cap      | `gateway.maxRequestBytes`                                  | 2× gRPC's limit       | Lower it when the gateway is reachable by untrusted callers and no legitimate body is that large.                    |
 | gRPC stream/keepalive | `maxConcurrentStreams`, `keepalive.*`                      | grpc-go's             | The gRPC port is exposed beyond trusted callers.                                                                     |
-| Listener binding      | `bindAddress`, `gateway.bindAddress`                       | all                   | A sidecar or mesh fronts the service — bind loopback only.                                                           |
+| Listener binding      | `bindAddress`, `gateway.bindAddress`                       | all                   | A sidecar or mesh fronts the service — bind loopback only. Startup warns when auth is off and a listener is not.     |
 | Server reflection     | [`reflection.enabled`](configuration.md#server-reflection) | follows `auth.method` | Already handled: on without auth, off with it. Set it off explicitly if an unauthenticated port is reachable at all. |
 
 Authentication and authorisation are one decision, not two: the authoriser is built only when auth is
@@ -104,6 +104,12 @@ What it does **not** give you, because the partition is soft:
   so a link to a record in another group raises this one's effective significance even though the
   other end can never be read. Spreading activation on recall crosses such a link too. Only an
   unscoped token can create one.
+- **An id's existence crosses the boundary.** Ids are one store-wide namespace, so a scoped writer
+  storing an id another group already holds is answered `ALREADY_EXISTS`. That confirms the id is
+  taken, though nothing about the record behind it. A replacing write (`Import`, `ImportBatch`) is
+  refused rather than allowed to overwrite another group's row. Where a guessable id confirming its
+  existence matters, have clients use unguessable ids (the server assigns a UUID when none is given),
+  or run one instance per tenant.
 - **It is not a defence against a hostile caller with a valid token.** It is one predicate and one id
   check per path, guarded by a test rather than by a structural impossibility.
 - **Operators still need unscoped tokens** for `Purge`, `Sleep`, `PreviewConsolidation`, the
@@ -361,6 +367,12 @@ ServiceAccount. See [Containers and Kubernetes](operations.md#containers-and-kub
 The Compose stacks under `deploy/compose/` are **demonstration stacks**: several run OpenSearch with
 its security plugin disabled and no authentication at all. `docker-compose.opensearch-secured.yaml`
 is the one that shows the secured shape. Do not lift a demo stack into production unmodified.
+
+Every port those stacks publish binds `${PUBLISH_ADDRESS:-127.0.0.1}`, so by default nothing is
+reachable from beyond the host. That matters more than it looks: a container runtime's published
+ports bypass a host firewall such as `ufw`, so an unauthenticated stack published on `0.0.0.0` is open
+to the network whatever the firewall says. Set `PUBLISH_ADDRESS=0.0.0.0` only for a stack that has
+authentication on, or a network that is itself the boundary.
 
 ## A hardening pass
 
