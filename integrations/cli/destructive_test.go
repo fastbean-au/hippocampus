@@ -110,6 +110,7 @@ func eventDeleteCases() []flagCase {
 		{"metadata", "tenant=acme", request(func(r *contract.DeleteEventsByFilterRequest) { r.Metadata = []string{"tenant=acme"} })},
 		{"ended", "true", request(func(r *contract.DeleteEventsByFilterRequest) { r.Ended = contract.Bool_TRUE })},
 		{"name-contains", "deploy", request(func(r *contract.DeleteEventsByFilterRequest) { r.NameContains = "deploy" })},
+		{"description-contains", "failover", request(func(r *contract.DeleteEventsByFilterRequest) { r.DescriptionContains = "failover" })},
 		{"max-deletions", "7", request(func(r *contract.DeleteEventsByFilterRequest) { r.MaxDeletions = 7 })},
 		{"delete-memories", "true", request(func(r *contract.DeleteEventsByFilterRequest) { r.DeleteMemories = true })},
 	}

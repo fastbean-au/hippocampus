@@ -238,7 +238,7 @@ attempt counts and next-attempt deadlines. That pair is what separates a queue t
 one that is stuck: rising attempts against a receding deadline is a receiver that is refusing, while
 a deep queue with zero attempts is one the dispatcher has not reached yet. It never prints a
 delivery's payload, which may carry memory bodies. `--kind` narrows it to `memory-forgotten`,
-`event-forgotten`, `sleep-completed` or `memories-at-risk`.
+`event-forgotten`, `sleep-completed`, `memories-at-risk`, `memory-stored` or `memory-updated`.
 
 `callbacks clear` requires `--before` or `--all`, and is a harder discard than `forgotten clear`:
 what it destroys is not the record of a notification but the notification itself, and nothing else

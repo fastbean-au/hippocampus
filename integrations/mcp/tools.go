@@ -559,6 +559,10 @@ type searchMemoriesInput struct {
 	IncludeLinked bool `json:"include_linked,omitempty" jsonschema:"also return the memories linked to each match, one hop away, appended after the ranked results"`
 
 	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict matches to memories carrying ALL of these key/value labels exactly"`
+
+	Offset       int32  `json:"offset,omitempty" jsonschema:"matches to skip, for the next page of the ranked results (at most 1000)"`
+	StoredAfter  string `json:"stored_after,omitempty" jsonschema:"optional: only matches stored at or after this RFC3339 timestamp (e.g. 2026-08-12T00:00:00Z)"`
+	StoredBefore string `json:"stored_before,omitempty" jsonschema:"optional: only matches stored at or before this RFC3339 timestamp"`
 }
 
 // searchModes maps the tool's mode string onto the RPC enum. An unknown value is an error rather
@@ -581,6 +585,16 @@ func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 		return nil, memoriesOutput{}, fmt.Errorf("unknown mode %q (expected keyword, semantic, or hybrid)", in.Mode)
 	}
 
+	storedAfter, err := parseToolTime(in.StoredAfter, "stored_after")
+	if err != nil {
+		return nil, memoriesOutput{}, err
+	}
+
+	storedBefore, err := parseToolTime(in.StoredBefore, "stored_before")
+	if err != nil {
+		return nil, memoriesOutput{}, err
+	}
+
 	callCtx, cancel := b.callContext(ctx)
 	defer cancel()
 
@@ -594,6 +608,10 @@ func (b *bridge) searchMemories(ctx context.Context, _ *mcp.CallToolRequest, in 
 
 		IncludeLinked: in.IncludeLinked,
 		Metadata:      metadataFilterPairs(in.Metadata),
+
+		Offset:       in.Offset,
+		TimestampMin: storedAfter,
+		TimestampMax: storedBefore,
 	})
 	if err != nil {
 		return nil, memoriesOutput{}, fmt.Errorf("SearchMemories failed: %w", err)
@@ -896,7 +914,9 @@ type listEventsInput struct {
 
 	Ended        *bool  `json:"ended,omitempty" jsonschema:"optional: true for events that have ended, false for those still running; omit for both. This is the only way to ask for open events - they store an end time of 0, which the two bounds above read as no bound"`
 	NameContains string `json:"name_contains,omitempty" jsonschema:"optional: only events whose name contains this text, matched case-insensitively. A substring match, not a content search - event names and descriptions are in no search index"`
-	LinkedTo     string `json:"linked_to,omitempty" jsonschema:"optional: only the events one hop from this event id, in either direction. Errors if that event does not exist"`
+
+	DescriptionContains string `json:"description_contains,omitempty" jsonschema:"optional: only events whose description contains this text, matched case-insensitively, as name_contains is for the name"`
+	LinkedTo            string `json:"linked_to,omitempty" jsonschema:"optional: only the events one hop from this event id, in either direction. Errors if that event does not exist"`
 
 	Metadata map[string]string `json:"metadata,omitempty" jsonschema:"optional: restrict to events carrying ALL of these key/value labels exactly"`
 }
@@ -927,21 +947,22 @@ func (b *bridge) listEvents(ctx context.Context, _ *mcp.CallToolRequest, in list
 	defer cancel()
 
 	res, err := b.client.GetEvents(callCtx, &contract.GetEventsRequest{
-		TimeStartMin:    bounds["started_after"],
-		TimeStartMax:    bounds["started_before"],
-		TimeEndMin:      bounds["ended_after"],
-		TimeEndMax:      bounds["ended_before"],
-		Group:           in.Group,
-		SignificanceMin: in.SignificanceMin,
-		SignificanceMax: in.SignificanceMax,
-		OrderBy:         in.OrderBy,
-		OrderDir:        sortDirection(in.OrderDir),
-		Limit:           in.Limit,
-		Offset:          in.Offset,
-		Metadata:        metadataFilterPairs(in.Metadata),
-		Ended:           triStateFilter(in.Ended),
-		NameContains:    in.NameContains,
-		LinkedTo:        in.LinkedTo,
+		TimeStartMin:        bounds["started_after"],
+		TimeStartMax:        bounds["started_before"],
+		TimeEndMin:          bounds["ended_after"],
+		TimeEndMax:          bounds["ended_before"],
+		Group:               in.Group,
+		SignificanceMin:     in.SignificanceMin,
+		SignificanceMax:     in.SignificanceMax,
+		OrderBy:             in.OrderBy,
+		OrderDir:            sortDirection(in.OrderDir),
+		Limit:               in.Limit,
+		Offset:              in.Offset,
+		Metadata:            metadataFilterPairs(in.Metadata),
+		Ended:               triStateFilter(in.Ended),
+		NameContains:        in.NameContains,
+		DescriptionContains: in.DescriptionContains,
+		LinkedTo:            in.LinkedTo,
 
 		// Always asked for, never exposed as an input: how much an event holds is most of what
 		// decides whether a model should open it, and the count costs one aggregate that reads no

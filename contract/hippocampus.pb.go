@@ -374,6 +374,8 @@ const (
 	CallbackKind_CALLBACK_KIND_EVENT_FORGOTTEN  CallbackKind = 2
 	CallbackKind_CALLBACK_KIND_SLEEP_COMPLETED  CallbackKind = 3
 	CallbackKind_CALLBACK_KIND_MEMORIES_AT_RISK CallbackKind = 4
+	CallbackKind_CALLBACK_KIND_MEMORY_STORED    CallbackKind = 5 // a memory created, with callbacks.writes on
+	CallbackKind_CALLBACK_KIND_MEMORY_UPDATED   CallbackKind = 6 // a memory changed, with callbacks.writes on
 )
 
 // Enum value maps for CallbackKind.
@@ -384,6 +386,8 @@ var (
 		2: "CALLBACK_KIND_EVENT_FORGOTTEN",
 		3: "CALLBACK_KIND_SLEEP_COMPLETED",
 		4: "CALLBACK_KIND_MEMORIES_AT_RISK",
+		5: "CALLBACK_KIND_MEMORY_STORED",
+		6: "CALLBACK_KIND_MEMORY_UPDATED",
 	}
 	CallbackKind_value = map[string]int32{
 		"CALLBACK_KIND_UNSPECIFIED":      0,
@@ -391,6 +395,8 @@ var (
 		"CALLBACK_KIND_EVENT_FORGOTTEN":  2,
 		"CALLBACK_KIND_SLEEP_COMPLETED":  3,
 		"CALLBACK_KIND_MEMORIES_AT_RISK": 4,
+		"CALLBACK_KIND_MEMORY_STORED":    5,
+		"CALLBACK_KIND_MEMORY_UPDATED":   6,
 	}
 )
 
@@ -1818,6 +1824,7 @@ type GetEventsRequest struct {
 	NameContains         string                 `protobuf:"bytes,17,opt,name=name_contains,json=nameContains,proto3" json:"name_contains,omitempty"`                                                                   // optional: restrict to events whose name contains this substring, case-insensitively. Unindexed, exactly as the group and metadata filters are, and a substring match rather than a content search - an event's name and description are in no search index. Empty (the default) applies no restriction
 	Links                bool                   `protobuf:"varint,18,opt,name=links,proto3" json:"links,omitempty"`                                                                                                    // when true, populate each returned event's links (outbound only, like Event.links - ask GetEventLinks for both directions)
 	LinkedTo             string                 `protobuf:"bytes,19,opt,name=linked_to,json=linkedTo,proto3" json:"linked_to,omitempty"`                                                                               // optional: restrict to events linked to this event id, in either direction (one hop). NotFound if that event does not exist. The events' counterpart to GetMemoriesRequest.linked_to
+	DescriptionContains  string                 `protobuf:"bytes,20,opt,name=description_contains,json=descriptionContains,proto3" json:"description_contains,omitempty"`                                              // optional: restrict to events whose description contains this substring, case-insensitively - name_contains's counterpart, and unindexed on the same terms. Empty (the default) applies no restriction
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1981,6 +1988,13 @@ func (x *GetEventsRequest) GetLinks() bool {
 func (x *GetEventsRequest) GetLinkedTo() string {
 	if x != nil {
 		return x.LinkedTo
+	}
+	return ""
+}
+
+func (x *GetEventsRequest) GetDescriptionContains() string {
+	if x != nil {
+		return x.DescriptionContains
 	}
 	return ""
 }
@@ -2667,6 +2681,9 @@ type SearchMemoriesRequest struct {
 	Mode          SearchMode             `protobuf:"varint,6,opt,name=mode,proto3,enum=hippocampus.v1.SearchMode" json:"mode,omitempty"`         // how to match; unset means KEYWORD
 	IncludeLinked bool                   `protobuf:"varint,7,opt,name=include_linked,json=includeLinked,proto3" json:"include_linked,omitempty"` // also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves
 	Metadata      []string               `protobuf:"bytes,8,rep,name=metadata,proto3" json:"metadata,omitempty"`                                 // optional: restrict matches to memories whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata. Applied inside the search index rather than to the results, so it narrows the candidates that ranking sees and limit still means what it says
+	Offset        int32                  `protobuf:"varint,9,opt,name=offset,proto3" json:"offset,omitempty"`                                    // matches to skip, for paging past the first page; 0 by default, at most 1000. Applied after ranking, so it pages through the ranked order. With ranking weights set a deeper page is ranked over a larger candidate pool, so adjacent pages can overlap slightly
+	TimestampMin  int64                  `protobuf:"varint,10,opt,name=timestamp_min,json=timestampMin,proto3" json:"timestamp_min,omitempty"`   // optional: inclusive lower bound on the memory's time_stamp (UnixNano), applied inside the index like the other filters; 0 means unbounded
+	TimestampMax  int64                  `protobuf:"varint,11,opt,name=timestamp_max,json=timestampMax,proto3" json:"timestamp_max,omitempty"`   // optional: inclusive upper bound on the memory's time_stamp (UnixNano); 0 means unbounded
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2755,6 +2772,27 @@ func (x *SearchMemoriesRequest) GetMetadata() []string {
 		return x.Metadata
 	}
 	return nil
+}
+
+func (x *SearchMemoriesRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *SearchMemoriesRequest) GetTimestampMin() int64 {
+	if x != nil {
+		return x.TimestampMin
+	}
+	return 0
+}
+
+func (x *SearchMemoriesRequest) GetTimestampMax() int64 {
+	if x != nil {
+		return x.TimestampMax
+	}
+	return 0
 }
 
 // LinkMemoriesRequest adds or updates links from one memory to others. It is an upsert per pair:
@@ -4754,6 +4792,7 @@ type DeleteEventsByFilterRequest struct {
 	Ended                Bool                   `protobuf:"varint,10,opt,name=ended,proto3,enum=hippocampus.v1.Bool" json:"ended,omitempty"`                                                                          // FALSE selects only events that have not ended, TRUE only those that have; UNSPECIFIED (default) applies no restriction
 	NameContains         string                 `protobuf:"bytes,11,opt,name=name_contains,json=nameContains,proto3" json:"name_contains,omitempty"`                                                                  // restrict to events whose name contains this substring, case-insensitively
 	MaxDeletions         int64                  `protobuf:"varint,12,opt,name=max_deletions,json=maxDeletions,proto3" json:"max_deletions,omitempty"`                                                                 // stop after deleting this many events; 0 (the default) means no bound. complete on the response reports which happened
+	DescriptionContains  string                 `protobuf:"bytes,14,opt,name=description_contains,json=descriptionContains,proto3" json:"description_contains,omitempty"`                                             // restrict to events whose description contains this substring, case-insensitively
 	DeleteMemories       bool                   `protobuf:"varint,13,opt,name=delete_memories,json=deleteMemories,proto3" json:"delete_memories,omitempty"`                                                           // delete each event's memories with it. Unset, they survive with their event_id cleared - the same choice DeleteEvent's memories flag makes, named unambiguously here because the listing's `memories` field means something else entirely
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
@@ -4871,6 +4910,13 @@ func (x *DeleteEventsByFilterRequest) GetMaxDeletions() int64 {
 		return x.MaxDeletions
 	}
 	return 0
+}
+
+func (x *DeleteEventsByFilterRequest) GetDescriptionContains() string {
+	if x != nil {
+		return x.DescriptionContains
+	}
+	return ""
 }
 
 func (x *DeleteEventsByFilterRequest) GetDeleteMemories() bool {
@@ -8301,7 +8347,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\rmemory_counts\x18\x03 \x01(\bR\fmemoryCounts\x12\x14\n" +
 	"\x05links\x18\x04 \x01(\bR\x05links\"?\n" +
 	"\x10GetEventResponse\x12+\n" +
-	"\x05event\x18\x01 \x01(\v2\x15.hippocampus.v1.EventR\x05event\"\xcf\x05\n" +
+	"\x05event\x18\x01 \x01(\v2\x15.hippocampus.v1.EventR\x05event\"\x82\x06\n" +
 	"\x10GetEventsRequest\x12$\n" +
 	"\x0etime_start_min\x18\x01 \x01(\x03R\ftimeStartMin\x12$\n" +
 	"\x0etime_start_max\x18\x02 \x01(\x03R\ftimeStartMax\x12 \n" +
@@ -8324,7 +8370,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x05ended\x18\x10 \x01(\x0e2\x14.hippocampus.v1.BoolR\x05ended\x12#\n" +
 	"\rname_contains\x18\x11 \x01(\tR\fnameContains\x12\x14\n" +
 	"\x05links\x18\x12 \x01(\bR\x05links\x12\x1b\n" +
-	"\tlinked_to\x18\x13 \x01(\tR\blinkedTo\"c\n" +
+	"\tlinked_to\x18\x13 \x01(\tR\blinkedTo\x121\n" +
+	"\x14description_contains\x18\x14 \x01(\tR\x13descriptionContains\"c\n" +
 	"\x11GetEventsResponse\x12-\n" +
 	"\x06events\x18\x01 \x03(\v2\x15.hippocampus.v1.EventR\x06events\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
@@ -8378,7 +8425,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x03ids\x18\x01 \x03(\tR\x03ids\"P\n" +
 	"\x15RecallMemoriesRequest\x12\x10\n" +
 	"\x03ids\x18\x01 \x03(\tR\x03ids\x12%\n" +
-	"\x0einclude_linked\x18\x02 \x01(\bR\rincludeLinked\"\x85\x02\n" +
+	"\x0einclude_linked\x18\x02 \x01(\bR\rincludeLinked\"\xe7\x02\n" +
 	"\x15SearchMemoriesRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x19\n" +
@@ -8387,7 +8434,11 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x05group\x18\x05 \x01(\tR\x05group\x12.\n" +
 	"\x04mode\x18\x06 \x01(\x0e2\x1a.hippocampus.v1.SearchModeR\x04mode\x12%\n" +
 	"\x0einclude_linked\x18\a \x01(\bR\rincludeLinked\x12\x1a\n" +
-	"\bmetadata\x18\b \x03(\tR\bmetadata\"Q\n" +
+	"\bmetadata\x18\b \x03(\tR\bmetadata\x12\x16\n" +
+	"\x06offset\x18\t \x01(\x05R\x06offset\x12#\n" +
+	"\rtimestamp_min\x18\n" +
+	" \x01(\x03R\ftimestampMin\x12#\n" +
+	"\rtimestamp_max\x18\v \x01(\x03R\ftimestampMax\"Q\n" +
 	"\x13LinkMemoriesRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12*\n" +
 	"\x05links\x18\x02 \x03(\v2\x14.hippocampus.v1.LinkR\x05links\"9\n" +
@@ -8537,7 +8588,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x1eDeleteMemoriesByFilterResponse\x12)\n" +
 	"\x10memories_deleted\x18\x01 \x01(\x03R\x0fmemoriesDeleted\x12%\n" +
 	"\x0eevents_deleted\x18\x02 \x01(\x03R\reventsDeleted\x12\x1a\n" +
-	"\bcomplete\x18\x03 \x01(\bR\bcomplete\"\xaf\x04\n" +
+	"\bcomplete\x18\x03 \x01(\bR\bcomplete\"\xe2\x04\n" +
 	"\x1bDeleteEventsByFilterRequest\x12$\n" +
 	"\x0etime_start_min\x18\x01 \x01(\x03R\ftimeStartMin\x12$\n" +
 	"\x0etime_start_max\x18\x02 \x01(\x03R\ftimeStartMax\x12 \n" +
@@ -8553,7 +8604,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x05ended\x18\n" +
 	" \x01(\x0e2\x14.hippocampus.v1.BoolR\x05ended\x12#\n" +
 	"\rname_contains\x18\v \x01(\tR\fnameContains\x12#\n" +
-	"\rmax_deletions\x18\f \x01(\x03R\fmaxDeletions\x12'\n" +
+	"\rmax_deletions\x18\f \x01(\x03R\fmaxDeletions\x121\n" +
+	"\x14description_contains\x18\x0e \x01(\tR\x13descriptionContains\x12'\n" +
 	"\x0fdelete_memories\x18\r \x01(\bR\x0edeleteMemories\"\xb9\x01\n" +
 	"\x1cDeleteEventsByFilterResponse\x12%\n" +
 	"\x0eevents_deleted\x18\x01 \x01(\x03R\reventsDeleted\x12)\n" +
@@ -8876,13 +8928,15 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x17FORGET_RULE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19FORGET_RULE_CONSOLIDATION\x10\x01\x12\x18\n" +
 	"\x14FORGET_RULE_EVICTION\x10\x02\x12\x16\n" +
-	"\x12FORGET_RULE_EXPIRY\x10\x03*\xbb\x01\n" +
+	"\x12FORGET_RULE_EXPIRY\x10\x03*\xfe\x01\n" +
 	"\fCallbackKind\x12\x1d\n" +
 	"\x19CALLBACK_KIND_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eCALLBACK_KIND_MEMORY_FORGOTTEN\x10\x01\x12!\n" +
 	"\x1dCALLBACK_KIND_EVENT_FORGOTTEN\x10\x02\x12!\n" +
 	"\x1dCALLBACK_KIND_SLEEP_COMPLETED\x10\x03\x12\"\n" +
-	"\x1eCALLBACK_KIND_MEMORIES_AT_RISK\x10\x04*\x84\x02\n" +
+	"\x1eCALLBACK_KIND_MEMORIES_AT_RISK\x10\x04\x12\x1f\n" +
+	"\x1bCALLBACK_KIND_MEMORY_STORED\x10\x05\x12 \n" +
+	"\x1cCALLBACK_KIND_MEMORY_UPDATED\x10\x06*\x84\x02\n" +
 	"\vDeleteCause\x12\x1c\n" +
 	"\x18DELETE_CAUSE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aDELETE_CAUSE_CONSOLIDATION\x10\x01\x12\x19\n" +

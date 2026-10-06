@@ -201,9 +201,10 @@ func TestListEvents_NewFilters(t *testing.T) {
 	open := false
 
 	if _, _, err := newBridge(f).listEvents(context.Background(), nil, listEventsInput{
-		Ended:        &open,
-		NameContains: "election",
-		LinkedTo:     "e-open",
+		Ended:               &open,
+		NameContains:        "election",
+		DescriptionContains: "recount",
+		LinkedTo:            "e-open",
 	}); err != nil {
 		t.Fatalf("listEvents: %s", err)
 	}
@@ -220,6 +221,9 @@ func TestListEvents_NewFilters(t *testing.T) {
 
 	case req.GetLinkedTo() != "e-open":
 		t.Errorf("linked_to = %q", req.GetLinkedTo())
+
+	case req.GetDescriptionContains() != "recount":
+		t.Errorf("description_contains = %q", req.GetDescriptionContains())
 
 	}
 

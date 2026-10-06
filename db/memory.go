@@ -245,7 +245,7 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 		return "", err
 	}
 
-	_, err = d.exec(ctx,
+	_, err = d.execMemoryWrite(ctx, CallbackKindMemoryStored, memory.Id,
 		`INSERT INTO memories (`+memoryStoredColumns+`) VALUES `+memoryValuePlaceholders,
 		memory.Id,
 		memory.TimeStamp,
@@ -393,7 +393,7 @@ func (d *DB) UpdateMemory(ctx context.Context, memory types.Memory) (bool, error
 
 	args = append(args, memory.Id)
 
-	res, err := d.exec(ctx, `UPDATE memories SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+	res, err := d.execMemoryWrite(ctx, CallbackKindMemoryUpdated, memory.Id, `UPDATE memories SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return false, err
 	}

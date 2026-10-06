@@ -191,6 +191,26 @@ def test_delete_event_carries_if_empty(client, service):
     assert request.memories is False
 
 
+def test_description_contains_reaches_both_event_calls(client, service):
+    client.get_events(description_contains="failover")
+    client.delete_events_by_filter(description_contains="failover")
+
+    assert service.requests["GetEvents"].description_contains == "failover"
+    assert service.requests["DeleteEventsByFilter"].description_contains == "failover"
+
+
+def test_search_pages_and_bounds(client, service):
+    when = datetime.datetime(2026, 8, 12, tzinfo=datetime.timezone.utc)
+
+    client.search_memories("deploy", offset=20, timestamp_min=when)
+
+    request = service.requests["SearchMemories"]
+
+    assert request.offset == 20
+    assert request.timestamp_min == int(when.timestamp() * 1_000_000_000)
+    assert request.timestamp_max == 0
+
+
 def test_a_predicate_delete_sends_its_own_two_flags(client, service):
     client.delete_memories_by_filter(group="g", max_deletions=10, delete_empty_events=True)
     client.delete_events_by_filter(group="g", max_deletions=5, delete_memories=True)

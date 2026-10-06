@@ -439,3 +439,37 @@ func TestGetSignificanceLevels(t *testing.T) {
 		t.Errorf("GetSignificanceLevels(max < min) = %v, want InvalidArgument", err)
 	}
 }
+
+// TestGetEvents_DescriptionContains: the RPC carries the filter through, and the predicate deletion
+// selects by it identically, so the listing stays its dry run (TODO-3 item 171).
+func TestGetEvents_DescriptionContains(t *testing.T) {
+	s := newTestServer(t)
+	ctx := context.Background()
+
+	for _, e := range []types.Event{
+		{Id: "e-outage", Name: "one", Description: "a FAILOVER at 2am", TimeStart: 100, Significance: 3},
+		{Id: "e-other", Name: "two", Description: "a quiet night", TimeStart: 200, Significance: 3},
+	} {
+		if _, err := s.db.CreateEvent(ctx, e); err != nil {
+			t.Fatalf("CreateEvent: %s", err)
+		}
+	}
+
+	res, err := s.GetEvents(ctx, &contract.GetEventsRequest{DescriptionContains: "failover"})
+	if err != nil {
+		t.Fatalf("GetEvents: %s", err)
+	}
+
+	if got := eventIds(res); len(got) != 1 || got[0] != "e-outage" {
+		t.Errorf("GetEvents(description_contains=failover) = %v, want [e-outage]", got)
+	}
+
+	deleted, err := s.DeleteEventsByFilter(ctx, &contract.DeleteEventsByFilterRequest{DescriptionContains: "failover"})
+	if err != nil {
+		t.Fatalf("DeleteEventsByFilter: %s", err)
+	}
+
+	if deleted.GetEventsDeleted() != 1 {
+		t.Errorf("deleted %d events by description, want the one the listing showed", deleted.GetEventsDeleted())
+	}
+}

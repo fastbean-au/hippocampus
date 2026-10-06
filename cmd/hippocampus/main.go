@@ -603,6 +603,7 @@ func setStartupDefaults() {
 	viper.SetDefault("callbacks.events.eventForgotten", true)
 	viper.SetDefault("callbacks.events.sleepCompleted", true)
 	viper.SetDefault("callbacks.events.memoriesAtRisk", false)
+	viper.SetDefault("callbacks.events.memoryWrites", false)
 	viper.SetDefault("callbacks.atRiskLimit", 1000)
 	viper.SetDefault("callbacks.atRiskMargin", 0)
 

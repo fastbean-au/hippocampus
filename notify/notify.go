@@ -46,6 +46,11 @@ const (
 	// KindMemoriesAtRisk reports what a cycle is about to forget, raised at the top of that cycle.
 	// It is the only kind that is not about something that has already happened.
 	KindMemoriesAtRisk Kind = "memories_at_risk"
+
+	// KindMemoryStored and KindMemoryUpdated are the change stream for writes, opt-in through
+	// callbacks.writes: a memory created, and a memory changed, each as it now stands.
+	KindMemoryStored  Kind = "memory_stored"
+	KindMemoryUpdated Kind = "memory_updated"
 )
 
 // Cause names why records were deleted. Unlike Kind this is not a decay judgement - it separates

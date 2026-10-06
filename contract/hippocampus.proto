@@ -781,6 +781,7 @@ message GetEventsRequest {
 	string                                 name_contains             = 17; // optional: restrict to events whose name contains this substring, case-insensitively. Unindexed, exactly as the group and metadata filters are, and a substring match rather than a content search - an event's name and description are in no search index. Empty (the default) applies no restriction
 	bool                                   links                     = 18; // when true, populate each returned event's links (outbound only, like Event.links - ask GetEventLinks for both directions)
 	string                                 linked_to                 = 19; // optional: restrict to events linked to this event id, in either direction (one hop). NotFound if that event does not exist. The events' counterpart to GetMemoriesRequest.linked_to
+	string                                 description_contains      = 20; // optional: restrict to events whose description contains this substring, case-insensitively - name_contains's counterpart, and unindexed on the same terms. Empty (the default) applies no restriction
 }
 
 message GetEventsResponse {
@@ -894,6 +895,9 @@ message SearchMemoriesRequest {
 	SearchMode                             mode                      = 6; // how to match; unset means KEYWORD
 	bool                                   include_linked            = 7; // also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves
 	repeated string                        metadata                  = 8; // optional: restrict matches to memories whose metadata carries every one of these "key=value" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata. Applied inside the search index rather than to the results, so it narrows the candidates that ranking sees and limit still means what it says
+	int32                                  offset                    = 9; // matches to skip, for paging past the first page; 0 by default, at most 1000. Applied after ranking, so it pages through the ranked order. With ranking weights set a deeper page is ranked over a larger candidate pool, so adjacent pages can overlap slightly
+	int64                                  timestamp_min             = 10; // optional: inclusive lower bound on the memory's time_stamp (UnixNano), applied inside the index like the other filters; 0 means unbounded
+	int64                                  timestamp_max             = 11; // optional: inclusive upper bound on the memory's time_stamp (UnixNano); 0 means unbounded
 }
 
 // LinkDirection narrows which of an item's links a read returns. The graph is stored directed, so
@@ -1182,6 +1186,7 @@ message DeleteEventsByFilterRequest {
 	Bool                                   ended                     = 10; // FALSE selects only events that have not ended, TRUE only those that have; UNSPECIFIED (default) applies no restriction
 	string                                 name_contains             = 11; // restrict to events whose name contains this substring, case-insensitively
 	int64                                  max_deletions             = 12; // stop after deleting this many events; 0 (the default) means no bound. complete on the response reports which happened
+	string                                 description_contains      = 14; // restrict to events whose description contains this substring, case-insensitively
 	bool                                   delete_memories           = 13; // delete each event's memories with it. Unset, they survive with their event_id cleared - the same choice DeleteEvent's memories flag makes, named unambiguously here because the listing's `memories` field means something else entirely
 }
 
@@ -1354,6 +1359,8 @@ enum CallbackKind {
 	CALLBACK_KIND_EVENT_FORGOTTEN = 2;
 	CALLBACK_KIND_SLEEP_COMPLETED = 3;
 	CALLBACK_KIND_MEMORIES_AT_RISK = 4;
+	CALLBACK_KIND_MEMORY_STORED = 5; // a memory created, with callbacks.writes on
+	CALLBACK_KIND_MEMORY_UPDATED = 6; // a memory changed, with callbacks.writes on
 }
 
 // DeleteCause is why the records a delivery describes were deleted. The two decay causes are the

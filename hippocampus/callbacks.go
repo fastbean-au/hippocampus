@@ -238,6 +238,7 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 		RetainDeletions: s.callbackBacklogPolicy.retains(),
 		MemoryEvents:    viper.GetBool("callbacks.events.memoryForgotten"),
 		EventEvents:     viper.GetBool("callbacks.events.eventForgotten"),
+		WriteEvents:     viper.GetBool("callbacks.events.memoryWrites"),
 	})
 
 	s.callbacksEnabled = true
@@ -642,6 +643,12 @@ func notifyKind(kind db.CallbackKind) notify.Kind {
 
 	case db.CallbackKindMemoriesAtRisk:
 		return notify.KindMemoriesAtRisk
+
+	case db.CallbackKindMemoryStored:
+		return notify.KindMemoryStored
+
+	case db.CallbackKindMemoryUpdated:
+		return notify.KindMemoryUpdated
 
 	}
 

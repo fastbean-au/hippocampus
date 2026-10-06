@@ -162,3 +162,28 @@ func TestSearch_MetadataFilter(t *testing.T) {
 		t.Errorf("expected only the slack-sourced memory, got %+v", got)
 	}
 }
+
+// TestSearch_TimeBounds covers the inclusive time range on the mapped timestamp field (TODO-3 item
+// 171), applied inside the index like the metadata filter.
+func TestSearch_TimeBounds(t *testing.T) {
+	idx := newIntegrationIndex(t)
+
+	for _, doc := range []Doc{
+		{Id: "early", Body: "deploy failed", Timestamp: 100},
+		{Id: "middle", Body: "deploy failed", Timestamp: 200},
+		{Id: "late", Body: "deploy failed", Timestamp: 300},
+	} {
+		mustApply(t, idx, op{kind: opIndex, doc: doc})
+	}
+
+	got := mustSearch(t, idx, Query{Text: "deploy", Limit: 10, TimestampMin: 150, TimestampMax: 300})
+
+	seen := map[string]bool{}
+	for _, id := range got {
+		seen[id] = true
+	}
+
+	if len(seen) != 2 || !seen["middle"] || !seen["late"] {
+		t.Errorf("expected middle and late (both bounds inclusive), got %+v", got)
+	}
+}

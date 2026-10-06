@@ -100,6 +100,12 @@ type Query struct {
 	// It is applied inside the index for the same reasons Metadata is, and one more: the shortfall
 	// from post-filtering would itself report how much of the store the caller cannot see.
 	Groups []string
+
+	// TimestampMin and TimestampMax bound the memory's time_stamp (UnixNano), inclusive, with zero
+	// meaning unbounded - GetMemories' semantics. Applied inside the index for Metadata's reason: a
+	// bound applied to the results would shrink the page below the limit (TODO-3 item 171).
+	TimestampMin int64
+	TimestampMax int64
 }
 
 // Hit is one search match: the memory's id and how well its body matched.

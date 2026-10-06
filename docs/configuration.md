@@ -2297,7 +2297,8 @@ request, not five hundred:
 }
 ```
 
-`kind` is one of `memory_forgotten`, `event_forgotten`, `sleep_completed` or `memories_at_risk`.
+`kind` is one of `memory_forgotten`, `event_forgotten`, `sleep_completed` or `memories_at_risk`, and
+with `callbacks.events.memoryWrites` also `memory_stored` and `memory_updated` (see below).
 `cause` is why: `consolidation`, `eviction` or `expiry` (the three forgetting passes), or — only
 with `allDeletions` — `client`, `clear`, `cascade`, `summary_replace` or `purge`. `cycle_id` groups
 every delivery one sleep cycle produced, including its warning and its completion, so a receiver can
@@ -2391,6 +2392,16 @@ default **on**, since the feature as a whole is off — an operator who has conf
 callbacks, and needing to then enable each one would be a second switch for one decision. Turning one
 off stops the rows being written, which is cheaper than writing them for a receiver to discard.
 
+`callbacks.events.memoryWrites` (off by default) adds the change stream for writes. Each memory
+created (`memory_stored`) or changed (`memory_updated`) is one delivery, carrying the memory as it now
+stands, with its body under `callbacks.includeBodies`. A system that mirrors the store learned every
+deletion through callbacks and no creation, so it could only clean up, never follow. Each delivery
+is queued **inside the write's own transaction**: a write that commits always has its delivery, and
+one that fails never does. It is off by default because it puts a queue row on every write. These
+kinds are notifications, so the queue's caps trim them under every `backlogPolicy`. Recalls are not
+reported, being reinforcement rather than a change of content, and nor are `Import`/`ImportBatch`,
+being data movement.
+
 #### Bodies
 
 `includeBodies` adds each memory's body to its item. It is off by default and costs a body read per
@@ -2477,8 +2488,9 @@ is no answer that costs nothing:
 | `retain`  | The two deletion kinds are exempt from the caps and the queue keeps them.         | This disk, in a queue nothing trims                  |
 | `stall`   | As `retain`, and the two decay passes stop until the backlog is back under them.  | The workload, in a store that has stopped forgetting |
 
-The other two kinds — `sleep_completed` and `memories_at_risk` — are capped under every policy. Both
-are worthless once stale, and holding them would be holding rows for their own sake.
+The other kinds — `sleep_completed`, `memories_at_risk` and the write stream's `memory_stored` and
+`memory_updated` — are capped under every policy. They are notifications rather than instructions,
+and holding them would be holding rows for their own sake.
 
 Under `stall` the caps stop trimming and start **gating**: once the retained backlog is past
 `maxRows`, `maxBytes` or `maxAgeHours`, `consolidate()` and `evict()` do not run. The cycle still
@@ -2577,6 +2589,7 @@ so a retry of an identical body signs differently.
 | `callbacks.events.eventForgotten`   | `true`    | Record event-deletion callbacks.                                                                |
 | `callbacks.events.sleepCompleted`   | `true`    | Record sleep-cycle completion callbacks.                                                        |
 | `callbacks.events.memoriesAtRisk`   | `false`   | Warn at the top of a cycle about what it is about to forget. Costs a preview scan per cycle.    |
+| `callbacks.events.memoryWrites`     | `false`   | Report each memory created or changed (`memory_stored`/`memory_updated`): the change stream.    |
 | `callbacks.atRiskLimit`             | `1000`    | How many at-risk memories one cycle reports, lowest value first. Capped at 1000.                |
 | `callbacks.atRiskMargin`            | `0`       | Raises the threshold the at-risk scan selects on, so the warning arrives with notice on it.     |
 | `callbacks.backlogPolicy`           | `abandon` | What happens to an undelivered **deletion** callback at the caps: `abandon`, `retain`, `stall`. |

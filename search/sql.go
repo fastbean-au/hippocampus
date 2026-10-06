@@ -92,6 +92,9 @@ func (s *SQL) Search(ctx context.Context, query Query) ([]Hit, error) {
 		Groups:   query.Groups,
 		Limit:    query.Limit,
 		Metadata: query.Metadata,
+
+		TimestampMin: query.TimestampMin,
+		TimestampMax: query.TimestampMax,
 	})
 	if err != nil {
 		return nil, err

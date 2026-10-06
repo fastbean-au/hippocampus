@@ -39,7 +39,7 @@
         "parameters": [
           {
             "name": "kind",
-            "description": "UNSPECIFIED returns every kind",
+            "description": "UNSPECIFIED returns every kind\n\n - CALLBACK_KIND_MEMORY_STORED: a memory created, with callbacks.writes on\n - CALLBACK_KIND_MEMORY_UPDATED: a memory changed, with callbacks.writes on",
             "in": "query",
             "required": false,
             "type": "string",
@@ -48,7 +48,9 @@
               "CALLBACK_KIND_MEMORY_FORGOTTEN",
               "CALLBACK_KIND_EVENT_FORGOTTEN",
               "CALLBACK_KIND_SLEEP_COMPLETED",
-              "CALLBACK_KIND_MEMORIES_AT_RISK"
+              "CALLBACK_KIND_MEMORIES_AT_RISK",
+              "CALLBACK_KIND_MEMORY_STORED",
+              "CALLBACK_KIND_MEMORY_UPDATED"
             ],
             "default": "CALLBACK_KIND_UNSPECIFIED"
           },
@@ -380,6 +382,13 @@
           {
             "name": "linkedTo",
             "description": "optional: restrict to events linked to this event id, in either direction (one hop). NotFound if that event does not exist. The events' counterpart to GetMemoriesRequest.linked_to",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "descriptionContains",
+            "description": "optional: restrict to events whose description contains this substring, case-insensitively - name_contains's counterpart, and unindexed on the same terms. Empty (the default) applies no restriction",
             "in": "query",
             "required": false,
             "type": "string"
@@ -2365,10 +2374,12 @@
         "CALLBACK_KIND_MEMORY_FORGOTTEN",
         "CALLBACK_KIND_EVENT_FORGOTTEN",
         "CALLBACK_KIND_SLEEP_COMPLETED",
-        "CALLBACK_KIND_MEMORIES_AT_RISK"
+        "CALLBACK_KIND_MEMORIES_AT_RISK",
+        "CALLBACK_KIND_MEMORY_STORED",
+        "CALLBACK_KIND_MEMORY_UPDATED"
       ],
       "default": "CALLBACK_KIND_UNSPECIFIED",
-      "description": "CallbackKind is what a queued delivery is about.\n\nMEMORIES_AT_RISK is the only one that is not about something that has already happened: it is\nraised at the top of a sleep cycle, from the same scan PreviewConsolidation runs, and describes\nwhat the store is about to forget. It is off by default because it costs that scan per cycle."
+      "description": "CallbackKind is what a queued delivery is about.\n\nMEMORIES_AT_RISK is the only one that is not about something that has already happened: it is\nraised at the top of a sleep cycle, from the same scan PreviewConsolidation runs, and describes\nwhat the store is about to forget. It is off by default because it costs that scan per cycle.\n\n - CALLBACK_KIND_MEMORY_STORED: a memory created, with callbacks.writes on\n - CALLBACK_KIND_MEMORY_UPDATED: a memory changed, with callbacks.writes on"
     },
     "v1ClearRequest": {
       "type": "object",
@@ -2631,6 +2642,10 @@
           "type": "string",
           "format": "int64",
           "title": "stop after deleting this many events; 0 (the default) means no bound. complete on the response reports which happened"
+        },
+        "descriptionContains": {
+          "type": "string",
+          "title": "restrict to events whose description contains this substring, case-insensitively"
         },
         "deleteMemories": {
           "type": "boolean",
@@ -3989,6 +4004,21 @@
             "type": "string"
           },
           "title": "optional: restrict matches to memories whose metadata carries every one of these \"key=value\" pairs (AND, exact match), exactly as GetMemoriesRequest.metadata. Applied inside the search index rather than to the results, so it narrows the candidates that ranking sees and limit still means what it says"
+        },
+        "offset": {
+          "type": "integer",
+          "format": "int32",
+          "title": "matches to skip, for paging past the first page; 0 by default, at most 1000. Applied after ranking, so it pages through the ranked order. With ranking weights set a deeper page is ranked over a larger candidate pool, so adjacent pages can overlap slightly"
+        },
+        "timestampMin": {
+          "type": "string",
+          "format": "int64",
+          "title": "optional: inclusive lower bound on the memory's time_stamp (UnixNano), applied inside the index like the other filters; 0 means unbounded"
+        },
+        "timestampMax": {
+          "type": "string",
+          "format": "int64",
+          "title": "optional: inclusive upper bound on the memory's time_stamp (UnixNano); 0 means unbounded"
         }
       },
       "description": "SearchMemoriesRequest queries the secondary content-search index for memories matching the\nquery. Results are always re-read from the primary store, which remains authoritative; ids the\nindex returns that the primary store no longer holds are silently dropped. When reinforce is\ntrue the matched memories are recalled - resetting their decay clocks and raising their\neffective significance - rather than merely fetched, and only the memories actually returned are\nreinforced."

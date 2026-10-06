@@ -82,6 +82,11 @@ type ContentQuery struct {
 	// ranked page would silently return fewer matches than the caller asked for, and would let the
 	// size of the shortfall report how much of the store the caller cannot see.
 	Groups []string
+
+	// TimestampMin and TimestampMax bound m.timestamp, inclusive; zero is unbounded. Inside the query
+	// and before the LIMIT, for Metadata's reason (TODO-3 item 171).
+	TimestampMin int64
+	TimestampMax int64
 }
 
 // ContentHit is one match: the memory's id and its relevance, in the convention every backend
@@ -332,6 +337,16 @@ func (d *DB) SearchMemoryHits(ctx context.Context, query ContentQuery) ([]Conten
 	metadataClauses, metadataArgs := d.metadataConditions("m.", query.Metadata)
 	clauses = append(clauses, metadataClauses...)
 	args = append(args, metadataArgs...)
+
+	if query.TimestampMin > 0 {
+		clauses = append(clauses, `m.timestamp >= ?`)
+		args = append(args, query.TimestampMin)
+	}
+
+	if query.TimestampMax > 0 {
+		clauses = append(clauses, `m.timestamp <= ?`)
+		args = append(args, query.TimestampMax)
+	}
 
 	limit := query.Limit
 	if limit <= 0 {

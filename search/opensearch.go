@@ -962,6 +962,21 @@ func (o *OpenSearch) Search(ctx context.Context, query Query) ([]Hit, error) {
 		filters = append(filters, map[string]any{"term": map[string]any{"metadata": term}})
 	}
 
+	// The time bounds, inclusive, on the mapped timestamp field - already a long, so no reindex.
+	if query.TimestampMin > 0 || query.TimestampMax > 0 {
+		bounds := map[string]any{}
+
+		if query.TimestampMin > 0 {
+			bounds["gte"] = query.TimestampMin
+		}
+
+		if query.TimestampMax > 0 {
+			bounds["lte"] = query.TimestampMax
+		}
+
+		filters = append(filters, map[string]any{"range": map[string]any{"timestamp": bounds}})
+	}
+
 	body, err := json.Marshal(map[string]any{
 		"query":   o.searchQuery(query, filters),
 		"size":    query.Limit,

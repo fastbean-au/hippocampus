@@ -70,6 +70,12 @@ const (
 	// CallbackKindMemoriesAtRisk reports what a cycle is about to forget, raised at the top of that
 	// cycle. It is the only kind that is not about something that has already happened.
 	CallbackKindMemoriesAtRisk
+
+	// CallbackKindMemoryStored and CallbackKindMemoryUpdated are the change stream for writes (TODO-3
+	// item 171), opt-in through CallbackPolicy.WriteEvents. Appended, never inserted: the kind is
+	// stored as its number.
+	CallbackKindMemoryStored
+	CallbackKindMemoryUpdated
 )
 
 // DeleteCause names why records were deleted.
@@ -160,6 +166,12 @@ type CallbackPolicy struct {
 	// is the difference between not writing the rows and writing them to throw away.
 	MemoryEvents bool
 	EventEvents  bool
+
+	// WriteEvents adds memory_stored and memory_updated deliveries: the change stream for writes,
+	// which forgetting callbacks never were (TODO-3 item 171). Off by default, because it puts a
+	// queue row on every write; a store mirrored elsewhere is what wants it. Each delivery is queued
+	// inside the write's own transaction (execMemoryWrite), and is capped like any notification.
+	WriteEvents bool
 }
 
 // wantsKind reports whether this kind of deletion callback is recorded at all.
@@ -1503,4 +1515,66 @@ func appendBounded(into []string, from []string, dropped int) ([]string, int) {
 	}
 
 	return append(into, from[:room]...), dropped + (len(from) - room)
+}
+
+// execMemoryWrite runs a statement that creates or changes one memory and, when write callbacks are
+// on, queues the delivery describing it in the SAME transaction (TODO-3 item 171): a write that
+// commits always has its delivery, and one that fails never does. With them off it is exactly
+// d.exec, so the write path is unchanged for every deployment that has not asked.
+//
+// The delivery carries the memory as it stands after the statement, read back inside the
+// transaction - an update reports what the memory now is, not what the request asked to change. A
+// statement that matched no row captures nothing and queues nothing.
+func (d *DB) execMemoryWrite(ctx context.Context, kind CallbackKind, id string, query string, args ...any) (sql.Result, error) {
+	if !d.callbacks.Enabled || !d.callbacks.WriteEvents || !d.callbackTable {
+		return d.exec(ctx, query, args...)
+	}
+
+	tx, cancel, err := d.beginTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+
+	res, err := tx.Exec(d.rebind(query), args...)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return nil, err
+	}
+
+	captured, err := d.captureMemoryRows(tx, []string{id}, nil, d.callbacks.IncludeBodies)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return nil, err
+	}
+
+	if row, ok := captured[id]; ok {
+		delivery := CallbackDelivery{
+			Kind:      kind,
+			ItemCount: 1,
+			Payload: CallbackPayload{Items: []CallbackItem{{
+				Id:           row.id,
+				EventId:      row.eventId,
+				Group:        row.group,
+				Significance: row.significance,
+				Bytes:        row.bytes,
+				Body:         row.body,
+				BodyOmitted:  row.bodyOmitted,
+			}}},
+		}
+
+		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+			_ = tx.Rollback()
+
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return res, nil
 }

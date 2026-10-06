@@ -461,9 +461,15 @@ class Hippocampus:
         metadata: Optional[Mapping[str, str]] = None,
         reinforce: bool = False,
         include_linked: bool = False,
+        offset: int = 0,
+        timestamp_min: _convert.Timestamp = None,
+        timestamp_max: _convert.Timestamp = None,
         timeout: Optional[float] = None,
     ) -> Page:
         """Search memory content, ranked by relevance blended with significance and recall.
+
+        `offset` pages through the ranked matches (at most 1000), and `timestamp_min`/`timestamp_max`
+        bound when the matches were stored, inclusive.
 
         `mode` defaults to keyword. Which modes a deployment can serve is not universal - check
         `who_am_i().search_modes` rather than having an unavailable mode rejected with
@@ -481,6 +487,9 @@ class Hippocampus:
             group=group or "",
             include_linked=include_linked,
             metadata=_convert.metadata_to_pairs(metadata),
+            offset=offset,
+            timestamp_min=_convert.to_nanos(timestamp_min),
+            timestamp_max=_convert.to_nanos(timestamp_max),
         )
 
         if mode is not None:
@@ -703,6 +712,7 @@ class Hippocampus:
         metadata: Optional[Mapping[str, str]] = None,
         ended: Optional[bool] = None,
         name_contains: Optional[str] = None,
+        description_contains: Optional[str] = None,
         max_deletions: int = 0,
         delete_memories: bool = False,
         timeout: Optional[float] = None,
@@ -728,6 +738,7 @@ class Hippocampus:
             metadata=_convert.metadata_to_pairs(metadata),
             ended=_convert.to_tristate(ended),
             name_contains=name_contains or "",
+            description_contains=description_contains or "",
             max_deletions=max_deletions,
             delete_memories=delete_memories,
         )
@@ -751,6 +762,7 @@ class Hippocampus:
         metadata: Optional[Mapping[str, str]] = None,
         ended: Optional[bool] = None,
         name_contains: Optional[str] = None,
+        description_contains: Optional[str] = None,
         linked_to: Optional[str] = None,
         memories: bool = False,
         memory_counts: bool = False,
@@ -778,6 +790,7 @@ class Hippocampus:
             metadata=_convert.metadata_to_pairs(metadata),
             ended=_convert.to_tristate(ended),
             name_contains=name_contains or "",
+            description_contains=description_contains or "",
             linked_to=linked_to or "",
             memories=memories,
             memory_counts=memory_counts,

@@ -61,6 +61,18 @@ itself which service version it was built against.
 
 ### Added
 
+- **Three API gaps closed.**
+  - **`SearchMemories` pages and takes time bounds.** `offset` (at most 1000) pages through the
+    ranked matches, and `timestamp_min`/`timestamp_max` bound when the matches were stored, applied
+    inside the index on both backends. `GetMemories` had both and search had neither, so a client
+    could read no further than the first page.
+  - **A change stream for writes.** `callbacks.events.memoryWrites` (off by default) adds
+    `memory_stored` and `memory_updated` deliveries on the existing durable queue, each queued inside
+    the write's own transaction and carrying the memory as it now stands. Before this, callbacks
+    reported forgetting only, so a mirror of the store learned of every deletion and no creation.
+  - **Events can be selected by description.** `description_contains` on `GetEvents` and
+    `DeleteEventsByFilter`, `name_contains`'s counterpart.
+  - All three are in the CLI, the Python client and the MCP bridge where those carry the RPC.
 - **Kubernetes manifests closer to production.**
   - A `mysql` overlay: one consolidator and N replicas over a bundled MySQL 8.4, the postgres
     overlay's shape.

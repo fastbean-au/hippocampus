@@ -907,3 +907,27 @@ func TestEventDeleteIfEmpty(t *testing.T) {
 		t.Errorf("request = %v, want if_empty set and memories not", del)
 	}
 }
+
+func TestEventListDescriptionContains(t *testing.T) {
+	req, _, err := runCommand(t, "event list", []string{"--description-contains", "failover"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if got := req.(*contract.GetEventsRequest).GetDescriptionContains(); got != "failover" {
+		t.Errorf("description_contains = %q, want failover", got)
+	}
+}
+
+func TestMemorySearchPagesAndBounds(t *testing.T) {
+	req, _, err := runCommand(t, "memory search", []string{"--query", "deploy", "--offset", "20", "--timestamp-min", "2026-01-02T03:04:05Z"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	search := req.(*contract.SearchMemoriesRequest)
+
+	if search.GetOffset() != 20 || search.GetTimestampMin() == 0 || search.GetTimestampMax() != 0 {
+		t.Errorf("request = %v, want offset 20 and only the lower bound", search)
+	}
+}

@@ -1456,6 +1456,15 @@ const STEPS = [
             help: "The only callback that speaks before the fact: what the next cycle is about to forget, raised at the top of it. Off by default because it is also the only one that costs a scan — every cycle runs an extra consolidation preview to build it.",
           },
           {
+            key: "callbacks.events.memoryWrites",
+            label: "Report writes too (memory_stored, memory_updated)",
+            type: "bool",
+            def: false,
+            svc: false,
+            when: (s) => value(s, "callbacks.enabled"),
+            help: "The change stream for writes: one delivery per memory created or changed, as it now stands, queued in the write's own transaction. Off by default because it puts a queue row on every write; turn it on when the receiver mirrors the store rather than only cleaning up after it. Recalls and imports are not reported.",
+          },
+          {
             key: "callbacks.atRiskLimit",
             label: "Warn about at most (memories)",
             type: "int",

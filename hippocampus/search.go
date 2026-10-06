@@ -26,6 +26,11 @@ const defaultSearchLimit = 10
 // The ranking over-fetch multiplies the clamped value, never the requested one.
 const maxSearchLimit = 200
 
+// maxSearchOffset bounds how deep SearchMemories pages (TODO-3 item 171). A page past it would have
+// the index rank more candidates than any client reads, and on OpenSearch would approach the index's
+// max_result_window; a client needing more is enumerating, which is GetMemories' job.
+const maxSearchOffset = 1000
+
 // searchIdx returns the configured search index, or the disabled no-op when none was injected
 // (as in tests constructing a Server directly), so callers never need a nil check.
 func (s *Server) searchIdx() search.Index {
@@ -74,10 +79,23 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 		limit = maxSearchLimit
 	}
 
+	offset := int(in.GetOffset())
+	if offset < 0 || offset > maxSearchOffset {
+		return &res, status.Errorf(codes.InvalidArgument, "offset must be between 0 and %d, got %d", maxSearchOffset, offset)
+	}
+
+	if in.GetTimestampMin() > 0 && in.GetTimestampMax() > 0 && in.GetTimestampMin() > in.GetTimestampMax() {
+		return &res, status.Error(codes.InvalidArgument, "timestamp_min is after timestamp_max")
+	}
+
+	// The window is everything up to the end of the requested page: it is ranked whole and then
+	// sliced, so a page is a page of the ranked order rather than a ranking of one page of hits.
+	window := offset + limit
+
 	// When ranking is active the backend is asked for more candidates than the caller wanted, so
 	// significance and recall have room to promote a memory into the returned page; rankMemories
-	// truncates back to limit afterwards.
-	hits, err := s.searchHits(ctx, in, s.ranking.candidateLimit(limit))
+	// truncates back to the window afterwards.
+	hits, err := s.searchHits(ctx, in, s.ranking.candidateLimit(window))
 	if err != nil {
 		return &res, mapError(err)
 	}
@@ -110,7 +128,13 @@ func (s *Server) SearchMemories(ctx context.Context, in *contract.SearchMemories
 
 	// Order by relevance blended with significance and recall, and truncate to what the caller
 	// asked for.
-	ranked := rankMemories(hits, *memories, s.ranking, limit)
+	ranked := rankMemories(hits, *memories, s.ranking, window)
+
+	if offset >= len(ranked) {
+		ranked = nil
+	} else {
+		ranked = ranked[offset:]
+	}
 
 	// Only now, against exactly the memories being returned, is reinforcement applied. The recall
 	// re-reads them, so the response carries their updated recall state rather than the pre-recall
@@ -175,6 +199,9 @@ func (s *Server) searchHits(ctx context.Context, in *contract.SearchMemoriesRequ
 		Groups:   groups,
 		Limit:    limit,
 		Metadata: metadata,
+
+		TimestampMin: in.GetTimestampMin(),
+		TimestampMax: in.GetTimestampMax(),
 	}
 
 	switch in.GetMode() {

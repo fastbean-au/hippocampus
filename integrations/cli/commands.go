@@ -132,6 +132,9 @@ func commands() map[string]command {
 				fs.Bool("reinforce", false, "route matches through recall, reinforcing them")
 				fs.String("mode", "keyword", "how to match: keyword, semantic, or hybrid (semantic and hybrid need the service to have an embedding model and OpenSearch)")
 				fs.Bool("include-linked", false, "also return the memories linked to each match, one hop, in either direction; appended after the ranked matches and never counted as matches themselves")
+				fs.Int32("offset", 0, "matches to skip, for the next page of the ranked results (at most 1000)")
+				fs.String("timestamp-min", "", "only matches stored at or after this time (RFC3339)")
+				fs.String("timestamp-max", "", "only matches stored at or before this time (RFC3339)")
 			},
 			run: runMemorySearch,
 		},
@@ -315,7 +318,7 @@ func commands() map[string]command {
 		"callbacks queue": {
 			summary: "show the outbound callback queue",
 			flags: func(fs *pflag.FlagSet) {
-				fs.String("kind", "", "only this kind: memory-forgotten, event-forgotten, sleep-completed or memories-at-risk")
+				fs.String("kind", "", "only this kind: memory-forgotten, event-forgotten, sleep-completed, memories-at-risk, memory-stored or memory-updated")
 				fs.Int64("after-seq", 0, "pagination: the next_seq reported by the previous page")
 				fs.Int32("limit", 0, "deliveries to return (default 100, max 1000)")
 			},
@@ -545,6 +548,7 @@ func eventDeleteFilterFlags(fs *pflag.FlagSet) {
 	fs.StringSlice("metadata", nil, "restrict to events carrying this 'key=value' label (repeatable; all must match)")
 	fs.String("ended", "", "'true' for events that have ended, 'false' for those still running")
 	fs.String("name-contains", "", "restrict to events whose name contains this substring (case-insensitive)")
+	fs.String("description-contains", "", "restrict to events whose description contains this substring (case-insensitive)")
 	fs.Int64("max-deletions", 0, "stop after deleting this many events (0 = no bound)")
 	fs.Bool("delete-memories", false, "delete each event's memories with it; without this they survive with no event")
 }
@@ -567,6 +571,7 @@ func eventFilterFlags(fs *pflag.FlagSet) {
 	fs.StringSlice("metadata", nil, "restrict to events carrying this 'key=value' label (repeatable; all must match)")
 	fs.String("ended", "", "'true' for events that have ended, 'false' for those still running")
 	fs.String("name-contains", "", "restrict to events whose name contains this substring (case-insensitive)")
+	fs.String("description-contains", "", "restrict to events whose description contains this substring (case-insensitive)")
 	fs.String("linked-to", "", "restrict to the events one hop from this event id, in either direction")
 	fs.Bool("links", false, "include each event's outbound links")
 }
@@ -1089,6 +1094,7 @@ func runEventDeleteByFilter(ctx context.Context, client contract.HippocampusClie
 		Metadata:             strs(fs, "metadata"),
 		Ended:                ended,
 		NameContains:         str(fs, "name-contains"),
+		DescriptionContains:  str(fs, "description-contains"),
 		MaxDeletions:         i64(fs, "max-deletions"),
 		DeleteMemories:       b(fs, "delete-memories"),
 	})
@@ -1137,6 +1143,16 @@ func runMemorySearch(ctx context.Context, client contract.HippocampusClient, fs 
 		return fmt.Errorf("--mode must be keyword, semantic, or hybrid")
 	}
 
+	tsMin, err := parseTime(fs, "timestamp-min")
+	if err != nil {
+		return err
+	}
+
+	tsMax, err := parseTime(fs, "timestamp-max")
+	if err != nil {
+		return err
+	}
+
 	req := &contract.SearchMemoriesRequest{
 		Query:     query,
 		Limit:     i32(fs, "limit"),
@@ -1147,6 +1163,10 @@ func runMemorySearch(ctx context.Context, client contract.HippocampusClient, fs 
 		Metadata:  strs(fs, "metadata"),
 
 		IncludeLinked: b(fs, "include-linked"),
+
+		Offset:       i32(fs, "offset"),
+		TimestampMin: tsMin,
+		TimestampMax: tsMax,
 	}
 
 	resp, err := client.SearchMemories(ctx, req)
@@ -1351,6 +1371,7 @@ func runEventList(ctx context.Context, client contract.HippocampusClient, fs *pf
 		Metadata:             strs(fs, "metadata"),
 		Ended:                ended,
 		NameContains:         str(fs, "name-contains"),
+		DescriptionContains:  str(fs, "description-contains"),
 		LinkedTo:             str(fs, "linked-to"),
 		Links:                b(fs, "links"),
 	}
@@ -1574,10 +1595,16 @@ func callbackKindFromFlag(fs *pflag.FlagSet, name string) (contract.CallbackKind
 	case "memories-at-risk", "at-risk":
 		return contract.CallbackKind_CALLBACK_KIND_MEMORIES_AT_RISK, nil
 
+	case "memory-stored", "stored":
+		return contract.CallbackKind_CALLBACK_KIND_MEMORY_STORED, nil
+
+	case "memory-updated", "updated":
+		return contract.CallbackKind_CALLBACK_KIND_MEMORY_UPDATED, nil
+
 	}
 
 	return 0, fmt.Errorf(
-		"--%s must be memory-forgotten, event-forgotten, sleep-completed or memories-at-risk",
+		"--%s must be memory-forgotten, event-forgotten, sleep-completed, memories-at-risk, memory-stored or memory-updated",
 		name,
 	)
 }

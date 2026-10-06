@@ -267,7 +267,9 @@ func knownKind(kind string) string {
 	case notify.KindMemoryForgotten,
 		notify.KindEventForgotten,
 		notify.KindSleepCompleted,
-		notify.KindMemoriesAtRisk:
+		notify.KindMemoriesAtRisk,
+		notify.KindMemoryStored,
+		notify.KindMemoryUpdated:
 		return kind
 
 	}

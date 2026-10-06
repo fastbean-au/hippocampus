@@ -1256,3 +1256,28 @@ func TestEveryToolIsDocumented(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchMemories_PagesAndBounds: the tool takes RFC3339 bounds, as the listing tools do, and
+// pages with offset (TODO-3 item 171).
+func TestSearchMemories_PagesAndBounds(t *testing.T) {
+	f := &fakeClient{searchRes: &contract.GetMemoriesResponse{}}
+
+	if _, _, err := newBridge(f).searchMemories(context.Background(), nil, searchMemoriesInput{
+		Query:        "deploy",
+		Offset:       10,
+		StoredAfter:  "2026-08-12T00:00:00Z",
+		StoredBefore: "2026-08-13T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("searchMemories: %v", err)
+	}
+
+	want := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC).UnixNano()
+
+	if f.searchReq.GetOffset() != 10 || f.searchReq.GetTimestampMin() != want || f.searchReq.GetTimestampMax() <= want {
+		t.Errorf("search request = %+v, want offset 10 and the RFC3339 bounds as UnixNano", f.searchReq)
+	}
+
+	if _, _, err := newBridge(f).searchMemories(context.Background(), nil, searchMemoriesInput{Query: "x", StoredAfter: "yesterday"}); err == nil {
+		t.Error("a malformed stored_after was accepted")
+	}
+}

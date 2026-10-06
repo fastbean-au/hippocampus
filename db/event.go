@@ -501,6 +501,11 @@ func (d *DB) eventFilterConditions(filter EventFilter) (string, []any) {
 		args = append(args, "%"+escapeLikePattern(filter.NameContains)+"%")
 	}
 
+	if filter.DescriptionContains != "" {
+		query += ` AND LOWER(description) LIKE LOWER(?) ESCAPE '` + string(likeEscape) + `'`
+		args = append(args, "%"+escapeLikePattern(filter.DescriptionContains)+"%")
+	}
+
 	// The caller's group scope, conjoined with the Group filter above (see MemoryFilter.Groups).
 	query, args = appendGroupScope(query, args, "", filter.Groups)
 

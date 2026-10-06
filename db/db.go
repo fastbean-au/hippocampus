@@ -551,6 +551,11 @@ type EventFilter struct {
 	// description are in neither search backend, both of which index memories only.
 	NameContains string
 
+	// DescriptionContains is NameContains for the description (TODO-3 item 171), on the same terms:
+	// case-insensitive, literal, unindexed. An event's description is where its account of what
+	// happened lives, and nothing could select on it.
+	DescriptionContains string
+
 	// Ended is tri-state for the reason MemoryFilter.Recalled is: an event that has not ended
 	// stores time_end = 0, so a Go bool could not distinguish "only the ones still running" from
 	// "no restriction", and still-running is the question this filter exists to answer.

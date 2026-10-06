@@ -64,6 +64,7 @@ type eventSelector interface {
 	GetMetadata() []string
 	GetEnded() contract.Bool
 	GetNameContains() string
+	GetDescriptionContains() string
 }
 
 // memorySelectionFilter validates a memory selection and turns it into a db.MemoryFilter carrying
@@ -178,9 +179,10 @@ func eventSelectionFilter(in eventSelector) (db.EventFilter, error) {
 		SignificanceExtremum: extremum,
 		Group:                in.GetGroup(),
 
-		Metadata:     metadata,
-		Ended:        triState(in.GetEnded()),
-		NameContains: in.GetNameContains(),
+		Metadata:            metadata,
+		Ended:               triState(in.GetEnded()),
+		NameContains:        in.GetNameContains(),
+		DescriptionContains: in.GetDescriptionContains(),
 	}
 
 	return filter, nil

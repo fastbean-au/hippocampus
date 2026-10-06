@@ -634,6 +634,8 @@ export const CALLBACK_KIND_LABELS = {
   CALLBACK_KIND_EVENT_FORGOTTEN: "event forgotten",
   CALLBACK_KIND_SLEEP_COMPLETED: "sleep completed",
   CALLBACK_KIND_MEMORIES_AT_RISK: "memories at risk",
+  CALLBACK_KIND_MEMORY_STORED: "memory stored",
+  CALLBACK_KIND_MEMORY_UPDATED: "memory updated",
 };
 
 export function callbackKindLabel(kind) {

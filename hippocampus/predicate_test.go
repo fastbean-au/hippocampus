@@ -157,6 +157,7 @@ func TestEverySelectingFieldIsRecognised(t *testing.T) {
 		"metadata":              {Metadata: []string{"k=v"}},
 		"ended":                 {Ended: contract.Bool_FALSE},
 		"name_contains":         {NameContains: "x"},
+		"description_contains":  {DescriptionContains: "x"},
 	}
 
 	fieldNames := func(m proto.Message) []string {
