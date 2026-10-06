@@ -630,6 +630,7 @@ type Store interface {
 	CreateEvent(ctx context.Context, event types.Event) (string, error)
 	UpdateEvent(ctx context.Context, event types.Event) (bool, error)
 	DeleteEvent(ctx context.Context, id string) (bool, error)
+	DeleteEventCascade(ctx context.Context, id string, opts EventCascade) (EventDeletion, error)
 	DeleteEvents(ctx context.Context, ids []string) (int, error)
 	EventExists(ctx context.Context, id string) (bool, error)
 	GetEvent(ctx context.Context, id string) (*types.Event, error)

@@ -137,6 +137,18 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **Deleting an event is one transaction, and the ingestor never drains a memory it did not judge.**
+  - **`DeleteEvent`:** it took the event in one transaction and its memories in another. A failure
+    between the two left memories naming an event that no longer existed, and a retry answered
+    `NotFound` with nothing left to finish.
+  - **`DeleteEventsByFilter`:** it could delete an event that had gained a memory after it was
+    cleared. Its batch delete now takes only events that hold nothing.
+  - **The ingestor's drain:** it re-read an event's memory count and then deleted the event with its
+    memories. A memory landing between the two was deleted without ever being judged. The drain now
+    deletes the memories it judged, by id, and then the event with a new
+    `DeleteEventRequest.if_empty`. The edge refuses that delete while a late memory holds the event,
+    so the next pass judges the late memory. `if_empty` is also reachable as
+    `hippo event delete --if-empty` and as `delete_event(if_empty=True)` in the Python client.
 - **Three concurrency fixes in the preview, explain and shutdown paths.**
   - A `PreviewConsolidation` or `ExplainConsolidation` snapshot read the default event significance
     while a sleep cycle could be writing it, a data race.

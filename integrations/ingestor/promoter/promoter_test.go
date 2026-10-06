@@ -339,44 +339,68 @@ func TestPassRepromotesAfterAFailedDrain(t *testing.T) {
 	}
 }
 
-// TestDrainSkipsWhenTheEventChangedUnderneath covers the guard behind the settle window: a memory
-// that landed against the event after it was read must not be deleted without ever being judged.
-func TestDrainSkipsWhenTheEventChangedUnderneath(t *testing.T) {
+// TestDrainNeverDeletesAMemoryItDidNotJudge covers the window the count re-check left open (TODO-3
+// item 165): the drain compared the event's memory count and then deleted it with memories: true, so
+// a memory landing between the two went with it, unjudged. It now deletes only the memories it
+// judged and the event only while it is empty, so a late memory and its event stay for the next pass.
+func TestDrainNeverDeletesAMemoryItDidNotJudge(t *testing.T) {
 	source := newFakeStore()
 	target := newFakeStore()
 
 	source.putEvent(endedEvent("e1", "keep", nil))
-	source.putMemory(memory("m1", "e1", "read", 5))
+	source.putMemory(memory("m1", "e1", "judged", 5))
+
+	// Lands as the drain's event delete arrives - after any re-check could have looked.
+	source.beforeDeleteEvent = func() {
+		source.beforeDeleteEvent = nil
+		source.putMemory(memory("m2", "e1", "landed late", 5))
+	}
 
 	p := newPromoter(t, source, target, `{"defaultAction":"promote","rules":[]}`, Config{})
 
-	// The judgement saw one memory; the drain's re-check will see two.
-	drained, err := p.drainAfterInsert(source, "e1", 1, memory("m2", "e1", "landed late", 5))
+	stats, err := p.Pass(context.Background())
 	if err != nil {
-		t.Fatalf("drain: %s", err)
+		t.Fatalf("Pass: %s", err)
 	}
 
-	// Leaving the event is deliberate, so it is not an error - but it is not a drain either, and the
-	// pass pages by the difference.
-	if drained {
-		t.Error("drain reported the changed event as drained")
+	if stats.EventsPromoted != 1 {
+		t.Errorf("expected the judged event promoted, got %+v", stats)
+	}
+
+	if got := source.memoryIds(); !reflect.DeepEqual(got, []string{"m2"}) {
+		t.Errorf("the source holds %v, want only the late m2: the judged m1 drained and m2 never deleted unjudged", got)
 	}
 
 	if got := source.eventIds(); !reflect.DeepEqual(got, []string{"e1"}) {
-		t.Errorf("expected the changed event to be left alone, got %v", got)
+		t.Errorf("the event holding the late memory was not left for the next pass: %v", got)
 	}
 
-	if got := source.memoryIds(); !reflect.DeepEqual(got, []string{"m1", "m2"}) {
-		t.Errorf("expected both memories to survive, got %v", got)
+	// The next pass judges what is left: the late memory, under the same event.
+	if _, err := p.Pass(context.Background()); err != nil {
+		t.Fatalf("second Pass: %s", err)
+	}
+
+	if got := target.memoryIds(); !reflect.DeepEqual(got, []string{"m1", "m2"}) {
+		t.Errorf("the target holds %v, want both memories, each judged once", got)
+	}
+
+	if got := source.eventIds(); len(got) != 0 {
+		t.Errorf("the source still holds %v after the late memory was judged", got)
 	}
 }
 
-// drainAfterInsert writes a memory and then drains against the pre-insert count, which is the race
-// the re-check exists for.
-func (p *Promoter) drainAfterInsert(source *fakeStore, eventId string, expected int, late *contract.Memory) (bool, error) {
-	source.putMemory(late)
+// TestDrainOfAnEventAlreadyGoneIsADrain: an event something else removed between the judgement and
+// the drain is in the state the drain was after.
+func TestDrainOfAnEventAlreadyGoneIsADrain(t *testing.T) {
+	source := newFakeStore()
+	target := newFakeStore()
 
-	return p.drain(context.Background(), eventId, expected)
+	p := newPromoter(t, source, target, `{"defaultAction":"promote","rules":[]}`, Config{})
+
+	drained, err := p.drain(context.Background(), "gone", nil)
+	if err != nil || !drained {
+		t.Errorf("drain of an absent event = %v, %v; want drained", drained, err)
+	}
 }
 
 // TestPassSkipsAnEventOverTheMemoryCap pins that an event too large to judge whole is left alone and

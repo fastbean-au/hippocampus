@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -757,4 +758,179 @@ func (d *DB) CalculateSignificancePercentile(ctx context.Context, percent float6
 	}
 
 	return stats.PercentileNearestRank(sigs, percent)
+}
+
+// EventCascade says what DeleteEventCascade does with an event's memories.
+type EventCascade struct {
+	// DeleteMemories deletes the caller's memories of the event; otherwise they are detached.
+	DeleteMemories bool
+
+	// OnlyIfEmpty refuses the deletion, changing nothing, while the event holds any of the caller's
+	// memories. It is what a caller that has already deleted the memories it judged uses, so a memory
+	// that arrived since is never deleted unjudged.
+	OnlyIfEmpty bool
+
+	// Groups is the caller's scope (see MemoryFilter.Groups), empty meaning unrestricted. Another
+	// group's memories are never deleted and never block OnlyIfEmpty: they are detached, because the
+	// event is going and a refusal would reveal that they exist.
+	Groups []string
+}
+
+// EventDeletion reports what DeleteEventCascade did.
+type EventDeletion struct {
+	// Deleted is false for an event that does not exist, in which case nothing changed.
+	Deleted bool
+
+	// HeldMemories is true when OnlyIfEmpty refused the deletion.
+	HeldMemories bool
+
+	// MemoryIds are the caller's memories of the event: deleted under DeleteMemories, otherwise
+	// detached.
+	MemoryIds []string
+
+	// Detached counts every memory left without an event, the caller's or another group's.
+	Detached int
+}
+
+// DeleteEventCascade deletes an event and deals with its memories in ONE transaction (TODO-3 item
+// 165). The DeleteEvent RPC used to take the event in one transaction and its memories in another,
+// so a failure between them left memories naming an event that no longer existed, and a retry
+// answered NotFound with nothing left to finish. Here a failure anywhere leaves everything as it was.
+//
+// The caller's memories are deleted by id rather than by event_id, because the ids are what the link
+// prune, the search outbox and a callback need: a memory attached between the read and the delete is
+// then caught by the detach rather than deleted with its links left behind.
+func (d *DB) DeleteEventCascade(ctx context.Context, id string, opts EventCascade) (EventDeletion, error) {
+	log.Trace("func() db.DeleteEventCascade")
+
+	var out EventDeletion
+
+	err := d.withTxRetry(ctx, "delete an event", func() error {
+		var attemptErr error
+
+		out, attemptErr = d.deleteEventCascadeOnce(ctx, id, opts)
+
+		return attemptErr
+	})
+
+	return out, err
+}
+
+func (d *DB) deleteEventCascadeOnce(ctx context.Context, id string, opts EventCascade) (EventDeletion, error) {
+	var out EventDeletion
+
+	tx, cancel, err := d.beginTx(ctx)
+	if err != nil {
+		return out, err
+	}
+	defer cancel()
+
+	fail := func(err error) (EventDeletion, error) {
+		_ = tx.Rollback()
+
+		return EventDeletion{}, err
+	}
+
+	inScope, err := d.memoryIdsForEvent(tx, id, opts.Groups)
+	if err != nil {
+		return fail(err)
+	}
+
+	if opts.OnlyIfEmpty && len(inScope) > 0 {
+		_ = tx.Rollback()
+
+		return EventDeletion{HeldMemories: true}, nil
+	}
+
+	// Captured before the delete: the group is only readable while the row still exists.
+	captured, err := d.captureEventCallback(tx, []string{id}, CauseClient)
+	if err != nil {
+		return fail(err)
+	}
+
+	res, err := tx.Exec(d.rebind(`DELETE FROM events WHERE id = ?`), id)
+	if err != nil {
+		return fail(err)
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fail(err)
+	}
+
+	// An unknown id changes nothing at all, including the memories that happen to name it.
+	if n == 0 {
+		_ = tx.Rollback()
+
+		return EventDeletion{}, nil
+	}
+
+	out.Deleted = true
+	out.MemoryIds = inScope
+
+	if opts.DeleteMemories && len(inScope) > 0 {
+		if err := d.deleteEventMemoriesById(tx, inScope); err != nil {
+			return fail(err)
+		}
+	}
+
+	detached, err := tx.Exec(d.rebind(`UPDATE memories SET event_id = '' WHERE event_id = ?`), id)
+	if err != nil {
+		return fail(err)
+	}
+
+	if count, err := detached.RowsAffected(); err == nil {
+		out.Detached = int(count)
+	}
+
+	if err := d.queueEventCallbacks(tx, captured, CauseClient, 0); err != nil {
+		return fail(err)
+	}
+
+	if err := d.pruneEventLinks(tx, []string{id}); err != nil {
+		return fail(err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return EventDeletion{}, err
+	}
+
+	return out, nil
+}
+
+// deleteEventMemoriesById deletes memories going with their event, inside its transaction: the
+// cascade callback, the rows, their links and the search index's delete, as DeleteEventMemories does
+// for the same cause.
+func (d *DB) deleteEventMemoriesById(tx *sql.Tx, ids []string) error {
+	ids = lockOrderedIDs(ids)
+
+	delivery, notifying, err := d.captureMemoryCallback(tx, ids, CauseCascade)
+	if err != nil {
+		return err
+	}
+
+	for start := 0; start < len(ids); start += deleteChunkSize {
+		chunk := ids[start:min(start+deleteChunkSize, len(ids))]
+
+		args := make([]any, len(chunk))
+		for i, v := range chunk {
+			args[i] = v
+		}
+
+		if _, err := tx.Exec(d.rebind(`DELETE FROM memories WHERE id IN (`+placeholders(len(chunk))+`)`), args...); err != nil {
+			return err
+		}
+	}
+
+	if notifying {
+		if err := d.queueCallbacks(tx, []CallbackDelivery{delivery}); err != nil {
+			return err
+		}
+	}
+
+	if err := d.pruneMemoryLinks(tx, ids); err != nil {
+		return err
+	}
+
+	return d.queueSearchDeletes(tx, ids)
 }

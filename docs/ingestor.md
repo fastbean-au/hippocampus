@@ -178,10 +178,14 @@ The pass re-reads the *first* page each time rather than paging with an offset, 
 event shifts every later event back into the window an offset would have skipped. It stops when a
 page brings nothing new.
 
-**The drain is guarded.** Before deleting, the event's memory count is re-read; if it changed since
-the judgement, the whole event is left for the next pass and re-judged whole. That is what makes a
-memory landing against an already-ended event safe — `--settle-seconds` makes it rare, and the
-re-check makes it correct.
+**The drain never deletes a memory it did not judge.** It deletes the memories the judgement covered,
+by id, and then the event with `DeleteEvent`'s `if_empty`, which the edge refuses while the event
+holds anything else. A memory landing against an already-ended event therefore keeps the event, and
+the next pass judges it on its own, under the same event. `--settle-seconds` makes that rare, and
+deleting by id makes it correct. The drain used to re-read the event's memory count and then delete
+everything with it, which left the window between the two calls open. An edge older than
+`if_empty` ignores the field and detaches a late memory rather than deleting it, so it is never
+lost unjudged there either; it is simply never judged.
 
 ### Does the edge have to be embedded?
 

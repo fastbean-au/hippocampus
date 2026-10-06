@@ -908,7 +908,8 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     an id already names (TODO-3 item 136). An event-wide operation (`DeleteEvent`, the predicate
     event delete, summary replacement) acts on the caller's own memories of an in-scope event only,
     detaching another group's from a deleted event rather than refusing - a refusal would reveal
-    them (`clearEventMemories`, item 139). Two things
+    them (`clearEventMemories`, item 139; `DeleteEvent` does the same inside one transaction through
+    `db.DeleteEventCascade`, item 165, whose `if_empty` likewise counts only the caller's memories). Two things
     deliberately cross the boundary, both consequences of the partition being _soft_:
     `link_significance` is scope-blind (it is the denormalised aggregate in the covering index, and
     recomputing per-scope would mean joining the link tables in the consolidation scans), and the
@@ -1697,11 +1698,13 @@ github.com/fastbean-au/hippocampus => ../..`), which is what makes `github.com/g
     because the field set is a contract with every deployed rules file), bounded by a cost limit and
     a timeout, and an expression that _errors_ (the classic: an unguarded `event.metadata['k']`) does
     not match, is logged naming the rule, and does not stop the rules after it. (4) **The drain
-    re-checks** the event's memory count before deleting, so a memory landing against an
-    already-ended event is never deleted unjudged — `--settle-seconds` makes that rare and the
-    re-check makes it correct; note the two reduction kinds disagree about that count
+    deletes only what it judged**: the judged memories by id, then the event with
+    `DeleteEvent.if_empty`, which the edge refuses while a late memory holds it - so a memory landing
+    against an already-ended event is never deleted unjudged, and is judged on the next pass
+    (TODO-3 item 165; a count re-check followed by `memories: true` left the window between the two
+    calls open). The two reduction kinds disagree about what the source holds afterwards
     (`keepTopN`/`minSignificance` choose what _crosses_ and leave the source untouched, `summarise`
-    replaces memories on the source), which is why `reduce` returns both. (5) **An event over
+    replaces memories on the source), which is why `reduce` returns both lists. (5) **An event over
     `--max-event-memories` is left unjudged** rather than judged on a truncated view of itself.
     (6) A `promote` rule may also carry a **`set` block** (`rules/set.go`) — CEL expressions for
     `significance`/`group`/`metadata` (plus `name`/`description` on the event), evaluated per event

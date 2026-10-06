@@ -336,27 +336,50 @@ func (s *Server) DeleteEvent(ctx context.Context, in *contract.DeleteEventReques
 		return &res, status.Error(codes.InvalidArgument, "id must be provided")
 	}
 
+	if in.GetIfEmpty() && in.GetMemories() {
+		return &res, status.Error(codes.InvalidArgument, "if_empty and memories are exclusive: one deletes the event only when it holds nothing, the other deletes what it holds")
+	}
+
 	if err := s.scopeEventIds(ctx, []string{eid}); err != nil {
 		return &res, err
 	}
 
-	deleted, err := s.db.DeleteEvent(ctx, eid)
+	// One transaction for the event and its memories (TODO-3 item 165): taken in two, a failure
+	// between them left memories naming an event that no longer existed and a retry with nothing to
+	// find. Scope-aware: a scoped caller's deletion takes only their own memories of the event,
+	// detaching any other group's (TODO-3 item 139).
+	groups, _ := s.scopedGroups(ctx)
+
+	deletion, err := s.db.DeleteEventCascade(ctx, eid, db.EventCascade{
+		DeleteMemories: in.GetMemories(),
+		OnlyIfEmpty:    in.GetIfEmpty(),
+		Groups:         groups,
+	})
 	if err != nil {
 		return &res, mapError(err)
 	}
 
+	if deletion.HeldMemories {
+		return &res, status.Errorf(codes.FailedPrecondition, "event '%s' still holds memories, and if_empty was set", eid)
+	}
+
 	// An unknown id deletes nothing; report NotFound rather than success, matching EndEvent and
-	// UpdateEventSignificance. The memory cleanup below is skipped for a nonexistent event.
-	if !deleted {
+	// UpdateEventSignificance.
+	if !deletion.Deleted {
 		return &res, status.Errorf(codes.NotFound, "event '%s' not found", eid)
 	}
 
 	tel.eventsDeleted.Add(ctx, 1)
 
-	// Shared with DeleteEventsByFilter, and scope-aware: a scoped caller's deletion takes only their
-	// own memories of the event, detaching any other group's (TODO-3 item 139).
-	if _, err := s.clearEventMemories(ctx, eid, in.GetMemories()); err != nil {
-		return &res, mapError(err)
+	// The secondary index follows the committed transaction; its deletes are also in the outbox,
+	// recorded inside it.
+	if in.GetMemories() && len(deletion.MemoryIds) > 0 {
+		tel.memoriesDeleted.Add(ctx, int64(len(deletion.MemoryIds)))
+		s.searchIdx().DeleteMemories(deletion.MemoryIds)
+	}
+
+	if deletion.Detached > 0 {
+		s.searchIdx().SetEventId(eid, "")
 	}
 
 	res.Ok = true

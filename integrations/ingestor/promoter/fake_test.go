@@ -34,6 +34,10 @@ type fakeStore struct {
 	summariser func(eventId string, memories []*contract.Memory) *contract.Memory
 
 	calls map[string]int
+
+	// beforeDeleteEvent, when set, runs as a DeleteEvent call arrives and before the fake takes its
+	// lock: a memory landing at the last moment, which is the window TODO-3 item 165 closed.
+	beforeDeleteEvent func()
 }
 
 func newFakeStore() *fakeStore {
@@ -287,6 +291,10 @@ func (f *fakeStore) DeleteEvent(
 	in *contract.DeleteEventRequest,
 	_ ...grpc.CallOption,
 ) (*contract.GeneralResponse, error) {
+	if f.beforeDeleteEvent != nil {
+		f.beforeDeleteEvent()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -296,6 +304,14 @@ func (f *fakeStore) DeleteEvent(
 
 	if _, ok := f.events[in.GetId()]; !ok {
 		return nil, status.Errorf(codes.NotFound, "event '%s' not found", in.GetId())
+	}
+
+	if in.GetIfEmpty() {
+		for _, memory := range f.memories {
+			if memory.GetEventId() == in.GetId() {
+				return nil, status.Errorf(codes.FailedPrecondition, "event '%s' still holds memories", in.GetId())
+			}
+		}
 	}
 
 	delete(f.events, in.GetId())

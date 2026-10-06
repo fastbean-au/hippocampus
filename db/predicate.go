@@ -223,7 +223,14 @@ func (d *DB) deleteEventsOnce(ctx context.Context, ids []string) (int, error) {
 			args[i] = v
 		}
 
-		res, err := tx.Exec(d.rebind(`DELETE FROM events WHERE id IN (`+placeholders(len(chunk))+`)`), args...)
+		// Only an event holding no memory: the caller cleared each one first, in a transaction of its
+		// own, and a memory written since must not be left naming an event that is gone. Such an event
+		// survives, and the next selection pass clears it again (TODO-3 item 165).
+		res, err := tx.Exec(
+			d.rebind(`DELETE FROM events WHERE id IN (`+placeholders(len(chunk))+`)
+				AND NOT EXISTS (SELECT 1 FROM memories WHERE memories.event_id = events.id)`),
+			args...,
+		)
 		if err != nil {
 			_ = tx.Rollback()
 

@@ -1331,26 +1331,9 @@ func TestGroupScopeIsolation_EventCascadeStoreFailures(t *testing.T) {
 		call  func(s *Server) error
 	}{
 		{
-			name:  "DeleteEvent cannot read the caller's memories",
-			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failMemoryIds: true} },
-			call: func(s *Server) error {
-				_, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a", Memories: true})
-
-				return err
-			},
-		},
-		{
-			name:  "DeleteEvent cannot delete the caller's memories",
-			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failEventMemories: true} },
-			call: func(s *Server) error {
-				_, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a", Memories: true})
-
-				return err
-			},
-		},
-		{
-			name:  "DeleteEvent cannot detach the rest",
-			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failUnsetEventId: true} },
+			// One transaction since TODO-3 item 165, so one failure covers every step of it.
+			name:  "DeleteEvent's cascade fails",
+			store: func(inner db.Store) db.Store { return failingPredicateStore{Store: inner, failCascade: true} },
 			call: func(s *Server) error {
 				_, err := s.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: "e-a", Memories: true})
 

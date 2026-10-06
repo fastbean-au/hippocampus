@@ -1628,7 +1628,8 @@ func (x *MergeEventsRequest) GetMergeFrom() string {
 type DeleteEventRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"` // true also deletes the event's memories; false only detaches them
+	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"`              // true also deletes the event's memories; false only detaches them
+	IfEmpty       bool                   `protobuf:"varint,3,opt,name=if_empty,json=ifEmpty,proto3" json:"if_empty,omitempty"` // true deletes the event only while it holds none of the caller's memories, and otherwise fails FAILED_PRECONDITION leaving everything in place - what a caller that has deleted the memories it judged uses so a memory that arrived since is never deleted unjudged; excludes memories
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1673,6 +1674,13 @@ func (x *DeleteEventRequest) GetId() string {
 func (x *DeleteEventRequest) GetMemories() bool {
 	if x != nil {
 		return x.Memories
+	}
+	return false
+}
+
+func (x *DeleteEventRequest) GetIfEmpty() bool {
+	if x != nil {
+		return x.IfEmpty
 	}
 	return false
 }
@@ -8266,10 +8274,11 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x12MergeEventsRequest\x12\x19\n" +
 	"\bmerge_to\x18\x01 \x01(\tR\amergeTo\x12\x1d\n" +
 	"\n" +
-	"merge_from\x18\x02 \x01(\tR\tmergeFrom\"@\n" +
+	"merge_from\x18\x02 \x01(\tR\tmergeFrom\"[\n" +
 	"\x12DeleteEventRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
-	"\bmemories\x18\x02 \x01(\bR\bmemories\"|\n" +
+	"\bmemories\x18\x02 \x01(\bR\bmemories\x12\x19\n" +
+	"\bif_empty\x18\x03 \x01(\bR\aifEmpty\"|\n" +
 	"\x13GetEventByIdRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bmemories\x18\x02 \x01(\bR\bmemories\x12#\n" +

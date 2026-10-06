@@ -219,10 +219,11 @@ func commands() map[string]command {
 		},
 		"event delete": {
 			summary: "delete an event (optionally its memories too)",
-			hint:    "--id ID [--memories]",
+			hint:    "--id ID [--memories | --if-empty]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("id", "", "id of the event to delete (required)")
 				fs.Bool("memories", false, "also delete the event's memories (otherwise they are detached)")
+				fs.Bool("if-empty", false, "delete the event only while it holds none of your memories; otherwise fail and change nothing")
 			},
 			run: runEventDelete,
 		},
@@ -1269,7 +1270,7 @@ func runEventDelete(ctx context.Context, client contract.HippocampusClient, fs *
 		return fmt.Errorf("--id is required")
 	}
 
-	resp, err := client.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: id, Memories: b(fs, "memories")})
+	resp, err := client.DeleteEvent(ctx, &contract.DeleteEventRequest{Id: id, Memories: b(fs, "memories"), IfEmpty: b(fs, "if-empty")})
 	if err != nil {
 		return err
 	}

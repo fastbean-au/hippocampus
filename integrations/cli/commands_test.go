@@ -896,3 +896,14 @@ func TestIncludeLinkedReachesBothRPCs(t *testing.T) {
 		}
 	})
 }
+
+func TestEventDeleteIfEmpty(t *testing.T) {
+	req, _, err := runCommand(t, "event delete", []string{"--id", "e1", "--if-empty"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if del := req.(*contract.DeleteEventRequest); !del.GetIfEmpty() || del.GetMemories() {
+		t.Errorf("request = %v, want if_empty set and memories not", del)
+	}
+}

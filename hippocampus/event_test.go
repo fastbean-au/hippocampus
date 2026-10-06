@@ -179,15 +179,16 @@ func TestUpdateEventSignificance_Success(t *testing.T) {
 	}
 }
 
-// failUnsetStore wraps a real db.Store but forces UnsetMemoriesEventId to fail, so DeleteEvent's
-// detach branch can be driven down its error path without a full hand-written mock.
+// failUnsetStore wraps a real db.Store but forces DeleteEventCascade to fail, so DeleteEvent's
+// detach arm can be driven down its error path without a full hand-written mock. The detach is
+// inside the cascade's one transaction since TODO-3 item 165, so it can no longer fail on its own.
 type failUnsetStore struct {
 	db.Store
 	err error
 }
 
-func (f failUnsetStore) UnsetMemoriesEventId(ctx context.Context, eventId string) (int, error) {
-	return 0, f.err
+func (f failUnsetStore) DeleteEventCascade(context.Context, string, db.EventCascade) (db.EventDeletion, error) {
+	return db.EventDeletion{}, f.err
 }
 
 // TestDeleteEvent_DetachSuccess is a regression test: a successful DeleteEvent
@@ -250,9 +251,9 @@ func TestDeleteEvent_WithMemoriesSuccess(t *testing.T) {
 	}
 }
 
-// TestDeleteEvent_UnsetErrorSurfaces verifies that a failure clearing the memories' event_id in the
-// detach arm surfaces to the caller instead of being swallowed as a nil error: the event is gone but
-// the memories still point at it, which the client must be told about. The raw storage error is
+// TestDeleteEvent_UnsetErrorSurfaces verifies that a failure in the detach arm surfaces to the
+// caller instead of being swallowed as a nil error. Since the detach shares the event's transaction,
+// a failure there leaves the event in place too, so the request can be retried. The raw storage error is
 // masked to codes.Internal by mapError (the detail is logged server-side, not leaked to the client),
 // so the assertion is on the code and Ok, not on the underlying error text.
 func TestDeleteEvent_UnsetErrorSurfaces(t *testing.T) {
@@ -267,7 +268,7 @@ func TestDeleteEvent_UnsetErrorSurfaces(t *testing.T) {
 
 	res, err := s.DeleteEvent(context.Background(), &contract.DeleteEventRequest{Id: "e1", Memories: false})
 	if err == nil {
-		t.Fatal("DeleteEvent swallowed the UnsetMemoriesEventId failure; expected an error")
+		t.Fatal("DeleteEvent swallowed the detach failure; expected an error")
 	}
 
 	if got := status.Code(err); got != codes.Internal {
@@ -1010,7 +1011,6 @@ type eventFaultStore struct {
 	updateEventErr              error
 	deleteEventErr              error
 	createEventErr              error
-	deleteEventMemoriesErr      error
 	getMemoriesByEventIdErr     error
 	getMemoriesByEventIdsErr    error
 	countEventsFilteredErr      error
@@ -1042,12 +1042,12 @@ func (f eventFaultStore) UpdateEvent(ctx context.Context, event types.Event) (bo
 	return f.Store.UpdateEvent(ctx, event)
 }
 
-func (f eventFaultStore) DeleteEvent(ctx context.Context, id string) (bool, error) {
+func (f eventFaultStore) DeleteEventCascade(ctx context.Context, id string, opts db.EventCascade) (db.EventDeletion, error) {
 	if f.deleteEventErr != nil {
-		return false, f.deleteEventErr
+		return db.EventDeletion{}, f.deleteEventErr
 	}
 
-	return f.Store.DeleteEvent(ctx, id)
+	return f.Store.DeleteEventCascade(ctx, id, opts)
 }
 
 func (f eventFaultStore) CreateEvent(ctx context.Context, event types.Event) (string, error) {
@@ -1056,14 +1056,6 @@ func (f eventFaultStore) CreateEvent(ctx context.Context, event types.Event) (st
 	}
 
 	return f.Store.CreateEvent(ctx, event)
-}
-
-func (f eventFaultStore) DeleteEventMemories(ctx context.Context, eventId string, groups []string) (int, error) {
-	if f.deleteEventMemoriesErr != nil {
-		return 0, f.deleteEventMemoriesErr
-	}
-
-	return f.Store.DeleteEventMemories(ctx, eventId, groups)
 }
 
 func (f eventFaultStore) GetMemoriesByEventId(ctx context.Context, eventId string) (*[]types.Memory, error) {
@@ -1248,8 +1240,8 @@ func TestMergeEvents_EventExistsErrorMapped(t *testing.T) {
 	}
 }
 
-// TestDeleteEvent_ErrorsMapped verifies DeleteEvent's own DeleteEvent-call failure and (with
-// memories: true) its DeleteEventMemories failure are both mapped via mapError.
+// TestDeleteEvent_ErrorsMapped verifies a storage failure in DeleteEvent's one cascade call is mapped
+// via mapError.
 func TestDeleteEvent_ErrorsMapped(t *testing.T) {
 	s := newEventTestServer(t)
 
@@ -1258,23 +1250,6 @@ func TestDeleteEvent_ErrorsMapped(t *testing.T) {
 
 	if _, err := s.DeleteEvent(context.Background(), &contract.DeleteEventRequest{Id: "e1"}); status.Code(err) != codes.Internal {
 		t.Fatalf("DeleteEvent failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
-	}
-
-	database, err := db.New("")
-	if err != nil {
-		t.Fatalf("db.New: %s", err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-
-	if _, err := database.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
-		t.Fatalf("CreateEvent: %s", err)
-	}
-
-	memErr := errors.New("delete memories boom")
-	s.db = eventFaultStore{Store: database, deleteEventMemoriesErr: memErr}
-
-	if _, err := s.DeleteEvent(context.Background(), &contract.DeleteEventRequest{Id: "e1", Memories: true}); status.Code(err) != codes.Internal {
-		t.Fatalf("DeleteEventMemories failure: expected codes.Internal, got %s (%v)", status.Code(err), err)
 	}
 }
 

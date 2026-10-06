@@ -182,6 +182,15 @@ def test_an_unselected_export_sends_no_selection(client, service):
     assert not service.requests["Export"].HasField("memories")
 
 
+def test_delete_event_carries_if_empty(client, service):
+    client.delete_event("e-1", if_empty=True)
+
+    request = service.requests["DeleteEvent"]
+
+    assert request.if_empty is True
+    assert request.memories is False
+
+
 def test_a_predicate_delete_sends_its_own_two_flags(client, service):
     client.delete_memories_by_filter(group="g", max_deletions=10, delete_empty_events=True)
     client.delete_events_by_filter(group="g", max_deletions=5, delete_memories=True)

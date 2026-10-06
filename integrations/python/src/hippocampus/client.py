@@ -648,11 +648,17 @@ class Hippocampus:
         id: str,
         *,
         memories: bool = False,
+        if_empty: bool = False,
         timeout: Optional[float] = None,
     ) -> bool:
-        """Delete an event, and with `memories` its memories too - otherwise they are detached."""
+        """Delete an event, and with `memories` its memories too - otherwise they are detached.
 
-        request = pb.DeleteEventRequest(id=id, memories=memories)
+        With `if_empty` the event is deleted only while it holds none of the caller's memories, and
+        otherwise the call fails FAILED_PRECONDITION having changed nothing: what a caller that has
+        already deleted the memories it judged uses, so one that arrived since is never deleted.
+        """
+
+        request = pb.DeleteEventRequest(id=id, memories=memories, if_empty=if_empty)
 
         return self._call(self.stub.DeleteEvent, request, timeout).ok
 

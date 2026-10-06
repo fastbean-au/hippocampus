@@ -747,6 +747,7 @@ message MergeEventsRequest {
 message DeleteEventRequest {
 	string                                 id                        = 1;
 	bool                                   memories                  = 2; // true also deletes the event's memories; false only detaches them
+	bool                                   if_empty                  = 3; // true deletes the event only while it holds none of the caller's memories, and otherwise fails FAILED_PRECONDITION leaving everything in place - what a caller that has deleted the memories it judged uses so a memory that arrived since is never deleted unjudged; excludes memories
 }
 
 message GetEventByIdRequest {

@@ -21,6 +21,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/contract"
 
@@ -439,7 +441,7 @@ func (p *Promoter) judge(ctx context.Context, ruleset *rules.Ruleset, event *con
 		return p.promote(ctx, judged, stats)
 
 	case rules.ActionDrop:
-		drained, err := p.drain(ctx, event.GetId(), len(memories))
+		drained, err := p.drain(ctx, event.GetId(), memories)
 		if err != nil {
 			log.Errorf("dropping event '%s': %s", event.GetId(), err.Error())
 
@@ -681,11 +683,9 @@ func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats)
 		return false
 	}
 
-	// onSource is what the event is expected to hold when the drain re-checks it, which is NOT the
-	// number about to be promoted: a keepTopN/minSignificance reduction chooses what crosses to the
-	// central store and leaves the rest in place to be drained, while summarise actually replaces
-	// them on the source. Conflating the two makes every reduced event look like it changed
-	// underneath the judgement, and nothing is ever drained.
+	// onSource is what the drain deletes from the source, which is NOT what is about to be promoted:
+	// a keepTopN/minSignificance reduction chooses what crosses to the central store and leaves the
+	// rest in place to be drained, while summarise actually replaces them on the source.
 	memories, onSource, err := p.reduce(ctx, judged)
 	if err != nil {
 		p.failEvent(ctx, judged, stats, fmt.Errorf("reducing event '%s': %w", event.GetId(), err))
@@ -739,13 +739,12 @@ func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats)
 }
 
 // reduce applies the decision's memory-scoped mutation and then its reduction, returning the
-// memories to promote and how many the SOURCE is expected to hold afterwards (what the drain
-// re-checks against).
+// memories to promote and the memories the SOURCE holds afterwards (what the drain deletes).
 //
-// The two kinds of reduction differ in exactly that second number. A selection reduction is a
-// decision about what crosses the boundary and changes nothing on the source, so the source still
-// holds every memory the judgement saw. Summarise is a real mutation of the source - it replaces
-// them - so what remains is the summary.
+// The two kinds of reduction differ in exactly that second list. A selection reduction is a decision
+// about what crosses the boundary and changes nothing on the source, so the source still holds every
+// memory the judgement saw. Summarise is a real mutation of the source - it replaces them - so what
+// remains is the summary.
 //
 // The MUTATION RUNS BEFORE THE SELECTION, which is the ordering that makes the two compose: a rule
 // that scores memories and then keeps the top ten means the top ten BY ITS OWN SCORE, not by the
@@ -753,23 +752,23 @@ func (p *Promoter) promote(ctx context.Context, judged *judgement, stats *Stats)
 // then discarded; ranking by a number the rule just declared irrelevant would be worse. After a
 // summarise reduction there is one memory to score - the summary - and it is scored for the same
 // reason: it is what crosses.
-func (p *Promoter) reduce(ctx context.Context, judged *judgement) ([]*contract.Memory, int, error) {
+func (p *Promoter) reduce(ctx context.Context, judged *judgement) ([]*contract.Memory, []*contract.Memory, error) {
 	reduction := judged.decision.Reduce
 	memories := judged.memories
-	onSource := len(memories)
+	onSource := memories
 
 	if reduction.Summarise {
 		summarised, err := p.summarise(ctx, judged.event.GetId())
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 
 		memories = summarised
-		onSource = len(summarised)
+		onSource = summarised
 	}
 
 	if err := p.applyMemorySet(ctx, judged, memories); err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	if reduction.Summarise {
@@ -911,56 +910,43 @@ func (p *Promoter) sendMemories(ctx context.Context, memories []*contract.Memory
 	return sent, nil
 }
 
-// drain deletes the event and every memory it still holds from the source, but only while the event
-// still looks the way it did when it was judged. A memory landing against an already-ended event
-// after the settle window would otherwise be deleted without ever having been judged - so the count
-// is re-read and a change leaves the whole event for the next pass, where it is re-judged whole.
+// drain removes a judged event from the source: the memories the judgement covered, by id, and then
+// the event, only while it holds nothing else (TODO-3 item 165). A memory landing against the event
+// after it was read is therefore never deleted unjudged - it keeps the event, and the next pass
+// judges it under that event. This replaced re-reading the count and then deleting with
+// memories: true, which left exactly that window open between the two calls.
 //
-// drained reports whether the event actually left the source, which a nil error alone does not: a
-// changed event is left in place deliberately and is not a failure. Pass needs the difference to
-// know where the next page of the listing starts.
-func (p *Promoter) drain(ctx context.Context, eventId string, expected int) (bool, error) {
-	current, err := p.memoryCount(ctx, eventId)
-	if err != nil {
-		return false, fmt.Errorf("re-checking event %q before draining: %w", eventId, err)
+// drained reports whether the event actually left the source, which a nil error alone does not: an
+// event kept by a late memory is left in place deliberately and is not a failure. Pass needs the
+// difference to know where the next page of the listing starts.
+func (p *Promoter) drain(ctx context.Context, eventId string, judged []*contract.Memory) (bool, error) {
+	if _, err := p.deleteMemories(ctx, judged); err != nil {
+		return false, fmt.Errorf("deleting the judged memories of event %q: %w", eventId, err)
 	}
 
-	if current != expected {
-		log.Warnf(
-			"event '%s' changed underneath the judgement (%d memories, expected %d) - left for the next pass",
-			eventId,
-			current,
-			expected,
-		)
+	callCtx, cancel := p.callContext(ctx)
+	defer cancel()
+
+	_, err := p.source.DeleteEvent(callCtx, &contract.DeleteEventRequest{Id: eventId, IfEmpty: true})
+
+	switch status.Code(err) {
+
+	case codes.OK:
+		return true, nil
+
+	case codes.FailedPrecondition:
+		log.Warnf("event '%s' gained a memory after it was judged - the judged memories are drained, and the event is left for the next pass", eventId)
 
 		return false, nil
-	}
 
-	callCtx, cancel := p.callContext(ctx)
-	defer cancel()
+	case codes.NotFound:
+		// Already gone - a concurrent drain, or an operator - which is the state this was after.
+		return true, nil
 
-	if _, err := p.source.DeleteEvent(callCtx, &contract.DeleteEventRequest{Id: eventId, Memories: true}); err != nil {
+	default:
 		return false, err
+
 	}
-
-	return true, nil
-}
-
-// memoryCount reads how many memories an event currently holds, without reading any of them: a page
-// size of 1 still reports the full total_count.
-func (p *Promoter) memoryCount(ctx context.Context, eventId string) (int, error) {
-	callCtx, cancel := p.callContext(ctx)
-	defer cancel()
-
-	res, err := p.source.GetMemories(callCtx, &contract.GetMemoriesRequest{
-		EventId: eventId,
-		Limit:   1,
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	return int(res.GetTotalCount()), nil
 }
 
 // callContext bounds one RPC.

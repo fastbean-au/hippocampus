@@ -911,6 +911,15 @@ type failingPredicateStore struct {
 	failDeleteEventEmpty bool
 	failEventMemories    bool
 	failUnsetEventId     bool
+	failCascade          bool
+}
+
+func (f failingPredicateStore) DeleteEventCascade(ctx context.Context, id string, opts db.EventCascade) (db.EventDeletion, error) {
+	if f.failCascade {
+		return db.EventDeletion{}, errStoreFailed
+	}
+
+	return f.Store.DeleteEventCascade(ctx, id, opts)
 }
 
 func (f failingPredicateStore) MemoryIdsMatching(ctx context.Context, filter db.MemoryFilter) ([]string, error) {
