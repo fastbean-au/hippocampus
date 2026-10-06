@@ -61,6 +61,13 @@ itself which service version it was built against.
 
 ### Added
 
+- **Fuzz targets, and a property test for the decay curves.**
+  - Native fuzz targets cover metadata filter keys, search tokens, the archive reader, archive key
+    resolution, endpoint redaction, reported versions and the object-storage id mapping. Their seeds
+    run in every `go test`, and a new nightly `Fuzz` workflow fuzzes each for three minutes.
+  - A property test checks that every decay method yields a finite value that never rises with age
+    and never falls as significance rises. The `days_until_forgotten` bisection depends on those
+    properties.
 - **Every Go module is scanned for reachable known vulnerabilities.** `scripts/govulncheck.sh`, run
   by a new `govulncheck` CI job, runs govulncheck over the root module and the five under
   `integrations/` (which a root `./...` never reaches) and fails on any symbol-level finding not on a
@@ -137,6 +144,17 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **The deployment view no longer shows part of a database password in three address shapes.**
+  `GetTopology` is reader-visible by default, and what made that safe was that every address had its
+  credentials stripped. Fuzzing that redaction found three shapes where they were not:
+  - a libpq keyword DSN with an `@` anywhere in it (`password=p@ss`), which showed the text after
+    the `@`;
+  - a MySQL DSN whose password contains a `/`, which showed the whole `user:password`;
+  - a URL whose password contains an unencoded `/` or `?`, which `url.Parse` reads into the path or
+    the query.
+
+  The redaction now recognises a keyword DSN by its first field. When an address is not
+  recognised, or a URL parses with the userinfo misplaced, it drops everything up to the last `@`.
 - **Deleting an event is one transaction, and the ingestor never drains a memory it did not judge.**
   - **`DeleteEvent`:** it took the event in one transaction and its memories in another. A failure
     between the two left memories naming an event that no longer existed, and a retry answered

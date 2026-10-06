@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -666,14 +667,49 @@ func redactURL(address string) string {
 	}
 
 	clean := url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: parsed.Path}
+	out := strings.TrimSuffix(clean.String(), "/")
 
-	return strings.TrimSuffix(clean.String(), "/")
+	// A password that is not percent-encoded can parse "successfully" into the wrong part: a "/" in
+	// it makes the userinfo part of the path, a "?" makes it part of the query with the user name
+	// left as the host. Either way url.Parse reports no userinfo while the address plainly has an
+	// "@", or the rebuilt address still carries one, and the blunt form is the only safe answer
+	// (found by FuzzRedactEndpoint, TODO-3 item 167).
+	afterScheme := address[strings.Index(address, "://")+3:]
+
+	if (parsed.User == nil && strings.Contains(afterScheme, "@")) || strings.Contains(out, "@") {
+		return redactBareAddress(address)
+	}
+
+	return out
 }
 
 // isKeywordDSN recognises the libpq keyword/value form, which is neither a URL nor a MySQL DSN and
-// carries its password as a plain parameter.
+// carries its password as a plain parameter. It is recognised by its first field being
+// identifier=value. It used to be "has an '=' and no '@'", which sent a keyword DSN with an "@"
+// anywhere in it - a password containing one - to the bare-address form, and that kept everything
+// after the "@", password included (found by FuzzRedactEndpoint, TODO-3 item 167). A MySQL DSN's
+// first field cannot match, since its key would carry the ':' of its userinfo or the '(' of its
+// address.
 func isKeywordDSN(address string) bool {
-	return strings.Contains(address, "=") && !strings.Contains(address, "@")
+	fields := strings.Fields(address)
+	if len(fields) == 0 {
+		return false
+	}
+
+	key, _, found := strings.Cut(fields[0], "=")
+	if !found || key == "" {
+		return false
+	}
+
+	for i, c := range key {
+		letter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+
+		if !letter && (i == 0 || c < '0' || c > '9') {
+			return false
+		}
+	}
+
+	return true
 }
 
 // redactKeywordDSN rebuilds a libpq keyword/value DSN from only the three keys worth showing.
@@ -721,33 +757,35 @@ func redactKeywordDSN(address string) string {
 }
 
 // redactBareAddress drops any userinfo and any parameters from an address that is not a URL. This
-// is the MySQL DSN's shape and also the safe fallback for anything unrecognised.
+// is the MySQL DSN's shape and also the safe fallback for anything unrecognised, so it fails closed
+// rather than trying to be exact:
+//
+//   - everything up to the LAST "@" anywhere goes, because a password may itself contain "/", "?" or
+//     "@", and splitting on any of those first left part of it on the kept side (TODO-3 item 167). An
+//     "@" that was really inside a path or a parameter costs some of what would have been shown,
+//     which is the right way round to be wrong;
+//   - then the parameters go, from the first "?";
+//   - then anything from the first whitespace, which no host, path or URL legitimately contains and a
+//     keyword-style string that reached here does.
 func redactBareAddress(address string) string {
 	prefix, rest := "", address
 
-	// A scheme separator has to come off first, or the "/" in "://" is mistaken below for the one
-	// that starts the path - which leaves the userinfo on the wrong side of the split and the
-	// credentials in the output. That is only reachable when url.Parse has already failed, so it is
-	// exactly the case nobody would notice by inspection.
+	// The scheme comes off first so it survives the cut below; the cut is what removes credentials.
 	if scheme := strings.Index(rest, "://"); scheme >= 0 {
 		prefix, rest = rest[:scheme+3], rest[scheme+3:]
 	}
 
-	head, tail := rest, ""
-
-	// The database name follows the first "/", and credentials can only precede it - so splitting
-	// there keeps a "@" inside a path or a parameter from being mistaken for userinfo.
-	if slash := strings.Index(rest, "/"); slash >= 0 {
-		head, tail = rest[:slash], rest[slash:]
+	if at := strings.LastIndex(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
 	}
 
-	if at := strings.LastIndex(head, "@"); at >= 0 {
-		head = head[at+1:]
+	if question := strings.Index(rest, "?"); question >= 0 {
+		rest = rest[:question]
 	}
 
-	if question := strings.Index(tail, "?"); question >= 0 {
-		tail = tail[:question]
+	if space := strings.IndexFunc(rest, unicode.IsSpace); space >= 0 {
+		rest = rest[:space]
 	}
 
-	return prefix + head + tail
+	return prefix + rest
 }

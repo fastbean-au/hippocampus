@@ -46,6 +46,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   or the schema; they pin that the consolidation scans never read memory bodies, eviction's
   scan+sort cost, and `UsedBytes` on all three drivers — the Postgres/MySQL ones need
   `HIPPOCAMPUS_TEST_POSTGRES_DSN`/`HIPPOCAMPUS_TEST_MYSQL_DSN`)
+- Fuzz one target: `go test ./hippocampus -run '^$' -fuzz '^FuzzRedactEndpoint$' -fuzztime 2m` (the
+  seeds, and any failing input saved under `testdata/fuzz`, run in plain `go test`; the nightly
+  `Fuzz` workflow fuzzes every target, and `fuzz_workflow_test.go` holds its matrix to the `func Fuzz*`
+  declarations in both directions)
 - Vulnerability scan: `scripts/govulncheck.sh` (all six Go modules; needs `govulncheck` and `jq`;
   fails on a reachable finding not on its reviewed-exception list, and on an exception no longer
   reported; CI runs it as the `govulncheck` job)

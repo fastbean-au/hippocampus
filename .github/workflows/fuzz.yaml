@@ -1,0 +1,66 @@
+name: Fuzz
+
+# Runs every native fuzz target for a few minutes each night (TODO-3 item 167).
+#
+# The targets' seed corpora already run in every `go test`, so CI proves the seeds stay green on
+# each push; what only time finds is a new input, and that is this job. A finding fails the run and
+# uploads the failing input, which belongs in the target's testdata/fuzz directory beside the fix -
+# from there it runs as a seed in every `go test` and the bug cannot come back unnoticed.
+#
+# The matrix is held to the targets in the repository by cmd/hippocampus/fuzz_workflow_test.go, in
+# both directions, so a target added without a row here (which would never be fuzzed) fails CI.
+on:
+  schedule:
+    - cron: "0 17 * * *" # 03:00 AEST
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "How long to fuzz each target"
+        default: "3m"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { module: ., package: ./types, target: FuzzParseMetadataFilters }
+          - { module: ., package: ./db, target: FuzzContentTokens }
+          - { module: ., package: ./archive, target: FuzzReader }
+          - { module: ., package: ./archive, target: FuzzResolve }
+          - { module: ., package: ./hippocampus, target: FuzzRedactEndpoint }
+          - { module: ., package: ./hippocampus, target: FuzzSanitiseReportedVersion }
+          - { module: integrations/objectstore, package: ./keymap, target: FuzzMemoryIdRoundTrips }
+
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+
+      - name: Fuzz
+        working-directory: ${{ matrix.module }}
+        run: >-
+          go test ${{ matrix.package }} -run '^$'
+          -fuzz '^${{ matrix.target }}$'
+          -fuzztime ${{ inputs.fuzztime || '3m' }}
+
+      - name: Upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: ${{ matrix.module }}/**/testdata/fuzz/${{ matrix.target }}/
