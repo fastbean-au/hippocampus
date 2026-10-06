@@ -1170,10 +1170,10 @@ back in step afterwards.
 So a non-zero `hippocampus.search.dropped` is not by itself a fault. What it means depends on the
 `reason` attribute, and the two have unrelated remedies:
 
-| `reason`       | What it says                                                   | What to do                                                                      |
-| -------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `queue_full`   | This service is offering work faster than one worker drains it | Compare `queue_depth` against `queue_capacity` (below)                          |
-| `apply_failed` | The cluster refused or did not answer, on every retry          | The cluster's problem: check its health, then `applyTimeout`/`applyMaxAttempts` |
+| `reason`       | What it says                                                   | What to do                                                                             |
+| -------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `queue_full`   | This service is offering work faster than one worker drains it | Compare `queue_depth` against `queue_capacity` (below)                                 |
+| `apply_failed` | The cluster refused or did not answer, on every retry          | The cluster's problem: check its health, then `applyTimeoutSeconds`/`applyMaxAttempts` |
 
 **`queueSize` is not the answer to a sustained `queue_full` rate.** A bounded queue absorbs _bursts_;
 it cannot absorb a rate mismatch, and raising it past what the worker can drain only moves the drop
@@ -1183,7 +1183,7 @@ helps; a queue **pinned at capacity** is being outrun, and no size helps. Utilis
 `hippocampus_search_queue_depth / hippocampus_search_queue_capacity` — the capacity is exported so a
 dashboard need not carry its own copy of the configuration.
 
-When the queue is genuinely being outrun, the levers are the write rate, `opensearch.applyTimeout`
+When the queue is genuinely being outrun, the levers are the write rate, `opensearch.applyTimeoutSeconds`
 (a shorter timeout fails a stuck round trip sooner, so the worker moves on), and the cluster's own
 ingest latency, which is what a single-document-per-request worker is bounded by.
 

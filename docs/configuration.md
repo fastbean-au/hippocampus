@@ -2405,7 +2405,10 @@ one; a receiver that cares about replay rejects a timestamp that is too old. Bot
 both are injectable as `HIPPOCAMPUS_CALLBACKS_TOKEN` / `HIPPOCAMPUS_CALLBACKS_SIGNINGSECRET`.
 
 `callbacks.tls` accepts the same trust options as [`opensearch.tls`](#securing-the-connection) for an
-`https://` receiver serving a private-CA or mutual-TLS certificate. Redirects are **never followed** —
+`https://` receiver serving a private-CA or mutual-TLS certificate. `callbacks.tls.enabled: false`
+switches the whole block off, with a warning at startup if it still carries anything. Left unset,
+the block applies whenever it is set, so a configuration that names a `caCertFile` needs nothing
+more. Redirects are **never followed** —
 a redirect would forward the bearer token and the signature to whatever host the endpoint named — and
 are reported as a failed delivery.
 
@@ -2576,7 +2579,7 @@ so a retry of an identical body signs differently.
 | `callbacks.batchSize`               | `100`     | How many deliveries one dispatch pass claims.                                                   |
 | `callbacks.retryBaseBackoffSeconds` | `1`       | First retry delay; doubles per attempt, jittered.                                               |
 | `callbacks.retryMaxBackoffSeconds`  | `300`     | Ceiling on that backoff.                                                                        |
-| `callbacks.tls.enabled`             | `false`   | Customise TLS for an `https://` receiver.                                                       |
+| `callbacks.tls.enabled`             | unset     | `false` ignores the block; `true` applies it; unset, it applies whatever the block carries.     |
 | `callbacks.tls.caCertFile`          | `""`      | PEM CA bundle trusted in place of the system pool.                                              |
 | `callbacks.tls.certFile`            | `""`      | Client certificate for mutual TLS; set with `callbacks.tls.keyFile` or neither.                 |
 | `callbacks.tls.keyFile`             | `""`      | The matching key.                                                                               |

@@ -1064,12 +1064,7 @@ func run(ctx context.Context, version versionInfo) error {
 			Token:         viper.GetString("callbacks.token"),
 			SigningSecret: viper.GetString("callbacks.signingSecret"),
 			Timeout:       time.Duration(viper.GetInt("callbacks.timeoutSeconds")) * time.Second,
-			TLS: notify.TLSConfig{
-				CACertFile:         viper.GetString("callbacks.tls.caCertFile"),
-				CertFile:           viper.GetString("callbacks.tls.certFile"),
-				KeyFile:            viper.GetString("callbacks.tls.keyFile"),
-				InsecureSkipVerify: viper.GetBool("callbacks.tls.insecureSkipVerify"),
-			},
+			TLS:           callbacksTLSFromViper(),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to initialise the callback sink: %w", err)
@@ -2231,6 +2226,32 @@ func newGatewayServer(bindAddress string, port int, handler http.Handler) *http.
 		ReadTimeout:       gatewayReadTimeout,
 		IdleTimeout:       gatewayIdleTimeout,
 	}
+}
+
+// callbacksTLSFromViper reads the callback receiver's TLS block, honouring callbacks.tls.enabled
+// (TODO-3 item 163). The key was documented and offered by the wizard but never read, so an operator
+// turning the block off with insecureSkipVerify still set kept skipping verification. Explicitly
+// false now discards the block, with a warning naming what it carried; explicitly true applies it.
+// Unset, the block applies whenever it carries anything - which is how every configuration written
+// before the key was read behaves, and dropping their trust options would silently stop a
+// private-CA receiver verifying.
+func callbacksTLSFromViper() notify.TLSConfig {
+	config := notify.TLSConfig{
+		CACertFile:         viper.GetString("callbacks.tls.caCertFile"),
+		CertFile:           viper.GetString("callbacks.tls.certFile"),
+		KeyFile:            viper.GetString("callbacks.tls.keyFile"),
+		InsecureSkipVerify: viper.GetBool("callbacks.tls.insecureSkipVerify"),
+	}
+
+	if !viper.IsSet("callbacks.tls.enabled") || viper.GetBool("callbacks.tls.enabled") {
+		return config
+	}
+
+	if config != (notify.TLSConfig{}) {
+		log.Warn("callbacks.tls.enabled is false, so the trust options set beside it (caCertFile, certFile/keyFile, insecureSkipVerify) are ignored")
+	}
+
+	return notify.TLSConfig{}
 }
 
 // observabilityFlushTimeout bounds the exporter flush on a bootstrap failure. The configured

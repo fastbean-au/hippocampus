@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -239,7 +240,10 @@ func jsonExampleKeys(document string) map[string]bool {
 		}
 
 		if match := jsonKeyPattern.FindStringSubmatch(trimmed); match != nil {
-			if strings.HasPrefix(match[2], "{") {
+			// An object opened and closed on one line ("roleMapping": {"admin": "admin"}) is a
+			// value, not a level: pushing it with nothing to pop it left every later key in the
+			// example nested under it.
+			if strings.HasPrefix(match[2], "{") && strings.Count(match[2], "{") > strings.Count(match[2], "}") {
 				stack = append(stack, match[1])
 
 				continue
@@ -333,4 +337,91 @@ func TestNoStaleConfigKeyExceptions(t *testing.T) {
 			}
 		}
 	}
+
+	documented := documentedConfigKeys(t)
+
+	for key, reason := range unreadDocumentedKeys {
+		if !documented[key] || keys[key] {
+			t.Errorf("%q is excepted as documented-but-unread (%q) but is no longer both - remove the exception", key, reason)
+		}
+	}
+}
+
+// TestEveryDocumentedConfigKeyIsRead is the reverse of TestEveryConfigKeyIsDocumented (TODO-3 item
+// 163): a key the documentation names and the service never reads presents as a setting that does
+// nothing - callbacks.tls.enabled was documented, offered by the wizard, and ignored, so an operator
+// turning the block off still had its insecureSkipVerify in force.
+//
+// The documentation names many dotted things that are not configuration - metric names, files,
+// proto packages - so only a name under one of the service's own top-level sections is judged, and
+// a name that is a prefix of a key the service reads (a block, such as callbacks.tls) is accepted.
+func TestEveryDocumentedConfigKeyIsRead(t *testing.T) {
+	read := serviceConfigKeys(t)
+	sections := make(map[string]bool)
+
+	for key := range read {
+		sections[strings.SplitN(key, ".", 2)[0]] = true
+	}
+
+	var unread []string
+
+DOCUMENTED:
+	for key := range documentedConfigKeys(t) {
+		if !strings.Contains(key, ".") || !sections[strings.SplitN(key, ".", 2)[0]] || !couldBeConfigKey(key) {
+			continue
+		}
+
+		if read[key] {
+			continue
+		}
+
+		if _, expected := unreadDocumentedKeys[key]; expected {
+			continue
+		}
+
+		for candidate := range read {
+			if strings.HasPrefix(candidate, key+".") {
+				continue DOCUMENTED
+			}
+		}
+
+		unread = append(unread, key)
+	}
+
+	sort.Strings(unread)
+
+	for _, key := range unread {
+		t.Errorf("the documentation names %q, which the service never reads - correct the name, read the key, or add it to unreadDocumentedKeys with the reason", key)
+	}
+}
+
+// couldBeConfigKey rules out the dotted names under a section's word that cannot be keys: a Go
+// identifier (auth.Verifier) has a capitalised segment, and a file (sleep.go) ends in an extension.
+func couldBeConfigKey(key string) bool {
+	segments := strings.Split(key, ".")
+
+	for _, segment := range segments {
+		if segment == "" || segment[0] < 'a' || segment[0] > 'z' {
+			return false
+		}
+	}
+
+	switch segments[len(segments)-1] {
+
+	case "go", "md", "json", "yaml", "yml", "js", "py", "sh", "proto":
+		return false
+
+	}
+
+	return true
+}
+
+// unreadDocumentedKeys are names the documentation writes under a configuration section that are
+// deliberately not keys the service reads, with the reason.
+var unreadDocumentedKeys = map[string]string{
+	"consolidation.relationshipSignificanceWeight": "named only in the upgrading note for the key that replaced it",
+	"rateLimit.global":       "a block read through rateLimitRuleFromViper, which builds its member keys by concatenation the pattern cannot see",
+	"rateLimit.perClient":    "as above",
+	"rateLimit.tiers.reader": "a tier under rateLimit.tiers, which the service reads with viper.Sub and then by tier name",
+	"rateLimit.tiers.writer": "as above",
 }

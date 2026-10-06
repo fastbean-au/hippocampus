@@ -137,6 +137,14 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **`callbacks.tls.enabled: false` now turns the callback TLS block off.** The key was documented and
+  offered by the config wizard, but never read. A block switched off with `insecureSkipVerify` still
+  set therefore kept skipping certificate verification. Left unset, the block still applies whenever
+  it carries anything, so existing configurations are unchanged. `docs/operations.md` also named
+  `opensearch.applyTimeout`, which is `opensearch.applyTimeoutSeconds`. A new guard requires every
+  configuration key the documentation names to be one the service reads. Writing it fixed the guard's
+  own JSON reader, which nested every later key in an example under an object opened and closed on
+  one line.
 - **A callback whose stored payload cannot be decoded no longer wedges the queue.** The dispatcher
   skipped such a row without removing it, so it was claimed again on every pass. With a batch of them
   at the head of the queue, nothing behind them was ever sent. Under `abandon` the age cap eventually
