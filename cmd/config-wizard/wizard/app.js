@@ -2106,6 +2106,21 @@ const STEPS = [
             def: "",
             help: "A local directory to write archives into. The simplest backup for a single-binary deployment; leave empty to use S3 instead.",
           },
+          {
+            key: "archive.scheduledExport.intervalHours",
+            label: "Scheduled export every (hours)",
+            type: "int",
+            def: 0,
+            help: "Take a full Export on this schedule — the store's own backup. Runs on the consolidating instance only, and needs an archive directory or bucket. 0 disables it.",
+          },
+          {
+            key: "archive.scheduledExport.keep",
+            label: "Scheduled exports to keep",
+            type: "int",
+            def: 7,
+            svc: 7,
+            help: "How many scheduled archives to keep; older ones are deleted after each new one. Only scheduled archives are ever pruned, never a manual Export. 0 keeps them all.",
+          },
           { key: "s3.bucket", label: "Bucket", type: "text", def: "" },
           {
             key: "s3.region",
@@ -3056,6 +3071,19 @@ function validate() {
       "info",
       "observability",
       "No OTLP endpoint is set, so the exporter falls back to the standard OTEL_EXPORTER_OTLP_* environment variables. With none of those set either it dials localhost:4317 and logs an export failure every interval. A Prometheus scrape endpoint needs none of this.",
+    );
+  }
+
+  // Mirrors configProblems: a scheduled export with nowhere to write would take no backup, ever.
+  if (
+    Number(val("archive.scheduledExport.intervalHours")) > 0 &&
+    !val("s3.bucket") &&
+    !val("archive.directory")
+  ) {
+    add(
+      "error",
+      "transfer",
+      "archive.scheduledExport.intervalHours needs somewhere to write: set an archive directory or a bucket.",
     );
   }
 

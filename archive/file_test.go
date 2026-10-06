@@ -394,3 +394,48 @@ func TestFileStore_PutCannotRename(t *testing.T) {
 		}
 	}
 }
+
+// TestFileStore_ListAndDelete: listing returns the keys under a prefix, sorted, and never the
+// temporary file an interrupted Put leaves while it is writing; Delete removes one object and
+// refuses a key that would leave the directory, as Put and Get do (TODO-3 item 158).
+func TestFileStore_ListAndDelete(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileStore: %s", err)
+	}
+
+	ctx := context.Background()
+
+	for _, key := range []string{"scheduled/b.archive.gz", "scheduled/a.archive.gz", "manual.archive.gz"} {
+		if err := store.Put(ctx, key, strings.NewReader("x")); err != nil {
+			t.Fatalf("Put(%s): %s", key, err)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "scheduled", ".archive-123.partial"), []byte("half"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %s", err)
+	}
+
+	keys, err := store.List(ctx, "scheduled/")
+	if err != nil {
+		t.Fatalf("List: %s", err)
+	}
+
+	if strings.Join(keys, ",") != "scheduled/a.archive.gz,scheduled/b.archive.gz" {
+		t.Errorf("List = %v, want the two scheduled archives, sorted, and no partial file", keys)
+	}
+
+	if err := store.Delete(ctx, "scheduled/a.archive.gz"); err != nil {
+		t.Fatalf("Delete: %s", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "scheduled", "a.archive.gz")); !os.IsNotExist(err) {
+		t.Error("Delete left the file in place")
+	}
+
+	if err := store.Delete(ctx, "../outside"); err == nil {
+		t.Error("Delete accepted a key that leaves the archive directory")
+	}
+}

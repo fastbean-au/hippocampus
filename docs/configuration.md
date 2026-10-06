@@ -2639,8 +2639,32 @@ missing; each archive is written to a temporary file and renamed into place, so 
 interrupted half way leaves nothing rather than a truncated file that `Import` would accept and
 then fail part way through. `Import`'s `object_key` is validated against the directory: a key that
 is absolute, or that carries a `..` segment, is refused rather than reinterpreted. Point it at a
-directory a backup takes, or at a mounted volume — nothing prunes it, so the archives accumulate
-until something else removes them.
+directory a backup takes, or at a mounted volume. Nothing prunes the archives `Export` writes when
+called; only the scheduled ones below are rotated.
+
+#### Scheduled export
+
+```json
+"archive": {
+  "directory": "/var/backups/hippocampus",
+  "scheduledExport": { "intervalHours": 24, "keep": 7 }
+}
+```
+
+`archive.scheduledExport.intervalHours` (0, the default, disables it) takes an `Export` of the whole
+store on a schedule, and `archive.scheduledExport.keep` (default 7; 0 keeps every one) is how many
+of them to keep, the oldest deleted after each new one is written. It needs an archive store, and
+startup refuses the setting without one. The archives are written under their own `scheduled/` key
+prefix (after `s3.keyPrefix`), and **only that prefix is ever pruned**, so a manual `Export` is never
+deleted by the rotation.
+
+It runs on the consolidating instance only, so replicas of one store do not each export it. The
+schedule is read back from the archives already there: after a restart the next export is one
+interval after the newest, or immediately if that has passed — never a fresh export on every
+restart, and never a full interval's wait from scratch. A failed export is retried within 15
+minutes. `hippocampus.export.scheduled.last_success` and `hippocampus.export.scheduled.interval` are
+published while it runs, and the shipped `HippocampusScheduledExportStale` alert fires when the last
+success is more than two intervals old.
 
 S3 credentials come from the standard AWS chain (environment variables, shared config, instance
 roles); `s3.endpoint` and `s3.usePathStyle` support S3-compatible stores such as MinIO. With

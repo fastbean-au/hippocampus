@@ -1264,16 +1264,31 @@ memory if semantic search is on and leaves searches answering from an incomplete
 
 ## Backup, restore, and migration
 
-Two complementary approaches:
+Three approaches, which combine:
 
-- **Standard backups.** For SQLite, the database file in `storage.directory` is the store — copy it
-  (ideally with the service stopped, or via SQLite's online backup). For Postgres/MySQL, use the
-  server's normal backup tooling (`pg_dump`, `mysqldump`, snapshots).
-- **The transfer/archive RPCs** (see the RPC mapping in the README): `Export` writes a gzip
-  length-delimited-proto archive to S3; `Import` reads one back; `Transfer` streams the whole store
-  directly into another instance's `ImportBatch`; `Clear` deletes exactly what a prior
-  `Export`/`Transfer` captured. These preserve full state (timestamps, recall history, groups,
-  summary flags, links) and are idempotent by id.
+- **`hippocampus --backup <path>` (SQLite).** Writes a consistent copy of the store to `<path>` and
+  exits, **safely beside a running instance**: it opens the store read-only, takes no lock, and uses
+  SQLite's `VACUUM INTO`, which reads one snapshot and writes a single compacted file with no `-wal`
+  sidecar. Do **not** copy `hippocampus.db` by hand while the service runs: in WAL mode the recent
+  writes are in the `-wal` file until a checkpoint, so a copy of the main file alone silently loses
+  them. The destination must not exist — a backup never overwrites the previous one. To restore,
+  stop the service and put the copy in place as `hippocampus.db` in `storage.directory`.
+- **Server tools (PostgreSQL, MySQL).** Use `pg_dump`, `mysqldump`, or your provider's snapshots.
+  `--backup` refuses these drivers and says so: their own tools understand their transactions, roles
+  and replication, and the service does not imitate them.
+- **The archive** — any driver. `Export` writes the whole store as a gzip, length-delimited proto
+  archive to the configured archive store (`archive.directory` or `s3.bucket`); `Import` reads one
+  back; `Transfer` streams the store straight into another instance's `ImportBatch`; `Clear` deletes
+  exactly what a prior `Export`/`Transfer` captured. Archives preserve full state (timestamps, recall
+  history, groups, summary flags, links), are idempotent by id, and are the one format that moves
+  between drivers. **`archive.scheduledExport.intervalHours`** takes one on a schedule and keeps the
+  newest `archive.scheduledExport.keep` — see
+  [Scheduled export](configuration.md#scheduled-export), and alert on
+  `HippocampusScheduledExportStale`, since a backup nobody notices failing is worse than none.
+
+What none of these reaches is an archive or backup already written: erasing a group, or a person's
+records, removes them from the store and leaves them in every backup taken before. Keeping backups
+on a bounded rotation is what bounds how long erased data survives in them.
 
 **Driver migration** (e.g. SQLite → Postgres) uses the same path: `Export` from the source, `Import`
 into a fresh target. Record ids compare byte-for-byte across all three drivers, so identity is
@@ -1506,7 +1521,7 @@ catches is one store's instance disappearing while others still report: its seri
 and drop out. That needs an inventory of what _should_ be reporting, which Prometheus does not have
 and a liveness probe does.
 
-The same twenty-nine rules are provisioned into the bundled Grafana below, so the demo stack alerts as
+The same thirty rules are provisioned into the bundled Grafana below, so the demo stack alerts as
 well as draws; see [deploy/observability/README.md](../deploy/observability/README.md). Neither file
 provisions a contact point — where alerts should be delivered is deployment-specific.
 
@@ -1543,6 +1558,8 @@ Metrics worth alerting on in production:
   `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
 - `hippocampus.memories.evicted` / `hippocampus.events.evicted` — eviction volume per cycle, with
   `hippocampus.bytes.evicted` the estimated bytes reclaimed (how much has been reaped).
+- `hippocampus.export.scheduled.last_success` / `hippocampus.export.scheduled.interval` — when the
+  last scheduled export completed, and how often one is meant to; the staleness alert compares them.
 - `hippocampus.memories.expired` — memories taken for being older than
   `consolidation.maximumRetentionInDays`, measured from when they were stored.
 - `hippocampus.memory.body_bytes` — a histogram of stored memory-body sizes (how much data each

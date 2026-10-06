@@ -171,6 +171,12 @@ type dialect struct {
 	// dialects' long after, so a store records whichever one applies to it. See search_dialect.go.
 	contentIndexCascades bool
 
+	// onlineBackup is set where the store can copy itself, consistently and beside a live writer, in
+	// one statement: SQLite's VACUUM INTO, which reads one snapshot and writes a compacted, WAL-free
+	// copy. The server dialects have their own tools for this (pg_dump, mysqldump) and the service
+	// does not stand in for them. See backup.go.
+	onlineBackup bool
+
 	// instanceRegistry is set where the peer registry table is kept. Deliberately off for the
 	// embedded dialect: it is single-instance by construction, so the table would have exactly one
 	// row, and its page-based UsedBytes would let the record of the deployment raise capacity
@@ -318,6 +324,7 @@ var dialects = map[driver]*dialect{
 		greatestFunc:         "MAX",
 		blobBytesFunc:        "LENGTH",
 		singleWriter:         true,
+		onlineBackup:         true,
 		returning:            true,
 		upsertExcluded:       "excluded",
 		indexIfNotExists:     true,

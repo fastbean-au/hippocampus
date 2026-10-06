@@ -349,6 +349,12 @@ type Server struct {
 	stopReconcile      chan struct{}
 	reconcileStopped   chan struct{}
 
+	// scheduledExport configures the scheduled archive export (scheduledexport.go), and the two
+	// channels coordinate its shutdown as the reconcile sweep's do; nil when it is not running.
+	scheduledExport        scheduledExportConfig
+	stopScheduledExport    chan struct{}
+	scheduledExportStopped chan struct{}
+
 	// staleSweepEnabled makes that sweep bidirectional: as well as re-indexing memories whose
 	// document is missing, it enumerates the index and removes documents the primary store no
 	// longer has. See outbox.go for why the forward direction alone was not enough.
@@ -645,6 +651,7 @@ func New(deps Dependencies) *Server {
 	s.autoSleep(reset, period)
 
 	s.startReconcile(deps.Search)
+	s.startScheduledExport()
 	s.startOutboxDrain(deps.Search)
 	s.startCallbackDispatch(deps.Notifier)
 
@@ -849,6 +856,11 @@ func (s *Server) Stop() {
 		if s.stopReconcile != nil {
 			close(s.stopReconcile)
 			<-s.reconcileStopped
+		}
+
+		if s.stopScheduledExport != nil {
+			close(s.stopScheduledExport)
+			<-s.scheduledExportStopped
 		}
 
 		if s.stopSleep == nil {

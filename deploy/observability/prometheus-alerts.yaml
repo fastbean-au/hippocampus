@@ -375,6 +375,19 @@ groups:
           description: "The sleep cycle is running but its consolidation and eviction passes are not, because the outbound callback queue is holding undelivered forget-callbacks past its caps and callbacks.backlogPolicy is stall. Nothing is being reclaimed, so used_bytes and capacity pressure will climb past the target for as long as this lasts - the store is holding its own growth open rather than orphaning payloads in whatever system the receiver fronts. This is a receiver outage with a deadline attached: fix the endpoint at callbacks.url and the backlog drains, the stall clears and the next cycle forgets everything that accumulated meanwhile."
           runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#observability"
 
+      # The store's own backup (TODO-3 item 158). The interval comes from a gauge the service
+      # publishes beside the timestamp, so the rule needs no hard-coded schedule.
+      - alert: HippocampusScheduledExportStale
+        expr: max by (service_name) (time() - hippocampus_export_scheduled_last_success) > 2 * max by (service_name) (hippocampus_export_scheduled_interval)
+        for: 30m
+        labels:
+          severity: warning
+          service: hippocampus
+        annotations:
+          summary: "Hippocampus has not taken a scheduled export for over two intervals"
+          description: "Scheduled exports (archive.scheduledExport.intervalHours) have not completed for more than twice their interval, so the store's own backup is going stale. The consolidating instance takes them, and each failure is logged at Error and retried within 15 minutes - read its log for the reason, which is usually the archive store: a full or unmounted archive.directory, or S3 credentials or permissions. Until this clears, the newest restorable archive is older than the schedule promises."
+          runbook_url: "https://github.com/fastbean-au/hippocampus/blob/main/docs/operations.md#backup-restore-and-migration"
+
       # The escalation of the above: the caps have started discarding deletions the index never
       # took. This is the one condition here that leaves the index knowingly wrong until a sweep
       # finds it.

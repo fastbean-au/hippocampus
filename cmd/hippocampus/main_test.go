@@ -1166,3 +1166,43 @@ func TestValidateConfigMaximumRetention(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateConfigScheduledExport: a scheduled export needs somewhere to write, and a backup
+// setting that silently does nothing is the failure that matters most here - nobody looks until they
+// need the backup (TODO-3 item 158).
+func TestValidateConfigScheduledExport(t *testing.T) {
+	cases := []struct {
+		name      string
+		interval  int
+		keep      int
+		directory string
+		wantErr   bool
+	}{
+		{name: "off", interval: 0, wantErr: false},
+		{name: "on with an archive directory", interval: 24, keep: 7, directory: "/backups", wantErr: false},
+		{name: "on with nowhere to write", interval: 24, keep: 7, wantErr: true},
+		{name: "a negative interval", interval: -1, directory: "/backups", wantErr: true},
+		{name: "a negative keep", interval: 24, keep: -1, directory: "/backups", wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validConsolidationConfig()
+			viper.Set("archive.scheduledExport.intervalHours", tc.interval)
+			viper.Set("archive.scheduledExport.keep", tc.keep)
+			viper.Set("archive.directory", tc.directory)
+
+			t.Cleanup(func() {
+				viper.Set("archive.scheduledExport.intervalHours", nil)
+				viper.Set("archive.scheduledExport.keep", nil)
+				viper.Set("archive.directory", nil)
+			})
+
+			err := validateConfig()
+
+			if tc.wantErr != (err != nil) {
+				t.Errorf("validateConfig = %v, want error %t", err, tc.wantErr)
+			}
+		})
+	}
+}

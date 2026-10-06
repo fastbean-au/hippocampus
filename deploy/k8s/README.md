@@ -172,6 +172,30 @@ how much that recovers, and how quickly it comes back.
 
 A managed Postgres has its provider's own major-upgrade path. None of this section applies to it.
 
+### Backing up the SQLite overlay
+
+There is deliberately no backup `CronJob`. The store's volume is `ReadWriteOnce`, so on most
+clusters a second pod cannot mount it while the `StatefulSet` holds it, and a job that cannot be
+scheduled is a backup that silently never runs. Two routes work instead:
+
+- **Take one from inside the running pod.** `--backup` opens the store read-only, takes no lock and
+  writes a consistent copy, so it is safe beside the live process:
+
+  ```sh
+  kubectl -n hippocampus exec hippocampus-0 -- \
+    hippocampus -c /etc/hippocampus/config.json --backup /data/backup-$(date +%Y%m%d).db
+  kubectl -n hippocampus cp hippocampus-0:/data/backup-$(date +%Y%m%d).db ./backup.db
+  ```
+
+  Delete the copy from `/data` afterwards: it shares the store's volume and so its capacity.
+- **Let the service take its own.** Set `archive.scheduledExport.intervalHours` with `s3.bucket` (or
+  an `archive.directory` on a volume of its own), and the consolidating instance exports the whole
+  store on that schedule and keeps the newest `archive.scheduledExport.keep`. This is the one that
+  needs no operator, and the shipped `HippocampusScheduledExportStale` alert says when it stops
+  working. See [Backup, restore, and migration](../../docs/operations.md#backup-restore-and-migration).
+
+The Postgres overlay backs up with `pg_dump` or the provider's snapshots, like any Postgres.
+
 ## Observability
 
 Metrics reach a backend by either of two routes, and the overlays ship with the **pull** one on

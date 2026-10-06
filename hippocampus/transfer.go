@@ -288,21 +288,20 @@ func (s *Server) clearManifest(ctx context.Context, manifest *transferManifest) 
 	return memoriesCleared, eventsCleared, nil
 }
 
-// Export snapshots the whole store into an archive object in S3 and caches a manifest of exactly
-// what it captured; with clear set the captured records are deleted once the upload has
-// succeeded. The archive streams through an io.Pipe, so it is never buffered whole in memory.
-func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contract.ExportResponse, error) {
-	log.Debug("Export()")
+// exportResult is one archive written: the manifest a later Clear can act on, what went into it,
+// and the walk's error if there was one.
+type exportResult struct {
+	manifest *transferManifest
+	events   int
+	memories int
+	err      error
+}
 
-	var res contract.ExportResponse
-
-	if s.objects == nil {
-		return &res, status.Error(codes.FailedPrecondition, "no object store is configured (set archive.directory or s3.bucket)")
-	}
-
-	manifestShort := uuid.New().String()[:8]
-	key := fmt.Sprintf("%s%s-%s.archive.gz", s.transfer.keyPrefix, time.Now().UTC().Format("20060102T150405Z"), manifestShort)
-
+// exportArchive streams the whole store into one archive object at key. It is the shared body of the
+// Export RPC and the scheduled export (TODO-3 item 158); the RPC's clear and manifest handling stay in
+// Export, since a scheduled export never clears anything. scheduled labels the exports counter, so
+// the two can be told apart.
+func (s *Server) exportArchive(ctx context.Context, key string, scheduled bool) (exportResult, error) {
 	// The header's counts are informational — they are read before the walk and the store can
 	// move underneath; the response carries the exact figures.
 	memoriesWith, memoriesWithout := s.db.CountMemories(ctx)
@@ -312,13 +311,6 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 		ExportedAt:  time.Now().UnixNano(),
 		EventCount:  int32(max(s.db.CountEvents(ctx), 0)),
 		MemoryCount: int32(max(memoriesWith+memoriesWithout, 0)),
-	}
-
-	type exportResult struct {
-		manifest *transferManifest
-		events   int
-		memories int
-		err      error
 	}
 
 	pr, pw := io.Pipe()
@@ -379,14 +371,40 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 		err = putErr
 	}
 
-	tel.exports.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", err == nil)))
+	tel.exports.Add(ctx, 1, metric.WithAttributes(
+		attribute.Bool("success", err == nil),
+		attribute.Bool("scheduled", scheduled),
+	))
 
 	if err != nil {
-		return &res, mapError(err)
+		return exportResult{}, err
 	}
 
 	tel.recordsExported.Add(ctx, int64(result.events), metric.WithAttributes(attribute.String("kind", "event")))
 	tel.recordsExported.Add(ctx, int64(result.memories), metric.WithAttributes(attribute.String("kind", "memory")))
+
+	return result, nil
+}
+
+// Export snapshots the whole store into an archive object in S3 and caches a manifest of exactly
+// what it captured; with clear set the captured records are deleted once the upload has
+// succeeded. The archive streams through an io.Pipe, so it is never buffered whole in memory.
+func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contract.ExportResponse, error) {
+	log.Debug("Export()")
+
+	var res contract.ExportResponse
+
+	if s.objects == nil {
+		return &res, status.Error(codes.FailedPrecondition, "no object store is configured (set archive.directory or s3.bucket)")
+	}
+
+	manifestShort := uuid.New().String()[:8]
+	key := fmt.Sprintf("%s%s-%s.archive.gz", s.transfer.keyPrefix, time.Now().UTC().Format("20060102T150405Z"), manifestShort)
+
+	result, err := s.exportArchive(ctx, key, false)
+	if err != nil {
+		return &res, mapError(err)
+	}
 
 	res.ManifestId = result.manifest.id
 	res.ObjectKey = key

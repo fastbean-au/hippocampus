@@ -229,6 +229,7 @@ func requireSQLite(t *testing.T) {
 //   - conformance_test.go is newTestDB itself.
 //   - instances_test.go asserts SQLite does NOT keep the instance registry, which is the point.
 //   - listing_index_test.go reads EXPLAIN QUERY PLAN, a SQLite statement.
+//   - backup_test.go is VACUUM INTO, which only the embedded driver offers, against a real file.
 //   - lock_test.go is the storage-directory file lock, which only the embedded driver takes.
 //   - schema_upgrade_test.go builds old-schema SQLite files; the server dialects' equivalent is
 //     schema_upgrade_server_test.go, which builds its own scratch databases.
@@ -236,6 +237,7 @@ func requireSQLite(t *testing.T) {
 // Anything else opening its own store is opting out of two thirds of the coverage without saying
 // so, which is the state this whole harness exists to end.
 var sqliteOnlyTestFiles = map[string]bool{
+	"backup_test.go":      true,
 	"bench_test.go":       true,
 	"conformance_test.go": true,
 

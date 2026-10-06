@@ -262,6 +262,13 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   they refuse and there is nothing left to report. Takes no lock and runs no DDL, so it is safe
   beside a live instance. It is a flag on this binary rather than a `hippo` subcommand because the
   CLI is a network client and a stopped store has nothing to dial
+- Back up a SQLite store: `go run ./cmd/hippocampus --backup <path> -c config.json` (CLI mode in
+  `backup.go` over `db.BackupTo`: `VACUUM INTO` through a read-only open, so it is safe beside a
+  live instance and takes no lock; refuses an existing destination, and refuses the server drivers
+  with the tool to use instead). Its scheduled counterpart is `archive.scheduledExport.*`
+  (`hippocampus/scheduledexport.go`): the consolidating instance exports on an interval, prunes only
+  its own `scheduled/` prefix to `keep`, reads its schedule back from the archives already there, and
+  publishes the gauges `HippocampusScheduledExportStale` alerts on (TODO-3 item 158)
 - Validate a configuration without starting: `go run ./cmd/hippocampus --check-config [--output json] -c config.json`
   (CLI mode in `checkconfig.go`, exits non-zero when the service would refuse to start; touches no
   store and no network, so it is safe in a build step or beside a live instance). It checks the
@@ -446,7 +453,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   traffic out of the error-rate denominator. **The alert rules those metrics exist for are shipped
   too**, and deliberately twice: `deploy/observability/prometheus-alerts.yaml` (a portable
   Prometheus rule file — the artefact a real deployment loads) and
-  `deploy/compose/observability/alerting-rules.yaml` (the same twenty-nine rules as Grafana-managed rules,
+  `deploy/compose/observability/alerting-rules.yaml` (the same thirty rules as Grafana-managed rules,
   provisioned into every compose file's `observability` profile and `demo/run.sh`, because Grafana
   provisions its own format and cannot read a Prometheus rule file). Two copies of a PromQL
   expression that nothing in the repo executes is exactly what drifts, so the drift guard
@@ -480,7 +487,7 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
   store's estimate. Neither file provisions a contact point. The `gt 0` threshold has a consequence worth
   knowing before writing a rule: an expression must return a **positive** number while it should be
   firing, so a rule whose firing value is zero is correct in Prometheus and silent in Grafana —
-  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the twenty-nine are a second group,
+  hence `HippocampusBridgeNotConsuming`'s `count(… == 0) > 0`. Nine of the thirty are a second group,
   `hippocampus-clients`, and are **not about the service**: they cover the processes that dial it (the
   broker bridges, the ingestor, the object-storage agents) and read instruments declared in
   `integrations/*`, which

@@ -43,10 +43,16 @@ type telemetry struct {
 	sleepDuration    metric.Float64Histogram
 	capacityPressure metric.Float64Gauge
 	usedBytes        metric.Int64Gauge
-	capacityBytes    metric.Int64Gauge
-	memoriesRetained metric.Int64Gauge
-	retainedBytes    metric.Int64Gauge
-	purges           metric.Int64Counter
+
+	// scheduledExportLastSuccess and scheduledExportInterval are published together so a staleness
+	// alert can compare the age of the last good backup with how often one is meant to happen,
+	// without an interval hard-coded in the rule (TODO-3 item 158).
+	scheduledExportLastSuccess metric.Int64Gauge
+	scheduledExportInterval    metric.Int64Gauge
+	capacityBytes              metric.Int64Gauge
+	memoriesRetained           metric.Int64Gauge
+	retainedBytes              metric.Int64Gauge
+	purges                     metric.Int64Counter
 
 	// The external capacity axis (consolidation.capacityExternalBytes): the payload the store's
 	// memories point at in other systems, the target it is held under, and what retention is
@@ -126,9 +132,12 @@ func newTelemetry() *telemetry {
 		sleepDuration:    newFloat64Histogram(meter, "hippocampus.sleep.duration", "s", "Duration of a full sleep cycle in seconds.", observability.CycleBuckets()),
 		capacityPressure: newFloat64Gauge(meter, "hippocampus.capacity_pressure", "Deletion-threshold multiplier derived from store utilisation, recalculated each sleep cycle."),
 		usedBytes:        newInt64Gauge(meter, "hippocampus.used_bytes", "Bytes the store occupies excluding free pages, measured each sleep cycle when a capacity target is set."),
-		capacityBytes:    newInt64Gauge(meter, "hippocampus.capacity_bytes", "The configured byte capacity target, exported alongside used_bytes so a dashboard need not hard-code the limit."),
-		memoriesRetained: newInt64Gauge(meter, "hippocampus.memories.retained", "Memories inside the minimum retention window, and so exempt from both consolidation and eviction."),
-		retainedBytes:    newInt64Gauge(meter, "hippocampus.retained_bytes", "Stored bytes held by the minimum retention window. Approaching capacity_bytes means the capacity target has become unreachable, since retention overrides it."),
+
+		scheduledExportLastSuccess: newInt64Gauge(meter, "hippocampus.export.scheduled.last_success", "Unix seconds of the last scheduled export that completed, published only while scheduled exports are configured."),
+		scheduledExportInterval:    newInt64Gauge(meter, "hippocampus.export.scheduled.interval", "The configured interval between scheduled exports, in seconds, so an alert can judge staleness without hard-coding it."),
+		capacityBytes:              newInt64Gauge(meter, "hippocampus.capacity_bytes", "The configured byte capacity target, exported alongside used_bytes so a dashboard need not hard-code the limit."),
+		memoriesRetained:           newInt64Gauge(meter, "hippocampus.memories.retained", "Memories inside the minimum retention window, and so exempt from both consolidation and eviction."),
+		retainedBytes:              newInt64Gauge(meter, "hippocampus.retained_bytes", "Stored bytes held by the minimum retention window. Approaching capacity_bytes means the capacity target has become unreachable, since retention overrides it."),
 
 		externalBytes:         newInt64Gauge(meter, "hippocampus.external_bytes", "Total size of the payloads the store's memories point at in other systems, measured each sleep cycle when an external capacity target is set."),
 		capacityExternalBytes: newInt64Gauge(meter, "hippocampus.capacity_external_bytes", "The configured external byte capacity target, exported alongside external_bytes so a dashboard need not hard-code the limit."),

@@ -23,7 +23,7 @@ translation. Either produces the same names, which is the point — nothing here
 The client-side components in the `hippocampus-clients` group below take the same choice as a
 `--prometheus` flag, and serve `/metrics` on the `--health-port` they already listen on.
 
-Twenty-nine rules in two groups. `hippocampus` is the service itself — twenty rules covering what
+Thirty rules in two groups. `hippocampus` is the service itself — twenty-one rules covering what
 actually goes wrong:
 
 | Alert                                  | Fires when                                                                  | Severity |
@@ -46,6 +46,7 @@ actually goes wrong:
 | `HippocampusCallbackDeliveriesFailing` | the callback receiver is refusing deliveries for 15m                        | warning  |
 | `HippocampusCallbacksAbandoning`       | the callback queue's caps are discarding undelivered notifications          | critical |
 | `HippocampusForgettingStalled`         | the decay passes are held off because forget-callbacks are undelivered      | critical |
+| `HippocampusScheduledExportStale`      | no scheduled export has completed for over two intervals                    | warning  |
 | `HippocampusSearchOutboxAbandoning`    | the outbox's caps are discarding queued index deletions                     | critical |
 | `HippocampusPanicsRecovered`           | a handler panicked and was recovered                                        | warning  |
 
@@ -143,7 +144,7 @@ Four properties worth knowing before you deploy them:
 
 ## The Grafana copy
 
-`../compose/observability/alerting-rules.yaml` is the same twenty-nine rules as Grafana-managed rules,
+`../compose/observability/alerting-rules.yaml` is the same thirty rules as Grafana-managed rules,
 provisioned into the bundled `grafana/otel-lgtm` stack (every compose file's `observability` profile,
 and `demo/run.sh`) so the demo stack alerts as well as draws. It exists as a second file only
 because Grafana provisions its own rule format and cannot read a Prometheus rule file.

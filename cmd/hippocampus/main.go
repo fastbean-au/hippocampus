@@ -71,6 +71,7 @@ func execute(args []string) {
 	flags.Bool("schema-version", false, "print the configured store's schema version and exit; exits non-zero if the store is newer than this build")
 	flags.Bool("check-config", false, "validate the resolved configuration and exit; exits non-zero if the service would refuse to start on it")
 	flags.String("output", "text", "output format for --schema-version and --check-config: text or json")
+	flags.String("backup", "", "write a consistent copy of the SQLite store to this path and exit; safe beside a running instance (for postgres/mysql use pg_dump or mysqldump)")
 	flags.Bool("backfill-search", false, "rebuild the opensearch content-search index from the primary store and exit")
 	flags.Bool("reindex", false, "delete and recreate the index before backfilling, removing stale entries (used with --backfill-search)")
 	flags.Int("backfill-batch-size", 500, "memories read from the primary store per batch (used with --backfill-search)")
@@ -287,6 +288,21 @@ func execute(args []string) {
 		log.Warnf("the ollama.* configuration keys are deprecated and were renamed to llm.* in v0.42.0 - still reading %s; they will be honoured for now, but rename them",
 			strings.Join(legacyLLMKeys, ", "),
 		)
+	}
+
+	// --backup is a CLI mode like --backfill-search: it copies the store and exits without starting
+	// the server (see backup.go). Below the configMissing warning for the same reason that mode is -
+	// which store it read is exactly what an operator needs to know.
+	if destination := viper.GetString("backup"); destination != "" {
+		if err := runBackup(backupConfig{
+			StorageDriver:    viper.GetString("storage.driver"),
+			StorageDirectory: viper.GetString("storage.directory"),
+			Destination:      destination,
+		}); err != nil {
+			log.Fatalf("backup failed: %s", err.Error())
+		}
+
+		return
 	}
 
 	// --backfill-search is a CLI mode like --mint-token: it rebuilds the content-search index
@@ -551,6 +567,11 @@ func setStartupDefaults() {
 	// disables that bound.
 	viper.SetDefault("consolidation.tombstones.maxRows", 100000)
 	viper.SetDefault("consolidation.tombstones.maxAgeInDays", 30)
+
+	// Defaulted though the scheduled export is off unless intervalHours is set, as the tombstone caps
+	// above are: a bound that matters once the feature is on should not depend on the operator
+	// remembering it. A week of daily archives.
+	viper.SetDefault("archive.scheduledExport.keep", 7)
 
 	// consolidation.tombstones.maxBytes has deliberately NO default, and neither do the byte caps
 	// on the two queues below. A tombstone is a fixed-width row, so the row cap above already IS a
@@ -2401,6 +2422,27 @@ func configProblems() []error {
 			"consolidation.maximumRetentionInDays (%d) must be greater than consolidation.minimumRetentionInDays (%d)",
 			maximum,
 			minimum,
+		))
+
+	}
+
+	// The scheduled export (TODO-3 item 158) needs an archive store to write to. Configured without
+	// one it would start, log once, and take no backup ever - and a backup is the thing nobody checks
+	// until the day it is needed, so this is refused rather than warned about.
+	exportInterval := viper.GetInt("archive.scheduledExport.intervalHours")
+	exportKeep := viper.GetInt("archive.scheduledExport.keep")
+
+	switch {
+
+	case exportInterval < 0:
+		problems = append(problems, fmt.Errorf("archive.scheduledExport.intervalHours must not be negative, got %d", exportInterval))
+
+	case exportKeep < 0:
+		problems = append(problems, fmt.Errorf("archive.scheduledExport.keep must not be negative, got %d (0 keeps every archive)", exportKeep))
+
+	case exportInterval > 0 && viper.GetString("archive.directory") == "" && viper.GetString("s3.bucket") == "":
+		problems = append(problems, errors.New(
+			"archive.scheduledExport.intervalHours is set but there is nowhere to write the exports: set archive.directory or s3.bucket",
 		))
 
 	}

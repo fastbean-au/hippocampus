@@ -88,6 +88,19 @@ itself which service version it was built against.
   `PreviewConsolidation` predicts it and `ExplainConsolidation` reports `days_until_expiry`. The
   object-storage reaper acts on it by default, and the console, the CLI and the config wizard all
   know it.
+- **An online backup for SQLite: `hippocampus --backup <path>`.** Writes a consistent copy of the
+  store and exits, safely beside a running instance: it opens the store read-only, takes no lock,
+  and uses `VACUUM INTO`, which reads one snapshot and writes a single compacted file. The docs used
+  to say "copy the file", which in WAL mode silently loses every write not yet checkpointed. An
+  existing destination is refused, and the server drivers are pointed at `pg_dump`/`mysqldump`.
+- **Scheduled exports: `archive.scheduledExport.intervalHours` and `.keep`.** The consolidating
+  instance takes a full `Export` on a schedule and keeps the newest `keep` (default 7), deleting
+  only archives under its own `scheduled/` prefix, so a manual export is never rotated away. The
+  schedule survives restarts by being read back from the archives already present, a failure is
+  retried within 15 minutes, and startup refuses the setting with no archive store to write to.
+  Published as `hippocampus.export.scheduled.last_success`/`.interval`, with a shipped
+  `HippocampusScheduledExportStale` alert (thirty rules now). Both object stores gained list and
+  delete for the rotation.
 ### Changed
 
 - **A release is dispatched only to the satellites it changes something for.** `notify-satellites`
