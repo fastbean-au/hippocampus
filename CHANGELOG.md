@@ -137,6 +137,14 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **Three concurrency fixes in the preview, explain and shutdown paths.**
+  - A `PreviewConsolidation` or `ExplainConsolidation` snapshot read the default event significance
+    while a sleep cycle could be writing it, a data race.
+  - Concurrent previews and explain refreshes share one scan, but that scan ran on the first caller's
+    context. One closed console tab therefore failed every other viewer's request. The scan now
+    belongs to the server, bounded at five minutes, and each caller can still give up on its own.
+  - On a forced shutdown, the database could close beneath a sleep cycle an RPC had started. `Stop`
+    now waits for a cycle in flight, and refuses to start a new one.
 - **`callbacks.tls.enabled: false` now turns the callback TLS block off.** The key was documented and
   offered by the config wizard, but never read. A block switched off with `insecureSkipVerify` still
   set therefore kept skipping certificate verification. Left unset, the block still applies whenever

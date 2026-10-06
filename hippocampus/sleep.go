@@ -217,15 +217,16 @@ func (s *Server) consolidate(ctx context.Context, report *cycleReport) error {
 		if err != nil {
 			log.Warnf(
 				"default event significance percentile unavailable, retaining %d: %s",
-				s.consolidation.defaultEventSignificanceValue,
+				s.defaultEventSignificance(),
 				err.Error(),
 			)
 
 			span.AddEvent("default_event_significance_retained", trace.WithAttributes(
-				attribute.Int("default_event_significance", int(s.consolidation.defaultEventSignificanceValue)),
+				attribute.Int("default_event_significance", int(s.defaultEventSignificance())),
 			))
 		} else {
-			s.consolidation.defaultEventSignificanceValue = int32(v)
+			s.computedDefaultEventSignificance.Store(int32(v))
+			s.hasComputedDefault.Store(true)
 			log.Infof("default event significance: %d (%0.2f)", int(v), v)
 
 			span.AddEvent("default_event_significance_calculated", trace.WithAttributes(
@@ -642,7 +643,7 @@ func (s *Server) ShouldConsolidateMemory(candidate db.MemoryConsolidationCandida
 // algorithm. Capacity eviction uses it to rank memories from least to most valuable; a memory
 // with no age yet (or a future timestamp) ranks as maximally valuable.
 func (s *Server) MemoryValue(candidate db.MemoryConsolidationCandidate) float64 {
-	return s.memoryValueUnder(candidate, s.consolidation.defaultEventSignificanceValue)
+	return s.memoryValueUnder(candidate, s.defaultEventSignificance())
 }
 
 // memoryValueUnder is MemoryValue against an explicitly supplied default event significance; see
@@ -705,7 +706,7 @@ func linkContribution(weight float64, sum int64) float64 {
 // memorySignificance combines the memory's own significance with its event's, the damped
 // contributions of the memory's own links and its event's links, and the weighted recall count.
 func (s *Server) memorySignificance(candidate db.MemoryConsolidationCandidate) float64 {
-	return s.memorySignificanceUnder(candidate, s.consolidation.defaultEventSignificanceValue)
+	return s.memorySignificanceUnder(candidate, s.defaultEventSignificance())
 }
 
 // memorySignificanceUnder is memorySignificance against an explicitly supplied default event

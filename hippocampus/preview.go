@@ -131,12 +131,11 @@ type previewResult struct {
 // handed a shorter list. The limit is normalised first (via db.PreviewLimit), so the default and
 // its explicit equivalent share a key rather than scanning twice for the same answer.
 //
-// The usual singleflight caveat applies and is accepted: the leader's context governs the shared
-// call, so a follower whose leader disconnects sees that cancellation and must retry. The
-// alternative - detaching the work from every caller's context - would keep a scan running for
-// callers who have all gone away, which is precisely the load this group exists to avoid.
+// The scan runs on a context detached from the caller who started it (sharedCall), so a leader that
+// disconnects does not fail the followers who joined it; the cost is a scan that can outlive every
+// caller, bounded by sharedWorkTimeout.
 func (s *Server) previewOnce(ctx context.Context, limit int) (previewResult, error) {
-	shared, err, _ := s.previewGroup.Do(strconv.Itoa(limit), func() (any, error) {
+	shared, err := sharedCall(ctx, &s.previewGroup, strconv.Itoa(limit), func(ctx context.Context) (any, error) {
 		state, err := s.decisionSnapshot(ctx)
 		if err != nil {
 			return previewResult{}, err
@@ -265,7 +264,7 @@ func (s *Server) decisionSnapshot(ctx context.Context) (decisionState, error) {
 		decider: previewDecider{
 			server:                   s,
 			capacityPressure:         1.0,
-			defaultEventSignificance: s.consolidation.defaultEventSignificanceValue,
+			defaultEventSignificance: s.defaultEventSignificance(),
 		},
 	}
 
@@ -316,7 +315,7 @@ func (s *Server) decisionSnapshot(ctx context.Context) (decisionState, error) {
 			// Exactly as the cycle does: an empty event store cannot yield a percentile, so retain
 			// the configured value rather than failing.
 			log.Warnf("default event significance percentile unavailable for preview, retaining %d: %s",
-				s.consolidation.defaultEventSignificanceValue,
+				s.defaultEventSignificance(),
 				err.Error(),
 			)
 		} else {

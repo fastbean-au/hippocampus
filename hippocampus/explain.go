@@ -208,7 +208,7 @@ func (s *Server) cachedDecisionSnapshot(ctx context.Context) (decisionState, err
 		return cached, nil
 	}
 
-	shared, err, _ := s.explainGroup.Do(explainStateKey, func() (any, error) {
+	shared, err := sharedCall(ctx, &s.explainGroup, explainStateKey, func(ctx context.Context) (any, error) {
 		state, err := s.decisionSnapshot(ctx)
 		if err != nil {
 			return decisionState{}, err

@@ -242,6 +242,22 @@ type Server struct {
 	// so a caller that JOINED a running cycle sees the same true a caller that started one does.
 	sleepInProgress atomic.Bool
 
+	// cycles counts the sleep cycles running, and cyclesStopping (under cycleMu) refuses new ones
+	// once Stop has begun, so Stop can wait for the last one before the database closes beneath it.
+	// A cycle an RPC started runs on its own context, which a forced gRPC stop does not reach
+	// (TODO-3 item 164).
+	cycleMu        sync.Mutex
+	cyclesStopping bool
+	cycles         sync.WaitGroup
+
+	// computedDefaultEventSignificance is the default event significance the latest cycle derived
+	// from consolidation.defaultEventSignificancePercentile, valid once hasComputedDefault is set;
+	// until then the configured value applies. Atomics because the sleep goroutine writes it while
+	// a preview or explain snapshot reads it (TODO-3 item 164). Read through
+	// defaultEventSignificance().
+	computedDefaultEventSignificance atomic.Int32
+	hasComputedDefault               atomic.Bool
+
 	// sleepPeriod is sleep.periodSeconds as a duration, kept for GetConsolidationStatus to report.
 	// Non-positive means no timed cycle at all - a supported mode for an instance driven only by the
 	// Sleep RPC or the WAL trigger.
@@ -836,6 +852,12 @@ func (s *Server) startReconcile(searchIndex search.Index) {
 // before closing the database.
 func (s *Server) Stop() {
 	s.stopOnce.Do(func() {
+		// Refuse new cycles before anything else, so none can start between the loop stopping and
+		// the wait below.
+		s.cycleMu.Lock()
+		s.cyclesStopping = true
+		s.cycleMu.Unlock()
+
 		// First, so this instance leaves the shared registry while the database is still open: a
 		// clean exit should disappear from its peers' views immediately rather than be reported
 		// unreachable for several intervals, which is what an instance that could not say so gets.
@@ -863,13 +885,24 @@ func (s *Server) Stop() {
 			<-s.scheduledExportStopped
 		}
 
-		if s.stopSleep == nil {
-			return
+		if s.stopSleep != nil {
+			close(s.stopSleep)
+			<-s.sleepStopped
 		}
 
-		close(s.stopSleep)
-		<-s.sleepStopped
+		// Last, and unconditionally: an RPC-triggered cycle runs whether or not the timed loop does.
+		s.cycles.Wait()
 	})
+}
+
+// defaultEventSignificance is the default event significance in force: the latest cycle's computed
+// percentile once there is one, otherwise the configured value.
+func (s *Server) defaultEventSignificance() int32 {
+	if s.hasComputedDefault.Load() {
+		return s.computedDefaultEventSignificance.Load()
+	}
+
+	return s.consolidation.defaultEventSignificanceValue
 }
 
 func (s *Server) autoSleep(reset chan bool, period time.Duration) {
@@ -1009,6 +1042,19 @@ func (s *Server) checkWALTrigger() {
 // result, and the report describes the cycle that ran rather than the call that observed it.
 func (s *Server) sleepOnce(trigger string) error {
 	_, err, _ := s.sleepGroup.Do(sleepSingleflightKey, func() (any, error) {
+		s.cycleMu.Lock()
+
+		if s.cyclesStopping {
+			s.cycleMu.Unlock()
+
+			return nil, status.Error(codes.Unavailable, "the server is stopping; no new sleep cycle will start")
+		}
+
+		s.cycles.Add(1)
+		s.cycleMu.Unlock()
+
+		defer s.cycles.Done()
+
 		// Set inside the closure, so it covers exactly the cycle and is true for a caller that
 		// joined one as much as for the caller that started it.
 		s.sleepInProgress.Store(true)

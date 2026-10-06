@@ -881,10 +881,10 @@ func TestConsolidate_PercentileWithNoEvents(t *testing.T) {
 		t.Errorf("consolidate() must not fail when the percentile has no events to work with: %s", err)
 	}
 
-	if s.consolidation.defaultEventSignificanceValue != 5 {
+	if s.defaultEventSignificance() != 5 {
 		t.Errorf(
 			"the configured fixed value should be retained on fallback, got %d",
-			s.consolidation.defaultEventSignificanceValue,
+			s.defaultEventSignificance(),
 		)
 	}
 }
@@ -1161,7 +1161,7 @@ func TestConsolidate_PercentileCalculatedFromEvents(t *testing.T) {
 		t.Fatalf("consolidate: %s", err)
 	}
 
-	if s.consolidation.defaultEventSignificanceValue == 5 {
+	if s.defaultEventSignificance() == 5 {
 		t.Error("expected the computed percentile to overwrite the configured fixed value")
 	}
 }

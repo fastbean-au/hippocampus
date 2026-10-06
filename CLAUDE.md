@@ -597,7 +597,9 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
     read the two fields the sleep goroutine mutates (`capacityPressure`,
     `defaultEventSignificanceValue`) — that would be a data race, and would also let one scan
     evaluate its first rows against different numbers from its last. So `previewDecider` carries a
-    snapshot, and `shouldConsolidateUnder`/`memorySignificanceUnder`/`memoryValueUnder`/
+    snapshot (whose one live input, the computed default event significance, is an atomic read
+    through `defaultEventSignificance()`, after the snapshot was found reading the plain field under
+    `-race` — TODO-3 item 164), and `shouldConsolidateUnder`/`memorySignificanceUnder`/`memoryValueUnder`/
     `shouldConsolidateEventUnder` are the parameterised forms the existing methods now delegate to.
     Every actual decision still goes through the server's own methods. (3) `db.PreviewConsolidation`
     scans **once** and reimplements only the per-event bookkeeping rather than sharing the four real
