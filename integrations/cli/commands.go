@@ -74,9 +74,15 @@ func commands() map[string]command {
 		},
 		"memory list": {
 			summary: "list memories with optional filters",
-			hint:    "[--group G] [--metadata k=v] [--recalled false] [--significance-min N] [--limit N]",
-			flags:   memoryFilterFlags,
-			run:     runMemoryList,
+			hint:    "[--id ID ...] [--group G] [--metadata k=v] [--recalled false] [--significance-min N] [--limit N]",
+			flags: func(fs *pflag.FlagSet) {
+				memoryFilterFlags(fs)
+
+				// Listing-only: delete-by-filter shares memoryFilterFlags and selects by predicate,
+				// never by id.
+				fs.StringSlice("id", nil, "restrict to this memory id (repeatable, at most 200): reads by id WITHOUT reinforcing, unlike 'memory recall'")
+			},
+			run: runMemoryList,
 		},
 		"memory recall": {
 			summary: "recall memories by id (reinforces them)",
@@ -902,6 +908,8 @@ func runMemoryList(ctx context.Context, client contract.HippocampusClient, fs *p
 		RecallCountMax:  i32(fs, "recall-count-max"),
 		TimeRecalledMin: recalledAfter,
 		TimeRecalledMax: recalledBefore,
+
+		Ids: strs(fs, "id"),
 	}
 
 	resp, err := client.GetMemories(ctx, req)

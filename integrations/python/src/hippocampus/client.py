@@ -376,6 +376,7 @@ class Hippocampus:
         is_summary: Optional[bool] = None,
         binary: Optional[bool] = None,
         linked_to: Optional[str] = None,
+        ids: Optional[Iterable[str]] = None,
         links: bool = False,
         order_by: str = "",
         order_dir: Optional[SortDirection] = None,
@@ -384,6 +385,10 @@ class Hippocampus:
         timeout: Optional[float] = None,
     ) -> Page:
         """List memories. This is the read - it does not reinforce anything.
+
+        `ids` reads particular memories (at most 200) without reinforcing them, which is the
+        difference from `recall_memories`. An id the store does not hold, or one outside the
+        token's group scope, is simply missing from the page.
 
         The tri-state filters (`recalled`, `has_event`, `is_summary`, `binary`) exist because their
         bounds cannot express absence: `recall_count_max=0` means "no upper bound", not "never
@@ -408,6 +413,7 @@ class Hippocampus:
             is_summary=_convert.to_tristate(is_summary),
             is_binary=_convert.to_tristate(binary),
             linked_to=linked_to or "",
+            ids=list(ids or ()),
             links=links,
             order_by=order_by,
             limit=limit,

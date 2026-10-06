@@ -97,6 +97,14 @@ def test_metadata_travels_as_pairs(client, service):
     ]
 
 
+def test_get_memories_reads_by_id(client, service):
+    """ids is the by-id read that does not reinforce; recall_memories is the one that does."""
+
+    client.get_memories(ids=["m1", "m2"])
+
+    assert list(service.requests["GetMemories"].ids) == ["m1", "m2"]
+
+
 def test_a_predicate_delete_encodes_the_same_filter_as_the_listing(client, service):
     """The dry run only means anything if the two send the same predicate.
 

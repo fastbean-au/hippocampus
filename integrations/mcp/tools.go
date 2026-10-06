@@ -631,6 +631,11 @@ type listMemoriesInput struct {
 	Recalled *bool             `json:"recalled,omitempty" jsonschema:"optional: false returns only memories that have never been recalled, true only those recalled at least once; omit for no restriction"`
 	EventId  string            `json:"event_id,omitempty" jsonschema:"optional: restrict to one event's memories; this is the paged way to read them, and an empty value applies no restriction rather than matching the event-less"`
 	HasEvent *bool             `json:"has_event,omitempty" jsonschema:"optional: false returns only memories belonging to no event, true only those belonging to one; omit for no restriction"`
+
+	// Ids is the by-id read that leaves the memories as they were. recall_memories is the other
+	// by-id read and it reinforces, so a model checking what it holds about something would
+	// otherwise keep it alive by looking (TODO-3 item 156).
+	Ids []string `json:"ids,omitempty" jsonschema:"optional: read exactly these memory ids (at most 200) WITHOUT reinforcing them - use recall_memories only when the memory should be strengthened by the use. An id the store does not hold is simply absent from the page"`
 }
 
 type memoriesPageOutput struct {
@@ -666,6 +671,7 @@ func (b *bridge) listMemories(ctx context.Context, _ *mcp.CallToolRequest, in li
 		Recalled:        triStateFilter(in.Recalled),
 		EventId:         in.EventId,
 		HasEvent:        triStateFilter(in.HasEvent),
+		Ids:             in.Ids,
 	})
 	if err != nil {
 		return nil, memoriesPageOutput{}, fmt.Errorf("GetMemories failed: %w", err)

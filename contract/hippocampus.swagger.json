@@ -1223,6 +1223,17 @@
               "SORT_DIRECTION_DESC"
             ],
             "default": "SORT_DIRECTION_UNSPECIFIED"
+          },
+          {
+            "name": "ids",
+            "description": "optional: restrict to these memory ids, at most 200 - the way to read memories by id WITHOUT reinforcing them, which RecallMemories always does. An id the store does not hold, or one outside the caller's group scope, is simply absent from the page rather than an error, so the answer never says which. Composes with every other field; with linked_to it is the intersection",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
           }
         ],
         "tags": [

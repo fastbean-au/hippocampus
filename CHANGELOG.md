@@ -69,6 +69,14 @@ itself which service version it was built against.
   entry today is GO-2026-6443 in grpc-go v1.84.0: its panic is in xDS server routing, which nothing
   here links, and it comes out when v1.85.0 is tagged.
 
+- **Read memories by id without reinforcing them.** `GetMemoriesRequest` gains `ids` (up to 200).
+  `RecallMemories` was the only by-id read that returned a body, and recalling resets the decay
+  clock, so inspecting a memory — an operator checking a record, a subject-access lookup, a sync job
+  — made it more durable. The ids go through the listing's own predicate, so they compose with every
+  other filter and the group scope applies to them unchanged: an id the store does not hold, or one
+  outside the caller's scope, is simply absent from the page. Reachable as `hippo memory list --id`,
+  `get_memories(ids=...)` in the Python client, and the `ids` argument of the MCP bridge's
+  `list_memories`, which gives a model a way to look at what it holds without keeping it alive.
 ### Changed
 
 - **A release is dispatched only to the satellites it changes something for.** `notify-satellites`

@@ -2047,6 +2047,7 @@ type GetMemoriesRequest struct {
 	EventId              string                 `protobuf:"bytes,20,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                                                                                 // optional: restrict to memories associated with this event. This is the paged way to read an event's memories - GetEventById with memories: true returns them all in one message, which overruns the receive frame on a large event. Empty (the default) applies no restriction rather than matching the event-less; use has_event for those
 	HasEvent             Bool                   `protobuf:"varint,21,opt,name=has_event,json=hasEvent,proto3,enum=hippocampus.v1.Bool" json:"has_event,omitempty"`                                                    // optional: FALSE returns only memories associated with no event, TRUE only those associated with one; UNSPECIFIED (default) applies no restriction. Exists because event_id cannot say it - an event-less memory stores an empty event_id, which is the same value that means "no bound" there, exactly as recalled exists alongside recall_count_min/max
 	OrderDir             SortDirection          `protobuf:"varint,22,opt,name=order_dir,json=orderDir,proto3,enum=hippocampus.v1.SortDirection" json:"order_dir,omitempty"`                                           // optional: reverse order_by's sort direction; UNSPECIFIED (the default) uses that field's natural direction. Applies to the whole ordering, tiebreakers included, so ASC returns exactly the reverse of DESC
+	Ids                  []string               `protobuf:"bytes,23,rep,name=ids,proto3" json:"ids,omitempty"`                                                                                                        // optional: restrict to these memory ids, at most 200 - the way to read memories by id WITHOUT reinforcing them, which RecallMemories always does. An id the store does not hold, or one outside the caller's group scope, is simply absent from the page rather than an error, so the answer never says which. Composes with every other field; with linked_to it is the intersection
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -2233,6 +2234,13 @@ func (x *GetMemoriesRequest) GetOrderDir() SortDirection {
 		return x.OrderDir
 	}
 	return SortDirection_SORT_DIRECTION_UNSPECIFIED
+}
+
+func (x *GetMemoriesRequest) GetIds() []string {
+	if x != nil {
+		return x.Ids
+	}
+	return nil
 }
 
 type GetMemoriesResponse struct {
@@ -8071,7 +8079,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x11GetEventsResponse\x12-\n" +
 	"\x06events\x18\x01 \x03(\v2\x15.hippocampus.v1.EventR\x06events\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCount\"\x8d\a\n" +
+	"totalCount\"\x9f\a\n" +
 	"\x12GetMemoriesRequest\x12#\n" +
 	"\rtimestamp_min\x18\x01 \x01(\x03R\ftimestampMin\x12#\n" +
 	"\rtimestamp_max\x18\x02 \x01(\x03R\ftimestampMax\x12)\n" +
@@ -8096,7 +8104,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\tis_binary\x18\x13 \x01(\x0e2\x14.hippocampus.v1.BoolR\bisBinary\x12\x19\n" +
 	"\bevent_id\x18\x14 \x01(\tR\aeventId\x121\n" +
 	"\thas_event\x18\x15 \x01(\x0e2\x14.hippocampus.v1.BoolR\bhasEvent\x12:\n" +
-	"\torder_dir\x18\x16 \x01(\x0e2\x1d.hippocampus.v1.SortDirectionR\borderDir\"j\n" +
+	"\torder_dir\x18\x16 \x01(\x0e2\x1d.hippocampus.v1.SortDirectionR\borderDir\x12\x10\n" +
+	"\x03ids\x18\x17 \x03(\tR\x03ids\"j\n" +
 	"\x13GetMemoriesResponse\x122\n" +
 	"\bmemories\x18\x01 \x03(\v2\x16.hippocampus.v1.MemoryR\bmemories\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +

@@ -517,6 +517,21 @@ func TestListMemories_MapsFiltersAndTotal(t *testing.T) {
 	}
 }
 
+// TestListMemories_ReadsById: ids reaches the request, which is what lets a model read a memory it
+// knows about without reinforcing it.
+func TestListMemories_ReadsById(t *testing.T) {
+	f := &fakeClient{getMemoriesRes: &contract.GetMemoriesResponse{}}
+	b := newBridge(f)
+
+	if _, _, err := b.listMemories(context.Background(), nil, listMemoriesInput{Ids: []string{"m1", "m2"}}); err != nil {
+		t.Fatalf("listMemories returned error: %v", err)
+	}
+
+	if got := f.getMemoriesReq.GetIds(); len(got) != 2 || got[0] != "m1" || got[1] != "m2" {
+		t.Errorf("ids = %v, want [m1 m2]", got)
+	}
+}
+
 func TestCreateEvent_MapsRequestAndResponse(t *testing.T) {
 	f := &fakeClient{storeEventRes: &contract.StoreEventResponse{Id: "e1", Rejected: false}}
 	b := newBridge(f)

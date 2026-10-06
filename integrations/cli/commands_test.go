@@ -106,6 +106,21 @@ func TestMemoryListFiltersAndExtremum(t *testing.T) {
 	}
 }
 
+// TestMemoryListById: --id narrows the listing to those memories, which is the by-id read that does
+// not reinforce - `memory recall` is the one that does (TODO-3 item 156).
+func TestMemoryListById(t *testing.T) {
+	req, _, err := runCommand(t, "memory list", []string{"--id", "m1", "--id", "m2"}, &fakeClient{})
+	if err != nil {
+		t.Fatalf("memory list --id: %s", err)
+	}
+
+	got := req.(*contract.GetMemoriesRequest)
+
+	if len(got.GetIds()) != 2 || got.GetIds()[0] != "m1" || got.GetIds()[1] != "m2" {
+		t.Errorf("ids = %v, want [m1 m2]", got.GetIds())
+	}
+}
+
 func TestMemoryListBadExtremum(t *testing.T) {
 	_, _, err := runCommand(t, "memory list", []string{"--extremum", "sideways"}, &fakeClient{})
 	if err == nil || !strings.Contains(err.Error(), "invalid --extremum") {

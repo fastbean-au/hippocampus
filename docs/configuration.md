@@ -377,6 +377,16 @@ Metadata predicates are **unindexed**, exactly as the `group` filter is: the onl
 memories table is the consolidation covering index. On a large store a metadata-filtered list is a
 scan, and is best combined with a time range or a page size.
 
+#### Reading by id
+
+`GetMemories` takes `ids` — up to 200, repeated as `?ids=a&ids=b` over the gateway — to read
+particular memories **without reinforcing them**. `RecallMemories` is the other by-id read, and it
+resets the decay clock of everything it returns, so an inspection (an operator checking a record, a
+subject-access lookup, a sync job checking what is held) would otherwise make what it looked at
+more durable. An id the store does not hold, or one outside the caller's group scope, is simply
+missing from the page rather than refused, so the answer never says which. `ids` composes with every
+other filter; with `linked_to` the result is the intersection.
+
 #### Recall-state filters
 
 `GetMemories` also filters on the columns the store already maintained but never exposed:

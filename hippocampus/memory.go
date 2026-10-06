@@ -20,10 +20,37 @@ import (
 
 // Page-size bounds for the GetMemories listing: an unset (0) limit selects the default, and
 // anything larger than the cap is clamped so a single request can't pull the whole store.
+// maxMemoryIdsPerRead bounds GetMemoriesRequest.ids, refused rather than clamped, since dropping ids
+// would silently answer a different question from the one asked.
 const (
 	defaultMemoryPageSize = 25
 	maxMemoryPageSize     = 200
+	maxMemoryIdsPerRead   = 200
 )
+
+// restrictIds narrows an id restriction already on a filter (current, empty meaning none) to the ids
+// a caller asked for, de-duplicated. With no existing restriction it is the request itself.
+func restrictIds(current []string, requested []string) []string {
+	allowed := make(map[string]bool, len(current))
+	for _, v := range current {
+		allowed[v] = true
+	}
+
+	seen := make(map[string]bool, len(requested))
+	out := make([]string, 0, len(requested))
+
+	for _, id := range requested {
+		if seen[id] || (len(current) > 0 && !allowed[id]) {
+			continue
+		}
+
+		seen[id] = true
+
+		out = append(out, id)
+	}
+
+	return out
+}
 
 // triState maps the contract's tri-state boolean onto the db package's equivalent, for the list
 // filters over boolean columns. UNSPECIFIED means no restriction rather than false.
@@ -721,6 +748,13 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 	// see. It composes with the Group filter above rather than replacing it.
 	filter.Groups, _ = s.scopedGroups(ctx)
 
+	// ids is the by-id read that does not reinforce (TODO-3 item 156): RecallMemories resets the
+	// decay clock of everything it returns, so an inspection read used to make what it inspected
+	// more durable. Bounded like ExplainConsolidation's id list, and checked before any query.
+	if n := len(in.GetIds()); n > maxMemoryIdsPerRead {
+		return &res, status.Errorf(codes.InvalidArgument, "at most %d ids may be read at once, got %d", maxMemoryIdsPerRead, n)
+	}
+
 	// linked_to narrows the listing to one memory's direct neighbours, resolved to ids and passed
 	// down as a filter so it composes with the time/significance/group filters and with pagination.
 	if linkedTo := in.GetLinkedTo(); linkedTo != "" {
@@ -751,6 +785,20 @@ func (s *Server) GetMemories(ctx context.Context, in *contract.GetMemoriesReques
 		}
 
 		filter.Ids = linked
+	}
+
+	// The requested ids go through the listing's own predicate, so the group scope applies to them
+	// exactly as to any other filter: an id outside it, like one never stored, is simply absent
+	// from the page rather than refused, and the answer cannot tell the two apart.
+	if requested := in.GetIds(); len(requested) > 0 {
+		ids := restrictIds(filter.Ids, requested)
+
+		// As for linked_to: an empty set left on the filter would read as "no restriction".
+		if len(ids) == 0 {
+			return &res, nil
+		}
+
+		filter.Ids = ids
 	}
 
 	memories, err := s.db.GetMemories(ctx, filter)
