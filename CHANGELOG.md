@@ -137,6 +137,13 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **A callback whose stored payload cannot be decoded no longer wedges the queue.** The dispatcher
+  skipped such a row without removing it, so it was claimed again on every pass. With a batch of them
+  at the head of the queue, nothing behind them was ever sent. Under `abandon` the age cap eventually
+  cleared them. Under `retain` and `stall` the caps exempt `memory_forgotten` rows, so the queue
+  stuck for good, and under `stall` forgetting stopped with it. Such a row is now removed when
+  claimed, logged at Error with the kind, cause, cycle and item count that survive, and counted in
+  `hippocampus.callbacks.abandoned`.
 - **The MCP bridge's HTTP transport no longer hands its service token to the network.**
   `--http-address` defaulted to `:8090` with no inbound authentication, and the compose `mcp`
   profile published the port on every host interface. Anyone who could reach it therefore acted

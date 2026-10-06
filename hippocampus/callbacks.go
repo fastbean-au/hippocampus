@@ -312,6 +312,8 @@ func (s *Server) dispatchCallbacksOnce(notifier notify.Notifier) int {
 		return 0
 	}
 
+	claimed = s.discardUndecodable(ctx, claimed)
+
 	var (
 		delivered []int64
 		deferred  []int64
@@ -415,6 +417,59 @@ func (s *Server) callbackBackoff(attempt int) time.Duration {
 	}
 
 	return backoff + time.Duration(rand.Int63n(int64(s.callbackBaseBack)))
+}
+
+// discardUndecodable removes the claimed rows whose payload could not be decoded and returns the
+// rest (TODO-3 item 162). Such a row can never be delivered and no retry changes that, but nothing
+// else would remove it: it was claimed again on every pass, a batch of them at the head of the queue
+// meant nothing behind them was ever sent, and under a retaining backlog policy the caps exempt
+// exactly the memory_forgotten rows - so the queue wedged for good, and under stall forgetting
+// stopped with it. It is logged at Error with the columns that survive, since those are all that
+// says what was lost, and counted as abandoned, which is what it is. Under a retaining policy the
+// forgotten log is the pull path that can still recover a lost memory_forgotten delivery.
+func (s *Server) discardUndecodable(ctx context.Context, claimed []db.CallbackDelivery) []db.CallbackDelivery {
+	kept := claimed[:0]
+
+	var discarded []int64
+
+	for _, entry := range claimed {
+		if entry.DecodeErr == nil {
+			kept = append(kept, entry)
+
+			continue
+		}
+
+		log.WithFields(log.Fields{
+			"seq":        entry.Seq,
+			"kind":       string(notifyKind(entry.Kind)),
+			"cause":      string(notifyCause(entry.Cause)),
+			"cycle_id":   entry.CycleId,
+			"chunk":      entry.Chunk,
+			"item_count": entry.ItemCount,
+			"queued_at":  time.Unix(0, entry.QueuedAt).UTC().Format(time.RFC3339),
+		}).Errorf(
+			"callbacks: abandoning a queued delivery whose payload cannot be decoded, which no retry "+
+				"can deliver: %s",
+			entry.DecodeErr.Error(),
+		)
+
+		discarded = append(discarded, entry.Seq)
+	}
+
+	if len(discarded) == 0 {
+		return kept
+	}
+
+	// Removed through the same statement a delivered row is: the row is finished with either way.
+	if err := s.db.ConfirmCallbacks(ctx, discarded); err != nil {
+		log.Warnf("callbacks: failed to remove %d undecodable deliveries: %s", len(discarded), err.Error())
+
+		return kept
+	}
+
+	tel.callbacksAbandoned.Add(ctx, int64(len(discarded)))
+
+	return kept
 }
 
 // pruneCallbackQueue applies the caps, on the idle path only so it never races the dispatcher.

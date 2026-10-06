@@ -590,11 +590,12 @@ func TestPurgeEmptiesTheCallbackQueue(t *testing.T) {
 	}
 }
 
-// TestClaimSkipsAnUndecodablePayload pins that one corrupt row cannot wedge the queue behind it.
-func TestClaimSkipsAnUndecodablePayload(t *testing.T) {
+// TestClaimFlagsAnUndecodablePayload pins that a corrupt row is handed back flagged rather than
+// skipped (TODO-3 item 162). Skipped, it was claimed again on every pass, and with a batch's worth
+// at the head of the queue every claim came back empty - for good under a retaining backlog policy,
+// whose memory_forgotten rows the caps never remove. Flagged, the dispatcher can remove it.
+func TestClaimFlagsAnUndecodablePayload(t *testing.T) {
 	d := callbackTestDB(t, CallbackPolicy{Enabled: true, MemoryEvents: true, EventEvents: true})
-
-	queueOne(t, d, testMemoryDelivery("good"))
 
 	// A row whose blob is neither gzip nor JSON, which no amount of retrying will fix.
 	if _, err := d.exec(
@@ -606,13 +607,29 @@ func TestClaimSkipsAnUndecodablePayload(t *testing.T) {
 		t.Fatalf("inserting a corrupt row: %s", err.Error())
 	}
 
+	queueOne(t, d, testMemoryDelivery("good"))
+
 	claimed, err := d.ClaimCallbacks(context.Background(), 10, time.Now().UnixNano())
 	if err != nil {
 		t.Fatalf("ClaimCallbacks: %s", err.Error())
 	}
 
-	if len(claimed) != 1 || claimed[0].Payload.Items[0].Id != "good" {
-		t.Errorf("a corrupt row was not skipped: %+v", claimed)
+	if len(claimed) != 2 {
+		t.Fatalf("claimed %d deliveries, want both: the corrupt one flagged, the good one decoded", len(claimed))
+	}
+
+	corrupt, good := claimed[0], claimed[1]
+
+	if corrupt.DecodeErr == nil || corrupt.Seq == 0 {
+		t.Errorf("the corrupt row came back unflagged or without its seq: %+v", corrupt)
+	}
+
+	if corrupt.Kind != CallbackKindMemoryForgotten || corrupt.ItemCount != 1 {
+		t.Errorf("the corrupt row lost the columns that say what was lost: %+v", corrupt)
+	}
+
+	if good.DecodeErr != nil || len(good.Payload.Items) != 1 || good.Payload.Items[0].Id != "good" {
+		t.Errorf("the good row was not decoded: %+v", good)
 	}
 }
 

@@ -202,7 +202,7 @@ func newTelemetry() *telemetry {
 
 		callbackQueueDepth: newInt64Gauge(meter, "hippocampus.callbacks.queue_depth", "Callback deliveries recorded but not yet accepted by the receiver. Sustained growth means the receiver is failing or unreachable."),
 		callbacksDelivered: newInt64Counter(meter, "hippocampus.callbacks.delivered", "Callback delivery attempts, by kind and outcome."),
-		callbacksAbandoned: newInt64Counter(meter, "hippocampus.callbacks.abandoned", "Queued callbacks discarded by the queue caps before the receiver accepted them. Unlike a dropped index deletion, nothing recovers these."),
+		callbacksAbandoned: newInt64Counter(meter, "hippocampus.callbacks.abandoned", "Queued callbacks discarded by the queue caps, or because their payload could not be decoded, before the receiver accepted them. Unlike a dropped index deletion, nothing recovers these."),
 		callbackDuration:   newFloat64Histogram(meter, "hippocampus.callbacks.delivery.duration", "s", "Duration of one callback delivery attempt in seconds.", observability.LatencyBuckets()),
 
 		summarisationCandidates: newInt64Gauge(meter, "hippocampus.summarisation_candidates", "Number of events identified as summarisation candidates by the most recent sleep cycle."),

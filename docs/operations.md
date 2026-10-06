@@ -1041,7 +1041,9 @@ deadline that separate a queue which is draining from one that is stuck. Three s
 cover it. The escalation is `hippocampus.callbacks.abandoned`, and it is worse than its search-index
 namesake: there is no sweep behind this queue, so a delivery discarded at
 `callbacks.maxRows`/`maxAgeHours` is a notification nobody will ever receive. It is logged at Warn
-for deployments without a metrics stack.
+for deployments without a metrics stack. It also counts a delivery whose stored payload could not be
+decoded, which is removed when claimed and logged at Error. That is corruption rather than an outage,
+and the log line names what was lost.
 
 The queue is excluded from the capacity target — it grows precisely when a receiver is down, and it
 can carry memory bodies, so counting it would evict live memories to make room for the news that
@@ -1648,7 +1650,7 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.search.queries`                 | counter       | `success`                             | Content searches served by it                                                                                          |
 | `hippocampus.callbacks.queue_depth`          | gauge         |                                       | [Callback](configuration.md#outbound-callbacks) deliveries recorded but not yet accepted — the backpressure signal     |
 | `hippocampus.callbacks.delivered`            | counter       | `kind`, `outcome`                     | Callback delivery attempts, by what they were about and whether they landed                                            |
-| `hippocampus.callbacks.abandoned`            | counter       |                                       | Queued callbacks discarded at the caps — unlike an index deletion, nothing recovers these                              |
+| `hippocampus.callbacks.abandoned`            | counter       |                                       | Queued callbacks discarded at the caps or undecodable — unlike an index deletion, nothing recovers these               |
 | `hippocampus.callbacks.delivery.duration`    | histogram (s) | `outcome`                             | How long one delivery attempt took                                                                                     |
 | `hippocampus.forgetting.stalls`              | counter       | `reason`                              | Sleep cycles whose decay passes were held off — the store has stopped forgetting                                       |
 

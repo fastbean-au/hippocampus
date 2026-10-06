@@ -2417,7 +2417,10 @@ Nothing is abandoned on an attempt count. The only thing that removes an undeliv
 queue's own bounds — `maxRows` (1,000,000) and `maxAgeHours` (24) — and passing them is logged at
 **Warn** and counted (`hippocampus.callbacks.abandoned`), because unlike a dropped search-index
 deletion there is no sweep behind this queue: an abandoned callback is a notification nobody will
-ever receive.
+ever receive. The one other way out is a delivery whose stored payload cannot be decoded. No retry
+can send it, so it is removed when claimed, logged at **Error** with the kind, cause, cycle and item
+count that survive, and counted in the same metric. Left in place, it would be claimed on every
+pass, and under a retaining `backlogPolicy` it would never be removed at all.
 
 The queue is **excluded from the capacity target**, which is not tidiness. It grows precisely when a
 receiver is down, and it can carry memory bodies; counted as stored bytes it would raise capacity

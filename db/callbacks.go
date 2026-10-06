@@ -306,6 +306,11 @@ type CallbackDelivery struct {
 	Attempts      int
 	NextAttemptAt int64
 	Payload       CallbackPayload
+
+	// DecodeErr is set, and Payload left empty, when ClaimCallbacks could not decode the stored
+	// payload. Such a row can never be delivered, and it is handed back rather than skipped so the
+	// dispatcher can remove it: skipped, it was claimed again on every pass (TODO-3 item 162).
+	DecodeErr error
 }
 
 // callbackQueueDDL is the CREATE TABLE for the callback queue in the active dialect.
@@ -648,19 +653,20 @@ func (d *DB) ClaimCallbacks(ctx context.Context, limit int, now int64) ([]Callba
 			return nil, err
 		}
 
-		payload, err := decodeCallbackPayload(stored, isCompressed)
-		if err != nil {
-			// A payload that cannot be decoded can never be delivered, so failing the whole pass
-			// would wedge the queue behind it forever. It is skipped, logged, and left for the
-			// caps to remove - the same treatment a permanently-rejected delivery gets.
-			log.Warnf("skipping callback delivery %d: %s", v.Seq, err.Error())
-
-			continue
-		}
-
 		v.Kind = CallbackKind(kind)
 		v.Cause = DeleteCause(cause)
-		v.Payload = payload
+
+		// A payload that cannot be decoded can never be delivered. Failing the whole pass would
+		// wedge the queue behind it, and so did skipping it: a skipped row is claimed again on every
+		// pass, and the caps that would eventually remove it exempt memory_forgotten rows under a
+		// retaining backlog policy. So it is handed back flagged, for the dispatcher to remove and
+		// count as abandoned. The columns read above still say what was lost.
+		payload, err := decodeCallbackPayload(stored, isCompressed)
+		if err != nil {
+			v.DecodeErr = err
+		} else {
+			v.Payload = payload
+		}
 
 		out = append(out, v)
 	}
