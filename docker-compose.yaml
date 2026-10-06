@@ -83,8 +83,11 @@ services:
   # reach this embedded instance's memory tools over the network. Off by default; started only with
   # `--profile mcp`. It dials the hippocampus service over the compose network and exposes the MCP
   # endpoint on :8090. The more common local pattern is the stdio transport, where the host spawns
-  # the binary itself and dials the exposed :50051 - no container needed; see docs/mcp.md. This
-  # endpoint is unauthenticated, like the rest of this demo stack - do not expose it as-is.
+  # the binary itself and dials the exposed :50051 - no container needed; see docs/mcp.md. Inside
+  # the container the bridge has to bind every interface to be reachable at all, which it refuses
+  # to do with no inbound token unless told - so the port is published on the host's loopback only,
+  # and MCP_HTTP_TOKEN, when set, makes every request present it. Unset, the endpoint is
+  # unauthenticated like the rest of this demo stack: do not publish it beyond loopback as-is.
   mcp:
     build:
       context: .
@@ -99,8 +102,11 @@ services:
       - "http"
       - "--http-address"
       - ":8090"
+      - "--allow-unauthenticated-http"
+    environment:
+      HIPPOCAMPUS_MCP_HTTP_TOKEN: "${MCP_HTTP_TOKEN:-}"
     ports:
-      - "8090:8090" # streamable-HTTP MCP endpoint
+      - "127.0.0.1:8090:8090" # streamable-HTTP MCP endpoint, loopback only
     depends_on:
       - hippocampus
 

@@ -104,8 +104,11 @@ hippocampus-nats-bridge .` — the release publishes one image per broker to
   `docs/clients.md`
 - MCP-over-HTTP endpoint (SQLite compose only): `docker compose --profile mcp up --build` adds an
   opt-in `mcp` service (streamable-HTTP transport, `Dockerfile` `target: mcp`) that dials the
-  `hippocampus` service over the compose network and publishes the MCP endpoint on `:8090`; off by
-  default (behind the `mcp` profile), unauthenticated like the rest of that demo stack. The common
+  `hippocampus` service over the compose network and publishes the MCP endpoint on the host's
+  loopback `127.0.0.1:8090`; off by default (behind the `mcp` profile), unauthenticated unless
+  `MCP_HTTP_TOKEN` is set. The bridge itself listens on loopback by default and **refuses** a
+  non-loopback `--http-address` with no `--http-token` unless `--allow-unauthenticated-http`,
+  because whoever reaches it acts with its writer token (TODO-3 item 160). The common
   local pattern is instead the stdio transport, spawned by the MCP host against the published
   `:50051` — no container. See `docs/mcp.md`
 - Observability stack (any compose file): `OBSERVABILITY=true docker compose --profile observability

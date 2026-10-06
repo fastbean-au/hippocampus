@@ -125,6 +125,16 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **The MCP bridge's HTTP transport no longer hands its service token to the network.**
+  `--http-address` defaulted to `:8090` with no inbound authentication, and the compose `mcp`
+  profile published the port on every host interface. Anyone who could reach it therefore acted
+  with the bridge's own token, normally a writer's, including `delete_memories`. The default is now
+  `127.0.0.1:8090`. A new `--http-token` (`HIPPOCAMPUS_MCP_HTTP_TOKEN`) makes every request present
+  it. With no token, a non-loopback address is refused at startup unless
+  `--allow-unauthenticated-http` says the exposure is deliberate. The compose profile publishes on
+  the host's loopback only and passes `MCP_HTTP_TOKEN` through when set. **Upgrading:** a bridge
+  started with `--http-address :8090` and no token now refuses to start. Add `--http-token`, or
+  `--allow-unauthenticated-http` where the network is itself the boundary.
 - **A group-scoped token can no longer take over another group's records through an import.**
   `Import` and `ImportBatch` upsert by id, and stamped the caller's group on each incoming row
   without checking whose row that id already named — so a writer scoped to one group could

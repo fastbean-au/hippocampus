@@ -114,8 +114,28 @@ back into `recall_memories`.
 
 - **stdio** (default) — the host launches this binary as a subprocess and speaks MCP over its
   stdin/stdout. All logging goes to **stderr**; stdout carries only the MCP protocol stream.
-- **streamable HTTP** (`--transport http --http-address :8090`) — serves the same tools over HTTP
-  for a remote/hosted host instead.
+- **streamable HTTP** (`--transport http`) — serves the same tools over HTTP for a remote/hosted
+  host instead. It listens on `127.0.0.1:8090` by default.
+
+### Securing the HTTP transport
+
+Whoever reaches the HTTP listener acts with the bridge's own `--token`, and a useful bridge's token
+is a writer's, which includes `delete_memories`. Two settings guard it:
+
+- `--http-token` (or `HIPPOCAMPUS_MCP_HTTP_TOKEN`) makes every request present
+  `Authorization: Bearer <token>`, compared in constant time; anything else is answered `401`.
+- With no `--http-token`, the bridge **refuses** to listen on anything but a loopback address
+  (`127.0.0.1`, `::1`, `localhost`). `:8090`, `0.0.0.0` or a hostname is refused at startup unless
+  `--allow-unauthenticated-http` says the exposure is deliberate (a private network that is itself
+  the boundary), and even then a warning is logged.
+
+```sh
+hippocampus-mcp --address memory.internal:50051 --token "$HIPPO_TOKEN" \
+  --transport http --http-address :8090 --http-token "$MCP_HTTP_TOKEN"
+```
+
+The inbound token is a shared secret, not a scheme with roles or expiry. Rotating it means a restart,
+and it carries no TLS: terminate TLS in front of the bridge before it leaves a trusted network.
 
 ## Connecting to the service
 
@@ -142,19 +162,21 @@ stores.
 
 ### Flags
 
-| Flag                         | Default           | Purpose                                           |
-| :--------------------------- | :---------------- | :------------------------------------------------ |
-| `-a`, `--address`            | `localhost:50051` | Hippocampus gRPC address.                         |
-| `--transport`                | `stdio`           | `stdio` or `http`.                                |
-| `--http-address`             | `:8090`           | Listen address for `--transport http`.            |
-| `--token`                    | —                 | Bearer token (or `HIPPOCAMPUS_MCP_TOKEN`).        |
-| `--tls`                      | `false`           | Dial over TLS.                                    |
-| `--tls-ca-cert`              | —                 | PEM CA bundle in place of the system pool.        |
-| `--tls-cert` / `--tls-key`   | —                 | Client certificate/key for mutual TLS.            |
-| `--tls-insecure-skip-verify` | `false`           | Skip certificate verification (dev only).         |
-| `--call-timeout-seconds`     | `30`              | Per-tool-call timeout bounding each gRPC request. |
-| `--log-level`                | `info`            | Logging level (written to stderr).                |
-| `--version`                  | —                 | Print the version and exit.                       |
+| Flag                           | Default           | Purpose                                           |
+| :----------------------------- | :---------------- | :------------------------------------------------ |
+| `-a`, `--address`              | `localhost:50051` | Hippocampus gRPC address.                         |
+| `--transport`                  | `stdio`           | `stdio` or `http`.                                |
+| `--http-address`               | `127.0.0.1:8090`  | Listen address for `--transport http`.            |
+| `--http-token`                 | —                 | Bearer token every HTTP request must present.     |
+| `--allow-unauthenticated-http` | `false`           | Serve a non-loopback address with no HTTP token.  |
+| `--token`                      | —                 | Bearer token (or `HIPPOCAMPUS_MCP_TOKEN`).        |
+| `--tls`                        | `false`           | Dial over TLS.                                    |
+| `--tls-ca-cert`                | —                 | PEM CA bundle in place of the system pool.        |
+| `--tls-cert` / `--tls-key`     | —                 | Client certificate/key for mutual TLS.            |
+| `--tls-insecure-skip-verify`   | `false`           | Skip certificate verification (dev only).         |
+| `--call-timeout-seconds`       | `30`              | Per-tool-call timeout bounding each gRPC request. |
+| `--log-level`                  | `info`            | Logging level (written to stderr).                |
+| `--version`                    | —                 | Print the version and exit.                       |
 
 ## Host configuration
 
@@ -217,9 +239,13 @@ docker compose --profile mcp up --build
 ```
 
 It builds the `mcp` image target (`Dockerfile`), dials the `hippocampus` service over the compose
-network, and publishes the MCP endpoint on `:8090`. Point an HTTP-capable MCP host at
-`http://localhost:8090`. This demo endpoint is **unauthenticated**, like the rest of that stack —
-put it behind auth/TLS (or a proxy that terminates them) before exposing it beyond localhost.
+network, and publishes the MCP endpoint on the host's **loopback** only (`127.0.0.1:8090`). Point an
+HTTP-capable MCP host at `http://localhost:8090`. Set `MCP_HTTP_TOKEN` in the environment of
+`docker compose up` to require it of every request. Unset, the endpoint is **unauthenticated**,
+like the rest of that stack. Inside the container the bridge has to bind every interface to be
+reachable, so the service passes `--allow-unauthenticated-http`, and the loopback publish is what
+keeps it local. Put it behind TLS (or a proxy that terminates it) before exposing it beyond
+localhost.
 
 ## Notes
 

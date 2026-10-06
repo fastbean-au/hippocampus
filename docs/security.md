@@ -386,6 +386,8 @@ For anything beyond localhost, in the order they matter:
     another origin, or someone generating a client, needs them.
 16. **`auth.readerRecallReinforces` left `false`**, its default, so a reader can read memories but
     cannot keep them alive.
+17. **An MCP bridge on the HTTP transport behind `--http-token`**, since whoever reaches it acts with
+    the bridge's own service token — see [the MCP bridge](mcp.md#securing-the-http-transport).
 
 ## Reporting a vulnerability
 

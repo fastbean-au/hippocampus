@@ -342,7 +342,7 @@ func TestServeHTTP_BindErrorReturns(t *testing.T) {
 
 	// Port 99999 is out of range, so ListenAndServe fails immediately and serveHTTP returns via its
 	// serveErr branch rather than blocking on ctx.
-	if err := serveHTTP(context.Background(), server, "127.0.0.1:99999"); err == nil {
+	if err := serveHTTP(context.Background(), server, httpConfig{address: "127.0.0.1:99999"}); err == nil {
 		t.Fatal("expected serveHTTP to return the listener bind error")
 	}
 }

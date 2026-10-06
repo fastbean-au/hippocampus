@@ -12,9 +12,11 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -97,7 +99,9 @@ func serve(ctx context.Context) error {
 func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.StringP("address", "a", "localhost:50051", "address of the hippocampus gRPC service")
 	fs.String("transport", "stdio", "MCP transport: 'stdio' (the host spawns this as a subprocess) or 'http' (streamable HTTP)")
-	fs.String("http-address", ":8090", "listen address for the streamable-HTTP transport (used with --transport http)")
+	fs.String("http-address", "127.0.0.1:8090", "listen address for the streamable-HTTP transport (used with --transport http); loopback unless --http-token is set")
+	fs.String("http-token", "", "bearer token every streamable-HTTP request must present (overridable by HIPPOCAMPUS_MCP_HTTP_TOKEN)")
+	fs.Bool("allow-unauthenticated-http", false, "serve the streamable-HTTP transport on a non-loopback address with no --http-token (anyone who can reach it acts with --token)")
 	fs.String("token", "", "bearer token sent on every RPC when the service requires auth (overridable by HIPPOCAMPUS_MCP_TOKEN)")
 	fs.Bool("tls", false, "dial the service over TLS")
 	fs.String("tls-ca-cert", "", "PEM CA bundle to verify the service certificate against, in place of the system pool (used with --tls)")
@@ -179,24 +183,50 @@ func run(ctx context.Context) error {
 		return nil
 
 	case "http":
-		return serveHTTP(ctx, server, viper.GetString("http-address"))
+		return serveHTTP(ctx, server, httpConfig{
+			address:              viper.GetString("http-address"),
+			token:                viper.GetString("http-token"),
+			allowUnauthenticated: viper.GetBool("allow-unauthenticated-http"),
+		})
 
 	default:
 		return fmt.Errorf("unknown transport '%s' (expected 'stdio' or 'http')", transport)
 	}
 }
 
+// httpConfig is the streamable-HTTP transport's listener and its inbound authentication.
+type httpConfig struct {
+	address              string
+	token                string
+	allowUnauthenticated bool
+}
+
 // serveHTTP serves the MCP server over the streamable-HTTP transport, shutting the listener down
 // when ctx is cancelled. The same server instance is handed to every request - the bridge is
 // stateless, so one server can back concurrent sessions.
-func serveHTTP(ctx context.Context, server *mcp.Server, httpAddress string) error {
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-		return server
-	}, nil)
+//
+// Whoever reaches this listener acts with the bridge's own service token, which for a useful bridge
+// is a writer's - so an unauthenticated listener anyone on the network can reach is that token,
+// handed out (TODO-3 item 160). With no --http-token, a non-loopback address is therefore refused
+// unless --allow-unauthenticated-http says the exposure is deliberate, on the precedent of the
+// object gateway's --allow-anonymous.
+func serveHTTP(ctx context.Context, server *mcp.Server, cfg httpConfig) error {
+	if cfg.token == "" && !isLoopbackAddress(cfg.address) {
+		if !cfg.allowUnauthenticated {
+			return fmt.Errorf(
+				"refusing to serve MCP over HTTP on '%s' with no --http-token: anyone who can reach it acts with this bridge's service token; set --http-token, bind a loopback address, or pass --allow-unauthenticated-http",
+				cfg.address,
+			)
+		}
+
+		log.Warnf("serving MCP over HTTP on %s with no --http-token: anyone who can reach it acts with this bridge's service token", cfg.address)
+	}
+
+	httpAddress := cfg.address
 
 	httpServer := &http.Server{
 		Addr:              httpAddress,
-		Handler:           handler,
+		Handler:           httpHandler(server, cfg.token),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -221,6 +251,56 @@ func serveHTTP(ctx context.Context, server *mcp.Server, httpAddress string) erro
 	case err := <-serveErr:
 		return fmt.Errorf("http transport failed: %w", err)
 	}
+}
+
+// httpHandler is the streamable-HTTP handler, behind the inbound token when one is configured.
+func httpHandler(server *mcp.Server, token string) http.Handler {
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return server
+	}, nil)
+
+	return requireBearer(token, handler)
+}
+
+// requireBearer refuses any request not carrying "Authorization: Bearer <token>", comparing in
+// constant time. An empty token is no requirement, and returns next unchanged.
+func requireBearer(token string, next http.Handler) http.Handler {
+	if token == "" {
+		return next
+	}
+
+	want := []byte(token)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scheme, presented, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+
+		if !ok || !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(presented), want) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="hippocampus-mcp"`)
+			http.Error(w, "unauthorised", http.StatusUnauthorized)
+
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isLoopbackAddress reports whether a listen address binds only the loopback interface. An empty
+// host binds every interface, and a hostname other than localhost is not resolved - the answer has
+// to be right without trusting DNS, so anything uncertain reads as exposed.
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || host == "" {
+		return false
+	}
+
+	if host == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
 }
 
 // bearerTokenInterceptor returns a unary client interceptor that stamps the bearer token onto every
