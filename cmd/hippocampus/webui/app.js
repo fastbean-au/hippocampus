@@ -24,6 +24,7 @@ import {
   curveSvg,
   cycleSummary,
   esc,
+  forgetRuleLabel,
   formatBytes,
   gateMessage,
   gateNeeded,
@@ -2679,7 +2680,9 @@ function renderNowHeadline(status) {
   }
 
   const forgottenLast = last
-    ? Number(last.memoriesConsolidated || 0) + Number(last.memoriesEvicted || 0)
+    ? Number(last.memoriesExpired || 0) +
+      Number(last.memoriesConsolidated || 0) +
+      Number(last.memoriesEvicted || 0)
     : null;
 
   $("now-headline").innerHTML = `<div class="stats">
@@ -2868,7 +2871,7 @@ function renderNowForgotten() {
     <td>${esc(num(Number(m.value)))}</td>
     <td>${esc(num(Number(m.threshold)))}</td>
     <td>${esc(m.recallCount || 0)}</td>
-    <td>${m.rule === "FORGET_RULE_EVICTION" ? "over capacity" : "decayed"}</td>
+    <td>${esc(forgetRuleLabel(m.rule))}</td>
   </tr>`,
     )
     .join("");
@@ -3146,6 +3149,7 @@ async function runPreview() {
 }
 
 function renderPreview(data) {
+  const expired = Number(data.memoriesExpired || 0);
   const consolidated = Number(data.memoriesConsolidated || 0);
   const evicted = Number(data.memoriesEvicted || 0);
   const retained = Number(data.memoriesRetained || 0);
@@ -3170,7 +3174,7 @@ function renderPreview(data) {
     <td>${esc(c.significance ?? "")}</td>
     <td class="id">${c.eventId ? idCell(c.eventId) : "—"}</td>
     <td>${esc(c.group || "—")}</td>
-    <td>${c.rule === "FORGET_RULE_EVICTION" ? "over capacity" : "decayed"}</td>
+    <td>${esc(forgetRuleLabel(c.rule))}</td>
   </tr>`,
     )
     .join("");
@@ -3186,8 +3190,8 @@ function renderPreview(data) {
   $("preview-results").innerHTML = `<div class="stats gap-top">
     <div class="stat">
       <div class="k">Would be forgotten</div>
-      <div class="v">${esc((consolidated + evicted).toLocaleString())}</div>
-      <div class="n">${esc(consolidated.toLocaleString())} decayed · ${esc(evicted.toLocaleString())} over capacity</div>
+      <div class="v">${esc((expired + consolidated + evicted).toLocaleString())}</div>
+      <div class="n">${expired ? esc(expired.toLocaleString()) + " past maximum retention · " : ""}${esc(consolidated.toLocaleString())} decayed · ${esc(evicted.toLocaleString())} over capacity</div>
     </div>
     <div class="stat">
       <div class="k">Events removed</div>
@@ -3306,7 +3310,7 @@ function renderForgotten(data) {
     <td>${esc(m.significance ?? "")}</td>
     <td>${esc(m.eventId || "—")}</td>
     <td>${esc(m.group || "—")}</td>
-    <td>${m.rule === "FORGET_RULE_EVICTION" ? "over capacity" : "decayed"}</td>
+    <td>${esc(forgetRuleLabel(m.rule))}</td>
   </tr>`,
     )
     .join("");
@@ -4289,7 +4293,8 @@ function tourFacts() {
         ? null
         : replica,
     forgottenLast: last
-      ? Number(last.memoriesConsolidated || 0) +
+      ? Number(last.memoriesExpired || 0) +
+        Number(last.memoriesConsolidated || 0) +
         Number(last.memoriesEvicted || 0)
       : null,
     period: status ? Number(status.periodSeconds || 0) : 0,

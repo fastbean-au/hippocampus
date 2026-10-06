@@ -1417,14 +1417,15 @@
           },
           {
             "name": "rule",
-            "description": "UNSPECIFIED returns both rules\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity",
+            "description": "UNSPECIFIED returns both rules\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity\n - FORGET_RULE_EXPIRY: stored longer ago than consolidation.maximumRetentionInDays, whatever its value or how recently it was recalled; value and threshold are 0, since neither was the reason",
             "in": "query",
             "required": false,
             "type": "string",
             "enum": [
               "FORGET_RULE_UNSPECIFIED",
               "FORGET_RULE_CONSOLIDATION",
-              "FORGET_RULE_EVICTION"
+              "FORGET_RULE_EVICTION",
+              "FORGET_RULE_EXPIRY"
             ],
             "default": "FORGET_RULE_UNSPECIFIED"
           },
@@ -2447,6 +2448,16 @@
         "stalledReason": {
           "type": "string",
           "description": "stalled_reason says why, in words meant to be shown rather than parsed. Empty unless stalled."
+        },
+        "memoriesExpired": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories past consolidation.maximumRetentionInDays, taken before the decay passes ran"
+        },
+        "eventsExpired": {
+          "type": "integer",
+          "format": "int32",
+          "title": "events left empty by expiry, deleted with their last memory"
         }
       },
       "description": "CycleReport is what one sleep cycle did: the counts the two decay paths deleted, what it cost,\nand whether it succeeded. Counts only - no ids, no groups, no bodies - which is what keeps this\naggregate rather than an enumeration, and so readable by the reader tier.\n\nThe counts come from the passes themselves rather than from the metrics instruments they also\nfeed, so a deployment exporting no telemetry still gets them."
@@ -2548,10 +2559,11 @@
         "DELETE_CAUSE_CLEAR",
         "DELETE_CAUSE_CASCADE",
         "DELETE_CAUSE_SUMMARY_REPLACE",
-        "DELETE_CAUSE_PURGE"
+        "DELETE_CAUSE_PURGE",
+        "DELETE_CAUSE_EXPIRY"
       ],
       "default": "DELETE_CAUSE_UNSPECIFIED",
-      "description": "DeleteCause is why the records a delivery describes were deleted. The two decay causes are the\nonly ones reported unless callbacks.allDeletions widens the feed."
+      "description": "DeleteCause is why the records a delivery describes were deleted. The two decay causes are the\nonly ones reported unless callbacks.allDeletions widens the feed.\n\n - DELETE_CAUSE_EXPIRY: the maximum-retention pass (consolidation.maximumRetentionInDays); a decay cause, like consolidation and eviction"
     },
     "v1DeleteEventsByFilterRequest": {
       "type": "object",
@@ -3070,10 +3082,11 @@
       "enum": [
         "FORGET_RULE_UNSPECIFIED",
         "FORGET_RULE_CONSOLIDATION",
-        "FORGET_RULE_EVICTION"
+        "FORGET_RULE_EVICTION",
+        "FORGET_RULE_EXPIRY"
       ],
       "default": "FORGET_RULE_UNSPECIFIED",
-      "description": "ForgetRule names why a memory appears in a consolidation preview - which of the two independent\ndeletion paths selected it. The distinction matters when tuning: a memory forgotten by\nCONSOLIDATION decayed below the threshold and is answered by the decay settings\n(aggressiveness, deletionThreshold, unitsOfAgeInDays), while one forgotten by EVICTION was\nstill valuable enough to keep and went only because the store is over its byte capacity - which\nis answered by capacityBytes, or by storing less.\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity"
+      "description": "ForgetRule names why a memory appears in a consolidation preview - which of the two independent\ndeletion paths selected it. The distinction matters when tuning: a memory forgotten by\nCONSOLIDATION decayed below the threshold and is answered by the decay settings\n(aggressiveness, deletionThreshold, unitsOfAgeInDays), while one forgotten by EVICTION was\nstill valuable enough to keep and went only because the store is over its byte capacity - which\nis answered by capacityBytes, or by storing less.\n\n - FORGET_RULE_CONSOLIDATION: decayed value fell below the capacity-pressure-scaled deletion threshold\n - FORGET_RULE_EVICTION: still above the threshold, but evicted to bring the store back under its byte capacity\n - FORGET_RULE_EXPIRY: stored longer ago than consolidation.maximumRetentionInDays, whatever its value or how recently it was recalled; value and threshold are 0, since neither was the reason"
     },
     "v1ForgottenMemory": {
       "type": "object",
@@ -3649,7 +3662,7 @@
         "daysUntilForgotten": {
           "type": "number",
           "format": "double",
-          "title": "projected days until the memory would be consolidated, holding today's threshold and pressure and assuming no further recall; 0 when it is already due, -1 when it is not due within the projected horizon"
+          "title": "projected days until the memory would be forgotten - by consolidation, holding today's threshold and pressure and assuming no further recall, or by expiry if that comes sooner (see days_until_expiry); 0 when it is already due, -1 when it is not due within the projected horizon"
         },
         "linkSignificance": {
           "type": "string",
@@ -3670,6 +3683,11 @@
           "type": "number",
           "format": "double",
           "title": "what the event's links add to effective_significance, damped the same way; 0 for a memory with no event"
+        },
+        "daysUntilExpiry": {
+          "type": "number",
+          "format": "double",
+          "title": "days until consolidation.maximumRetentionInDays takes the memory, measured from when it was stored and unaffected by recall; 0 when it is already past the ceiling, -1 when no maximum is configured. days_until_forgotten already takes the sooner of the two"
         }
       },
       "description": "MemoryValuation is where one memory stands against the consolidation rules right now: the value\nthe decay algorithm gives it, the threshold that value is measured against, and the flags that\noverride the comparison either way. Bodies are never included - this explains a memory, it is not\na way to read one."
@@ -3769,6 +3787,11 @@
           "type": "string",
           "format": "int64",
           "title": "the external bytes held by consolidation.minimumRetentionInDays, the counterpart of retained_bytes"
+        },
+        "memoriesExpired": {
+          "type": "integer",
+          "format": "int32",
+          "title": "memories past consolidation.maximumRetentionInDays, which the cycle takes first: each is counted here only, never also as consolidated or evicted"
         }
       },
       "description": "PreviewConsolidationResponse reports what a cycle would forget. The counts and byte figures are\nalways complete; candidates is a bounded sample of the individual memories, ordered by value\nascending so the least valuable - those furthest past the threshold - come first.\n\nThe preview accounts for the cycle's own ordering: consolidation runs first, so the memories it\nwould delete are excluded from the eviction pool and their bytes are already reclaimed before\neviction is considered at all. A memory therefore appears at most once, under the rule that\nwould actually claim it."

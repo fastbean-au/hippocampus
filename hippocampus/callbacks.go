@@ -490,6 +490,8 @@ func (s *Server) queueCycleCallback(ctx context.Context, cycleId int64, report *
 		Trigger:                 report.trigger,
 		StartedAt:               report.startedAt.UnixNano(),
 		DurationMillis:          report.duration.Milliseconds(),
+		MemoriesExpired:         report.memoriesExpired,
+		EventsExpired:           report.eventsExpired,
 		MemoriesConsolidated:    report.memoriesConsolidated,
 		EventsConsolidated:      report.eventsConsolidated,
 		MemoriesEvicted:         report.memoriesEvicted,
@@ -600,6 +602,9 @@ func notifyCause(cause db.DeleteCause) notify.Cause {
 	case db.CauseEviction:
 		return notify.CauseEviction
 
+	case db.CauseExpiry:
+		return notify.CauseExpiry
+
 	case db.CauseClient:
 		return notify.CauseClient
 
@@ -669,6 +674,8 @@ func notifyCycle(in *db.CallbackCycle) *notify.Cycle {
 		Trigger:                 in.Trigger,
 		StartedAt:               in.StartedAt,
 		DurationMillis:          in.DurationMillis,
+		MemoriesExpired:         in.MemoriesExpired,
+		EventsExpired:           in.EventsExpired,
 		MemoriesConsolidated:    in.MemoriesConsolidated,
 		EventsConsolidated:      in.EventsConsolidated,
 		MemoriesEvicted:         in.MemoriesEvicted,

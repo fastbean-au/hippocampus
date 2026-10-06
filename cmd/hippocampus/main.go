@@ -2385,6 +2385,26 @@ func configProblems() []error {
 		problems = append(problems, fmt.Errorf("consolidation.minimumRetentionInDays must not be negative, got %d", retention))
 	}
 
+	// The maximum is a ceiling (TODO-3 item 157): 0 disables it, a negative value is a mis-signed one,
+	// and a ceiling at or below the minimum floor contradicts itself - every memory would be both
+	// protected and past its limit for the whole of the window between them.
+	maximum := viper.GetInt("consolidation.maximumRetentionInDays")
+	minimum := viper.GetInt("consolidation.minimumRetentionInDays")
+
+	switch {
+
+	case maximum < 0:
+		problems = append(problems, fmt.Errorf("consolidation.maximumRetentionInDays must not be negative, got %d", maximum))
+
+	case maximum > 0 && minimum > 0 && maximum <= minimum:
+		problems = append(problems, fmt.Errorf(
+			"consolidation.maximumRetentionInDays (%d) must be greater than consolidation.minimumRetentionInDays (%d)",
+			maximum,
+			minimum,
+		))
+
+	}
+
 	// sleep.periodSeconds is deliberately not validated: a non-positive value disables automatic
 	// timed sleep cycles (a supported mode - e.g. an import-only instance, or one driven purely by
 	// the manual Sleep RPC or the WAL trigger). autoSleep treats it as "no timed sleep".

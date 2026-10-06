@@ -289,12 +289,12 @@ func commands() map[string]command {
 		},
 		"forgotten list": {
 			summary: "list memories the sleep cycle forgot, and why",
-			hint:    "[--memory-id ID] [--group G] [--rule consolidation|eviction] [--since T] [--limit N]",
+			hint:    "[--memory-id ID] [--group G] [--rule consolidation|eviction|expiry] [--since T] [--limit N]",
 			flags: func(fs *pflag.FlagSet) {
 				fs.String("memory-id", "", "a specific memory: did it exist, and when did it go")
 				fs.String("event-id", "", "only memories that belonged to this event")
 				fs.String("group", "", "only memories in this group")
-				fs.String("rule", "", "which path took them: consolidation or eviction (default both)")
+				fs.String("rule", "", "which path took them: consolidation, eviction or expiry (default all)")
 				fs.String("since", "", "only memories forgotten at or after this RFC3339 time")
 				fs.String("until", "", "only memories forgotten before this RFC3339 time")
 				fs.Int64("after-seq", 0, "pagination: the next_seq reported by the previous page")
@@ -1582,9 +1582,12 @@ func forgetRuleFromFlag(fs *pflag.FlagSet, name string) (contract.ForgetRule, er
 	case "eviction":
 		return contract.ForgetRule_FORGET_RULE_EVICTION, nil
 
+	case "expiry":
+		return contract.ForgetRule_FORGET_RULE_EXPIRY, nil
+
 	}
 
-	return 0, fmt.Errorf("invalid --%s %q (want consolidation or eviction)", name, str(fs, name))
+	return 0, fmt.Errorf("invalid --%s %q (want consolidation, eviction or expiry)", name, str(fs, name))
 }
 
 func runPurge(ctx context.Context, client contract.HippocampusClient, fs *pflag.FlagSet, r *renderer) error {

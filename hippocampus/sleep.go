@@ -51,7 +51,7 @@ func (s *Server) sleep(trigger string) error {
 	// evicting would report counts for half a decision.
 	stalled, reason := s.forgettingStalled(ctx)
 
-	var e1, e2 error
+	var e0, e1, e2 error
 
 	if stalled {
 		report.stalled = true
@@ -69,6 +69,13 @@ func (s *Server) sleep(trigger string) error {
 				"the store will grow past its capacity target - check the receiver at callbacks.url",
 			reason,
 		)
+	}
+
+	// Expiry first: a memory past the ceiling is forgotten as expired, not left to be counted as
+	// decayed by the pass that happens to reach it. Held off by a stall like the decay passes, since
+	// its deletions are the same kind of instruction to whoever holds what a memory pointed at.
+	if !stalled {
+		e0 = s.expire(ctx, report)
 	}
 
 	if !stalled {
@@ -113,7 +120,7 @@ func (s *Server) sleep(trigger string) error {
 		log.Warnf("significance registry compaction failed: %s", err.Error())
 	}
 
-	success := e1 == nil && e2 == nil && e3 == nil
+	success := e0 == nil && e1 == nil && e2 == nil && e3 == nil
 
 	tel.sleeps.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", success)))
 	tel.sleepDuration.Record(ctx, time.Since(ts).Seconds())
@@ -168,6 +175,8 @@ type cycleReport struct {
 	duration  time.Duration
 	trigger   string
 
+	memoriesExpired      int
+	eventsExpired        int
 	memoriesConsolidated int
 	eventsConsolidated   int
 	memoriesEvicted      int

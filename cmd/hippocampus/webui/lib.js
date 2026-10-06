@@ -567,9 +567,13 @@ export function cycleSummary(cycle) {
   if (cycle.stalled) return "Forgetting is stalled — nothing was reclaimed.";
 
   const parts = [];
+  const expired = Number(cycle.memoriesExpired || 0);
   const consolidated = Number(cycle.memoriesConsolidated || 0);
   const evicted = Number(cycle.memoriesEvicted || 0);
 
+  // Expiry first, as the cycle runs it: a ceiling on age, which is not a decay at all.
+  if (expired)
+    parts.push(`${expired.toLocaleString()} past the maximum retention`);
   if (consolidated) parts.push(`${consolidated.toLocaleString()} decayed away`);
   if (evicted)
     parts.push(`${evicted.toLocaleString()} evicted to stay under capacity`);
@@ -577,6 +581,23 @@ export function cycleSummary(cycle) {
   if (!parts.length) return "Nothing was forgotten.";
 
   return parts.join(", ") + ".";
+}
+
+// forgetRuleLabel is how a forgotten log row or a preview candidate names the rule that took it. A
+// table switch with "decayed" as its fallback used to cover this, which was right while there were
+// two rules and would have labelled an expiry - a ceiling on age, not a judgement of value - as a
+// decay (TODO-3 item 157).
+export function forgetRuleLabel(rule) {
+  switch (rule) {
+    case "FORGET_RULE_EXPIRY":
+      return "past maximum retention";
+
+    case "FORGET_RULE_EVICTION":
+      return "over capacity";
+
+    default:
+      return "decayed";
+  }
 }
 
 // stallNotice is the sentence a stalled cycle earns beside its zeroes: what stopped, why, and what

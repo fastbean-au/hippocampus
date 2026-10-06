@@ -52,6 +52,11 @@ const (
 	// ForgetRuleEviction is the capacity path: the memory was still above the threshold and went
 	// only to bring the store back under its byte capacity.
 	ForgetRuleEviction
+
+	// ForgetRuleExpiry is the ceiling: the memory was older than consolidation.maximumRetentionInDays,
+	// measured from when it was stored, whatever its value or how recently it was recalled. Appended,
+	// never inserted, because the forgotten log stores the rule as its number.
+	ForgetRuleExpiry
 )
 
 // ForgetCandidate is one memory a consolidation cycle would delete, with the numbers behind the
@@ -74,6 +79,7 @@ type ForgetCandidate struct {
 // ConsolidationPreview is what a cycle would do to the store. The counts and byte figures are
 // complete; Candidates is a bounded sample ordered by Value ascending.
 type ConsolidationPreview struct {
+	MemoriesExpired      int
 	MemoriesConsolidated int
 	MemoriesEvicted      int
 	EventsDeleted        int
@@ -108,6 +114,11 @@ type PreviewOptions struct {
 	UsedBytes     int64
 	CapacityBytes int64
 	EvictionFloor int64
+
+	// ExpireBefore is the maximum-retention cutoff (UnixNano) the next cycle would apply, 0 for none.
+	// Expiry runs first in the cycle, so a memory past it is reported as expiring and is neither
+	// consolidated nor eligible for eviction - mirroring ExpireMemories running ahead of both.
+	ExpireBefore int64
 
 	ExternalBytes         int64
 	CapacityExternalBytes int64
@@ -186,6 +197,7 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 	}
 	defer func() { _ = rows.Close() }()
 
+	var expiring []previewRow
 	var consolidating []previewRow
 	var evictable []previewRow
 
@@ -235,6 +247,19 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 			row.eventId = ""
 		}
 
+		// Expiry first, as in the cycle: past the ceiling, the memory goes whatever its value and
+		// whatever the retention floor says (see ExpireMemories). The candidate's Timestamp is the
+		// creation time, which is what the ceiling is measured from.
+		if opts.ExpireBefore > 0 && row.candidate.Timestamp < opts.ExpireBefore {
+			expiring = append(expiring, row)
+
+			if joinedEventId.Valid {
+				deletionsPerEvent[row.eventId]++
+			}
+
+			continue
+		}
+
 		if s.ShouldConsolidateMemory(row.candidate) {
 			consolidating = append(consolidating, row)
 
@@ -267,9 +292,17 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 
 	_ = rows.Close()
 
+	preview.MemoriesExpired = len(expiring)
 	preview.MemoriesConsolidated = len(consolidating)
 
+	// What expiry and consolidation reclaim between them, before eviction is considered - both run
+	// ahead of it in the cycle.
 	var consolidatedBytes, consolidatedExternalBytes int64
+
+	for _, row := range expiring {
+		consolidatedBytes += row.bytes
+		consolidatedExternalBytes += row.externalBytes
+	}
 
 	for _, row := range consolidating {
 		consolidatedBytes += row.bytes
@@ -309,7 +342,7 @@ func (d *DB) PreviewConsolidation(ctx context.Context, s Server, opts PreviewOpt
 
 	preview.EventsDeleted += empty
 
-	preview.Candidates, preview.Truncated = previewSample(consolidating, evicting, limit)
+	preview.Candidates, preview.Truncated = previewSample(expiring, consolidating, evicting, limit)
 
 	return preview, nil
 }
@@ -380,10 +413,14 @@ func previewExcess(remaining int64, capacity int64, floor int64) int64 {
 	return remaining - floor
 }
 
-// previewSample merges the two sets into one list ordered by value ascending - least valuable
+// previewSample merges the three sets into one list ordered by value ascending - least valuable
 // first, so the memories furthest past the threshold lead - and truncates it to limit.
-func previewSample(consolidating []previewRow, evicting []previewRow, limit int) ([]ForgetCandidate, bool) {
-	candidates := make([]ForgetCandidate, 0, len(consolidating)+len(evicting))
+func previewSample(expiring []previewRow, consolidating []previewRow, evicting []previewRow, limit int) ([]ForgetCandidate, bool) {
+	candidates := make([]ForgetCandidate, 0, len(expiring)+len(consolidating)+len(evicting))
+
+	for _, row := range expiring {
+		candidates = append(candidates, row.forgetCandidate(ForgetRuleExpiry))
+	}
 
 	for _, row := range consolidating {
 		candidates = append(candidates, row.forgetCandidate(ForgetRuleConsolidation))

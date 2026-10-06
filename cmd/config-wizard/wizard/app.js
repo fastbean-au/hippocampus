@@ -1153,6 +1153,13 @@ const STEPS = [
             help: "Nothing inside this window is ever deleted — not by consolidation, not by capacity eviction, whatever the pressure. 0 disables the floor.",
           },
           {
+            key: "consolidation.maximumRetentionInDays",
+            label: "Maximum retention ceiling (days)",
+            type: "int",
+            def: 0,
+            help: "A memory stored longer ago than this is deleted on the next sleep cycle, whatever its value and however recently it was recalled — measured from when it was stored, so recall does not extend it. For storage-limitation and log-retention rules. Overrides the retention floor, and must be greater than it. 0 disables the ceiling.",
+          },
+          {
             key: "consolidation.linkSignificanceWeight",
             label: "Link significance weight",
             type: "float",
@@ -2420,6 +2427,24 @@ function validate() {
       "error",
       "memory",
       "consolidation.minimumRetentionInDays must not be negative.",
+    );
+  }
+
+  // Mirrors configProblems: the ceiling must not be negative, and must lie above the floor.
+  const maximumRetention = Number(val("consolidation.maximumRetentionInDays"));
+  const minimumRetention = Number(val("consolidation.minimumRetentionInDays"));
+
+  if (maximumRetention < 0) {
+    add(
+      "error",
+      "memory",
+      "consolidation.maximumRetentionInDays must not be negative.",
+    );
+  } else if (maximumRetention > 0 && minimumRetention > 0 && maximumRetention <= minimumRetention) {
+    add(
+      "error",
+      "memory",
+      "consolidation.maximumRetentionInDays must be greater than consolidation.minimumRetentionInDays.",
     );
   }
 

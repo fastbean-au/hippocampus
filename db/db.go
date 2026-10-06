@@ -673,6 +673,7 @@ type Store interface {
 	ConsolidateEventMemories(ctx context.Context, s Server) (int, int, int, error)
 	ConsolidateEvents(ctx context.Context, s Server) (int, error)
 	EvictMemories(ctx context.Context, s Server, target EvictionTarget) (EvictionResult, error)
+	ExpireMemories(ctx context.Context, createdBefore int64) (ExpiryResult, error)
 
 	// PreviewConsolidation reports what the four passes above would delete, and deletes nothing.
 	PreviewConsolidation(ctx context.Context, s Server, opts PreviewOptions) (ConsolidationPreview, error)

@@ -315,6 +315,7 @@ const (
 	ForgetRule_FORGET_RULE_UNSPECIFIED   ForgetRule = 0
 	ForgetRule_FORGET_RULE_CONSOLIDATION ForgetRule = 1 // decayed value fell below the capacity-pressure-scaled deletion threshold
 	ForgetRule_FORGET_RULE_EVICTION      ForgetRule = 2 // still above the threshold, but evicted to bring the store back under its byte capacity
+	ForgetRule_FORGET_RULE_EXPIRY        ForgetRule = 3 // stored longer ago than consolidation.maximumRetentionInDays, whatever its value or how recently it was recalled; value and threshold are 0, since neither was the reason
 )
 
 // Enum value maps for ForgetRule.
@@ -323,11 +324,13 @@ var (
 		0: "FORGET_RULE_UNSPECIFIED",
 		1: "FORGET_RULE_CONSOLIDATION",
 		2: "FORGET_RULE_EVICTION",
+		3: "FORGET_RULE_EXPIRY",
 	}
 	ForgetRule_value = map[string]int32{
 		"FORGET_RULE_UNSPECIFIED":   0,
 		"FORGET_RULE_CONSOLIDATION": 1,
 		"FORGET_RULE_EVICTION":      2,
+		"FORGET_RULE_EXPIRY":        3,
 	}
 )
 
@@ -431,6 +434,7 @@ const (
 	DeleteCause_DELETE_CAUSE_CASCADE         DeleteCause = 5
 	DeleteCause_DELETE_CAUSE_SUMMARY_REPLACE DeleteCause = 6
 	DeleteCause_DELETE_CAUSE_PURGE           DeleteCause = 7
+	DeleteCause_DELETE_CAUSE_EXPIRY          DeleteCause = 8 // the maximum-retention pass (consolidation.maximumRetentionInDays); a decay cause, like consolidation and eviction
 )
 
 // Enum value maps for DeleteCause.
@@ -444,6 +448,7 @@ var (
 		5: "DELETE_CAUSE_CASCADE",
 		6: "DELETE_CAUSE_SUMMARY_REPLACE",
 		7: "DELETE_CAUSE_PURGE",
+		8: "DELETE_CAUSE_EXPIRY",
 	}
 	DeleteCause_value = map[string]int32{
 		"DELETE_CAUSE_UNSPECIFIED":     0,
@@ -454,6 +459,7 @@ var (
 		"DELETE_CAUSE_CASCADE":         5,
 		"DELETE_CAUSE_SUMMARY_REPLACE": 6,
 		"DELETE_CAUSE_PURGE":           7,
+		"DELETE_CAUSE_EXPIRY":          8,
 	}
 )
 
@@ -5001,6 +5007,7 @@ type PreviewConsolidationResponse struct {
 	ExternalBytes         int64 `protobuf:"varint,14,opt,name=external_bytes,json=externalBytes,proto3" json:"external_bytes,omitempty"`                           // the store's current total external bytes; 0 when no external capacity is configured, since it is not measured then
 	CapacityExternalBytes int64 `protobuf:"varint,15,opt,name=capacity_external_bytes,json=capacityExternalBytes,proto3" json:"capacity_external_bytes,omitempty"` // consolidation.capacityExternalBytes; 0 when no external capacity is configured, in which case the external axis is inert
 	RetainedExternalBytes int64 `protobuf:"varint,16,opt,name=retained_external_bytes,json=retainedExternalBytes,proto3" json:"retained_external_bytes,omitempty"` // the external bytes held by consolidation.minimumRetentionInDays, the counterpart of retained_bytes
+	MemoriesExpired       int32 `protobuf:"varint,17,opt,name=memories_expired,json=memoriesExpired,proto3" json:"memories_expired,omitempty"`                     // memories past consolidation.maximumRetentionInDays, which the cycle takes first: each is counted here only, never also as consolidated or evicted
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -5143,6 +5150,13 @@ func (x *PreviewConsolidationResponse) GetCapacityExternalBytes() int64 {
 func (x *PreviewConsolidationResponse) GetRetainedExternalBytes() int64 {
 	if x != nil {
 		return x.RetainedExternalBytes
+	}
+	return 0
+}
+
+func (x *PreviewConsolidationResponse) GetMemoriesExpired() int32 {
+	if x != nil {
+		return x.MemoriesExpired
 	}
 	return 0
 }
@@ -6139,11 +6153,12 @@ type MemoryValuation struct {
 	WouldConsolidate      bool                   `protobuf:"varint,10,opt,name=would_consolidate,json=wouldConsolidate,proto3" json:"would_consolidate,omitempty"`                   // a cycle running now would forget this memory
 	Retained              bool                   `protobuf:"varint,11,opt,name=retained,proto3" json:"retained,omitempty"`                                                           // held by consolidation.minimumRetentionInDays, so neither consolidation nor capacity eviction may take it
 	BelowMinimumAge       bool                   `protobuf:"varint,12,opt,name=below_minimum_age,json=belowMinimumAge,proto3" json:"below_minimum_age,omitempty"`                    // younger than consolidation.minimumAgeInDays, so value-based consolidation is deferred whatever the value says
-	DaysUntilForgotten    float64                `protobuf:"fixed64,13,opt,name=days_until_forgotten,json=daysUntilForgotten,proto3" json:"days_until_forgotten,omitempty"`          // projected days until the memory would be consolidated, holding today's threshold and pressure and assuming no further recall; 0 when it is already due, -1 when it is not due within the projected horizon
+	DaysUntilForgotten    float64                `protobuf:"fixed64,13,opt,name=days_until_forgotten,json=daysUntilForgotten,proto3" json:"days_until_forgotten,omitempty"`          // projected days until the memory would be forgotten - by consolidation, holding today's threshold and pressure and assuming no further recall, or by expiry if that comes sooner (see days_until_expiry); 0 when it is already due, -1 when it is not due within the projected horizon
 	LinkSignificance      int64                  `protobuf:"varint,14,opt,name=link_significance,json=linkSignificance,proto3" json:"link_significance,omitempty"`                   // the memory's own summed link significance, both directions, before damping
 	LinkContribution      float64                `protobuf:"fixed64,15,opt,name=link_contribution,json=linkContribution,proto3" json:"link_contribution,omitempty"`                  // what those links add to effective_significance: linkSignificanceWeight * log1p(link_significance)
 	EventLinkSignificance int64                  `protobuf:"varint,16,opt,name=event_link_significance,json=eventLinkSignificance,proto3" json:"event_link_significance,omitempty"`  // the memory's event's summed link significance, both directions, before damping; 0 for a memory with no event
 	EventLinkContribution float64                `protobuf:"fixed64,17,opt,name=event_link_contribution,json=eventLinkContribution,proto3" json:"event_link_contribution,omitempty"` // what the event's links add to effective_significance, damped the same way; 0 for a memory with no event
+	DaysUntilExpiry       float64                `protobuf:"fixed64,18,opt,name=days_until_expiry,json=daysUntilExpiry,proto3" json:"days_until_expiry,omitempty"`                   // days until consolidation.maximumRetentionInDays takes the memory, measured from when it was stored and unaffected by recall; 0 when it is already past the ceiling, -1 when no maximum is configured. days_until_forgotten already takes the sooner of the two
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -6293,6 +6308,13 @@ func (x *MemoryValuation) GetEventLinkSignificance() int64 {
 func (x *MemoryValuation) GetEventLinkContribution() float64 {
 	if x != nil {
 		return x.EventLinkContribution
+	}
+	return 0
+}
+
+func (x *MemoryValuation) GetDaysUntilExpiry() float64 {
+	if x != nil {
+		return x.DaysUntilExpiry
 	}
 	return 0
 }
@@ -6563,9 +6585,11 @@ type CycleReport struct {
 	// cause, so a later reason needs no second flag.
 	Stalled bool `protobuf:"varint,13,opt,name=stalled,proto3" json:"stalled,omitempty"`
 	// stalled_reason says why, in words meant to be shown rather than parsed. Empty unless stalled.
-	StalledReason string `protobuf:"bytes,14,opt,name=stalled_reason,json=stalledReason,proto3" json:"stalled_reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StalledReason   string `protobuf:"bytes,14,opt,name=stalled_reason,json=stalledReason,proto3" json:"stalled_reason,omitempty"`
+	MemoriesExpired int32  `protobuf:"varint,15,opt,name=memories_expired,json=memoriesExpired,proto3" json:"memories_expired,omitempty"` // memories past consolidation.maximumRetentionInDays, taken before the decay passes ran
+	EventsExpired   int32  `protobuf:"varint,16,opt,name=events_expired,json=eventsExpired,proto3" json:"events_expired,omitempty"`       // events left empty by expiry, deleted with their last memory
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CycleReport) Reset() {
@@ -6694,6 +6718,20 @@ func (x *CycleReport) GetStalledReason() string {
 		return x.StalledReason
 	}
 	return ""
+}
+
+func (x *CycleReport) GetMemoriesExpired() int32 {
+	if x != nil {
+		return x.MemoriesExpired
+	}
+	return 0
+}
+
+func (x *CycleReport) GetEventsExpired() int32 {
+	if x != nil {
+		return x.EventsExpired
+	}
+	return 0
 }
 
 // GetConsolidationStatusResponse reports the sleep cycle's schedule and its last result.
@@ -8305,7 +8343,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\rtime_recalled\x18\n" +
 	" \x01(\x03R\ftimeRecalled\x12!\n" +
 	"\frecall_count\x18\v \x01(\x05R\vrecallCount\x12%\n" +
-	"\x0eexternal_bytes\x18\f \x01(\x03R\rexternalBytes\"\xe4\x05\n" +
+	"\x0eexternal_bytes\x18\f \x01(\x03R\rexternalBytes\"\x8f\x06\n" +
 	"\x1cPreviewConsolidationResponse\x123\n" +
 	"\x15memories_consolidated\x18\x01 \x01(\x05R\x14memoriesConsolidated\x12)\n" +
 	"\x10memories_evicted\x18\x02 \x01(\x05R\x0fmemoriesEvicted\x12%\n" +
@@ -8327,7 +8365,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x14external_bytes_freed\x18\r \x01(\x03R\x12externalBytesFreed\x12%\n" +
 	"\x0eexternal_bytes\x18\x0e \x01(\x03R\rexternalBytes\x126\n" +
 	"\x17capacity_external_bytes\x18\x0f \x01(\x03R\x15capacityExternalBytes\x126\n" +
-	"\x17retained_external_bytes\x18\x10 \x01(\x03R\x15retainedExternalBytes\"\x95\x03\n" +
+	"\x17retained_external_bytes\x18\x10 \x01(\x03R\x15retainedExternalBytes\x12)\n" +
+	"\x10memories_expired\x18\x11 \x01(\x05R\x0fmemoriesExpired\"\x95\x03\n" +
 	"\x0fForgottenMemory\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x19\n" +
@@ -8411,7 +8450,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\fmax_age_days\x18\x02 \x01(\x01R\n" +
 	"maxAgeDays\x12*\n" +
 	"\x11crossing_age_days\x18\x03 \x01(\x01R\x0fcrossingAgeDays\x122\n" +
-	"\x06points\x18\x04 \x03(\v2\x1a.hippocampus.v1.DecayPointR\x06points\"\x9f\x05\n" +
+	"\x06points\x18\x04 \x03(\v2\x1a.hippocampus.v1.DecayPointR\x06points\"\xcb\x05\n" +
 	"\x0fMemoryValuation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
 	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\"\n" +
@@ -8430,7 +8469,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x11link_significance\x18\x0e \x01(\x03R\x10linkSignificance\x12+\n" +
 	"\x11link_contribution\x18\x0f \x01(\x01R\x10linkContribution\x126\n" +
 	"\x17event_link_significance\x18\x10 \x01(\x03R\x15eventLinkSignificance\x126\n" +
-	"\x17event_link_contribution\x18\x11 \x01(\x01R\x15eventLinkContribution\"u\n" +
+	"\x17event_link_contribution\x18\x11 \x01(\x01R\x15eventLinkContribution\x12*\n" +
+	"\x11days_until_expiry\x18\x12 \x01(\x01R\x0fdaysUntilExpiry\"u\n" +
 	"\x1bExplainConsolidationRequest\x12\x1d\n" +
 	"\n" +
 	"memory_ids\x18\x01 \x03(\tR\tmemoryIds\x127\n" +
@@ -8454,7 +8494,7 @@ const file_hippocampus_proto_rawDesc = "" +
 	"valuations\x120\n" +
 	"\x05curve\x18\r \x01(\v2\x1a.hippocampus.v1.DecayCurveR\x05curve\x12%\n" +
 	"\x0eexternal_bytes\x18\x0e \x01(\x03R\rexternalBytes\x126\n" +
-	"\x17capacity_external_bytes\x18\x0f \x01(\x03R\x15capacityExternalBytes\"\xa2\x04\n" +
+	"\x17capacity_external_bytes\x18\x0f \x01(\x03R\x15capacityExternalBytes\"\xf4\x04\n" +
 	"\vCycleReport\x12\x1d\n" +
 	"\n" +
 	"started_at\x18\x01 \x01(\x03R\tstartedAt\x12\x1f\n" +
@@ -8473,7 +8513,9 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\atrigger\x18\v \x01(\tR\atrigger\x120\n" +
 	"\x14external_bytes_freed\x18\f \x01(\x03R\x12externalBytesFreed\x12\x18\n" +
 	"\astalled\x18\r \x01(\bR\astalled\x12%\n" +
-	"\x0estalled_reason\x18\x0e \x01(\tR\rstalledReason\"\xea\x03\n" +
+	"\x0estalled_reason\x18\x0e \x01(\tR\rstalledReason\x12)\n" +
+	"\x10memories_expired\x18\x0f \x01(\x05R\x0fmemoriesExpired\x12%\n" +
+	"\x0eevents_expired\x18\x10 \x01(\x05R\reventsExpired\"\xea\x03\n" +
 	"\x1eGetConsolidationStatusResponse\x123\n" +
 	"\x15consolidation_enabled\x18\x01 \x01(\bR\x14consolidationEnabled\x12%\n" +
 	"\x0eperiod_seconds\x18\x02 \x01(\x03R\rperiodSeconds\x12\"\n" +
@@ -8592,18 +8634,19 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x1aLINK_DIRECTION_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13LINK_DIRECTION_BOTH\x10\x01\x12\x1b\n" +
 	"\x17LINK_DIRECTION_OUTBOUND\x10\x02\x12\x1a\n" +
-	"\x16LINK_DIRECTION_INBOUND\x10\x03*b\n" +
+	"\x16LINK_DIRECTION_INBOUND\x10\x03*z\n" +
 	"\n" +
 	"ForgetRule\x12\x1b\n" +
 	"\x17FORGET_RULE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19FORGET_RULE_CONSOLIDATION\x10\x01\x12\x18\n" +
-	"\x14FORGET_RULE_EVICTION\x10\x02*\xbb\x01\n" +
+	"\x14FORGET_RULE_EVICTION\x10\x02\x12\x16\n" +
+	"\x12FORGET_RULE_EXPIRY\x10\x03*\xbb\x01\n" +
 	"\fCallbackKind\x12\x1d\n" +
 	"\x19CALLBACK_KIND_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eCALLBACK_KIND_MEMORY_FORGOTTEN\x10\x01\x12!\n" +
 	"\x1dCALLBACK_KIND_EVENT_FORGOTTEN\x10\x02\x12!\n" +
 	"\x1dCALLBACK_KIND_SLEEP_COMPLETED\x10\x03\x12\"\n" +
-	"\x1eCALLBACK_KIND_MEMORIES_AT_RISK\x10\x04*\xeb\x01\n" +
+	"\x1eCALLBACK_KIND_MEMORIES_AT_RISK\x10\x04*\x84\x02\n" +
 	"\vDeleteCause\x12\x1c\n" +
 	"\x18DELETE_CAUSE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aDELETE_CAUSE_CONSOLIDATION\x10\x01\x12\x19\n" +
@@ -8612,7 +8655,8 @@ const file_hippocampus_proto_rawDesc = "" +
 	"\x12DELETE_CAUSE_CLEAR\x10\x04\x12\x18\n" +
 	"\x14DELETE_CAUSE_CASCADE\x10\x05\x12 \n" +
 	"\x1cDELETE_CAUSE_SUMMARY_REPLACE\x10\x06\x12\x16\n" +
-	"\x12DELETE_CAUSE_PURGE\x10\a*\xa3\x04\n" +
+	"\x12DELETE_CAUSE_PURGE\x10\a\x12\x17\n" +
+	"\x13DELETE_CAUSE_EXPIRY\x10\b*\xa3\x04\n" +
 	"\x10TopologyNodeKind\x12\"\n" +
 	"\x1eTOPOLOGY_NODE_KIND_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bTOPOLOGY_NODE_KIND_INSTANCE\x10\x01\x12\x1c\n" +

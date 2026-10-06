@@ -80,7 +80,7 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	client.RegisterCommonFlags(fs, 8091)
 
 	fs.Bool("delete", false, "actually delete objects; without it the reaper runs in shadow mode, reporting what it would delete")
-	fs.String("causes", "", "comma-separated deletion causes to act on (default consolidation,eviction,cascade; see docs/objectstore.md)")
+	fs.String("causes", "", "comma-separated deletion causes to act on (default consolidation,eviction,expiry,cascade; see docs/objectstore.md)")
 
 	// The push path.
 	fs.Int("listen-port", 8089, "port serving the callback endpoint (0 disables the push path)")

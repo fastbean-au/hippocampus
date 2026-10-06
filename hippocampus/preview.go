@@ -151,6 +151,8 @@ func (s *Server) previewOnce(ctx context.Context, limit int) (previewResult, err
 			ExternalBytes:         state.externalBytes,
 			CapacityExternalBytes: s.consolidation.capacityExternalBytes,
 			ExternalEvictionFloor: s.externalEvictionFloor(),
+
+			ExpireBefore: s.expiryCutoff(time.Now()),
 		})
 		if err != nil {
 			return previewResult{}, err
@@ -181,6 +183,7 @@ func (s *Server) previewResponse(result previewResult) *contract.PreviewConsolid
 	preview := result.preview
 
 	res := contract.PreviewConsolidationResponse{
+		MemoriesExpired:      int32(preview.MemoriesExpired),
 		MemoriesConsolidated: int32(preview.MemoriesConsolidated),
 		MemoriesEvicted:      int32(preview.MemoriesEvicted),
 		EventsDeleted:        int32(preview.EventsDeleted),
@@ -227,6 +230,7 @@ func (s *Server) previewResponse(result previewResult) *contract.PreviewConsolid
 var forgetRules = map[db.ForgetRule]contract.ForgetRule{
 	db.ForgetRuleConsolidation: contract.ForgetRule_FORGET_RULE_CONSOLIDATION,
 	db.ForgetRuleEviction:      contract.ForgetRule_FORGET_RULE_EVICTION,
+	db.ForgetRuleExpiry:        contract.ForgetRule_FORGET_RULE_EXPIRY,
 }
 
 // decisionState is what a consolidation cycle starting now would decide against: the decider

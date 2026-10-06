@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/pflag"
+
 	"github.com/fastbean-au/hippocampus/contract"
 )
 
@@ -370,5 +372,26 @@ func TestRenderEventMetadata(t *testing.T) {
 
 	if strings.Contains(buf.String(), "metadata") {
 		t.Fatalf("an event with no metadata should print no metadata line, got %q", buf.String())
+	}
+}
+
+// TestForgetRulesIncludeExpiry: the CLI names and filters by all three rules. A fallback of
+// "unknown" or a refused flag would hide the one rule that is not a judgement of value (TODO-3 item
+// 157).
+func TestForgetRulesIncludeExpiry(t *testing.T) {
+	if got := forgetRuleLabel(contract.ForgetRule_FORGET_RULE_EXPIRY); got != "expired" {
+		t.Errorf("forgetRuleLabel(EXPIRY) = %q, want expired", got)
+	}
+
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	fs.String("rule", "", "")
+
+	if err := fs.Parse([]string{"--rule", "expiry"}); err != nil {
+		t.Fatalf("parsing --rule: %s", err)
+	}
+
+	rule, err := forgetRuleFromFlag(fs, "rule")
+	if err != nil || rule != contract.ForgetRule_FORGET_RULE_EXPIRY {
+		t.Errorf("forgetRuleFromFlag(expiry) = %v, %v; want FORGET_RULE_EXPIRY", rule, err)
 	}
 }

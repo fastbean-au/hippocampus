@@ -1128,3 +1128,41 @@ func TestValidateTopologyComponentsCapped(t *testing.T) {
 		t.Fatalf("validateConfig rejected exactly the cap: %v", err)
 	}
 }
+
+// TestValidateConfigMaximumRetention: consolidation.maximumRetentionInDays is a ceiling, so it must
+// not be negative, and where a minimum is also set the ceiling must lie above it - a maximum at or
+// below the floor is a configuration that contradicts itself (TODO-3 item 157).
+func TestValidateConfigMaximumRetention(t *testing.T) {
+	cases := []struct {
+		name    string
+		minimum int
+		maximum int
+		wantErr bool
+	}{
+		{name: "no maximum", maximum: 0, wantErr: false},
+		{name: "a maximum alone", maximum: 90, wantErr: false},
+		{name: "a maximum above the minimum", minimum: 30, maximum: 90, wantErr: false},
+		{name: "a negative maximum", maximum: -1, wantErr: true},
+		{name: "a maximum equal to the minimum", minimum: 30, maximum: 30, wantErr: true},
+		{name: "a maximum below the minimum", minimum: 30, maximum: 7, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validConsolidationConfig()
+			viper.Set("consolidation.minimumRetentionInDays", tc.minimum)
+			viper.Set("consolidation.maximumRetentionInDays", tc.maximum)
+
+			t.Cleanup(func() {
+				viper.Set("consolidation.minimumRetentionInDays", nil)
+				viper.Set("consolidation.maximumRetentionInDays", nil)
+			})
+
+			err := validateConfig()
+
+			if tc.wantErr != (err != nil) {
+				t.Errorf("validateConfig(minimum=%d, maximum=%d) = %v, want error %t", tc.minimum, tc.maximum, err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -165,6 +165,7 @@ func atRiskDeliveries(
 	}{
 		{db.ForgetRuleConsolidation, db.CauseConsolidation},
 		{db.ForgetRuleEviction, db.CauseEviction},
+		{db.ForgetRuleExpiry, db.CauseExpiry},
 	}
 
 	deliveries := make([]db.CallbackDelivery, 0, 2)

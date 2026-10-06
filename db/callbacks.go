@@ -104,12 +104,18 @@ const (
 
 	// CausePurge is Purge - everything, at an operator's explicit request.
 	CausePurge
+
+	// CauseExpiry is the maximum-retention pass. Appended, never inserted: the callback queue
+	// stores a cause as its number.
+	CauseExpiry
 )
 
-// decay reports whether a cause is one of the two forgetting passes. It is what
-// callbacks.allDeletions widens past: off, only a decay cause enqueues.
+// decay reports whether a cause is one of the forgetting passes. It is what callbacks.allDeletions
+// widens past: off, only a decay cause enqueues. Expiry counts: it is the store deciding on its own
+// to forget, exactly as the other two are, and a system holding what an expired memory pointed at
+// needs the instruction as much as for a consolidated one.
 func (c DeleteCause) decay() bool {
-	return c == CauseConsolidation || c == CauseEviction
+	return c == CauseConsolidation || c == CauseEviction || c == CauseExpiry
 }
 
 // CallbackPolicy is how the store is told whether to record deliveries, and what to put in them.
@@ -235,6 +241,8 @@ type CallbackCycle struct {
 	Trigger                 string `json:"trigger"`
 	StartedAt               int64  `json:"started_at"`
 	DurationMillis          int64  `json:"duration_millis"`
+	MemoriesExpired         int    `json:"memories_expired"`
+	EventsExpired           int    `json:"events_expired"`
 	MemoriesConsolidated    int    `json:"memories_consolidated"`
 	EventsConsolidated      int    `json:"events_consolidated"`
 	MemoriesEvicted         int    `json:"memories_evicted"`

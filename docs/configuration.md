@@ -2286,10 +2286,10 @@ request, not five hundred:
 ```
 
 `kind` is one of `memory_forgotten`, `event_forgotten`, `sleep_completed` or `memories_at_risk`.
-`cause` is why: `consolidation` or `eviction` (the two decay paths), or — only with `allDeletions` —
-`client`, `clear`, `cascade`, `summary_replace` or `purge`. `cycle_id` groups every delivery one sleep
-cycle produced, including its warning and its completion, so a receiver can assemble a whole cycle
-without keeping state.
+`cause` is why: `consolidation`, `eviction` or `expiry` (the three forgetting passes), or — only
+with `allDeletions` — `client`, `clear`, `cascade`, `summary_replace` or `purge`. `cycle_id` groups
+every delivery one sleep cycle produced, including its warning and its completion, so a receiver can
+assemble a whole cycle without keeping state.
 
 A `sleep_completed` delivery adds a `cycle` object (the trigger, the counts, the bytes freed, whether
 it succeeded) and carries the ids the cycle forgot, **chunked** at `maxIdsPerDelivery` with `chunk`

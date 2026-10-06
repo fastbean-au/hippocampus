@@ -133,6 +133,7 @@ type Consolidation struct {
 	defaultEventSignificancePercentile float64
 	minimumAgeInDays                   int
 	minimumRetentionInDays             int
+	maximumRetentionInDays             int
 	aggressiveness                     float64
 	deletionThreshold                  float64
 	method                             int
@@ -579,6 +580,7 @@ func New(deps Dependencies) *Server {
 			defaultEventSignificancePercentile: viper.GetFloat64("consolidation.defaultEventSignificancePercentile"),
 			minimumAgeInDays:                   viper.GetInt("consolidation.minimumAgeInDays"),
 			minimumRetentionInDays:             viper.GetInt("consolidation.minimumRetentionInDays"),
+			maximumRetentionInDays:             viper.GetInt("consolidation.maximumRetentionInDays"),
 			aggressiveness:                     viper.GetFloat64("consolidation.aggressiveness"),
 			deletionThreshold:                  viper.GetFloat64("consolidation.deletionThreshold"),
 			method:                             viper.GetInt("consolidation.method"),

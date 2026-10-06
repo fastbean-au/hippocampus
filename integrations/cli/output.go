@@ -449,6 +449,9 @@ func forgetRuleLabel(rule contract.ForgetRule) string {
 	case contract.ForgetRule_FORGET_RULE_EVICTION:
 		return "capacity"
 
+	case contract.ForgetRule_FORGET_RULE_EXPIRY:
+		return "expired"
+
 	default:
 		return "unknown"
 	}

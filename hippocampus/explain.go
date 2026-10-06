@@ -291,9 +291,19 @@ func (s *Server) valuation(
 	state decisionState,
 	threshold float64,
 ) *contract.MemoryValuation {
+	now := time.Now()
 	decayTimestamp := memoryDecayTimestamp(candidate.Candidate)
 	significance := s.memorySignificanceUnder(candidate.Candidate, state.decider.defaultEventSignificance)
-	ageDays := float64(time.Now().UnixNano()-decayTimestamp) / float64(DAY_IN_NANOSECONDS)
+	ageDays := float64(now.UnixNano()-decayTimestamp) / float64(DAY_IN_NANOSECONDS)
+
+	// The ceiling is measured from creation, so a recall that resets the decay clock above does not
+	// move it; whichever rule reaches the memory first is the one days_until_forgotten reports.
+	untilExpiry := s.daysUntilExpiry(candidate.Candidate.Timestamp, now)
+	untilForgotten := s.daysUntilForgotten(significance, ageDays, threshold)
+
+	if untilExpiry >= 0 && (untilForgotten < 0 || untilExpiry < untilForgotten) {
+		untilForgotten = untilExpiry
+	}
 
 	// The two link terms are reported alongside effective_significance rather than folded silently
 	// into it. That field documents itself as the full breakdown of what decay acts on, and a
@@ -321,8 +331,26 @@ func (s *Server) valuation(
 		WouldConsolidate:   state.decider.ShouldConsolidateMemory(candidate.Candidate),
 		Retained:           s.retained(decayTimestamp),
 		BelowMinimumAge:    int(ageDays) < s.consolidation.minimumAgeInDays,
-		DaysUntilForgotten: s.daysUntilForgotten(significance, ageDays, threshold),
+		DaysUntilForgotten: untilForgotten,
+		DaysUntilExpiry:    untilExpiry,
 	}
+}
+
+// daysUntilExpiry is how long a memory stored at createdAt has before
+// consolidation.maximumRetentionInDays takes it: 0 once it is past the ceiling, -1 when no maximum is
+// configured. Unlike daysUntilForgotten this is not a projection - the ceiling depends on nothing but
+// the date, so it is exact.
+func (s *Server) daysUntilExpiry(createdAt int64, now time.Time) float64 {
+	cutoff := s.expiryCutoff(now)
+	if cutoff == 0 {
+		return -1
+	}
+
+	if createdAt <= cutoff {
+		return 0
+	}
+
+	return float64(createdAt-cutoff) / float64(DAY_IN_NANOSECONDS)
 }
 
 // daysUntilForgotten projects how long a memory has left: the age at which its value falls below

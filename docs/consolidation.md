@@ -718,8 +718,9 @@ behind the utilisation is only measured when a target is configured. It is repor
 `consolidation.minimumRetentionInDays` (0, the default, disables it) is a hard floor that
 protects recent items from being reaped at all — by value-based consolidation _and_ by capacity
 eviction. Any memory or event whose age is less than this many days is never deleted by a sleep
-cycle, whatever its decayed value and however full the store is: **retention overrides the
-capacity target**. It is the guarantee to reach for when data must be kept for a fixed window
+cycle's decay passes, whatever its decayed value and however full the store is: **retention
+overrides the capacity target**. The one rule it does not override is the
+[maximum retention](#maximum-retention) below, which is measured differently and is a ceiling. It is the guarantee to reach for when data must be kept for a fixed window
 regardless of significance (a compliance or audit requirement, say).
 
 This is a stronger, separate guarantee from `consolidation.minimumAgeInDays`. `minimumAgeInDays`
@@ -743,6 +744,38 @@ Retention is a floor, not a cap: it can hold the store above `capacityBytes` —
 rate so the retained working set fits the capacity you have provisioned. `hippocampus.retained_bytes`
 and `hippocampus.retained_external_bytes` are what make that visible: each approaching its own target
 means eviction can no longer bring that axis back under it, and the service logs a warning saying so.
+
+## Maximum retention
+
+`consolidation.maximumRetentionInDays` (0, the default, disables it) is a **ceiling**: a memory
+stored longer ago than this many days is deleted by the next sleep cycle, whatever its value and
+however recently it was recalled. Every other rule in the store is a judgement about value; this
+one is not, and it exists for the requirements that are not about value either — a
+storage-limitation policy, a log-retention rule, a contractual deletion deadline.
+
+The decay rules cannot express one on their own. Recall resets the decay clock, so a memory read
+often enough is never forgotten, which is the design; but it also means "never keep anything longer
+than 90 days" had no setting. So the ceiling is measured from **when the memory was stored** — not
+from its last recall, which would make it the decay clock again with a harder edge.
+
+Three things follow from it being a ceiling:
+
+- **It runs first in the cycle**, before consolidation and eviction, so a memory past it is reported
+  as expired (`memories_expired` in `GetConsolidationStatus` and the `sleep_completed` callback,
+  `hippocampus.memories.expired`, rule `expiry` in the forgotten log, cause `expiry` in callbacks)
+  rather than as whatever decay pass happened to reach it.
+- **It overrides `minimumRetentionInDays`.** A ceiling a floor can lift is not a ceiling. Startup
+  refuses a maximum at or below the minimum, so the two only meet for a memory recalled recently
+  after a long life — retention is measured from the last recall, the ceiling from creation — and
+  there the ceiling wins.
+- **It applies to memories.** An event left empty by expiry is deleted with its last memory, as
+  eviction does; an event's own age is not subject to it.
+
+`PreviewConsolidation` counts what it would take, and `ExplainConsolidation` reports
+`days_until_expiry` per memory — exact rather than projected, since it depends only on the date —
+and pulls `days_until_forgotten` forward when the ceiling comes first. Like a stall on the decay
+passes, a [stalled cycle](configuration.md#outbound-callbacks) holds expiry back too: its deletions
+are the same instruction to whatever holds what a memory pointed at.
 
 ## Checkpoint-triggered eviction
 

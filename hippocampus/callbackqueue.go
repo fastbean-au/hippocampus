@@ -181,6 +181,7 @@ var (
 		db.CauseCascade:        contract.DeleteCause_DELETE_CAUSE_CASCADE,
 		db.CauseSummaryReplace: contract.DeleteCause_DELETE_CAUSE_SUMMARY_REPLACE,
 		db.CausePurge:          contract.DeleteCause_DELETE_CAUSE_PURGE,
+		db.CauseExpiry:         contract.DeleteCause_DELETE_CAUSE_EXPIRY,
 	}
 )
 

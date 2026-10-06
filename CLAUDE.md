@@ -1749,7 +1749,7 @@ github.com/fastbean-au/hippocampus => ../..`), which is what keeps the AWS SDK o
     shadow run against what the far end's flat expiry would have dropped is how this becomes
     authoritative over data the store cannot see. (6) **What it refuses to delete** is most of the
     safety: an id that is not an object reference, an id naming another bucket, an unmappable key, and
-    any cause outside `--causes` (default `consolidation,eviction,cascade`) — `clear` is a MOVE,
+    any cause outside `--causes` (default `consolidation,eviction,expiry,cascade`) — `clear` is a MOVE,
     `purge` would empty the bucket on one administrative command, `summary_replace` is a judgement,
     and `client` only arrives when `callbacks.allDeletions` is set, which is a visibility key rather
     than consent. **Every path asks the store first**: the sweep of its own enumeration, and the push

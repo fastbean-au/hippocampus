@@ -77,6 +77,17 @@ itself which service version it was built against.
   outside the caller's scope, is simply absent from the page. Reachable as `hippo memory list --id`,
   `get_memories(ids=...)` in the Python client, and the `ids` argument of the MCP bridge's
   `list_memories`, which gives a model a way to look at what it holds without keeping it alive.
+- **A maximum retention: `consolidation.maximumRetentionInDays`.** A ceiling, where every other rule
+  in the store is a judgement of value: a memory stored longer ago than this is deleted by the next
+  sleep cycle whatever its value and however recently it was recalled. Recall resets the decay clock,
+  so before this a memory read often enough was never forgotten and a storage-limitation or
+  log-retention policy had no setting. It is measured from creation, runs first in the cycle, and
+  overrides `minimumRetentionInDays` (startup refuses a maximum at or below it). Off by default.
+  Expiry is a forget rule (`FORGET_RULE_EXPIRY`) and a callback cause (`expiry`) of its own, counted
+  as `memories_expired`/`events_expired` in the cycle report and `hippocampus.memories.expired`;
+  `PreviewConsolidation` predicts it and `ExplainConsolidation` reports `days_until_expiry`. The
+  object-storage reaper acts on it by default, and the console, the CLI and the config wizard all
+  know it.
 ### Changed
 
 - **A release is dispatched only to the satellites it changes something for.** `notify-satellites`

@@ -846,10 +846,11 @@ It answers three questions:
 - **Which, and why.** A bounded sample of individual memories — id, group, event, significance, the
   computed `value`, the `threshold` it was compared against, and the `rule` that claimed it. The
   sample is ordered least-valuable-first, so a truncated one shows the memories furthest past the
-  threshold rather than an arbitrary slice. `rule` separates the two paths, which have different
+  threshold rather than an arbitrary slice. `rule` separates the three paths, which have different
   answers: `CONSOLIDATION` means the memory decayed below the threshold (tune the decay settings),
-  while `EVICTION` means it was still valuable enough to keep and went only because the store is
-  over `capacityBytes` (raise the capacity, or store less).
+  `EVICTION` means it was still valuable enough to keep and went only because the store is over
+  `capacityBytes` (raise the capacity, or store less), and `EXPIRY` means it was older than
+  `consolidation.maximumRetentionInDays`, whatever its value (that one is policy, not tuning).
 - **Against what.** `capacity_pressure`, the scaled `deletion_threshold`, `used_bytes` and
   `capacity_bytes` — the inputs the decisions were made against, so the numbers can be read
   alongside the configuration that produced them.
@@ -949,7 +950,8 @@ hippo forgotten clear --before 2026-07-01T00:00:00Z      # or --all
 
 Each record carries the memory's id, group, event, significance, stored size, the `value` the decay
 algorithm gave it and the `threshold` it was measured against **at that moment**, the `rule` that
-took it, its creation and recall timestamps, and when it went. The threshold is recorded per record
+took it, its creation and recall timestamps, and when it went. (For an `EXPIRY` record `value` and
+`threshold` are 0, since neither was the reason.) The threshold is recorded per record
 rather than inferred, because it moves with capacity pressure: without it a value from last month
 means nothing today.
 
@@ -1541,6 +1543,8 @@ Metrics worth alerting on in production:
   `success=false`, or a duration climbing toward `sleep.periodSeconds`, signals trouble.
 - `hippocampus.memories.evicted` / `hippocampus.events.evicted` — eviction volume per cycle, with
   `hippocampus.bytes.evicted` the estimated bytes reclaimed (how much has been reaped).
+- `hippocampus.memories.expired` — memories taken for being older than
+  `consolidation.maximumRetentionInDays`, measured from when they were stored.
 - `hippocampus.memory.body_bytes` — a histogram of stored memory-body sizes (how much data each
   write carries); the sum tracks ingest volume and the distribution surfaces outlier blobs.
 - The `hippocampus.memories.count` / `hippocampus.events.count` gauges — store growth.

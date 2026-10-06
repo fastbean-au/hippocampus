@@ -83,6 +83,8 @@ func cycleReportToProto(in *cycleReport) *contract.CycleReport {
 	return &contract.CycleReport{
 		StartedAt:               in.startedAt.UnixNano(),
 		DurationMs:              in.duration.Milliseconds(),
+		MemoriesExpired:         int32(in.memoriesExpired),
+		EventsExpired:           int32(in.eventsExpired),
 		MemoriesConsolidated:    int32(in.memoriesConsolidated),
 		EventsConsolidated:      int32(in.eventsConsolidated),
 		MemoriesEvicted:         int32(in.memoriesEvicted),

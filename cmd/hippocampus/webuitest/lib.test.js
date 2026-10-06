@@ -28,6 +28,7 @@ import {
   countdownFraction,
   countdownLabel,
   cycleSummary,
+  forgetRuleLabel,
   stallNotice,
   TRIGGER_LABELS,
   bodyClassesFor,
@@ -732,6 +733,20 @@ test("capacityMeter uses whichever axis is configured, and none when neither is"
 // Consolidated and evicted mean different things - decayed below the threshold, versus above it and
 // removed anyway to stay under capacity - and a store doing only the latter is misconfigured. The
 // summary has to keep them apart.
+// Expiry is a third way to be forgotten (TODO-3 item 157), and the most different of the three: it
+// is a ceiling on age, not a judgement of value, so it must never read as "decayed".
+test("cycleSummary and forgetRuleLabel name expiry for what it is", () => {
+  assert.match(cycleSummary({ memoriesExpired: 5 }), /5 past the maximum retention/);
+  assert.match(
+    cycleSummary({ memoriesExpired: 1, memoriesConsolidated: 2 }),
+    /1 past the maximum retention, 2 decayed away/,
+  );
+
+  assert.equal(forgetRuleLabel("FORGET_RULE_EXPIRY"), "past maximum retention");
+  assert.equal(forgetRuleLabel("FORGET_RULE_EVICTION"), "over capacity");
+  assert.equal(forgetRuleLabel("FORGET_RULE_CONSOLIDATION"), "decayed");
+});
+
 test("cycleSummary names the two decay paths separately", () => {
   assert.match(cycleSummary(null), /No cycle has run/);
   assert.match(cycleSummary({}), /Nothing was forgotten/);

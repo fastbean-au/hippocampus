@@ -186,7 +186,7 @@ unauthenticated listener is only warned about.
 - **An id that is not an object reference** — a UUID from another producer sharing the store.
 - **An id naming another bucket** — an agent pointed at the wrong one.
 - **A key too long to have been minted here.**
-- **A cause outside `--causes`** (default `consolidation,eviction,cascade`).
+- **A cause outside `--causes`** (default `consolidation,eviction,expiry,cascade`).
 - **An object whose memory the store still holds.** The push and catch-up paths ask the store
   before deleting, exactly as the sweep does, because neither a delivery nor a log entry proves the
   memory is gone *now*: a delivery can be forged, and either can be stale — an object uploaded again

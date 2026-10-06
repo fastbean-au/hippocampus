@@ -60,6 +60,10 @@ const (
 	// CauseEviction is the capacity-pressure pass.
 	CauseEviction Cause = "eviction"
 
+	// CauseExpiry is the maximum-retention pass: older than consolidation.maximumRetentionInDays,
+	// measured from when it was stored.
+	CauseExpiry Cause = "expiry"
+
 	// CauseClient is an explicit DeleteMemories/DeleteEvent from a caller.
 	CauseClient Cause = "client"
 
@@ -110,6 +114,8 @@ type Cycle struct {
 	Trigger                 string `json:"trigger"`
 	StartedAt               int64  `json:"started_at"`
 	DurationMillis          int64  `json:"duration_millis"`
+	MemoriesExpired         int    `json:"memories_expired"`
+	EventsExpired           int    `json:"events_expired"`
 	MemoriesConsolidated    int    `json:"memories_consolidated"`
 	EventsConsolidated      int    `json:"events_consolidated"`
 	MemoriesEvicted         int    `json:"memories_evicted"`

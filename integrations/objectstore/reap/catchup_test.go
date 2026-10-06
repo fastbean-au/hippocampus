@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fastbean-au/hippocampus/contract"
+	"github.com/fastbean-au/hippocampus/notify"
 
 	"github.com/fastbean-au/hippocampus/integrations/objectstore/objects"
 )
@@ -257,5 +258,39 @@ func TestTheCatchUpStopsWhenTheStoreCannotBeAsked(t *testing.T) {
 
 	if !store.Has("one.json") {
 		t.Error("an object was deleted although the store could not be asked whether it was held")
+	}
+}
+
+// TestExpiryIsActedOnByDefault: an expired memory's object should go like a decayed one's - expiry
+// is the store forgetting on its own, which is what the default causes are (TODO-3 item 157). It is
+// acted on from a delivery, accepted by --causes, and mapped from the forgotten log's rule on the
+// catch-up path.
+func TestExpiryIsActedOnByDefault(t *testing.T) {
+	defaults, err := NewCauses("")
+	if err != nil {
+		t.Fatalf("NewCauses: %s", err)
+	}
+
+	if !defaults.Acts(notify.CauseExpiry) {
+		t.Error("the default causes do not include expiry")
+	}
+
+	if _, err := NewCauses("expiry"); err != nil {
+		t.Errorf("--causes expiry was refused: %s", err)
+	}
+
+	log := &fakeLog{
+		enabled: true,
+		records: []*contract.ForgottenMemory{forgotten("payloads/one.json", contract.ForgetRule_FORGET_RULE_EXPIRY)},
+	}
+
+	catchUp, store := newCatchUp(t, log, time.Hour)
+
+	if _, err := catchUp.Run(context.Background()); err != nil {
+		t.Fatalf("Run failed: %s", err.Error())
+	}
+
+	if store.Has("one.json") {
+		t.Error("the catch-up left the object behind an expired memory")
 	}
 }

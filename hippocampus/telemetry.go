@@ -26,6 +26,7 @@ type telemetry struct {
 	memoriesDeleted      metric.Int64Counter
 	memoriesConsolidated metric.Int64Counter
 	memoriesEvicted      metric.Int64Counter
+	memoriesExpired      metric.Int64Counter
 	memoriesSearched     metric.Int64Counter
 	memoryBodyBytes      metric.Int64Histogram
 	bytesEvicted         metric.Int64Counter
@@ -108,6 +109,7 @@ func newTelemetry() *telemetry {
 		memoriesDeleted:      newInt64Counter(meter, "hippocampus.memories.deleted", "Number of memories explicitly deleted via RPC."),
 		memoriesConsolidated: newInt64Counter(meter, "hippocampus.memories.consolidated", "Number of memories forgotten by the sleep cycle."),
 		memoriesEvicted:      newInt64Counter(meter, "hippocampus.memories.evicted", "Number of memories evicted to meet the capacity target."),
+		memoriesExpired:      newInt64Counter(meter, "hippocampus.memories.expired", "Number of memories forgotten for being older than consolidation.maximumRetentionInDays."),
 		memoriesSearched:     newInt64Counter(meter, "hippocampus.memories.searched", "Number of memories returned by content search, by whether the search reinforced them."),
 		memoryBodyBytes:      newInt64Histogram(meter, "hippocampus.memory.body_bytes", "", "Size in bytes of each memory body accepted and stored."),
 		bytesEvicted:         newInt64Counter(meter, "hippocampus.bytes.evicted", "Estimated bytes reclaimed by capacity eviction."),

@@ -54,8 +54,9 @@ import (
 	"github.com/fastbean-au/hippocampus/integrations/objectstore/objects"
 )
 
-// DefaultCauses are the deletions this agent acts on unless told otherwise: the two decay passes
-// and the cascade that follows them.
+// DefaultCauses are the deletions this agent acts on unless told otherwise: the store's three
+// forgetting passes - consolidation, eviction and the maximum-retention expiry - and the cascade that
+// follows them.
 //
 // The omissions are the interesting part, and each is a way to destroy data that is still wanted.
 //
@@ -76,6 +77,7 @@ import (
 var DefaultCauses = []notify.Cause{
 	notify.CauseConsolidation,
 	notify.CauseEviction,
+	notify.CauseExpiry,
 	notify.CauseCascade,
 }
 
@@ -125,6 +127,7 @@ func known(cause notify.Cause) bool {
 
 	case notify.CauseConsolidation,
 		notify.CauseEviction,
+		notify.CauseExpiry,
 		notify.CauseCascade,
 		notify.CauseClient,
 		notify.CauseClear,

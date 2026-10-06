@@ -165,6 +165,9 @@ func forgetRuleOf(rule contract.ForgetRule) db.ForgetRule {
 	case contract.ForgetRule_FORGET_RULE_EVICTION:
 		return db.ForgetRuleEviction
 
+	case contract.ForgetRule_FORGET_RULE_EXPIRY:
+		return db.ForgetRuleExpiry
+
 	}
 
 	return db.ForgetRuleNone

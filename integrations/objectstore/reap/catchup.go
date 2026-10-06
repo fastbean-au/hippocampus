@@ -103,8 +103,8 @@ func (c *CatchUp) Run(ctx context.Context) (Result, error) {
 }
 
 // actionable turns one page of the log into the ids this agent acts on, applying the same cause
-// filter the push path applies. The log records a RULE rather than a cause, and the two decay
-// passes are exactly the two rules, so the mapping is total.
+// filter the push path applies. The log records a RULE rather than a cause, and the three forgetting
+// passes are exactly the three rules, so the mapping is total.
 func (c *CatchUp) actionable(page []*contract.ForgottenMemory) []string {
 	ids := make([]string, 0, len(page))
 
@@ -127,6 +127,9 @@ func cause(rule contract.ForgetRule) notify.Cause {
 
 	case contract.ForgetRule_FORGET_RULE_EVICTION:
 		return notify.CauseEviction
+
+	case contract.ForgetRule_FORGET_RULE_EXPIRY:
+		return notify.CauseExpiry
 
 	}
 
