@@ -722,7 +722,11 @@ jobs:
   # fail a release that has already published everything else.
   #
   # Best-effort per repository: one unreachable satellite must not stop the others being told, and
-  # none of them can stop the release.
+  # none of them can stop the release - nothing depends on this job, so by the time it runs
+  # everything has published. But a dispatch that fails FAILS THE JOB, once every satellite has been
+  # tried: a warning annotation on an otherwise green run is what let hippocampus-gen's 403 (a PAT
+  # whose repository list did not include it) go unread for three releases, v0.50.0 to v0.51.1. A
+  # red run is the notification; the fix is a manual bump from that satellite's Actions tab.
   #
   # Only a satellite whose consumed surface moved is told. `scripts/family-status.py
   # --dispatch-targets` compares the pin on each satellite's main against this tag over the paths
@@ -770,6 +774,8 @@ jobs:
             targets="all"
           fi
 
+          failed=()
+
           for repo in hippocampus-obsidian hippocampus-otel-collector hippocampus-llamaindex hippocampus-gen; do
             if [ "${targets}" != "all" ] && ! printf '%s\n' "${targets}" | grep -qx "${repo}"; then
               echo "not telling ${repo}: nothing it consumes changed since the release it pins"
@@ -782,8 +788,15 @@ jobs:
                  --field "client_payload[tag]=${RELEASE_TAG}"; then
               echo "dispatched ${RELEASE_TAG} to ${repo}"
             else
-              echo "::warning::could not dispatch to ${repo} - bump it from its own Actions tab with tag ${RELEASE_TAG}"
+              echo "::error::could not dispatch to ${repo} - check SATELLITE_DISPATCH_TOKEN's repository access, then bump it from its own Actions tab with tag ${RELEASE_TAG}"
+              failed+=("${repo}")
             fi
           done
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::${RELEASE_TAG} was not dispatched to: ${failed[*]}"
+
+            exit 1
+          fi
 
           exit 0

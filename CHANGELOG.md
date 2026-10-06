@@ -142,6 +142,12 @@ itself which service version it was built against.
   declared minimum service version. The weekly status report judges a pin stale by the same test,
   and `family_test.go` requires every dispatched satellite to declare a surface whose paths exist.
 
+- **A satellite the release cannot reach now fails the release run.** `notify-satellites` still
+  tries every satellite, but a failed dispatch is now an error, and the job exits non-zero once
+  they have all been tried. It used to be a warning on a green run: `hippocampus-gen` was refused
+  with a 403 on 0.50.0, 0.51.0 and 0.51.1 (the dispatch token's repository list did not include
+  it) and nothing showed until the weekly status report found its pin three releases behind.
+
 ### Fixed
 
 - **The deployment view no longer shows part of a database password in three address shapes.**

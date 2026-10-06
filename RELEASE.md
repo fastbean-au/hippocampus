@@ -56,8 +56,8 @@ pre-flight plus the one command that starts all of that.
   - **Fine-grained PAT:** resource owner `fastbean-au`, _Only select repositories_ → the four above,
     permission **Contents: Read and write** (what the dispatch endpoint requires; Metadata:
     Read-only is mandatory and auto-added). Grant nothing else. A target missing from the
-    repository list fails as a **404**, indistinguishable in the log from a repository that does not
-    exist.
+    repository list fails as a **403** (`Resource not accessible by personal access token`), which
+    is what `hippocampus-gen` returned on 0.50.0, 0.51.0 and 0.51.1.
   - **Classic PAT:** `public_repo` covers every public repository in the family, so a new target
     needs no token change at all — broader than the fine-grained option, and that breadth is the
     trade.
@@ -333,10 +333,12 @@ while the work is in flight — that is what stands the contract gate down (see
    `hippocampus-llamaindex` raises the client wheel its tests install, and `hippocampus-gen` raises
    the same `require` the collector does. Authentication is the `SATELLITE_DISPATCH_TOKEN` PAT,
    because the built-in `GITHUB_TOKEN` is scoped to this repository and cannot dispatch to another;
-   without the secret the job logs a notice and skips, and one unreachable satellite never fails the
-   release. A repository that is not told bumps late — which is what `hippocampus-gen` did for
-   eleven releases on v0.36.1, and why it is on this list at all — but that is not a reason to fail
-   a release which has already published everything else.
+   without the secret the job logs a notice and skips. A dispatch that fails turns the job **red**
+   once every satellite has been tried, naming each one that was not told. That does not undo the
+   release, because nothing depends on this job and everything has already published. It is how
+   you find out to bump that satellite by hand from its own Actions tab. It used to be a warning
+   on a green run, which is how `hippocampus-gen` missed three releases in a row (0.50.0 to 0.51.1)
+   on a token whose repository list did not include it.
 
    **Only a satellite whose consumed surface moved is told.** Each satellite's entry in
    `scripts/family-status.py`'s `SURFACE` table names the paths it builds against (the OpenAPI
