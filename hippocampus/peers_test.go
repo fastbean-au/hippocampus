@@ -102,6 +102,8 @@ func liveInstance(id string, hostname string, role string) db.Instance {
 // this store becomes a node without anybody configuring it anywhere, sourced DISCOVERED so a reader
 // can tell it apart from the components an operator had to type in.
 func TestPeersAreDiscoveredNotDeclared(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newPeerServer(t, []db.Instance{
 		liveInstance("hippo-1:50051", "hippo-1", db.InstanceRoleConsolidator),
 		liveInstance("hippo-2:50051", "hippo-2", db.InstanceRoleReplica),
@@ -177,6 +179,8 @@ func TestPeersAreDiscoveredNotDeclared(t *testing.T) {
 // instance came up as a replica, so nothing is forgetting or evicting and the store simply grows -
 // while each instance individually reports itself perfectly healthy, because it is.
 func TestNoConsolidatorIsWarned(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newPeerServer(t, []db.Instance{
 		liveInstance("hippo-1:50051", "hippo-1", db.InstanceRoleReplica),
 		liveInstance("hippo-2:50051", "hippo-2", db.InstanceRoleReplica),
@@ -203,6 +207,8 @@ func TestNoConsolidatorIsWarned(t *testing.T) {
 // starts before the consolidator has registered, and a banner that appears for a minute after every
 // deploy is one nobody reads the second time.
 func TestNoConsolidatorWarningIsHeldBackAtStartup(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newPeerServer(t, []db.Instance{
 		liveInstance("hippo-1:50051", "hippo-1", db.InstanceRoleReplica),
 	})
@@ -219,6 +225,8 @@ func TestNoConsolidatorWarningIsHeldBackAtStartup(t *testing.T) {
 // TestTwoConsolidatorsAreWarned covers the other side: the single-consolidator lock has been
 // circumvented, or two tiers are pointed at different databases and each believes it is alone.
 func TestTwoConsolidatorsAreWarned(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newPeerServer(t, []db.Instance{
 		liveInstance("hippo-1:50051", "hippo-1", db.InstanceRoleConsolidator),
 		liveInstance("hippo-2:50051", "hippo-2", db.InstanceRoleConsolidator),
@@ -246,6 +254,8 @@ func TestTwoConsolidatorsAreWarned(t *testing.T) {
 // and counting it would report two consolidators at exactly the moment a replacement had correctly
 // taken over, turning the recovery into an alarm.
 func TestStaleRowsAreReportedButNotCounted(t *testing.T) {
+	t.Parallel()
+
 	dead := liveInstance("hippo-2:50051", "hippo-2", db.InstanceRoleConsolidator)
 	dead.LastSeen = time.Now().Add(-5 * time.Minute).UnixNano()
 
@@ -283,6 +293,8 @@ func TestStaleRowsAreReportedButNotCounted(t *testing.T) {
 // failure: a round that cannot read the registry must not replace a good snapshot with an empty
 // one, which renders as every peer having vanished.
 func TestHeartbeatFailureKeepsTheLastSnapshot(t *testing.T) {
+	t.Parallel()
+
 	s, store := newPeerServer(t, []db.Instance{
 		liveInstance("hippo-1:50051", "hippo-1", db.InstanceRoleConsolidator),
 		liveInstance("hippo-2:50051", "hippo-2", db.InstanceRoleReplica),
@@ -305,6 +317,8 @@ func TestHeartbeatFailureKeepsTheLastSnapshot(t *testing.T) {
 // the point of it beyond mere presence: two instances answering the same RPCs with different
 // features enabled is a real misconfiguration that is otherwise entirely silent.
 func TestHeartbeatWritesThisInstancesOwnRow(t *testing.T) {
+	t.Parallel()
+
 	s, store := newPeerServer(t, nil)
 
 	s.heartbeatOnce()
@@ -341,6 +355,8 @@ func TestHeartbeatWritesThisInstancesOwnRow(t *testing.T) {
 // TestHeartbeatIsNotStartedWithoutARegistry covers the three gates, and in particular the SQLite one:
 // there is no table there, so there must be no goroutine, no write, and nothing to stop.
 func TestHeartbeatIsNotStartedWithoutARegistry(t *testing.T) {
+	t.Parallel()
+
 	for name, prepare := range map[string]func(s *Server, store *registryStore){
 		"no registry in the store": func(_ *Server, store *registryStore) { store.available = false },
 		"heartbeating disabled":    func(s *Server, _ *registryStore) { s.topology.heartbeatInterval = 0 },
@@ -370,6 +386,8 @@ func TestHeartbeatIsNotStartedWithoutARegistry(t *testing.T) {
 // An instance that exits cleanly leaves the view at once; the staleness window is for the ones that
 // went without being able to say so.
 func TestStoppingDeregistersThisInstance(t *testing.T) {
+	t.Parallel()
+
 	s, store := newPeerServer(t, nil)
 
 	s.startInstanceHeartbeat()
@@ -395,6 +413,8 @@ func TestStoppingDeregistersThisInstance(t *testing.T) {
 // a minute for as long as it lasts - and saying so when it clears, which is the half that is easy to
 // leave out and the half a reader needs to stop worrying.
 func TestWarningsAreLoggedOnChange(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newPeerServer(t, nil)
 
 	s.logWarningChanges([]string{"a", "b"})

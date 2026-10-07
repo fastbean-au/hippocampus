@@ -148,6 +148,8 @@ func seedLinkEvents(t *testing.T, s *Server, ids ...string) {
 // TestLinkMemories_RPC covers the happy path end to end: the link is written, and reading it back
 // reports the far end, its weight, the outbound direction, and the summed significance.
 func TestLinkMemories_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
 
@@ -191,6 +193,8 @@ func TestLinkMemories_RPC(t *testing.T) {
 // TestLinkEvents_RPC is TestLinkMemories_RPC for events, confirming the shared implementation is
 // wired to the event store methods rather than the memory ones.
 func TestLinkEvents_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkEvents(t, s, "e1", "e2")
 
@@ -220,6 +224,8 @@ func TestLinkEvents_RPC(t *testing.T) {
 // TestLinkMemories_Rejections covers every guard createLinks applies before it writes, in the order
 // it applies them.
 func TestLinkMemories_Rejections(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		id      string
@@ -288,6 +294,8 @@ func TestLinkMemories_Rejections(t *testing.T) {
 // checked in one call: a request naming several unknown ids reports all of them, rather than making
 // the caller discover them one round trip at a time.
 func TestLinkMemories_UnknownIdsAreReportedTogether(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1")
 
@@ -313,6 +321,8 @@ func TestLinkMemories_UnknownIdsAreReportedTogether(t *testing.T) {
 // TestLinkEvents_NoIdRejected covers the event half of createLinks' first guard, which names the
 // kind in its message.
 func TestLinkEvents_NoIdRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	req := &contract.LinkEventsRequest{Links: []*contract.Link{{Id: "e2", Significance: 1}}}
@@ -331,6 +341,8 @@ func TestLinkEvents_NoIdRejected(t *testing.T) {
 // the item would end up holding rather than to the request alone: a caller adding a few links at a
 // time must not be able to walk past the bound indefinitely.
 func TestLinkMemories_CapacityIsCheckedAgainstTheTotalHeld(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	ids := make([]string, 0, types.MaxLinks+2)
@@ -376,6 +388,8 @@ func TestLinkMemories_CapacityIsCheckedAgainstTheTotalHeld(t *testing.T) {
 // re-weighting a link an item already holds must not count as an addition, or an item at the cap
 // could never have its existing links adjusted.
 func TestLinkMemories_RelinkingAtCapacityIsAnUpdate(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	ids := make([]string, 0, types.MaxLinks+1)
@@ -430,6 +444,8 @@ func TestLinkMemories_RelinkingAtCapacityIsAnUpdate(t *testing.T) {
 // TestLinkMemories_StoreFailuresMapToInternal walks the three store calls createLinks makes and
 // confirms each failure reaches the caller as Internal rather than as a raw driver error.
 func TestLinkMemories_StoreFailuresMapToInternal(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		wrap  func(db.Store) db.Store
@@ -494,6 +510,8 @@ func TestLinkMemories_StoreFailuresMapToInternal(t *testing.T) {
 
 // TestUnlinkMemories_RPC covers the happy path, including the deduplication of repeated targets.
 func TestUnlinkMemories_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2", "m3")
 
@@ -535,6 +553,8 @@ func TestUnlinkMemories_RPC(t *testing.T) {
 // near end has to exist, because an unknown target is simply a link that is not there — which is the
 // state the caller asked for.
 func TestUnlinkMemories_UnknownTargetIsNotAnError(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1")
 
@@ -552,6 +572,8 @@ func TestUnlinkMemories_UnknownTargetIsNotAnError(t *testing.T) {
 
 // TestUnlinkEvents_RPC covers the event half of removeLinks.
 func TestUnlinkEvents_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkEvents(t, s, "e1", "e2")
 
@@ -576,6 +598,8 @@ func TestUnlinkEvents_RPC(t *testing.T) {
 
 // TestUnlinkMemories_Rejections covers removeLinks' guards.
 func TestUnlinkMemories_Rejections(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		id      string
@@ -627,6 +651,8 @@ func TestUnlinkMemories_Rejections(t *testing.T) {
 
 // TestUnlinkEvents_NoIdRejected covers the event half of removeLinks' first guard.
 func TestUnlinkEvents_NoIdRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	_, err := s.UnlinkEvents(context.Background(), &contract.UnlinkEventsRequest{Ids: []string{"e2"}})
@@ -641,6 +667,8 @@ func TestUnlinkEvents_NoIdRejected(t *testing.T) {
 
 // TestUnlinkMemories_StoreFailuresMapToInternal walks removeLinks' two store calls.
 func TestUnlinkMemories_StoreFailuresMapToInternal(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		wrap func(db.Store) db.Store
@@ -676,6 +704,8 @@ func TestUnlinkMemories_StoreFailuresMapToInternal(t *testing.T) {
 // TestGetMemoryLinks_Direction confirms the requested direction reaches the store, and that an
 // inbound read reports the edge as inbound relative to the item asked about.
 func TestGetMemoryLinks_Direction(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
 
@@ -733,6 +763,8 @@ func TestGetMemoryLinks_Direction(t *testing.T) {
 
 // TestGetLinks_Rejections covers readLinks' guards on both halves of the graph.
 func TestGetLinks_Rejections(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.GetMemoryLinks(context.Background(), &contract.GetMemoryLinksRequest{}); status.Code(err) != codes.InvalidArgument {
@@ -756,6 +788,8 @@ func TestGetLinks_Rejections(t *testing.T) {
 
 // TestGetMemoryLinks_StoreFailuresMapToInternal walks readLinks' two store calls.
 func TestGetMemoryLinks_StoreFailuresMapToInternal(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		wrap func(db.Store) db.Store
@@ -791,6 +825,8 @@ func TestGetMemoryLinks_StoreFailuresMapToInternal(t *testing.T) {
 // TestStoreMemory_WithLinks covers checkLinkTargets and storeLinks on the create path: a memory
 // created with links has them written once it exists.
 func TestStoreMemory_WithLinks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "existing")
 
@@ -818,6 +854,8 @@ func TestStoreMemory_WithLinks(t *testing.T) {
 // TestStoreMemory_UnknownLinkTargetRejectedBeforeCreate pins checkLinkTargets running before the
 // item is written: a bad link set must not leave a half-created memory behind.
 func TestStoreMemory_UnknownLinkTargetRejectedBeforeCreate(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	memory := &contract.Memory{
@@ -849,6 +887,8 @@ func TestStoreMemory_UnknownLinkTargetRejectedBeforeCreate(t *testing.T) {
 // TestStoreMemory_InvalidLinkSetRejected covers checkLinkTargets' validation branch, which runs
 // before the existence check.
 func TestStoreMemory_InvalidLinkSetRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "target")
 
@@ -874,6 +914,8 @@ func TestStoreMemory_InvalidLinkSetRejected(t *testing.T) {
 
 // TestCheckLinkTargets_StoreFailureMapsToInternal covers checkLinkTargets' store-error branch.
 func TestCheckLinkTargets_StoreFailureMapsToInternal(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "target")
 	s.db = missingErrStore{Store: s.db}
@@ -892,6 +934,8 @@ func TestCheckLinkTargets_StoreFailureMapsToInternal(t *testing.T) {
 
 // TestCheckLinkTargets_NoLinksIsNoOp covers the early return, which must not touch the store at all.
 func TestCheckLinkTargets_NoLinksIsNoOp(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.db = missingErrStore{Store: s.db}
 
@@ -902,6 +946,8 @@ func TestCheckLinkTargets_NoLinksIsNoOp(t *testing.T) {
 
 // TestStoreLinks_BestEffort pins storeLinks' deliberate contract: the item is already stored and
 // acknowledged, so a link write that fails is logged and swallowed rather than losing the write.
+//
+// Not parallel: it hooks the global logger.
 func TestStoreLinks_BestEffort(t *testing.T) {
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
@@ -928,6 +974,8 @@ func TestStoreLinks_BestEffort(t *testing.T) {
 }
 
 // TestStoreLinks_NoLinksIsNoOp covers the early return.
+//
+// Not parallel: it hooks the global logger.
 func TestStoreLinks_NoLinksIsNoOp(t *testing.T) {
 	s := newTestServer(t)
 	s.db = writeLinksErrStore{Store: s.db}
@@ -943,6 +991,8 @@ func TestStoreLinks_NoLinksIsNoOp(t *testing.T) {
 
 // TestStoreEvent_WithLinks covers the event create path's use of checkLinkTargets and storeLinks.
 func TestStoreEvent_WithLinks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkEvents(t, s, "existing")
 
@@ -970,6 +1020,8 @@ func TestStoreEvent_WithLinks(t *testing.T) {
 
 // TestStoreEvent_UnknownLinkTargetRejected covers the event half of the create-path existence check.
 func TestStoreEvent_UnknownLinkTargetRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	event := &contract.Event{
@@ -992,6 +1044,8 @@ func TestStoreEvent_UnknownLinkTargetRejected(t *testing.T) {
 
 // TestAttachMemoryLinks populates a read's memories with their links.
 func TestAttachMemoryLinks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
 
@@ -1016,6 +1070,8 @@ func TestAttachMemoryLinks(t *testing.T) {
 // TestAttachMemoryLinks_BestEffort pins the contract: the memories are the answer, so a link read
 // that fails must leave them intact rather than failing the whole read.
 func TestAttachMemoryLinks_BestEffort(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.db = linksForErrStore{Store: s.db}
 
@@ -1028,6 +1084,8 @@ func TestAttachMemoryLinks_BestEffort(t *testing.T) {
 }
 
 // TestAttachMemoryLinks_EmptyIsNoOp covers the early return.
+//
+// Not parallel: it hooks the global logger.
 func TestAttachMemoryLinks_EmptyIsNoOp(t *testing.T) {
 	s := newTestServer(t)
 	s.db = linksForErrStore{Store: s.db}
@@ -1043,6 +1101,8 @@ func TestAttachMemoryLinks_EmptyIsNoOp(t *testing.T) {
 // TestAttachEventLinks is TestAttachMemoryLinks for the event half, which the archive walk uses so
 // an export carries the event graph.
 func TestAttachEventLinks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkEvents(t, s, "e1", "e2")
 
@@ -1065,6 +1125,8 @@ func TestAttachEventLinks(t *testing.T) {
 
 // TestAttachEventLinks_BestEffort covers the event half's failure branch.
 func TestAttachEventLinks_BestEffort(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.db = linksForErrStore{Store: s.db}
 
@@ -1077,6 +1139,8 @@ func TestAttachEventLinks_BestEffort(t *testing.T) {
 }
 
 // TestAttachEventLinks_EmptyIsNoOp covers the early return.
+//
+// Not parallel: it hooks the global logger.
 func TestAttachEventLinks_EmptyIsNoOp(t *testing.T) {
 	s := newTestServer(t)
 	s.db = linksForErrStore{Store: s.db}
@@ -1091,6 +1155,8 @@ func TestAttachEventLinks_EmptyIsNoOp(t *testing.T) {
 
 // TestReinforceLinked_Disabled pins the default: with linkRecallPropagation at 0 spreading
 // activation is off, so the store is never consulted at all.
+//
+// Not parallel: it hooks the global logger.
 func TestReinforceLinked_Disabled(t *testing.T) {
 	s := newTestServer(t)
 	s.db = linkedIdsErrStore{Store: s.db}
@@ -1106,6 +1172,8 @@ func TestReinforceLinked_Disabled(t *testing.T) {
 }
 
 // TestReinforceLinked_NoIds covers the other half of the early return.
+//
+// Not parallel: it hooks the global logger.
 func TestReinforceLinked_NoIds(t *testing.T) {
 	s := newTestServer(t)
 	s.consolidation.linkRecallPropagation = 0.5
@@ -1124,6 +1192,8 @@ func TestReinforceLinked_NoIds(t *testing.T) {
 // direct neighbours have their decay clocks advanced a fraction of the way toward now, without
 // their recall counts moving.
 func TestReinforceLinked_AdvancesNeighbourDecayClocks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation.linkRecallPropagation = 0.5
 	seedLinkMemories(t, s, "m1", "m2")
@@ -1163,6 +1233,8 @@ func TestReinforceLinked_AdvancesNeighbourDecayClocks(t *testing.T) {
 }
 
 // TestReinforceLinked_NoNeighbours covers the branch where the lookup succeeds but finds nothing.
+//
+// Not parallel: it hooks the global logger.
 func TestReinforceLinked_NoNeighbours(t *testing.T) {
 	s := newTestServer(t)
 	s.consolidation.linkRecallPropagation = 0.5
@@ -1188,6 +1260,8 @@ func TestReinforceLinked_NoNeighbours(t *testing.T) {
 // TestReinforceLinked_StoreFailuresAreSwallowed pins the best-effort contract on both store calls:
 // a failure here must not fail a recall that already succeeded.
 func TestReinforceLinked_StoreFailuresAreSwallowed(t *testing.T) {
+	t.Parallel()
+
 	t.Run("neighbour lookup fails", func(t *testing.T) {
 		s := newTestServer(t)
 		s.consolidation.linkRecallPropagation = 0.5
@@ -1215,6 +1289,8 @@ func TestReinforceLinked_StoreFailuresAreSwallowed(t *testing.T) {
 
 // TestLinkedMemories covers associative retrieval's happy path.
 func TestLinkedMemories(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
 
@@ -1233,6 +1309,8 @@ func TestLinkedMemories(t *testing.T) {
 // not reinforce it: an association is not a retrieval, and spreading activation is the separately
 // configured mechanism that may move those clocks.
 func TestLinkedMemories_IsAPlainRead(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
 
@@ -1260,6 +1338,8 @@ func TestLinkedMemories_IsAPlainRead(t *testing.T) {
 
 // TestLinkedMemories_EmptyAndFailureCases covers the three branches that return nil.
 func TestLinkedMemories_EmptyAndFailureCases(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no ids", func(t *testing.T) {
 		s := newTestServer(t)
 
@@ -1305,6 +1385,8 @@ func TestLinkedMemories_EmptyAndFailureCases(t *testing.T) {
 
 // TestIdsOfMemories covers the projection helper, including the empty case.
 func TestIdsOfMemories(t *testing.T) {
+	t.Parallel()
+
 	got := idsOfMemories([]types.Memory{{Id: "a"}, {Id: "b"}})
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Errorf("unexpected ids: %+v", got)
@@ -1318,6 +1400,8 @@ func TestIdsOfMemories(t *testing.T) {
 // TestRecallMemories_IncludeLinked covers associative recall: the neighbours are appended after the
 // memories actually asked for, and are not themselves counted as recalled.
 func TestRecallMemories_IncludeLinked(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
 
@@ -1351,6 +1435,8 @@ func TestRecallMemories_IncludeLinked(t *testing.T) {
 // TestGetMemories_LinkedTo covers the listing filter's happy path: it resolves to the neighbours'
 // ids and composes with the ordinary filters and pagination.
 func TestGetMemories_LinkedTo(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "hub", "n1", "n2", "unrelated")
 
@@ -1389,6 +1475,8 @@ func TestGetMemories_LinkedTo(t *testing.T) {
 // TestGetMemories_LinkedToUnknownMemory pins the documented NotFound, which distinguishes "that
 // memory does not exist" from "that memory has no neighbours".
 func TestGetMemories_LinkedToUnknownMemory(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	_, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{LinkedTo: "ghost"})
@@ -1405,6 +1493,8 @@ func TestGetMemories_LinkedToUnknownMemory(t *testing.T) {
 // empty page, not an unrestricted one — an empty id set left on the filter would read as "no id
 // restriction" and return the whole store.
 func TestGetMemories_LinkedToWithNoNeighbours(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "lonely", "other-a", "other-b")
 
@@ -1420,6 +1510,8 @@ func TestGetMemories_LinkedToWithNoNeighbours(t *testing.T) {
 
 // TestGetMemories_LinkedToStoreFailures walks the two store calls the filter makes.
 func TestGetMemories_LinkedToStoreFailures(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		wrap func(db.Store) db.Store
@@ -1454,6 +1546,8 @@ func TestGetMemories_LinkedToStoreFailures(t *testing.T) {
 
 // TestGetMemories_Links covers the links option, which populates each returned memory's links.
 func TestGetMemories_Links(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
 
@@ -1492,6 +1586,8 @@ func TestGetMemories_Links(t *testing.T) {
 // imported rows are applied once every row in the batch exists, which is what lets an archive carry
 // a link whose target appears later in the same batch.
 func TestImportBatch_AppliesLinks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	req := &contract.ImportBatchRequest{
@@ -1537,6 +1633,8 @@ func TestImportBatch_AppliesLinks(t *testing.T) {
 // end is in neither the batch nor the store is dropped by the store rather than failing the import,
 // because a partial archive is exactly what that looks like.
 func TestImportBatch_DropsDanglingLinks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	req := &contract.ImportBatchRequest{
@@ -1593,6 +1691,8 @@ func (importLinksErrStore) ImportMemoryLinks(ctx context.Context, links map[stri
 // rows are already committed and counted, so failing the call after that point would tell the caller
 // nothing useful about what to retry.
 func TestImportBatch_LinkFailureDoesNotFailTheImport(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.db = importLinksErrStore{Store: s.db}
 
@@ -1620,6 +1720,8 @@ func TestImportBatch_LinkFailureDoesNotFailTheImport(t *testing.T) {
 // TestImportBatch_RejectsInvalidMetadata covers the metadata validation both ingest paths apply to
 // imported rows: an archive is not a trusted input.
 func TestImportBatch_RejectsInvalidMetadata(t *testing.T) {
+	t.Parallel()
+
 	oversized := strings.Repeat("x", types.MaxMetadataValueLength+1)
 
 	t.Run("event", func(t *testing.T) {

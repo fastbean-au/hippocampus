@@ -16,6 +16,8 @@ import (
 // refuses otherwise), significance from 1 up, and ages from a fraction of a unit to far past any
 // configured horizon.
 func TestDecayIsMonotoneForEveryMethod(t *testing.T) {
+	t.Parallel()
+
 	aggressivenesses := []float64{0.05, 0.37, 0.5, 1, 1.5, 2, 5, 10, 50}
 	significances := []float64{1, 2, 10, 100, 1e4, 1e6}
 	ages := []float64{1e-6, 0.001, 0.1, 0.5, 1, 1.0001, 2, 10, 100, 1000, 1e5, 1e7}

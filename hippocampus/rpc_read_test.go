@@ -15,6 +15,8 @@ import (
 // TestGetEventById_RPC covers the read handler: fetching an event, optionally with its memories,
 // and surfacing a not-found error for an unknown id.
 func TestGetEventById_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 3}); err != nil {
@@ -85,6 +87,8 @@ func TestGetEventById_RPC(t *testing.T) {
 // TestRecallMemories_RPC covers the recall handler: an empty id list is a no-op, and recalling a
 // memory returns it while reinforcing the stored recall count.
 func TestRecallMemories_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "recall me"}); err != nil {
@@ -117,6 +121,8 @@ func TestRecallMemories_RPC(t *testing.T) {
 
 // TestGetMemories_RPC covers the list handler: filtering, the total count, and request validation.
 func TestGetMemories_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	memories := []types.Memory{
@@ -166,6 +172,8 @@ func TestGetMemories_RPC(t *testing.T) {
 // db package declares is accepted here (the two lists are one list, which is the point of exporting
 // it), and order_dir reaches the query.
 func TestGetMemoriesOrdering_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	memories := []types.Memory{
@@ -216,6 +224,8 @@ func TestGetMemoriesOrdering_RPC(t *testing.T) {
 
 // TestGetEventsOrdering_RPC is TestGetMemoriesOrdering_RPC's counterpart for the events listing.
 func TestGetEventsOrdering_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	events := []types.Event{

@@ -22,6 +22,8 @@ import (
 // the store would serialise them on SQLite's one pooled connection, and the race detector reads that
 // as ordering, so the race would go unreported.
 func TestPreviewSnapshotDoesNotRaceTheCycle(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -129,6 +131,8 @@ func gatedServer(t *testing.T) (*Server, gatedUsedBytes) {
 // TestALeaderGivingUpDoesNotFailItsFollowers drives both shared snapshots: one console tab closing
 // must not fail the request of every other viewer that joined its scan.
 func TestALeaderGivingUpDoesNotFailItsFollowers(t *testing.T) {
+	t.Parallel()
+
 	calls := map[string]func(s *Server, ctx context.Context) error{
 		"preview": func(s *Server, ctx context.Context) error {
 			_, err := s.previewOnce(ctx, db.PreviewLimit(0))
@@ -212,6 +216,8 @@ func (g gatedCycle) BeginCallbackCycle(cycleId int64) {
 // shutdown that stopped the gRPC server could close the database beneath it. Stop now waits, and no
 // cycle starts once it has begun.
 func TestStopWaitsForACycleInFlight(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)

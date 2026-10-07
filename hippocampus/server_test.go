@@ -28,6 +28,8 @@ import (
 // many goroutines at s.sleepGroup with the same key sleepOnce uses and asserts at most one is
 // ever inside the guarded section at a time, and that not every caller ran it themselves.
 func TestSleepOnce_ConcurrentCallersShareOneExecution(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	var (
@@ -91,6 +93,8 @@ func TestSleepOnce_ConcurrentCallersShareOneExecution(t *testing.T) {
 // InterceptorBlockWhenPurgeInProgress from every RPC's own goroutine; before it became an
 // atomic.Bool this was an unsynchronised read/write of a plain bool across goroutines.
 func TestPurgeInProgress_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -158,6 +162,8 @@ func walTestServer(t *testing.T, walTriggerBytes int64) (*Server, *db.DB) {
 // TestCheckWALTrigger_RunsSleepWhenOverThreshold verifies that checkWALTrigger runs a sleep cycle
 // (and so checkpoints the WAL, per Preserve) once the on-disk WAL exceeds walTriggerBytes.
 func TestCheckWALTrigger_RunsSleepWhenOverThreshold(t *testing.T) {
+	t.Parallel()
+
 	s, database := walTestServer(t, 1)
 
 	body := make([]byte, 256*1024)
@@ -189,6 +195,8 @@ func TestCheckWALTrigger_RunsSleepWhenOverThreshold(t *testing.T) {
 // TestCheckWALTrigger_NoOpBelowThreshold verifies that checkWALTrigger leaves the WAL alone when
 // it hasn't reached walTriggerBytes yet.
 func TestCheckWALTrigger_NoOpBelowThreshold(t *testing.T) {
+	t.Parallel()
+
 	s, database := walTestServer(t, 1<<30)
 
 	body := make([]byte, 256*1024)
@@ -252,6 +260,8 @@ func (r *recordingStore) WALBytes() (int64, error) {
 // walCheckInterval, more often than the period - restarted the countdown before it could elapse and
 // the timed cycle never fired. Here walTriggerBytes is so high the WAL never triggers a cycle, so
 // the only way CountMemories runs is the timer firing.
+//
+// Not parallel: it replaces a package variable (walCheckInterval).
 func TestAutoSleep_TimedCycleFiresWithWALTriggerEnabled(t *testing.T) {
 	// Poll the WAL far more often than the sleep period, the condition that exposed the bug.
 	orig := walCheckInterval
@@ -297,6 +307,8 @@ func TestAutoSleep_TimedCycleFiresWithWALTriggerEnabled(t *testing.T) {
 // be closed without a sleep cycle racing it. The server is built by hand (not New) against a tiny
 // period, so the loop runs many cycles quickly.
 func TestStop_HaltsSleepBeforeClose(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -353,6 +365,8 @@ func TestStop_HaltsSleepBeforeClose(t *testing.T) {
 // TestStop_Idempotent verifies Stop can be called more than once (and on a server that never
 // started autoSleep) without panicking on a double channel close.
 func TestStop_Idempotent(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -386,6 +400,8 @@ func TestStop_Idempotent(t *testing.T) {
 // buffer (buffer size 1, e.g. autoSleep mid-cycle and not yet reading) would hang the RPC. Here
 // nothing reads the channel and it is pre-filled, so a blocking send would deadlock.
 func TestSleep_NonBlockingResetWhenBufferFull(t *testing.T) {
+	t.Parallel()
+
 	s, _ := walTestServer(t, 0)
 
 	s.sleepReset = make(chan bool, 1)
@@ -412,6 +428,8 @@ func TestSleep_NonBlockingResetWhenBufferFull(t *testing.T) {
 // consolidation scan, since it does not hold the single-consolidator lock and would otherwise race
 // the consolidating instance against shared data.
 func TestSleep_RejectedWhenConsolidationDisabled(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -452,6 +470,8 @@ func TestSleep_RejectedWhenConsolidationDisabled(t *testing.T) {
 // set, so no cycle ever fires. The period is a single second, so a consolidating instance would run
 // a cycle well within the wait window; a replica must run none.
 func TestNew_ConsolidationDisabledRunsNoTimedSleep(t *testing.T) {
+	t.Parallel()
+
 	cfg := testConfig()
 	cfg.Consolidation.Enabled = false
 	cfg.SleepPeriod = time.Second
@@ -492,6 +512,8 @@ func TestNew_ConsolidationDisabledRunsNoTimedSleep(t *testing.T) {
 // wrapped context.Canceled/context.DeadlineExceeded must map to the matching gRPC code rather than
 // falling through to the generic codes.Internal masking.
 func TestMapError_ContextErrors(t *testing.T) {
+	t.Parallel()
+
 	if got := status.Code(mapError(fmt.Errorf("query: %w", context.Canceled))); got != codes.Canceled {
 		t.Errorf("expected codes.Canceled, got %s", got)
 	}
@@ -506,6 +528,8 @@ func TestMapError_ContextErrors(t *testing.T) {
 // mapError, which masks it), and any other error is returned unchanged so an admin retrying a
 // failed Clear sees the real cause.
 func TestMapWriteError_NilAndPassthrough(t *testing.T) {
+	t.Parallel()
+
 	if err := mapWriteError(nil); err != nil {
 		t.Errorf("expected nil to stay nil, got %v", err)
 	}
@@ -560,6 +584,8 @@ func (c *countingSleepStore) snapshot() int {
 // TestCheckWALTrigger_WALBytesErrorIsNoOp verifies a failure reading the WAL size is logged and
 // otherwise ignored - it must not panic or run a spurious sleep cycle.
 func TestCheckWALTrigger_WALBytesErrorIsNoOp(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -590,6 +616,8 @@ func TestCheckWALTrigger_WALBytesErrorIsNoOp(t *testing.T) {
 // on the reset channel when there is room (the complementary case to
 // TestSleep_NonBlockingResetWhenBufferFull, which only proves the full-buffer case doesn't block).
 func TestSleep_ResetSentWhenBufferHasRoom(t *testing.T) {
+	t.Parallel()
+
 	s, _ := walTestServer(t, 0)
 	s.sleepReset = make(chan bool, 1)
 
@@ -615,6 +643,8 @@ func TestSleep_ResetSentWhenBufferHasRoom(t *testing.T) {
 // rather than dereferencing the nil timer. If it ever blocked or panicked, the reset channel would
 // never drain and this test would time out.
 func TestAutoSleep_ManualResetWithTimedSleepDisabled(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -655,6 +685,8 @@ func TestAutoSleep_ManualResetWithTimedSleepDisabled(t *testing.T) {
 // sweep goroutine (stopReconcile/reconcileStopped non-nil), and Stop must drain it promptly rather
 // than hanging.
 func TestNew_StartsAndStopsReconcile(t *testing.T) {
+	t.Parallel()
+
 	cfg := testConfig()
 	cfg.Consolidation.Enabled = true
 	cfg.Reconcile.Interval = time.Hour
@@ -692,6 +724,8 @@ func TestNew_StartsAndStopsReconcile(t *testing.T) {
 // TestNew_TransferTokenWithoutTLSWarns verifies New logs a warning when transfer.token is
 // configured without transfer.tls, mirroring the server-side auth-without-TLS warning - a
 // plaintext bearer token sent to the transfer target is a real exposure worth flagging.
+//
+// Not parallel: it changes the global logger.
 func TestNew_TransferTokenWithoutTLSWarns(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -731,6 +765,8 @@ func (f failPurgeStore) Purge(ctx context.Context) error {
 // returned raw, and purgeInProgress is still cleared afterwards so subsequent RPCs are not blocked
 // forever.
 func TestPurge_ErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -755,6 +791,8 @@ func TestPurge_ErrorMapped(t *testing.T) {
 // the purge gate would stop recognising Hippocampus RPCs and serve them from a store that is being
 // emptied underneath them.
 func TestServicePrefixMatchesDescriptor(t *testing.T) {
+	t.Parallel()
+
 	if want := "/" + contract.Hippocampus_ServiceDesc.ServiceName + "/"; hippocampusServicePrefix != want {
 		t.Fatalf("hippocampusServicePrefix = %q, want %q", hippocampusServicePrefix, want)
 	}
@@ -766,6 +804,8 @@ func TestServicePrefixMatchesDescriptor(t *testing.T) {
 // into forgetting nothing at all - all three presented as silence. Each branch must therefore name
 // the mode it is in, and the row-capacity one must say plainly that nothing is evicted on the row
 // count, since "capacityMemories: 100000" reads like a cap and is not one.
+//
+// Not parallel: it changes the global logger.
 func TestLogForgettingMode(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -956,6 +996,8 @@ func TestLogForgettingMode(t *testing.T) {
 // notifier and a delete-syncing search backend respectively; what is under test here is Stop's
 // drain, not their construction.
 func TestStopDrainsEveryWorker(t *testing.T) {
+	t.Parallel()
+
 	// Long enough that a Stop skipping this worker's wait returns well inside it, short enough not
 	// to slow the suite.
 	const confirmDelay = 300 * time.Millisecond
@@ -1038,6 +1080,8 @@ func TestStopDrainsEveryWorker(t *testing.T) {
 // ran New, so none of the optional workers were started - returns rather than blocking on a
 // confirmation nothing will send.
 func TestStopIsANoOpWithoutWorkers(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	done := make(chan struct{})

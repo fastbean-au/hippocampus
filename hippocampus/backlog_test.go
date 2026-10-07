@@ -98,6 +98,8 @@ func countMemories(t *testing.T, database *db.DB) int {
 // TestAStalledCycleForgetsNothing is the whole point of the stall: with the backlog past the caps,
 // a real cycle runs and deletes nothing, and says so.
 func TestAStalledCycleForgetsNothing(t *testing.T) {
+	t.Parallel()
+
 	s, database := stallServer(t, BacklogStall, db.QueueBounds{MaxRows: 3})
 
 	seedForgettable(t, database, "m1", "m2", "m3")
@@ -134,6 +136,8 @@ func TestAStalledCycleForgetsNothing(t *testing.T) {
 // TestTheStallClearsWhenTheBacklogDrains pins that the valve is a valve. A stall that outlived the
 // outage would be a store that never forgets again after one bad afternoon.
 func TestTheStallClearsWhenTheBacklogDrains(t *testing.T) {
+	t.Parallel()
+
 	s, database := stallServer(t, BacklogStall, db.QueueBounds{MaxRows: 3})
 	ctx := context.Background()
 
@@ -180,6 +184,8 @@ func TestTheStallClearsWhenTheBacklogDrains(t *testing.T) {
 // TestOnlyTheStallPolicyStopsForgetting is the other two values, and the one that protects every
 // existing deployment: the same backlog under abandon or retain must not hold the cycle.
 func TestOnlyTheStallPolicyStopsForgetting(t *testing.T) {
+	t.Parallel()
+
 	for _, policy := range []BacklogPolicy{BacklogAbandon, BacklogRetain} {
 		t.Run(policy.String(), func(t *testing.T) {
 			s, database := stallServer(t, policy, db.QueueBounds{MaxRows: 3})
@@ -201,6 +207,8 @@ func TestOnlyTheStallPolicyStopsForgetting(t *testing.T) {
 // TestTheStallIsJudgedOnEveryCap covers the three axes separately, because they are three different
 // comparisons and an operator who set only one of them gets only that one.
 func TestTheStallIsJudgedOnEveryCap(t *testing.T) {
+	t.Parallel()
+
 	stale := time.Now().Add(-48 * time.Hour).UnixNano()
 
 	cases := []struct {
@@ -246,6 +254,8 @@ func TestTheStallIsJudgedOnEveryCap(t *testing.T) {
 // it. The receiver is by definition down while this is happening, so it learns of the stall when it
 // comes back or not at all.
 func TestASleepCompletedDeliveryCarriesTheStall(t *testing.T) {
+	t.Parallel()
+
 	s, database := stallServer(t, BacklogStall, db.QueueBounds{MaxRows: 3})
 	s.callbackSleepEvents = true
 
@@ -286,6 +296,8 @@ func TestASleepCompletedDeliveryCarriesTheStall(t *testing.T) {
 // TestParseBacklogPolicy pins the spellings, since a value the validator accepts and the server
 // silently defaults would be the worst of both.
 func TestParseBacklogPolicy(t *testing.T) {
+	t.Parallel()
+
 	for spelling, want := range map[string]BacklogPolicy{
 		"":         BacklogAbandon,
 		"abandon":  BacklogAbandon,
@@ -326,6 +338,8 @@ func (backlogErrStore) CallbackBacklog(context.Context) (db.CallbackBacklog, err
 // the backlog cannot be measured the cycle runs. Holding it off would stop the store forgetting for
 // a reason unrelated to the receiver - the store's own storage failing - so the failure is logged
 // and forgetting carries on.
+//
+// Not parallel: it hooks the global logger.
 func TestAnUnreadableBacklogIsNotAStall(t *testing.T) {
 	s, database := stallServer(t, BacklogStall, db.QueueBounds{MaxRows: 1})
 

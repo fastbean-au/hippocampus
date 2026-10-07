@@ -22,6 +22,8 @@ import (
 // small on both of its own axes but over the external one must still feel pressure, which is the
 // whole point - a pointer-memory is two hundred bytes and the payload behind it is forty kilobytes.
 func TestCalculateCapacityPressure_ExternalUtilisation(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			capacityMemories:         1000,
@@ -60,6 +62,8 @@ func TestCalculateCapacityPressure_ExternalUtilisation(t *testing.T) {
 // TestExternalEvictionFloor covers the second hysteresis floor, which reads exactly as the first
 // does: honoured only when positive and actually below the target it provides headroom under.
 func TestExternalEvictionFloor(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{capacityExternalBytes: 1000}}
 
 	tests := []struct {
@@ -102,6 +106,8 @@ func (e *externalCountingStore) ExternalBytes(ctx context.Context) (int64, error
 // reports - an unconfigured external axis has nothing to say: every memory's external size is 0 and
 // no decision reads the sum, so the scan would buy a gauge nobody asked for.
 func TestEvictOnlyMeasuresTheExternalAxisWhenConfigured(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		capacity int64
@@ -135,6 +141,8 @@ func TestEvictOnlyMeasuresTheExternalAxisWhenConfigured(t *testing.T) {
 // TestEvictRunsOnTheExternalAxisAlone is the behaviour the axis exists to add: a store well under
 // its own byte target, over the target for the payload it points at, evicting anyway.
 func TestEvictRunsOnTheExternalAxisAlone(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	// No byte capacity at all, so nothing about this store's own size can trigger the pass.
@@ -187,6 +195,8 @@ func TestEvictRunsOnTheExternalAxisAlone(t *testing.T) {
 // TestEvictDoesNotRunWhenNeitherAxisIsOver guards the other direction: a store inside both targets
 // must delete nothing, so a configured external axis cannot make eviction unconditional.
 func TestEvictDoesNotRunWhenNeitherAxisIsOver(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	s.consolidation.capacityBytes = 1 << 30
@@ -209,6 +219,8 @@ func TestEvictDoesNotRunWhenNeitherAxisIsOver(t *testing.T) {
 // TestPreviewReportsTheExternalAxis covers the dry run's half: the figures a client reads to
 // understand a pressure reading its own size does not account for.
 func TestPreviewReportsTheExternalAxis(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	s.consolidation.capacityExternalBytes = 5000
@@ -271,6 +283,8 @@ func (*failingExternalStore) ExternalBytes(context.Context) (int64, error) {
 // target off for that cycle, which is the worst of the available answers: eviction would stop
 // reclaiming exactly when it was most needed and nothing would say so.
 func TestSleepFailsWhenTheExternalAxisCannotBeMeasured(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.capacityExternalBytes = 1 << 20
 
@@ -287,6 +301,8 @@ func TestSleepFailsWhenTheExternalAxisCannotBeMeasured(t *testing.T) {
 // preview reports the axis's utilisation, so a zero would describe a store with a target it is
 // nowhere near - a dry run that disagrees with the cycle it is describing.
 func TestPreviewFailsWhenTheExternalAxisCannotBeMeasured(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.capacityExternalBytes = 1 << 20
 
@@ -304,6 +320,8 @@ func TestPreviewFailsWhenTheExternalAxisCannotBeMeasured(t *testing.T) {
 // factor, so a one-cycle-old reading is fine, and the hard caps are still enforced against fresh
 // readings in evict().
 func TestPressureReusesTheExternalReading(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.capacityExternalBytes = 10_000
 	s.consolidation.deletionThreshold = -1
@@ -344,6 +362,8 @@ func TestPressureReusesTheExternalReading(t *testing.T) {
 // retention gauges. It is the one condition under which the external capacity target silently stops
 // being achievable - retention overrides the target, so eviction can never bring the axis back under
 // it - and it is logged as well as counted for the deployments with no metrics stack.
+//
+// Not parallel: it changes the global logger.
 func TestRetentionWarnsWhenItHoldsTheExternalAxisOverItsTarget(t *testing.T) {
 	s, database := previewTestServer(t)
 	s.consolidation.minimumRetentionInDays = 7
@@ -385,6 +405,8 @@ func TestRetentionWarnsWhenItHoldsTheExternalAxisOverItsTarget(t *testing.T) {
 // TestRetentionSaysNothingAboutAnUnconfiguredExternalAxis is the gate's other side: without a target
 // there is nothing for the figure to be unreachable against, so neither the gauge nor the warning is
 // published.
+//
+// Not parallel: it changes the global logger.
 func TestRetentionSaysNothingAboutAnUnconfiguredExternalAxis(t *testing.T) {
 	s, database := previewTestServer(t)
 	s.consolidation.minimumRetentionInDays = 7
@@ -417,6 +439,8 @@ func TestRetentionSaysNothingAboutAnUnconfiguredExternalAxis(t *testing.T) {
 // sleep goroutine is mutating. The preview writes no tombstones - it deletes nothing - so this is
 // reached only through db.Server, and only a direct call exercises it.
 func TestPreviewDeciderReportsTheSnapshotThreshold(t *testing.T) {
+	t.Parallel()
+
 	s, _ := previewTestServer(t)
 	s.consolidation.deletionThreshold = 2
 

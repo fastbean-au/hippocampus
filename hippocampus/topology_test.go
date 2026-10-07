@@ -31,6 +31,8 @@ import (
 // connection strings, both Postgres forms, an authenticated OpenSearch URL - and each one hides a
 // secret in a different position.
 func TestRedactEndpoint(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		raw  string
 		want string
@@ -94,6 +96,8 @@ func TestRedactEndpoint(t *testing.T) {
 // this asserts the absence rather than the exact output, which is what actually matters and what
 // would still hold if a new driver arrived with a fourth syntax.
 func TestRedactEndpointNeverLeaksASecret(t *testing.T) {
+	t.Parallel()
+
 	const secret = "sup3rs3cret"
 
 	for _, raw := range []string{
@@ -116,6 +120,8 @@ func TestRedactEndpointNeverLeaksASecret(t *testing.T) {
 // dependency that answered and is unhappy is not the same operational problem as one that cannot be
 // reached, and an operator sent to look at the wrong one loses the time it takes to find out.
 func TestTopologyStatusFor(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		err  error
 		want contract.TopologyStatus
@@ -206,6 +212,8 @@ func nodesById(res *contract.GetTopologyResponse) map[string]*contract.TopologyN
 // instance, its store, and the store-backed search index that comes with it - each sourced as
 // something the instance knows first-hand rather than something it was told.
 func TestGetTopologyDescribesTheDefaultDeployment(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
@@ -255,6 +263,8 @@ func TestGetTopologyDescribesTheDefaultDeployment(t *testing.T) {
 // node naming the key that enables it, and by nothing else this service says - so dropping these
 // nodes would quietly remove the view's most useful answer.
 func TestGetTopologyReportsDisabledComponents(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
@@ -299,6 +309,8 @@ func (unpingableObjectStore) Get(context.Context, string) (io.ReadCloser, error)
 // the address shown is the redacted one - a builder that forgets redactEndpoint is invisible until
 // somebody reads a password off a console.
 func TestGetTopologyDescribesAFullyConfiguredDeployment(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	index, err := search.NewOpenSearch(search.Config{
@@ -393,6 +405,8 @@ func TestGetTopologyDescribesAFullyConfiguredDeployment(t *testing.T) {
 // states: with OpenSearch off, SQLite still has a working content-search index and the server
 // drivers have none, and only the live dependency says which happened.
 func TestSearchNodeReportsTheStoreBackedIndex(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	index, err := search.NewSQL(s.db.(*db.DB))
@@ -429,6 +443,8 @@ func TestSearchNodeReportsTheStoreBackedIndex(t *testing.T) {
 // replica runs no cycle, and reporting the numbers it does not act on would send an operator to
 // tune the wrong instance.
 func TestReplicaOmitsTheConsolidationSettings(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.consolidationEnabled = false
 	rebuildTopology(s, topologyTestConfig())
@@ -454,6 +470,8 @@ func TestReplicaOmitsTheConsolidationSettings(t *testing.T) {
 // than block, since a transfer target is the one dependency on the far side of somebody else's
 // network.
 func TestProbeTransferTargetReportsAnUnreachableTarget(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.transfer.targetAddress = "127.0.0.1:1"
 
@@ -468,6 +486,8 @@ func TestProbeTransferTargetReportsAnUnreachableTarget(t *testing.T) {
 // TestRedactEndpointsJoinsAndRedacts covers the list form used for a multi-node cluster, including
 // that an empty entry is dropped rather than rendered as a stray separator.
 func TestRedactEndpointsJoinsAndRedacts(t *testing.T) {
+	t.Parallel()
+
 	got := redactEndpoints([]string{"https://admin:pw@one:9200", "", "https://two:9200"})
 
 	if got != "https://one:9200, https://two:9200" {
@@ -479,6 +499,8 @@ func TestRedactEndpointsJoinsAndRedacts(t *testing.T) {
 // the response draws a line to nowhere, which a diagram renders as either a crash or a stray arrow.
 // It is the failure mode a hand-written edge list has, so it is the one worth a test.
 func TestTopologyEdgesTerminateOnNodes(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
@@ -503,6 +525,8 @@ func TestTopologyEdgesTerminateOnNodes(t *testing.T) {
 // that redactEndpoint is correct if a builder forgets to call it, and the store is the node most
 // likely to be handed a password.
 func TestGetTopologyRedactsTheStoreDSN(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	cfg := topologyTestConfig()
@@ -535,6 +559,8 @@ func TestGetTopologyRedactsTheStoreDSN(t *testing.T) {
 // rather than an empty deployment, since a client cannot tell "nothing is configured" from
 // "nobody is answering" out of an empty node list.
 func TestGetTopologyRefusedWhenDisabled(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.topology.enabled = false
 
@@ -548,6 +574,8 @@ func TestGetTopologyRefusedWhenDisabled(t *testing.T) {
 // all from it - and an empty string has to mean "switched off" rather than "unset", or a disabled
 // deployment would show a tab that always fails.
 func TestTopologyTierReportedByWhoAmI(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	if tier := s.topologyTier(); tier != auth.TierReader.String() {
@@ -572,6 +600,8 @@ func TestTopologyTierReportedByWhoAmI(t *testing.T) {
 // by the probe timeout rather than by the caller, which is the whole reason probing does not happen
 // inside the handler.
 func TestTopologyProberPublishesResults(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.topology.probeTimeout = 50 * time.Millisecond
 
@@ -624,6 +654,8 @@ func TestTopologyProberPublishesResults(t *testing.T) {
 // probe: the RPC must answer, and must answer with "not checked" rather than with a status nobody
 // established.
 func TestTopologyProbeResultsBeforeTheFirstRound(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	if results := s.topologyProbeResults(); results == nil {
@@ -649,6 +681,8 @@ func TestTopologyProbeResultsBeforeTheFirstRound(t *testing.T) {
 // TestTopologyProberStops covers shutdown: Stop must drain the prober like it drains the sleep and
 // reconcile loops, or a probe outlives the database it pings.
 func TestTopologyProberStops(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.topology.probeInterval = 10 * time.Millisecond
 
@@ -680,6 +714,8 @@ func TestTopologyProberStops(t *testing.T) {
 // no memories allowed, and an empty bind address could mean unconfigured or every interface. Each
 // pair below is one of those readings against its opposite.
 func TestTopologyValueRenderers(t *testing.T) {
+	t.Parallel()
+
 	if got := countDescription(0); got != "unset" {
 		t.Errorf("countDescription(0) = %q, want unset", got)
 	}
@@ -718,6 +754,8 @@ func TestTopologyValueRenderers(t *testing.T) {
 // (resolveAuthMethod in package main, tested there), so the view cannot disagree with what is
 // enforced.
 func TestTopologyReportsTheResolvedAuthMethod(t *testing.T) {
+	t.Parallel()
+
 	for method, want := range map[string]string{"": "none", "hmac": "hmac", "idp": "idp"} {
 		cfg := topologyTestConfig()
 		cfg.Deployment.AuthMethod = method
@@ -732,6 +770,8 @@ func TestTopologyReportsTheResolvedAuthMethod(t *testing.T) {
 // config file looks like "not configured" and in a listener means every interface, and the second
 // is the one an operator needs to be shown.
 func TestBindAddressRendersEveryInterface(t *testing.T) {
+	t.Parallel()
+
 	if got := bindAddressOrAll(""); got != "0.0.0.0" {
 		t.Errorf("an unset bind address renders as %q, want 0.0.0.0", got)
 	}
@@ -744,6 +784,8 @@ func TestBindAddressRendersEveryInterface(t *testing.T) {
 // TestGatewayDisabledIsReportedAsSuch covers the zero port, which is a supported mode rather than a
 // mistake - and one that takes the console, the OpenAPI document and the HTTP probes with it.
 func TestGatewayDisabledIsReportedAsSuch(t *testing.T) {
+	t.Parallel()
+
 	if got := gatewayDescription(Deployment{}); got != "disabled" {
 		t.Errorf("gatewayDescription with no port = %q, want disabled", got)
 	}
@@ -777,6 +819,8 @@ func declaredServer(t *testing.T, components ...TopologyComponent) *Server {
 // discover. What matters is the source: a declared component is not something this instance found,
 // and a client that rendered it as though it were would be presenting a survey it never made.
 func TestDeclaredComponentsAppearAsDeclared(t *testing.T) {
+	t.Parallel()
+
 	s := declaredServer(t,
 		TopologyComponent{Name: "nats-bridge", Kind: "bridge", HealthURL: "http://nats-bridge:8090"},
 		TopologyComponent{Name: "ingestor", Kind: "ingestor", HealthURL: "http://ingestor:8090"},
@@ -819,6 +863,8 @@ func TestDeclaredComponentsAppearAsDeclared(t *testing.T) {
 // runs outward, so an inward one is what makes the picture a deployment rather than a dependency
 // list.
 func TestDeclaredComponentEdgesPointInward(t *testing.T) {
+	t.Parallel()
+
 	s := declaredServer(t, TopologyComponent{Name: "mqtt-bridge", Kind: "bridge", HealthURL: "http://mqtt:8090"})
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
@@ -855,6 +901,8 @@ func TestDeclaredComponentEdgesPointInward(t *testing.T) {
 // TestDeclaredComponentsAreAlwaysProbed pins that a declared component gets a probe. One without is
 // a comment in a config file rendered as a live component, which is why healthUrl is required.
 func TestDeclaredComponentsAreAlwaysProbed(t *testing.T) {
+	t.Parallel()
+
 	s := declaredServer(t, TopologyComponent{Name: "cli-host", Kind: "client", HealthURL: "http://host:9000"})
 
 	if _, ok := s.topologyProbers()["declared:cli-host"]; !ok {
@@ -866,6 +914,8 @@ func TestDeclaredComponentsAreAlwaysProbed(t *testing.T) {
 // bridge serves its health on and nothing else, so a bare URL gets /readyz appended; a URL carrying
 // a path belongs to something behind a proxy and is used as written.
 func TestHealthProbeURL(t *testing.T) {
+	t.Parallel()
+
 	for raw, want := range map[string]string{
 		"http://bridge:8090":          "http://bridge:8090/readyz",
 		"http://bridge:8090/":         "http://bridge:8090/readyz",
@@ -884,6 +934,8 @@ func TestHealthProbeURL(t *testing.T) {
 // component that is running and cannot reach its own broker says so, instead of rendering
 // identically to one that cannot reach us.
 func TestProbeHealthEndpoint(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		status       int
 		body         string
@@ -975,6 +1027,8 @@ func TestProbeHealthEndpoint(t *testing.T) {
 // TestProbeHealthEndpointUnreachable covers a component that is not answering at all - which must be
 // distinguishable from one answering 503, since they are different problems with different owners.
 func TestProbeHealthEndpointUnreachable(t *testing.T) {
+	t.Parallel()
+
 	_, err := probeHealthEndpoint(context.Background(), "http://127.0.0.1:1/readyz")
 
 	if err == nil {
@@ -993,6 +1047,8 @@ func TestProbeHealthEndpointUnreachable(t *testing.T) {
 // TestDeclaredComponentStatusReachesTheResponse is the end-to-end form: a component reporting itself
 // not ready must arrive at the caller as DEGRADED with its own explanation, not as a bare colour.
 func TestDeclaredComponentStatusReachesTheResponse(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"status":"not ready","dependencies":{"hippocampus":"unreachable"}}`))
@@ -1028,6 +1084,8 @@ func TestDeclaredComponentStatusReachesTheResponse(t *testing.T) {
 // declared list operator-controlled, a sequential round no longer fits inside its own interval - so
 // this asserts a round of slow probes takes closer to one timeout than to N of them.
 func TestProbeRoundRunsConcurrently(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.topology.probeTimeout = 200 * time.Millisecond
 
@@ -1061,6 +1119,8 @@ func TestProbeRoundRunsConcurrently(t *testing.T) {
 // config file - main.go's validation refuses anything else at startup - so the set is derived from
 // the table here rather than restated there, and this is what stops the two drifting.
 func TestTopologyComponentKinds(t *testing.T) {
+	t.Parallel()
+
 	kinds := TopologyComponentKinds()
 
 	if !slices.IsSorted(kinds) {
@@ -1082,6 +1142,8 @@ func TestTopologyComponentKinds(t *testing.T) {
 // running service. Drawing a generic client beats drawing nothing if a kind ever does get through -
 // a component missing from the diagram is far harder to notice than one with the wrong shape.
 func TestDeclaredNodeFallsBackOnAnUnknownKind(t *testing.T) {
+	t.Parallel()
+
 	spec := declaredNodeSpec(TopologyComponent{Name: "odd", Kind: "broker", HealthURL: "http://x:1"})
 
 	if spec.kind != contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_CLIENT {
@@ -1097,6 +1159,8 @@ func TestDeclaredNodeFallsBackOnAnUnknownKind(t *testing.T) {
 // name with no component behind it means the two have disagreed, and returning nil leaves the node
 // reporting "not checked" rather than panicking on a nil URL.
 func TestDeclaredProbeUnknownName(t *testing.T) {
+	t.Parallel()
+
 	s := declaredServer(t, TopologyComponent{Name: "known", Kind: "bridge", HealthURL: "http://x:1"})
 
 	if probe := s.declaredProbe("missing"); probe != nil {
@@ -1115,6 +1179,8 @@ func TestDeclaredProbeUnknownName(t *testing.T) {
 // symptom was a node shown as DISABLED while spans were being exported to it, carrying an
 // `enable_with` hint naming a key an operator could set to no effect.
 func TestCollectorNodeReportsATracesOnlyDeployment(t *testing.T) {
+	t.Parallel()
+
 	spec := collectorNodeSpec(Deployment{TracingEnabled: true, OTLPEndpoint: "otel-lgtm:4317"})
 
 	if spec.staticStatus == contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED {
@@ -1142,6 +1208,8 @@ func TestCollectorNodeReportsATracesOnlyDeployment(t *testing.T) {
 // different configuration key, and getting the pairing wrong shows an operator an empty detail on
 // exactly one driver - the sort of thing nothing else notices, since the node is still there.
 func TestStoreNodeNamesTheServerDialects(t *testing.T) {
+	t.Parallel()
+
 	spec := (&Server{}).storeNodeSpec(Deployment{
 		StorageDriver: "mysql",
 		StorageDSN:    "hippo:sup3rs3cret@tcp(db.internal:3306)/hippocampus",
@@ -1165,6 +1233,8 @@ func TestStoreNodeNamesTheServerDialects(t *testing.T) {
 // reaching here skipped validation, and showing what is actually configured beats a default that
 // would report a model server nobody is running.
 func TestProviderDisplayName(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"openai":  "OpenAI-compatible",
 		"ollama":  "Ollama",
@@ -1184,6 +1254,8 @@ func TestProviderDisplayName(t *testing.T) {
 // what main.go was asked for rather than what it built, and those differ on any startup where both
 // backends were configured.
 func TestObjectStoreNodeNamesTheFilesystemBackend(t *testing.T) {
+	t.Parallel()
+
 	directory := t.TempDir()
 
 	store, err := archive.NewFileStore(directory)
@@ -1222,6 +1294,8 @@ func TestObjectStoreNodeNamesTheFilesystemBackend(t *testing.T) {
 // alone is a supported deployment - discovery is the convenience, not the requirement - and a node
 // with no detail there would read as an identity provider nobody had configured.
 func TestIdpNodeFallsBackToTheJWKSUrl(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	cfg := topologyTestConfig()
@@ -1251,6 +1325,8 @@ func TestIdpNodeFallsBackToTheJWKSUrl(t *testing.T) {
 // proves who it is without naming either secret, and a renderer that named one would put a signing
 // key on a reader-visible page.
 func TestCallbackNodeDescribesAConfiguredReceiver(t *testing.T) {
+	t.Parallel()
+
 	// The token and signing secret never reach the server - Deployment carries only whether each is
 	// set - so the one place a secret could still arrive is the URL's userinfo, which must be redacted.
 	spec := callbackNodeSpec(Deployment{
@@ -1292,6 +1368,8 @@ func TestCallbackNodeDescribesAConfiguredReceiver(t *testing.T) {
 // TestCallbackAuthDescription covers the remaining three arms of the renderer on its own, the node
 // test above having covered the two-secret one.
 func TestCallbackAuthDescription(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		token  string
 		signed string

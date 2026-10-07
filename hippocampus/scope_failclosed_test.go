@@ -24,6 +24,8 @@ import (
 // returning them unchecked. The links are supplementary to the records they hang off, so losing them
 // is the cheap failure; returning a far end the caller may not see is the leak this exists to stop.
 func TestDropOutOfScopeLinksFailsClosed(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	kind := linkKind{
@@ -49,6 +51,8 @@ func TestDropOutOfScopeLinksFailsClosed(t *testing.T) {
 // call and drops exactly the out-of-scope ones, leaving an item whose only link went out of scope
 // with an empty list rather than removing the item.
 func TestDropOutOfScopeLinksKeepsOnlyInScopeFarEnds(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	var asked [][]string
@@ -87,6 +91,8 @@ func TestDropOutOfScopeLinksKeepsOnlyInScopeFarEnds(t *testing.T) {
 // links attached: a memory in the caller's group linked both to another in-scope memory and to one
 // in a group the caller cannot see comes back with the in-scope link only.
 func TestScopedListingDropsLinksCrossingTheBoundary(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -140,6 +146,8 @@ func (failFilteredCountsStore) CountMemoriesFiltered(context.Context, db.MemoryF
 // any work with a figure the caller can act on, and a failed count falls through to the in-walk
 // guard rather than letting the walk run uncapped.
 func TestScopedManifestPreflightCountsThePartition(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 

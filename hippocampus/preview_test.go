@@ -70,6 +70,8 @@ func seedPreviewMemories(t *testing.T, database *db.DB, prefix string, days int,
 // TestPreviewConsolidationRejectedOnAReplica covers the replica guard: an instance that never runs
 // a cycle has no forgetting of its own to describe.
 func TestPreviewConsolidationRejectedOnAReplica(t *testing.T) {
+	t.Parallel()
+
 	s, _ := previewTestServer(t)
 	s.consolidationEnabled = false
 
@@ -86,6 +88,8 @@ func TestPreviewConsolidationRejectedOnAReplica(t *testing.T) {
 // TestPreviewConsolidationReportsWhatWouldGo covers the happy path end to end: old, low
 // significance memories are reported as consolidation candidates, and the store is untouched.
 func TestPreviewConsolidationReportsWhatWouldGo(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	seedPreviewMemories(t, database, "old", 100, 1, 5)
@@ -130,6 +134,8 @@ func TestPreviewConsolidationReportsWhatWouldGo(t *testing.T) {
 // TestPreviewConsolidationPredictsTheCycle is the RPC-level counterpart of the db package's
 // drift test: whatever the preview says, running the real cycle must then do.
 func TestPreviewConsolidationPredictsTheCycle(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	// A mix: old and doomed, plus recent and safe.
@@ -169,6 +175,8 @@ func TestPreviewConsolidationPredictsTheCycle(t *testing.T) {
 // TestPreviewConsolidationReportsItsInputs covers the decision inputs the response carries so the
 // numbers can be read against the configuration that produced them.
 func TestPreviewConsolidationReportsItsInputs(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.capacityBytes = 1 << 20
 	s.consolidation.capacityMemories = 10
@@ -205,6 +213,8 @@ func TestPreviewConsolidationReportsItsInputs(t *testing.T) {
 // preview must decide against the pressure it computed for itself, not whatever the sleep
 // goroutine last left in the server's field.
 func TestPreviewConsolidationUsesASnapshotNotTheLiveFields(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.capacityMemories = 10
 
@@ -232,6 +242,8 @@ func TestPreviewConsolidationUsesASnapshotNotTheLiveFields(t *testing.T) {
 // TestPreviewConsolidationLimitBoundsTheSample covers the bounded-sample/complete-counts split at
 // the RPC layer.
 func TestPreviewConsolidationLimitBoundsTheSample(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	seedPreviewMemories(t, database, "m", 100, 1, 12)
@@ -258,6 +270,8 @@ func TestPreviewConsolidationLimitBoundsTheSample(t *testing.T) {
 // that makes it actionable: retention overrides the capacity target, so retained bytes approaching
 // the capacity is what tells an operator the target has become unreachable.
 func TestPreviewConsolidationCountsRetained(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.minimumRetentionInDays = 365
 
@@ -331,6 +345,8 @@ func (f *failingPreviewStore) CalculateSignificancePercentile(ctx context.Contex
 // proceed without: it must refuse rather than report a forgetting schedule derived from a pressure
 // it could not compute.
 func TestPreviewConsolidationFailsWhenItsInputsAreUnavailable(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		store func(db.Store) db.Store
@@ -366,6 +382,8 @@ func TestPreviewConsolidationFailsWhenItsInputsAreUnavailable(t *testing.T) {
 // TestPreviewConsolidationRecomputesThePercentile covers the derived default event significance:
 // like a real cycle, the preview recomputes it rather than reading what the last cycle left behind.
 func TestPreviewConsolidationRecomputesThePercentile(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.defaultEventSignificancePercentile = 50
 
@@ -399,6 +417,8 @@ func TestPreviewConsolidationRecomputesThePercentile(t *testing.T) {
 // TestPreviewConsolidationCountsEmptyEvents covers the third consolidation pass through the RPC:
 // an event holding no memories, decayed past the threshold.
 func TestPreviewConsolidationCountsEmptyEvents(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	old := time.Now().Add(-500 * 24 * time.Hour).UnixNano()
@@ -436,6 +456,8 @@ func TestPreviewConsolidationCountsEmptyEvents(t *testing.T) {
 // TestPreviewConsolidationNeverReturnsBodies pins the boundary that keeps a dry run from doubling
 // as a way to read the store.
 func TestPreviewConsolidationNeverReturnsBodies(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 
 	secret := "the body that must not be returned"
@@ -503,6 +525,8 @@ func (c *countingPreviewStore) scanCount() int {
 // TestPreviewConcurrentCallsShareOneScan is why previewGroup exists: on SQLite the connection pool
 // is one connection by design, so a stream of previews each running its own full scan would crowd
 // out the sleep cycle's own queries.
+//
+// Not parallel: it replaces a package variable (sharedCallJoined).
 func TestPreviewConcurrentCallsShareOneScan(t *testing.T) {
 	s, database := previewTestServer(t)
 	seedPreviewMemories(t, database, "m", 100, 1, 5)
@@ -567,6 +591,8 @@ func TestPreviewConcurrentCallsShareOneScan(t *testing.T) {
 // TestPreviewDifferentLimitsDoNotShare is the other half of the keying: a caller asking for more
 // rows must not be handed a shorter list because someone else asked first.
 func TestPreviewDifferentLimitsDoNotShare(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	seedPreviewMemories(t, database, "m", 100, 1, 20)
 
@@ -593,6 +619,8 @@ func TestPreviewDifferentLimitsDoNotShare(t *testing.T) {
 // preview must not be collapsed into the sleep singleflight, where it would describe a run that is
 // at that moment deleting.
 func TestPreviewNeverJoinsASleepCycle(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	seedPreviewMemories(t, database, "m", 100, 1, 4)
 
@@ -636,6 +664,8 @@ func (r *retentionCountingStore) RetainedStats(ctx context.Context, cutoff int64
 // aggregate scan per cycle, so a deployment with no retention floor - where the answer is always
 // zero - must not pay for it.
 func TestRecordRetentionOnlyScansWhenThereIsAFloor(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		retention int
@@ -680,6 +710,8 @@ func TestRecordRetentionOnlyScansWhenThereIsAFloor(t *testing.T) {
 // TestRecordRetentionSurvivesAFailedScan covers the best-effort contract: the gauges are a
 // measurement, and failing to take one must not fail the sleep cycle.
 func TestRecordRetentionSurvivesAFailedScan(t *testing.T) {
+	t.Parallel()
+
 	s, database := previewTestServer(t)
 	s.consolidation.minimumRetentionInDays = 7
 	s.consolidation.capacityBytes = 1 << 20

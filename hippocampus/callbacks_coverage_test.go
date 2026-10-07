@@ -135,6 +135,8 @@ func queueOneDelivery(t *testing.T, database *db.DB) {
 // pass outright: the dispatcher runs forever, and a transient store error must cost one pass rather
 // than stop delivery until a restart.
 func TestDispatchSurvivesEveryStoreFailure(t *testing.T) {
+	t.Parallel()
+
 	t.Run("claim", func(t *testing.T) {
 		s, database := callbackServer(t, recordingPolicy())
 		queueOneDelivery(t, database)
@@ -205,6 +207,8 @@ func TestDispatchSurvivesEveryStoreFailure(t *testing.T) {
 // silent. There is no sweep behind this queue, so a pruned delivery is a notification nobody will
 // ever get - the one discard in the service with no backstop.
 func TestPruneCallbackQueueWarnsWhenItAbandons(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackServer(t, recordingPolicy())
 	ctx := context.Background()
 
@@ -234,6 +238,8 @@ func TestPruneCallbackQueueWarnsWhenItAbandons(t *testing.T) {
 // TestCallbackDispatchLoopRunsAndStops drives the real loop rather than a single pass, which is what
 // covers the adaptive delay and the stop path. The delays are shortened for the duration, the idiom
 // the outbox drain's tests already use.
+//
+// Not parallel: it replaces a package variable (callbackIdleDelay).
 func TestCallbackDispatchLoopRunsAndStops(t *testing.T) {
 	restoreIdle, restoreBusy := callbackIdleDelay, callbackBusyDelay
 	callbackIdleDelay = 5 * time.Millisecond
@@ -283,6 +289,8 @@ func TestCallbackDispatchLoopRunsAndStops(t *testing.T) {
 // The two are one decision expressed at both ends: a store queues deliveries exactly when something
 // is going to send them, so every path that declines to dispatch must also decline to record.
 func TestStartCallbackDispatchGating(t *testing.T) {
+	t.Parallel()
+
 	configured := CallbacksConfig{
 		Bounds:            db.QueueBounds{MaxRows: 10, MaxAge: time.Hour},
 		BatchSize:         5,
@@ -444,6 +452,8 @@ type Store struct {
 
 // TestQueueCycleCallbackEdgeCases covers the gates and the two reporting branches.
 func TestQueueCycleCallbackEdgeCases(t *testing.T) {
+	t.Parallel()
+
 	report := &cycleReport{trigger: "timer", startedAt: time.Now(), success: true}
 
 	t.Run("nothing is queued when callbacks are off", func(t *testing.T) {
@@ -493,6 +503,8 @@ func TestQueueCycleCallbackEdgeCases(t *testing.T) {
 }
 
 func TestCycleDeliveriesDefaultsAnInvalidChunkSize(t *testing.T) {
+	t.Parallel()
+
 	deliveries := cycleDeliveries(1, &db.CallbackCycle{}, []string{"a", "b"}, nil, 0)
 
 	if len(deliveries) != 1 {
@@ -507,6 +519,8 @@ func TestCycleDeliveriesDefaultsAnInvalidChunkSize(t *testing.T) {
 // TestNotifyProjections covers the storage-to-wire mappings in both directions of completeness: every
 // declared value maps, and an unknown one maps to the empty wire value rather than to a wrong one.
 func TestNotifyProjections(t *testing.T) {
+	t.Parallel()
+
 	kinds := map[db.CallbackKind]notify.Kind{
 		db.CallbackKindMemoryForgotten: notify.KindMemoryForgotten,
 		db.CallbackKindEventForgotten:  notify.KindEventForgotten,
@@ -575,6 +589,8 @@ func TestNotifyProjections(t *testing.T) {
 // TestDeliverOneRecordsTheOutcome pins that both outcomes are reported, since the failure rate is
 // what an operator alerts on.
 func TestDeliverOneRecordsTheOutcome(t *testing.T) {
+	t.Parallel()
+
 	s, _ := callbackServer(t, recordingPolicy())
 
 	sink := &recordingNotifier{}

@@ -16,6 +16,8 @@ import (
 // unusable record still stores the rest. A producer holding records it did not author cannot
 // re-author the bad one, so failing its neighbours only costs the store data it could have kept.
 func TestStoreMemories_PartialSuccess(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.minimumMemorySignificance = 10
 
@@ -67,6 +69,8 @@ func TestStoreMemories_PartialSuccess(t *testing.T) {
 // is - it is not ImportBatch. Client-supplied recall state is discarded, defaults are applied, and
 // an id the store already holds fails with AlreadyExists rather than replacing a live row.
 func TestStoreMemories_AppliesTheWritePath(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.StoreMemory(context.Background(), &contract.Memory{Id: "held", Significance: 5, Body: "original"}); err != nil {
@@ -110,6 +114,8 @@ func TestStoreMemories_AppliesTheWritePath(t *testing.T) {
 // TestStoreMemories_BatchLevelFaults covers the three things that fail the call rather than one
 // record: nothing to write, more than the cap, and a caller that has gone away.
 func TestStoreMemories_BatchLevelFaults(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.StoreMemories(context.Background(), &contract.StoreMemoriesRequest{}); status.Code(err) != codes.InvalidArgument {
@@ -145,6 +151,8 @@ func TestStoreMemories_BatchLevelFaults(t *testing.T) {
 // TestStoreMemories_LinksAndEvents verifies the batch carries the whole write path's reach, not a
 // reduced one: a memory may name an existing event and declare links, and both are applied.
 func TestStoreMemories_LinksAndEvents(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 

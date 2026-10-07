@@ -19,6 +19,8 @@ func hitIds(hits []search.Hit) []string {
 // The property that makes hybrid worth having: a memory both routes found should outrank one only
 // a single route found, even when that one was top of its list.
 func TestFuseHitsPrefersResultsFoundByBothRoutes(t *testing.T) {
+	t.Parallel()
+
 	keyword := []search.Hit{{Id: "keyword-only", Score: 99}, {Id: "both", Score: 1}}
 	semantic := []search.Hit{{Id: "semantic-only", Score: 0.99}, {Id: "both", Score: 0.1}}
 
@@ -37,6 +39,8 @@ func TestFuseHitsPrefersResultsFoundByBothRoutes(t *testing.T) {
 // keyword list scored in the tens and a semantic list scored under one must fuse the same as if
 // both were scored identically.
 func TestFuseHitsIgnoresScoreMagnitudes(t *testing.T) {
+	t.Parallel()
+
 	wildlyScaled := fuseHits(
 		[]search.Hit{{Id: "a", Score: 10000}, {Id: "b", Score: 9999}},
 		[]search.Hit{{Id: "b", Score: 0.0002}, {Id: "a", Score: 0.0001}},
@@ -54,6 +58,8 @@ func TestFuseHitsIgnoresScoreMagnitudes(t *testing.T) {
 
 // Rank position must still matter within a list.
 func TestFuseHitsRespectsRankOrder(t *testing.T) {
+	t.Parallel()
+
 	single := []search.Hit{{Id: "first"}, {Id: "second"}, {Id: "third"}}
 
 	got := hitIds(fuseHits(single))
@@ -66,6 +72,8 @@ func TestFuseHitsRespectsRankOrder(t *testing.T) {
 // Ties must break deterministically, or the same query returns the same memories in different
 // orders on successive calls.
 func TestFuseHitsIsDeterministic(t *testing.T) {
+	t.Parallel()
+
 	build := func() [][]search.Hit {
 		return [][]search.Hit{
 			{{Id: "a"}, {Id: "b"}, {Id: "c"}, {Id: "d"}},
@@ -87,6 +95,8 @@ func TestFuseHitsIsDeterministic(t *testing.T) {
 }
 
 func TestFuseHitsEdgeCases(t *testing.T) {
+	t.Parallel()
+
 	if got := fuseHits(); len(got) != 0 {
 		t.Errorf("fusing nothing returned %d hits, want 0", len(got))
 	}

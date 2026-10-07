@@ -88,6 +88,8 @@ func searchNode(t *testing.T, s *Server) *contract.TopologyNode {
 // TestProbedVersionReachesTheNode is the end-to-end form of item 134 for a probed dependency: the
 // version a dependency reports arrives on its node.
 func TestProbedVersionReachesTheNode(t *testing.T) {
+	t.Parallel()
+
 	s := probedSearchServer(t)
 	dependency := &versionedDependency{version: "opensearch 2.19.1"}
 
@@ -104,6 +106,8 @@ func TestProbedVersionReachesTheNode(t *testing.T) {
 // again after a failed round (a restart is usually an upgrade), and again once the refresh has
 // passed - the case a rolling upgrade that never fails a probe depends on.
 func TestProbedVersionIsCached(t *testing.T) {
+	t.Parallel()
+
 	s := probedSearchServer(t)
 	dependency := &versionedDependency{version: "Ollama 0.6.1"}
 	probers := map[string]topologyProbe{topologyNodeSearch: pingerProbe(topologyNodeSearch, dependency)}
@@ -162,6 +166,8 @@ func TestProbedVersionIsCached(t *testing.T) {
 // TestUnreadableVersionIsNotAFailure covers a dependency that serves correctly and will not say
 // which build it is: it is healthy, carries no version, and is asked again only once per refresh.
 func TestUnreadableVersionIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
 	s := probedSearchServer(t)
 	dependency := &versionedDependency{versionErr: errors.New("404 Not Found")}
 	probers := map[string]topologyProbe{topologyNodeSearch: pingerProbe(topologyNodeSearch, dependency)}
@@ -187,6 +193,8 @@ func TestUnreadableVersionIsNotAFailure(t *testing.T) {
 // TestPingerProbeWithoutAVersion covers a dependency with nothing to report (an S3 bucket, an
 // OpenAI-compatible provider): the probe works exactly as it did before versions existed.
 func TestPingerProbeWithoutAVersion(t *testing.T) {
+	t.Parallel()
+
 	probe := pingerProbe("objects", pingOnly{})
 
 	version, err := probe(context.Background(), true)
@@ -201,6 +209,8 @@ func (pingOnly) Ping(context.Context) error { return nil }
 
 // TestStoreReportsItsEngineVersion runs the store's probe against a real embedded store.
 func TestStoreReportsItsEngineVersion(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	version, err := s.probeStore(context.Background(), true)
@@ -220,6 +230,8 @@ func TestStoreReportsItsEngineVersion(t *testing.T) {
 // TestDeclaredComponentVersionReachesTheNode covers the free path: a declared component's /readyz
 // body carries its version, so it arrives every round with no request of its own.
 func TestDeclaredComponentVersionReachesTheNode(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"ready","component":"nats-bridge","version":"v0.52.0"}`))
 	}))
@@ -244,6 +256,8 @@ func TestDeclaredComponentVersionReachesTheNode(t *testing.T) {
 // diagram: it says which build it is in a header, on either transport, and the node shows it. A
 // call that omits the header does not clear it, and a value not fit to show is dropped.
 func TestObservedCallerReportsItsVersion(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	s.topology.authMethod = "hmac"
@@ -297,6 +311,8 @@ func TestObservedCallerReportsItsVersion(t *testing.T) {
 // TestDeclaredComponentTakesItsCallerVersion covers a declared component with no health port of its
 // own - an MCP bridge on stdio - whose only version is the one it reports as a caller.
 func TestDeclaredComponentTakesItsCallerVersion(t *testing.T) {
+	t.Parallel()
+
 	s := declaredServer(t, TopologyComponent{Name: "claude-mcp", Kind: "mcp", HealthURL: "http://127.0.0.1:1"})
 
 	s.topology.authMethod = "hmac"
@@ -323,6 +339,8 @@ func TestDeclaredComponentTakesItsCallerVersion(t *testing.T) {
 // TestTransferOutgoingContextCarriesThisVersion covers the other side of the header: this instance
 // is itself a caller the Transfer target holds no address for.
 func TestTransferOutgoingContextCarriesThisVersion(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.transfer.token = "secret"
 
@@ -339,6 +357,8 @@ func TestTransferOutgoingContextCarriesThisVersion(t *testing.T) {
 
 // TestWantTopologyVersion pins the three reasons to ask.
 func TestWantTopologyVersion(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 	ok := contract.TopologyStatus_TOPOLOGY_STATUS_OK
 

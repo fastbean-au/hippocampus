@@ -41,6 +41,8 @@ func passthroughHandler(_ context.Context, _ interface{}) (interface{}, error) {
 // would turn the one thing this half of the view adds into a claim that the service dials its own
 // clients.
 func TestObservedCallerRecordedFromVerifiedClaims(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	s.topology.authMethod = "hmac"
@@ -122,6 +124,8 @@ func TestObservedCallerRecordedFromVerifiedClaims(t *testing.T) {
 // no client. Neither is inferred from an address or a user agent - a source address names a proxy
 // and a user agent names whatever the caller typed.
 func TestObservedCallerRecordsNothingWithoutAClientId(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	for name, ctx := range map[string]context.Context{
@@ -146,6 +150,8 @@ func TestObservedCallerRecordsNothingWithoutAClientId(t *testing.T) {
 // An operator with six bridges writing to an unauthenticated instance sees no caller boxes, and
 // must be told that callers are not identified rather than left to conclude the view is broken.
 func TestObservedCallerSelfAttributeExplainsAnEmptyColumn(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	for name, tc := range map[string]struct {
@@ -175,6 +181,8 @@ func TestObservedCallerSelfAttributeExplainsAnEmptyColumn(t *testing.T) {
 // same name should see ONE box - and the merged box separates the two cases nothing else in the
 // view can: a bridge that is up and writing, and a bridge that is up and has never written.
 func TestObservedCallerMergesIntoADeclaredComponent(t *testing.T) {
+	t.Parallel()
+
 	s := declaredServer(t, TopologyComponent{
 		Name:      "nats-bridge",
 		Kind:      "bridge",
@@ -220,6 +228,8 @@ func TestObservedCallerMergesIntoADeclaredComponent(t *testing.T) {
 // in a token, so without a cap it is memory a caller controls. The oldest entry goes, and the view
 // says it is showing a subset rather than presenting a truncated list as complete.
 func TestObservedCallersAreBounded(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	s.topology.authMethod = "hmac"
@@ -267,6 +277,8 @@ func TestObservedCallersAreBounded(t *testing.T) {
 // browser over the gateway. That is one client, and reporting only the most recent surface would
 // make the row flap between two values that are both true.
 func TestObservedCallerAccumulatesBothTransports(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	ctx := observedContext("hippo-cli", []string{"admin"}, nil)
@@ -305,6 +317,8 @@ func TestObservedCallerAccumulatesBothTransports(t *testing.T) {
 // grpc.health.v1.Health is not a client of the store, and counting it would put a box on the
 // diagram for every deployment that has a liveness probe - which is all of them.
 func TestObservedCallerIgnoresNonServiceRPCs(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	info := &grpc.UnaryServerInfo{FullMethod: "/grpc.health.v1.Health/Check"}
@@ -324,6 +338,8 @@ func TestObservedCallerIgnoresNonServiceRPCs(t *testing.T) {
 // it feeds: with topology.enabled false there is nothing to render, so nothing should be retained
 // about who called either.
 func TestObservedCallerRecordsNothingWhenTheViewIsOff(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 	s.topology.enabled = false
 
@@ -342,6 +358,8 @@ func TestObservedCallerRecordsNothingWhenTheViewIsOff(t *testing.T) {
 // reader tier by default and a group name is frequently a customer's, so whether a caller is bound
 // may be reported and what it is bound TO may not.
 func TestObservedCallerReportsScopeWithoutNamingGroups(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	if _, err := s.InterceptorObserveCaller(
@@ -377,6 +395,8 @@ func TestObservedCallerReportsScopeWithoutNamingGroups(t *testing.T) {
 // the first identity seen would leave the view describing a token that is no longer in use, which
 // is worse than not reporting roles at all.
 func TestObservedCallerIdentityFollowsTheToken(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	for _, roles := range [][]string{{"reader"}, {"reader", "writer"}} {
@@ -402,6 +422,8 @@ func TestObservedCallerIdentityFollowsTheToken(t *testing.T) {
 // authenticated request's own goroutine, which is why the entry's moving fields are atomics and the
 // lock is taken only to insert. Run under -race.
 func TestObservedCallersConcurrent(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	var wg sync.WaitGroup
@@ -448,6 +470,8 @@ func TestObservedCallersConcurrent(t *testing.T) {
 // that are only correct because they spell out a zero: a caller with no roles is refused every RPC,
 // and a moment that never happened is not "0s ago".
 func TestObservedValueRenderers(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 
 	if got := transportDescription(0); got != "unknown" {
@@ -480,6 +504,8 @@ func TestObservedValueRenderers(t *testing.T) {
 // TestObservedEdgesTerminateOnNodes extends the graph's own invariant to the nodes this file adds:
 // an edge to nothing draws a line into empty space.
 func TestObservedEdgesTerminateOnNodes(t *testing.T) {
+	t.Parallel()
+
 	s := newTopologyServer(t)
 
 	if _, err := s.InterceptorObserveCaller(

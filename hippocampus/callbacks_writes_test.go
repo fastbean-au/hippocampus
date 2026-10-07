@@ -13,6 +13,8 @@ import (
 // StoreMemory and an UpdateMemory each arrive at the receiver, as the memory now stands, through the
 // same durable queue forgetting uses.
 func TestAWriteReachesTheReceiverAsMemoryStored(t *testing.T) {
+	t.Parallel()
+
 	s, _ := callbackServer(t, db.CallbackPolicy{Enabled: true, WriteEvents: true})
 	ctx := context.Background()
 

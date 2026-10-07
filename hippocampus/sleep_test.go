@@ -28,6 +28,8 @@ func (f failConsolidateStore) ConsolidateMemories(ctx context.Context, s db.Serv
 // sleep cycle where a scan failed still recorded success=true (its error branch in sleep() was dead
 // code). A failing scan must now surface through consolidate() while the other passes still run.
 func TestConsolidate_PropagatesScanError(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -75,6 +77,8 @@ func (c *countingUsedBytesStore) UsedBytes(ctx context.Context) (int64, error) {
 // evict) - two full table scans on the server drivers. Pressure now reuses the previous cycle's
 // eviction reading, so a cycle scans UsedBytes exactly once.
 func TestSleep_UsedBytesScannedOncePerCycle(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -107,6 +111,8 @@ func TestSleep_UsedBytesScannedOncePerCycle(t *testing.T) {
 // failing pass's real error with a static string, so the Sleep RPC caller and the span never saw
 // the cause. It must now wrap it so errors.Is reaches the underlying error.
 func TestSleep_WrapsUnderlyingError(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -148,6 +154,8 @@ func candidate(eventSignificance int32, memorySignificance int32, eventLinkSigni
 // TestCalculateValue_ReturnsPreciseFloat verifies that calculateValue preserves fractional
 // precision. Before the fix the return type was int, so 3/2.0=1.5 was truncated to 1.
 func TestCalculateValue_ReturnsPreciseFloat(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:           1,
@@ -168,6 +176,8 @@ func TestCalculateValue_ReturnsPreciseFloat(t *testing.T) {
 // the defining trait of exponential (constant relative rate) decay, distinct from the linear
 // methods 2 and 3 and from the power law of method 1.
 func TestCalculateValue_Method4_ExponentialDecay(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 4, aggressiveness: 1.0}}
 
 	halfLife := math.Ln2 / s.consolidation.aggressiveness
@@ -190,6 +200,8 @@ func TestCalculateValue_Method4_ExponentialDecay(t *testing.T) {
 // methods, and a non-positive aggressiveness degrades safely to "never consolidate" rather than a
 // negative or NaN value, mirroring method 3's guard against the same class of misconfiguration.
 func TestCalculateValue_Method5_LogarithmicDecay(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 5, aggressiveness: 1.0}}
 
 	// significance / (1 * ln(97 + e)) = 1000 / ln(99.718) ~= 1000 / 4.602
@@ -222,6 +234,8 @@ func TestCalculateValue_Method5_LogarithmicDecay(t *testing.T) {
 // at the midpoint, and is close to zero well beyond it — a smooth S-curve rather than a hard
 // cutoff, so eviction ranking among memories on the same side of the window stays meaningful.
 func TestCalculateValue_Method6_SigmoidDecay(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 6, aggressiveness: 10.0}}
 
 	atMidpoint := s.calculateValue(1000, 10.0)
@@ -251,6 +265,8 @@ func TestCalculateValue_Method6_SigmoidDecay(t *testing.T) {
 // suggesting an exponential curve, it is linear in age (a constant divisor scaled by e raised to
 // aggressiveness), unlike method 4, the one genuinely exponential method.
 func TestCalculateValue_Method2_LinearVariant(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 2, aggressiveness: 1.0}}
 
 	got := s.calculateValue(1000, 2.0)
@@ -265,6 +281,8 @@ func TestCalculateValue_Method2_LinearVariant(t *testing.T) {
 // outside the six documented algorithms degrades safely to "never consolidate" (math.MaxFloat64)
 // rather than a zero value that would delete everything.
 func TestCalculateValue_UnknownMethodNeverConsolidates(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 99, aggressiveness: 1.0}}
 
 	if got := s.calculateValue(1000, 5.0); got != math.MaxFloat64 {
@@ -277,6 +295,8 @@ func TestCalculateValue_UnknownMethodNeverConsolidates(t *testing.T) {
 // consolidate memories. Before the fix, calculateValue returned a negative number in this case,
 // which is always < any positive threshold, so every memory would be deleted.
 func TestShouldConsolidateMemory_Method3_NegativeLogFactor(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:            3,
@@ -301,6 +321,8 @@ func TestShouldConsolidateMemory_Method3_NegativeLogFactor(t *testing.T) {
 // valid ordering over NaN, so eviction deleted essentially arbitrary memories. The value must
 // degrade to MaxFloat64 (never-consolidate), not NaN.
 func TestCalculateValue_Method3_NegativeAggressivenessNotNaN(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 3, aggressiveness: -1.0}}
 
 	got := s.calculateValue(1000, 2.0)
@@ -319,6 +341,8 @@ func TestCalculateValue_Method3_NegativeAggressivenessNotNaN(t *testing.T) {
 // negative age reaching this method - which the IsNaN guard now tolerates - would make ln(age+e)
 // NaN; the result must still degrade to MaxFloat64 rather than leak NaN into eviction's sort.
 func TestCalculateValue_Method5_NaNFactorNotNaN(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 5, aggressiveness: 1.0}}
 
 	// age + e < 0 makes ln NaN; the guard must catch it.
@@ -337,6 +361,8 @@ func TestCalculateValue_Method5_NaNFactorNotNaN(t *testing.T) {
 // (just created, or timestamped in the future) is never consolidated. A non-positive ageUnits
 // causes division by zero or sign-flip in the formula, producing ±Inf or NaN.
 func TestShouldConsolidateMemory_NonPositiveAge(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:            3,
@@ -368,6 +394,8 @@ func TestShouldConsolidateMemory_NonPositiveAge(t *testing.T) {
 // - computed at finer precision - is still negative, and must be caught rather than flowing into
 // calculateValue.
 func TestShouldConsolidateMemory_TinyFutureAgeUnitsNonPositive(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:            1,
@@ -389,6 +417,8 @@ func TestShouldConsolidateMemory_TinyFutureAgeUnitsNonPositive(t *testing.T) {
 // where (1 + ln(aggressiveness)) is positive - the two existing method-3 tests only cover the
 // negative/NaN guard, never this line.
 func TestCalculateValue_Method3_PositiveFactor(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{method: 3, aggressiveness: math.E * math.E}} // ln(e^2) = 2
 
 	got := s.calculateValue(1000, 2.0)
@@ -404,6 +434,8 @@ func TestCalculateValue_Method3_PositiveFactor(t *testing.T) {
 // and float computed values were truncated before comparison causing wrong decisions near the
 // boundary.
 func TestShouldConsolidateMemory_FractionalThreshold(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                        1,
@@ -435,6 +467,8 @@ func TestShouldConsolidateMemory_FractionalThreshold(t *testing.T) {
 // and scaled by the configured weight, extends the survival of that event's memories. Two otherwise
 // identical memories must diverge: the one whose event is well-connected survives.
 func TestShouldConsolidateMemory_LinkSignificance(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -477,6 +511,8 @@ func TestShouldConsolidateMemory_LinkSignificance(t *testing.T) {
 // constant. This is what stops a well-connected memory becoming unforgettable and defeating the
 // capacity bound.
 func TestShouldConsolidateMemory_LinkContributionIsDamped(t *testing.T) {
+	t.Parallel()
+
 	const weight = 2.0
 
 	if got := linkContribution(weight, 0); got != 0 {
@@ -508,6 +544,8 @@ func TestShouldConsolidateMemory_LinkContributionIsDamped(t *testing.T) {
 // TestShouldConsolidateMemory_RelationshipWeightZero verifies that a zero weight disables the
 // link contribution entirely, preserving the previous behaviour.
 func TestShouldConsolidateMemory_RelationshipWeightZero(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -533,6 +571,8 @@ func TestShouldConsolidateMemory_RelationshipWeightZero(t *testing.T) {
 // populations, and one logarithm over both would let a heavily linked event flatten the difference
 // between its own memories.
 func TestMemorySignificance_LinkTermsAreDampedSeparately(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{linkSignificanceWeight: 1.0}}
 
 	split := s.memorySignificanceUnder(db.MemoryConsolidationCandidate{
@@ -553,6 +593,8 @@ func TestMemorySignificance_LinkTermsAreDampedSeparately(t *testing.T) {
 // range: 1 when capacity is disabled or the store is empty, negligible when far from capacity,
 // 2 at capacity, and growing beyond it when overfull.
 func TestCalculateCapacityPressure(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			capacityMemories:         1000,
@@ -586,6 +628,8 @@ func TestCalculateCapacityPressure(t *testing.T) {
 // capacityBytes contributes to pressure, and that the greater of the two utilisations wins:
 // a store with few rows but large bodies must feel byte pressure, and vice versa.
 func TestCalculateCapacityPressure_ByteUtilisation(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			capacityMemories:         1000,
@@ -619,6 +663,8 @@ func TestCalculateCapacityPressure_ByteUtilisation(t *testing.T) {
 // TestEvictionFloor verifies the hysteresis floor: a valid floor is used as the reclaim level,
 // while an unset floor, or one above the capacity target, falls back to the target itself.
 func TestEvictionFloor(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			capacityBytes: 1000,
@@ -654,6 +700,8 @@ func (f failPreserveStore) Preserve(ctx context.Context) error {
 // TestPreserve_PropagatesError verifies preserve() surfaces a Preserve failure (so a failed
 // compaction is reflected in the sleep cycle's success metric) rather than swallowing it.
 func TestPreserve_PropagatesError(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{db: failPreserveStore{err: errors.New("checkpoint failed")}}
 
 	if err := s.preserve(context.Background()); err == nil {
@@ -664,6 +712,8 @@ func TestPreserve_PropagatesError(t *testing.T) {
 // TestEvict_DisabledAndUnderCapacityAreNoOps verifies evict() leaves the store untouched when byte
 // eviction is disabled (capacityBytes <= 0) and when the store is comfortably under its target.
 func TestEvict_DisabledAndUnderCapacityAreNoOps(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	for _, id := range []string{"m1", "m2", "m3"} {
@@ -695,6 +745,8 @@ func TestEvict_DisabledAndUnderCapacityAreNoOps(t *testing.T) {
 // target, evict() deletes lowest-value memories down toward the floor and caches the fresh used
 // reading for the next cycle's pressure calculation.
 func TestEvict_ReclaimsWhenOverCapacity(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation = Consolidation{
 		method:           1,
@@ -729,6 +781,8 @@ func TestEvict_ReclaimsWhenOverCapacity(t *testing.T) {
 // effective deletion threshold: a memory that survives in an unpressured store is consolidated
 // when the store is under pressure.
 func TestShouldConsolidateMemory_CapacityPressure(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:            1,
@@ -758,6 +812,8 @@ func TestShouldConsolidateMemory_CapacityPressure(t *testing.T) {
 // TestShouldConsolidateMemory_ZeroPressureIsSafe verifies that an unset (zero) capacityPressure
 // behaves as no pressure rather than zeroing the threshold and disabling all forgetting.
 func TestShouldConsolidateMemory_ZeroPressureIsSafe(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:            1,
@@ -780,6 +836,8 @@ func TestShouldConsolidateMemory_ZeroPressureIsSafe(t *testing.T) {
 // rules as memories: old low-significance events are consolidated, relationship significance
 // protects an event, and age is measured from the most recent of the start and end times.
 func TestShouldConsolidateEvent(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -824,6 +882,8 @@ func TestShouldConsolidateEvent(t *testing.T) {
 // decay clock: age is measured from the last recall rather than creation, so an old but recently
 // recalled memory survives where an identical unrecalled one is consolidated.
 func TestShouldConsolidateMemory_RecallResetsDecayClock(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:            1,
@@ -859,6 +919,8 @@ func TestShouldConsolidateMemory_RecallResetsDecayClock(t *testing.T) {
 // nothing was consolidated, evicted, or compacted until the first event was stored. An empty
 // store must fall back to the configured fixed value instead.
 func TestConsolidate_PercentileWithNoEvents(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("failed to create in-memory DB: %s", err)
@@ -892,6 +954,8 @@ func TestConsolidate_PercentileWithNoEvents(t *testing.T) {
 // TestScanSummarisationCandidates_PopulatesList verifies that the scan finds a quiet, populous
 // event and stores it as a candidate, ready for GetSummarisationCandidates to serve.
 func TestScanSummarisationCandidates_PopulatesList(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("failed to create in-memory DB: %s", err)
@@ -934,6 +998,8 @@ func TestScanSummarisationCandidates_PopulatesList(t *testing.T) {
 // summarisationMinMemories (the shipped default) disables the scan entirely, leaving the
 // candidate list untouched even when qualifying events exist.
 func TestScanSummarisationCandidates_DisabledByDefault(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("failed to create in-memory DB: %s", err)
@@ -978,6 +1044,8 @@ func (f failFindCandidatesStore) FindSummarisationCandidates(ctx context.Context
 // TestScanSummarisationCandidates_PropagatesScanError verifies a failing scan is logged and leaves
 // the previously cached candidate list untouched, rather than panicking or clearing it.
 func TestScanSummarisationCandidates_PropagatesScanError(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1011,6 +1079,8 @@ func (f failCompactStore) CompactSignificanceLevels(ctx context.Context) error {
 // TestSleep_CompactSignificanceLevelsFailureIsBestEffort verifies a failing registry compaction is
 // logged and does not fail the sleep cycle - it sits outside the success flag.
 func TestSleep_CompactSignificanceLevelsFailureIsBestEffort(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1047,6 +1117,8 @@ func (f failReapStore) ReapSignificanceLevels(ctx context.Context, grace time.Du
 // tidiness, exactly as a forgotten log that could not be pruned is, and a cycle that consolidated
 // and evicted correctly has not failed because of it.
 func TestSleep_ReapSignificanceLevelsFailureIsBestEffort(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1073,6 +1145,8 @@ func TestSleep_ReapSignificanceLevelsFailureIsBestEffort(t *testing.T) {
 // TestSleep_ReapsTheSignificanceRegistry is the wiring: the cycle actually calls the reap, with the
 // window configuration gave it. Two cycles, because the first only marks.
 func TestSleep_ReapsTheSignificanceRegistry(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1130,6 +1204,8 @@ func TestSleep_ReapsTheSignificanceRegistry(t *testing.T) {
 // configured fixed value (the complementary case to TestConsolidate_PercentileWithNoEvents, which
 // only exercises the empty-store fallback).
 func TestConsolidate_PercentileCalculatedFromEvents(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1180,6 +1256,8 @@ func (f failUsedBytesStore) UsedBytes(ctx context.Context) (int64, error) {
 // TestEvict_UsedBytesErrorPropagates verifies a failing UsedBytes reading surfaces through evict()
 // rather than being swallowed.
 func TestEvict_UsedBytesErrorPropagates(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1208,6 +1286,8 @@ func TestEvict_UsedBytesErrorPropagates(t *testing.T) {
 // figure instead. lastUsedBytes is the observable proxy for the gauge: it is written from the same
 // reading, immediately before the recording.
 func TestEvict_MeasuresTheStoreWithoutACapacityTarget(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1249,6 +1329,8 @@ func TestEvict_MeasuresTheStoreWithoutACapacityTarget(t *testing.T) {
 // store that previously never read used bytes at all must not start failing cycles because a query
 // taken purely for observability failed.
 func TestEvict_MeasurementFailureIsBestEffortWithoutACapacityTarget(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1284,6 +1366,8 @@ func (f failEvictMemoriesStore) EvictMemories(ctx context.Context, s db.Server, 
 // TestEvict_EvictMemoriesErrorPropagates verifies a failing EvictMemories call surfaces through
 // evict() (after used bytes are recorded and cached) rather than being swallowed.
 func TestEvict_EvictMemoriesErrorPropagates(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1310,6 +1394,8 @@ func TestEvict_EvictMemoriesErrorPropagates(t *testing.T) {
 // consolidation succeeding, an evict() failure must surface as e2 and a preserve() failure as e3 -
 // the two switch arms TestSleep_WrapsUnderlyingError (which drives the e1 arm) does not reach.
 func TestSleep_WrapsEvictAndPreserveErrors(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1357,6 +1443,8 @@ func TestSleep_WrapsEvictAndPreserveErrors(t *testing.T) {
 // future-dated memory ranks as maximally valuable, and a recent recall raises a memory's rank by
 // resetting its decay clock.
 func TestMemoryValue_RanksForEviction(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:           1,
@@ -1398,6 +1486,8 @@ func TestMemoryValue_RanksForEviction(t *testing.T) {
 // TestShouldConsolidateMemory_RecallCountBoostsSignificance verifies that repeated recalls raise
 // a memory's effective significance by recallSignificanceWeight per recall.
 func TestShouldConsolidateMemory_RecallCountBoostsSignificance(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                   1,
@@ -1437,6 +1527,8 @@ func TestShouldConsolidateMemory_RecallCountBoostsSignificance(t *testing.T) {
 // memories is a remnant there, not a record, and must be swept - subject to the retention floor,
 // which overrides the capacity target everywhere else too.
 func TestShouldConsolidateEvent_CapacityTargetOnlyMode(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -1478,6 +1570,8 @@ func TestShouldConsolidateEvent_CapacityTargetOnlyMode(t *testing.T) {
 // event forever. An empty event the decay machinery has already emptied is finished; retrying the
 // delete completes an action that was decided, rather than making a new decision.
 func TestShouldConsolidateEvent_EmptiedByDecay(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -1517,6 +1611,8 @@ func TestShouldConsolidateEvent_EmptiedByDecay(t *testing.T) {
 // eviction rate and invisible to the capacity target that is supposed to bound the store (UsedBytes
 // estimates live MEMORY rows, and eviction's pool is memories). A cycle must sweep them.
 func TestConsolidate_CapacityTargetOnlyModeSweepsOrphanEvents(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation = Consolidation{
 		method:            1,
@@ -1566,6 +1662,8 @@ func TestConsolidate_CapacityTargetOnlyModeSweepsOrphanEvents(t *testing.T) {
 // not happen - the last memory went by a route that does not cascade, or the cascade failed. Here
 // it is a client delete, which is the reproducible shape of the same thing.
 func TestConsolidate_SweepsAnEventTheCycleEmptied(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation = Consolidation{
 		method:            1,
@@ -1622,6 +1720,8 @@ func TestConsolidate_SweepsAnEventTheCycleEmptied(t *testing.T) {
 // value - and keep it - rather than treat it as a deletion already decided, which it did while the
 // evented pass flagged every event it scanned.
 func TestAValuableEventIsNotSweptAfterACycleThatSparedIt(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -1672,6 +1772,8 @@ func TestAValuableEventIsNotSweptAfterACycleThatSparedIt(t *testing.T) {
 // putting the most significant memories in the store below every threshold and first in line for
 // eviction (TODO-3 item 141).
 func TestMemorySignificanceDoesNotOverflow(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{
 		method:                        1,
 		aggressiveness:                1,

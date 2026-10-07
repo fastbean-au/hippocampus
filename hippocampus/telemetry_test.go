@@ -42,6 +42,8 @@ func (erroringMeter) Float64Gauge(name string, options ...metric.Float64GaugeOpt
 // propagating) when the underlying meter fails to create the instrument - a case the real no-op
 // and SDK meters essentially never hit in practice, but which must still degrade safely.
 func TestNewInstrumentHelpers_LogAndReturnZeroValueOnError(t *testing.T) {
+	t.Parallel()
+
 	meter := erroringMeter{}
 
 	if got := newInt64Counter(meter, "test.counter", "a test counter"); got != nil {

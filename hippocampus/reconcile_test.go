@@ -95,6 +95,8 @@ func (*recordingIndex) Close() error          { return nil }
 // index does not hold - the self-healing that recovers documents a dropped index operation missed -
 // while skipping binary memories, whose bodies are opaque to content search. The index here holds
 // nothing, so everything indexable is missing.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestReconcileOnce_IndexesNonBinaryMemories(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond
@@ -148,6 +150,8 @@ func TestReconcileOnce_IndexesNonBinaryMemories(t *testing.T) {
 
 // TestReconcileOnce_StopsPromptlyOnShutdown verifies a sweep in progress abandons its remaining
 // work as soon as the server is shutting down, rather than paging the whole store first.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestReconcileOnce_StopsPromptlyOnShutdown(t *testing.T) {
 	// An hour between pages: the sweep indexes its first page and then waits, so the test can stop
 	// it at a known point instead of guessing how far 60ms gets.
@@ -209,6 +213,8 @@ func TestReconcileOnce_StopsPromptlyOnShutdown(t *testing.T) {
 // itself, as opposed to a single reconcileOnce call): after reconcileInitialDelay it must run a
 // sweep on its own, and closing stopReconcile must make it return promptly and close
 // reconcileStopped, exactly as startReconcile's shutdown path (server.go) expects.
+//
+// Not parallel: it replaces a package variable (reconcileInitialDelay).
 func TestReconcileLoop_RunsSweepThenStops(t *testing.T) {
 	restoreDelay := reconcileInitialDelay
 	reconcileInitialDelay = 10 * time.Millisecond
@@ -265,6 +271,8 @@ func TestReconcileLoop_RunsSweepThenStops(t *testing.T) {
 // TestReconcileLoop_StopsBeforeInitialSweep verifies reconcileLoop can be stopped while still
 // waiting out the initial delay, without ever running a sweep - it must not block shutdown behind
 // a timer that has not fired yet.
+//
+// Not parallel: it replaces a package variable (reconcileInitialDelay).
 func TestReconcileLoop_StopsBeforeInitialSweep(t *testing.T) {
 	restoreDelay := reconcileInitialDelay
 	reconcileInitialDelay = time.Hour
@@ -308,6 +316,8 @@ func TestReconcileLoop_StopsBeforeInitialSweep(t *testing.T) {
 // from the pacing-delay check the other stop tests exercise): with stopReconcile already closed
 // before reconcileOnce is even called, it must return immediately without reading a single page.
 func TestReconcileOnce_StopsAtLoopTopBeforeFirstPage(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -352,6 +362,8 @@ func (f failGetMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId s
 // abandons the sweep cleanly (no panic, nothing indexed) rather than propagating - the next sweep
 // simply retries from the start.
 func TestReconcileOnce_PageReadErrorAbandonsSweep(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -404,6 +416,8 @@ func reconcileTestStore(t *testing.T, ids ...string) *db.DB {
 // exists to compensate for - and, because a re-index is a delete plus an insert in Lucene even when
 // the document has not changed, it tombstoned the whole index once per pass. It must now write only
 // the documents the index does not hold.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestReconcileOnce_IndexesOnlyWhatIsMissing(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond
@@ -439,6 +453,8 @@ func TestReconcileOnce_IndexesOnlyWhatIsMissing(t *testing.T) {
 // TestReconcileOnce_AsksOncePerPage pins the cost of asking: one probe request per page of memories,
 // not one per memory. A probe per memory would trade a write round trip for a read one and leave the
 // sweep as expensive as it was.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestReconcileOnce_AsksOncePerPage(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond
@@ -476,6 +492,8 @@ func TestReconcileOnce_AsksOncePerPage(t *testing.T) {
 // fails for the same reasons an index write does - an unreachable or overloaded cluster - so
 // re-indexing the page anyway would offer a full page of writes at exactly the moment nothing can be
 // applied, which is the behaviour this change removes.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestReconcileOnce_ProbeFailureIndexesNothing(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond
@@ -503,6 +521,8 @@ func TestReconcileOnce_ProbeFailureIndexesNothing(t *testing.T) {
 // probe rather than after it. It has no document to be missing, so asking about it would report it
 // absent every sweep, for ever - the sweep would then index it, which is the one thing content search
 // must never hold.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestReconcileOnce_BinaryMemoriesAreNeverProbed(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond
@@ -571,6 +591,8 @@ func (p *probeRecordingIndex) AbsentIds(ctx context.Context, ids []string) ([]st
 // It asserts against the real backend, not a fake, so adding a no-op AbsentIds to search.SQL would
 // fail here rather than quietly reinstating the sweep.
 func TestStartReconcile_SkipsTheStoreBackedIndex(t *testing.T) {
+	t.Parallel()
+
 	database := reconcileTestStore(t)
 
 	idx, err := search.NewSQL(database)

@@ -123,6 +123,10 @@ Each of these has failed before or would fail silently. The test named beside it
 - **The `hippocampus` package reads no configuration**: `New` takes a `Config` that
   `cmd/hippocampus/serverconfig.go` builds. `TestHippocampusReadsNoConfiguration`, and
   `TestServerConfigFillsEveryField` for an assignment forgotten there.
+- **`hippocampus` tests run in parallel unless they say why not.** A test that touches the global
+  logger, the OTEL provider or a package timing variable is sequential, with a `Not parallel:` line
+  in its doc comment; every other test calls `t.Parallel()` first.
+  `TestEveryTestDecidesWhetherItIsParallel`.
 - **Every config key is read, defaulted, offered and documented.** `TestEveryConfigKeyIsDocumented`
   (a row in the generated index, `TestConfigIndex`), `TestEveryDocumentedConfigKeyIsRead`,
   `TestWizardOffersEveryConfigKey`, `defaults_test.go` in the wizard.

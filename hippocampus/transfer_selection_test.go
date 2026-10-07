@@ -56,6 +56,8 @@ func importedIds(t *testing.T, objects *fakeObjectStore, key string) (events []s
 }
 
 func TestExport_SelectsMemoriesAndTheirEvents(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name         string
 		selection    *contract.MemorySelection
@@ -96,6 +98,8 @@ func TestExport_SelectsMemoriesAndTheirEvents(t *testing.T) {
 // TestExport_SelectionByGroupIncludesTheGroupsEmptyEvents: offboarding one group must take its
 // events with it, including those holding no memory.
 func TestExport_SelectionByGroupIncludesTheGroupsEmptyEvents(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 	s := newTransferTestServer(t, objects)
 	seedTransferFixture(t, s)
@@ -119,6 +123,8 @@ func TestExport_SelectionByGroupIncludesTheGroupsEmptyEvents(t *testing.T) {
 // TestExport_SelectionWithClearDeletesOnlyWhatWasSelected is "export, verify, delete" for one group:
 // the memory goes, and its event stays because it still holds another group's memory.
 func TestExport_SelectionWithClearDeletesOnlyWhatWasSelected(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 	s := newTransferTestServer(t, objects)
 	seedTransferFixture(t, s)
@@ -143,6 +149,8 @@ func TestExport_SelectionWithClearDeletesOnlyWhatWasSelected(t *testing.T) {
 }
 
 func TestExport_RefusesAnInvalidSelection(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, newFakeObjectStore())
 
 	_, err := s.Export(context.Background(), &contract.ExportRequest{Memories: &contract.MemorySelection{
@@ -155,6 +163,8 @@ func TestExport_RefusesAnInvalidSelection(t *testing.T) {
 }
 
 func TestTransfer_SelectsMemoriesAndTheirEvents(t *testing.T) {
+	t.Parallel()
+
 	target := newTransferTestServer(t, nil)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -185,6 +195,8 @@ func TestTransfer_SelectsMemoriesAndTheirEvents(t *testing.T) {
 // TestExport_SelectionPagesPastOneBatch: the selected walk resolves ids in transfer.batchSize pages
 // on a keyset cursor, so a selection larger than one page must arrive whole, once each.
 func TestExport_SelectionPagesPastOneBatch(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 	s := newTransferTestServer(t, objects)
 	s.transfer.batchSize = 2
@@ -223,6 +235,8 @@ func TestExport_SelectionPagesPastOneBatch(t *testing.T) {
 // TestExport_SelectionHonoursGroupScope: a selection composes with the caller's scope rather than
 // widening it - a caller bound to one group naming another selects nothing.
 func TestExport_SelectionHonoursGroupScope(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 	s := newTransferTestServer(t, objects)
 	seedTransferFixture(t, s)
@@ -240,6 +254,8 @@ func TestExport_SelectionHonoursGroupScope(t *testing.T) {
 // TestExport_SelectionIsHeldToTheManifestCap: transfer.maxManifestRows bounds a selected run by
 // what it selects, not by the size of the store.
 func TestExport_SelectionIsHeldToTheManifestCap(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 	s := newTransferTestServer(t, objects)
 	seedTransferFixture(t, s)

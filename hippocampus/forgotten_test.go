@@ -56,6 +56,8 @@ func storeMemory(t *testing.T, s *Server, id string, group string) {
 // TestGetForgottenMemories is the round trip: a memory forgotten by a cycle comes back as a record
 // naming what it was and what decided it, and never as a body.
 func TestGetForgottenMemories(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	storeMemory(t, s, "m1", "notes")
@@ -102,6 +104,8 @@ func TestGetForgottenMemories(t *testing.T) {
 // TestGetForgottenMemoriesReportsWhetherItIsRecording pins the distinction an empty page cannot
 // make on its own: nothing forgotten, or nothing written down.
 func TestGetForgottenMemoriesReportsWhetherItIsRecording(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.GetForgottenMemories(context.Background(), &contract.GetForgottenMemoriesRequest{})
@@ -121,6 +125,8 @@ func TestGetForgottenMemoriesReportsWhetherItIsRecording(t *testing.T) {
 // TestGetForgottenMemoriesPaginates pins that next_seq is set only when there is another page: a
 // cursor on a short page would send the client to fetch an empty one to find out.
 func TestGetForgottenMemoriesPaginates(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	for _, id := range []string{"m1", "m2", "m3"} {
@@ -158,6 +164,8 @@ func TestGetForgottenMemoriesPaginates(t *testing.T) {
 // TestGetForgottenMemoriesFiltersByRule covers the wire enum's translation, including that
 // UNSPECIFIED means "either" rather than "no rule".
 func TestGetForgottenMemoriesFiltersByRule(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	storeMemory(t, s, "m1", "")
@@ -189,6 +197,8 @@ func TestGetForgottenMemoriesFiltersByRule(t *testing.T) {
 // TestDeleteForgottenMemoriesRequiresAChoice is the guard on the one operation that destroys the
 // record of what was destroyed: an empty request must never be read as "delete everything".
 func TestDeleteForgottenMemoriesRequiresAChoice(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	storeMemory(t, s, "m1", "")
@@ -211,6 +221,8 @@ func TestDeleteForgottenMemoriesRequiresAChoice(t *testing.T) {
 
 // TestDeleteForgottenMemories covers both accepted forms.
 func TestDeleteForgottenMemories(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	storeMemory(t, s, "m1", "")
@@ -241,6 +253,8 @@ func TestDeleteForgottenMemories(t *testing.T) {
 // TestPruneTombstonesIsSkippedWhileDisabled pins the RPC layer's half of "disabling never deletes":
 // the sleep cycle does not even ask.
 func TestPruneTombstonesIsSkippedWhileDisabled(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	storeMemory(t, s, "m1", "")
@@ -269,6 +283,8 @@ func TestPruneTombstonesIsSkippedWhileDisabled(t *testing.T) {
 
 // TestPruneTombstonesTrims is the other half: while enabled, the caps are applied by the cycle.
 func TestPruneTombstonesTrims(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	for _, id := range []string{"m1", "m2", "m3"} {
@@ -341,6 +357,8 @@ func (f *failingForgottenStore) PruneTombstones(ctx context.Context) (int64, err
 // TestForgottenLogErrorsSurface: a store that cannot answer must say so rather than report an
 // empty log, which would read as "nothing was forgotten".
 func TestForgottenLogErrorsSurface(t *testing.T) {
+	t.Parallel()
+
 	boom := errors.New("boom")
 
 	t.Run("read", func(t *testing.T) {
@@ -376,6 +394,8 @@ func TestForgottenLogErrorsSurface(t *testing.T) {
 // consolidated and evicted correctly has not failed because a record could not be pruned or
 // counted.
 func TestPruneTombstonesNeverFailsTheCycle(t *testing.T) {
+	t.Parallel()
+
 	boom := errors.New("boom")
 
 	for _, failure := range []*failingForgottenStore{{pruneErr: boom}, {countErr: boom}} {
@@ -399,6 +419,8 @@ func TestPruneTombstonesNeverFailsTheCycle(t *testing.T) {
 // TestDeletionThresholdScalesWithPressure pins what the tombstone's threshold column records: the
 // threshold in force, not the configured one.
 func TestDeletionThresholdScalesWithPressure(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation.deletionThreshold = 10
 	s.consolidation.capacityPressure = 1.5
@@ -419,6 +441,8 @@ func TestDeletionThresholdScalesWithPressure(t *testing.T) {
 // TestForgottenLogSurvivesADisabledCycle is the end-to-end statement of the requirement: records
 // written while the feature was on are still there after it is turned off, and go only when asked.
 func TestForgottenLogSurvivesADisabledCycle(t *testing.T) {
+	t.Parallel()
+
 	s, forget := newForgottenTestServer(t)
 
 	storeMemory(t, s, "m1", "")

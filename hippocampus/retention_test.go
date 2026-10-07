@@ -13,6 +13,8 @@ import (
 // and otherwise items younger than minimumRetentionInDays (measured in whole wall-clock days) are
 // retained while older ones are not.
 func TestRetained_Boundary(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{minimumRetentionInDays: 30}}
 
 	now := time.Now().UnixNano()
@@ -43,6 +45,8 @@ func TestRetained_Boundary(t *testing.T) {
 // decayed well below the deletion threshold is still NOT consolidated while inside its retention
 // window, and IS consolidated once past it - the hard floor overriding value-based forgetting.
 func TestShouldConsolidateMemory_RetentionOverridesThreshold(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -73,6 +77,8 @@ func TestShouldConsolidateMemory_RetentionOverridesThreshold(t *testing.T) {
 // TestShouldConsolidateMemory_RetentionRenewedByRecall verifies that a recall resets the retention
 // clock along with the decay clock: an old memory recalled recently is protected again.
 func TestShouldConsolidateMemory_RetentionRenewedByRecall(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -98,6 +104,8 @@ func TestShouldConsolidateMemory_RetentionRenewedByRecall(t *testing.T) {
 // honours the retention floor too (both memory and event consolidation flow through
 // shouldConsolidate).
 func TestShouldConsolidateEvent_RetentionOverridesThreshold(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		consolidation: Consolidation{
 			method:                 1,
@@ -127,6 +135,8 @@ func TestShouldConsolidateEvent_RetentionOverridesThreshold(t *testing.T) {
 // TestMemoryRetained verifies MemoryRetained (the hook eviction consults) tracks the decay
 // timestamp, including recall renewal.
 func TestMemoryRetained(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{consolidation: Consolidation{minimumRetentionInDays: 30}}
 
 	now := time.Now().UnixNano()
@@ -150,6 +160,8 @@ func TestMemoryRetained(t *testing.T) {
 // with the store far over its byte target, eviction must still leave a retained memory in place
 // (retention overrides the capacity limit), while evicting a non-retained one of equal size.
 func TestEvict_RetainedMemoriesSurviveCapacityPressure(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation = Consolidation{
 		method:                 1,
@@ -203,6 +215,8 @@ func TestEvict_RetainedMemoriesSurviveCapacityPressure(t *testing.T) {
 // under the retained memory (which would orphan it). The retained memory is still counted toward
 // the event's memory total so the event is never seen as fully evicted.
 func TestEvict_RetainedMemoryKeepsItsEventAlive(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation = Consolidation{
 		method:                 1,
@@ -260,6 +274,8 @@ func TestEvict_RetainedMemoryKeepsItsEventAlive(t *testing.T) {
 // leaves eviction behaviour unchanged: with no floor, even fresh memories are evicted under
 // sufficient capacity pressure.
 func TestEvict_RetentionDisabledEvictsEverything(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.consolidation = Consolidation{
 		method:                 1,

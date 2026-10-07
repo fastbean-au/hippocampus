@@ -49,6 +49,8 @@ func seedDoomed(t *testing.T, s *Server, n int) {
 // TestSleepRecordsACycleReport verifies a completed cycle publishes what it did, so
 // GetConsolidationStatus has something to report.
 func TestSleepRecordsACycleReport(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	seedDoomed(t, s, 3)
 
@@ -88,6 +90,8 @@ func TestSleepRecordsACycleReport(t *testing.T) {
 // a fourth pass is added - except this: everything the cycle removed must be accounted for by
 // exactly one of the two decay paths it reports.
 func TestCycleReportCountsMatchTheDeletions(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	seedDoomed(t, s, 5)
 
@@ -122,6 +126,8 @@ func TestCycleReportCountsMatchTheDeletions(t *testing.T) {
 // A failed cycle must still publish. "The last cycle deleted 40 and then failed" is the reading an
 // operator needs; leaving the previous success standing would hide it.
 func TestCycleReportPublishedOnFailure(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	wantErr := errors.New("preserve exploded")
 	s.db = failPreserveStore{Store: s.db, err: wantErr}
@@ -156,6 +162,8 @@ func TestCycleReportPublishedOnFailure(t *testing.T) {
 // other way round keeps the real regressions failing (a deadline never restarted, restarted
 // backwards, or restarted by less than a whole period) while a slow runner cannot.
 func TestNextSleepIsRecordedAndResets(t *testing.T) {
+	t.Parallel()
+
 	const period = 50 * time.Millisecond
 
 	s := statusServer(t)
@@ -230,6 +238,8 @@ func TestNextSleepIsRecordedAndResets(t *testing.T) {
 // or the WAL trigger. It must report no schedule rather than a countdown to something that will
 // never fire.
 func TestNextSleepIsZeroWhenTimedSleepDisabled(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	s.sleepPeriod = 0
 	s.stopSleep = make(chan struct{})
@@ -262,6 +272,8 @@ func TestNextSleepIsZeroWhenTimedSleepDisabled(t *testing.T) {
 // would leave a client unable to tell a replica from a consolidator whose cycle had stopped, which
 // is the distinction the RPC exists to make.
 func TestGetConsolidationStatusOnAReplica(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	s.consolidationEnabled = false
 	s.sleepPeriod = time.Minute
@@ -285,6 +297,8 @@ func TestGetConsolidationStatusOnAReplica(t *testing.T) {
 
 // TestGetConsolidationStatusReportsTheCycle covers the projection onto the wire.
 func TestGetConsolidationStatusReportsTheCycle(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	s.consolidation.walTriggerBytes = 1 << 20
 	seedDoomed(t, s, 2)
@@ -342,6 +356,8 @@ func TestGetConsolidationStatusReportsTheCycle(t *testing.T) {
 // A caller that joins an in-flight cycle must see sleep_in_progress, not only the caller that
 // started it - the flag is set inside the singleflight closure for exactly that reason.
 func TestSleepInProgressIsSetForTheCycle(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 
 	if s.sleepInProgress.Load() {

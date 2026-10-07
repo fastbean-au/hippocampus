@@ -37,6 +37,8 @@ func (c corruptingStore) ClaimCallbacks(ctx context.Context, limit int, now int6
 // TestAnUndecodableDeliveryIsAbandonedNotRetriedForever (TODO-3 item 162): under a retaining policy
 // the caps never remove a memory_forgotten row, so a corrupt one at the head of the queue would be
 // claimed on every pass forever and, with a batch of them, nothing behind it would ever be sent.
+//
+// Not parallel: it replaces a package variable (tel).
 func TestAnUndecodableDeliveryIsAbandonedNotRetriedForever(t *testing.T) {
 	restoreProvider := otel.GetMeterProvider()
 	restoreTel := tel

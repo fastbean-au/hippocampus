@@ -61,6 +61,8 @@ func bloatedFootprint() db.StorageFootprint {
 // TestFootprintIsMeasuredAndServed is the whole path: a cycle takes the reading, caches it beside
 // the estimate it is to be read against, and GetConsolidationStatus serves both.
 func TestFootprintIsMeasuredAndServed(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	s.db = measuredFootprintStore{Store: s.db, footprint: bloatedFootprint()}
 
@@ -111,6 +113,8 @@ func TestFootprintIsMeasuredAndServed(t *testing.T) {
 // this reading exists to stop anybody believing - and it is the ordinary state on two of three
 // drivers.
 func TestFootprintIsAbsentWhereTheDriverCannotMeasure(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	s.db = measuredFootprintStore{Store: s.db, footprint: db.StorageFootprint{}}
 
@@ -129,6 +133,8 @@ func TestFootprintIsAbsentWhereTheDriverCannotMeasure(t *testing.T) {
 // TestFootprintIsAbsentUntilACycleHasRun is the other absence, and the ordinary state of a freshly
 // started instance - a console has to be able to tell it from a store occupying nothing.
 func TestFootprintIsAbsentUntilACycleHasRun(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 
 	res, err := s.GetConsolidationStatus(context.Background(), &contract.EmptyRequest{})
@@ -145,6 +151,8 @@ func TestFootprintIsAbsentUntilACycleHasRun(t *testing.T) {
 // for the same reason: a stale figure carries its own measured_at and can be interpreted, while a
 // fresh zero says the store occupies no disk.
 func TestFootprintMeasurementFailureKeepsTheLastReading(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 
 	measured := time.Now().Add(-time.Hour)
@@ -183,6 +191,8 @@ func TestFootprintMeasurementFailureKeepsTheLastReading(t *testing.T) {
 // that could not take the reading, and dividing by it would publish an infinity; a reading nobody
 // took is not a ratio of 1.
 func TestBloatFactorNeedsBothHalves(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		in   footprintSnapshot
@@ -207,6 +217,8 @@ func TestBloatFactorNeedsBothHalves(t *testing.T) {
 // sleep.periodSeconds, and a line per cycle is a line nobody reads. It pins the recovery line too -
 // a reindex having worked is the other half of the same operator's question, and nothing else
 // anywhere confirms it.
+//
+// Not parallel: it redirects the global logger.
 func TestBloatIsReportedOnceUntilItChanges(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -275,6 +287,8 @@ func TestBloatIsReportedOnceUntilItChanges(t *testing.T) {
 // the largest: the largest index on a large store may be the honest cost of holding it, while an
 // entry costing a kilobyte over a key of an id and a few numbers is air at any size.
 func TestDescribeWorstIndexPicksByCostPerEntry(t *testing.T) {
+	t.Parallel()
+
 	line := describeWorstIndex(db.StorageFootprint{
 		Measured: true,
 		Tables: []db.TableFootprint{{
@@ -309,6 +323,8 @@ func TestDescribeWorstIndexPicksByCostPerEntry(t *testing.T) {
 // storage struct and forgotten here is invisible on the wire, and a console renders whatever it is
 // given without noticing that a figure never arrived.
 func TestFootprintToProtoCarriesEveryIndex(t *testing.T) {
+	t.Parallel()
+
 	out := footprintToProto(&footprintSnapshot{
 		measuredAt: time.Unix(0, 12345),
 		estimated:  100,
@@ -368,6 +384,8 @@ func TestFootprintToProtoCarriesEveryIndex(t *testing.T) {
 // UsedBytes again for a figure nothing acts on would be a second full scan per cycle on the server
 // drivers, which is the cost this whole reading is designed around.
 func TestSleepReportsTheFootprintAgainstTheCycleEstimate(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	s.db = measuredFootprintStore{Store: s.db, footprint: bloatedFootprint()}
 	s.consolidation.capacityBytes = 160_000_000

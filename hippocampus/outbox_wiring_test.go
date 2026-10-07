@@ -116,6 +116,8 @@ func outboxDrainServer(t *testing.T, store db.Store, consolidating bool) *Server
 // return: a queue nothing bounds is the one failure mode this whole file exists to avoid, so the
 // defaults must land even on the arms that never start a drain.
 func TestStartOutboxDrainDefaultsTheCaps(t *testing.T) {
+	t.Parallel()
+
 	s := outboxDrainServer(t, nil, false)
 
 	s.startOutboxDrain(nil)
@@ -145,6 +147,8 @@ func TestStartOutboxDrainDefaultsTheCaps(t *testing.T) {
 // the recording OFF. Each is a deployment where a queued row would never be read, and the point of
 // enabling the recording and the drain in one function is that this cannot drift apart.
 func TestStartOutboxDrainRecordsNothingWithoutABackendThatNeedsIt(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		index search.Index
@@ -211,6 +215,8 @@ func TestStartOutboxDrainRecordsNothingWithoutABackendThatNeedsIt(t *testing.T) 
 // its deletes are as losable as anyone's and must be queued, but the queue is single and only the
 // consolidating instance may claim from it.
 func TestStartOutboxDrainOnAReplicaRecordsWithoutDraining(t *testing.T) {
+	t.Parallel()
+
 	database := mustOutboxStore(t)
 	s := outboxDrainServer(t, database, false)
 
@@ -235,6 +241,8 @@ func TestStartOutboxDrainOnAReplicaRecordsWithoutDraining(t *testing.T) {
 // TestStartOutboxDrainOnTheConsolidatorDrains is the other half, end to end through the goroutine
 // rather than by calling drainOutboxOnce: the loop is what turns a queued row into a deleted
 // document without anybody asking, and its delay selection and shutdown are only reachable here.
+//
+// Not parallel: it replaces a package variable (outboxIdleDelay).
 func TestStartOutboxDrainOnTheConsolidatorDrains(t *testing.T) {
 	restoreIdle, restoreBusy := outboxIdleDelay, outboxBusyDelay
 	outboxIdleDelay, outboxBusyDelay = time.Millisecond, time.Millisecond
@@ -284,6 +292,8 @@ func TestStartOutboxDrainOnTheConsolidatorDrains(t *testing.T) {
 // checks the same capability, so this arm is only reachable if the index is swapped afterwards -
 // but it is the difference between a goroutine that exits and one that spins on a nil assertion.
 func TestOutboxDrainLoopStopsWhenTheBackendCannotSync(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		search:        &nonSyncingIndex{},
 		stopOutbox:    make(chan struct{}),
@@ -307,6 +317,8 @@ func TestOutboxDrainLoopStopsWhenTheBackendCannotSync(t *testing.T) {
 // a failed pass costs a retry - and what this asserts is that none of them is counted as applied,
 // because a pass that did not finish must not shorten the next one's delay.
 func TestDrainOutboxOnceSurfacesStorageFailures(t *testing.T) {
+	t.Parallel()
+
 	t.Run("the claim fails", func(t *testing.T) {
 		database := mustOutboxStore(t)
 		store := &outboxFaultStore{Store: database, claimErr: errors.New("boom")}
@@ -362,6 +374,8 @@ func TestDrainOutboxOnceSurfacesStorageFailures(t *testing.T) {
 // TestStaleSweepAbandonsWhenTheStoreCannotBeAsked covers the two failures inside the sweep's page
 // loop. Both abandon the pass rather than continuing, which matters: the sweep DELETES, and
 // carrying on past an unanswered "does this still exist" would remove documents on no evidence.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestStaleSweepAbandonsWhenTheStoreCannotBeAsked(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond
@@ -399,6 +413,8 @@ func TestStaleSweepAbandonsWhenTheStoreCannotBeAsked(t *testing.T) {
 // TestStaleSweepIgnoresABackendThatCannotDelete is the second capability guard, the counterpart to
 // the enumeration one already covered: a backend that can list its ids but not delete them
 // synchronously has nothing this sweep can do.
+//
+// Not parallel: it hooks the global logger.
 func TestStaleSweepIgnoresABackendThatCannotDelete(t *testing.T) {
 	s, _ := outboxServer(t, &enumerateOnlyIndex{})
 	hook := captureLogs(t)

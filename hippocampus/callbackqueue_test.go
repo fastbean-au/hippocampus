@@ -63,6 +63,8 @@ func seedQueue(t *testing.T, database *db.DB, n int) {
 // TestGetCallbackQueueReportsTheBacklog is the happy path: the depth, the oldest instant, and a page
 // of deliveries with the attempt state an operator reads to tell draining from stuck.
 func TestGetCallbackQueueReportsTheBacklog(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackQueueServer(t)
 	seedQueue(t, database, 3)
 
@@ -131,6 +133,8 @@ func contains(haystack string, needle string) bool {
 
 // TestGetCallbackQueuePaginates covers the cursor, which is offered only on a full page.
 func TestGetCallbackQueuePaginates(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackQueueServer(t)
 	seedQueue(t, database, 3)
 
@@ -167,6 +171,8 @@ func TestGetCallbackQueuePaginates(t *testing.T) {
 
 // TestGetCallbackQueueFiltersByKind covers the filter and the wire-to-storage kind mapping behind it.
 func TestGetCallbackQueueFiltersByKind(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackQueueServer(t)
 	seedQueue(t, database, 3)
 
@@ -201,6 +207,8 @@ func TestGetCallbackQueueFiltersByKind(t *testing.T) {
 // TestGetCallbackQueueOnAStoreThatIsNotRecording pins the ambiguity the enabled flag resolves: an
 // empty queue means everything was delivered, or nothing is being queued at all.
 func TestGetCallbackQueueOnAStoreThatIsNotRecording(t *testing.T) {
+	t.Parallel()
+
 	s, _ := callbackQueueServer(t)
 	s.callbacksEnabled = false
 
@@ -221,6 +229,8 @@ func TestGetCallbackQueueOnAStoreThatIsNotRecording(t *testing.T) {
 // TestGetCallbackQueueSurfacesStoreFailures covers the three reads, each of which must fail the RPC
 // rather than report a half-answer an operator would act on.
 func TestGetCallbackQueueSurfacesStoreFailures(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]failingCallbackStore{
 		"listing": {failList: true},
 		"depth":   {failDepth: true},
@@ -245,6 +255,8 @@ func TestGetCallbackQueueSurfacesStoreFailures(t *testing.T) {
 // TestDeleteCallbackQueueRequiresABound is the refusal, and the sharper sibling of the forgotten
 // log's: what this discards is not the record of a notification but the notification itself.
 func TestDeleteCallbackQueueRequiresABound(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackQueueServer(t)
 	seedQueue(t, database, 2)
 
@@ -260,6 +272,8 @@ func TestDeleteCallbackQueueRequiresABound(t *testing.T) {
 }
 
 func TestDeleteCallbackQueueAll(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackQueueServer(t)
 	seedQueue(t, database, 2)
 
@@ -278,6 +292,8 @@ func TestDeleteCallbackQueueAll(t *testing.T) {
 }
 
 func TestDeleteCallbackQueueBeforeATime(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackQueueServer(t)
 	ctx := context.Background()
 
@@ -309,6 +325,8 @@ func TestDeleteCallbackQueueBeforeATime(t *testing.T) {
 }
 
 func TestDeleteCallbackQueueSurfacesTheStoreFailure(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackQueueServer(t)
 
 	s.db = failingCallbackStore{Store: database, failDelete: true}
@@ -321,6 +339,8 @@ func TestDeleteCallbackQueueSurfacesTheStoreFailure(t *testing.T) {
 // TestCallbackKindOf covers the wire-to-storage filter mapping, where UNSPECIFIED means "every kind"
 // rather than "no kind" - the inverse of what the same zero value means on a stored row.
 func TestCallbackKindOf(t *testing.T) {
+	t.Parallel()
+
 	cases := map[contract.CallbackKind]db.CallbackKind{
 		contract.CallbackKind_CALLBACK_KIND_UNSPECIFIED:      db.CallbackKindNone,
 		contract.CallbackKind_CALLBACK_KIND_MEMORY_FORGOTTEN: db.CallbackKindMemoryForgotten,
@@ -346,6 +366,8 @@ func TestCallbackKindOf(t *testing.T) {
 // receiver with an empty "kind", which is neither an error nor something anybody notices until they
 // are looking for it.
 func TestEveryCallbackKindIsProjected(t *testing.T) {
+	t.Parallel()
+
 	for value, name := range contract.CallbackKind_name {
 		kind := contract.CallbackKind(value)
 

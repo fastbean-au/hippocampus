@@ -19,6 +19,8 @@ import (
 // records to a caller who should not see them, and looks exactly like a working feature while doing
 // so. Forcing a new RPC to name its mode here is what turns that into a build failure.
 func TestScopesCoverEveryRPC(t *testing.T) {
+	t.Parallel()
+
 	for _, m := range contract.Hippocampus_ServiceDesc.Methods {
 		if _, ok := scopes[m.MethodName]; !ok {
 			t.Errorf("RPC %q has no entry in scopes - declare how it honours a caller's group scope (see hippocampus/scope.go)", m.MethodName)
@@ -36,6 +38,8 @@ func TestScopesCoverEveryRPC(t *testing.T) {
 // method name misspelled in one and not the other would leave that RPC unguarded in a way each
 // table's own coverage test would still pass.
 func TestScopesAgreeWithPolicies(t *testing.T) {
+	t.Parallel()
+
 	for _, m := range contract.Hippocampus_ServiceDesc.Methods {
 		_, hasScope := scopes[m.MethodName]
 
@@ -59,6 +63,8 @@ func scopedContext(groups ...string) context.Context {
 // empty. Getting this backwards in either direction is a security bug or a total outage, and the
 // slice alone cannot tell them apart.
 func TestScopedGroupsDistinguishesUnscopedFromEmpty(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	if _, bound := s.scopedGroups(context.Background()); bound {
@@ -77,6 +83,8 @@ func TestScopedGroupsDistinguishesUnscopedFromEmpty(t *testing.T) {
 }
 
 func TestRequireUnbound(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	if err := s.requireUnbound(context.Background(), "Purge"); err != nil {
@@ -91,6 +99,8 @@ func TestRequireUnbound(t *testing.T) {
 }
 
 func TestWriteGroup(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	tests := []struct {

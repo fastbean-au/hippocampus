@@ -23,6 +23,8 @@ import (
 // Limit and Offset are the two that must NOT move it: the count ignores both, so including them
 // would give every page of one traversal its own entry.
 func TestFilterCacheKeyCoversEveryField(t *testing.T) {
+	t.Parallel()
+
 	for _, subject := range []struct {
 		name string
 		zero any
@@ -72,6 +74,8 @@ func TestFilterCacheKeyCoversEveryField(t *testing.T) {
 // other's entry - and, worse, once an address is reused, two requests asking for different values
 // could share one and be told each other's totals.
 func TestFilterCacheKeyReadsThroughPointers(t *testing.T) {
+	t.Parallel()
+
 	three := int32(3)
 	alsoThree := int32(3)
 	five := int32(5)
@@ -152,6 +156,8 @@ func nonZeroValue(t reflect.Type) reflect.Value {
 // TestCountCacheScopesCannotShareAnEntry is the same guard expressed as the consequence that
 // matters: two callers bound to different groups must never be served each other's total.
 func TestCountCacheScopesCannotShareAnEntry(t *testing.T) {
+	t.Parallel()
+
 	a := filterCacheKey("memories", db.MemoryFilter{Groups: []string{"team-a"}})
 	b := filterCacheKey("memories", db.MemoryFilter{Groups: []string{"team-b"}})
 	unbound := filterCacheKey("memories", db.MemoryFilter{})
@@ -169,6 +175,8 @@ func TestCountCacheScopesCannotShareAnEntry(t *testing.T) {
 // TestCountCacheExpiryAndBounds covers the two things the cache must do beyond returning a number:
 // stop returning it after the TTL, and stay bounded when the key space is a caller's to grow.
 func TestCountCacheExpiryAndBounds(t *testing.T) {
+	t.Parallel()
+
 	t.Run("a zero TTL disables it", func(t *testing.T) {
 		c := newCountCache(0)
 
@@ -216,6 +224,8 @@ func TestCountCacheExpiryAndBounds(t *testing.T) {
 // listing must stop asking the store, and must report the cached figure even once the store has
 // moved on - which is the trade being made, and so is worth pinning rather than leaving implied.
 func TestListingTotalIsCachedAndStale(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.listingCounts = newCountCache(time.Minute)
 
@@ -287,6 +297,8 @@ func TestListingTotalIsCachedAndStale(t *testing.T) {
 // the reset existed. An empty page at a positive offset is the one short page that must still ask for
 // a total, which makes it the only place a surviving entry could surface.
 func TestPurgeInvalidatesTheListingTotal(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.listingCounts = newCountCache(time.Minute)
 

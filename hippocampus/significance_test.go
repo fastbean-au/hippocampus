@@ -30,6 +30,8 @@ func memorySignificance(t *testing.T, s *Server, id string) int32 {
 // TestStoreMemory_PlacementAbove exercises the RPC placement path end to end: storing a memory
 // "above" an existing significance opens a gap and lands it between the neighbours.
 func TestStoreMemory_PlacementAbove(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -70,6 +72,8 @@ func TestStoreMemory_PlacementAbove(t *testing.T) {
 // "just below" an anchor should land the new memory at the anchor's own rank and shift the anchor
 // (and anything at or above it) up by one.
 func TestStoreMemory_PlacementBelow(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -109,6 +113,8 @@ func TestStoreMemory_PlacementBelow(t *testing.T) {
 // significance (unranked) and ranked later via UpdateMemory - the "significance may arrive later"
 // requirement.
 func TestStoreMemory_UnrankedThenDeferredRanking(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -137,6 +143,8 @@ func TestStoreMemory_UnrankedThenDeferredRanking(t *testing.T) {
 // TestStoreMemory_PlacementUnknownAnchor confirms a placement naming a missing anchor is a client
 // error (InvalidArgument), not an internal failure.
 func TestStoreMemory_PlacementUnknownAnchor(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	_, err := s.StoreMemory(context.Background(), &contract.Memory{
@@ -164,6 +172,8 @@ func TestStoreMemory_PlacementUnknownAnchor(t *testing.T) {
 // explicit UNSPECIFIED mode (the switch's default arm) must both yield a plain absolute spec, with
 // no placement fields stamped on it.
 func TestSignificanceSpecFromProto_NilAndUnspecified(t *testing.T) {
+	t.Parallel()
+
 	spec := significanceSpecFromProto(5, nil, db.AnchorMemory)
 
 	if spec.Value != 5 || spec.AnchorKind != db.AnchorMemory || spec.UpperKind != db.AnchorMemory {

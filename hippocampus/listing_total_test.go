@@ -32,6 +32,8 @@ func (c *countingStore) CountMemoriesFiltered(ctx context.Context, filter db.Mem
 // The total has to stay EXACT in every case - it is the number a client pages by - so each case
 // asserts the reported figure as well as whether the store was asked for it.
 func TestGetMemoriesTotalCountShortcut(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	store := &countingStore{Store: s.db}

@@ -17,6 +17,8 @@ import (
 // rejected with 503, while the open paths (health, OpenAPI) stay reachable, and everything passes
 // through when no purge is running.
 func TestHTTPMiddlewareBlockWhenPurgeInProgress(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	openPaths := []string{"/healthz", "/v1/openapi.json"}
@@ -64,6 +66,8 @@ func TestHTTPMiddlewareBlockWhenPurgeInProgress(t *testing.T) {
 // RPCs with codes.Unavailable during a purge (previously a bare fmt.Errorf, i.e. codes.Unknown),
 // and leaves non-Hippocampus methods (health) and all methods outside a purge untouched.
 func TestInterceptorBlockWhenPurgeInProgress_Code(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{}
 
 	handlerCalled := false

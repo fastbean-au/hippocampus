@@ -38,6 +38,8 @@ func seedMemory(t *testing.T, s *Server) {
 // side effect: writers/admins and the auth-disabled path reinforce; a reader reinforces only when
 // readerRecallReinforces is set, otherwise the recall is a plain read.
 func TestRecallMemories_ReinforcementGate(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name           string
 		ctx            context.Context
@@ -77,6 +79,8 @@ func TestRecallMemories_ReinforcementGate(t *testing.T) {
 // TestRecallMemories_StillReturnsMemories confirms a reader whose reinforcement is suppressed still
 // gets the memory back - the recall is downgraded to a read, not denied.
 func TestRecallMemories_StillReturnsMemories(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedMemory(t, s)
 

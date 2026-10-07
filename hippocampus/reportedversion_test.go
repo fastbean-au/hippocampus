@@ -8,6 +8,8 @@ import (
 // TestSanitiseReportedVersion pins what the topology view keeps of a version the far end reports: a
 // value it would have had to edit is dropped whole rather than shown as something never sent.
 func TestSanitiseReportedVersion(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"hippo/0.52.0":              "hippo/0.52.0",
 		"  hippo/0.52.0  ":          "hippo/0.52.0",

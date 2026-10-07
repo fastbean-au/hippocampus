@@ -35,6 +35,8 @@ func newEventTestServer(t *testing.T) *Server {
 // every event-less memory (event_id = ”) then LEFT JOINs to in eviction. The RPC must reject an
 // empty id and create nothing.
 func TestEndEvent_EmptyIdRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	res, err := s.EndEvent(context.Background(), &contract.EndEventRequest{Id: ""})
@@ -58,6 +60,8 @@ func TestEndEvent_EmptyIdRejected(t *testing.T) {
 // TestEndEvent_UnknownIdNotFound verifies EndEvent no longer upserts a phantom event for an unknown
 // id: it must return NotFound and leave the store empty.
 func TestEndEvent_UnknownIdNotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	res, err := s.EndEvent(context.Background(), &contract.EndEventRequest{Id: "nope", TimeEnd: 500})
@@ -80,6 +84,8 @@ func TestEndEvent_UnknownIdNotFound(t *testing.T) {
 
 // TestEndEvent_Success confirms the happy path still ends an existing event and reports Ok.
 func TestEndEvent_Success(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -108,6 +114,8 @@ func TestEndEvent_Success(t *testing.T) {
 // TestUpdateEventSignificance_EmptyIdRejected mirrors TestEndEvent_EmptyIdRejected for the other
 // RPC that fed db.UpdateEvent unvalidated.
 func TestUpdateEventSignificance_EmptyIdRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	res, err := s.UpdateEventSignificance(context.Background(), &contract.UpdateEventSignificanceRequest{Id: "", Significance: 7})
@@ -131,6 +139,8 @@ func TestUpdateEventSignificance_EmptyIdRejected(t *testing.T) {
 // TestUpdateEventSignificance_UnknownIdNotFound verifies the unknown-id path returns NotFound and
 // creates nothing.
 func TestUpdateEventSignificance_UnknownIdNotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	res, err := s.UpdateEventSignificance(context.Background(), &contract.UpdateEventSignificanceRequest{Id: "nope", Significance: 7})
@@ -154,6 +164,8 @@ func TestUpdateEventSignificance_UnknownIdNotFound(t *testing.T) {
 // TestUpdateEventSignificance_Success confirms the happy path updates the significance and reports
 // Ok.
 func TestUpdateEventSignificance_Success(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -195,6 +207,8 @@ func (f failUnsetStore) DeleteEventCascade(context.Context, string, db.EventCasc
 // must report Ok (every other GeneralResponse RPC does), and the detach arm (memories: false) must
 // leave the event's memories in place with their event_id cleared rather than deleting them.
 func TestDeleteEvent_DetachSuccess(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -227,6 +241,8 @@ func TestDeleteEvent_DetachSuccess(t *testing.T) {
 // TestDeleteEvent_WithMemoriesSuccess verifies the memories: true arm deletes the event's memories
 // and still reports Ok.
 func TestDeleteEvent_WithMemoriesSuccess(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -257,6 +273,8 @@ func TestDeleteEvent_WithMemoriesSuccess(t *testing.T) {
 // masked to codes.Internal by mapError (the detail is logged server-side, not leaked to the client),
 // so the assertion is on the code and Ok, not on the underlying error text.
 func TestDeleteEvent_UnsetErrorSurfaces(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -285,6 +303,8 @@ func TestDeleteEvent_UnsetErrorSurfaces(t *testing.T) {
 // DELETE FROM memories WHERE event_id = ” and wiped every memory not associated with any event.
 // The RPC must reject an empty id with InvalidArgument and leave those memories untouched.
 func TestDeleteEvent_EmptyIdRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	// An event-less memory (event_id = '') - exactly what the empty-id delete would have swept away.
@@ -314,6 +334,8 @@ func TestDeleteEvent_EmptyIdRejected(t *testing.T) {
 // event, rather than reporting Ok unconditionally, matching EndEvent and
 // UpdateEventSignificance.
 func TestDeleteEvent_UnknownIdNotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	res, err := s.DeleteEvent(context.Background(), &contract.DeleteEventRequest{Id: "nope", Memories: true})
@@ -334,6 +356,8 @@ func TestDeleteEvent_UnknownIdNotFound(t *testing.T) {
 // merge into a nonexistent merge_to is rejected with FailedPrecondition and no memories are moved,
 // so a typo cannot turn a whole event's memories into dangling references in one call.
 func TestMergeEvents_NonexistentTargetRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "from", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
@@ -371,6 +395,8 @@ func TestMergeEvents_NonexistentTargetRejected(t *testing.T) {
 // TestMergeEvents_EmptyIdsRejected verifies both ids are required: an absent merge_from or
 // merge_to is rejected before any store call.
 func TestMergeEvents_EmptyIdsRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.MergeEvents(context.Background(), &contract.MergeEventsRequest{MergeFrom: "", MergeTo: "dst"}); err == nil {
@@ -385,6 +411,8 @@ func TestMergeEvents_EmptyIdsRejected(t *testing.T) {
 // TestMergeEvents_Success verifies the happy path re-points merge_from's memories onto an existing
 // merge_to and reports Ok.
 func TestMergeEvents_Success(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
@@ -425,6 +453,8 @@ func TestMergeEvents_Success(t *testing.T) {
 // every other GeneralResponse RPC (EndEvent, DeleteEvent, UpdateEventSignificance). Ok must be
 // true once the merge succeeds.
 func TestMergeEvents_SetsOkOnSuccess(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "src", Name: "source", TimeStart: 100, Significance: 5}); err != nil {
@@ -448,6 +478,8 @@ func TestMergeEvents_SetsOkOnSuccess(t *testing.T) {
 // TestStoreEvent_StoresNestedMemories verifies the nested-memory path: memories carried on the
 // event are stored, defaulted onto the new event id, and counted in the response.
 func TestStoreEvent_StoresNestedMemories(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	res, err := s.StoreEvent(context.Background(), &contract.Event{
@@ -481,6 +513,8 @@ func TestStoreEvent_StoresNestedMemories(t *testing.T) {
 // insignificance returns (rejected, no error), and the old code counted it towards memory_count
 // because it only checked err. memory_count must reflect only the memories actually retained.
 func TestStoreEvent_NestedMemoryDroppedNotCounted(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	s.minimumMemorySignificance = 10
 
@@ -514,6 +548,8 @@ func TestStoreEvent_NestedMemoryDroppedNotCounted(t *testing.T) {
 // TestStoreEvent_InvalidRejected verifies a validation failure surfaces as an error and stores
 // nothing (an event with no name fails Validate).
 func TestStoreEvent_InvalidRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.StoreEvent(context.Background(), &contract.Event{Name: "", TimeStart: 100, Significance: 5}); err == nil {
@@ -529,6 +565,8 @@ func TestStoreEvent_InvalidRejected(t *testing.T) {
 // requested attaches each event's own memories (fetched in one batched query) and never
 // cross-attaches, and a loose memory is left off entirely.
 func TestGetEvents_BatchesMemoriesCorrectly(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	for _, e := range []types.Event{
@@ -581,6 +619,8 @@ func TestGetEvents_BatchesMemoriesCorrectly(t *testing.T) {
 // attaching the memories themselves, that an event holding none reports zero, and that the count is
 // not populated unless it was asked for.
 func TestGetEvents_MemoryCounts(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	for _, e := range []types.Event{
@@ -640,6 +680,8 @@ func TestGetEvents_MemoryCounts(t *testing.T) {
 // TestGetEvents_MemoryCountsWithMemories verifies the two flags compose: the count is still
 // reported alongside the attached memories, and it agrees with them.
 func TestGetEvents_MemoryCountsWithMemories(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -674,6 +716,8 @@ func TestGetEvents_MemoryCountsWithMemories(t *testing.T) {
 // TestGetEvents_SignificanceExtremum verifies the RPC passes SignificanceExtremum through to the
 // db filter and returns every event tied at the highest significance, not just one.
 func TestGetEvents_SignificanceExtremum(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	for _, e := range []types.Event{
@@ -708,6 +752,8 @@ func TestGetEvents_SignificanceExtremum(t *testing.T) {
 // and significance_min/significance_max are mutually exclusive, per the overload the field was
 // deliberately kept separate to avoid.
 func TestGetEvents_SignificanceExtremum_RejectsCombinationWithRange(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{
@@ -729,6 +775,8 @@ func TestGetEvents_SignificanceExtremum_RejectsCombinationWithRange(t *testing.T
 // events: an event below the minimum significance returns no error, no id, stores none of its
 // nested memories, and sets rejected.
 func TestStoreEvent_InsignificantRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	s.minimumEventSignificance = 10
 
@@ -765,6 +813,8 @@ func TestStoreEvent_InsignificantRejected(t *testing.T) {
 
 // TestStoreEvent_SignificantNotRejected verifies a stored event reports rejected=false with an id.
 func TestStoreEvent_SignificantNotRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	s.minimumEventSignificance = 10
 
@@ -785,6 +835,8 @@ func TestStoreEvent_SignificantNotRejected(t *testing.T) {
 // TestStoreEvent_DefaultsTimeStart verifies that StoreEvent accepts a zero time_start,
 // defaulting it to now (SetDefaults runs before Validate), rather than rejecting it as invalid.
 func TestStoreEvent_DefaultsTimeStart(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	before := time.Now().UnixNano()
@@ -813,6 +865,8 @@ func TestStoreEvent_DefaultsTimeStart(t *testing.T) {
 // opens a gap and lands it between the neighbours, mirroring the memory placement behaviour but
 // through the events table join.
 func TestStoreEvent_PlacementAboveNumericAnchor(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	ctx := context.Background()
 
@@ -872,6 +926,8 @@ func TestStoreEvent_PlacementAboveNumericAnchor(t *testing.T) {
 // TestStoreEvent_PlacementIdAnchor verifies an id-based anchor resolves against the anchor event's
 // own current rank rather than a literal value.
 func TestStoreEvent_PlacementIdAnchor(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	ctx := context.Background()
 
@@ -906,6 +962,8 @@ func TestStoreEvent_PlacementIdAnchor(t *testing.T) {
 // anchor is a client error (InvalidArgument) that creates nothing, matching the memory RPC's
 // behaviour for the same case but exercising the events-table anchor lookup.
 func TestStoreEvent_PlacementUnknownIdAnchorRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	ctx := context.Background()
 
@@ -930,6 +988,8 @@ func TestStoreEvent_PlacementUnknownIdAnchorRejected(t *testing.T) {
 // TestUpdateEventSignificance_PlacementAbove exercises resolveEventSignificance's placement path
 // through UpdateEventSignificance rather than StoreEvent.
 func TestUpdateEventSignificance_PlacementAbove(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	ctx := context.Background()
 
@@ -970,6 +1030,8 @@ func TestUpdateEventSignificance_PlacementAbove(t *testing.T) {
 // (upper <= lower) surfaces as InvalidArgument rather than an internal error, and leaves the event
 // unchanged.
 func TestUpdateEventSignificance_PlacementInvalidBetweenRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	ctx := context.Background()
 
@@ -1103,6 +1165,8 @@ func (f eventFaultStore) ResolveSignificanceLevel(ctx context.Context, spec db.S
 // insignificance) must be logged and skipped, and excluded from memory_count, while the event
 // create itself still succeeds.
 func TestStoreEvent_NestedMemoryErrorLoggedAndSkipped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "dup", TimeStamp: 100, Significance: 5, Body: "existing"}); err != nil {
@@ -1131,6 +1195,8 @@ func TestStoreEvent_NestedMemoryErrorLoggedAndSkipped(t *testing.T) {
 // resolveEventSignificance (e.g. a storage error opening a registry gap) is mapped via mapError
 // rather than returned raw.
 func TestStoreEvent_ResolveSignificanceGenericErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	wantErr := errors.New("resolve boom")
@@ -1153,6 +1219,8 @@ func TestStoreEvent_ResolveSignificanceGenericErrorMapped(t *testing.T) {
 // TestStoreEvent_CreateEventErrorMapped verifies a generic CreateEvent failure is mapped via
 // mapError rather than returned raw.
 func TestStoreEvent_CreateEventErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	wantErr := errors.New("create boom")
@@ -1171,6 +1239,8 @@ func TestStoreEvent_CreateEventErrorMapped(t *testing.T) {
 // TestEndEvent_UpdateEventErrorMapped verifies a generic UpdateEvent failure is mapped via
 // mapError rather than returned raw.
 func TestEndEvent_UpdateEventErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -1194,6 +1264,8 @@ func TestEndEvent_UpdateEventErrorMapped(t *testing.T) {
 // UpdateEventSignificance's own error-mapping branches: a generic resolveEventSignificance failure,
 // and a generic UpdateEvent failure once resolution succeeds.
 func TestUpdateEventSignificance_ResolveAndUpdateErrorsMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "one", TimeStart: 100, Significance: 5}); err != nil {
@@ -1225,6 +1297,8 @@ func TestUpdateEventSignificance_ResolveAndUpdateErrorsMapped(t *testing.T) {
 // TestMergeEvents_EventExistsErrorMapped verifies a generic EventExists failure (checking merge_to)
 // is mapped via mapError rather than returned raw.
 func TestMergeEvents_EventExistsErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	wantErr := errors.New("exists boom")
@@ -1243,6 +1317,8 @@ func TestMergeEvents_EventExistsErrorMapped(t *testing.T) {
 // TestDeleteEvent_ErrorsMapped verifies a storage failure in DeleteEvent's one cascade call is mapped
 // via mapError.
 func TestDeleteEvent_ErrorsMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	wantErr := errors.New("delete boom")
@@ -1256,6 +1332,8 @@ func TestDeleteEvent_ErrorsMapped(t *testing.T) {
 // TestGetEventById_ErrorsMapped verifies a generic GetEvent failure and (with memories: true) a
 // generic GetMemoriesByEventId failure are both mapped via mapError.
 func TestGetEventById_ErrorsMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	getEventErr := errors.New("get event boom")
@@ -1287,6 +1365,8 @@ func TestGetEventById_ErrorsMapped(t *testing.T) {
 // significance_extremum (already covered elsewhere): every inverted time range, and an unsupported
 // order_by.
 func TestGetEvents_ValidationErrors(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	cases := []struct {
@@ -1320,6 +1400,8 @@ func TestGetEvents_ValidationErrors(t *testing.T) {
 // TestGetEvents_LimitAndOffsetClamped verifies an over-large limit is clamped to maxEventPageSize
 // and a negative offset is clamped to 0, by capturing the filter actually reaching the store.
 func TestGetEvents_LimitAndOffsetClamped(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 
 	captured := &capturingEventStore{Store: s.db}
@@ -1354,6 +1436,8 @@ func (c *capturingEventStore) GetEvents(ctx context.Context, filter db.EventFilt
 // TestGetEvents_CountAndListErrorsMapped verifies CountEventsFiltered's and GetEvents' own
 // generic failures, and (with memories: true) GetMemoriesByEventIds', are all mapped via mapError.
 func TestGetEvents_CountAndListErrorsMapped(t *testing.T) {
+	t.Parallel()
+
 	countErr := errors.New("count boom")
 	s := newEventTestServer(t)
 

@@ -83,6 +83,8 @@ func claimAtRisk(t *testing.T, database *db.DB, cycleId int64) []db.CallbackDeli
 // would take memories queues a delivery naming them, and does so at the top of the cycle, before
 // anything has been deleted.
 func TestAtRiskWarnsBeforeTheCycleTakesAnything(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 	ctx := context.Background()
 
@@ -148,6 +150,8 @@ func TestAtRiskWarnsBeforeTheCycleTakesAnything(t *testing.T) {
 // TestAtRiskIsSilentWhenNothingIsAtRisk is the "only when the set is non-empty" decision: a store at
 // rest must not put a delivery in the queue on every cycle. The heartbeat is sleep_completed.
 func TestAtRiskIsSilentWhenNothingIsAtRisk(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 	ctx := context.Background()
 
@@ -163,6 +167,8 @@ func TestAtRiskIsSilentWhenNothingIsAtRisk(t *testing.T) {
 // TestAtRiskIsOffByDefault covers the one deviation from the other three kinds: it costs a scan, so
 // it must do nothing at all - not merely deliver nothing - unless it is asked for.
 func TestAtRiskIsOffByDefault(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 	s.callbackAtRiskEvents = false
 
@@ -179,6 +185,8 @@ func TestAtRiskIsOffByDefault(t *testing.T) {
 // margin raises the bar the scan selects on, so memories still above the threshold - which this
 // cycle will NOT take - are reported too, with both thresholds so the two can be told apart.
 func TestAtRiskMarginWidensTheWarning(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 	ctx := context.Background()
 
@@ -233,6 +241,8 @@ func atRiskIds(deliveries []db.CallbackDelivery) []string {
 // two independently numbered streams, every chunk repeats the summary, and a cause with nothing in
 // it produces no delivery at all.
 func TestAtRiskDeliveriesGroupByCauseAndChunk(t *testing.T) {
+	t.Parallel()
+
 	summary := &db.CallbackAtRisk{Consolidating: 4, Evicting: 1, Threshold: 1.0, AtRiskThreshold: 1.25}
 
 	candidates := []db.ForgetCandidate{
@@ -295,6 +305,8 @@ func TestAtRiskDeliveriesGroupByCauseAndChunk(t *testing.T) {
 // TestAtRiskDeliveriesSkipAnEmptyCause pins that a cause with no candidates produces nothing, rather
 // than an empty delivery a receiver would have to read to discover it was empty.
 func TestAtRiskDeliveriesSkipAnEmptyCause(t *testing.T) {
+	t.Parallel()
+
 	deliveries := atRiskDeliveries(1, &db.CallbackAtRisk{}, []db.ForgetCandidate{
 		{Id: "c1", Rule: db.ForgetRuleConsolidation},
 	}, 10)
@@ -307,6 +319,8 @@ func TestAtRiskDeliveriesSkipAnEmptyCause(t *testing.T) {
 // TestTheSleepCycleWarnsBeforeItForgets is the wiring: one real cycle produces both the warning and
 // the deletions it warned about, under one cycle id, and the warning names what actually went.
 func TestTheSleepCycleWarnsBeforeItForgets(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 	ctx := context.Background()
 
@@ -357,6 +371,8 @@ func TestTheSleepCycleWarnsBeforeItForgets(t *testing.T) {
 // TestAtRiskSurvivesAFailedScan covers the best-effort rule: this runs before the cycle's real work
 // and must never stop it, or a receiver's problem would become a store that never consolidates.
 func TestAtRiskSurvivesAFailedScan(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 
 	// Closing the store makes every read fail, which is the shape of any scan failure here.
@@ -370,6 +386,8 @@ func TestAtRiskSurvivesAFailedScan(t *testing.T) {
 // TestAtRiskCarriesNoBodies is the property stated on notify.Item: includeBodies widens the deletion
 // kinds and must not reach this one, whose scan never reads a body.
 func TestAtRiskCarriesNoBodies(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 
 	database.SetCallbackPolicy(db.CallbackPolicy{
@@ -400,6 +418,8 @@ func TestAtRiskCarriesNoBodies(t *testing.T) {
 // survive the queue's encoding and the storage-to-wire projection, which is where a field added to
 // one of the two structs and forgotten in the other goes quiet.
 func TestAtRiskReachesTheReceiver(t *testing.T) {
+	t.Parallel()
+
 	s, database := atRiskServer(t)
 	ctx := context.Background()
 

@@ -16,6 +16,8 @@ import (
 // from one period.
 
 func TestSearchMemories_OffsetPagesThroughTheRankedMatches(t *testing.T) {
+	t.Parallel()
+
 	ids := []string{"m1", "m2", "m3", "m4", "m5"}
 	idx := &fakeIndex{enabled: true, searchIds: ids}
 	s := newSearchTestServer(t, idx)
@@ -59,6 +61,8 @@ func TestSearchMemories_OffsetPagesThroughTheRankedMatches(t *testing.T) {
 }
 
 func TestSearchMemories_OffsetIsBounded(t *testing.T) {
+	t.Parallel()
+
 	s := newSearchTestServer(t, &fakeIndex{enabled: true})
 
 	for _, offset := range []int32{-1, maxSearchOffset + 1} {
@@ -70,6 +74,8 @@ func TestSearchMemories_OffsetIsBounded(t *testing.T) {
 }
 
 func TestSearchMemories_TimeBoundsReachTheIndex(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 

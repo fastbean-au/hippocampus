@@ -32,6 +32,8 @@ func expiryServer(t *testing.T) *Server {
 // though it is highly significant and was recalled a moment ago, reports it as expired rather than
 // consolidated, and leaves a newer one alone (TODO-3 item 157).
 func TestSleepExpiresMemoriesPastTheCeiling(t *testing.T) {
+	t.Parallel()
+
 	s := expiryServer(t)
 	ctx := context.Background()
 
@@ -84,6 +86,8 @@ func TestSleepExpiresMemoriesPastTheCeiling(t *testing.T) {
 
 // TestSleepWithoutAMaximumExpiresNothing: with no maximum configured, nothing is taken for its age.
 func TestSleepWithoutAMaximumExpiresNothing(t *testing.T) {
+	t.Parallel()
+
 	s := expiryServer(t)
 	s.consolidation.maximumRetentionInDays = 0
 
@@ -106,6 +110,8 @@ func TestSleepWithoutAMaximumExpiresNothing(t *testing.T) {
 // how long a memory has before the ceiling reaches it - and pulls days_until_forgotten forward when
 // the ceiling comes before decay would.
 func TestPreviewAndExplainAccountForExpiry(t *testing.T) {
+	t.Parallel()
+
 	s := expiryServer(t)
 	ctx := context.Background()
 

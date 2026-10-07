@@ -21,6 +21,8 @@ import (
 // (demo/soak/report.py), which exists to answer the question item 20 was re-scoped around - whether
 // a cycle that has grown from one scan to roughly six degrades over hours. A quantile pinned to a
 // bucket edge answers "no" every time, which is the worst possible failure for that check.
+//
+// Not parallel: it swaps the global OTEL provider.
 func TestSleepDurationUsesCycleBuckets(t *testing.T) {
 	restore := otel.GetMeterProvider()
 	t.Cleanup(func() { otel.SetMeterProvider(restore) })

@@ -49,6 +49,8 @@ func storeAgedMemory(t *testing.T, database *db.DB, id string, days float64, sig
 // is not the one its store is consolidated under, so reporting it would describe a schedule nothing
 // carries out.
 func TestExplainConsolidationRejectedOnAReplica(t *testing.T) {
+	t.Parallel()
+
 	s, _ := explainTestServer(t)
 	s.consolidationEnabled = false
 
@@ -66,6 +68,8 @@ func TestExplainConsolidationRejectedOnAReplica(t *testing.T) {
 // rather than recomputed by each client: whatever the RPC says about a memory must be what the
 // consolidation scan decides about the same memory.
 func TestExplainConsolidationAgreesWithTheCycle(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 
 	ids := []string{
@@ -121,6 +125,8 @@ func TestExplainConsolidationAgreesWithTheCycle(t *testing.T) {
 // come back in the order they were asked for, and a repeated id costs neither a duplicate answer
 // nor a duplicate lookup.
 func TestExplainConsolidationOrdersAndDeduplicatesIds(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 
 	storeAgedMemory(t, database, "a", 10, 1)
@@ -146,6 +152,8 @@ func TestExplainConsolidationOrdersAndDeduplicatesIds(t *testing.T) {
 
 // TestExplainConsolidationRejectsTooManyIds covers the request bound.
 func TestExplainConsolidationRejectsTooManyIds(t *testing.T) {
+	t.Parallel()
+
 	s, _ := explainTestServer(t)
 
 	ids := make([]string, explainMaxMemoryIds+1)
@@ -163,6 +171,8 @@ func TestExplainConsolidationRejectsTooManyIds(t *testing.T) {
 // explanation reports what the service thinks of a memory, and must not become a second way to read
 // one.
 func TestExplainConsolidationNeverReturnsBodies(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 
 	body := "the-secret-body-nobody-asked-for"
@@ -192,6 +202,8 @@ func TestExplainConsolidationNeverReturnsBodies(t *testing.T) {
 // comparison in the memory's favour: a memory well past the threshold but inside the retention
 // window is safe, and must be shown to be.
 func TestExplainConsolidationReportsTheRetentionFloor(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 	s.consolidation.minimumRetentionInDays = 30
 
@@ -223,6 +235,8 @@ func TestExplainConsolidationReportsTheRetentionFloor(t *testing.T) {
 // TestExplainConsolidationProjectsTheDueDate covers the projection itself: a memory reported as due
 // in n days must, when aged by n days, be one the cycle would take.
 func TestExplainConsolidationProjectsTheDueDate(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 
 	storeAgedMemory(t, database, "counting-down", 1, 5)
@@ -260,6 +274,8 @@ func TestExplainConsolidationProjectsTheDueDate(t *testing.T) {
 // TestExplainConsolidationCurve covers the served curve: it is sampled from the same maths, sized to
 // show the crossing when the caller does not choose a span, and monotonically decreasing.
 func TestExplainConsolidationCurve(t *testing.T) {
+	t.Parallel()
+
 	s, _ := explainTestServer(t)
 
 	res, err := s.ExplainConsolidation(context.Background(), &contract.ExplainConsolidationRequest{
@@ -312,6 +328,8 @@ func TestExplainConsolidationCurve(t *testing.T) {
 // TestExplainConsolidationCurveWithoutACrossing covers the configuration that never forgets what it
 // was asked about: the projection reports no crossing rather than a number that looks like one.
 func TestExplainConsolidationCurveWithoutACrossing(t *testing.T) {
+	t.Parallel()
+
 	s, _ := explainTestServer(t)
 
 	// Method 5's logarithmic long tail against a high significance: the value falls so slowly that
@@ -336,6 +354,8 @@ func TestExplainConsolidationCurveWithoutACrossing(t *testing.T) {
 
 // TestExplainConsolidationCurveValidation covers the one curve input with no sensible default.
 func TestExplainConsolidationCurveValidation(t *testing.T) {
+	t.Parallel()
+
 	s, _ := explainTestServer(t)
 
 	for _, significance := range []float64{0, -1, math.NaN(), math.Inf(1)} {
@@ -359,6 +379,8 @@ func TestExplainConsolidationCurveValidation(t *testing.T) {
 
 // TestExplainConsolidationCurvePointsAreBounded covers the sample-count normalisation.
 func TestExplainConsolidationCurvePointsAreBounded(t *testing.T) {
+	t.Parallel()
+
 	s, _ := explainTestServer(t)
 
 	res, err := s.ExplainConsolidation(context.Background(), &contract.ExplainConsolidationRequest{
@@ -380,6 +402,8 @@ func TestExplainConsolidationCurvePointsAreBounded(t *testing.T) {
 // TestExplainConsolidationReportsTheDecisionInputs covers the half of the response that explains the
 // threshold rather than a memory: without these the value has nothing to be read against.
 func TestExplainConsolidationReportsTheDecisionInputs(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 	s.consolidation.capacityMemories = 10
 	s.consolidation.minimumAgeInDays = 2
@@ -426,6 +450,8 @@ func TestExplainConsolidationReportsTheDecisionInputs(t *testing.T) {
 // sleep goroutine rewrites Consolidation.capacityPressure, so an explanation evaluating against it
 // would be racing that write - and would be reporting a pressure it did not compute.
 func TestExplainConsolidationValuesAgainstASnapshot(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 	s.consolidation.capacityPressure = 99
 
@@ -447,6 +473,8 @@ func TestExplainConsolidationValuesAgainstASnapshot(t *testing.T) {
 // the snapshot are full scans, so repeated calls inside the TTL must reuse one reading, and a call
 // after it must take a fresh one.
 func TestExplainConsolidationCachesTheSnapshot(t *testing.T) {
+	t.Parallel()
+
 	counting := &countingUsedBytesStore{Store: mustExplainStore(t)}
 
 	s := &Server{
@@ -488,6 +516,8 @@ func TestExplainConsolidationCachesTheSnapshot(t *testing.T) {
 // without. Like the preview, it must refuse rather than report a standing derived from a pressure
 // it could not compute, or from memories it could not read.
 func TestExplainConsolidationFailsWhenItsInputsAreUnavailable(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		store func(db.Store) db.Store
@@ -539,6 +569,8 @@ func (f *failingExplainStore) GetMemoryConsolidationCandidates(ctx context.Conte
 // TestExplainConsolidationWithoutAThreshold covers the configuration where nothing is ever
 // forgotten by value: with no threshold to fall below there is no crossing to project or plot.
 func TestExplainConsolidationWithoutAThreshold(t *testing.T) {
+	t.Parallel()
+
 	s, database := explainTestServer(t)
 	s.consolidation.deletionThreshold = 0
 
@@ -565,6 +597,8 @@ func TestExplainConsolidationWithoutAThreshold(t *testing.T) {
 // that a whole day rounds to no age at all values as an infinity under method 1 - which neither
 // JSON nor a plot has anywhere to put, so the point is dropped rather than returned.
 func TestExplainConsolidationCurveDropsNonFinitePoints(t *testing.T) {
+	t.Parallel()
+
 	s, _ := explainTestServer(t)
 	s.consolidation.unitsOfAgeInDays = math.MaxFloat64
 

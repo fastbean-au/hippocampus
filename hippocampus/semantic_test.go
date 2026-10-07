@@ -57,6 +57,8 @@ func newSemanticTestServer(t *testing.T, idx *fakeIndex, embedder *fakeEmbedder)
 
 // A semantic search must send the embedded query as a vector, not as text.
 func TestSearchMemories_SemanticSendsAVector(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{enabled: true, supportsVectors: true, searchIds: []string{"m1"}}
@@ -95,6 +97,8 @@ func TestSearchMemories_SemanticSendsAVector(t *testing.T) {
 
 // Hybrid must run both searches - one with a vector, one without - and fuse them.
 func TestSearchMemories_HybridRunsBothSearches(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{enabled: true, supportsVectors: true, searchIds: []string{"m1"}}
@@ -129,6 +133,8 @@ func TestSearchMemories_HybridRunsBothSearches(t *testing.T) {
 // Keyword must remain vector-free, and an unset mode must behave exactly as keyword does - an
 // existing caller sees no change.
 func TestSearchMemories_KeywordAndUnspecifiedNeverEmbed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	for _, mode := range []contract.SearchMode{
@@ -161,6 +167,8 @@ func TestSearchMemories_KeywordAndUnspecifiedNeverEmbed(t *testing.T) {
 // The two ways a deployment can lack semantic search are separate misconfigurations with separate
 // fixes, so they must be reported separately rather than as one vague message.
 func TestSearchMemories_SemanticRefusalsAreSpecific(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	tests := []struct {
@@ -210,6 +218,8 @@ func TestSearchMemories_SemanticRefusalsAreSpecific(t *testing.T) {
 // Unavailable rather than FailedPrecondition - the distinction a client uses to decide whether
 // retrying is worthwhile.
 func TestSearchMemories_EmbedderFailureIsUnavailable(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, supportsVectors: true}
 	embedder := &fakeEmbedder{enabled: true, err: errors.New("connection refused")}
 
@@ -227,6 +237,8 @@ func TestSearchMemories_EmbedderFailureIsUnavailable(t *testing.T) {
 
 // WhoAmI reports the modes the deployment can serve, so a client can choose without probing.
 func TestWhoAmI_ReportsSearchModes(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	tests := []struct {
@@ -302,6 +314,8 @@ func TestWhoAmI_ReportsSearchModes(t *testing.T) {
 // Storing a memory must attach its embedding to the indexed document, or it is stored but not
 // findable by meaning.
 func TestStoreMemory_IndexesWithAVector(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{enabled: true, supportsVectors: true}
@@ -324,6 +338,8 @@ func TestStoreMemory_IndexesWithAVector(t *testing.T) {
 
 // A binary body is opaque, so embedding it would describe its encoding rather than its content.
 func TestStoreMemory_DoesNotEmbedBinaryBodies(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{enabled: true, supportsVectors: true}
@@ -347,6 +363,8 @@ func TestStoreMemory_DoesNotEmbedBinaryBodies(t *testing.T) {
 
 // An unreachable model server must cost the vector, never the memory.
 func TestStoreMemory_SurvivesAnEmbedderFailure(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{enabled: true, supportsVectors: true}
@@ -382,6 +400,8 @@ func TestStoreMemory_SurvivesAnEmbedderFailure(t *testing.T) {
 // Re-indexing without a vector would replace a document that had one, silently removing that
 // memory from semantic search. The reconcile sweep is the path most likely to do it.
 func TestReconcile_KeepsVectorsOnReindexedMemories(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{enabled: true, supportsVectors: true}

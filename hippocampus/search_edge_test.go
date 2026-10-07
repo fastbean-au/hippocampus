@@ -50,6 +50,8 @@ func (vanishingRecallStore) RecallMemories(ctx context.Context, ids []string) (*
 // best-effort: reinforceRanked rebuilds the response from the recalled rows, so if the recall fails
 // there is nothing honest to return.
 func TestSearchMemories_ReinforceFailureIsReported(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 	s := newSearchTestServer(t, idx)
 
@@ -75,6 +77,8 @@ func TestSearchMemories_ReinforceFailureIsReported(t *testing.T) {
 // disappeared between the ranking read and the recall is dropped rather than returned with a stale
 // body, because RecallMemories only returns what it actually reinforced.
 func TestSearchMemories_VanishedMemoryIsDropped(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 	s := newSearchTestServer(t, idx)
 
@@ -99,6 +103,8 @@ func TestSearchMemories_VanishedMemoryIsDropped(t *testing.T) {
 // TestSearchMemories_IncludeLinked covers associative retrieval on the search path: neighbours are
 // appended after the ranked matches, are not counted as matches, and are not reinforced.
 func TestSearchMemories_IncludeLinked(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 	s := newSearchTestServer(t, idx)
 
@@ -137,6 +143,8 @@ func TestSearchMemories_IncludeLinked(t *testing.T) {
 // A semantic or hybrid search cannot fall back to keyword: the caller asked for a different kind of
 // matching, and silently giving them another would be worse than refusing.
 func TestSearchMemories_EmbedFailuresPropagate(t *testing.T) {
+	t.Parallel()
+
 	modes := []struct {
 		name string
 		mode contract.SearchMode
@@ -184,6 +192,8 @@ func TestSearchMemories_EmbedFailuresPropagate(t *testing.T) {
 // TestSearchMemories_HybridIndexFailuresPropagate covers the two index calls hybrid makes: a
 // failure in either half must surface rather than silently degrading to the half that worked.
 func TestSearchMemories_HybridIndexFailuresPropagate(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, supportsVectors: true, searchErr: errLink}
 	s := newSemanticTestServer(t, idx, &fakeEmbedder{enabled: true})
 
@@ -203,6 +213,8 @@ func TestSearchMemories_HybridIndexFailuresPropagate(t *testing.T) {
 // failure rather than returning it, because no caller can act on it - the memory is already stored,
 // the index is best-effort, and a rebuild can supply the vector later.
 func TestEmbedBody_SkipsWhenUnusable(t *testing.T) {
+	t.Parallel()
+
 	memory := types.Memory{Id: "m1", Body: "some text"}
 
 	t.Run("no vector index", func(t *testing.T) {
@@ -229,6 +241,8 @@ func TestEmbedBody_SkipsWhenUnusable(t *testing.T) {
 // create RPCs reach it only after types.ValidateMemory/ValidateEvent have already rejected a bad
 // link set, so this guard is the one that holds if a future caller arrives by another route.
 func TestCheckLinkTargets_InvalidLinkSet(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	links := []types.Link{

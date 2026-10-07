@@ -35,6 +35,8 @@ func (conflictStore) CreateMemory(ctx context.Context, memory types.Memory) (str
 // (a MySQL deadlock that outlived the retries) used to surface as a gRPC Unknown, which clients read
 // as a lost write. It must now map to Aborted, which clients treat as retryable.
 func TestStoreMemory_WriteConflictMapsToAborted(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.db = conflictStore{Store: s.db}
 
@@ -53,6 +55,8 @@ func TestStoreMemory_WriteConflictMapsToAborted(t *testing.T) {
 // memories.id") as a gRPC Unknown, both leaking schema detail and miscoding the error. It must now
 // map to codes.AlreadyExists with a generic message.
 func TestStoreMemory_DuplicateIdMapsToAlreadyExists(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	first, err := s.StoreMemory(context.Background(), &contract.Memory{Id: "dup", Significance: 5, Body: "x"})
@@ -83,6 +87,8 @@ func TestStoreMemory_DuplicateIdMapsToAlreadyExists(t *testing.T) {
 // requested memory was in fact deleted. Deduplicating the ids first makes the count comparison
 // honest.
 func TestDeleteMemories_DuplicateIdsReportOk(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	for _, id := range []string{"m1", "m2"} {
@@ -125,6 +131,8 @@ func newTestServer(t *testing.T) *Server {
 // deleted, the summary is stored in their place flagged is_summary, and the response reports how
 // many memories were replaced.
 func TestReplaceMemoriesWithSummary_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
@@ -173,6 +181,8 @@ func TestReplaceMemoriesWithSummary_RPC(t *testing.T) {
 // TestReplaceMemoriesWithSummary_UnknownEvent verifies that an event id with no matching event is
 // rejected, and — critically — that rejection happens before any memory is deleted.
 func TestReplaceMemoriesWithSummary_UnknownEvent(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	// A memory dangling on a non-existent event id, as can happen after DeleteEvent(memories:
@@ -204,6 +214,8 @@ func TestReplaceMemoriesWithSummary_UnknownEvent(t *testing.T) {
 // configured minimum significance is rejected, and that the original memories survive the
 // rejected call — a caller must not lose data to a summary that never made it into the store.
 func TestReplaceMemoriesWithSummary_RejectsInsignificantSummary(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.minimumMemorySignificance = 10
 
@@ -237,6 +249,8 @@ func TestReplaceMemoriesWithSummary_RejectsInsignificantSummary(t *testing.T) {
 // TestGetSummarisationCandidates_RPC verifies that the RPC returns whatever the most recent scan
 // stored on the server, converted to contract.
 func TestGetSummarisationCandidates_RPC(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	s.summarisationCandidates = []db.SummarisationCandidate{
@@ -262,6 +276,8 @@ func TestGetSummarisationCandidates_RPC(t *testing.T) {
 // before the first sleep cycle, or with the scan disabled) returns an empty response rather than
 // an error.
 func TestGetSummarisationCandidates_Empty(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.GetSummarisationCandidates(context.Background(), &contract.EmptyRequest{})
@@ -279,6 +295,8 @@ func TestGetSummarisationCandidates_Empty(t *testing.T) {
 // had just condensed until the next sleep cycle refreshed the scan — the auto-summarisation path
 // already pruned, and the pruning now lives at the one chokepoint both paths share.
 func TestSummarising_DropsTheCandidate(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -319,6 +337,8 @@ func TestSummarising_DropsTheCandidate(t *testing.T) {
 // cycle, so a replica reports false however the threshold is set - otherwise a client would wait
 // forever on an instance that will never populate the cache.
 func TestGetSummarisationCandidates_ScanEnabled(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name            string
 		consolidating   bool
@@ -351,6 +371,8 @@ func TestGetSummarisationCandidates_ScanEnabled(t *testing.T) {
 // memory below the minimum significance returns no error and no id, but sets rejected so the caller
 // can tell it apart from a store that simply produced no id, and nothing is persisted.
 func TestStoreMemory_InsignificantRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.minimumMemorySignificance = 10
 
@@ -374,6 +396,8 @@ func TestStoreMemory_InsignificantRejected(t *testing.T) {
 
 // TestStoreMemory_SignificantNotRejected verifies a stored memory reports rejected=false with an id.
 func TestStoreMemory_SignificantNotRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	s.minimumMemorySignificance = 10
 
@@ -395,6 +419,8 @@ func TestStoreMemory_SignificantNotRejected(t *testing.T) {
 // event_id names no existing event is rejected with FailedPrecondition and nothing is persisted,
 // so no dangling reference is ever created.
 func TestStoreMemory_NonexistentEventRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.StoreMemory(context.Background(), &contract.Memory{Significance: 5, Body: "orphan", EventId: "ghost"})
@@ -418,6 +444,8 @@ func TestStoreMemory_NonexistentEventRejected(t *testing.T) {
 // TestStoreMemory_ExistingEventAccepted verifies the guard admits a memory whose event_id names a
 // real event.
 func TestStoreMemory_ExistingEventAccepted(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 5}); err != nil {
@@ -438,6 +466,8 @@ func TestStoreMemory_ExistingEventAccepted(t *testing.T) {
 // never inherit client-supplied recall state, or the memory arrives already reinforced (its decay
 // clock pre-set and its effective significance boosted), which would make it hard to ever forget.
 func TestStoreMemory_IgnoresClientRecallState(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.StoreMemory(context.Background(), &contract.Memory{
@@ -469,6 +499,8 @@ func TestStoreMemory_IgnoresClientRecallState(t *testing.T) {
 // timestamp beyond the clock-skew allowance is rejected (a negative-age memory is undeletable by
 // decay and ranks last for eviction) and nothing is persisted.
 func TestStoreMemory_FutureTimestampRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	future := time.Now().Add(time.Hour).UnixNano()
@@ -494,6 +526,8 @@ func TestStoreMemory_FutureTimestampRejected(t *testing.T) {
 // TestStoreMemory_NearFutureTimestampAccepted verifies a timestamp within the clock-skew allowance
 // is still accepted, so ordinary client/server clock drift is not rejected.
 func TestStoreMemory_NearFutureTimestampAccepted(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	nearFuture := time.Now().Add(time.Minute).UnixNano()
@@ -512,6 +546,8 @@ func TestStoreMemory_NearFutureTimestampAccepted(t *testing.T) {
 // update path: UpdateMemory can write time_stamp, so a far-future value would be exploitable there
 // too.
 func TestUpdateMemory_FutureTimestampRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
@@ -546,6 +582,8 @@ func TestUpdateMemory_FutureTimestampRejected(t *testing.T) {
 // TestUpdateMemory_PartialUpdate verifies the UpdateMemory RPC: only the provided
 // content fields overwrite the stored memory, and a successful update reports Ok.
 func TestUpdateMemory_PartialUpdate(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "original", Group: "billing"}); err != nil {
@@ -575,6 +613,8 @@ func TestUpdateMemory_PartialUpdate(t *testing.T) {
 // that does not exist is rejected with FailedPrecondition and the memory's stored event_id is left
 // unchanged.
 func TestUpdateMemory_NonexistentEventRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
@@ -607,6 +647,8 @@ func TestUpdateMemory_NonexistentEventRejected(t *testing.T) {
 // TestUpdateMemory_EmptyIdRejected verifies an empty id is rejected with InvalidArgument and
 // nothing is touched.
 func TestUpdateMemory_EmptyIdRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.UpdateMemory(context.Background(), &contract.Memory{Id: "", Significance: 5})
@@ -626,6 +668,8 @@ func TestUpdateMemory_EmptyIdRejected(t *testing.T) {
 // TestUpdateMemory_UnknownIdNotFound verifies the RPC returns NotFound and creates nothing for an
 // unknown id, rather than inserting a phantom memory.
 func TestUpdateMemory_UnknownIdNotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.UpdateMemory(context.Background(), &contract.Memory{Id: "nope", Significance: 5})
@@ -649,6 +693,8 @@ func TestUpdateMemory_UnknownIdNotFound(t *testing.T) {
 // TestGetMemories_SignificanceExtremum verifies the RPC passes SignificanceExtremum through to the
 // db filter and returns every memory tied at the highest significance, not just one.
 func TestGetMemories_SignificanceExtremum(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	for _, m := range []types.Memory{
@@ -682,6 +728,8 @@ func TestGetMemories_SignificanceExtremum(t *testing.T) {
 // TestGetMemories_SignificanceExtremum_RejectsCombinationWithRange verifies significance_extremum
 // and significance_min/significance_max are mutually exclusive, matching GetEvents.
 func TestGetMemories_SignificanceExtremum_RejectsCombinationWithRange(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{
@@ -783,6 +831,8 @@ func (f memoryFaultStore) ResolveSignificanceLevel(ctx context.Context, spec db.
 // TestStoreMemory_EventExistsErrorMapped verifies a generic EventExists failure (checking the
 // memory's event_id) is mapped via mapError rather than returned raw.
 func TestStoreMemory_EventExistsErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	wantErr := errors.New("exists boom")
@@ -797,6 +847,8 @@ func TestStoreMemory_EventExistsErrorMapped(t *testing.T) {
 // TestStoreMemory_ResolveSignificanceGenericErrorMapped verifies a non-placement failure from
 // resolveMemorySignificance is mapped via mapError rather than returned raw.
 func TestStoreMemory_ResolveSignificanceGenericErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	wantErr := errors.New("resolve boom")
@@ -814,6 +866,8 @@ func TestStoreMemory_ResolveSignificanceGenericErrorMapped(t *testing.T) {
 // TestUpdateMemory_EventExistsAndUpdateErrorsMapped verifies UpdateMemory's own EventExists,
 // resolveMemorySignificance, and db.UpdateMemory failures are each mapped via mapError.
 func TestUpdateMemory_EventExistsAndUpdateErrorsMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
@@ -850,6 +904,8 @@ func TestUpdateMemory_EventExistsAndUpdateErrorsMapped(t *testing.T) {
 // TestDeleteMemories_EmptyIdsIsNoOp verifies an empty (post-dedupe) id list returns immediately
 // without touching the store or the search index.
 func TestDeleteMemories_EmptyIdsIsNoOp(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.DeleteMemories(context.Background(), &contract.DeleteMemoriesRequest{})
@@ -864,6 +920,8 @@ func TestDeleteMemories_EmptyIdsIsNoOp(t *testing.T) {
 
 // TestRecallMemories_ErrorMapped verifies a generic RecallMemories failure is mapped via mapError.
 func TestRecallMemories_ErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	wantErr := errors.New("recall boom")
@@ -878,6 +936,8 @@ func TestRecallMemories_ErrorMapped(t *testing.T) {
 // error-mapping branches: an empty event_id, an invalid summary body, a generic GetEvent failure,
 // a generic resolveMemorySignificance failure, and a generic db.ReplaceMemoriesWithSummary failure.
 func TestReplaceMemoriesWithSummary_ErrorsMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.ReplaceMemoriesWithSummary(context.Background(), &contract.ReplaceMemoriesWithSummaryRequest{
@@ -949,6 +1009,8 @@ func (c *capturingMemoryStore) GetMemories(ctx context.Context, filter db.Memory
 // TestGetMemories_LimitAndOffsetClamped verifies an over-large limit is clamped to
 // maxMemoryPageSize and a negative offset is clamped to 0.
 func TestGetMemories_LimitAndOffsetClamped(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	captured := &capturingMemoryStore{Store: s.db}
@@ -974,6 +1036,8 @@ func TestGetMemories_LimitAndOffsetClamped(t *testing.T) {
 // first page is its own total), so a request that returns fewer rows than it asked for never reaches
 // CountMemoriesFiltered and its fault would go unnoticed here.
 func TestGetMemories_CountAndListErrorsMapped(t *testing.T) {
+	t.Parallel()
+
 	countErr := errors.New("count boom")
 	s := newTestServer(t)
 
@@ -1002,6 +1066,8 @@ func TestGetMemories_CountAndListErrorsMapped(t *testing.T) {
 // branch (naming a placement anchor that does not exist), distinct from a generic
 // resolveMemorySignificance failure - it must map to InvalidArgument, not codes.Internal.
 func TestUpdateMemory_PlacementInvalidRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", TimeStamp: 100, Significance: 5, Body: "x"}); err != nil {
@@ -1020,6 +1086,8 @@ func TestUpdateMemory_PlacementInvalidRejected(t *testing.T) {
 // TestReplaceMemoriesWithSummary_PlacementInvalidRejected verifies
 // ReplaceMemoriesWithSummary's own db.ErrInvalidPlacement branch for the summary's placement.
 func TestReplaceMemoriesWithSummary_PlacementInvalidRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "trip", TimeStart: 100, Significance: 1}); err != nil {
@@ -1042,6 +1110,8 @@ func TestReplaceMemoriesWithSummary_PlacementInvalidRejected(t *testing.T) {
 // stored through StoreMemory as a proto map, filtered through GetMemories as packed "key=value"
 // strings, and returned intact.
 func TestStoreAndFilterMemoriesByMetadata(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	memories := []*contract.Memory{
@@ -1107,6 +1177,8 @@ func TestStoreAndFilterMemoriesByMetadata(t *testing.T) {
 // JSON_EXTRACT as part of a JSON path and raise ER_INVALID_JSON_PATH, which is why the RPC layer
 // validates filter keys with the same rule it validates written ones.
 func TestGetMemoriesRejectsMalformedMetadataFilters(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	cases := []struct {
@@ -1137,6 +1209,8 @@ func TestGetMemoriesRejectsMalformedMetadataFilters(t *testing.T) {
 // TestStoreMemoryRejectsOverBoundsMetadata checks ValidateInsert's metadata arm surfaces as
 // InvalidArgument through the RPC.
 func TestStoreMemoryRejectsOverBoundsMetadata(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	_, err := s.StoreMemory(context.Background(), &contract.Memory{
@@ -1155,6 +1229,8 @@ func TestStoreMemoryRejectsOverBoundsMetadata(t *testing.T) {
 // the only way to unset either field, because every updatable field reads its zero value as "leave
 // unchanged" and an absent map is indistinguishable from an empty one on the wire.
 func TestUpdateMemoryClearFlags(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.StoreMemory(context.Background(), &contract.Memory{
@@ -1193,6 +1269,8 @@ func TestUpdateMemoryClearFlags(t *testing.T) {
 // TestGetMemoriesRecallStateFilters covers item 58's second half at the RPC layer, above all the
 // question it exists to answer: "what have I never recalled?".
 func TestGetMemoriesRecallStateFilters(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	for _, m := range []*contract.Memory{
@@ -1256,6 +1334,8 @@ func TestGetMemoriesRecallStateFilters(t *testing.T) {
 // read one event's memories, where the only alternative is GetEventById with memories: true, which
 // returns every one of them in a single message.
 func TestGetMemoriesEventFilters(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	for _, e := range []*contract.Event{
@@ -1323,6 +1403,8 @@ func TestGetMemoriesEventFilters(t *testing.T) {
 
 // TestGetMemoriesRejectsInvertedRecallBounds mirrors the existing significance/timestamp guards.
 func TestGetMemoriesRejectsInvertedRecallBounds(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.GetMemories(context.Background(), &contract.GetMemoriesRequest{

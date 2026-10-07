@@ -43,6 +43,8 @@ func captureLog(t *testing.T) *bytes.Buffer {
 // TestEveryAdminMutationIsAudited calls each RPC the policy table marks as an admin-tier mutation
 // through the audited server, by name, and requires an audit line for it. Being driven from the
 // policy table is what makes it a guard: a new administrative RPC fails here until it is audited.
+//
+// Not parallel: it changes the global logger.
 func TestEveryAdminMutationIsAudited(t *testing.T) {
 	audited := reflect.ValueOf(Audited(newTestServer(t)))
 
@@ -77,6 +79,8 @@ func TestEveryAdminMutationIsAudited(t *testing.T) {
 
 // TestTheAuditLineCarriesTheRequestAndTheResult: the filter a predicate delete ran with and what it
 // removed are the two facts an audit trail exists for.
+//
+// Not parallel: it changes the global logger.
 func TestTheAuditLineCarriesTheRequestAndTheResult(t *testing.T) {
 	s := newTestServer(t)
 	seedIdMemories(t, s, types.Memory{Id: "m1", Group: "acme"}, types.Memory{Id: "m2", Group: "other"})
@@ -97,6 +101,8 @@ func TestTheAuditLineCarriesTheRequestAndTheResult(t *testing.T) {
 }
 
 // TestARefusedCallIsAuditedWithItsCode: an attempt is part of the trail, not only a success.
+//
+// Not parallel: it changes the global logger.
 func TestARefusedCallIsAuditedWithItsCode(t *testing.T) {
 	buf := captureLog(t)
 

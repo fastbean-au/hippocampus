@@ -210,6 +210,8 @@ func outboxServer(t *testing.T, idx search.Index) (*Server, *db.DB) {
 // deletion in the same transaction, and the drain applies it. The whole point is that no step
 // between the two can drop it.
 func TestDrainAppliesQueuedDeletions(t *testing.T) {
+	t.Parallel()
+
 	idx := &syncingIndex{}
 	s, database := outboxServer(t, idx)
 	ctx := context.Background()
@@ -246,6 +248,8 @@ func TestDrainAppliesQueuedDeletions(t *testing.T) {
 // between the outbox and the in-memory queue it replaced: an index that cannot take the deletion now
 // must still be given it later, rather than the deletion being forgotten at the point of failure.
 func TestDrainKeepsWorkQueuedWhenTheIndexRefuses(t *testing.T) {
+	t.Parallel()
+
 	idx := &syncingIndex{deleteErr: errors.New("cluster unreachable")}
 	s, database := outboxServer(t, idx)
 	ctx := context.Background()
@@ -286,6 +290,8 @@ func TestDrainKeepsWorkQueuedWhenTheIndexRefuses(t *testing.T) {
 // must not grow the queue without bound. What is discarded becomes the stale sweep's to find, which
 // is why abandoning it is survivable at all.
 func TestPruneAbandonsQueuedDeletionsAtTheCaps(t *testing.T) {
+	t.Parallel()
+
 	idx := &syncingIndex{deleteErr: errors.New("cluster unreachable")}
 	s, database := outboxServer(t, idx)
 	ctx := context.Background()
@@ -319,6 +325,8 @@ func TestPruneAbandonsQueuedDeletionsAtTheCaps(t *testing.T) {
 // index holding documents for memories that are gone must converge back on the store, whatever put
 // them there - a dropped delete, a deletion abandoned at the caps, or divergence that predates the
 // outbox entirely.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestStaleSweepRemovesDocumentsTheStoreNoLongerHas(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond
@@ -367,6 +375,8 @@ func TestStaleSweepRemovesDocumentsTheStoreNoLongerHas(t *testing.T) {
 // TestStaleSweepStopsPromptlyOnShutdown pins that the sweep is interruptible. It enumerates the
 // whole index, which on the deployment that motivated this change was several million documents, so
 // a sweep that ran to completion regardless would hold shutdown open for as long as it took.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestStaleSweepStopsPromptlyOnShutdown(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Hour
@@ -401,6 +411,8 @@ func TestStaleSweepStopsPromptlyOnShutdown(t *testing.T) {
 // TestStaleSweepAbandonsOnAnEnumerationFailure keeps a cluster failure from becoming a data-loss
 // path: if the index cannot be listed, the sweep must stop rather than reason about a partial answer.
 func TestStaleSweepAbandonsOnAnEnumerationFailure(t *testing.T) {
+	t.Parallel()
+
 	idx := &syncingIndex{
 		documents:    []indexedDoc{{id: "a", timestamp: 1}, {id: "b", timestamp: 2}},
 		enumerateErr: errors.New("cluster unreachable"),
@@ -418,6 +430,8 @@ func TestStaleSweepAbandonsOnAnEnumerationFailure(t *testing.T) {
 // TestStaleSweepIgnoresABackendThatCannotEnumerate covers the optional-interface gate: the SQLite
 // FTS and no-op backends implement neither capability, and the sweep must simply not run rather
 // than fail.
+//
+// Not parallel: it hooks the global logger.
 func TestStaleSweepIgnoresABackendThatCannotEnumerate(t *testing.T) {
 	s, _ := outboxServer(t, &recordingIndex{})
 	hook := captureLogs(t)
@@ -444,6 +458,8 @@ func TestStaleSweepIgnoresABackendThatCannotEnumerate(t *testing.T) {
 // So this drives deliberately colliding timestamps - far more documents per instant than fit in a
 // page - at several page sizes, and demands the only outcome that means anything: every stale
 // document gone, every live one still there.
+//
+// Not parallel: it replaces a package variable (reconcilePageDelay).
 func TestStaleSweepConvergesUnderTimestampCollisions(t *testing.T) {
 	restore := reconcilePageDelay
 	reconcilePageDelay = time.Millisecond

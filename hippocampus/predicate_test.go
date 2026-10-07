@@ -56,6 +56,8 @@ func countMemoriesInGroup(t *testing.T, s *Server, group string) int {
 // unfiltered request must never be read as "delete everything". Purge is that operation, and it is
 // a different RPC with a different tier and a different scope rule.
 func TestDeleteMemoriesByFilter_RefusesAnEmptyFilter(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedGroupedMemories(t, s, "a", "", 3)
 
@@ -88,6 +90,8 @@ func TestDeleteMemoriesByFilter_RefusesAnEmptyFilter(t *testing.T) {
 // the case that motivated naming the flag delete_memories rather than memories: a request carrying
 // only that flag says what to do with the selection, not what to select, so it is still empty.
 func TestDeleteEventsByFilter_RefusesAnEmptyFilter(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.db.CreateEvent(context.Background(), types.Event{Id: "e1", Name: "e", TimeStart: 100, Significance: 5}); err != nil {
@@ -120,6 +124,8 @@ func TestDeleteEventsByFilter_RefusesAnEmptyFilter(t *testing.T) {
 // two fields that legitimately select nothing are named here and nowhere else, so a new field
 // arriving with no handling fails the build's tests rather than shipping.
 func TestEverySelectingFieldIsRecognised(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -209,6 +215,8 @@ func TestEverySelectingFieldIsRecognised(t *testing.T) {
 // TestDeleteMemoriesByFilter_DeletesOnlyWhatMatches is the offboarding case: one group goes, the
 // other is untouched.
 func TestDeleteMemoriesByFilter_DeletesOnlyWhatMatches(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	seedGroupedMemories(t, s, "a", "", 4)
@@ -241,6 +249,8 @@ func TestDeleteMemoriesByFilter_DeletesOnlyWhatMatches(t *testing.T) {
 // The two build their predicate with one function (selection.go), and this is what would fail if
 // somebody gave either of them a second one.
 func TestDeleteMemoriesByFilter_MatchesTheListing(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -328,6 +338,8 @@ func remainingMemoryIds(t *testing.T, s *Server) map[string]bool {
 // on until nothing matched - a listing of one memory as the dry run, and a deletion of all of them
 // (TODO-3 item 137).
 func TestDeleteMemoriesByFilter_SignificanceExtremum(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name          string
 		extremum      contract.SignificanceExtremum
@@ -390,6 +402,8 @@ func TestDeleteMemoriesByFilter_SignificanceExtremum(t *testing.T) {
 // TestDeleteMemoriesByFilter_SignificanceExtremumWithinTheFilter: the extremum is taken over what
 // the rest of the filter selects, not over the store, as the listing takes it.
 func TestDeleteMemoriesByFilter_SignificanceExtremumWithinTheFilter(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -420,6 +434,8 @@ func TestDeleteMemoriesByFilter_SignificanceExtremumWithinTheFilter(t *testing.T
 // TestDeleteMemoriesByFilter_SignificanceExtremumMatchingNothing: a filter whose other fields
 // select nothing has no extremum to resolve, and is simply complete.
 func TestDeleteMemoriesByFilter_SignificanceExtremumMatchingNothing(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	seedSignificances(t, s, "a", 1, 2)
@@ -441,6 +457,8 @@ func TestDeleteMemoriesByFilter_SignificanceExtremumMatchingNothing(t *testing.T
 // call reports itself incomplete - otherwise an operator taking a hundred rows at a time would
 // have no way to know when to stop.
 func TestDeleteMemoriesByFilter_MaxDeletions(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	seedGroupedMemories(t, s, "a", "", 5)
@@ -483,6 +501,8 @@ func TestDeleteMemoriesByFilter_MaxDeletions(t *testing.T) {
 // always takes the first matching ids, so it is the deletion of one batch that makes the next
 // selection return the next - and a bug there is an infinite loop or a silent stop at 500.
 func TestDeleteMemoriesByFilter_BeyondOneBatch(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("seeds more than one batch of memories")
 	}
@@ -510,6 +530,8 @@ func TestDeleteMemoriesByFilter_BeyondOneBatch(t *testing.T) {
 // TestDeleteMemoriesByFilter_DeleteEmptyEvents checks both halves of the cleanup: an event whose
 // memories all went is removed, and one that still holds a memory is not.
 func TestDeleteMemoriesByFilter_DeleteEmptyEvents(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -559,6 +581,8 @@ func TestDeleteMemoriesByFilter_DeleteEmptyEvents(t *testing.T) {
 // TestDeleteMemoriesByFilter_LeavesEventsAloneByDefault: the cleanup is opt-in, so without it an
 // emptied event stays for the decay cycle to deal with.
 func TestDeleteMemoriesByFilter_LeavesEventsAloneByDefault(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -587,6 +611,8 @@ func TestDeleteMemoriesByFilter_LeavesEventsAloneByDefault(t *testing.T) {
 // counting significance for its surviving end forever, which is the failure a DELETE ... WHERE
 // would have introduced.
 func TestDeleteMemoriesByFilter_PrunesLinks(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -619,6 +645,8 @@ func TestDeleteMemoriesByFilter_PrunesLinks(t *testing.T) {
 
 // TestDeleteEventsByFilter_DeleteMemories: the events go and so do their memories.
 func TestDeleteEventsByFilter_DeleteMemories(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -664,6 +692,8 @@ func TestDeleteEventsByFilter_DeleteMemories(t *testing.T) {
 // TestDeleteEventsByFilter_SignificanceExtremum is TestDeleteMemoriesByFilter_SignificanceExtremum
 // for events, whose deletion loop had the same shape and so the same fault.
 func TestDeleteEventsByFilter_SignificanceExtremum(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -704,6 +734,8 @@ func TestDeleteEventsByFilter_SignificanceExtremum(t *testing.T) {
 // TestDeleteEventsByFilter_OrphansMemories: without delete_memories the memories outlive their
 // event with no event_id, exactly as DeleteEvent's default does.
 func TestDeleteEventsByFilter_OrphansMemories(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -744,6 +776,8 @@ func TestDeleteEventsByFilter_OrphansMemories(t *testing.T) {
 // TestDeleteEventsByFilter_MaxDeletions bounds the events rather than the memories, and reports
 // itself incomplete for the same reason its memory counterpart does.
 func TestDeleteEventsByFilter_MaxDeletions(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -777,6 +811,8 @@ func TestDeleteEventsByFilter_MaxDeletions(t *testing.T) {
 // "a". It is a test of its own rather than a subtest of TestGroupScopeIsolation_Admin because it
 // empties the partition it runs against, which the shared fixture's later subtests read.
 func TestGroupScopeIsolation_DeleteByFilter(t *testing.T) {
+	t.Parallel()
+
 	t.Run("a scoped caller cannot delete another group's memories", func(t *testing.T) {
 		s := seedTwoGroups(t)
 
@@ -871,6 +907,8 @@ func (vanishingStore) GetEvent(_ context.Context, id string) (*types.Event, erro
 // TestDeleteByFilter_SignificanceExtremumRowVanishes: when the probed row goes before its tier can
 // be read, the call is Aborted and deletes nothing, rather than guessing a tier.
 func TestDeleteByFilter_SignificanceExtremumRowVanishes(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -1001,6 +1039,8 @@ func (f failingPredicateStore) UnsetMemoriesEventId(ctx context.Context, eventId
 // error itself: a failure reports what had ALREADY been deleted rather than zero - those rows are
 // gone whether or not the call finished - and it never reports itself complete.
 func TestDeleteByFilter_StoreFailures(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	seed := func(t *testing.T) *Server {
@@ -1162,6 +1202,8 @@ func TestDeleteByFilter_StoreFailures(t *testing.T) {
 // TestDeleteMemoriesByFilter_RejectsAnInvalidSelection: the shared builder's validation reaches
 // this RPC too, so a nonsensical range is refused here exactly as it is on the listing.
 func TestDeleteMemoriesByFilter_RejectsAnInvalidSelection(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.DeleteMemoriesByFilter(context.Background(), &contract.DeleteMemoriesByFilterRequest{
@@ -1180,6 +1222,8 @@ func TestDeleteMemoriesByFilter_RejectsAnInvalidSelection(t *testing.T) {
 
 // TestDeleteEventsByFilter_RejectsAnInvalidSelection is the events' half.
 func TestDeleteEventsByFilter_RejectsAnInvalidSelection(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	if _, err := s.DeleteEventsByFilter(context.Background(), &contract.DeleteEventsByFilterRequest{

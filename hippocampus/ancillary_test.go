@@ -32,6 +32,8 @@ func (failingAncillaryStore) AncillaryStorage(context.Context, db.AncillaryBound
 // which is the state this report exists to describe - the store spending bytes on the record of
 // what it just deleted, in a place the capacity target will never look.
 func TestSleepMeasuresTheStorageOutsideTheTarget(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 	s.consolidation.tombstones = true
 
@@ -111,6 +113,8 @@ func TestSleepMeasuresTheStorageOutsideTheTarget(t *testing.T) {
 // failure: replace a real figure with a zero. A stale reading carries its own measured_at and can be
 // interpreted; a fresh zero says the queues are empty when nobody knows whether they are.
 func TestAncillaryMeasurementFailureKeepsTheLastReading(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 
 	measured := time.Now().Add(-time.Hour)
@@ -152,6 +156,8 @@ func TestAncillaryMeasurementFailureKeepsTheLastReading(t *testing.T) {
 // TestAncillaryIsAbsentUntilACycleHasRun is the state a console has to be able to tell from "the
 // queues are empty", and it is the ordinary state of a freshly started instance.
 func TestAncillaryIsAbsentUntilACycleHasRun(t *testing.T) {
+	t.Parallel()
+
 	s := statusServer(t)
 
 	res, err := s.GetConsolidationStatus(context.Background(), &contract.EmptyRequest{})
@@ -168,6 +174,8 @@ func TestAncillaryIsAbsentUntilACycleHasRun(t *testing.T) {
 // storage struct and forgotten on the wire fails here rather than by being silently absent from a
 // console that renders whatever it is given.
 func TestAncillaryToProtoCarriesEveryTable(t *testing.T) {
+	t.Parallel()
+
 	measured := time.Now()
 
 	out := ancillaryToProto(&ancillarySnapshot{
@@ -229,6 +237,8 @@ func TestAncillaryToProtoCarriesEveryTable(t *testing.T) {
 // measurement reads it there - which is why there was a tombstoneMaxBytes mirror on the server to
 // remove when this landed.
 func TestAncillaryBoundsComeFromTheEnforcedFields(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{
 		outboxBounds:   db.QueueBounds{MaxRows: 10, MaxBytes: 4096, MaxAge: time.Hour},
 		callbackBounds: db.QueueBounds{MaxRows: 20, MaxBytes: 8192, MaxAge: 2 * time.Hour},
@@ -255,6 +265,8 @@ func TestAncillaryBoundsComeFromTheEnforcedFields(t *testing.T) {
 // projection: a field added to the storage struct and forgotten here is invisible on the wire, and a
 // console renders whatever it is given without noticing that a bound never arrived.
 func TestAncillaryTableProjectionCarriesEveryBound(t *testing.T) {
+	t.Parallel()
+
 	out := ancillaryTableToProto(db.AncillaryTable{
 		Enabled:    true,
 		Rows:       10,
@@ -291,6 +303,8 @@ func TestAncillaryTableProjectionCarriesEveryBound(t *testing.T) {
 // it is the engine's reading where there is one - and is therefore deliberately NOT the sum of the
 // three `bytes` fields beside it.
 func TestTotalBytesIsTheFootprint(t *testing.T) {
+	t.Parallel()
+
 	out := ancillaryToProto(&ancillarySnapshot{
 		measuredAt: time.Now(),
 		storage: db.AncillaryStorage{
@@ -309,6 +323,8 @@ func TestTotalBytesIsTheFootprint(t *testing.T) {
 // its row cap while an age cap is also configured is holding less history than its operator asked
 // for, and nothing about it is an error - both caps are enforced and neither is violated.
 func TestUnreachableWindow(t *testing.T) {
+	t.Parallel()
+
 	for _, one := range []struct {
 		name  string
 		table db.AncillaryTable
@@ -332,6 +348,8 @@ func TestUnreachableWindow(t *testing.T) {
 // it. The span is the number that makes the mismatch visible: a row count is the same whether the
 // log holds five days or thirty.
 func TestDescribeBindingStatesTheSpan(t *testing.T) {
+	t.Parallel()
+
 	measured := time.Now()
 
 	line := describeBinding("forgotten_log", db.AncillaryTable{
@@ -373,6 +391,8 @@ func TestDescribeBindingStatesTheSpan(t *testing.T) {
 // It pins the severity split too, which is most of what the line is for. A table held by exactly the
 // cap its operator expressed is the arrangement working and is Info; a window the store forgets too
 // fast to reach, and a table nothing will ever trim, are the two an operator has to act on.
+//
+// Not parallel: it redirects the global logger.
 func TestBindingIsReportedOnceUntilItChanges(t *testing.T) {
 	var buf bytes.Buffer
 

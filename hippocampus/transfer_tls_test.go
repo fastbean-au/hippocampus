@@ -7,6 +7,8 @@ import (
 // TestTransferClientCredentials covers the credential building: plaintext when disabled, TLS when
 // enabled, and the two validation failures the trust options add.
 func TestTransferClientCredentials(t *testing.T) {
+	t.Parallel()
+
 	insecureCreds, err := Transfer{tls: false}.clientCredentials()
 	if err != nil {
 		t.Fatalf("disabled: unexpected error: %s", err)

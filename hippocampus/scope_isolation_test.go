@@ -143,6 +143,8 @@ func assertNoLeak(t *testing.T, rpc string, rendered string) {
 
 // TestGroupScopeIsolation_Reads drives every read RPC as a caller scoped to group "a".
 func TestGroupScopeIsolation_Reads(t *testing.T) {
+	t.Parallel()
+
 	s := seedTwoGroups(t)
 	ctx := scopedContext("a")
 
@@ -337,6 +339,8 @@ func TestGroupScopeIsolation_Reads(t *testing.T) {
 
 // TestGroupScopeIsolation_Writes drives every mutating RPC as a caller scoped to group "a".
 func TestGroupScopeIsolation_Writes(t *testing.T) {
+	t.Parallel()
+
 	s := seedTwoGroups(t)
 	ctx := scopedContext("a")
 
@@ -603,6 +607,8 @@ func TestGroupScopeIsolation_Writes(t *testing.T) {
 // TestGroupScopeIsolation_Admin covers the RPCs refused outright to a scoped caller, and the
 // data-movement ones that are narrowed to the caller's partition instead.
 func TestGroupScopeIsolation_Admin(t *testing.T) {
+	t.Parallel()
+
 	s := seedTwoGroups(t)
 	s.consolidationEnabled = true
 
@@ -767,6 +773,8 @@ func TestGroupScopeIsolation_Admin(t *testing.T) {
 // group, and so handed to them (TODO-3 item 136). Each case gets its own store, since a case that
 // failed would otherwise have moved the record the next one relies on.
 func TestGroupScopeIsolation_ImportCollisions(t *testing.T) {
+	t.Parallel()
+
 	ctx := scopedContext("a")
 
 	t.Run("ImportBatch cannot take over another group's memory", func(t *testing.T) {
@@ -953,6 +961,8 @@ func assertDetached(t *testing.T, s *Server, id string) {
 // event is the one state no consolidation pass can see through. Counts reported back cover the
 // caller's memories only, so none of this tells them the other memory exists (TODO-3 item 139).
 func TestGroupScopeIsolation_EventCascades(t *testing.T) {
+	t.Parallel()
+
 	ctx := scopedContext("a")
 
 	t.Run("DeleteEvent with memories deletes only the caller's", func(t *testing.T) {
@@ -1125,6 +1135,8 @@ func assertMemoryAbsent(t *testing.T, s *Server, id string) {
 // This needs its own store rather than seedTwoGroups', whose events each hold only their own
 // group's memory: the mismatch is the whole point of the case.
 func TestGroupScopeIsolation_EventMemoryCounts(t *testing.T) {
+	t.Parallel()
+
 	s := newEventTestServer(t)
 	ctx := context.Background()
 
@@ -1176,6 +1188,8 @@ func TestGroupScopeIsolation_EventMemoryCounts(t *testing.T) {
 }
 
 func TestGroupScopeIsolation_UnscopedCallerIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	s := seedTwoGroups(t)
 	ctx := context.Background()
 
@@ -1220,6 +1234,8 @@ func TestGroupScopeIsolation_UnscopedCallerIsUnchanged(t *testing.T) {
 // cannot be observed from inside the test binary. What the descriptor check buys is that adding an
 // RPC forces somebody to look at this file.
 func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
+	t.Parallel()
+
 	covered := map[string]bool{
 		// TestGroupScopeIsolation_Reads
 		"GetMemories":                true,
@@ -1296,6 +1312,8 @@ func TestEveryRPCIsCoveredByIsolationTest(t *testing.T) {
 
 // TestSearchMemories_GroupScope covers the search path, which needs a content-search backend.
 func TestSearchMemories_GroupScope(t *testing.T) {
+	t.Parallel()
+
 	s := seedTwoGroups(t)
 
 	idx, err := search.NewSQL(s.db.(*db.DB))
@@ -1323,6 +1341,8 @@ func TestSearchMemories_GroupScope(t *testing.T) {
 // each must surface as an error rather than be skipped, since a skipped step here is either a
 // memory left naming a deleted event or a summary written over memories that were never removed.
 func TestGroupScopeIsolation_EventCascadeStoreFailures(t *testing.T) {
+	t.Parallel()
+
 	ctx := scopedContext("a")
 
 	cases := []struct {

@@ -16,6 +16,8 @@ import (
 // "unknown manifest", which reads as an expired id rather than a misrouted call.
 
 func TestExportNamesTheInstanceHoldingTheManifest(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 	s := newTransferTestServer(t, objects)
 	s.topology.instanceId = "replica-a:50051"
@@ -31,6 +33,8 @@ func TestExportNamesTheInstanceHoldingTheManifest(t *testing.T) {
 }
 
 func TestClearOfAnUnknownManifestSaysWhereManifestsLive(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, newFakeObjectStore())
 	s.topology.instanceId = "replica-b:50051"
 

@@ -53,6 +53,8 @@ func standbyServer(t *testing.T) (*Server, *atomic.Bool) {
 }
 
 func TestAStandbyServesAsAReplicaUntilItWinsTheLock(t *testing.T) {
+	t.Parallel()
+
 	s, free := standbyServer(t)
 
 	if s.consolidating() {
@@ -112,6 +114,8 @@ func TestAStandbyServesAsAReplicaUntilItWinsTheLock(t *testing.T) {
 
 // TestStopEndsAStandbyThatNeverWon: shutdown must not wait on a lock that is never released.
 func TestStopEndsAStandbyThatNeverWon(t *testing.T) {
+	t.Parallel()
+
 	s, _ := standbyServer(t)
 
 	stopped := make(chan struct{})

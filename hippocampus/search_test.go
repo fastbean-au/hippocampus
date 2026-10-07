@@ -154,6 +154,8 @@ func newSearchTestServer(t *testing.T, idx search.Index) *Server {
 // TestSearchMemories_DisabledReturnsFailedPrecondition verifies both the no-op index and a nil
 // index (a Server constructed without one) reject the RPC with FailedPrecondition.
 func TestSearchMemories_DisabledReturnsFailedPrecondition(t *testing.T) {
+	t.Parallel()
+
 	for _, s := range []*Server{
 		newSearchTestServer(t, nil),
 		newSearchTestServer(t, search.NewNoop()),
@@ -172,6 +174,8 @@ func TestSearchMemories_DisabledReturnsFailedPrecondition(t *testing.T) {
 // OpenSearch behind it - and the message used to say the driver had no content search at all, which
 // sent the operator looking for a backend they already had.
 func TestSearchMemories_DisabledNamesTheSwitch(t *testing.T) {
+	t.Parallel()
+
 	s := newSearchTestServer(t, search.NewNoop())
 
 	_, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "anything"})
@@ -193,6 +197,8 @@ func TestSearchMemories_DisabledNamesTheSwitch(t *testing.T) {
 // primary store no longer holds are silently dropped, and surviving results come back in the
 // index's relevance order rather than the fetch order.
 func TestSearchMemories_DropsStaleIdsAndKeepsRelevanceOrder(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m2", "stale", "m1"}}
 	s := newSearchTestServer(t, idx)
 
@@ -223,6 +229,8 @@ func TestSearchMemories_DropsStaleIdsAndKeepsRelevanceOrder(t *testing.T) {
 // TestSearchMemories_ReinforceRecalls verifies the reinforce flag routes matches through recall,
 // bumping the recall count.
 func TestSearchMemories_ReinforceRecalls(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 	s := newSearchTestServer(t, idx)
 
@@ -244,6 +252,8 @@ func TestSearchMemories_ReinforceRecalls(t *testing.T) {
 // search path too: a reader for whom reinforcement is disabled gets the match back but without the
 // recall write, exactly as RecallMemories downgrades.
 func TestSearchMemories_ReinforceSuppressedForReader(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 	s := newSearchTestServer(t, idx)
 	s.readerRecallReinforces = false
@@ -266,6 +276,8 @@ func TestSearchMemories_ReinforceSuppressedForReader(t *testing.T) {
 
 // TestSearchMemories_EmptyQueryRejected verifies a missing query is an error even when enabled.
 func TestSearchMemories_EmptyQueryRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newSearchTestServer(t, &fakeIndex{enabled: true})
 
 	if _, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{}); err == nil {
@@ -276,6 +288,8 @@ func TestSearchMemories_EmptyQueryRejected(t *testing.T) {
 // TestSearchMemories_IndexErrorMapped verifies a failing index search is mapped through mapError
 // rather than returned raw (which would leak driver detail and mis-code the RPC).
 func TestSearchMemories_IndexErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchErr: errors.New("cluster unreachable")}
 	s := newSearchTestServer(t, idx)
 
@@ -292,6 +306,8 @@ func TestSearchMemories_IndexErrorMapped(t *testing.T) {
 // TestSearchMemories_NoMatchesReturnsEmpty verifies a successful index search returning no ids
 // short-circuits to an empty result without touching the primary store.
 func TestSearchMemories_NoMatchesReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 
@@ -325,6 +341,8 @@ func (f failFetchStore) GetMemoriesByIds(ctx context.Context, ids []string) (*[]
 // primary store - after a successful index search - is also mapped rather than returned raw, for
 // both the reinforcing and non-reinforcing fetch paths.
 func TestSearchMemories_FetchErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	wantErr := errors.New("store unavailable")
 
 	for _, reinforce := range []bool{false, true} {
@@ -346,6 +364,8 @@ func TestSearchMemories_FetchErrorMapped(t *testing.T) {
 // TestSearchHooks_WriteAndDeleteThrough verifies each mutating RPC fires the matching index
 // operation - and that binary memories are never indexed.
 func TestSearchHooks_WriteAndDeleteThrough(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 
@@ -381,6 +401,8 @@ func TestSearchHooks_WriteAndDeleteThrough(t *testing.T) {
 // TestSearchHooks_SummaryDeleteThenIndex verifies ReplaceMemoriesWithSummary enqueues the
 // event-scoped delete before the summary's index write - the order the FIFO worker preserves.
 func TestSearchHooks_SummaryDeleteThenIndex(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 
@@ -418,6 +440,8 @@ func TestSearchHooks_SummaryDeleteThenIndex(t *testing.T) {
 // memory to the search index for a non-binary memory, keyed off the memory's stored is_binary flag
 // (which the RPC does not change), and never indexes a binary one.
 func TestUpdateMemory_ReindexesNonBinary(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 
@@ -456,6 +480,8 @@ func TestUpdateMemory_ReindexesNonBinary(t *testing.T) {
 // client would. Every other test in this file drives a fake index, so this is the one that would
 // catch the wiring between the RPC, the search adapter, and the store's own index coming apart.
 func TestSearchMemories_WorksOnTheSQLBackend(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	database, err := db.New("")
@@ -507,6 +533,8 @@ func TestSearchMemories_WorksOnTheSQLBackend(t *testing.T) {
 // A reinforcing search must still reinforce on this backend: the recall goes through the primary
 // store, so nothing about it is index-specific, but it is the combination that a caller uses.
 func TestSearchMemories_ReinforcesOnTheSQLBackend(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	database, err := db.New("")
@@ -545,6 +573,8 @@ func TestSearchMemories_ReinforcesOnTheSQLBackend(t *testing.T) {
 // delete trigger's job rather than the delete observer's - so it holds even though nothing wires
 // an observer here.
 func TestSearchMemories_ConsolidationRemovesFromTheSQLBackend(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	database, err := db.New("")
@@ -582,6 +612,8 @@ func TestSearchMemories_ConsolidationRemovesFromTheSQLBackend(t *testing.T) {
 // TestSearchMemories_RankingReordersResults drives the blend through the RPC: two near-equal
 // textual matches, where the more significant memory should come out first.
 func TestSearchMemories_RankingReordersResults(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{
@@ -616,6 +648,8 @@ func TestSearchMemories_RankingReordersResults(t *testing.T) {
 // With ranking off the backend's order must reach the caller untouched, and the index must be
 // asked for exactly the caller's limit rather than an over-fetched window.
 func TestSearchMemories_RankingOffPreservesBackendOrder(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	idx := &fakeIndex{
@@ -653,6 +687,8 @@ func TestSearchMemories_RankingOffPreservesBackendOrder(t *testing.T) {
 // Ranking widens the candidate window so a significant memory just outside the caller's page can
 // still be promoted into it.
 func TestSearchMemories_RankingOverFetchesCandidates(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 
 	s := newSearchTestServer(t, idx)
@@ -669,6 +705,8 @@ func TestSearchMemories_RankingOverFetchesCandidates(t *testing.T) {
 
 // The result must still be truncated to the caller's limit, not to the over-fetched window.
 func TestSearchMemories_RankingTruncatesToTheRequestedLimit(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	ids := []string{"m1", "m2", "m3", "m4", "m5"}
@@ -704,6 +742,8 @@ func TestSearchMemories_RankingTruncatesToTheRequestedLimit(t *testing.T) {
 // set is larger than the page, and recalling the candidates would reset the decay clock on
 // memories the caller was never shown - silently changing what the store forgets.
 func TestSearchMemories_ReinforceOnlyTouchesReturnedMemories(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	ids := []string{"m1", "m2", "m3", "m4"}
@@ -771,6 +811,8 @@ func memoryIds(memories []*contract.Memory) []string {
 // TestSearchMemories_MetadataFilterOnTheSQLBackend drives a metadata-filtered search end to end
 // over the real FTS5 backend: two memories match the query text, only one carries the metadata.
 func TestSearchMemories_MetadataFilterOnTheSQLBackend(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	database, err := db.New("")
@@ -860,6 +902,8 @@ func TestSearchMemories_MetadataFilterOnTheSQLBackend(t *testing.T) {
 // caller asked for even when more matched. The ranking layer's over-fetch is headroom, not a
 // guarantee, so it would not save it.
 func TestSearchMemories_MetadataFilterIsPushedIntoTheIndex(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true, searchIds: []string{"m1"}}
 	s := newSearchTestServer(t, idx)
 
@@ -890,6 +934,8 @@ func TestSearchMemories_MetadataFilterIsPushedIntoTheIndex(t *testing.T) {
 // TestSearchMemories_RejectsMalformedMetadataFilters checks a bad filter is rejected before any
 // index work rather than reaching a backend.
 func TestSearchMemories_RejectsMalformedMetadataFilters(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true}
 	s := newSearchTestServer(t, idx)
 
@@ -912,6 +958,8 @@ func TestSearchMemories_RejectsMalformedMetadataFilters(t *testing.T) {
 // TestDocFromMemoryCarriesMetadataTerms pins the indexed projection: sorted "key=value" strings,
 // the shape a term filter matches against.
 func TestDocFromMemoryCarriesMetadataTerms(t *testing.T) {
+	t.Parallel()
+
 	doc := search.DocFromMemory(types.Memory{
 		Id: "m1", Body: "a", Metadata: map[string]string{"source": "slack", "env": "staging"},
 	})
@@ -932,6 +980,8 @@ func TestDocFromMemoryCarriesMetadataTerms(t *testing.T) {
 // response, and a writer setting reinforce could reset the decay clock on all of them in one call
 // (TODO-3 item 143). 200 is GetMemories' cap.
 func TestSearchMemories_ClampsTheLimit(t *testing.T) {
+	t.Parallel()
+
 	const want = 200
 
 	ids := make([]string, 0, want+50)

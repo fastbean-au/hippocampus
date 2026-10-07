@@ -83,6 +83,8 @@ func (importConflictStore) ImportEvents(ctx context.Context, events []types.Even
 // MySQL deadlock surfaced its raw driver error as a gRPC Unknown, so a client could not tell the
 // write was retryable. ImportBatch must now map it to Aborted.
 func TestImportBatch_WriteConflictMapsToAborted(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	s.db = importConflictStore{Store: s.db}
 
@@ -168,6 +170,8 @@ func seedTransferFixture(t *testing.T, s *Server) {
 // becoming a real subdirectory, a real file on disk afterwards, and the archive reading back
 // through the same key the export returned.
 func TestExportImportRoundTripOverAFileStore(t *testing.T) {
+	t.Parallel()
+
 	directory := filepath.Join(t.TempDir(), "archives")
 
 	objects, err := archive.NewFileStore(directory)
@@ -216,6 +220,8 @@ func TestExportImportRoundTripOverAFileStore(t *testing.T) {
 // TestExportImportRoundTrip verifies the full S3 path: export from one instance, import into a
 // fresh one, with every piece of state preserved and a re-import staying idempotent.
 func TestExportImportRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	source := newTransferTestServer(t, objects)
@@ -306,6 +312,8 @@ func TestExportImportRoundTrip(t *testing.T) {
 // export are deleted by Clear, but a memory recalled after the capture — and the event that
 // still owns it — survive to the next run.
 func TestClearRespectsActivitySinceCapture(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	s := newTransferTestServer(t, objects)
@@ -351,6 +359,8 @@ func TestClearRespectsActivitySinceCapture(t *testing.T) {
 // TestExportWithClearFlag verifies the one-shot move: a successful export with clear set deletes
 // everything it captured in the same call.
 func TestExportWithClearFlag(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	s := newTransferTestServer(t, objects)
@@ -374,6 +384,8 @@ func TestExportWithClearFlag(t *testing.T) {
 // store's size, Export refuses with FailedPrecondition before uploading anything, and that a cap of
 // 0 (the default) leaves the export unbounded.
 func TestExportRefusesOverManifestCap(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	s := newTransferTestServer(t, objects)
@@ -415,6 +427,8 @@ func (f failClearStore) ClearMemories(ctx context.Context, snapshots []db.Memory
 // the delete with the returned manifest id. The previous code took (removed) the manifest before
 // clearing and never put it back on failure, so the id in the response was already useless.
 func TestExportWithClearFailure_CachesManifestForRetry(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	s := newTransferTestServer(t, objects)
@@ -457,6 +471,8 @@ func TestExportWithClearFailure_CachesManifestForRetry(t *testing.T) {
 // manifestCacheLimit concurrent runs), passing nil into clearManifest and panicking; clearing the
 // local manifest directly removes that window. Run under -race, this must complete without panicking.
 func TestExportWithClearConcurrent_NoPanic(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	s := newTransferTestServer(t, objects)
@@ -514,6 +530,8 @@ func TestExportWithClearConcurrent_NoPanic(t *testing.T) {
 // the caller can retry with the same id instead of getting NotFound. The retry, against a working
 // store, must then find the manifest and clear the captured records.
 func TestClearFailureCachesManifestForRetry(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	s := newTransferTestServer(t, objects)
@@ -573,6 +591,8 @@ func TestClearFailureCachesManifestForRetry(t *testing.T) {
 // TestTransferDirect verifies the direct gRPC path end to end against a real in-process target
 // instance: full state lands in the target and the clear flag empties the source.
 func TestTransferDirect(t *testing.T) {
+	t.Parallel()
+
 	target := newTransferTestServer(t, nil)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -628,6 +648,8 @@ func TestTransferDirect(t *testing.T) {
 // TestTransfer_DialErrorMapped verifies a grpc.NewClient failure (a target address grpc-go itself
 // rejects while parsing, before any network I/O) is mapped via mapError rather than returned raw.
 func TestTransfer_DialErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	s.transfer.targetAddress = "\x00" // a control character fails target-string parsing outright
 
@@ -640,6 +662,8 @@ func TestTransfer_DialErrorMapped(t *testing.T) {
 // manifest for a later Clear call, mirroring Export's own no-clear behaviour, rather than only ever
 // being exercised with clear: true.
 func TestTransferDirect_WithoutClearCachesManifest(t *testing.T) {
+	t.Parallel()
+
 	target := newTransferTestServer(t, nil)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -691,6 +715,8 @@ func (f failImportMemoriesStore) ImportMemories(ctx context.Context, memories []
 // TestTransferDirect_MemoriesImportFailurePropagates verifies a target rejecting the memories batch
 // (after the events batch already succeeded) surfaces through Transfer, mapped rather than raw.
 func TestTransferDirect_MemoriesImportFailurePropagates(t *testing.T) {
+	t.Parallel()
+
 	target := newTransferTestServer(t, nil)
 	target.db = failImportMemoriesStore{Store: target.db, err: errors.New("memories rejected")}
 
@@ -718,6 +744,8 @@ func TestTransferDirect_MemoriesImportFailurePropagates(t *testing.T) {
 // failure (distinct from Export's and the standalone Clear RPC's, both already covered) re-caches
 // the manifest so the caller can retry the delete with the returned manifest id.
 func TestTransferDirect_ClearFailureCachesManifestForRetry(t *testing.T) {
+	t.Parallel()
+
 	target := newTransferTestServer(t, nil)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -758,6 +786,8 @@ func TestTransferDirect_ClearFailureCachesManifestForRetry(t *testing.T) {
 
 // TestTransferSurfacePreconditions verifies the unconfigured-feature and bad-input failure modes.
 func TestTransferSurfacePreconditions(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 
 	if _, err := s.Export(context.Background(), &contract.ExportRequest{}); status.Code(err) != codes.FailedPrecondition {
@@ -798,6 +828,8 @@ func batchTotalSize(batch []types.Memory) int {
 // is dropped or reordered - the guard against Transfer→ImportBatch overflowing the receiver's
 // max-receive-message size and failing every retry against the same deterministic page.
 func TestBatchMemoriesByBytes_RespectsBudget(t *testing.T) {
+	t.Parallel()
+
 	// Ten ~1 KiB memories; a 3 KiB budget forces several batches.
 	memories := make([]types.Memory, 10)
 	for i := range memories {
@@ -833,6 +865,8 @@ func TestBatchMemoriesByBytes_RespectsBudget(t *testing.T) {
 // TestBatchMemoriesByBytes_OversizedMemoryGoesAlone verifies a single memory larger than the whole
 // budget is not dropped: it is emitted alone in its own batch (the receiver must accept it).
 func TestBatchMemoriesByBytes_OversizedMemoryGoesAlone(t *testing.T) {
+	t.Parallel()
+
 	memories := []types.Memory{
 		{Id: "small-a", Body: "a"},
 		{Id: "huge", Body: string(bytes.Repeat([]byte("x"), 8*1024))},
@@ -854,6 +888,8 @@ func TestBatchMemoriesByBytes_OversizedMemoryGoesAlone(t *testing.T) {
 // TestBatchMemoriesByBytes_DefaultBudget verifies a non-positive budget falls back to the default
 // rather than putting every memory in its own batch.
 func TestBatchMemoriesByBytes_DefaultBudget(t *testing.T) {
+	t.Parallel()
+
 	memories := []types.Memory{{Id: "a", Body: "a"}, {Id: "b", Body: "b"}}
 
 	batches := batchMemoriesByBytes(memories, 0)
@@ -868,6 +904,8 @@ func TestBatchMemoriesByBytes_DefaultBudget(t *testing.T) {
 // manifests unboundedly. The most recent manifestCacheLimit remain retrievable; the overflowed
 // oldest are gone.
 func TestStoreManifest_EvictsOldestBeyondCap(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{manifests: make(map[string]*transferManifest)}
 
 	total := manifestCacheLimit + 3
@@ -901,6 +939,8 @@ func TestStoreManifest_EvictsOldestBeyondCap(t *testing.T) {
 // non-matching ids (rather than only ever being exercised with the target already first), and
 // leaves the remaining ids in their original order.
 func TestTakeManifest_SkipsNonMatchingEntries(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{manifests: make(map[string]*transferManifest)}
 
 	for _, id := range []string{"a", "b", "c"} {
@@ -942,6 +982,8 @@ func (f failMemoriesPageStore) GetMemoriesPage(ctx context.Context, afterId stri
 // TestWalkStore_PageReadErrorsPropagate verifies a failure paging either events or memories
 // surfaces directly from walkStore rather than being swallowed.
 func TestWalkStore_PageReadErrorsPropagate(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -969,6 +1011,8 @@ func TestWalkStore_PageReadErrorsPropagate(t *testing.T) {
 // TestWalkStore_CallbackErrorsPropagate verifies a failing onEvents/onMemories callback surfaces
 // directly from walkStore, aborting the walk.
 func TestWalkStore_CallbackErrorsPropagate(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	seedTransferFixture(t, s)
 
@@ -1006,6 +1050,8 @@ func (f failCountEventsStore) CountEvents(ctx context.Context) int {
 // page is accumulated, independent of the pre-flight count) refuses an over-cap walk even when the
 // pre-flight check itself was skipped (here, because CountEvents reported an error).
 func TestWalkStore_InWalkManifestCapTrips(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	seedTransferFixture(t, s) // 2 events + 3 memories = 5 records
 
@@ -1025,6 +1071,8 @@ func TestWalkStore_InWalkManifestCapTrips(t *testing.T) {
 // TestWalkStore_InWalkManifestCapTrips: the cap fits the events alone but is exceeded once the
 // first page of memories is accumulated, tripping the second in-walk check.
 func TestWalkStore_InWalkManifestCapTripsDuringMemoriesPass(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	seedTransferFixture(t, s) // 2 events + 3 memories = 5 records; batchSize 2
 
@@ -1057,6 +1105,8 @@ func (failPutObjectStore) Get(ctx context.Context, key string) (io.ReadCloser, e
 // (here, the upload rejecting before reading anything, closing the pipe before the archive is
 // flushed) is mapped and surfaced rather than hanging or panicking.
 func TestExport_WriteHeaderErrorSurfaces(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	s.objects = failPutObjectStore{}
 	seedTransferFixture(t, s)
@@ -1074,6 +1124,8 @@ func TestExport_WriteHeaderErrorSurfaces(t *testing.T) {
 // the sibling test never triggers that eager flush, so this is the only path that reaches
 // WriteEvent's own error return.
 func TestExport_WriteEventErrorSurfaces(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	s.objects = failPutObjectStore{}
 
@@ -1101,6 +1153,8 @@ func TestExport_WriteEventErrorSurfaces(t *testing.T) {
 // overflows partway through the memories loop, forcing an eager flush against the (already
 // failing) upload pipe from within some WriteMemory call itself.
 func TestExport_WriteMemoryErrorSurfaces(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	s.objects = failPutObjectStore{}
 
@@ -1124,6 +1178,8 @@ func TestExport_WriteMemoryErrorSurfaces(t *testing.T) {
 // TestImport_EmptyObjectKeyRejected verifies a missing object_key is rejected before touching the
 // object store.
 func TestImport_EmptyObjectKeyRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, newFakeObjectStore())
 
 	if _, err := s.Import(context.Background(), &contract.ImportRequest{}); err == nil {
@@ -1134,6 +1190,8 @@ func TestImport_EmptyObjectKeyRejected(t *testing.T) {
 // TestImport_ObjectGetErrorMapped verifies a failure fetching the archive object (here, simply an
 // unknown key) is mapped via mapError rather than returned raw.
 func TestImport_ObjectGetErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, newFakeObjectStore())
 
 	if _, err := s.Import(context.Background(), &contract.ImportRequest{ObjectKey: "does-not-exist"}); status.Code(err) != codes.Internal {
@@ -1145,6 +1203,8 @@ func TestImport_ObjectGetErrorMapped(t *testing.T) {
 // (garbage bytes) fails at Import via importArchive's archive.NewReader error, mapped rather than
 // returned raw.
 func TestImport_MalformedArchiveErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 	if err := objects.Put(context.Background(), "garbage", bytes.NewReader([]byte("not an archive"))); err != nil {
 		t.Fatalf("Put: %s", err)
@@ -1194,6 +1254,8 @@ func buildArchive(t *testing.T, events []*contract.Event, memories []*contract.M
 // rejected, with transfer.batchSize small enough that the bad record triggers a flush mid-loop
 // (before EOF) rather than only at the final flush.
 func TestImportArchive_RejectsEventWithoutId_MidLoopFlush(t *testing.T) {
+	t.Parallel()
+
 	body := buildArchive(t, []*contract.Event{{Name: "no id", Significance: 5}}, nil)
 
 	objects := newFakeObjectStore()
@@ -1213,6 +1275,8 @@ func TestImportArchive_RejectsEventWithoutId_MidLoopFlush(t *testing.T) {
 // rejected at the final flush (transfer.batchSize left large so the whole archive is buffered
 // before the bad record is reached).
 func TestImportArchive_RejectsMemoryWithoutId_FinalFlush(t *testing.T) {
+	t.Parallel()
+
 	body := buildArchive(t,
 		[]*contract.Event{{Id: "e1", Name: "fine", Significance: 5}},
 		[]*contract.Memory{{Body: "no id", Significance: 5}},
@@ -1240,6 +1304,8 @@ func TestImportArchive_RejectsMemoryWithoutId_FinalFlush(t *testing.T) {
 // later record does not - surfaces through Import mapped rather than raw or silently accepted as a
 // short read.
 func TestImportArchive_TruncatedStreamErrorMapped(t *testing.T) {
+	t.Parallel()
+
 	full := buildArchive(t,
 		[]*contract.Event{{Id: "e1", Name: "one", Significance: 5}},
 		[]*contract.Memory{{Id: "m1", Body: "a longer body so there is enough compressed data to truncate meaningfully", Significance: 5}},
@@ -1262,6 +1328,8 @@ func TestImportArchive_TruncatedStreamErrorMapped(t *testing.T) {
 // TestImportBatch_SkipsBinaryMemoriesInSearchIndex verifies ImportBatch's ingestMemories skips
 // indexing binary memories, mirroring StoreMemory's own binary-skip contract.
 func TestImportBatch_SkipsBinaryMemoriesInSearchIndex(t *testing.T) {
+	t.Parallel()
+
 	idx := &fakeIndex{enabled: true}
 
 	s := newTransferTestServer(t, nil)
@@ -1288,6 +1356,8 @@ func TestImportBatch_SkipsBinaryMemoriesInSearchIndex(t *testing.T) {
 // default rather than, say, never flushing - exercised via a real round trip with batchSize left at
 // its zero value.
 func TestImportArchive_DefaultBatchSize(t *testing.T) {
+	t.Parallel()
+
 	objects := newFakeObjectStore()
 
 	source := newTransferTestServer(t, objects)
@@ -1375,6 +1445,8 @@ func generateSelfSignedCertFiles(t *testing.T) (certFile string, keyFile string)
 // branches: a valid CA bundle, an invalid (non-PEM) CA bundle, and a valid client certificate/key
 // pair.
 func TestTransferClientCredentials_CACertAndClientCert(t *testing.T) {
+	t.Parallel()
+
 	certFile, keyFile := generateSelfSignedCertFiles(t)
 
 	// Valid CA bundle: the self-signed cert doubles as its own CA.
@@ -1421,6 +1493,8 @@ func TestTransferClientCredentials_CACertAndClientCert(t *testing.T) {
 // TestTransfer_ClientCredentialsErrorSurfaces verifies the Transfer RPC maps a clientCredentials
 // failure (here, a half-configured client certificate pair) rather than returning it raw.
 func TestTransfer_ClientCredentialsErrorSurfaces(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 	s.transfer.targetAddress = "127.0.0.1:0"
 	s.transfer.tls = true
@@ -1433,6 +1507,8 @@ func TestTransfer_ClientCredentialsErrorSurfaces(t *testing.T) {
 
 // TestClear_EmptyManifestIdRejected verifies a missing manifest_id is rejected before any lookup.
 func TestClear_EmptyManifestIdRejected(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, nil)
 
 	if _, err := s.Clear(context.Background(), &contract.ClearRequest{}); err == nil {
@@ -1461,6 +1537,8 @@ func (f failDeleteEventIfEmptyStore) DeleteEventIfEmpty(ctx context.Context, id 
 // event in the manifest is logged and skipped rather than aborting the whole clear - the other
 // captured event still clears, and memoriesCleared is unaffected.
 func TestClearManifest_EventDeleteErrorLoggedAndSkipped(t *testing.T) {
+	t.Parallel()
+
 	s := newTransferTestServer(t, newFakeObjectStore())
 	seedTransferFixture(t, s) // events e1 (has memories) and e2 (referenced via relationship only)
 

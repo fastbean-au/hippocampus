@@ -110,6 +110,8 @@ func withListingFaults(s *Server, faults *listingFaultStore) *Server {
 // registry is paginated at all: it holds one row per distinct significance value, which nothing in
 // the service bounds, so a caller asking for everything must be given a page rather than the store.
 func TestGetSignificanceLevelsBoundsItsPage(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	ctx := context.Background()
 
@@ -143,6 +145,8 @@ func TestGetSignificanceLevelsBoundsItsPage(t *testing.T) {
 // reachable on a page that ran off its own end, which is exactly the shape the total-count
 // short-circuit exists to avoid paying for - so nothing on the happy path reaches it.
 func TestGetSignificanceLevelsSurfacesStorageFailures(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("the page read", func(t *testing.T) {
@@ -168,6 +172,8 @@ func TestGetSignificanceLevelsSurfacesStorageFailures(t *testing.T) {
 // exact total at all - the count is a full scan, and a page view asking for one per request is what
 // item 25.9 was about.
 func TestCountEventsUsesTheCache(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	s.listingCounts = newCountCache(time.Minute)
 
@@ -204,6 +210,8 @@ func TestCountEventsUsesTheCache(t *testing.T) {
 // listing that dropped its memory counts on a failure would be indistinguishable from one whose
 // events genuinely hold nothing.
 func TestGetEventsSurfacesStorageFailures(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	cases := []struct {
@@ -254,6 +262,8 @@ func TestGetEventsSurfacesStorageFailures(t *testing.T) {
 // that is neither full nor empty at a positive offset already knows the total exactly, and paying
 // for a count there would be a full scan for an answer in hand.
 func TestGetEventsCountsAShortPageFromItsOffset(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	s.listingCounts = newCountCache(time.Minute)
 
@@ -274,6 +284,8 @@ func TestGetEventsCountsAShortPageFromItsOffset(t *testing.T) {
 // TestGetEventByIdSurfacesTheMemoryCountFailure covers the single-event counterpart, which reaches
 // the same store call by a different route.
 func TestGetEventByIdSurfacesTheMemoryCountFailure(t *testing.T) {
+	t.Parallel()
+
 	s := withListingFaults(seedEventRPCs(t), &listingFaultStore{countByEventIdsErr: errors.New("boom")})
 
 	_, err := s.GetEventById(context.Background(), &contract.GetEventByIdRequest{Id: "e-open", MemoryCounts: true})
@@ -286,6 +298,8 @@ func TestGetEventByIdSurfacesTheMemoryCountFailure(t *testing.T) {
 // against the reason attribute - the one that separates a client sending nonsense from a store
 // refusing a write.
 func TestStoreEventRejectsAnInvalidEvent(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	// A negative significance: ranks are non-negative by design, 0 already meaning unranked.
@@ -304,6 +318,8 @@ func TestStoreEventRejectsAnInvalidEvent(t *testing.T) {
 // does not exist is a client mistake, and mapping it to Internal would send a caller looking for a
 // server fault.
 func TestUpdateEventRejectsAnInvalidPlacement(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 
 	_, err := s.UpdateEvent(context.Background(), &contract.Event{

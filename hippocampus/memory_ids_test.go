@@ -54,6 +54,8 @@ func returnedIds(res *contract.GetMemoriesResponse) []string {
 }
 
 func TestGetMemories_ByIdReturnsJustThoseAndDoesNotReinforce(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -92,6 +94,8 @@ func TestGetMemories_ByIdReturnsJustThoseAndDoesNotReinforce(t *testing.T) {
 // "never stored" from "outside your scope", and a caller asking about several ids wants the ones
 // that exist.
 func TestGetMemories_ByIdOmitsAnUnknownId(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	seedIdMemories(t, s, types.Memory{Id: "m1"})
@@ -107,6 +111,8 @@ func TestGetMemories_ByIdOmitsAnUnknownId(t *testing.T) {
 }
 
 func TestGetMemories_ByIdComposesWithTheOtherFilters(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	seedIdMemories(t, s, types.Memory{Id: "m1", Group: "a"}, types.Memory{Id: "m2", Group: "b"})
@@ -124,6 +130,8 @@ func TestGetMemories_ByIdComposesWithTheOtherFilters(t *testing.T) {
 // With linked_to, which also narrows to a set of ids, the answer is the intersection - and an empty
 // intersection is an empty page, never the whole store.
 func TestGetMemories_ByIdIntersectsLinkedTo(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
@@ -153,6 +161,8 @@ func TestGetMemories_ByIdIntersectsLinkedTo(t *testing.T) {
 }
 
 func TestGetMemories_ByIdRefusesTooMany(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	ids := make([]string, 201)
@@ -169,6 +179,8 @@ func TestGetMemories_ByIdRefusesTooMany(t *testing.T) {
 // A scoped caller naming another group's id gets nothing back and no error - the same answer as for
 // an id that was never stored, so the read cannot confirm the record exists.
 func TestGetMemories_ByIdHonoursGroupScope(t *testing.T) {
+	t.Parallel()
+
 	s := seedTwoGroups(t)
 
 	res, err := s.GetMemories(scopedContext("a"), &contract.GetMemoriesRequest{Ids: []string{"m-a", "m-b"}})

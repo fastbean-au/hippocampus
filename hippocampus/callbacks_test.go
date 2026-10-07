@@ -103,6 +103,8 @@ func storeMemories(t *testing.T, database *db.DB, ids ...string) {
 // TestDispatchSendsQueuedDeliveries is the mechanism end-to-end: a decay deletion records a delivery
 // in the same transaction, and the dispatcher sends it and removes it from the queue.
 func TestDispatchSendsQueuedDeliveries(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackServer(t, recordingPolicy())
 	ctx := context.Background()
 
@@ -159,6 +161,8 @@ func (evictAllServer) DeletionThreshold() float64                               
 // TestAFailedDeliveryIsDeferredNotDropped is the durability property: a receiver that refuses leaves
 // the delivery in the queue with a later deadline, rather than losing it.
 func TestAFailedDeliveryIsDeferredNotDropped(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackServer(t, recordingPolicy())
 	ctx := context.Background()
 
@@ -227,6 +231,8 @@ func TestAFailedDeliveryIsDeferredNotDropped(t *testing.T) {
 // TestBackoffGrowsAndIsCapped covers the retry curve, including the shift bound - without it a high
 // attempt count overflows into a negative duration and makes the next attempt due in the past.
 func TestBackoffGrowsAndIsCapped(t *testing.T) {
+	t.Parallel()
+
 	s := &Server{callbackBaseBack: time.Second, callbackMaxBack: time.Minute}
 
 	first := s.callbackBackoff(1)
@@ -256,6 +262,8 @@ func TestBackoffGrowsAndIsCapped(t *testing.T) {
 // TestDispatchPrunesOnTheIdlePathOnly pins that the caps are applied when there is nothing to send,
 // so pruning never races the dispatcher over the rows it is about to claim.
 func TestDispatchPrunesOnTheIdlePathOnly(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackServer(t, recordingPolicy())
 	ctx := context.Background()
 
@@ -307,6 +315,8 @@ func TestDispatchPrunesOnTheIdlePathOnly(t *testing.T) {
 // TestDispatchIsANoOpWithoutASink pins that a disabled notifier claims nothing, so a deployment that
 // has turned callbacks off does not poll a table it will never drain.
 func TestDispatchIsANoOpWithoutASink(t *testing.T) {
+	t.Parallel()
+
 	s, _ := callbackServer(t, recordingPolicy())
 
 	if sent := s.dispatchCallbacksOnce(nil); sent != 0 {
@@ -321,6 +331,8 @@ func TestDispatchIsANoOpWithoutASink(t *testing.T) {
 // TestCycleDeliveriesChunkTheIdList is the sleep-completion shape: one cycle becomes several
 // numbered deliveries sharing an id, each repeating the summary.
 func TestCycleDeliveriesChunkTheIdList(t *testing.T) {
+	t.Parallel()
+
 	summary := &db.CallbackCycle{Trigger: "timer", MemoriesConsolidated: 5, Success: true}
 
 	deliveries := cycleDeliveries(42, summary, []string{"m1", "m2", "m3", "m4", "m5"}, []string{"e1"}, 2)
@@ -368,6 +380,8 @@ func TestCycleDeliveriesChunkTheIdList(t *testing.T) {
 // delivery: "the cycle ran and took nothing" is what a store at rest looks like, and its absence is
 // indistinguishable from a consolidator that has stopped.
 func TestCycleDeliveriesAlwaysReportsOnce(t *testing.T) {
+	t.Parallel()
+
 	deliveries := cycleDeliveries(7, &db.CallbackCycle{Trigger: "manual", Success: true}, nil, nil, 500)
 
 	if len(deliveries) != 1 {
@@ -387,6 +401,8 @@ func TestCycleDeliveriesAlwaysReportsOnce(t *testing.T) {
 // and reports it under its own id, and the per-deletion deliveries carry the same id so a receiver
 // can assemble the cycle.
 func TestTheSleepCycleQueuesItsCompletion(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackServer(t, recordingPolicy())
 	ctx := context.Background()
 
@@ -459,6 +475,8 @@ func TestTheSleepCycleQueuesItsCompletion(t *testing.T) {
 // safe: only decay contributes, so a client's delete landing mid-cycle is never reported as
 // something the cycle forgot.
 func TestTheCycleCollectionIgnoresConcurrentClientDeletes(t *testing.T) {
+	t.Parallel()
+
 	_, database := callbackServer(t, db.CallbackPolicy{
 		Enabled: true, MemoryEvents: true, EventEvents: true, AllDeletions: true,
 	})
@@ -483,6 +501,8 @@ func TestTheCycleCollectionIgnoresConcurrentClientDeletes(t *testing.T) {
 // TestDispatchStopsPromptly pins that a batch against a slow receiver does not hold shutdown open
 // for one timeout per delivery.
 func TestDispatchStopsPromptly(t *testing.T) {
+	t.Parallel()
+
 	s, database := callbackServer(t, recordingPolicy())
 	ctx := context.Background()
 

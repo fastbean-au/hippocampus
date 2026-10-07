@@ -66,6 +66,8 @@ func scheduledExportServer(t *testing.T) (*Server, *fakeObjectStore) {
 // `keep` of them - never touching a manual export, or a key under the prefix this schedule did not
 // write (TODO-3 item 158).
 func TestRunScheduledExportWritesAndPrunes(t *testing.T) {
+	t.Parallel()
+
 	s, objects := scheduledExportServer(t)
 	ctx := context.Background()
 
@@ -114,6 +116,8 @@ func TestRunScheduledExportWritesAndPrunes(t *testing.T) {
 // TestFirstScheduledExportWait: the schedule is read back from what the store holds, so a restart
 // neither exports at once nor waits a full interval from scratch.
 func TestFirstScheduledExportWait(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 
 	cases := []struct {
@@ -143,6 +147,8 @@ func TestFirstScheduledExportWait(t *testing.T) {
 
 // TestScheduledExportLoopExportsAndStops: the loop takes an export on its own and Stop ends it.
 func TestScheduledExportLoopExportsAndStops(t *testing.T) {
+	t.Parallel()
+
 	s, objects := scheduledExportServer(t)
 	s.scheduledExport.Interval = 20 * time.Millisecond
 
@@ -185,6 +191,8 @@ func (brokenPruner) Delete(context.Context, string) error {
 // TestStartScheduledExportRunsOnlyWhereItShould: the export starts only when configured, with
 // somewhere to write, on the consolidating instance.
 func TestStartScheduledExportRunsOnlyWhereItShould(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name          string
 		interval      int
@@ -221,6 +229,8 @@ func TestStartScheduledExportRunsOnlyWhereItShould(t *testing.T) {
 // TestScheduledExportSurvivesAStoreThatCannotList: listing failing is not fatal - the first export is
 // scheduled one interval out, and a prune that cannot delete leaves the new archive written.
 func TestScheduledExportSurvivesAStoreThatCannotList(t *testing.T) {
+	t.Parallel()
+
 	s, objects := scheduledExportServer(t)
 	s.objects = brokenPruner{objects}
 
@@ -244,6 +254,8 @@ func TestScheduledExportSurvivesAStoreThatCannotList(t *testing.T) {
 // TestScheduledExportRetriesAFailure: a failed export is reported and the loop carries on to retry,
 // rather than exiting or waiting a full interval.
 func TestScheduledExportRetriesAFailure(t *testing.T) {
+	t.Parallel()
+
 	s, _ := scheduledExportServer(t)
 	s.objects = failPutObjectStore{}
 
@@ -265,6 +277,8 @@ func TestScheduledExportRetriesAFailure(t *testing.T) {
 // TestPruneKeepsEverythingWhenKeepIsZero: keep 0 is "keep them all", for an operator whose bucket has
 // lifecycle rules of its own.
 func TestPruneKeepsEverythingWhenKeepIsZero(t *testing.T) {
+	t.Parallel()
+
 	s, objects := scheduledExportServer(t)
 	s.scheduledExport.Keep = 0
 

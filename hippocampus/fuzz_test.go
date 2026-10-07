@@ -107,6 +107,8 @@ func FuzzSanitiseReportedVersion(f *testing.F) {
 // keyword DSN and fell through to the bare-address form, which cut only up to the "@" and kept the
 // rest, the tail of the password included.
 func TestRedactEndpointKeywordDSNWithAnAt(t *testing.T) {
+	t.Parallel()
+
 	for _, raw := range []string{
 		"host=db.internal port=5432 dbname=hippo user=svc password=p@ssw0rd-tail",
 		"host=db.internal password=p@ssw0rd-tail sslmode=require",
@@ -127,6 +129,8 @@ func TestRedactEndpointKeywordDSNWithAnAt(t *testing.T) {
 // TestRedactEndpointMySQLPasswordWithSeparators: the bare-address form split on the first "/" before
 // looking for the userinfo, so a password containing one kept the whole "user:pass" in the output.
 func TestRedactEndpointMySQLPasswordWithSeparators(t *testing.T) {
+	t.Parallel()
+
 	for _, raw := range []string{
 		"svc:pa/ss-tail@tcp(db.internal:3306)/hippo",
 		"svc:pa?ss-tail@tcp(db.internal:3306)/hippo?parseTime=true",
@@ -140,6 +144,8 @@ func TestRedactEndpointMySQLPasswordWithSeparators(t *testing.T) {
 // TestRedactEndpointURLPasswordWithSeparators: an unencoded "/" or "?" in a URL's password parses into
 // the path or the query, with the user name or the password's head left where the host should be.
 func TestRedactEndpointURLPasswordWithSeparators(t *testing.T) {
+	t.Parallel()
+
 	for _, raw := range []string{
 		"postgres://svc:pa/ss-tail@db.internal:5432/hippo",
 		"postgres://svc:1234?tail@db.internal:5432/hippo",

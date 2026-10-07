@@ -30,6 +30,8 @@ func seedEventWithMemory(t *testing.T, s *Server) {
 }
 
 func TestDeleteEvent_IfEmptyRefusesAnEventHoldingAMemory(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedEventWithMemory(t, s)
 
@@ -45,6 +47,8 @@ func TestDeleteEvent_IfEmptyRefusesAnEventHoldingAMemory(t *testing.T) {
 }
 
 func TestDeleteEvent_IfEmptyDeletesAnEmptyEvent(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedEventWithMemory(t, s)
 
@@ -61,6 +65,8 @@ func TestDeleteEvent_IfEmptyDeletesAnEmptyEvent(t *testing.T) {
 // TestDeleteEvent_IfEmptyIsJudgedWithinTheCallersScope: another group's memory neither blocks the
 // delete nor is revealed by a refusal; it is detached, as any delete of the event detaches it.
 func TestDeleteEvent_IfEmptyIsJudgedWithinTheCallersScope(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedEventWithMemory(t, s)
 
@@ -76,6 +82,8 @@ func TestDeleteEvent_IfEmptyIsJudgedWithinTheCallersScope(t *testing.T) {
 }
 
 func TestDeleteEvent_IfEmptyWithMemoriesIsRefused(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	seedEventWithMemory(t, s)
 

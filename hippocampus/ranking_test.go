@@ -35,6 +35,8 @@ func equalIds(got []string, want []string) bool {
 }
 
 func TestNormalise(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		in   []float64
@@ -80,6 +82,8 @@ func TestNormalise(t *testing.T) {
 // With both weights zero the backend's order must survive untouched. This is the guarantee that
 // makes the feature safe to turn off, so it is worth pinning explicitly.
 func TestRankMemoriesInactiveKeepsBackendOrder(t *testing.T) {
+	t.Parallel()
+
 	hits := []search.Hit{{Id: "m1", Score: 3}, {Id: "m2", Score: 2}, {Id: "m3", Score: 1}}
 
 	// m3 is by far the most significant and most recalled; with ranking off none of that matters.
@@ -99,6 +103,8 @@ func TestRankMemoriesInactiveKeepsBackendOrder(t *testing.T) {
 // The point of the feature: among comparable textual matches, the memory the store rates higher
 // should come first.
 func TestRankMemoriesPromotesSignificance(t *testing.T) {
+	t.Parallel()
+
 	// Near-identical relevance, so significance is free to decide.
 	hits := []search.Hit{{Id: "low", Score: 1.01}, {Id: "high", Score: 1.0}}
 
@@ -117,6 +123,8 @@ func TestRankMemoriesPromotesSignificance(t *testing.T) {
 // Recall count is the other half of the store's own view of worth: a memory people keep coming
 // back to should outrank an equally relevant one nobody has.
 func TestRankMemoriesPromotesRecallCount(t *testing.T) {
+	t.Parallel()
+
 	hits := []search.Hit{{Id: "unrecalled", Score: 1.01}, {Id: "recalled", Score: 1.0}}
 
 	memories := []types.Memory{
@@ -134,6 +142,8 @@ func TestRankMemoriesPromotesRecallCount(t *testing.T) {
 // Relevance must still lead. A clearly better textual match should not be displaced by
 // significance at the shipped weights - that would make search stop being search.
 func TestRankMemoriesKeepsRelevanceDominantAtDefaultWeights(t *testing.T) {
+	t.Parallel()
+
 	// A decisive relevance gap: the top hit is far better than the rest.
 	hits := []search.Hit{{Id: "best", Score: 100}, {Id: "weak", Score: 1}}
 
@@ -155,6 +165,8 @@ func TestRankMemoriesKeepsRelevanceDominantAtDefaultWeights(t *testing.T) {
 // hugely recalled memory flattens the signal for every other, and the interesting difference -
 // between never recalled and recalled once or twice - disappears.
 func TestRankMemoriesDampsSkewedRecallCounts(t *testing.T) {
+	t.Parallel()
+
 	hits := []search.Hit{
 		{Id: "never", Score: 1.0},
 		{Id: "twice", Score: 1.0},
@@ -189,6 +201,8 @@ func TestRankMemoriesDampsSkewedRecallCounts(t *testing.T) {
 // A signal that is flat across the candidates must not disturb the order, and must not produce
 // NaN by dividing by a zero spread.
 func TestRankMemoriesWithFlatSignals(t *testing.T) {
+	t.Parallel()
+
 	hits := []search.Hit{{Id: "m1", Score: 5}, {Id: "m2", Score: 5}, {Id: "m3", Score: 5}}
 
 	memories := []types.Memory{
@@ -210,6 +224,8 @@ func TestRankMemoriesWithFlatSignals(t *testing.T) {
 // Ids the index returned that the primary store no longer holds are stale entries and must drop
 // out - the store stays authoritative. This behaviour predates ranking and must survive it.
 func TestRankMemoriesDropsStaleIds(t *testing.T) {
+	t.Parallel()
+
 	hits := []search.Hit{{Id: "m1", Score: 3}, {Id: "stale", Score: 2}, {Id: "m2", Score: 1}}
 
 	memories := []types.Memory{{Id: "m1"}, {Id: "m2"}}
@@ -223,6 +239,8 @@ func TestRankMemoriesDropsStaleIds(t *testing.T) {
 
 // The caller asked for a page, not the whole candidate set the over-fetch produced.
 func TestRankMemoriesTruncatesToLimit(t *testing.T) {
+	t.Parallel()
+
 	var hits []search.Hit
 	var memories []types.Memory
 
@@ -242,6 +260,8 @@ func TestRankMemoriesTruncatesToLimit(t *testing.T) {
 }
 
 func TestRankingWeightsCandidateLimit(t *testing.T) {
+	t.Parallel()
+
 	// Inactive: ask for exactly what the caller wanted, so the "ranking off" path costs nothing.
 	if got := (rankingWeights{}).candidateLimit(10); got != 10 {
 		t.Errorf("inactive candidateLimit(10) = %d, want 10", got)
@@ -258,6 +278,8 @@ func TestRankingWeightsCandidateLimit(t *testing.T) {
 }
 
 func TestRankingWeightsActive(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		weights rankingWeights
@@ -283,6 +305,8 @@ func TestRankingWeightsActive(t *testing.T) {
 
 // The empty candidate set must not panic or produce a nil-vs-empty surprise.
 func TestRankMemoriesWithNoCandidates(t *testing.T) {
+	t.Parallel()
+
 	if got := rankMemories(nil, nil, rankingWeights{significance: 1}, 10); len(got) != 0 {
 		t.Errorf("got %d memories from an empty ranking, want 0", len(got))
 	}

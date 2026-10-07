@@ -14,6 +14,8 @@ import (
 // when it matters most. --check-config refuses one at startup, and this is the second line of
 // defence for a Server built by anything that skipped that.
 func TestCallbackAtRiskMarginIsClampedToZero(t *testing.T) {
+	t.Parallel()
+
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -37,6 +39,8 @@ func TestCallbackAtRiskMarginIsClampedToZero(t *testing.T) {
 // winner inserted rather than a second one is what keeps one client's call count from splitting
 // across two boxes on the diagram.
 func TestObservedCallerInsertIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	registry := &observedCallers{}
 	now := time.Now()
 
@@ -57,6 +61,8 @@ func TestObservedCallerInsertIsIdempotent(t *testing.T) {
 // what stops a delete of the zero-value id, which would be a real entry the moment some client
 // presented an empty client_id.
 func TestEvictOldestOnAnEmptyRegistry(t *testing.T) {
+	t.Parallel()
+
 	registry := &observedCallers{callers: map[string]*observedCaller{}}
 
 	registry.evictOldest()

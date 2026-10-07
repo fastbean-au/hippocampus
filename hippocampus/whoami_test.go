@@ -11,6 +11,8 @@ import (
 // TestWhoAmI_AuthDisabled reports an unrestricted admin tier when no tier is on the context, which
 // is how a request looks when authorisation never ran (authentication disabled).
 func TestWhoAmI_AuthDisabled(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	res, err := s.WhoAmI(context.Background(), &contract.EmptyRequest{})
@@ -27,6 +29,8 @@ func TestWhoAmI_AuthDisabled(t *testing.T) {
 // configuration rather than assumed, so a client can offer service-authored summarisation only
 // where SummariseMemories would actually serve.
 func TestWhoAmI_SummariserEnabled(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name    string
 		enabled bool
@@ -71,6 +75,8 @@ func TestWhoAmI_SummariserEnabled(t *testing.T) {
 // answered FAILED_PRECONDITION would be worse than no flag, since the console would then present
 // the Decay tab with more confidence than before.
 func TestWhoAmI_ConsolidationCapabilities(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name          string
 		consolidating bool
@@ -116,6 +122,8 @@ func TestWhoAmI_ConsolidationCapabilities(t *testing.T) {
 
 // TestWhoAmI_Authenticated reports the tier and client id the authorisation layer stashed.
 func TestWhoAmI_Authenticated(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 
 	ctx := auth.ContextWithClaims(context.Background(), &auth.Claims{ClientID: "console-1"})
@@ -138,6 +146,8 @@ func TestWhoAmI_Authenticated(t *testing.T) {
 // Both are properties of the DEPLOYMENT, so both must be reported on the unauthenticated path as
 // well; that is the half this asserts twice.
 func TestWhoAmI_VersionAndCallbacks(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name      string
 		version   string

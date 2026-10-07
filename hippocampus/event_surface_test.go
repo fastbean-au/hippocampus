@@ -55,6 +55,8 @@ func eventIds(res *contract.GetEventsResponse) []string {
 }
 
 func TestUpdateEvent(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("updates the five fields no RPC could reach", func(t *testing.T) {
@@ -217,6 +219,8 @@ func TestUpdateEvent(t *testing.T) {
 }
 
 func TestGetEvents_Ended(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	ctx := context.Background()
 
@@ -243,6 +247,8 @@ func TestGetEvents_Ended(t *testing.T) {
 // bound now asks only about events that ended, so "ended before X" no longer returns everything
 // still running.
 func TestGetEvents_TimeEndMaxExcludesOpenEvents(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 
 	res, err := s.GetEvents(context.Background(), &contract.GetEventsRequest{TimeEndMax: 500})
@@ -260,6 +266,8 @@ func TestGetEvents_TimeEndMaxExcludesOpenEvents(t *testing.T) {
 }
 
 func TestGetEvents_NameContains(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	ctx := context.Background()
 
@@ -284,6 +292,8 @@ func TestGetEvents_NameContains(t *testing.T) {
 }
 
 func TestGetEvents_LinkedTo(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	ctx := context.Background()
 
@@ -324,6 +334,8 @@ func TestGetEvents_LinkedTo(t *testing.T) {
 }
 
 func TestGetEvents_Links(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	ctx := context.Background()
 
@@ -366,6 +378,8 @@ func TestGetEvents_Links(t *testing.T) {
 }
 
 func TestGetEventById_Links(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	ctx := context.Background()
 
@@ -389,6 +403,8 @@ func TestGetEventById_Links(t *testing.T) {
 }
 
 func TestGetSignificanceLevels(t *testing.T) {
+	t.Parallel()
+
 	s := seedEventRPCs(t)
 	ctx := context.Background()
 
@@ -443,6 +459,8 @@ func TestGetSignificanceLevels(t *testing.T) {
 // TestGetEvents_DescriptionContains: the RPC carries the filter through, and the predicate deletion
 // selects by it identically, so the listing stays its dry run (TODO-3 item 171).
 func TestGetEvents_DescriptionContains(t *testing.T) {
+	t.Parallel()
+
 	s := newTestServer(t)
 	ctx := context.Background()
 
