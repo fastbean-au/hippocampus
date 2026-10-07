@@ -212,7 +212,7 @@ func TestNewGRPCClientBuilds(t *testing.T) {
 }
 
 func TestTLSMutualRequiresBothCertAndKey(t *testing.T) {
-	_, err := tlsClientConfig(TLSConfig{Enabled: true, Cert: "only-cert.pem"})
+	_, err := tlsOf(TLSConfig{Enabled: true, Cert: "only-cert.pem"})
 	if err == nil || !strings.Contains(err.Error(), "mutual TLS requires both") {
 		t.Fatalf("err = %v", err)
 	}

@@ -1578,8 +1578,8 @@ error)`) with a `TransformerFunc` adapter and a configurable `DefaultTransformer
     subject→group, fixed/header significance, optional base64/binary + truncation, future-timestamp
     clamping), `Store.Handle` (transform then `StoreMemory` each memory; a `Rejected` below-threshold
     memory is a success, a transform/transport failure is the adapter's cue to nack/redeliver), the
-    gRPC `Dial` (bearer-token + TLS trust options, mirroring the MCP bridge; auth is either a static
-    `--token` or the OIDC **client-credentials** grant in `bridge/oidc.go`, selected by a set
+    gRPC `Dial` (now aliases over the root `dial` package - see below; auth is either a static
+    `--token` or the OIDC **client-credentials** grant in `dial/oidc.go`, selected by a set
     `--oidc-client-id`, which mints and refreshes its own access tokens — a static token expires and
     then fails every write _silently_ for as long as the daemon runs, which is why anything against
     an IdP-backed service wants the grant; config is validated eagerly but discovery is LAZY so an
@@ -1797,6 +1797,19 @@ github.com/fastbean-au/hippocampus => ../..`), which is what keeps the AWS SDK o
     the producer's, being the only party that knows an object's significance and group. See
     `docs/objectstore.md`.
 
+- `dial/` — the one connection to the service, used by every process that dials it: the broker
+  bridges, the ingestor, the object-storage agents, the MCP bridge and the `hippo` CLI (TODO-3 item
+  172; each had its own copy, and only one had learned the OIDC grant). `dial.Config` carries the
+  address, a static token or the OIDC client-credentials grant, the TLS trust block, the version
+  header, and caller-supplied `Interceptors`; `TLSClientConfig` serves the CLI's HTTPS transport the
+  same TLS. It deliberately does **not** import `observability`: the CLI and the MCP bridge are kept
+  off the OpenTelemetry dependency tree, so the processes that do export metrics pass
+  `observability.ClientMetrics(endpoint)` in. `examples/` holds a Go quickstart over it, an asyncio
+  agent loop over the Python client, and a curl walk-through of the gateway - all three executed in CI
+  as contract smoke tests (the docker job runs the Go and curl ones against the compose stack, the
+  python-client job runs the agent loop against its fake). The Python client has an
+  `AsyncHippocampus` beside `Hippocampus`, both built from one `_Surface` of method definitions that
+  differ only in `_invoke`, so the two cannot drift.
 - `observability/` — the shared OTEL bootstrap and probe endpoints, in the root module so the
   service, the ingestor and the four broker bridges use one implementation (it began as
   `cmd/hippocampus/observability.go` and was promoted, not copied; the integration modules already

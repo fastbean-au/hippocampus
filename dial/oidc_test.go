@@ -1,4 +1,4 @@
-package bridge
+package dial
 
 import (
 	"context"
@@ -362,7 +362,7 @@ func TestTokenSourceSelection(t *testing.T) {
 		// Both are set, which is what a deployment mid-migration looks like: an env file still
 		// carrying a token beside the new client credentials. The refreshing source is the one it
 		// meant.
-		src, err := tokenSource(ClientConfig{
+		src, err := tokenSource(Config{
 			Token: "static",
 			OIDC:  OIDCConfig{Issuer: "https://idp", ClientID: "id", ClientSecret: "s"},
 		})
@@ -376,7 +376,7 @@ func TestTokenSourceSelection(t *testing.T) {
 	})
 
 	t.Run("a token alone selects the static source", func(t *testing.T) {
-		src, err := tokenSource(ClientConfig{Token: "static"})
+		src, err := tokenSource(Config{Token: "static"})
 		if err != nil {
 			t.Fatalf("tokenSource: %s", err)
 		}
@@ -388,7 +388,7 @@ func TestTokenSourceSelection(t *testing.T) {
 	})
 
 	t.Run("no auth configured yields no source", func(t *testing.T) {
-		src, err := tokenSource(ClientConfig{})
+		src, err := tokenSource(Config{})
 		if err != nil {
 			t.Fatalf("tokenSource: %s", err)
 		}
@@ -399,7 +399,7 @@ func TestTokenSourceSelection(t *testing.T) {
 	})
 
 	t.Run("a malformed OIDC config is reported", func(t *testing.T) {
-		if _, err := tokenSource(ClientConfig{OIDC: OIDCConfig{ClientID: "id"}}); err == nil {
+		if _, err := tokenSource(Config{OIDC: OIDCConfig{ClientID: "id"}}); err == nil {
 			t.Error("expected the incomplete OIDC config to be rejected")
 		}
 	})
@@ -408,7 +408,7 @@ func TestTokenSourceSelection(t *testing.T) {
 // TestDialRejectsAMalformedOIDCConfig pins that the validation actually reaches Dial, so a
 // misconfigured bridge exits at startup instead of running and failing every write.
 func TestDialRejectsAMalformedOIDCConfig(t *testing.T) {
-	_, _, err := Dial(ClientConfig{
+	_, _, err := Dial(Config{
 		Address: "localhost:50051",
 		OIDC:    OIDCConfig{ClientID: "id"}, // no secret, no issuer
 	})

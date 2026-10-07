@@ -2,14 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"io"
-	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,8 +10,6 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 )
 
 // resetViper clears and restores the global viper between tests, matching the pattern the main
@@ -30,128 +21,67 @@ func resetViper(t *testing.T) {
 	t.Cleanup(viper.Reset)
 }
 
-func TestTransportCredentials_InsecureByDefault(t *testing.T) {
+// The connection is the shared dial package's (TODO-3 item 172), which tests the TLS block and the
+// token itself. What is pinned here is this command's half: the flags reach it, and a bad TLS block
+// still fails before anything is served.
+
+func TestDialConfig_MapsTheFlags(t *testing.T) {
 	resetViper(t)
-
-	creds, err := transportCredentials()
-	if err != nil {
-		t.Fatalf("transportCredentials returned error: %v", err)
-	}
-
-	if got := creds.Info().SecurityProtocol; got != "insecure" {
-		t.Fatalf("expected insecure credentials, got %q", got)
-	}
-}
-
-func TestTransportCredentials_TLSSystemPool(t *testing.T) {
-	resetViper(t)
+	viper.Set("address", "svc:1")
+	viper.Set("token", "secret-token")
 	viper.Set("tls", true)
+	viper.Set("tls-ca-cert", "/ca.pem")
+	viper.Set("tls-cert", "/c.pem")
+	viper.Set("tls-key", "/k.pem")
+	viper.Set("tls-insecure-skip-verify", true)
 
-	creds, err := transportCredentials()
-	if err != nil {
-		t.Fatalf("transportCredentials returned error: %v", err)
+	cfg := dialConfig()
+
+	if cfg.Address != "svc:1" || cfg.Token != "secret-token" || !cfg.TLS || cfg.TLSCACertFile != "/ca.pem" ||
+		cfg.TLSCertFile != "/c.pem" || cfg.TLSKeyFile != "/k.pem" || !cfg.TLSInsecureSkipVerify {
+		t.Errorf("dialConfig = %+v, want every connection flag carried", cfg)
 	}
 
-	if got := creds.Info().SecurityProtocol; got != "tls" {
-		t.Fatalf("expected tls credentials, got %q", got)
-	}
-}
-
-func TestTransportCredentials_HalfConfiguredClientCertFails(t *testing.T) {
-	resetViper(t)
-	viper.Set("tls", true)
-	viper.Set("tls-cert", "/only/a/cert")
-
-	if _, err := transportCredentials(); err == nil {
-		t.Fatal("expected an error when only --tls-cert is set")
+	if cfg.ClientVersion != "hippocampus-mcp/"+version {
+		t.Errorf("client version = %q", cfg.ClientVersion)
 	}
 }
 
-func TestTransportCredentials_BadCAFileFails(t *testing.T) {
+func TestDialConfig_PlaintextByDefault(t *testing.T) {
 	resetViper(t)
 
-	path := filepath.Join(t.TempDir(), "not-a-cert.pem")
-	if err := os.WriteFile(path, []byte("this is not a certificate"), 0o600); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-
-	viper.Set("tls", true)
-	viper.Set("tls-ca-cert", path)
-
-	if _, err := transportCredentials(); err == nil {
-		t.Fatal("expected an error for a CA file with no valid certificates")
+	if dialConfig().TLS {
+		t.Error("TLS is on with no flag asking for it")
 	}
 }
 
-func TestTransportCredentials_MissingCAFileFails(t *testing.T) {
-	resetViper(t)
-	viper.Set("tls", true)
-	viper.Set("tls-ca-cert", filepath.Join(t.TempDir(), "does-not-exist.pem"))
+func TestRun_BadTLSBlockFailsBeforeServing(t *testing.T) {
+	cases := map[string]func(t *testing.T){
+		"half a client certificate": func(t *testing.T) { viper.Set("tls-cert", "/only/a/cert") },
+		"an unreadable CA file": func(t *testing.T) {
+			viper.Set("tls-ca-cert", filepath.Join(t.TempDir(), "does-not-exist.pem"))
+		},
+		"a CA file with no certificates": func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "not-a-cert.pem")
+			if err := os.WriteFile(path, []byte("this is not a certificate"), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
 
-	if _, err := transportCredentials(); err == nil {
-		t.Fatal("expected an error for an unreadable CA file")
-	}
-}
-
-func TestTransportCredentials_CAAndClientCert(t *testing.T) {
-	resetViper(t)
-
-	certPath, keyPath := writeSelfSignedCert(t)
-
-	viper.Set("tls", true)
-	viper.Set("tls-ca-cert", certPath)
-	viper.Set("tls-cert", certPath)
-	viper.Set("tls-key", keyPath)
-
-	creds, err := transportCredentials()
-	if err != nil {
-		t.Fatalf("transportCredentials returned error: %v", err)
+			viper.Set("tls-ca-cert", path)
+		},
 	}
 
-	if got := creds.Info().SecurityProtocol; got != "tls" {
-		t.Fatalf("expected tls credentials, got %q", got)
-	}
-}
+	for name, configure := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetViper(t)
+			viper.Set("address", "localhost:50051")
+			viper.Set("tls", true)
+			configure(t)
 
-func TestTransportCredentials_BadClientCertPairFails(t *testing.T) {
-	resetViper(t)
-
-	certPath, _ := writeSelfSignedCert(t)
-
-	// A key file that is not a valid key for the cert makes LoadX509KeyPair fail.
-	badKey := filepath.Join(t.TempDir(), "bad.key")
-	if err := os.WriteFile(badKey, []byte("-----BEGIN EC PRIVATE KEY-----\nnope\n-----END EC PRIVATE KEY-----\n"), 0o600); err != nil {
-		t.Fatalf("write bad key: %v", err)
-	}
-
-	viper.Set("tls", true)
-	viper.Set("tls-cert", certPath)
-	viper.Set("tls-key", badKey)
-
-	if _, err := transportCredentials(); err == nil {
-		t.Fatal("expected an error loading a mismatched client certificate")
-	}
-}
-
-func TestBearerTokenInterceptor_AttachesAuthorization(t *testing.T) {
-	interceptor := bearerTokenInterceptor("secret-token")
-
-	var seen metadata.MD
-
-	invoker := func(ctx context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
-		md, _ := metadata.FromOutgoingContext(ctx)
-		seen = md
-
-		return nil
-	}
-
-	if err := interceptor(context.Background(), "/hippocampus.v1.Hippocampus/StoreMemory", nil, nil, nil, invoker); err != nil {
-		t.Fatalf("interceptor returned error: %v", err)
-	}
-
-	got := seen.Get("authorization")
-	if len(got) != 1 || got[0] != "Bearer secret-token" {
-		t.Fatalf("authorization metadata not set correctly: %v", got)
+			if err := run(context.Background()); err == nil {
+				t.Fatal("run served with a broken TLS block")
+			}
+		})
 	}
 }
 
@@ -345,59 +275,4 @@ func TestServeHTTP_BindErrorReturns(t *testing.T) {
 	if err := serveHTTP(context.Background(), server, httpConfig{address: "127.0.0.1:99999"}); err == nil {
 		t.Fatal("expected serveHTTP to return the listener bind error")
 	}
-}
-
-// writeSelfSignedCert writes a self-signed ECDSA certificate and its key to temp files and returns
-// their paths, for exercising the TLS trust-option branches of transportCredentials.
-func writeSelfSignedCert(t *testing.T) (string, string) {
-	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "hippocampus-mcp-test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		IsCA:         true,
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create certificate: %v", err)
-	}
-
-	dir := t.TempDir()
-	certPath := filepath.Join(dir, "cert.pem")
-	keyPath := filepath.Join(dir, "key.pem")
-
-	certPEM, err := os.Create(certPath)
-	if err != nil {
-		t.Fatalf("create cert file: %v", err)
-	}
-	defer func() { _ = certPEM.Close() }()
-
-	if err := pem.Encode(certPEM, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		t.Fatalf("encode cert: %v", err)
-	}
-
-	keyBytes, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-
-	keyPEM, err := os.Create(keyPath)
-	if err != nil {
-		t.Fatalf("create key file: %v", err)
-	}
-	defer func() { _ = keyPEM.Close() }()
-
-	if err := pem.Encode(keyPEM, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
-		t.Fatalf("encode key: %v", err)
-	}
-
-	return certPath, keyPath
 }

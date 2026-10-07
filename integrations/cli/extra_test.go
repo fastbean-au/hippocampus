@@ -5,18 +5,18 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/fastbean-au/hippocampus/contract"
 )
@@ -66,10 +66,37 @@ func writeSelfSignedCert(t *testing.T) (certPath string, keyPath string) {
 	return certPath, keyPath
 }
 
+// tlsOf is the TLS configuration the CLI's HTTPS transport would use, which since TODO-3 item 172 is
+// dial.TLSClientConfig's - the same builder the gRPC path's credentials come from.
+func tlsOf(cfg TLSConfig) (*tls.Config, error) {
+	transport, err := httpTransport(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return transport.(*http.Transport).TLSClientConfig, nil
+}
+
+// TestDialConfigMapsTheFlags pins the CLI's half of the shared connection: every TLS option and the
+// token reach dial.Config.
+func TestDialConfigMapsTheFlags(t *testing.T) {
+	cfg := dialConfig(Config{
+		Address:       "svc:1",
+		Token:         "tok",
+		ClientVersion: "hippo/1",
+		TLS:           TLSConfig{Enabled: true, CACert: "/ca", Cert: "/c", Key: "/k", InsecureSkipVerify: true},
+	})
+
+	if cfg.Address != "svc:1" || cfg.Token != "tok" || cfg.ClientVersion != "hippo/1" || !cfg.TLS ||
+		cfg.TLSCACertFile != "/ca" || cfg.TLSCertFile != "/c" || cfg.TLSKeyFile != "/k" || !cfg.TLSInsecureSkipVerify {
+		t.Errorf("dialConfig = %+v", cfg)
+	}
+}
+
 func TestTLSClientConfigFull(t *testing.T) {
 	certPath, keyPath := writeSelfSignedCert(t)
 
-	conf, err := tlsClientConfig(TLSConfig{
+	conf, err := tlsOf(TLSConfig{
 		Enabled:            true,
 		CACert:             certPath,
 		Cert:               certPath,
@@ -77,7 +104,7 @@ func TestTLSClientConfigFull(t *testing.T) {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		t.Fatalf("tlsClientConfig: %v", err)
+		t.Fatalf("tlsOf: %v", err)
 	}
 
 	if conf.RootCAs == nil {
@@ -101,33 +128,16 @@ func TestTLSClientConfigBadCA(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := tlsClientConfig(TLSConfig{Enabled: true, CACert: bad})
+	_, err := tlsOf(TLSConfig{Enabled: true, CACert: bad})
 	if err == nil || !strings.Contains(err.Error(), "no valid certificates") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestTLSClientConfigMissingCA(t *testing.T) {
-	_, err := tlsClientConfig(TLSConfig{Enabled: true, CACert: filepath.Join(t.TempDir(), "absent.pem")})
+	_, err := tlsOf(TLSConfig{Enabled: true, CACert: filepath.Join(t.TempDir(), "absent.pem")})
 	if err == nil || !strings.Contains(err.Error(), "reading CA cert file") {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestTransportCredentialsPlaintext(t *testing.T) {
-	creds, err := transportCredentials(TLSConfig{Enabled: false})
-	if err != nil {
-		t.Fatalf("transportCredentials: %v", err)
-	}
-
-	if creds.Info().SecurityProtocol != insecure.NewCredentials().Info().SecurityProtocol {
-		t.Fatal("disabled TLS should yield insecure credentials")
-	}
-}
-
-func TestTransportCredentialsTLS(t *testing.T) {
-	if _, err := transportCredentials(TLSConfig{Enabled: true}); err != nil {
-		t.Fatalf("transportCredentials with TLS: %v", err)
 	}
 }
 

@@ -1,8 +1,6 @@
 package client
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +8,7 @@ import (
 )
 
 func TestDialBuildsAClient(t *testing.T) {
-	conn, hippo, err := Dial(Config{Address: "localhost:50051", Token: "sekrit", Endpoint: "hippocampus"})
+	conn, hippo, err := Dial(Config{Address: "localhost:50051", Token: "sekrit"})
 	if err != nil {
 		t.Fatalf("Dial failed: %s", err.Error())
 	}
@@ -19,73 +17,6 @@ func TestDialBuildsAClient(t *testing.T) {
 
 	if hippo == nil {
 		t.Error("expected a client")
-	}
-}
-
-func TestPlaintextIsTheDefault(t *testing.T) {
-	creds, err := transportCredentials(Config{})
-	if err != nil {
-		t.Fatalf("transportCredentials failed: %s", err.Error())
-	}
-
-	if got := creds.Info().SecurityProtocol; got != "insecure" {
-		t.Errorf("expected insecure credentials, got %q", got)
-	}
-}
-
-func TestTLSUsesTheSystemPoolByDefault(t *testing.T) {
-	creds, err := transportCredentials(Config{TLS: true})
-	if err != nil {
-		t.Fatalf("transportCredentials failed: %s", err.Error())
-	}
-
-	if got := creds.Info().SecurityProtocol; got != "tls" {
-		t.Errorf("expected tls credentials, got %q", got)
-	}
-}
-
-// Half a client certificate is a configuration mistake that would otherwise present as a handshake
-// failure against the far end.
-func TestMutualTLSNeedsBothHalves(t *testing.T) {
-	if _, err := transportCredentials(Config{TLS: true, TLSCertFile: "cert.pem"}); err == nil {
-		t.Error("expected a certificate without a key to be refused")
-	}
-
-	if _, err := transportCredentials(Config{TLS: true, TLSKeyFile: "key.pem"}); err == nil {
-		t.Error("expected a key without a certificate to be refused")
-	}
-}
-
-func TestABadCABundleIsReported(t *testing.T) {
-	if _, err := transportCredentials(Config{TLS: true, TLSCACertFile: filepath.Join(t.TempDir(), "absent.pem")}); err == nil {
-		t.Error("expected a missing CA file to be refused")
-	}
-
-	path := filepath.Join(t.TempDir(), "empty.pem")
-
-	if err := os.WriteFile(path, []byte("not a certificate"), 0o600); err != nil {
-		t.Fatalf("could not write the file: %s", err.Error())
-	}
-
-	if _, err := transportCredentials(Config{TLS: true, TLSCACertFile: path}); err == nil {
-		t.Error("expected a CA file with no certificates in it to be refused")
-	}
-}
-
-func TestABadClientCertificateIsReported(t *testing.T) {
-	dir := t.TempDir()
-
-	cert := filepath.Join(dir, "cert.pem")
-	key := filepath.Join(dir, "key.pem")
-
-	for _, path := range []string{cert, key} {
-		if err := os.WriteFile(path, []byte("rubbish"), 0o600); err != nil {
-			t.Fatalf("could not write the file: %s", err.Error())
-		}
-	}
-
-	if _, err := transportCredentials(Config{TLS: true, TLSCertFile: cert, TLSKeyFile: key}); err == nil {
-		t.Error("expected an unloadable certificate to be refused")
 	}
 }
 

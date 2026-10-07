@@ -13,7 +13,7 @@ service, which is what lets a client be constructed per request if that suits th
 
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, List, Mapping, Optional, Sequence
 
 import grpc
 
@@ -47,100 +47,51 @@ CLIENT_VERSION_HEADER = "hippocampus-client-version"
 DEFAULT_TIMEOUT = 30.0
 
 
-class Hippocampus:
-    """A connected client.
+def _ok(response: Any) -> bool:
+    return response.ok
 
-    Use it as a context manager, or call close() when finished - the channel holds a connection and
-    a background thread that will otherwise outlive the code that opened it.
 
-        with Hippocampus("localhost:50051") as client:
-            client.store_memory("the deploy at 14:03 rolled back cleanly", significance=50)
+def _stored(response: Any) -> Stored:
+    return Stored(id=response.id, rejected=response.rejected)
 
-    Authentication and TLS are both off in a default deployment, so `address` alone is often all
-    that is needed. Where they are on, `token` carries the bearer token and `tls` turns on
-    transport security; `ca_cert` trusts a private CA, and `client_cert`/`client_key` present a
-    client certificate to a listener configured to ask for one.
 
-    There is deliberately no skip-verify option: the Python gRPC stack does not offer one, and
-    faking it by trusting an arbitrary CA would be a different thing wearing the same name. Use
-    `ca_cert` for a private CA and `server_name_override` for a certificate whose name does not
-    match the address you dial.
+def _stored_event(response: Any) -> Stored:
+    return Stored(id=response.id, rejected=response.rejected, memory_count=response.memory_count)
+
+
+def _event_of(response: Any) -> Event:
+    return Event.from_proto(response.event)
+
+
+def _significance_page(response: Any) -> Page:
+    return Page(items=list(response.significances), total=response.total_count)
+
+
+def _identity(response: Any) -> Any:
+    return response
+
+
+class _Surface:
+    """Every RPC wrapper, written once for both clients.
+
+    Each method builds its request and names the conversion its response needs, and hands both to
+    `_invoke`, which is the only thing the two clients implement differently: the synchronous one
+    returns the converted value, and the asynchronous one returns a coroutine that awaits the call and
+    then converts. That is what keeps the two from drifting - there is one copy of every request and
+    every conversion - and it is why, on `AsyncHippocampus`, each of these methods is awaited even
+    though its annotation names the value rather than the coroutine.
     """
 
-    def __init__(
+    stub: Any
+
+    def _invoke(
         self,
-        address: str,
-        *,
-        token: Optional[str] = None,
-        tls: bool = False,
-        ca_cert: Optional[bytes] = None,
-        client_cert: Optional[bytes] = None,
-        client_key: Optional[bytes] = None,
-        server_name_override: Optional[str] = None,
-        timeout: Optional[float] = DEFAULT_TIMEOUT,
-        options: Optional[Sequence[tuple]] = None,
-        channel: Optional[grpc.Channel] = None,
-    ) -> None:
-        self.timeout = timeout
-
-        # A caller-supplied channel is taken as-is and never closed by us: it belongs to whoever
-        # built it, and it is how a test drives this class over an in-process transport.
-        self._owns_channel = channel is None
-
-        if channel is None:
-            channel = _build_channel(
-                address,
-                tls=tls or ca_cert is not None or client_cert is not None,
-                ca_cert=ca_cert,
-                client_cert=client_cert,
-                client_key=client_key,
-                server_name_override=server_name_override,
-                options=options,
-            )
-
-        self._channel = channel
-        self.stub = rpc.HippocampusStub(channel)
-
-        # The token travels as per-call metadata rather than as channel credentials, which is what
-        # keeps one code path for both transports: gRPC permits call credentials on a secure
-        # channel only, so binding them to the channel would work against a TLS deployment and
-        # raise against a plaintext one - and plaintext behind a TLS-terminating sidecar is a
-        # supported deployment here, not a mistake to guard against.
-        #
-        # The package's own version rides along on every call (CLIENT_VERSION_HEADER), so the
-        # service's deployment view can say which build of this client is calling it: from there a
-        # client is a caller it holds no address for, and the header is the only way its version
-        # arrives.
-        self._metadata = ((CLIENT_VERSION_HEADER, f"hippocampus-client-python/{__version__}"),)
-
-        if token:
-            self._metadata += (("authorization", f"Bearer {token}"),)
-
-    # ---------------------------------------------------------------- lifecycle
-
-    def close(self) -> None:
-        """Close the channel, unless it was supplied by the caller."""
-
-        if self._owns_channel:
-            self._channel.close()
-
-    def __enter__(self) -> "Hippocampus":
-        return self
-
-    def __exit__(self, *_: Any) -> None:
-        self.close()
-
-    def _call(self, method: Any, request: Any, timeout: Optional[float] = None) -> Any:
-        """Invoke one RPC, attaching credentials and the deadline, and translating failures."""
-
-        try:
-            return method(
-                request,
-                timeout=self.timeout if timeout is None else timeout,
-                metadata=self._metadata,
-            )
-        except grpc.RpcError as error:
-            raise errors.translate(error) from error
+        method: Any,
+        request: Any,
+        timeout: Optional[float],
+        convert: Callable[[Any], Any] = _identity,
+    ) -> Any:
+        raise NotImplementedError
 
     # ------------------------------------------------------- identity, topology
 
@@ -152,9 +103,7 @@ class Hippocampus:
         discovering an unavailable feature through a rejection.
         """
 
-        return Identity.from_proto(
-            self._call(self.stub.WhoAmI, pb.EmptyRequest(), timeout)
-        )
+        return self._invoke(self.stub.WhoAmI, pb.EmptyRequest(), timeout, Identity.from_proto)
 
     def topology(self, *, timeout: Optional[float] = None) -> pb.GetTopologyResponse:
         """What this instance is attached to, and the last known health of each dependency.
@@ -163,7 +112,7 @@ class Hippocampus:
         to a group-scoped caller - `Identity.topology_tier` reports whether it is available here.
         """
 
-        return self._call(self.stub.GetTopology, pb.EmptyRequest(), timeout)
+        return self._invoke(self.stub.GetTopology, pb.EmptyRequest(), timeout)
 
     def significance_levels(
         self,
@@ -187,9 +136,7 @@ class Hippocampus:
             offset=offset,
         )
 
-        response = self._call(self.stub.GetSignificanceLevels, request, timeout)
-
-        return Page(items=list(response.significances), total=response.total_count)
+        return self._invoke(self.stub.GetSignificanceLevels, request, timeout, _significance_page)
 
     # ----------------------------------------------------------------- memories
 
@@ -233,9 +180,7 @@ class Hippocampus:
                 external_bytes=external_bytes,
             ).to_proto()
 
-        response = self._call(self.stub.StoreMemory, message, timeout)
-
-        return Stored(id=response.id, rejected=response.rejected)
+        return self._invoke(self.stub.StoreMemory, message, timeout, _stored)
 
     def store_memories(
         self,
@@ -255,9 +200,7 @@ class Hippocampus:
             memories=[memory.to_proto() for memory in memories]
         )
 
-        return BatchStored.from_proto(
-            self._call(self.stub.StoreMemories, request, timeout)
-        )
+        return self._invoke(self.stub.StoreMemories, request, timeout, BatchStored.from_proto)
 
     def update_memory(
         self,
@@ -283,7 +226,7 @@ class Hippocampus:
         message.clear_metadata = clear_metadata
         message.clear_group = clear_group
 
-        return self._call(self.stub.UpdateMemory, message, timeout).ok
+        return self._invoke(self.stub.UpdateMemory, message, timeout, _ok)
 
     def delete_memories(
         self,
@@ -295,7 +238,7 @@ class Hippocampus:
 
         request = pb.DeleteMemoriesRequest(ids=list(ids))
 
-        return self._call(self.stub.DeleteMemories, request, timeout).ok
+        return self._invoke(self.stub.DeleteMemories, request, timeout, _ok)
 
     def delete_memories_by_filter(
         self,
@@ -354,7 +297,7 @@ class Hippocampus:
         if significance_extremum is not None:
             request.significance_extremum = int(significance_extremum)
 
-        return self._call(self.stub.DeleteMemoriesByFilter, request, timeout)
+        return self._invoke(self.stub.DeleteMemoriesByFilter, request, timeout)
 
     def get_memories(
         self,
@@ -426,7 +369,7 @@ class Hippocampus:
         if order_dir is not None:
             request.order_dir = int(order_dir)
 
-        return memories_page(self._call(self.stub.GetMemories, request, timeout))
+        return self._invoke(self.stub.GetMemories, request, timeout, memories_page)
 
     def recall_memories(
         self,
@@ -448,7 +391,7 @@ class Hippocampus:
 
         request = pb.RecallMemoriesRequest(ids=list(ids), include_linked=include_linked)
 
-        return memories_page(self._call(self.stub.RecallMemories, request, timeout))
+        return self._invoke(self.stub.RecallMemories, request, timeout, memories_page)
 
     def search_memories(
         self,
@@ -495,7 +438,7 @@ class Hippocampus:
         if mode is not None:
             request.mode = int(mode)
 
-        return memories_page(self._call(self.stub.SearchMemories, request, timeout))
+        return self._invoke(self.stub.SearchMemories, request, timeout, memories_page)
 
     # ------------------------------------------------------------- memory links
 
@@ -510,7 +453,7 @@ class Hippocampus:
 
         request = pb.LinkMemoriesRequest(id=id, links=link_protos(links))
 
-        return self._call(self.stub.LinkMemories, request, timeout).ok
+        return self._invoke(self.stub.LinkMemories, request, timeout, _ok)
 
     def unlink_memories(
         self,
@@ -523,7 +466,7 @@ class Hippocampus:
 
         request = pb.UnlinkMemoriesRequest(id=id, ids=list(ids))
 
-        return self._call(self.stub.UnlinkMemories, request, timeout).ok
+        return self._invoke(self.stub.UnlinkMemories, request, timeout, _ok)
 
     def memory_links(
         self,
@@ -536,7 +479,7 @@ class Hippocampus:
 
         request = pb.GetMemoryLinksRequest(id=id, direction=int(direction))
 
-        return Links.from_proto(self._call(self.stub.GetMemoryLinks, request, timeout))
+        return self._invoke(self.stub.GetMemoryLinks, request, timeout, Links.from_proto)
 
     # ------------------------------------------------------------------- events
 
@@ -581,13 +524,7 @@ class Hippocampus:
                 placement=placement,
             ).to_proto()
 
-        response = self._call(self.stub.StoreEvent, message, timeout)
-
-        return Stored(
-            id=response.id,
-            rejected=response.rejected,
-            memory_count=response.memory_count,
-        )
+        return self._invoke(self.stub.StoreEvent, message, timeout, _stored_event)
 
     def update_event(
         self,
@@ -603,7 +540,7 @@ class Hippocampus:
         message.clear_metadata = clear_metadata
         message.clear_group = clear_group
 
-        return self._call(self.stub.UpdateEvent, message, timeout).ok
+        return self._invoke(self.stub.UpdateEvent, message, timeout, _ok)
 
     def end_event(
         self,
@@ -616,7 +553,7 @@ class Hippocampus:
 
         request = pb.EndEventRequest(id=id, time_end=_convert.to_nanos(at))
 
-        return self._call(self.stub.EndEvent, request, timeout).ok
+        return self._invoke(self.stub.EndEvent, request, timeout, _ok)
 
     def update_event_significance(
         self,
@@ -637,7 +574,7 @@ class Hippocampus:
         if placement is not None:
             request.placement.CopyFrom(placement.to_proto())
 
-        return self._call(self.stub.UpdateEventSignificance, request, timeout).ok
+        return self._invoke(self.stub.UpdateEventSignificance, request, timeout, _ok)
 
     def merge_events(
         self,
@@ -650,7 +587,7 @@ class Hippocampus:
 
         request = pb.MergeEventsRequest(merge_to=merge_to, merge_from=merge_from)
 
-        return self._call(self.stub.MergeEvents, request, timeout).ok
+        return self._invoke(self.stub.MergeEvents, request, timeout, _ok)
 
     def delete_event(
         self,
@@ -669,7 +606,7 @@ class Hippocampus:
 
         request = pb.DeleteEventRequest(id=id, memories=memories, if_empty=if_empty)
 
-        return self._call(self.stub.DeleteEvent, request, timeout).ok
+        return self._invoke(self.stub.DeleteEvent, request, timeout, _ok)
 
     def get_event(
         self,
@@ -694,9 +631,7 @@ class Hippocampus:
             links=links,
         )
 
-        return Event.from_proto(
-            self._call(self.stub.GetEventById, request, timeout).event
-        )
+        return self._invoke(self.stub.GetEventById, request, timeout, _event_of)
 
     def delete_events_by_filter(
         self,
@@ -746,7 +681,7 @@ class Hippocampus:
         if significance_extremum is not None:
             request.significance_extremum = int(significance_extremum)
 
-        return self._call(self.stub.DeleteEventsByFilter, request, timeout)
+        return self._invoke(self.stub.DeleteEventsByFilter, request, timeout)
 
     def get_events(
         self,
@@ -806,7 +741,7 @@ class Hippocampus:
         if order_dir is not None:
             request.order_dir = int(order_dir)
 
-        return events_page(self._call(self.stub.GetEvents, request, timeout))
+        return self._invoke(self.stub.GetEvents, request, timeout, events_page)
 
     # -------------------------------------------------------------- event links
 
@@ -821,7 +756,7 @@ class Hippocampus:
 
         request = pb.LinkEventsRequest(id=id, links=link_protos(links))
 
-        return self._call(self.stub.LinkEvents, request, timeout).ok
+        return self._invoke(self.stub.LinkEvents, request, timeout, _ok)
 
     def unlink_events(
         self,
@@ -834,7 +769,7 @@ class Hippocampus:
 
         request = pb.UnlinkEventsRequest(id=id, ids=list(ids))
 
-        return self._call(self.stub.UnlinkEvents, request, timeout).ok
+        return self._invoke(self.stub.UnlinkEvents, request, timeout, _ok)
 
     def event_links(
         self,
@@ -847,7 +782,7 @@ class Hippocampus:
 
         request = pb.GetEventLinksRequest(id=id, direction=int(direction))
 
-        return Links.from_proto(self._call(self.stub.GetEventLinks, request, timeout))
+        return self._invoke(self.stub.GetEventLinks, request, timeout, Links.from_proto)
 
     # ----------------------------------------------------------- summarisation
 
@@ -862,7 +797,7 @@ class Hippocampus:
         about whether any event qualifies.
         """
 
-        return self._call(
+        return self._invoke(
             self.stub.GetSummarisationCandidates, pb.EmptyRequest(), timeout
         )
 
@@ -883,7 +818,7 @@ class Hippocampus:
         request = pb.ReplaceMemoriesWithSummaryRequest(event_id=event_id)
         request.summary.CopyFrom(summary.to_proto())
 
-        return self._call(self.stub.ReplaceMemoriesWithSummary, request, timeout)
+        return self._invoke(self.stub.ReplaceMemoriesWithSummary, request, timeout)
 
     def summarise_memories(
         self,
@@ -906,7 +841,7 @@ class Hippocampus:
         if placement is not None:
             request.placement.CopyFrom(placement.to_proto())
 
-        return self._call(self.stub.SummariseMemories, request, timeout)
+        return self._invoke(self.stub.SummariseMemories, request, timeout)
 
     # ------------------------------------------------------------ consolidation
 
@@ -917,12 +852,12 @@ class Hippocampus:
         whichever instance holds the single-consolidator lock.
         """
 
-        return self._call(self.stub.Sleep, pb.EmptyRequest(), timeout).ok
+        return self._invoke(self.stub.Sleep, pb.EmptyRequest(), timeout, _ok)
 
     def purge(self, *, timeout: Optional[float] = None) -> bool:
         """Delete every event and memory. While it runs, every other RPC is rejected."""
 
-        return self._call(self.stub.Purge, pb.EmptyRequest(), timeout).ok
+        return self._invoke(self.stub.Purge, pb.EmptyRequest(), timeout, _ok)
 
     def consolidation_status(
         self,
@@ -935,7 +870,7 @@ class Hippocampus:
         `consolidation_enabled` false is the answer there.
         """
 
-        return self._call(self.stub.GetConsolidationStatus, pb.EmptyRequest(), timeout)
+        return self._invoke(self.stub.GetConsolidationStatus, pb.EmptyRequest(), timeout)
 
     def preview_consolidation(
         self,
@@ -947,7 +882,7 @@ class Hippocampus:
 
         request = pb.PreviewConsolidationRequest(limit=limit)
 
-        return self._call(self.stub.PreviewConsolidation, request, timeout)
+        return self._invoke(self.stub.PreviewConsolidation, request, timeout)
 
     def explain_consolidation(
         self,
@@ -972,7 +907,7 @@ class Hippocampus:
             request.curve.max_age_days = curve_max_age_days
             request.curve.points = curve_points
 
-        return self._call(self.stub.ExplainConsolidation, request, timeout)
+        return self._invoke(self.stub.ExplainConsolidation, request, timeout)
 
     def forgotten_memories(
         self,
@@ -1005,7 +940,7 @@ class Hippocampus:
             limit=limit,
         )
 
-        return self._call(self.stub.GetForgottenMemories, request, timeout)
+        return self._invoke(self.stub.GetForgottenMemories, request, timeout)
 
     def delete_forgotten_memories(
         self,
@@ -1020,7 +955,7 @@ class Hippocampus:
             before_time=_convert.to_nanos(before), all=all
         )
 
-        return self._call(self.stub.DeleteForgottenMemories, request, timeout)
+        return self._invoke(self.stub.DeleteForgottenMemories, request, timeout)
 
     def callback_queue(
         self,
@@ -1040,7 +975,7 @@ class Hippocampus:
             kind=kind, after_seq=after_seq, limit=limit
         )
 
-        return self._call(self.stub.GetCallbackQueue, request, timeout)
+        return self._invoke(self.stub.GetCallbackQueue, request, timeout)
 
     def delete_callback_queue(
         self,
@@ -1055,7 +990,7 @@ class Hippocampus:
             before_time=_convert.to_nanos(before), all=all
         )
 
-        return self._call(self.stub.DeleteCallbackQueue, request, timeout)
+        return self._invoke(self.stub.DeleteCallbackQueue, request, timeout)
 
     # ------------------------------------------------------- transfer, archive
 
@@ -1125,7 +1060,7 @@ class Hippocampus:
 
         request = pb.ExportRequest(clear=clear, memories=selection)
 
-        return self._call(self.stub.Export, request, timeout)
+        return self._invoke(self.stub.Export, request, timeout)
 
     def import_(
         self,
@@ -1138,7 +1073,7 @@ class Hippocampus:
 
         request = pb.ImportRequest(object_key=object_key)
 
-        return self._call(self.stub.Import, request, timeout)
+        return self._invoke(self.stub.Import, request, timeout)
 
     def import_batch(
         self,
@@ -1158,7 +1093,7 @@ class Hippocampus:
             memories=[memory.to_proto() for memory in (memories or [])],
         )
 
-        return self._call(self.stub.ImportBatch, request, timeout)
+        return self._invoke(self.stub.ImportBatch, request, timeout)
 
     def transfer(
         self,
@@ -1172,7 +1107,7 @@ class Hippocampus:
 
         request = pb.TransferRequest(clear=clear, memories=selection)
 
-        return self._call(self.stub.Transfer, request, timeout)
+        return self._invoke(self.stub.Transfer, request, timeout)
 
     def clear(
         self,
@@ -1184,7 +1119,101 @@ class Hippocampus:
 
         request = pb.ClearRequest(manifest_id=manifest_id)
 
-        return self._call(self.stub.Clear, request, timeout)
+        return self._invoke(self.stub.Clear, request, timeout)
+
+
+class Hippocampus(_Surface):
+    """A connected client.
+
+    Use it as a context manager, or call close() when finished - the channel holds a connection and
+    a background thread that will otherwise outlive the code that opened it.
+
+        with Hippocampus("localhost:50051") as client:
+            client.store_memory("the deploy at 14:03 rolled back cleanly", significance=50)
+
+    Authentication and TLS are both off in a default deployment, so `address` alone is often all
+    that is needed. Where they are on, `token` carries the bearer token and `tls` turns on
+    transport security; `ca_cert` trusts a private CA, and `client_cert`/`client_key` present a
+    client certificate to a listener configured to ask for one.
+
+    There is deliberately no skip-verify option: the Python gRPC stack does not offer one, and
+    faking it by trusting an arbitrary CA would be a different thing wearing the same name. Use
+    `ca_cert` for a private CA and `server_name_override` for a certificate whose name does not
+    match the address you dial.
+    """
+
+    def __init__(
+        self,
+        address: str,
+        *,
+        token: Optional[str] = None,
+        tls: bool = False,
+        ca_cert: Optional[bytes] = None,
+        client_cert: Optional[bytes] = None,
+        client_key: Optional[bytes] = None,
+        server_name_override: Optional[str] = None,
+        timeout: Optional[float] = DEFAULT_TIMEOUT,
+        options: Optional[Sequence[tuple]] = None,
+        channel: Optional[grpc.Channel] = None,
+    ) -> None:
+        self.timeout = timeout
+
+        # A caller-supplied channel is taken as-is and never closed by us: it belongs to whoever
+        # built it, and it is how a test drives this class over an in-process transport.
+        self._owns_channel = channel is None
+
+        if channel is None:
+            channel = _build_channel(
+                address,
+                tls=tls or ca_cert is not None or client_cert is not None,
+                ca_cert=ca_cert,
+                client_cert=client_cert,
+                client_key=client_key,
+                server_name_override=server_name_override,
+                options=options,
+            )
+
+        self._channel = channel
+        self.stub = rpc.HippocampusStub(channel)
+
+        # The token and the client's version travel as per-call metadata; see _call_metadata.
+        self._metadata = _call_metadata(token)
+
+    # ---------------------------------------------------------------- lifecycle
+
+    def close(self) -> None:
+        """Close the channel, unless it was supplied by the caller."""
+
+        if self._owns_channel:
+            self._channel.close()
+
+    def __enter__(self) -> "Hippocampus":
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.close()
+
+    def _call(self, method: Any, request: Any, timeout: Optional[float] = None) -> Any:
+        """Invoke one RPC, attaching credentials and the deadline, and translating failures."""
+
+        try:
+            return method(
+                request,
+                timeout=self.timeout if timeout is None else timeout,
+                metadata=self._metadata,
+            )
+        except grpc.RpcError as error:
+            raise errors.translate(error) from error
+
+    def _invoke(
+        self,
+        method: Any,
+        request: Any,
+        timeout: Optional[float],
+        convert: Callable[[Any], Any] = _identity,
+    ) -> Any:
+        return convert(self._call(method, request, timeout))
+
 
 
 def _build_channel(
@@ -1196,8 +1225,13 @@ def _build_channel(
     client_key: Optional[bytes],
     server_name_override: Optional[str],
     options: Optional[Sequence[tuple]],
-) -> grpc.Channel:
-    """Open a channel, with transport security when any TLS material was supplied."""
+    transport: Any = grpc,
+) -> Any:
+    """Open a channel, with transport security when any TLS material was supplied.
+
+    `transport` is `grpc` for the synchronous client and `grpc.aio` for the asynchronous one: both
+    modules offer insecure_channel and secure_channel with the same signature, so one builder keeps
+    the TLS handling identical between them."""
 
     channel_options: List[tuple] = list(options or [])
 
@@ -1205,7 +1239,7 @@ def _build_channel(
         channel_options.append(("grpc.ssl_target_name_override", server_name_override))
 
     if not tls:
-        return grpc.insecure_channel(address, options=channel_options)
+        return transport.insecure_channel(address, options=channel_options)
 
     credentials = grpc.ssl_channel_credentials(
         root_certificates=ca_cert,
@@ -1213,10 +1247,108 @@ def _build_channel(
         certificate_chain=client_cert,
     )
 
-    return grpc.secure_channel(address, credentials, options=channel_options)
+    return transport.secure_channel(address, credentials, options=channel_options)
 
 
 def connect(address: str, **kwargs: Any) -> Hippocampus:
     """Open a client. A function-shaped alias for the constructor."""
 
     return Hippocampus(address, **kwargs)
+
+
+class AsyncHippocampus(_Surface):
+    """The asyncio client: the same methods as `Hippocampus`, each awaited.
+
+        async with AsyncHippocampus("localhost:50051") as client:
+            await client.store_memory("the deploy at 14:03 rolled back cleanly", significance=50)
+
+    It takes the same arguments as `Hippocampus` and returns the same values; only the transport
+    differs (`grpc.aio`), so the agent frameworks this package mostly serves can call it without
+    blocking their event loop or handing each call to a thread. `channel` takes a `grpc.aio.Channel`.
+    """
+
+    def __init__(
+        self,
+        address: str,
+        *,
+        token: Optional[str] = None,
+        tls: bool = False,
+        ca_cert: Optional[bytes] = None,
+        client_cert: Optional[bytes] = None,
+        client_key: Optional[bytes] = None,
+        server_name_override: Optional[str] = None,
+        timeout: Optional[float] = DEFAULT_TIMEOUT,
+        options: Optional[Sequence[tuple]] = None,
+        channel: Optional[Any] = None,
+    ) -> None:
+        self.timeout = timeout
+        self._owns_channel = channel is None
+
+        if channel is None:
+            channel = _build_channel(
+                address,
+                tls=tls or ca_cert is not None or client_cert is not None,
+                ca_cert=ca_cert,
+                client_cert=client_cert,
+                client_key=client_key,
+                server_name_override=server_name_override,
+                options=options,
+                transport=grpc.aio,
+            )
+
+        self._channel = channel
+        self.stub = rpc.HippocampusStub(channel)
+        self._metadata = _call_metadata(token)
+
+    async def close(self) -> None:
+        """Close the channel, unless it was supplied by the caller."""
+
+        if self._owns_channel:
+            await self._channel.close()
+
+    async def __aenter__(self) -> "AsyncHippocampus":
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.close()
+
+    async def _invoke(
+        self,
+        method: Any,
+        request: Any,
+        timeout: Optional[float],
+        convert: Callable[[Any], Any] = _identity,
+    ) -> Any:
+        try:
+            response = await method(
+                request,
+                timeout=self.timeout if timeout is None else timeout,
+                metadata=self._metadata,
+            )
+        except grpc.RpcError as error:
+            raise errors.translate(error) from error
+
+        return convert(response)
+
+
+def connect_async(address: str, **kwargs: Any) -> AsyncHippocampus:
+    """Open an asyncio client. A function-shaped alias for the constructor."""
+
+    return AsyncHippocampus(address, **kwargs)
+
+
+def _call_metadata(token: Optional[str]) -> tuple:
+    """The metadata every call carries: the client's version, and the bearer token when given.
+
+    The token travels as per-call metadata rather than as channel credentials, which keeps one code
+    path for both transports: gRPC permits call credentials on a secure channel only, so binding them
+    to the channel would work against a TLS deployment and raise against a plaintext one - and
+    plaintext behind a TLS-terminating sidecar is a supported deployment here, not a mistake.
+    """
+
+    metadata: tuple = ((CLIENT_VERSION_HEADER, f"hippocampus-client-python/{__version__}"),)
+
+    if token:
+        metadata += (("authorization", f"Bearer {token}"),)
+
+    return metadata

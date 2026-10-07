@@ -1,4 +1,4 @@
-package bridge
+package dial
 
 import (
 	"context"
@@ -259,14 +259,14 @@ func discoverTokenURL(ctx context.Context, httpClient *http.Client, issuer strin
 	return meta.TokenEndpoint, nil
 }
 
-// tokenSource picks the auth a ClientConfig describes: a set OIDC client id selects the
+// tokenSource picks the auth a Config describes: a set OIDC client id selects the
 // client-credentials grant, otherwise a non-empty Token selects the static one, otherwise there is
 // no auth to configure and the interceptor is left off entirely.
 //
 // The client id wins over a static token deliberately rather than erroring: a deployment moving from
 // one to the other will pass both for a while (an env file still carrying HIPPOCAMPUS_<BROKER>_TOKEN
 // beside the new client credentials), and the refreshing source is unambiguously the one it meant.
-func tokenSource(cfg ClientConfig) (TokenSource, error) {
+func tokenSource(cfg Config) (TokenSource, error) {
 	if cfg.OIDC.ClientID != "" {
 		return newOIDCSource(cfg.OIDC)
 	}

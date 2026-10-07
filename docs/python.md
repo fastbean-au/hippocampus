@@ -56,6 +56,24 @@ It speaks **gRPC only**. The `/v1` JSON gateway is a fine target for a hand-writ
 what the [Obsidian plugin](obsidian.md) uses), but a Python program has a gRPC stack and nothing is
 gained by encoding through JSON.
 
+## asyncio
+
+`AsyncHippocampus` is the same client over `grpc.aio`. It has the same methods, arguments and return
+values, each awaited, for the agent frameworks this package mostly serves:
+
+```python
+from hippocampus import AsyncHippocampus
+
+async with AsyncHippocampus("localhost:50051") as client:
+    relevant = await client.search_memories("billing deploy", reinforce=True)
+    await client.store_memory("added a canary stage", significance=60)
+```
+
+Both clients are built from one set of method definitions, so neither can gain a method, an
+argument or a conversion the other lacks. `connect_async` is the function-shaped alias.
+[`examples/python/agent_loop.py`](../examples/python/agent_loop.py) is a complete agent loop over
+it.
+
 ## What the wrapper is actually for
 
 Four of the contract's encodings catch every new client at least once. Removing them is most of

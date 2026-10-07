@@ -281,6 +281,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # For the Go example the SQLite smoke test runs against the stack.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
       - name: Compose config check
         run: |
           docker compose config -q
@@ -313,6 +318,10 @@ jobs:
           # separate files bought. A violation is silent in a browser, so assert the header is
           # actually sent rather than trusting the unit test that builds it.
           curl -sfI http://localhost:8080/ui | grep -i 'content-security-policy' | grep -qv 'unsafe-inline'
+          # The runnable examples are contract smoke tests (TODO-3 item 172): the curl walk-through
+          # over the gateway, and the Go quickstart over gRPC. The Python one runs in python-client.
+          examples/curl/quickstart.sh
+          go run ./examples/go/quickstart --address localhost:50051
           docker compose down
 
       - name: Postgres stack smoke test

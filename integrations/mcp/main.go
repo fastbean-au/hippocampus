@@ -13,8 +13,6 @@ package main
 import (
 	"context"
 	"crypto/subtle"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -27,14 +25,10 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/fastbean-au/hippocampus/contract"
+	"github.com/fastbean-au/hippocampus/dial"
 )
 
 // version is stamped into the MCP server's Implementation so an MCP host can display which build
@@ -131,33 +125,14 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 // transport until ctx is cancelled or the transport fails. It is split out of main so the
 // dial/serve lifecycle can be exercised by a test.
 func run(ctx context.Context) error {
-	creds, err := transportCredentials()
+	// The connection is the shared dial package's (TODO-3 item 172): the bearer token and this
+	// bridge's own version ride on every RPC, so no tool handler has to remember to send either.
+	cfg := dialConfig()
+	address := cfg.Address
+
+	conn, client, err := dial.Dial(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to build transport credentials: %w", err)
-	}
-
-	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
-
-	// A bearer token, when configured, is attached to every outgoing RPC as "authorization: Bearer
-	// <token>" metadata - exactly what the service's auth interceptor reads - via a client
-	// interceptor, so no individual tool handler has to remember to send it.
-	//
-	// The bridge's own version rides along in the same chain, so the service's deployment view can
-	// say which build of the bridge is calling it - from there this is a caller with no address to
-	// probe, and the header is the only way its version arrives.
-	interceptors := []grpc.UnaryClientInterceptor{contract.UnaryClientVersionInterceptor("hippocampus-mcp/" + version)}
-
-	if token := viper.GetString("token"); token != "" {
-		interceptors = append(interceptors, bearerTokenInterceptor(token))
-	}
-
-	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(interceptors...))
-
-	address := viper.GetString("address")
-
-	conn, err := grpc.NewClient(address, dialOpts...)
-	if err != nil {
-		return fmt.Errorf("failed to create gRPC client for '%s': %w", address, err)
+		return fmt.Errorf("failed to connect to '%s': %w", address, err)
 	}
 
 	defer func() { _ = conn.Close() }()
@@ -165,7 +140,7 @@ func run(ctx context.Context) error {
 	log.Infof("connecting to hippocampus at %s", address)
 
 	b := &bridge{
-		client:      contract.NewHippocampusClient(conn),
+		client:      client,
 		callTimeout: time.Duration(viper.GetInt("call-timeout-seconds")) * time.Second,
 	}
 
@@ -303,67 +278,16 @@ func isLoopbackAddress(address string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// bearerTokenInterceptor returns a unary client interceptor that stamps the bearer token onto every
-// RPC's outgoing metadata in the form the service's auth interceptor expects.
-func bearerTokenInterceptor(token string) grpc.UnaryClientInterceptor {
-	return func(
-		ctx context.Context,
-		method string,
-		req any,
-		reply any,
-		cc *grpc.ClientConn,
-		invoker grpc.UnaryInvoker,
-		opts ...grpc.CallOption,
-	) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
-
-		return invoker(ctx, method, req, reply, cc, opts...)
+// dialConfig is the --address, --token and --tls* flags in the shared dial package's terms.
+func dialConfig() dial.Config {
+	return dial.Config{
+		Address:               viper.GetString("address"),
+		Token:                 viper.GetString("token"),
+		TLS:                   viper.GetBool("tls"),
+		TLSCACertFile:         viper.GetString("tls-ca-cert"),
+		TLSCertFile:           viper.GetString("tls-cert"),
+		TLSKeyFile:            viper.GetString("tls-key"),
+		TLSInsecureSkipVerify: viper.GetBool("tls-insecure-skip-verify"),
+		ClientVersion:         "hippocampus-mcp/" + version,
 	}
-}
-
-// transportCredentials builds the gRPC transport credentials from the --tls* flags, mirroring the
-// trust options the service's own Transfer client honours: plaintext when --tls is off; otherwise
-// TLS against the system pool, an optional private-CA bundle, an optional client certificate for
-// mutual TLS, and an insecureSkipVerify escape hatch.
-func transportCredentials() (credentials.TransportCredentials, error) {
-	if !viper.GetBool("tls") {
-		return insecure.NewCredentials(), nil
-	}
-
-	certFile := viper.GetString("tls-cert")
-	keyFile := viper.GetString("tls-key")
-
-	if (certFile == "") != (keyFile == "") {
-		return nil, fmt.Errorf("mutual TLS requires both --tls-cert and --tls-key, or neither")
-	}
-
-	conf := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: viper.GetBool("tls-insecure-skip-verify"),
-	}
-
-	if caCertFile := viper.GetString("tls-ca-cert"); caCertFile != "" {
-		pem, err := os.ReadFile(caCertFile)
-		if err != nil {
-			return nil, fmt.Errorf("reading CA cert file %q: %w", caCertFile, err)
-		}
-
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("CA cert file %q contained no valid certificates", caCertFile)
-		}
-
-		conf.RootCAs = pool
-	}
-
-	if certFile != "" {
-		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-		if err != nil {
-			return nil, fmt.Errorf("loading client certificate: %w", err)
-		}
-
-		conf.Certificates = []tls.Certificate{cert}
-	}
-
-	return credentials.NewTLS(conf), nil
 }

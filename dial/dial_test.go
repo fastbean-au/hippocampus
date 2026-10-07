@@ -1,4 +1,4 @@
-package bridge
+package dial
 
 import (
 	"context"
@@ -64,7 +64,7 @@ func writeSelfSignedCert(t *testing.T) (certFile string, keyFile string) {
 }
 
 func TestTransportCredentials_PlaintextWhenTLSOff(t *testing.T) {
-	creds, err := transportCredentials(ClientConfig{TLS: false})
+	creds, err := transportCredentials(Config{TLS: false})
 	if err != nil {
 		t.Fatalf("transportCredentials: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestTransportCredentials_PlaintextWhenTLSOff(t *testing.T) {
 func TestTransportCredentials_TLSWithCAAndMutualCert(t *testing.T) {
 	certFile, keyFile := writeSelfSignedCert(t)
 
-	creds, err := transportCredentials(ClientConfig{
+	creds, err := transportCredentials(Config{
 		TLS:           true,
 		TLSCACertFile: certFile,
 		TLSCertFile:   certFile,
@@ -93,17 +93,17 @@ func TestTransportCredentials_TLSWithCAAndMutualCert(t *testing.T) {
 }
 
 func TestTransportCredentials_MismatchedCertKey(t *testing.T) {
-	if _, err := transportCredentials(ClientConfig{TLS: true, TLSCertFile: "only-cert"}); err == nil {
+	if _, err := transportCredentials(Config{TLS: true, TLSCertFile: "only-cert"}); err == nil {
 		t.Errorf("want error when only the certificate is set")
 	}
 
-	if _, err := transportCredentials(ClientConfig{TLS: true, TLSKeyFile: "only-key"}); err == nil {
+	if _, err := transportCredentials(Config{TLS: true, TLSKeyFile: "only-key"}); err == nil {
 		t.Errorf("want error when only the key is set")
 	}
 }
 
 func TestTransportCredentials_MissingCAFile(t *testing.T) {
-	if _, err := transportCredentials(ClientConfig{TLS: true, TLSCACertFile: "/no/such/ca.pem"}); err == nil {
+	if _, err := transportCredentials(Config{TLS: true, TLSCACertFile: "/no/such/ca.pem"}); err == nil {
 		t.Errorf("want error when the CA file cannot be read")
 	}
 }
@@ -116,7 +116,7 @@ func TestTransportCredentials_InvalidCAFile(t *testing.T) {
 		t.Fatalf("writing bad CA: %v", err)
 	}
 
-	if _, err := transportCredentials(ClientConfig{TLS: true, TLSCACertFile: bad}); err == nil {
+	if _, err := transportCredentials(Config{TLS: true, TLSCACertFile: bad}); err == nil {
 		t.Errorf("want error when the CA file has no valid certificates")
 	}
 }
@@ -129,13 +129,13 @@ func TestTransportCredentials_BadClientCert(t *testing.T) {
 	_ = os.WriteFile(cert, []byte("nope"), 0o600)
 	_ = os.WriteFile(key, []byte("nope"), 0o600)
 
-	if _, err := transportCredentials(ClientConfig{TLS: true, TLSCertFile: cert, TLSKeyFile: key}); err == nil {
+	if _, err := transportCredentials(Config{TLS: true, TLSCertFile: cert, TLSKeyFile: key}); err == nil {
 		t.Errorf("want error when the client keypair cannot be loaded")
 	}
 }
 
 func TestDial_PlaintextReturnsClient(t *testing.T) {
-	conn, client, err := Dial(ClientConfig{Address: "localhost:50051"})
+	conn, client, err := Dial(Config{Address: "localhost:50051"})
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestDial_PlaintextReturnsClient(t *testing.T) {
 }
 
 func TestDial_WithTokenReturnsClient(t *testing.T) {
-	conn, client, err := Dial(ClientConfig{Address: "localhost:50051", Token: "tok"})
+	conn, client, err := Dial(Config{Address: "localhost:50051", Token: "tok"})
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestDial_WithTokenReturnsClient(t *testing.T) {
 }
 
 func TestDial_CredentialsError(t *testing.T) {
-	if _, _, err := Dial(ClientConfig{Address: "localhost:50051", TLS: true, TLSCACertFile: "/no/such/ca.pem"}); err == nil {
+	if _, _, err := Dial(Config{Address: "localhost:50051", TLS: true, TLSCACertFile: "/no/such/ca.pem"}); err == nil {
 		t.Errorf("Dial should return an error when the credentials cannot be built")
 	}
 }

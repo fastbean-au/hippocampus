@@ -1,4 +1,10 @@
-package bridge
+// Package dial opens a connection to the Hippocampus gRPC service, for every process that dials one:
+// the broker bridges, the ingestor, the object-storage agents, the MCP bridge and the hippo CLI
+// (TODO-3 item 172). Each used to carry its own copy of the same connection code - the bearer
+// token, the OIDC client-credentials grant, the TLS trust block, the client RPC metrics and the
+// version header - and copies of connection code drift in exactly the places that matter: one
+// learned the OIDC grant and four did not.
+package dial
 
 import (
 	"crypto/tls"
@@ -11,13 +17,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/fastbean-au/hippocampus/contract"
-	"github.com/fastbean-au/hippocampus/observability"
 )
 
-// ClientConfig describes how to reach the Hippocampus gRPC service. It mirrors the trust options the
-// service's own Transfer client and the MCP bridge honour, so an operator configures the broker
-// bridges the same way they configure everything else that dials the service.
-type ClientConfig struct {
+// Config describes how to reach the Hippocampus gRPC service. Its trust options mirror the service's
+// own Transfer client, so an operator configures everything that dials the service the same way.
+type Config struct {
 	// Address is the host:port of the Hippocampus gRPC service.
 	Address string
 
@@ -46,9 +50,12 @@ type ClientConfig struct {
 	// TLSInsecureSkipVerify skips verification of the service certificate (dev only).
 	TLSInsecureSkipVerify bool
 
-	// Endpoint names this connection in the client RPC metrics. Empty omits the metrics interceptor
-	// entirely, which is what a caller that does not want the instrumentation gets.
-	Endpoint string
+	// Interceptors run outermost, ahead of the token and the version header - which is where a
+	// metrics interceptor belongs, so it measures the whole call including an OIDC refresh. They are
+	// supplied by the caller (observability.ClientMetrics) rather than built here, because this
+	// package is also dialled by the hippo CLI and the MCP bridge, which are deliberately kept off
+	// the OpenTelemetry dependency tree.
+	Interceptors []grpc.UnaryClientInterceptor
 
 	// ClientVersion, when set, is reported to the service on every RPC in the
 	// contract.ClientVersionHeader header ("<product>/<version>"), which is how this process's
@@ -65,7 +72,7 @@ type ClientConfig struct {
 //
 // Dial performs no network I/O of its own (grpc.NewClient does not block, and OIDC discovery is
 // deferred to the first RPC), so it fails only on genuine misconfiguration.
-func Dial(cfg ClientConfig) (*grpc.ClientConn, contract.HippocampusClient, error) {
+func Dial(cfg Config) (*grpc.ClientConn, contract.HippocampusClient, error) {
 	creds, err := transportCredentials(cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building transport credentials: %w", err)
@@ -82,11 +89,7 @@ func Dial(cfg ClientConfig) (*grpc.ClientConn, contract.HippocampusClient, error
 	// replace the first. The metrics interceptor is outermost so it measures the whole call
 	// including the token being attached - and, with OIDC, including a refresh when one falls due,
 	// which is exactly the latency an operator would want to see attributed to the RPC.
-	var interceptors []grpc.UnaryClientInterceptor
-
-	if cfg.Endpoint != "" {
-		interceptors = append(interceptors, observability.UnaryClientMetricsInterceptor(cfg.Endpoint))
-	}
+	interceptors := append([]grpc.UnaryClientInterceptor{}, cfg.Interceptors...)
 
 	if source != nil {
 		interceptors = append(interceptors, bearerInterceptor(source))
@@ -112,18 +115,31 @@ func Dial(cfg ClientConfig) (*grpc.ClientConn, contract.HippocampusClient, error
 // MCP bridge's transportCredentials: plaintext when TLS is off; otherwise TLS against the system
 // pool, an optional private-CA bundle, an optional client certificate for mutual TLS, and an
 // insecureSkipVerify escape hatch.
-func transportCredentials(cfg ClientConfig) (credentials.TransportCredentials, error) {
+func transportCredentials(cfg Config) (credentials.TransportCredentials, error) {
 	if !cfg.TLS {
 		return insecure.NewCredentials(), nil
 	}
 
+	conf, err := TLSClientConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return credentials.NewTLS(conf), nil
+}
+
+// TLSClientConfig builds the *tls.Config the TLS* fields describe, whatever cfg.TLS says: a TLS 1.2
+// floor, the system pool or a private CA bundle, an optional client certificate for mutual TLS, and
+// the dev-only insecureSkipVerify. It is exported for a caller with a second transport to secure the
+// same way - the hippo CLI's HTTP client.
+func TLSClientConfig(cfg Config) (*tls.Config, error) {
 	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
 		return nil, fmt.Errorf("mutual TLS requires both a certificate and a key, or neither")
 	}
 
 	conf := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: cfg.TLSInsecureSkipVerify,
+		InsecureSkipVerify: cfg.TLSInsecureSkipVerify, //nolint:gosec // opt-in, dev-only
 	}
 
 	if cfg.TLSCACertFile != "" {
@@ -149,5 +165,5 @@ func transportCredentials(cfg ClientConfig) (credentials.TransportCredentials, e
 		conf.Certificates = []tls.Certificate{cert}
 	}
 
-	return credentials.NewTLS(conf), nil
+	return conf, nil
 }

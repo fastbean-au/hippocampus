@@ -61,6 +61,18 @@ itself which service version it was built against.
 
 ### Added
 
+- **An asyncio Python client, one dialling package, and runnable examples.**
+  - **`AsyncHippocampus`** (with `connect_async`) is the Python client over `grpc.aio`: the same
+    methods, arguments and return values, awaited. Both clients come from one set of method
+    definitions, so neither can drift from the other. Writing it found that an asyncio failure
+    surfaced as an untyped `ServiceError`, because `AioRpcError` is not a `grpc.Call`; errors now
+    translate from either.
+  - **A root `dial` package** is the one connection to the service, carrying the token, the OIDC
+    client-credentials grant, the TLS trust block, the version header and caller-supplied
+    interceptors. The broker bridges, the ingestor, the object-storage agents, the MCP bridge and
+    the `hippo` CLI all use it, where each had its own copy and only the bridges had the OIDC grant.
+  - **`examples/`** holds a Go quickstart, an asyncio agent loop and a curl walk-through of the
+    gateway. CI runs them as contract smoke tests.
 - **Three API gaps closed.**
   - **`SearchMemories` pages and takes time bounds.** `offset` (at most 1000) pages through the
     ranked matches, and `timestamp_min`/`timestamp_max` bound when the matches were stored, applied

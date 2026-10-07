@@ -11,9 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/fastbean-au/hippocampus/contract"
 )
@@ -225,30 +223,6 @@ func TestRunCommandHelp(t *testing.T) {
 
 	if !strings.Contains(out.String(), "memory store") || !strings.Contains(out.String(), "--body") {
 		t.Fatalf("command help = %q", out.String())
-	}
-}
-
-func TestBearerTokenInterceptor(t *testing.T) {
-	interceptor := bearerTokenInterceptor("secret")
-
-	var seen string
-
-	invoker := func(ctx context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
-		md, _ := metadata.FromOutgoingContext(ctx)
-
-		if values := md.Get("authorization"); len(values) > 0 {
-			seen = values[0]
-		}
-
-		return nil
-	}
-
-	if err := interceptor(context.Background(), "/hippocampus.v1.Hippocampus/WhoAmI", nil, nil, nil, invoker); err != nil {
-		t.Fatalf("interceptor: %v", err)
-	}
-
-	if seen != "Bearer secret" {
-		t.Fatalf("authorization = %q, want 'Bearer secret'", seen)
 	}
 }
 

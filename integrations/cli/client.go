@@ -1,21 +1,13 @@
 package main
 
 import (
-	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
-
 	"github.com/fastbean-au/hippocampus/contract"
+	"github.com/fastbean-au/hippocampus/dial"
 )
 
 // TLSConfig carries the client TLS trust options, mirroring the block the service's own Transfer
@@ -60,31 +52,30 @@ func newClient(cfg Config) (contract.HippocampusClient, func() error, error) {
 	}
 }
 
-// newGRPCClient dials the service over gRPC, attaching the bearer token as an outgoing-metadata
-// interceptor when one is configured. grpc.NewClient is lazy, so the dial itself never blocks here;
-// a bad address surfaces on the first RPC.
+// newGRPCClient dials the service over gRPC through the shared dial package (TODO-3 item 172), which
+// attaches the bearer token and the version header. grpc.NewClient is lazy, so the dial itself never
+// blocks here; a bad address surfaces on the first RPC.
 func newGRPCClient(cfg Config) (contract.HippocampusClient, func() error, error) {
-	creds, err := transportCredentials(cfg.TLS)
+	conn, client, err := dial.Dial(dialConfig(cfg))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to build transport credentials: %w", err)
+		return nil, nil, err
 	}
 
-	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
+	return client, conn.Close, nil
+}
 
-	interceptors := []grpc.UnaryClientInterceptor{contract.UnaryClientVersionInterceptor(cfg.ClientVersion)}
-
-	if cfg.Token != "" {
-		interceptors = append(interceptors, bearerTokenInterceptor(cfg.Token))
+// dialConfig is the CLI's connection settings in the shared package's terms.
+func dialConfig(cfg Config) dial.Config {
+	return dial.Config{
+		Address:               cfg.Address,
+		Token:                 cfg.Token,
+		TLS:                   cfg.TLS.Enabled,
+		TLSCACertFile:         cfg.TLS.CACert,
+		TLSCertFile:           cfg.TLS.Cert,
+		TLSKeyFile:            cfg.TLS.Key,
+		TLSInsecureSkipVerify: cfg.TLS.InsecureSkipVerify,
+		ClientVersion:         cfg.ClientVersion,
 	}
-
-	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(interceptors...))
-
-	conn, err := grpc.NewClient(cfg.Address, dialOpts...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create gRPC client for %q: %w", cfg.Address, err)
-	}
-
-	return contract.NewHippocampusClient(conn), conn.Close, nil
 }
 
 // newHTTPClient builds an HTTP client that speaks to the service's /v1 grpc-gateway. The address is
@@ -119,40 +110,6 @@ func newHTTPClient(cfg Config) (contract.HippocampusClient, func() error, error)
 	return client, func() error { return nil }, nil
 }
 
-// bearerTokenInterceptor returns a unary client interceptor that stamps the bearer token onto every
-// RPC's outgoing metadata in the form the service's auth interceptor expects.
-func bearerTokenInterceptor(token string) grpc.UnaryClientInterceptor {
-	return func(
-		ctx context.Context,
-		method string,
-		req any,
-		reply any,
-		cc *grpc.ClientConn,
-		invoker grpc.UnaryInvoker,
-		opts ...grpc.CallOption,
-	) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
-
-		return invoker(ctx, method, req, reply, cc, opts...)
-	}
-}
-
-// transportCredentials builds the gRPC transport credentials from the TLS config: plaintext when
-// disabled; otherwise TLS against the system pool, an optional private-CA bundle, an optional client
-// certificate for mutual TLS, and an insecureSkipVerify escape hatch.
-func transportCredentials(cfg TLSConfig) (credentials.TransportCredentials, error) {
-	if !cfg.Enabled {
-		return insecure.NewCredentials(), nil
-	}
-
-	conf, err := tlsClientConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return credentials.NewTLS(conf), nil
-}
-
 // httpTransport builds the HTTP round-tripper, applying the same TLS trust options as the gRPC
 // path. A plaintext client uses the default transport.
 func httpTransport(cfg TLSConfig) (http.RoundTripper, error) {
@@ -160,7 +117,7 @@ func httpTransport(cfg TLSConfig) (http.RoundTripper, error) {
 		return http.DefaultTransport, nil
 	}
 
-	conf, err := tlsClientConfig(cfg)
+	conf, err := dial.TLSClientConfig(dialConfig(Config{TLS: cfg}))
 	if err != nil {
 		return nil, err
 	}
@@ -169,41 +126,4 @@ func httpTransport(cfg TLSConfig) (http.RoundTripper, error) {
 	transport.TLSClientConfig = conf
 
 	return transport, nil
-}
-
-// tlsClientConfig turns the TLS trust options into a *tls.Config shared by both transports.
-func tlsClientConfig(cfg TLSConfig) (*tls.Config, error) {
-	if (cfg.Cert == "") != (cfg.Key == "") {
-		return nil, fmt.Errorf("mutual TLS requires both --tls-cert and --tls-key, or neither")
-	}
-
-	conf := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: cfg.InsecureSkipVerify, //nolint:gosec // opt-in dev-only escape hatch
-	}
-
-	if cfg.CACert != "" {
-		pem, err := os.ReadFile(cfg.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("reading CA cert file %q: %w", cfg.CACert, err)
-		}
-
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("CA cert file %q contained no valid certificates", cfg.CACert)
-		}
-
-		conf.RootCAs = pool
-	}
-
-	if cfg.Cert != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
-		if err != nil {
-			return nil, fmt.Errorf("loading client certificate: %w", err)
-		}
-
-		conf.Certificates = []tls.Certificate{cert}
-	}
-
-	return conf, nil
 }

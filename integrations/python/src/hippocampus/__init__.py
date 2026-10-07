@@ -24,7 +24,7 @@ whether it has an embedded summariser, whether it consolidates at all.
 """
 
 from hippocampus._version import __version__
-from hippocampus.client import DEFAULT_TIMEOUT, Hippocampus, connect
+from hippocampus.client import DEFAULT_TIMEOUT, AsyncHippocampus, Hippocampus, connect, connect_async
 from hippocampus.errors import (
     AlreadyExists,
     DeadlineExceeded,
@@ -64,8 +64,10 @@ from hippocampus._proto import hippocampus_pb2 as proto  # noqa: E402
 __all__ = [
     "__version__",
     "DEFAULT_TIMEOUT",
+    "AsyncHippocampus",
     "Hippocampus",
     "connect",
+    "connect_async",
     "proto",
     # Records.
     "Event",

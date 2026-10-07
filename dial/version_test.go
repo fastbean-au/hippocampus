@@ -1,4 +1,4 @@
-package bridge
+package dial
 
 import (
 	"context"
@@ -42,7 +42,7 @@ func TestDial_ReportsTheClientVersion(t *testing.T) {
 
 	t.Cleanup(server.Stop)
 
-	conn, client, err := Dial(ClientConfig{
+	conn, client, err := Dial(Config{
 		Address:       listener.Addr().String(),
 		Token:         "tok",
 		ClientVersion: "hippocampus-nats-bridge/v0.52.0",

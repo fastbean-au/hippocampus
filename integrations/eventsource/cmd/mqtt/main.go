@@ -115,7 +115,7 @@ func run(ctx context.Context) error {
 		TLSCertFile:           viper.GetString("tls-cert"),
 		TLSKeyFile:            viper.GetString("tls-key"),
 		TLSInsecureSkipVerify: viper.GetBool("tls-insecure-skip-verify"),
-		Endpoint:              "hippocampus",
+		Interceptors:          observability.ClientMetrics("hippocampus"),
 		ClientVersion:         "hippocampus-mqtt-bridge/" + version,
 
 		// A set client id selects the client-credentials grant over --token; see bridge/oidc.go.

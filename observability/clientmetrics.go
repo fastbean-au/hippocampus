@@ -63,6 +63,11 @@ func newClientTelemetry() *clientTelemetry {
 // (ok/client_error/server_error) rather than a success bool, so an alert can fire on the far end
 // failing without also firing when this client sends something invalid. And the recording is NOT
 // deferred around the invoker: a panic in a call must not be counted as a success.
+// ClientMetrics is UnaryClientMetricsInterceptor in the form dial.Config.Interceptors takes.
+func ClientMetrics(endpoint string) []grpc.UnaryClientInterceptor {
+	return []grpc.UnaryClientInterceptor{UnaryClientMetricsInterceptor(endpoint)}
+}
+
 func UnaryClientMetricsInterceptor(endpoint string) grpc.UnaryClientInterceptor {
 	return func(
 		ctx context.Context,

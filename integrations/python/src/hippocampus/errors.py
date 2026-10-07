@@ -99,12 +99,16 @@ def for_code(code: grpc.StatusCode) -> type:
 def translate(error: grpc.RpcError) -> HippocampusError:
     """Turn a grpc.RpcError into the matching typed exception, preserving code and message."""
 
-    # grpc.RpcError is only usefully typed when it is also a grpc.Call, which every error raised by
-    # a blocking unary call is. Anything else (a channel-level failure with no status) still has to
-    # produce an exception of ours rather than escape as a raw RpcError.
-    if isinstance(error, grpc.Call):
-        code = error.code()
-        message = error.details() or str(error)
+    # A blocking call raises an error that is also a grpc.Call; grpc.aio raises an AioRpcError, which
+    # carries the same code() and details() without being one - so the status is read wherever it
+    # is offered rather than by type. Anything else (a channel-level failure with no status) still
+    # has to produce an exception of ours rather than escape as a raw RpcError.
+    status_code = getattr(error, "code", None)
+    status_details = getattr(error, "details", None)
+
+    if callable(status_code) and callable(status_details):
+        code = status_code()
+        message = status_details() or str(error)
     else:
         code = None
         message = str(error)

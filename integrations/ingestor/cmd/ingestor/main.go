@@ -322,7 +322,7 @@ func checkRules(path string, opts rules.Options) error {
 // through onto the connection so every RPC it makes is attributed to the right end in the metrics.
 func endpointConfig(endpoint string) client.Config {
 	return client.Config{
-		Endpoint:              endpoint,
+		Interceptors:          observability.ClientMetrics(endpoint),
 		Address:               viper.GetString(client.Key(endpoint, "address")),
 		Token:                 viper.GetString(client.Key(endpoint, "token")),
 		TLS:                   viper.GetBool(client.Key(endpoint, "tls")),
