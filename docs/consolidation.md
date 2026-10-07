@@ -69,14 +69,22 @@ The percentile should not be used initially as it requires there to be a collect
 
 ## Consolidation algorithms
 
-Where the significances are properties of the event (or a default value which is configurable) and memory, the `age` is a property of the memory (while the units are configurable). Both the values of `threshold` (`consolidation.deletionThreshold`) and `a` (`consolidation.aggressiveness`) are configurable. The choice of which algorithm to apply (`consolidation.method`, 1–6) is also configurable.
+Where the significances are properties of the event (or a default value which is configurable) and memory, the `age` is a property of the memory. Age is counted in **age units**, each
+`consolidation.unitsOfAgeInDays` days long (default `1`; it must be greater than 0) — so the same
+curve forgets over hours with a small unit, which is how the demo compresses days into minutes, or
+over years with a large one. Both the values of `threshold` (`consolidation.deletionThreshold`) and `a` (`consolidation.aggressiveness`) are configurable. The choice of which algorithm to apply (`consolidation.method`, 1–6) is also configurable.
 
 The six methods cover the shapes most use cases reach for: a power law (1) that matches published human-forgetting-curve research; two constant-rate linear decays (2, 3), kept for backwards compatibility, that forget in fixed amounts per age unit; a true exponential half-life decay (4), the standard recency-weighting curve for caches, feeds, and recommendation scoring; a logarithmic long-tail decay (5) for archival or audit-log stores that want to keep nearly everything; and a sigmoid "consolidation window" decay (6) that holds a memory near full value until a configured age, then lets it go quickly — closest in spirit to the biological process the service is named for.
+
+`consolidation.minimumAgeInDays` (default `0`) defers all of this: a memory or event younger than
+that many whole days, measured on the same decay clock as `age`, is never judged by value. It is a
+deferral and not a guarantee — capacity eviction ignores it. The hard floor that eviction honours
+too is [minimum retention](#minimum-retention).
 
 ### Links
 
 Memories can be linked to other memories, and events to other events, each link carrying its own
-significance (the `LinkMemories`/`LinkEvents` RPCs; see [Configurability](configuration.md#configurability)). A **link raises the effective significance
+significance (the `LinkMemories`/`LinkEvents` RPCs; see the [API reference](api.md#routes)). A **link raises the effective significance
 of both of its ends**, so an item that is well connected decays more slowly — the associative half
 of the model the service is named for.
 
@@ -109,6 +117,8 @@ barely registers. Being connected raises an item's standing; it cannot buy immor
 > orders of magnitude smaller. `ExplainConsolidation` reports each memory's link significance and
 > its damped contribution side by side, which is the quickest way to pick a new value.
 
+### Recall and capacity pressure
+
 Recalling a memory (the `RecallMemories` RPC) reinforces it in two ways: the memory's decay clock
 resets, so `age` is measured from the most recent recall rather than from creation; and each
 recall adds `consolidation.recallSignificanceWeight` ($w_c$, applied to the recall count $c$) to
@@ -128,6 +138,8 @@ $$ pressure = 1 + max \left( { count \over capacity_{count} }, { bytes \over cap
 The exponent $p$ (`consolidation.capacityPressureExponent`) controls how sharply pressure ramps
 up: with a high exponent the pressure is negligible until the store approaches capacity, reaches
 double the configured threshold at capacity, and keeps growing if the store overfills.
+
+### The six methods
 
 In each equation below the numerator is:
 
@@ -318,6 +330,29 @@ still rank meaningfully against each other for capacity eviction (see
 [Capacity target](#capacity-target)) — nothing ties at exactly the same value the way a true
 step function would.
 
+### Spreading activation
+
+`consolidation.linkRecallPropagation` (0, off, by default) makes a recall reach one hop further. When
+a memory is recalled, its direct neighbours have their decay clocks moved part of the way toward
+"just recalled", by this fraction. At 0.25 a neighbour last recalled eight days ago is treated as
+recalled six days ago. Links carry associative weight through significance, and this is what lets
+them carry it through use as well: recalling something keeps what it is connected to a little more
+current.
+
+Three things bound it:
+
+- **One hop only.** A neighbour's neighbours are not touched, so a recall cannot sweep through a
+  densely linked store.
+- **The clock only, never `recall_count`.** A neighbour's effective significance is not raised, and
+  it never looks more used than it was.
+- **Only a reinforcing recall spreads.** A read that deliberately does not reset the caller's own
+  decay clock (a reader under `auth.readerRecallReinforces: false`, or a non-reinforcing search)
+  resets nobody else's either.
+
+Values above 1 are clamped to 1, which would treat a neighbour as recalled as recently as the memory
+itself; the sensible settings are small. It is applied best-effort, after the recall has succeeded,
+so a failure here never fails the recall.
+
 ## Choosing significance values
 
 Every one of the six methods has the same shape — significance divided by some function of age:
@@ -471,7 +506,7 @@ memory, and translates ids to ranks in Go. The join never happens and the index 
 
 That registry is itself subject to forgetting, since it would otherwise be the one table growing
 with the store's history rather than its contents — see
-[the registry forgets too](configuration.md#the-registry-forgets-too).
+[the registry forgets too](api.md#the-registry-forgets-too).
 
 **`external_bytes` is in the index although no per-row decision reads it.** It is the size of the
 payload a memory _points at_ in another system (see

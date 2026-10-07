@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -286,22 +287,21 @@ func wizardConfigKeys(t *testing.T) map[string]bool {
 	return keys
 }
 
-// TestEveryConfigKeyIsDocumented fails when the service reads a key that appears nowhere in the
-// documentation. A key nobody wrote down is one an operator can only find by reading the source,
-// and a key whose name is a typo is one that can never be found at all.
+// TestEveryConfigKeyIsDocumented fails when the service reads a key that has no row in the key
+// index at the top of docs/configuration.md. A key nobody wrote down is one an operator can only
+// find by reading the source, and a key whose name is a typo is one that can never be found at all.
+// It used to accept a mention on any page, which is how the page claiming to be exhaustive came to
+// lack every core decay key (TODO-3 item 173); a row is generated only for a key some section
+// actually documents, so the row is the stronger test.
 func TestEveryConfigKeyIsDocumented(t *testing.T) {
-	documented := documentedConfigKeys(t)
+	indexed := indexedConfigKeys(t)
 
-	for key := range serviceConfigKeys(t) {
-		if documented[key] {
+	for key := range indexKeys(t) {
+		if indexed[key] {
 			continue
 		}
 
-		if _, expected := undocumentedConfigKeys[key]; expected {
-			continue
-		}
-
-		t.Errorf("the service reads %q, which appears in no document - document it, or add it to undocumentedConfigKeys with the reason", key)
+		t.Errorf("the service reads %q, which has no row in the key index at the top of docs/configuration.md - document it, then regenerate the index (TestConfigIndex), or add it to undocumentedConfigKeys with the reason", key)
 	}
 }
 
@@ -371,7 +371,7 @@ DOCUMENTED:
 			continue
 		}
 
-		if read[key] {
+		if read[key] || slices.Contains(indexExtraKeys, key) {
 			continue
 		}
 

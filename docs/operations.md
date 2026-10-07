@@ -542,7 +542,7 @@ drivers](#index-bloat-on-the-server-drivers).
 | [Delete outbox](configuration.md#the-delete-outbox)                      | `search_outbox`       | `opensearch.outbox.maxRows` / `.maxBytes` / `.maxAgeHours`                             | 1,000,000 rows or 24 hours               |
 | [Deletion callbacks](#being-told-what-was-forgotten--outbound-callbacks) | `callback_queue`      | `callbacks.maxRows` / `.maxBytes` / `.maxAgeHours`                                     | 1,000,000 rows or 24 hours               |
 | [Peer registry](#seeing-the-deployment) (server drivers)                 | `instances`           | one row per live instance, each pruned against its own heartbeat interval              | negligible                               |
-| [Significance registry](configuration.md#the-registry-forgets-too)       | `significance_levels` | `consolidation.significanceLevels.unusedRetentionInDays`, reaped each cycle            | 7 days after a value falls out of use    |
+| [Significance registry](api.md#the-registry-forgets-too)       | `significance_levels` | `consolidation.significanceLevels.unusedRetentionInDays`, reaped each cycle            | 7 days after a value falls out of use    |
 
 The significance registry is the odd one out and is listed here for one reason: it is the only table
 that grew with the store's **history** rather than its contents, gaining a row per distinct
@@ -550,7 +550,7 @@ significance value ever written and losing one only to a `Purge`. It is counted 
 the embedded driver (page accounting cannot exclude a table in the same file) and outside it on the
 server drivers (which count memory, event and link rows explicitly), so on neither was its growth
 something an operator could act on. The reap is what bounds it; see
-[the registry forgets too](configuration.md#the-registry-forgets-too), and
+[the registry forgets too](api.md#the-registry-forgets-too), and
 `hippocampus.significance_levels` for its size.
 
 Setting a bound to 0 removes it, which is supported — the forgotten log and the callback queue both

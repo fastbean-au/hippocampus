@@ -34,7 +34,7 @@ var (
 	// queries and the shipped alert rules name it.
 	promQLMetricPattern = regexp.MustCompile(`\bhippocampus_[a-z0-9_]+\b`)
 
-	// A row of the RPC-to-route table in docs/configuration.md.
+	// A row of the RPC-to-route table in docs/api.md.
 	routeTableRowPattern = regexp.MustCompile("^\\|\\s*`(\\w+)`\\s*\\|\\s*(\\w+)\\s*\\|\\s*`([^`]+)`\\s*\\|")
 )
 
@@ -161,7 +161,7 @@ func TestNoStaleNonInstrumentNames(t *testing.T) {
 	}
 }
 
-// TestRouteTableMatchesTheContract holds docs/configuration.md's RPC-to-route table to the
+// TestRouteTableMatchesTheContract holds docs/api.md's RPC-to-route table to the
 // google.api.http annotations the gateway is actually generated from. The table is how a reader
 // discovers the HTTP surface at all - the OpenAPI document is served by a running instance, which
 // is no help to somebody deciding whether to run one - so an RPC missing from it is a route that
@@ -173,7 +173,7 @@ func TestRouteTableMatchesTheContract(t *testing.T) {
 		switch actual, present := documented[rpc]; {
 
 		case !present:
-			t.Errorf("RPC '%s' is missing from the route table in docs/configuration.md (it "+
+			t.Errorf("RPC '%s' is missing from the route table in docs/api.md (it "+
 				"answers %s %s)", rpc, route.method, route.path)
 
 		case actual != route:
@@ -185,7 +185,7 @@ func TestRouteTableMatchesTheContract(t *testing.T) {
 
 	for rpc := range documented {
 		if _, present := contractRoutes(t)[rpc]; !present {
-			t.Errorf("the route table in docs/configuration.md carries '%s', which is not an RPC "+
+			t.Errorf("the route table in docs/api.md carries '%s', which is not an RPC "+
 				"of the service", rpc)
 		}
 	}
@@ -261,9 +261,9 @@ func httpRule(rule *annotations.HttpRule) (string, string) {
 func documentedRoutes(t *testing.T) map[string]route {
 	t.Helper()
 
-	source, err := os.ReadFile(filepath.Join("..", "..", "docs", "configuration.md"))
+	source, err := os.ReadFile(filepath.Join("..", "..", "docs", "api.md"))
 	if err != nil {
-		t.Fatalf("failed to read the configuration guide: %s", err.Error())
+		t.Fatalf("failed to read the API reference: %s", err.Error())
 	}
 
 	routes := make(map[string]route)
@@ -282,7 +282,7 @@ func documentedRoutes(t *testing.T) map[string]route {
 	}
 
 	if len(routes) == 0 {
-		t.Fatal("found no route table rows in docs/configuration.md - the table's shape changed")
+		t.Fatal("found no route table rows in docs/api.md - the table's shape changed")
 	}
 
 	return routes

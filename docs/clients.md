@@ -283,7 +283,7 @@ is dropped. Every client in this repository sends it; a Go client can install
 ## The JSON gateway
 
 Base path `/v1`, JSON bodies, field names lowerCamelCase. The full mapping of RPC to method and path
-is in [Configurability](configuration.md#configurability), and the OpenAPI document describes it
+is in the [API reference](api.md#routes), and the OpenAPI document describes it
 live.
 
 ```python

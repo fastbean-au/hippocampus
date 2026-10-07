@@ -1085,7 +1085,7 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
   open event because an open event stores `time_end = 0` - the same pairing, and the same reasoning,
   as `recalled` and `time_recalled_max`. Each RPC carries a
   `google.api.http` annotation mapping it onto a REST-ish `/v1/...` path (see
-  [Configurability](docs/configuration.md#configurability) for the full mapping); `go generate
+  [the API reference](docs/api.md#routes) for the full mapping); `go generate
 ./contract` (directive in `generate.go`) turns those into `hippocampus.pb.gw.go` (the gateway)
   and `hippocampus.swagger.json` (the OpenAPI description, embedded via `swagger.go`).
   `contract/google/api/{annotations,http}.proto`

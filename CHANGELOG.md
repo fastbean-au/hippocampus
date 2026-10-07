@@ -177,6 +177,26 @@ itself which service version it was built against.
 
 ### Changed
 
+- **The configuration reference now lists every key, and the API has its own page.**
+  - **`docs/configuration.md` opens with an index of every key the service reads**: its default, one
+    line on what it does, and the section documenting it. The page called itself exhaustive while 25
+    keys - every core decay key among them, with `sleep.periodSeconds` and `shutdown.timeoutSeconds`
+    - had no entry on it. The index is generated from the service's own key reads, so a new key
+    cannot be added without a row, and a row cannot be generated for a key no section documents.
+  - **Entries that were missing everywhere are written**: `consolidation.linkRecallPropagation`
+    ([Spreading activation](docs/consolidation.md#spreading-activation)),
+    `memory.minimumSignificance`/`event.minimumSignificance`
+    ([Minimum significance](docs/configuration.md#minimum-significance)), `memory.limit.sizeBytes`
+    ([Memory size limit](docs/configuration.md#memory-size-limit)), and the age unit and minimum age
+    behind every decay curve (`consolidation.unitsOfAgeInDays`, `consolidation.minimumAgeInDays`).
+  - **The route table and the filter, sorting and metadata semantics moved to
+    [`docs/api.md`](docs/api.md)**, the API reference. Links to the old anchors were updated.
+  - **Sections that had run together are separated**: the six decay methods, recall reinforcement
+    and capacity pressure no longer sit under "Links"; the gRPC server settings no longer sit under
+    CORS; the server-driver notes no longer sit under body compression; and the deprecated
+    `auth.enabled` alias moved from the OAuth2 sign-in section to Authentication. The empty
+    `## Functional` heading is gone.
+
 - **The Kubernetes overlays pin the image to a release** through kustomize's `images:` stanza,
   instead of running `:latest`. A node that pulled afresh could run a newer build than its peers, and
   a newer build migrates the schema forward, after which a rollback is refused. `scripts/release.sh`
@@ -3468,7 +3488,7 @@ recorded together rather than attributed to the release each shipped in._
   applications either packed a delimited string into it or buried the classification in the body.
   `Memory` and `Event` now carry a `map<string, string> metadata` alongside it, filterable on
   `GetMemories`, `GetEvents`, and `SearchMemories`. Documented under
-  [Metadata](docs/configuration.md#metadata).
+  [Metadata](docs/api.md#metadata).
   - **Bounded, and the bounds are constants rather than configuration**: 32 keys, 64-byte keys
     matching `[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}`, 512-byte values, 4096 bytes serialised in total.
     Unbounded metadata is a body by another name, so the serialised size **counts toward
