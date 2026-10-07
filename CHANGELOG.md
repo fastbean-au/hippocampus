@@ -4,6 +4,10 @@ All notable changes to Hippocampus are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+Each entry is a few lines: what changed, who it affects, and a link to the documentation that
+explains it. The reasoning belongs in that documentation. Older entries predate this rule and
+run longer.
+
 ## Compatibility
 
 **Hippocampus is pre-1.0.** Under semver that permits a breaking change in any minor release, and
@@ -60,6 +64,11 @@ itself which service version it was built against.
 ## [Unreleased]
 
 ### Added
+
+- **[Troubleshooting](docs/troubleshooting.md), a [port map](docs/operations.md#ports),
+  [`CONTRIBUTING.md`](CONTRIBUTING.md) and a [Compose README](deploy/compose/README.md).** The flags
+  of the broker bridges and the object-storage agents are now documented in full, and a test per
+  command keeps them so.
 
 - **An asyncio Python client, one dialling package, and runnable examples.**
   - **`AsyncHippocampus`** (with `connect_async`) is the Python client over `grpc.aio`: the same
@@ -236,6 +245,12 @@ itself which service version it was built against.
   it) and nothing showed until the weekly status report found its pin three releases behind.
 
 ### Fixed
+
+- **Getting started's authentication steps work.** They set no signing secret and minted a token
+  without `--role`, which `--mint-token` refuses. See [Enabling
+  authentication](docs/getting-started.md#enabling-authentication).
+- **`SearchMemories` names the right switch when search is off.** It said the storage driver had no
+  content search; it now names `search.contentIndex.enabled` and `opensearch.enabled`.
 
 - **Six smaller hardening fixes.**
   - **Webhook paths are no longer shown.** The deployment view and the startup log line showed a

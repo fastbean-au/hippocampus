@@ -67,7 +67,7 @@ probe endpoints.
 
 ## The two models, and why the workload kind differs
 
-- **SQLite (`StatefulSet`).** The embedded, instance-per-tenant model the project favours (TODO #9):
+- **SQLite (`StatefulSet`).** The embedded, instance-per-tenant model the project favours:
   each instance owns one database file and there must never be two writers of it. A `StatefulSet`
   with `replicas: 1` and a `volumeClaimTemplate` gives a stable identity, keeps the same
   `PersistentVolume` across restarts, and guarantees at most one pod per ordinal. **Do not scale it
@@ -77,7 +77,7 @@ probe endpoints.
   several tenants, apply the overlay again into another namespace (or with a different
   `namePrefix`); one hippocampus per mind.
 
-- **PostgreSQL (`Deployment`s).** Horizontal scaling (TODO #11): the pods are stateless, so they are
+- **PostgreSQL (`Deployment`s).** Horizontal scaling: the pods are stateless, so they are
   `Deployment`s. Exactly one — the **consolidator** — runs the sleep cycle and holds the Postgres
   advisory lock (`HIPPOCAMPUS_CONSOLIDATION_ENABLED=true`, `replicas: 1`, `Recreate` strategy so two
   never overlap during a rollout). Any number of **replicas** serve the full read/write RPC surface
@@ -301,7 +301,7 @@ Deliberately neither, for now. These manifests are a kick-start, not a distribut
 them readable and `kubectl`-native with zero extra tooling, the two overlays cover the project's two
 deployment models, and everything a Terraform module or Helm chart would parameterise (image tag,
 replica count, config, secrets, DB endpoint) is a one-line Kustomize edit or an env override. A chart
-or module earns its keep once these are published as a versioned artifact with many downstream
+or module earns its keep once these are published as a versioned artefact with many downstream
 consumers tuning many values — not while the surface is this small. Wrap them in Terraform's
 `kubernetes_manifest`/`kustomization_build` or a thin Helm chart externally if your platform
 standardises on one; nothing here blocks that.

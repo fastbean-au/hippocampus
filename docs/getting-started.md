@@ -199,11 +199,26 @@ languages](clients.md).
 
 ## Enabling authentication
 
-Auth and TLS are off by default. To require a bearer token, set `auth.method` to `hmac` and mint a
-token from the shared secret:
+Auth and TLS are off by default. To require a bearer token, set `auth.method` to `hmac` and give
+the service a signing secret of at least 32 random bytes. Keep the secret out of `config.json` by
+passing it in the environment:
+
+```json
+"auth": {
+    "method": "hmac"
+}
+```
 
 ```sh
-go run ./cmd/hippocampus --mint-token --client-id my-client --ttl 24h -c config.json
+export HIPPOCAMPUS_AUTH_SIGNINGSECRET="$(openssl rand -base64 32)"
+```
+
+Restart the service, then mint a token with the same secret in the environment. `--role` is
+required: it is the tier the token grants (`reader`, `writer` or `admin`), and a token without one
+would be refused every RPC, so the command refuses to mint it.
+
+```sh
+go run ./cmd/hippocampus --mint-token --client-id my-client --role writer --ttl 24h -c config.json
 # prints a token; pass it as: -H 'Authorization: Bearer <token>'
 ```
 

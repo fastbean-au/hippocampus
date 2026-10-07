@@ -115,19 +115,10 @@ What it does **not** give you, because the partition is soft:
 - **Operators still need unscoped tokens** for `Purge`, `Sleep`, `PreviewConsolidation`, the
   `MergeEvents` dangling-reference heal, and the `--backfill-search` CLI mode.
 
-**Offboarding a group.** Removing a partition is `DeleteMemoriesByFilter` and `DeleteEventsByFilter`
-— predicate deletions taking the same filters the listings take, both `admin` tier and both scoped,
-so a group-bound admin token drains its own partition and can reach no further. Run the matching
-listing first: the service builds one predicate for the pair, so `GetMemories` with those fields is
-the dry run and its `total_count` is what the deletion removes. A request carrying **no filter** is
-refused — deleting everything is `Purge`.
-
-```bash
-hippo memory list --group acme --limit 1                                  # how many
-hippo export --group acme                                                 # their copy, if owed
-hippo memory delete-by-filter --group acme --delete-empty-events --yes
-hippo event delete-by-filter --group acme --delete-memories --yes
-```
+**Offboarding a group.** Removing a partition is `DeleteMemoriesByFilter` and `DeleteEventsByFilter`:
+predicate deletions that are `admin` tier and scoped, so a group-bound admin token drains its own
+partition and can reach no further. The procedure, with the listing that serves as its dry run, is in
+[Removing a group's records](operations.md#removing-a-groups-records).
 
 Two things to know before relying on it for an erasure request. The **forgotten log**, when enabled,
 keeps a tombstone per memory a decay cycle deleted — id, group, size and significance, never a body
@@ -137,8 +128,9 @@ does not reach an archive already written**: an archive is a copy outside the st
 preserves full state by design. That includes the
 [scheduled exports](configuration.md#scheduled-export), which hold the group until they rotate out
 of `keep`. An offboarding that matters has to account for the object store as well. The
-`hippo export --group` step above is the other half of the same request, a portable copy of exactly
-what is about to be deleted, and `hippo memory list` with the same flags shows what it will hold.
+procedure's `hippo export --group` step is the other half of the same request: a portable copy of
+exactly what is about to be deleted, and `hippo memory list` with the same flags shows what it will
+hold.
 
 **Hard isolation — one instance per tenant.** Where bleed-through is unacceptable, or a tenant needs
 its own capacity and decay tuning, run a separate instance and a separate store. It isolates the

@@ -90,6 +90,83 @@ default transformer shapes each message — plus its own broker flags. Secrets c
 `HIPPOCAMPUS_KAFKA_OIDC_CLIENT_SECRET`) instead of argv. Run `--help` on any command for the full
 list, or `--version` to print the build version.
 
+### Common flags
+
+Every command carries these. The message-shaping flags are in
+[Shaping messages into memories](#shaping-messages-into-memories) and the telemetry flags in
+[Observability](#observability).
+
+| Flag                         | Default           | Effect                                                                              |
+| ---------------------------- | ----------------- | ----------------------------------------------------------------------------------- |
+| `--address`, `-a`            | `localhost:50051` | the Hippocampus gRPC service                                                        |
+| `--token`                    | —                 | static bearer token sent on every RPC                                               |
+| `--oidc-client-id`           | —                 | OIDC client id; setting it selects the client-credentials grant over `--token`      |
+| `--oidc-client-secret`       | —                 | OIDC client secret; pass it in the environment                                      |
+| `--oidc-issuer`              | —                 | issuer the token endpoint is discovered from                                        |
+| `--oidc-token-url`           | —                 | token endpoint, used in place of discovery                                          |
+| `--oidc-audience`            | —                 | audience to request (Auth0 needs its API identifier; Keycloak ignores it)           |
+| `--oidc-scope`               | —                 | space-separated scopes to request                                                   |
+| `--tls`                      | off               | dial the service over TLS                                                           |
+| `--tls-ca-cert`              | —                 | PEM CA bundle to verify the service against, in place of the system pool           |
+| `--tls-cert`, `--tls-key`    | —                 | client certificate and key for mutual TLS (both or neither)                         |
+| `--tls-insecure-skip-verify` | off               | skip verifying the service certificate (development only)                           |
+| `--call-timeout-seconds`     | `30`              | bound on each RPC                                                                   |
+| `--health-port`              | `8090`            | port serving `/healthz` and `/readyz` (and `/metrics` with `--prometheus`); 0 disables |
+| `--health-bind-address`      | all interfaces    | interface the health listener binds                                                 |
+| `--log-level`                | `info`            | `trace`, `debug`, `info`, `warn` or `error`                                         |
+| `--version`                  | —                 | print the build version and exit                                                    |
+
+### Broker flags
+
+Each command's own flags. The required ones are marked.
+
+**NATS** (`cmd/nats`)
+
+| Flag                                 | Default                   | Effect                                              |
+| ------------------------------------ | ------------------------- | --------------------------------------------------- |
+| `--nats-url`                         | `nats://localhost:4222`   | NATS server URL; `tls://` for TLS                   |
+| `--subject`, `-s`                    | — (required)              | subject to subscribe to; wildcards allowed          |
+| `--queue`                            | —                         | queue group, for load-balanced consumers            |
+| `--connection-name`                  | `hippocampus-nats-bridge` | connection name the NATS server reports             |
+| `--nats-username`, `--nats-password` | —                         | user credentials                                    |
+| `--nats-token`                       | —                         | server auth token                                   |
+| `--nats-creds`                       | —                         | `.creds` file for decentralised auth                |
+
+**MQTT** (`cmd/mqtt`)
+
+| Flag                                 | Default                   | Effect                                                              |
+| ------------------------------------ | ------------------------- | ------------------------------------------------------------------- |
+| `--broker`                           | `tcp://localhost:1883`    | broker URL (`tcp://`, `ssl://`, `ws://`)                            |
+| `--topic`, `-t`                      | — (required)              | topic filter; `+` and `#` wildcards allowed                         |
+| `--qos`                              | `1`                       | subscription QoS (0, 1 or 2); 1 makes the manual ack meaningful     |
+| `--client-id`                        | `hippocampus-mqtt-bridge` | client id; a stable one plus a persistent session gives redelivery  |
+| `--clean-session`                    | off                       | start a fresh session on each connect, dropping queued redelivery   |
+| `--mqtt-username`, `--mqtt-password` | —                         | broker credentials                                                  |
+
+**RabbitMQ** (`cmd/rabbitmq`)
+
+| Flag                 | Default                              | Effect                                                         |
+| -------------------- | ------------------------------------ | -------------------------------------------------------------- |
+| `--amqp-url`         | `amqp://guest:guest@localhost:5672/` | server URL, credentials included; `amqps://` for TLS           |
+| `--queue`, `-q`      | — (required)                         | queue to consume                                               |
+| `--prefetch`         | `1`                                  | unacknowledged deliveries in flight; 1 keeps processing ordered |
+| `--requeue-on-error` | on                                   | requeue a delivery whose store failed, so it is redelivered    |
+| `--consumer-tag`     | server-generated                     | consumer tag reported to the broker                            |
+| `--declare-queue`    | off                                  | declare a durable queue before consuming (a demo convenience)  |
+
+**Kafka** (`cmd/kafka`)
+
+| Flag                       | Default          | Effect                                                                 |
+| -------------------------- | ---------------- | ---------------------------------------------------------------------- |
+| `--brokers`                | `localhost:9092` | bootstrap broker addresses                                             |
+| `--topic`, `-t`            | — (required)     | topic to consume                                                       |
+| `--consumer-group`, `-g`   | — (required)     | consumer group id                                                      |
+| `--error-backoff-seconds`  | `1`              | wait before re-reading an uncommitted message after a store failure    |
+| `--min-bytes`              | reader default   | minimum bytes per fetch                                                |
+| `--max-bytes`              | reader default   | maximum bytes per fetch                                                |
+
+**Bluesky** (`cmd/bluesky`) has its own section: see [Flags](#flags) under the Bluesky bridge.
+
 ### Authenticating to the service
 
 Two shapes, and the choice matters more than it looks:
@@ -550,6 +627,10 @@ copy has quietly turned a public post into a permanent private archive.
 | `--langs`                       | _(all)_                                           | keep only posts **declaring** one of these languages (see below)         |
 | `--min-text-bytes`              | `1`                                               | drop posts shorter than this                                             |
 | `--root-cache-size`             | `8192`                                            | cache of known thread roots (an optimisation only)                       |
+| `--read-timeout-seconds`        | `30`                                              | reconnect when no frame arrives within this window                       |
+| `--reconnect-backoff-seconds`   | `1`                                               | first reconnect backoff                                                  |
+| `--reconnect-max-backoff-seconds` | `30`                                            | ceiling on the exponential reconnect backoff                             |
+| `--max-retries`                 | `3`                                               | store attempts on one frame before the connection is dropped and replayed from the last cursor |
 
 #### A post's language is self-declared, and is often wrong
 

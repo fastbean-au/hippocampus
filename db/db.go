@@ -55,6 +55,8 @@ const (
 	driverMySQL
 )
 
+// DB is the storage layer over one of the three SQL dialects. It satisfies Store. Open one with
+// New (SQLite), NewPostgres or NewMySQL, or with the read-only constructors the CLI tools use.
 type DB struct {
 	sql    *sql.DB
 	driver driver
@@ -615,6 +617,8 @@ type SummarisationCandidate struct {
 	Group string
 }
 
+// Server is what the consolidation scans ask about each row. hippocampus.Server implements it, which
+// keeps the decay maths out of this package while the scans stay here.
 type Server interface {
 	ShouldConsolidateMemory(MemoryConsolidationCandidate) bool
 	ShouldConsolidateEvent(EventConsolidationCandidate) bool

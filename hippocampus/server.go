@@ -206,6 +206,9 @@ type Consolidation struct {
 	tombstones bool
 }
 
+// Server implements contract.HippocampusServer over a db.Store. Construct it with New, which reads
+// the configuration from viper and starts the background workers - the sleep cycle, and the other
+// consolidator work where configured - and shut those down with Stop.
 type Server struct {
 	contract.UnimplementedHippocampusServer
 	db db.Store
@@ -575,6 +578,9 @@ type Dependencies struct {
 	Version string
 }
 
+// New builds a Server from its dependencies and the configuration in viper, and starts its
+// background workers (see Stop). The configuration is validated before New is called, by
+// configProblems in package main.
 func New(deps Dependencies) *Server {
 	log.Trace("func() hippocampus.New()")
 

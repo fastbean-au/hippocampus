@@ -256,7 +256,7 @@ up --build` adds an all-in-one `grafana/otel-lgtm` service (Grafana `:3000`, OTL
   `HIPPOCAMPUS_WIZARD_*` overridable; see `docs/config-wizard.md`)
 - Print the build version: `go run ./cmd/hippocampus --version` (module + VCS revision/time from
   `runtime/debug.ReadBuildInfo`; prints and exits before the config is read — see `version.go`)
-- Mint an auth token: `go run ./cmd/hippocampus --mint-token --client-id <id> --ttl 24h -c config.json` (prints the token and exits; see [Authentication](docs/configuration.md#authentication))
+- Mint an auth token: `go run ./cmd/hippocampus --mint-token --client-id <id> --role writer --ttl 24h -c config.json` (prints the token and exits; see [Authentication](docs/configuration.md#authentication))
 - Backfill/rebuild the OpenSearch index: `go run ./cmd/hippocampus --backfill-search [--reindex] -c config.json`
   (CLI mode in `backfill.go`, exits when done; requires `opensearch.enabled`; safe beside a live
   instance; see [Backfill and reindex](docs/configuration.md#backfill-and-reindex))

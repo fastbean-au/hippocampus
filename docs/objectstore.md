@@ -275,6 +275,73 @@ at Warn, and `HippocampusObjectTapNotReinforcing` alerts on the same condition. 
 - the store really has forgotten everything being served, which on a store whose job is forgetting is
   worth knowing either way.
 
+## Flags
+
+Every flag binds to an environment variable under the command's prefix -
+`HIPPOCAMPUS_OBJECT_GATEWAY_*` or `HIPPOCAMPUS_OBJECT_REAPER_*`, with the flag's dashes as
+underscores - which is how a token or secret should be passed.
+
+**Both agents**
+
+| Flag                                        | Default                           | Effect                                                                                  |
+| ------------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------- |
+| `--bucket`                                  | — (required)                      | the bucket this agent manages; it names the `<bucket>/` half of every memory id          |
+| `--s3-endpoint`                             | AWS                               | endpoint URL of an S3-compatible store, such as MinIO                                    |
+| `--s3-path-style`                           | off                               | address the bucket path-style rather than virtual-host style (MinIO needs this)          |
+| `--s3-region`                               | the AWS configuration chain       | AWS region                                                                               |
+| `--address`, `-a`                           | `localhost:50051`                 | the Hippocampus gRPC service                                                             |
+| `--token`                                   | —                                 | bearer token sent on every RPC to the service                                            |
+| `--tls`                                     | off                               | dial the service over TLS                                                                |
+| `--tls-ca-cert`                             | —                                 | PEM CA bundle to verify the service against, in place of the system pool               |
+| `--tls-cert`, `--tls-key`                   | —                                 | client certificate and key for mutual TLS (both or neither)                              |
+| `--tls-insecure-skip-verify`                | off                               | skip verifying the service certificate (development only)                                |
+| `--call-timeout-seconds`                    | `30`                              | bound on each RPC                                                                        |
+| `--bind-address`                            | all interfaces                    | interface the agent's own listener binds                                                 |
+| `--listen-tls-cert`, `--listen-tls-key`     | —                                 | serve that listener over HTTPS (both or neither)                                         |
+| `--health-port`                             | `8090` gateway, `8091` reaper     | port serving `/healthz` and `/readyz` (and `/metrics` with `--prometheus`); 0 disables   |
+| `--health-bind-address`                     | all interfaces                    | interface the health listener binds                                                      |
+| `--metrics`                                 | off                               | export metrics over OTLP/gRPC                                                            |
+| `--prometheus`                              | off                               | serve `/metrics` on the health port for Prometheus to scrape                             |
+| `--metrics-interval-seconds`                | SDK default                       | metric export interval                                                                   |
+| `--metrics-group`                           | —                                 | tenancy label stamped on this process's telemetry                                        |
+| `--tracing`                                 | off                               | export traces over OTLP/gRPC                                                             |
+| `--tracing-sampling-ratio`                  | `0.1`                             | fraction of locally started traces sampled                                               |
+| `--otlp-endpoint`                           | SDK environment, `localhost:4317` | collector address                                                                        |
+| `--otlp-insecure`                           | on                                | connect to the collector without TLS                                                     |
+| `--log-level`                               | `info`                            | `trace`, `debug`, `info`, `warn` or `error`                                              |
+| `--version`                                 | —                                 | print the build version and exit                                                         |
+
+**`object-gateway`**
+
+| Flag                       | Default    | Effect                                                                                      |
+| -------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
+| `--listen-port`            | `8088`     | port serving the object routes                                                              |
+| `--path-prefix`            | `/o/`      | path objects are served under: `GET <prefix><key>`                                          |
+| `--mode`                   | `redirect` | `redirect` (a presigned URL) or `proxy` (stream the body); see [The gateway](#the-gateway)  |
+| `--url-ttl-seconds`        | `300`      | how long a presigned URL stays valid, in redirect mode                                      |
+| `--auth-token`             | —          | bearer token required on every inbound request                                              |
+| `--allow-anonymous`        | off        | serve without an inbound token, making every object readable by anybody who can reach it   |
+| `--recall-batch-size`      | `100`      | distinct ids buffered before one `RecallMemories` call (0 recalls on each read)              |
+| `--recall-batch-window-ms` | `2000`     | how long a partial batch waits before it is flushed                                         |
+
+**`object-reaper`**
+
+| Flag                                | Default                                  | Effect                                                                                 |
+| ----------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------- |
+| `--delete`                          | off                                      | actually delete; without it the reaper runs in shadow mode and only reports            |
+| `--causes`                          | `consolidation,eviction,expiry,cascade`  | deletion causes acted on; see [What it refuses to delete](#what-it-refuses-to-delete)   |
+| `--listen-port`                     | `8089`                                   | port serving the callback endpoint (0 disables the push path)                          |
+| `--callback-path`                   | `/callbacks`                             | path the service's callback sink posts to                                              |
+| `--callback-token`                  | —                                        | bearer token required on every delivery (the service's `callbacks.token`)              |
+| `--callback-secret`                 | —                                        | secret the delivery signature is verified with (the service's `callbacks.signingSecret`) |
+| `--callback-max-age-seconds`        | `300`                                    | how old a signed delivery may be before it is refused as a replay                      |
+| `--allow-unauthenticated-callbacks` | off                                      | with `--delete`, accept deliveries on an endpoint with neither token nor secret        |
+| `--catch-up`                        | `1h`                                     | at startup, reap what the forgotten log says went within this window (0 disables)     |
+| `--sweep-interval`                  | 0 (off)                                  | how often to sweep the bucket for objects the store no longer holds                    |
+| `--sweep-now`                       | off                                      | run one sweep, report and exit                                                         |
+| `--sweep-prefix`                    | —                                        | restrict the sweep to one prefix of the bucket                                         |
+| `--sweep-min-age`                   | `24h`                                    | how old an object must be before the sweep judges it; cannot be zero                   |
+
 ## Metrics
 
 | Metric                                      | What it says                                                                         |

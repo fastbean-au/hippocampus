@@ -23,7 +23,7 @@ There are two ways to connect a vault, and they compose:
 
 The plugin is not in this repository. It has its own repository and its own version line, because
 Obsidian's community registry lists a repository whose **root** holds `manifest.json`, which a
-monorepo cannot offer — see TODO-2 item 113 for the reasoning, and
+monorepo cannot offer. See
 [`hippocampus-obsidian`](https://github.com/fastbean-au/hippocampus-obsidian) for the plugin itself.
 
 Two things about it are worth knowing from this side, because they are properties of the **service**

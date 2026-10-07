@@ -1,6 +1,8 @@
 package main
 
 import (
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -353,4 +355,95 @@ func documentationText(t *testing.T) string {
 	}
 
 	return builder.String()
+}
+
+// mintCommand matches a documented --mint-token invocation: one that names a client, which is what
+// separates a command a reader will paste from a prose mention of the flag.
+var mintCommand = regexp.MustCompile(`--mint-token[^\n` + "`" + `]*--client-id`)
+
+// TestDocumentedMintCommandsCarryARole holds every runnable --mint-token command in the
+// documentation to what the flag accepts (TODO-3 item 175). --mint-token refuses to mint without a
+// --role, since a role-less token is denied every RPC under the default-closed policy, so a
+// documented command without one fails for whoever copies it - which is what getting-started.md's
+// "Enabling authentication" did.
+func TestDocumentedMintCommandsCarryARole(t *testing.T) {
+	sources := documentationFiles(t)
+
+	for _, extra := range []string{"CLAUDE.md", "deploy/k8s/README.md", "deploy/compose/README.md"} {
+		source, err := os.ReadFile(filepath.Join("..", "..", extra))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			t.Fatalf("failed to read %s: %s", extra, err.Error())
+		}
+
+		sources[extra] = string(source)
+	}
+
+	for path, source := range sources {
+		for i, line := range strings.Split(source, "\n") {
+			if mintCommand.MatchString(line) && !strings.Contains(line, "--role") {
+				t.Errorf("%s:%d mints a token with no --role, which --mint-token refuses: %s", path, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// TestEveryPackageHasADocComment requires a package comment on every package in the root module
+// (TODO-3 item 175). It is what go doc and pkg.go.dev show first, and five of the central packages -
+// hippocampus, db, types, auth and contract - had none. The integration modules are their own
+// modules and are not walked.
+func TestEveryPackageHasADocComment(t *testing.T) {
+	root := filepath.Join("..", "..")
+
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !entry.IsDir() {
+			return nil
+		}
+
+		name := entry.Name()
+
+		if path != root && (strings.HasPrefix(name, ".") || name == "testdata" || name == "node_modules" ||
+			name == "integrations" || name == "google" || name == "protoc-gen-openapiv2") {
+			return filepath.SkipDir
+		}
+
+		files, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+
+		// Package name -> whether any of its files carries a package comment.
+		documented := map[string]bool{}
+
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".go") || strings.HasSuffix(file.Name(), "_test.go") {
+				continue
+			}
+
+			parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(path, file.Name()), nil, parser.PackageClauseOnly|parser.ParseComments)
+			if err != nil {
+				return err
+			}
+
+			documented[parsed.Name.Name] = documented[parsed.Name.Name] || parsed.Doc != nil
+		}
+
+		for name, ok := range documented {
+			if !ok {
+				t.Errorf("%s (package %s) has no package comment: add a doc.go", path, name)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the module: %s", err)
+	}
 }

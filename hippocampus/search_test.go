@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -161,6 +162,29 @@ func TestSearchMemories_DisabledReturnsFailedPrecondition(t *testing.T) {
 
 		if status.Code(err) != codes.FailedPrecondition {
 			t.Errorf("expected FailedPrecondition, got %v", err)
+		}
+	}
+}
+
+// TestSearchMemories_DisabledNamesTheSwitch pins what the refusal tells an operator (TODO-3 item
+// 175). Every driver has had a content index of its own since item 96, so on a writable store the
+// refusal is reached only when search.contentIndex.enabled has turned that index off with no
+// OpenSearch behind it - and the message used to say the driver had no content search at all, which
+// sent the operator looking for a backend they already had.
+func TestSearchMemories_DisabledNamesTheSwitch(t *testing.T) {
+	s := newSearchTestServer(t, search.NewNoop())
+
+	_, err := s.SearchMemories(context.Background(), &contract.SearchMemoriesRequest{Query: "anything"})
+
+	message := status.Convert(err).Message()
+
+	if strings.Contains(message, "no built-in content search") {
+		t.Errorf("the refusal still says the driver has no content search: %q", message)
+	}
+
+	for _, remedy := range []string{"search.contentIndex.enabled", "opensearch.enabled"} {
+		if !strings.Contains(message, remedy) {
+			t.Errorf("the refusal does not name %s: %q", remedy, message)
 		}
 	}
 }

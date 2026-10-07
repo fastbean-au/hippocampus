@@ -19,13 +19,14 @@ running.
 | **[Configurability](configuration.md)**          | The exhaustive key reference: storage, listeners, auth, TLS, search, callbacks, topology.         |
 | **[Operations & deployment](operations.md)**     | Supervision, containers, Kubernetes, driver choice, sizing, backup, shutdown, observability.      |
 | **[Security](security.md)**                      | What's off by default, auth and role tiers, the hardening checklist, where content can leave.     |
+| **[Troubleshooting](troubleshooting.md)**        | Symptom first: the startup refusals, the error codes, and what is quietly not happening.          |
 
 The deployment artefacts each carry their own README:
 [`deploy/systemd`](../deploy/systemd/README.md) (the packaged unit and its sandbox),
 [`deploy/launchd`](../deploy/launchd/README.md) (a per-user macOS agent),
 [`deploy/k8s`](../deploy/k8s/README.md) (Kustomize base and overlays),
 [`deploy/observability`](../deploy/observability/README.md) (the shipped alert rules), and
-[`deploy/compose`](../deploy/compose/) (the Compose stacks per driver).
+[`deploy/compose`](../deploy/compose/README.md) (the Compose stacks and their profiles).
 
 ## How it decides what to forget
 
@@ -48,6 +49,7 @@ The load generator and the compressed-clock demo stack are in [`demo/`](../demo/
 
 | Guide                               | What it answers                                                                         |
 | :---------------------------------- | :-------------------------------------------------------------------------------------- |
+| **[API reference](api.md)**         | Every RPC's JSON/HTTP route, and the filter, sorting and metadata semantics.            |
 | **[CLI (`hippo`)](cli.md)**         | Drive a running service from the shell, over gRPC or the JSON gateway.                  |
 | **[Python client](python.md)**      | The Python client, covering the full RPC surface; installed from a release tag for now. |
 | **[Clients & codegen](clients.md)** | Generate a TypeScript, Java, Rust or any-language client from the proto or OpenAPI doc. |

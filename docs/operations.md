@@ -306,6 +306,33 @@ its own `gateway.port`**: the defaults (`50051`/`8080`) collide, and the second 
 fails to bind the port. An external content-search cluster likewise needs a distinct
 `opensearch.index` (or a separate cluster) per instance so their documents do not intermingle.
 
+### Ports
+
+Every listener in the project and its default. Two defaults are shared by more than one component,
+so two of these on one host need one of them moved:
+
+- **8090** is the default of the MCP bridge's HTTP transport and of the health port of the broker
+  bridges, the ingestor and the object gateway.
+- **8091** is the default of the configuration wizard and of the object reaper's health port.
+
+| Port   | Component                                                          | Serves                                                    | Set with                                  |
+| :----- | :----------------------------------------------------------------- | :-------------------------------------------------------- | :---------------------------------------- |
+| `50051` | the service                                                       | gRPC                                                      | `port`, `--port`                          |
+| `8080` | the service                                                        | the JSON gateway, `/ui`, `/healthz`, `/readyz` (off unless set; 8080 is the convention every shipped config uses) | `gateway.port`, `--gateway-port` |
+| `9464` | the service                                                        | `/metrics` for Prometheus, when `observability.prometheus.enabled` | `observability.prometheus.port`   |
+| `8090` | [MCP bridge](mcp.md) (`--transport http`)                          | the streamable-HTTP MCP endpoint, on loopback by default  | `--http-address`                          |
+| `8090` | [broker bridges](eventsource.md), [ingestor](ingestor.md)          | `/healthz`, `/readyz`, and `/metrics` with `--prometheus` | `--health-port`                           |
+| `8088` | [object gateway](objectstore.md)                                   | the object routes                                         | `--listen-port`                           |
+| `8090` | object gateway                                                     | `/healthz`, `/readyz`, `/metrics`                         | `--health-port`                           |
+| `8089` | object reaper                                                      | the callback endpoint                                     | `--listen-port`                           |
+| `8091` | object reaper                                                      | `/healthz`, `/readyz`, `/metrics`                         | `--health-port`                           |
+| `8091` | [configuration wizard](config-wizard.md)                           | the wizard                                                | `--port`                                  |
+| `8082` | Swagger UI (compose `swagger` profile)                             | the API explorer                                          | the compose file                          |
+| `3000`, `4317` | `grafana/otel-lgtm` (compose `observability` profile)      | Grafana, and the OTLP collector                           | the compose file                          |
+
+Every compose file publishes on `127.0.0.1` unless `PUBLISH_ADDRESS` says otherwise, since a
+published port bypasses a host firewall.
+
 ## Containers and Kubernetes
 
 ### Docker Compose
@@ -1916,6 +1943,7 @@ pair, so the listing is the dry run:
 
 ```bash
 hippo memory list --group acme --limit 1                                  # total_count is what would go
+hippo export --group acme                                                 # their copy, if owed
 hippo memory delete-by-filter --group acme --delete-empty-events --yes
 hippo event delete-by-filter --group acme --delete-memories --yes
 ```

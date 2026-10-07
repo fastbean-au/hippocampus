@@ -35,8 +35,10 @@ backported patch branches, so **the latest release is the supported one**. See
 
 **In scope** — the service (`cmd/hippocampus`), the storage and search layers, the auth package, the
 embedded web console, the [configuration wizard](docs/config-wizard.md), and the components under
-`integrations/` (the `hippo` CLI, the MCP bridge, the event-source bridges, the ingestor, the OTEL
-exporter). Anything that lets a caller read, write, or destroy records beyond what their token
+`integrations/` (the `hippo` CLI, the MCP bridge, the event-source bridges, the ingestor, the
+object-storage agents and the Python client). The OpenTelemetry collector exporter, the LlamaIndex
+adapter and the Obsidian plugin now live in repositories of their own; report against those
+directly. Anything that lets a caller read, write, or destroy records beyond what their token
 permits — or that leaks credentials, another group's data, or memory content — is worth reporting.
 
 **Out of scope** — the public demo at `hippocampus-demo.com` and the stacks that run it. They exist

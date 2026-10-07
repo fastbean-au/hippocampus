@@ -63,7 +63,7 @@ docker run -p 50051:50051 -p 8080:8080 -v hippocampus:/data ghcr.io/fastbean-au/
 Mount your own config over `/etc/hippocampus/config.json` to replace the baked one, or override
 individual keys with `HIPPOCAMPUS_*` environment variables.
 
-Compose stacks per driver live in [`deploy/compose/`](../deploy/compose/) — `docker compose up` from
+Compose stacks per driver live in [`deploy/compose/`](../deploy/compose/README.md) — `docker compose up` from
 a clone brings up the SQLite one — and Kustomize overlays in
 [`deploy/k8s/`](../deploy/k8s/README.md):
 
@@ -72,8 +72,10 @@ kubectl apply -k deploy/k8s/overlays/sqlite      # embedded: one StatefulSet plu
 kubectl apply -k deploy/k8s/overlays/postgres    # centralised: one consolidator plus N replicas
 ```
 
-The MCP bridge, the [configuration wizard](config-wizard.md), the [ingestor](ingestor.md) and the
-five [broker bridges](eventsource.md) each ship their own image alongside the service. Details of
+The MCP bridge, the [configuration wizard](config-wizard.md), the [ingestor](ingestor.md), the
+five [broker bridges](eventsource.md) and the two [object-storage agents](objectstore.md)
+(`hippocampus-object-gateway`, `hippocampus-object-reaper`) each ship their own image alongside the
+service. Details of
 both paths are in [Containers and Kubernetes](operations.md#containers-and-kubernetes).
 
 ## Release binaries
@@ -83,7 +85,8 @@ both `amd64` and `arm64`. They're built with CGO disabled, so there's nothing to
 them:
 
 ```sh
-VERSION=v0.46.0
+VERSION="$(curl -fsSL https://api.github.com/repos/fastbean-au/hippocampus/releases/latest \
+  | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')"   # or pin one, e.g. VERSION=v0.51.1
 curl -fsSLO "https://github.com/fastbean-au/hippocampus/releases/download/${VERSION}/hippocampus_${VERSION}_linux_amd64.tar.gz"
 tar -xzf "hippocampus_${VERSION}_linux_amd64.tar.gz"
 ./hippocampus --version
@@ -93,8 +96,9 @@ Archives are named `<binary>_<tag>_<os>_<arch>` — `.tar.gz` everywhere but Win
 `.zip` — and each bundles one binary plus the licence.
 
 The same release carries `hippo` (the [CLI](cli.md)), `hippocampus-mcp` (the [MCP
-bridge](mcp.md)), `hippocampus-config-wizard`, `hippocampus-ingestor` and one bridge binary per
-broker.
+bridge](mcp.md)), `hippocampus-config-wizard`, `hippocampus-ingestor`, one bridge binary per
+broker, and the two object-storage agents, `hippocampus-object-gateway` and
+`hippocampus-object-reaper`.
 
 ## From source
 
