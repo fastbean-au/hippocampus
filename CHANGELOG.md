@@ -177,6 +177,13 @@ itself which service version it was built against.
 
 ### Changed
 
+- **Every message and field in the contract is documented.** 161 messages and fields had no
+  comment, mostly on the export, import and clear surface, and comments are what reach every
+  generated client and the OpenAPI document. A test now requires a comment on each new message and
+  field. Export, Import and the deployment view's object-store node no longer say "S3" alone,
+  because `archive.directory` is the other backend. The export comment, which had attached itself
+  to `MemorySelection` in the OpenAPI document, is back on `ExportRequest`.
+
 - **The configuration reference now lists every key, and the API has its own page.**
   - **`docs/configuration.md` opens with an index of every key the service reads**: its default, one
     line on what it does, and the section documenting it. The page called itself exhaustive while 25

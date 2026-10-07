@@ -513,7 +513,7 @@ const (
 	TopologyNodeKind_TOPOLOGY_NODE_KIND_SEARCH_INDEX      TopologyNodeKind = 3  // the secondary content-search index
 	TopologyNodeKind_TOPOLOGY_NODE_KIND_SUMMARISER        TopologyNodeKind = 4  // the embedded LLM behind SummariseMemories
 	TopologyNodeKind_TOPOLOGY_NODE_KIND_EMBEDDER          TopologyNodeKind = 5  // the embedding model behind semantic search
-	TopologyNodeKind_TOPOLOGY_NODE_KIND_OBJECT_STORE      TopologyNodeKind = 6  // the S3 bucket behind Export/Import
+	TopologyNodeKind_TOPOLOGY_NODE_KIND_OBJECT_STORE      TopologyNodeKind = 6  // where Export writes and Import reads: an S3 bucket or archive.directory
 	TopologyNodeKind_TOPOLOGY_NODE_KIND_TRANSFER_TARGET   TopologyNodeKind = 7  // the instance Transfer sends to
 	TopologyNodeKind_TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER TopologyNodeKind = 8  // the IdP whose JWKS verifies tokens
 	TopologyNodeKind_TOPOLOGY_NODE_KIND_COLLECTOR         TopologyNodeKind = 9  // the OTLP endpoint metrics and traces are exported to
@@ -1467,6 +1467,7 @@ func (x *StoreEventResponse) GetRejected() bool {
 	return false
 }
 
+// EndEventRequest sets an event's end time, marking it complete.
 type EndEventRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                           // the event to end
@@ -1519,6 +1520,7 @@ func (x *EndEventRequest) GetTimeEnd() int64 {
 	return 0
 }
 
+// UpdateEventSignificanceRequest re-ranks an event, by an absolute value or a placement.
 type UpdateEventSignificanceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                      // the event to update
@@ -1579,6 +1581,7 @@ func (x *UpdateEventSignificanceRequest) GetPlacement() *SignificancePlacement {
 	return nil
 }
 
+// MergeEventsRequest re-points every memory of merge_from onto merge_to.
 type MergeEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MergeTo       string                 `protobuf:"bytes,1,opt,name=merge_to,json=mergeTo,proto3" json:"merge_to,omitempty"`       // the surviving event; must already exist
@@ -1631,9 +1634,10 @@ func (x *MergeEventsRequest) GetMergeFrom() string {
 	return ""
 }
 
+// DeleteEventRequest deletes one event, and either detaches or deletes its memories.
 type DeleteEventRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                           // the event to delete
 	Memories      bool                   `protobuf:"varint,2,opt,name=memories,proto3" json:"memories,omitempty"`              // true also deletes the event's memories; false only detaches them
 	IfEmpty       bool                   `protobuf:"varint,3,opt,name=if_empty,json=ifEmpty,proto3" json:"if_empty,omitempty"` // true deletes the event only while it holds none of the caller's memories, and otherwise fails FAILED_PRECONDITION leaving everything in place - what a caller that has deleted the memories it judged uses so a memory that arrived since is never deleted unjudged; excludes memories
 	unknownFields protoimpl.UnknownFields
@@ -1691,6 +1695,7 @@ func (x *DeleteEventRequest) GetIfEmpty() bool {
 	return false
 }
 
+// GetEventByIdRequest reads one event by id, optionally with its memories, count and links.
 type GetEventByIdRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                          // the event to fetch
@@ -1759,9 +1764,10 @@ func (x *GetEventByIdRequest) GetLinks() bool {
 	return false
 }
 
+// GetEventResponse carries the event GetEventById read.
 type GetEventResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Event         *Event                 `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"`
+	Event         *Event                 `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"` // the event read
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1803,6 +1809,8 @@ func (x *GetEventResponse) GetEvent() *Event {
 	return nil
 }
 
+// GetEventsRequest lists the events matching every filter set, a page at a time. An unset filter
+// applies no restriction.
 type GetEventsRequest struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	TimeStartMin         int64                  `protobuf:"varint,1,opt,name=time_start_min,json=timeStartMin,proto3" json:"time_start_min,omitempty"`                                                                 // UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound
@@ -1999,9 +2007,10 @@ func (x *GetEventsRequest) GetDescriptionContains() string {
 	return ""
 }
 
+// GetEventsResponse is one page of a GetEvents listing.
 type GetEventsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Events        []*Event               `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	Events        []*Event               `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`                            // this page
 	TotalCount    int32                  `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"` // events matching the filter, ignoring limit/offset — for pagination
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2051,6 +2060,8 @@ func (x *GetEventsResponse) GetTotalCount() int32 {
 	return 0
 }
 
+// GetMemoriesRequest lists the memories matching every filter set, a page at a time. Reading never
+// reinforces - RecallMemories does. An unset filter applies no restriction.
 type GetMemoriesRequest struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	TimestampMin         int64                  `protobuf:"varint,1,opt,name=timestamp_min,json=timestampMin,proto3" json:"timestamp_min,omitempty"`                                                                  // UnixNano inclusive lower bound on time_stamp; 0 (the default) means no lower bound
@@ -2271,9 +2282,10 @@ func (x *GetMemoriesRequest) GetIds() []string {
 	return nil
 }
 
+// GetMemoriesResponse is one page of a GetMemories listing.
 type GetMemoriesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Memories      []*Memory              `protobuf:"bytes,1,rep,name=memories,proto3" json:"memories,omitempty"`
+	Memories      []*Memory              `protobuf:"bytes,1,rep,name=memories,proto3" json:"memories,omitempty"`                        // this page
 	TotalCount    int32                  `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"` // memories matching the filter, ignoring limit/offset — for pagination
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2503,7 +2515,7 @@ func (x *StoreMemoryResult) GetError() string {
 // describes the request's memories[i], and len(results) always equals len(memories).
 type StoreMemoriesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Results       []*StoreMemoryResult   `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	Results       []*StoreMemoryResult   `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`    // one per requested memory, in request order
 	Stored        int32                  `protobuf:"varint,2,opt,name=stored,proto3" json:"stored,omitempty"`     // memories written
 	Rejected      int32                  `protobuf:"varint,3,opt,name=rejected,proto3" json:"rejected,omitempty"` // memories dropped for significance below memory.minimumSignificance
 	Failed        int32                  `protobuf:"varint,4,opt,name=failed,proto3" json:"failed,omitempty"`     // memories that could not be written; each carries its code and error in results
@@ -2569,9 +2581,10 @@ func (x *StoreMemoriesResponse) GetFailed() int32 {
 	return 0
 }
 
+// DeleteMemoriesRequest deletes memories by id.
 type DeleteMemoriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ids           []string               `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	Ids           []string               `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"` // the memories to delete; an id the store does not hold is ignored, and the response is then ok false
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2613,9 +2626,10 @@ func (x *DeleteMemoriesRequest) GetIds() []string {
 	return nil
 }
 
+// RecallMemoriesRequest names the memories to recall and reinforce.
 type RecallMemoriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ids           []string               `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	Ids           []string               `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`                                           // the memories to recall; an id the store does not hold is absent from the response
 	IncludeLinked bool                   `protobuf:"varint,2,opt,name=include_linked,json=includeLinked,proto3" json:"include_linked,omitempty"` // also return the memories linked to those recalled, one hop, in either direction. The linked memories are returned as an associative recall, not counted as directly recalled: their recall_count is untouched (see consolidation.linkRecallPropagation for what a recall does to a neighbour's decay clock)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2673,7 +2687,7 @@ func (x *RecallMemoriesRequest) GetIncludeLinked() bool {
 // reinforced.
 type SearchMemoriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Query         string                 `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`
+	Query         string                 `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`                                       // the text to match; embedded as well in SEMANTIC and HYBRID modes
 	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`                                      // maximum results; a value <= 0 selects the default (10), and a value over 200 is clamped to 200, as GetMemories clamps its page
 	EventId       string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                    // optional: restrict matches to a single event
 	Reinforce     bool                   `protobuf:"varint,4,opt,name=reinforce,proto3" json:"reinforce,omitempty"`                              // route matches through recall, reinforcing them
@@ -2849,6 +2863,7 @@ func (x *LinkMemoriesRequest) GetLinks() []*Link {
 	return nil
 }
 
+// UnlinkMemoriesRequest removes links between a memory and others.
 type UnlinkMemoriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`   // the memory the links start from; must exist
@@ -2901,6 +2916,7 @@ func (x *UnlinkMemoriesRequest) GetIds() []string {
 	return nil
 }
 
+// GetMemoryLinksRequest reads a memory's links.
 type GetMemoryLinksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                  // the memory whose links to return; must exist
@@ -2953,6 +2969,8 @@ func (x *GetMemoryLinksRequest) GetDirection() LinkDirection {
 	return LinkDirection_LINK_DIRECTION_UNSPECIFIED
 }
 
+// LinkEventsRequest links an event to others, each link carrying its own significance. Linking a
+// pair again re-weights the link rather than duplicating it.
 type LinkEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`       // the event the links start from; must exist
@@ -3005,6 +3023,7 @@ func (x *LinkEventsRequest) GetLinks() []*Link {
 	return nil
 }
 
+// UnlinkEventsRequest removes links between an event and others.
 type UnlinkEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`   // the event the links start from; must exist
@@ -3057,6 +3076,7 @@ func (x *UnlinkEventsRequest) GetIds() []string {
 	return nil
 }
 
+// GetEventLinksRequest reads an event's links.
 type GetEventLinksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                  // the event whose links to return; must exist
@@ -3181,9 +3201,10 @@ func (x *LinkEdge) GetCreated() int64 {
 	return 0
 }
 
+// GetLinksResponse carries a memory's or an event's links.
 type GetLinksResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	Links            []*LinkEdge            `protobuf:"bytes,1,rep,name=links,proto3" json:"links,omitempty"`
+	Links            []*LinkEdge            `protobuf:"bytes,1,rep,name=links,proto3" json:"links,omitempty"`                                                // the edges, in the requested directions
 	LinkSignificance int64                  `protobuf:"varint,2,opt,name=link_significance,json=linkSignificance,proto3" json:"link_significance,omitempty"` // the queried item's total link significance, both directions - the figure the decay maths damps and weights
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -3238,8 +3259,8 @@ func (x *GetLinksResponse) GetLinkSignificance() int64 {
 // visibility into memory content, so it cannot generate the summary itself.
 type ReplaceMemoriesWithSummaryRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Summary       *Memory                `protobuf:"bytes,2,opt,name=summary,proto3" json:"summary,omitempty"`
+	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"` // the event whose memories are replaced
+	Summary       *Memory                `protobuf:"bytes,2,opt,name=summary,proto3" json:"summary,omitempty"`                // the summary memory to store in their place; validated before anything is deleted
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3288,10 +3309,11 @@ func (x *ReplaceMemoriesWithSummaryRequest) GetSummary() *Memory {
 	return nil
 }
 
+// ReplaceMemoriesWithSummaryResponse names the summary memory and counts what it replaced.
 type ReplaceMemoriesWithSummaryResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	MemoriesReplaced int32                  `protobuf:"varint,2,opt,name=memories_replaced,json=memoriesReplaced,proto3" json:"memories_replaced,omitempty"`
+	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                      // the new summary memory's id
+	MemoriesReplaced int32                  `protobuf:"varint,2,opt,name=memories_replaced,json=memoriesReplaced,proto3" json:"memories_replaced,omitempty"` // how many memories the summary replaced
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -3345,9 +3367,9 @@ func (x *ReplaceMemoriesWithSummaryResponse) GetMemoriesReplaced() int32 {
 // ReplaceMemoriesWithSummary.
 type SummarisationCandidate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	EventName     string                 `protobuf:"bytes,2,opt,name=event_name,json=eventName,proto3" json:"event_name,omitempty"`
-	MemoryCount   int32                  `protobuf:"varint,3,opt,name=memory_count,json=memoryCount,proto3" json:"memory_count,omitempty"`
+	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`              // the event to summarise
+	EventName     string                 `protobuf:"bytes,2,opt,name=event_name,json=eventName,proto3" json:"event_name,omitempty"`        // its name
+	MemoryCount   int32                  `protobuf:"varint,3,opt,name=memory_count,json=memoryCount,proto3" json:"memory_count,omitempty"` // memories it holds
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3403,9 +3425,11 @@ func (x *SummarisationCandidate) GetMemoryCount() int32 {
 	return 0
 }
 
+// GetSummarisationCandidatesResponse carries the events the last sleep cycle's scan found worth
+// summarising.
 type GetSummarisationCandidatesResponse struct {
 	state      protoimpl.MessageState    `protogen:"open.v1"`
-	Candidates []*SummarisationCandidate `protobuf:"bytes,1,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	Candidates []*SummarisationCandidate `protobuf:"bytes,1,rep,name=candidates,proto3" json:"candidates,omitempty"` // at most consolidation.summarisationMaxCandidates events, as the last cycle found them
 	// scan_enabled reports whether this instance runs the candidate scan at all: it needs
 	// consolidation.summarisationMinMemories > 0 AND consolidation.enabled, since the scan is part of
 	// the sleep cycle and a replica runs none. It exists because an empty candidates list is
@@ -3467,9 +3491,9 @@ func (x *GetSummarisationCandidatesResponse) GetScanEnabled() bool {
 // excluded from the LLM prompt (their bodies are opaque, not text).
 type SummariseMemoriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Significance  int32                  `protobuf:"varint,2,opt,name=significance,proto3" json:"significance,omitempty"` // optional: significance for the resulting summary memory; 0 (and no placement) defaults to the highest significance among the replaced memories
-	Placement     *SignificancePlacement `protobuf:"bytes,3,opt,name=placement,proto3" json:"placement,omitempty"`        // optional: rank the summary relative to existing values (see SignificancePlacement); takes precedence over significance when set
+	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"` // the event whose memories are summarised and replaced
+	Significance  int32                  `protobuf:"varint,2,opt,name=significance,proto3" json:"significance,omitempty"`     // optional: significance for the resulting summary memory; 0 (and no placement) defaults to the highest significance among the replaced memories
+	Placement     *SignificancePlacement `protobuf:"bytes,3,opt,name=placement,proto3" json:"placement,omitempty"`            // optional: rank the summary relative to existing values (see SignificancePlacement); takes precedence over significance when set
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3525,6 +3549,7 @@ func (x *SummariseMemoriesRequest) GetPlacement() *SignificancePlacement {
 	return nil
 }
 
+// SummariseMemoriesResponse names the summary memory the LLM wrote and counts what it replaced.
 type SummariseMemoriesResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                      // the new summary memory's id
@@ -3589,10 +3614,10 @@ func (x *SummariseMemoriesResponse) GetSummary() string {
 // length-delimited ArchiveRecord messages.
 type ArchiveHeader struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       int32                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	ExportedAt    int64                  `protobuf:"varint,2,opt,name=exported_at,json=exportedAt,proto3" json:"exported_at,omitempty"` // UnixNano
-	EventCount    int32                  `protobuf:"varint,3,opt,name=event_count,json=eventCount,proto3" json:"event_count,omitempty"`
-	MemoryCount   int32                  `protobuf:"varint,4,opt,name=memory_count,json=memoryCount,proto3" json:"memory_count,omitempty"`
+	Version       int32                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`                            // the archive layout version; a reader refuses one it does not know
+	ExportedAt    int64                  `protobuf:"varint,2,opt,name=exported_at,json=exportedAt,proto3" json:"exported_at,omitempty"`    // UnixNano
+	EventCount    int32                  `protobuf:"varint,3,opt,name=event_count,json=eventCount,proto3" json:"event_count,omitempty"`    // the store's event count as the export began: informational, since the store moves during the walk and a selective export still counts the whole store. ExportResponse carries the exact figure
+	MemoryCount   int32                  `protobuf:"varint,4,opt,name=memory_count,json=memoryCount,proto3" json:"memory_count,omitempty"` // the store's memory count as the export began, on event_count's terms
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3655,6 +3680,8 @@ func (x *ArchiveHeader) GetMemoryCount() int32 {
 	return 0
 }
 
+// ArchiveRecord is one length-delimited record of an export archive: the header first, then every
+// event, then every memory.
 type ArchiveRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Record:
@@ -3736,15 +3763,15 @@ type isArchiveRecord_Record interface {
 }
 
 type ArchiveRecord_Header struct {
-	Header *ArchiveHeader `protobuf:"bytes,1,opt,name=header,proto3,oneof"`
+	Header *ArchiveHeader `protobuf:"bytes,1,opt,name=header,proto3,oneof"` // the first record, and only the first
 }
 
 type ArchiveRecord_Event struct {
-	Event *Event `protobuf:"bytes,2,opt,name=event,proto3,oneof"`
+	Event *Event `protobuf:"bytes,2,opt,name=event,proto3,oneof"` // one event, with its full state
 }
 
 type ArchiveRecord_Memory struct {
-	Memory *Memory `protobuf:"bytes,3,opt,name=memory,proto3,oneof"`
+	Memory *Memory `protobuf:"bytes,3,opt,name=memory,proto3,oneof"` // one memory, with its full state
 }
 
 func (*ArchiveRecord_Header) isArchiveRecord_Record() {}
@@ -3759,8 +3786,8 @@ func (*ArchiveRecord_Memory) isArchiveRecord_Record() {}
 // idempotent.
 type ImportBatchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Events        []*Event               `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
-	Memories      []*Memory              `protobuf:"bytes,2,rep,name=memories,proto3" json:"memories,omitempty"`
+	Events        []*Event               `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`     // upserted first, so a memory may name an event in the same batch
+	Memories      []*Memory              `protobuf:"bytes,2,rep,name=memories,proto3" json:"memories,omitempty"` // upserted by id; their links are applied once every row in the batch exists
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3809,10 +3836,11 @@ func (x *ImportBatchRequest) GetMemories() []*Memory {
 	return nil
 }
 
+// ImportBatchResponse reports how many rows ImportBatch upserted.
 type ImportBatchResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	EventsImported   int32                  `protobuf:"varint,1,opt,name=events_imported,json=eventsImported,proto3" json:"events_imported,omitempty"`
-	MemoriesImported int32                  `protobuf:"varint,2,opt,name=memories_imported,json=memoriesImported,proto3" json:"memories_imported,omitempty"`
+	EventsImported   int32                  `protobuf:"varint,1,opt,name=events_imported,json=eventsImported,proto3" json:"events_imported,omitempty"`       // events upserted
+	MemoriesImported int32                  `protobuf:"varint,2,opt,name=memories_imported,json=memoriesImported,proto3" json:"memories_imported,omitempty"` // memories upserted
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -3861,9 +3889,6 @@ func (x *ImportBatchResponse) GetMemoriesImported() int32 {
 	return 0
 }
 
-// Export snapshots every event and memory into an archive object in S3 and records a manifest of
-// exactly what was captured; with clear set, the captured records are deleted after a successful
-// upload (writes and recalls landing mid-run survive, exactly as Clear does).
 // MemorySelection narrows an Export or a Transfer to the memories it matches. Every field means
 // exactly what the same field means on GetMemoriesRequest, and the service builds both predicates
 // with one function, so a GetMemories listing with the same fields is the dry run for the archive.
@@ -3872,22 +3897,22 @@ func (x *ImportBatchResponse) GetMemoriesImported() int32 {
 // carrying that group, so an archive of one group holds that group's empty events too.
 type MemorySelection struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
-	TimestampMin         int64                  `protobuf:"varint,1,opt,name=timestamp_min,json=timestampMin,proto3" json:"timestamp_min,omitempty"`
-	TimestampMax         int64                  `protobuf:"varint,2,opt,name=timestamp_max,json=timestampMax,proto3" json:"timestamp_max,omitempty"`
-	SignificanceMin      int32                  `protobuf:"varint,3,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"`
-	SignificanceMax      int32                  `protobuf:"varint,4,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"`
-	Group                string                 `protobuf:"bytes,5,opt,name=group,proto3" json:"group,omitempty"`
-	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,6,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=hippocampus.v1.SignificanceExtremum" json:"significance_extremum,omitempty"`
-	Metadata             []string               `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty"`
-	Recalled             Bool                   `protobuf:"varint,8,opt,name=recalled,proto3,enum=hippocampus.v1.Bool" json:"recalled,omitempty"`
-	RecallCountMin       int32                  `protobuf:"varint,9,opt,name=recall_count_min,json=recallCountMin,proto3" json:"recall_count_min,omitempty"`
-	RecallCountMax       int32                  `protobuf:"varint,10,opt,name=recall_count_max,json=recallCountMax,proto3" json:"recall_count_max,omitempty"`
-	TimeRecalledMin      int64                  `protobuf:"varint,11,opt,name=time_recalled_min,json=timeRecalledMin,proto3" json:"time_recalled_min,omitempty"`
-	TimeRecalledMax      int64                  `protobuf:"varint,12,opt,name=time_recalled_max,json=timeRecalledMax,proto3" json:"time_recalled_max,omitempty"`
-	IsSummary            Bool                   `protobuf:"varint,13,opt,name=is_summary,json=isSummary,proto3,enum=hippocampus.v1.Bool" json:"is_summary,omitempty"`
-	IsBinary             Bool                   `protobuf:"varint,14,opt,name=is_binary,json=isBinary,proto3,enum=hippocampus.v1.Bool" json:"is_binary,omitempty"`
-	EventId              string                 `protobuf:"bytes,15,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	HasEvent             Bool                   `protobuf:"varint,16,opt,name=has_event,json=hasEvent,proto3,enum=hippocampus.v1.Bool" json:"has_event,omitempty"`
+	TimestampMin         int64                  `protobuf:"varint,1,opt,name=timestamp_min,json=timestampMin,proto3" json:"timestamp_min,omitempty"`                                                                  // exactly as GetMemoriesRequest.timestamp_min
+	TimestampMax         int64                  `protobuf:"varint,2,opt,name=timestamp_max,json=timestampMax,proto3" json:"timestamp_max,omitempty"`                                                                  // exactly as GetMemoriesRequest.timestamp_max
+	SignificanceMin      int32                  `protobuf:"varint,3,opt,name=significance_min,json=significanceMin,proto3" json:"significance_min,omitempty"`                                                         // exactly as GetMemoriesRequest.significance_min
+	SignificanceMax      int32                  `protobuf:"varint,4,opt,name=significance_max,json=significanceMax,proto3" json:"significance_max,omitempty"`                                                         // exactly as GetMemoriesRequest.significance_max
+	Group                string                 `protobuf:"bytes,5,opt,name=group,proto3" json:"group,omitempty"`                                                                                                     // exactly as GetMemoriesRequest.group
+	SignificanceExtremum SignificanceExtremum   `protobuf:"varint,6,opt,name=significance_extremum,json=significanceExtremum,proto3,enum=hippocampus.v1.SignificanceExtremum" json:"significance_extremum,omitempty"` // exactly as GetMemoriesRequest.significance_extremum
+	Metadata             []string               `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty"`                                                                                               // exactly as GetMemoriesRequest.metadata
+	Recalled             Bool                   `protobuf:"varint,8,opt,name=recalled,proto3,enum=hippocampus.v1.Bool" json:"recalled,omitempty"`                                                                     // exactly as GetMemoriesRequest.recalled
+	RecallCountMin       int32                  `protobuf:"varint,9,opt,name=recall_count_min,json=recallCountMin,proto3" json:"recall_count_min,omitempty"`                                                          // exactly as GetMemoriesRequest.recall_count_min
+	RecallCountMax       int32                  `protobuf:"varint,10,opt,name=recall_count_max,json=recallCountMax,proto3" json:"recall_count_max,omitempty"`                                                         // exactly as GetMemoriesRequest.recall_count_max
+	TimeRecalledMin      int64                  `protobuf:"varint,11,opt,name=time_recalled_min,json=timeRecalledMin,proto3" json:"time_recalled_min,omitempty"`                                                      // exactly as GetMemoriesRequest.time_recalled_min
+	TimeRecalledMax      int64                  `protobuf:"varint,12,opt,name=time_recalled_max,json=timeRecalledMax,proto3" json:"time_recalled_max,omitempty"`                                                      // exactly as GetMemoriesRequest.time_recalled_max
+	IsSummary            Bool                   `protobuf:"varint,13,opt,name=is_summary,json=isSummary,proto3,enum=hippocampus.v1.Bool" json:"is_summary,omitempty"`                                                 // exactly as GetMemoriesRequest.is_summary
+	IsBinary             Bool                   `protobuf:"varint,14,opt,name=is_binary,json=isBinary,proto3,enum=hippocampus.v1.Bool" json:"is_binary,omitempty"`                                                    // exactly as GetMemoriesRequest.is_binary
+	EventId              string                 `protobuf:"bytes,15,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                                                                                 // exactly as GetMemoriesRequest.event_id
+	HasEvent             Bool                   `protobuf:"varint,16,opt,name=has_event,json=hasEvent,proto3,enum=hippocampus.v1.Bool" json:"has_event,omitempty"`                                                    // exactly as GetMemoriesRequest.has_event
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -4034,6 +4059,11 @@ func (x *MemorySelection) GetHasEvent() Bool {
 	return Bool_UNSPECIFIED
 }
 
+// ExportRequest asks for every event and memory - or the selection given - to be written to an
+// archive object in the configured object store (an S3 bucket, or a file under archive.directory),
+// and records a manifest of exactly what was captured. With clear set, the captured records are
+// deleted after a successful upload (writes and recalls landing mid-run survive, exactly as Clear
+// does).
 type ExportRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Clear         bool                   `protobuf:"varint,1,opt,name=clear,proto3" json:"clear,omitempty"`      // delete exactly what this export captured once it is written (see Clear)
@@ -4086,15 +4116,16 @@ func (x *ExportRequest) GetMemories() *MemorySelection {
 	return nil
 }
 
+// ExportResponse names the archive an Export wrote and, with clear set, what it then deleted.
 type ExportResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	ManifestId       string                 `protobuf:"bytes,1,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"`
-	ObjectKey        string                 `protobuf:"bytes,2,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"`
-	EventsExported   int32                  `protobuf:"varint,3,opt,name=events_exported,json=eventsExported,proto3" json:"events_exported,omitempty"`
-	MemoriesExported int32                  `protobuf:"varint,4,opt,name=memories_exported,json=memoriesExported,proto3" json:"memories_exported,omitempty"`
-	MemoriesCleared  int32                  `protobuf:"varint,5,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"`
-	EventsCleared    int32                  `protobuf:"varint,6,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`
-	InstanceId       string                 `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // the instance holding the manifest: manifests live in that process's memory, so a deferred Clear must reach it
+	ManifestId       string                 `protobuf:"bytes,1,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"`                    // identifies what was captured; pass it to Clear to delete those records later
+	ObjectKey        string                 `protobuf:"bytes,2,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"`                       // where the archive was written: a key in the bucket, or a path under archive.directory. Pass it to Import to read it back
+	EventsExported   int32                  `protobuf:"varint,3,opt,name=events_exported,json=eventsExported,proto3" json:"events_exported,omitempty"`       // events written to the archive
+	MemoriesExported int32                  `protobuf:"varint,4,opt,name=memories_exported,json=memoriesExported,proto3" json:"memories_exported,omitempty"` // memories written to the archive
+	MemoriesCleared  int32                  `protobuf:"varint,5,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"`    // memories deleted afterwards; 0 unless clear was set
+	EventsCleared    int32                  `protobuf:"varint,6,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`          // events deleted afterwards; 0 unless clear was set
+	InstanceId       string                 `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                    // the instance holding the manifest: manifests live in that process's memory, so a deferred Clear must reach it
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -4178,9 +4209,10 @@ func (x *ExportResponse) GetInstanceId() string {
 	return ""
 }
 
+// ImportRequest names the archive Import reads.
 type ImportRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ObjectKey     string                 `protobuf:"bytes,1,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"`
+	ObjectKey     string                 `protobuf:"bytes,1,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"` // the archive to read, as ExportResponse.object_key named it; under archive.directory an absolute path or a . or .. segment is refused
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4222,10 +4254,11 @@ func (x *ImportRequest) GetObjectKey() string {
 	return ""
 }
 
+// ImportResponse reports how many rows Import upserted.
 type ImportResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	EventsImported   int32                  `protobuf:"varint,1,opt,name=events_imported,json=eventsImported,proto3" json:"events_imported,omitempty"`
-	MemoriesImported int32                  `protobuf:"varint,2,opt,name=memories_imported,json=memoriesImported,proto3" json:"memories_imported,omitempty"`
+	EventsImported   int32                  `protobuf:"varint,1,opt,name=events_imported,json=eventsImported,proto3" json:"events_imported,omitempty"`       // events upserted
+	MemoriesImported int32                  `protobuf:"varint,2,opt,name=memories_imported,json=memoriesImported,proto3" json:"memories_imported,omitempty"` // memories upserted
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -4329,14 +4362,15 @@ func (x *TransferRequest) GetMemories() *MemorySelection {
 	return nil
 }
 
+// TransferResponse reports what a Transfer sent and, with clear set, what it then deleted.
 type TransferResponse struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
-	ManifestId          string                 `protobuf:"bytes,1,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"`
-	EventsTransferred   int32                  `protobuf:"varint,2,opt,name=events_transferred,json=eventsTransferred,proto3" json:"events_transferred,omitempty"`
-	MemoriesTransferred int32                  `protobuf:"varint,3,opt,name=memories_transferred,json=memoriesTransferred,proto3" json:"memories_transferred,omitempty"`
-	MemoriesCleared     int32                  `protobuf:"varint,4,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"`
-	EventsCleared       int32                  `protobuf:"varint,5,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`
-	InstanceId          string                 `protobuf:"bytes,6,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // the instance holding the manifest; see ExportResponse.instance_id
+	ManifestId          string                 `protobuf:"bytes,1,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"`                             // identifies what was captured; pass it to Clear to delete those records later
+	EventsTransferred   int32                  `protobuf:"varint,2,opt,name=events_transferred,json=eventsTransferred,proto3" json:"events_transferred,omitempty"`       // events the target accepted
+	MemoriesTransferred int32                  `protobuf:"varint,3,opt,name=memories_transferred,json=memoriesTransferred,proto3" json:"memories_transferred,omitempty"` // memories the target accepted
+	MemoriesCleared     int32                  `protobuf:"varint,4,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"`             // memories deleted afterwards; 0 unless clear was set
+	EventsCleared       int32                  `protobuf:"varint,5,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`                   // events deleted afterwards; 0 unless clear was set
+	InstanceId          string                 `protobuf:"bytes,6,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                             // the instance holding the manifest; see ExportResponse.instance_id
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -4419,7 +4453,7 @@ func (x *TransferResponse) GetInstanceId() string {
 // them.
 type ClearRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ManifestId    string                 `protobuf:"bytes,1,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"`
+	ManifestId    string                 `protobuf:"bytes,1,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"` // the manifest an Export or Transfer returned; held in memory by the instance that made it (see ExportResponse.instance_id)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4461,10 +4495,12 @@ func (x *ClearRequest) GetManifestId() string {
 	return ""
 }
 
+// ClearResponse reports what Clear deleted. A record created or recalled since the snapshot
+// survives and is not counted.
 type ClearResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	MemoriesCleared int32                  `protobuf:"varint,1,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"`
-	EventsCleared   int32                  `protobuf:"varint,2,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`
+	MemoriesCleared int32                  `protobuf:"varint,1,opt,name=memories_cleared,json=memoriesCleared,proto3" json:"memories_cleared,omitempty"` // memories deleted
+	EventsCleared   int32                  `protobuf:"varint,2,opt,name=events_cleared,json=eventsCleared,proto3" json:"events_cleared,omitempty"`       // events deleted, each once it had no memories left
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4713,9 +4749,9 @@ func (x *DeleteMemoriesByFilterRequest) GetDeleteEmptyEvents() bool {
 // call runs, and it will be deleted too if the call has not finished.
 type DeleteMemoriesByFilterResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	MemoriesDeleted int64                  `protobuf:"varint,1,opt,name=memories_deleted,json=memoriesDeleted,proto3" json:"memories_deleted,omitempty"`
-	EventsDeleted   int64                  `protobuf:"varint,2,opt,name=events_deleted,json=eventsDeleted,proto3" json:"events_deleted,omitempty"` // events removed because the deletion left them empty; always 0 unless delete_empty_events was set
-	Complete        bool                   `protobuf:"varint,3,opt,name=complete,proto3" json:"complete,omitempty"`                                // true when the filter matched nothing more; false when max_deletions stopped the call with matches still standing, so the same request can be sent again
+	MemoriesDeleted int64                  `protobuf:"varint,1,opt,name=memories_deleted,json=memoriesDeleted,proto3" json:"memories_deleted,omitempty"` // memories this call deleted
+	EventsDeleted   int64                  `protobuf:"varint,2,opt,name=events_deleted,json=eventsDeleted,proto3" json:"events_deleted,omitempty"`       // events removed because the deletion left them empty; always 0 unless delete_empty_events was set
+	Complete        bool                   `protobuf:"varint,3,opt,name=complete,proto3" json:"complete,omitempty"`                                      // true when the filter matched nothing more; false when max_deletions stopped the call with matches still standing, so the same request can be sent again
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4930,7 +4966,7 @@ func (x *DeleteEventsByFilterRequest) GetDeleteMemories() bool {
 // DeleteMemoriesByFilterResponse.
 type DeleteEventsByFilterResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	EventsDeleted    int64                  `protobuf:"varint,1,opt,name=events_deleted,json=eventsDeleted,proto3" json:"events_deleted,omitempty"`
+	EventsDeleted    int64                  `protobuf:"varint,1,opt,name=events_deleted,json=eventsDeleted,proto3" json:"events_deleted,omitempty"`          // events this call deleted
 	MemoriesDeleted  int64                  `protobuf:"varint,2,opt,name=memories_deleted,json=memoriesDeleted,proto3" json:"memories_deleted,omitempty"`    // memories deleted with their event; always 0 unless delete_memories was set
 	MemoriesOrphaned int64                  `protobuf:"varint,3,opt,name=memories_orphaned,json=memoriesOrphaned,proto3" json:"memories_orphaned,omitempty"` // memories that outlived their event with event_id cleared; always 0 when delete_memories was set
 	Complete         bool                   `protobuf:"varint,4,opt,name=complete,proto3" json:"complete,omitempty"`                                         // true when the filter matched nothing more; false when max_deletions stopped the call
@@ -4996,9 +5032,10 @@ func (x *DeleteEventsByFilterResponse) GetComplete() bool {
 	return false
 }
 
+// GeneralResponse is the reply of an RPC that reports only whether it did what was asked.
 type GeneralResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"` // true when the RPC did everything asked; each RPC says what false means
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5093,17 +5130,17 @@ func (x *PreviewConsolidationRequest) GetLimit() int32 {
 // would be lost, it is not a way to read the store.
 type ForgetCandidate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	EventId       string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"` // empty for a memory with no event
-	Group         string                 `protobuf:"bytes,3,opt,name=group,proto3" json:"group,omitempty"`
-	Significance  int32                  `protobuf:"varint,4,opt,name=significance,proto3" json:"significance,omitempty"`            // the memory's stored significance, as ranked
-	Value         float64                `protobuf:"fixed64,5,opt,name=value,proto3" json:"value,omitempty"`                         // the computed decayed value that decided it (see docs/consolidation.md)
-	Threshold     float64                `protobuf:"fixed64,6,opt,name=threshold,proto3" json:"threshold,omitempty"`                 // the capacity-pressure-scaled deletion threshold value was compared against
-	BodyBytes     int64                  `protobuf:"varint,7,opt,name=body_bytes,json=bodyBytes,proto3" json:"body_bytes,omitempty"` // stored size of the body, after compression - the same measure capacity accounting uses
-	Rule          ForgetRule             `protobuf:"varint,8,opt,name=rule,proto3,enum=hippocampus.v1.ForgetRule" json:"rule,omitempty"`
-	TimeStamp     int64                  `protobuf:"varint,9,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`           // UnixNano
-	TimeRecalled  int64                  `protobuf:"varint,10,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"` // UnixNano of the most recent recall; 0 if never recalled
-	RecallCount   int32                  `protobuf:"varint,11,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                              // the memory's id
+	EventId       string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                     // empty for a memory with no event
+	Group         string                 `protobuf:"bytes,3,opt,name=group,proto3" json:"group,omitempty"`                                        // the memory's group label
+	Significance  int32                  `protobuf:"varint,4,opt,name=significance,proto3" json:"significance,omitempty"`                         // the memory's stored significance, as ranked
+	Value         float64                `protobuf:"fixed64,5,opt,name=value,proto3" json:"value,omitempty"`                                      // the computed decayed value that decided it (see docs/consolidation.md)
+	Threshold     float64                `protobuf:"fixed64,6,opt,name=threshold,proto3" json:"threshold,omitempty"`                              // the capacity-pressure-scaled deletion threshold value was compared against
+	BodyBytes     int64                  `protobuf:"varint,7,opt,name=body_bytes,json=bodyBytes,proto3" json:"body_bytes,omitempty"`              // stored size of the body, after compression - the same measure capacity accounting uses
+	Rule          ForgetRule             `protobuf:"varint,8,opt,name=rule,proto3,enum=hippocampus.v1.ForgetRule" json:"rule,omitempty"`          // which path would take it
+	TimeStamp     int64                  `protobuf:"varint,9,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`              // UnixNano
+	TimeRecalled  int64                  `protobuf:"varint,10,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"`    // UnixNano of the most recent recall; 0 if never recalled
+	RecallCount   int32                  `protobuf:"varint,11,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`       // how many times it has been recalled
 	ExternalBytes int64                  `protobuf:"varint,12,opt,name=external_bytes,json=externalBytes,proto3" json:"external_bytes,omitempty"` // Memory.external_bytes: the payload elsewhere that forgetting this memory releases; 0 for a memory pointing at nothing
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5244,15 +5281,15 @@ type PreviewConsolidationResponse struct {
 	// eviction runs. They are counted, never listed - on a healthy store almost everything is
 	// retained, so listing them would return the store.
 	MemoriesRetained int32 `protobuf:"varint,5,opt,name=memories_retained,json=memoriesRetained,proto3" json:"memories_retained,omitempty"`
-	RetainedBytes    int64 `protobuf:"varint,6,opt,name=retained_bytes,json=retainedBytes,proto3" json:"retained_bytes,omitempty"`
+	RetainedBytes    int64 `protobuf:"varint,6,opt,name=retained_bytes,json=retainedBytes,proto3" json:"retained_bytes,omitempty"` // the stored size of the memories_retained
 	// The decision inputs as they stood for this preview, so the numbers above can be read against
 	// the configuration that produced them.
 	CapacityPressure  float64            `protobuf:"fixed64,7,opt,name=capacity_pressure,json=capacityPressure,proto3" json:"capacity_pressure,omitempty"`    // multiplier applied to the deletion threshold by how full the store is (1.0 = no effect)
 	DeletionThreshold float64            `protobuf:"fixed64,8,opt,name=deletion_threshold,json=deletionThreshold,proto3" json:"deletion_threshold,omitempty"` // the scaled threshold actually applied: deletionThreshold * capacity_pressure
 	UsedBytes         int64              `protobuf:"varint,9,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`                          // the store's current used bytes
 	CapacityBytes     int64              `protobuf:"varint,10,opt,name=capacity_bytes,json=capacityBytes,proto3" json:"capacity_bytes,omitempty"`             // consolidation.capacityBytes; 0 when no byte capacity is configured, in which case eviction never runs
-	Candidates        []*ForgetCandidate `protobuf:"bytes,11,rep,name=candidates,proto3" json:"candidates,omitempty"`
-	Truncated         bool               `protobuf:"varint,12,opt,name=truncated,proto3" json:"truncated,omitempty"` // true when more memories would be forgotten than limit returned
+	Candidates        []*ForgetCandidate `protobuf:"bytes,11,rep,name=candidates,proto3" json:"candidates,omitempty"`                                         // the memories that would go, at most the request's limit
+	Truncated         bool               `protobuf:"varint,12,opt,name=truncated,proto3" json:"truncated,omitempty"`                                          // true when more memories would be forgotten than limit returned
 	// The external axis (see Memory.external_bytes), reported on the same basis as the three fields
 	// above it: what the candidates point at, what the store currently points at in total, and the
 	// target that decides whether eviction runs on that axis at all. external_bytes_freed is the sum
@@ -5425,10 +5462,10 @@ func (x *PreviewConsolidationResponse) GetMemoriesExpired() int32 {
 // There is no body, and there never will be: this says a memory was forgotten, not what it said.
 type ForgottenMemory struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Seq           int64                  `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`                       // the log's own monotonic key; pass the lowest seen back as after_seq to page
-	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`                          // the forgotten memory's id
-	EventId       string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"` // empty for a memory with no event
-	Group         string                 `protobuf:"bytes,4,opt,name=group,proto3" json:"group,omitempty"`
+	Seq           int64                  `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`                                        // the log's own monotonic key; pass the lowest seen back as after_seq to page
+	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`                                           // the forgotten memory's id
+	EventId       string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                  // empty for a memory with no event
+	Group         string                 `protobuf:"bytes,4,opt,name=group,proto3" json:"group,omitempty"`                                     // the group label it carried
 	Significance  int32                  `protobuf:"varint,5,opt,name=significance,proto3" json:"significance,omitempty"`                      // the memory's significance, as ranked when it went
 	Value         float64                `protobuf:"fixed64,6,opt,name=value,proto3" json:"value,omitempty"`                                   // its computed decayed value at that moment (see docs/consolidation.md)
 	Threshold     float64                `protobuf:"fixed64,7,opt,name=threshold,proto3" json:"threshold,omitempty"`                           // the capacity-pressure-scaled deletion threshold then in force
@@ -5436,8 +5473,8 @@ type ForgottenMemory struct {
 	Rule          ForgetRule             `protobuf:"varint,9,opt,name=rule,proto3,enum=hippocampus.v1.ForgetRule" json:"rule,omitempty"`       // which path took it
 	TimeStamp     int64                  `protobuf:"varint,10,opt,name=time_stamp,json=timeStamp,proto3" json:"time_stamp,omitempty"`          // UnixNano the memory was created
 	TimeRecalled  int64                  `protobuf:"varint,11,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"` // UnixNano of its last recall; 0 if never recalled
-	RecallCount   int32                  `protobuf:"varint,12,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`
-	ForgottenAt   int64                  `protobuf:"varint,13,opt,name=forgotten_at,json=forgottenAt,proto3" json:"forgotten_at,omitempty"` // UnixNano the cycle deleted it
+	RecallCount   int32                  `protobuf:"varint,12,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`    // how many times it had been recalled
+	ForgottenAt   int64                  `protobuf:"varint,13,opt,name=forgotten_at,json=forgottenAt,proto3" json:"forgotten_at,omitempty"`    // UnixNano the cycle deleted it
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5567,9 +5604,9 @@ func (x *ForgottenMemory) GetForgottenAt() int64 {
 // empty request returns the most recent page of the whole log. Records come back newest first.
 type GetForgottenMemoriesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	MemoryId      string                 `protobuf:"bytes,1,opt,name=memory_id,json=memoryId,proto3" json:"memory_id,omitempty"` // a specific memory - "did this exist, and when did it go"
-	EventId       string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Group         string                 `protobuf:"bytes,3,opt,name=group,proto3" json:"group,omitempty"`
+	MemoryId      string                 `protobuf:"bytes,1,opt,name=memory_id,json=memoryId,proto3" json:"memory_id,omitempty"`         // a specific memory - "did this exist, and when did it go"
+	EventId       string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`            // restrict to memories that belonged to this event
+	Group         string                 `protobuf:"bytes,3,opt,name=group,proto3" json:"group,omitempty"`                               // restrict to memories that carried this group label
 	Rule          ForgetRule             `protobuf:"varint,4,opt,name=rule,proto3,enum=hippocampus.v1.ForgetRule" json:"rule,omitempty"` // UNSPECIFIED returns both rules
 	Since         int64                  `protobuf:"varint,5,opt,name=since,proto3" json:"since,omitempty"`                              // UnixNano, inclusive lower bound on forgotten_at
 	Until         int64                  `protobuf:"varint,6,opt,name=until,proto3" json:"until,omitempty"`                              // UnixNano, exclusive upper bound on forgotten_at
@@ -5673,9 +5710,9 @@ func (x *GetForgottenMemoriesRequest) GetLimit() int32 {
 // ambiguous without it: nothing has been forgotten, or nothing is being written down.
 type GetForgottenMemoriesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Memories      []*ForgottenMemory     `protobuf:"bytes,1,rep,name=memories,proto3" json:"memories,omitempty"`
-	Total         int64                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
-	Enabled       bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Memories      []*ForgottenMemory     `protobuf:"bytes,1,rep,name=memories,proto3" json:"memories,omitempty"`               // this page, newest first
+	Total         int64                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`                    // records the whole log holds within the caller's scope, whatever the filter
+	Enabled       bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`                // whether the log is recording; see above
 	NextSeq       int64                  `protobuf:"varint,4,opt,name=next_seq,json=nextSeq,proto3" json:"next_seq,omitempty"` // pass as after_seq for the next page; 0 when the page is the last
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5794,9 +5831,10 @@ func (x *DeleteForgottenMemoriesRequest) GetAll() bool {
 	return false
 }
 
+// DeleteForgottenMemoriesResponse reports how many records were removed from the forgotten log.
 type DeleteForgottenMemoriesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Deleted       int64                  `protobuf:"varint,1,opt,name=deleted,proto3" json:"deleted,omitempty"`
+	Deleted       int64                  `protobuf:"varint,1,opt,name=deleted,proto3" json:"deleted,omitempty"` // records removed
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5845,15 +5883,15 @@ func (x *DeleteForgottenMemoriesResponse) GetDeleted() int64 {
 // queue with zero attempts is simply one the dispatcher has not reached yet.
 type QueuedCallback struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Seq           int64                  `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"` // surrogate key; also the pagination cursor
-	Kind          CallbackKind           `protobuf:"varint,2,opt,name=kind,proto3,enum=hippocampus.v1.CallbackKind" json:"kind,omitempty"`
-	Cause         DeleteCause            `protobuf:"varint,3,opt,name=cause,proto3,enum=hippocampus.v1.DeleteCause" json:"cause,omitempty"`
-	CycleId       int64                  `protobuf:"varint,4,opt,name=cycle_id,json=cycleId,proto3" json:"cycle_id,omitempty"` // groups every delivery one sleep cycle produced; 0 outside a cycle
-	Chunk         int32                  `protobuf:"varint,5,opt,name=chunk,proto3" json:"chunk,omitempty"`                    // 1-based, for a sleep-cycle delivery split across several
-	Chunks        int32                  `protobuf:"varint,6,opt,name=chunks,proto3" json:"chunks,omitempty"`
-	ItemCount     int32                  `protobuf:"varint,7,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"` // how many memories or events this delivery describes
-	QueuedAt      int64                  `protobuf:"varint,8,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`    // UnixNano; when the deletion happened, not when it was last attempted
-	Attempts      int32                  `protobuf:"varint,9,opt,name=attempts,proto3" json:"attempts,omitempty"`
+	Seq           int64                  `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`                                             // surrogate key; also the pagination cursor
+	Kind          CallbackKind           `protobuf:"varint,2,opt,name=kind,proto3,enum=hippocampus.v1.CallbackKind" json:"kind,omitempty"`          // what the delivery reports
+	Cause         DeleteCause            `protobuf:"varint,3,opt,name=cause,proto3,enum=hippocampus.v1.DeleteCause" json:"cause,omitempty"`         // what deleted the items, for a forgotten delivery
+	CycleId       int64                  `protobuf:"varint,4,opt,name=cycle_id,json=cycleId,proto3" json:"cycle_id,omitempty"`                      // groups every delivery one sleep cycle produced; 0 outside a cycle
+	Chunk         int32                  `protobuf:"varint,5,opt,name=chunk,proto3" json:"chunk,omitempty"`                                         // 1-based, for a sleep-cycle delivery split across several
+	Chunks        int32                  `protobuf:"varint,6,opt,name=chunks,proto3" json:"chunks,omitempty"`                                       // how many deliveries the notification was split into
+	ItemCount     int32                  `protobuf:"varint,7,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"`                // how many memories or events this delivery describes
+	QueuedAt      int64                  `protobuf:"varint,8,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`                   // UnixNano; when the deletion happened, not when it was last attempted
+	Attempts      int32                  `protobuf:"varint,9,opt,name=attempts,proto3" json:"attempts,omitempty"`                                   // delivery attempts so far
 	NextAttemptAt int64                  `protobuf:"varint,10,opt,name=next_attempt_at,json=nextAttemptAt,proto3" json:"next_attempt_at,omitempty"` // UnixNano; when the dispatcher may next try
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6029,9 +6067,9 @@ func (x *GetCallbackQueueRequest) GetLimit() int32 {
 // delivered, or nothing is being queued.
 type GetCallbackQueueResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	Deliveries     []*QueuedCallback      `protobuf:"bytes,1,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
-	Depth          int64                  `protobuf:"varint,2,opt,name=depth,proto3" json:"depth,omitempty"` // every delivery waiting, not just this page
-	Enabled        bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Deliveries     []*QueuedCallback      `protobuf:"bytes,1,rep,name=deliveries,proto3" json:"deliveries,omitempty"`                                  // this page, oldest first
+	Depth          int64                  `protobuf:"varint,2,opt,name=depth,proto3" json:"depth,omitempty"`                                           // every delivery waiting, not just this page
+	Enabled        bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`                                       // whether deliveries are being queued; see above
 	OldestQueuedAt int64                  `protobuf:"varint,4,opt,name=oldest_queued_at,json=oldestQueuedAt,proto3" json:"oldest_queued_at,omitempty"` // UnixNano; 0 when the queue is empty
 	NextSeq        int64                  `protobuf:"varint,5,opt,name=next_seq,json=nextSeq,proto3" json:"next_seq,omitempty"`                        // pass as after_seq for the next page; 0 when the page is the last
 	unknownFields  protoimpl.UnknownFields
@@ -6158,9 +6196,10 @@ func (x *DeleteCallbackQueueRequest) GetAll() bool {
 	return false
 }
 
+// DeleteCallbackQueueResponse reports how many queued deliveries were discarded.
 type DeleteCallbackQueueResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Deleted       int64                  `protobuf:"varint,1,opt,name=deleted,proto3" json:"deleted,omitempty"`
+	Deleted       int64                  `protobuf:"varint,1,opt,name=deleted,proto3" json:"deleted,omitempty"` // deliveries discarded
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6270,8 +6309,8 @@ func (x *DecayCurveRequest) GetPoints() int32 {
 // requested significance once its decay clock reads age_days.
 type DecayPoint struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgeDays       float64                `protobuf:"fixed64,1,opt,name=age_days,json=ageDays,proto3" json:"age_days,omitempty"`
-	Value         float64                `protobuf:"fixed64,2,opt,name=value,proto3" json:"value,omitempty"`
+	AgeDays       float64                `protobuf:"fixed64,1,opt,name=age_days,json=ageDays,proto3" json:"age_days,omitempty"` // days on the decay clock
+	Value         float64                `protobuf:"fixed64,2,opt,name=value,proto3" json:"value,omitempty"`                    // the decayed value at that age
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6328,7 +6367,7 @@ type DecayCurve struct {
 	Significance    float64                `protobuf:"fixed64,1,opt,name=significance,proto3" json:"significance,omitempty"`                                // the combined significance projected, echoed back
 	MaxAgeDays      float64                `protobuf:"fixed64,2,opt,name=max_age_days,json=maxAgeDays,proto3" json:"max_age_days,omitempty"`                // the span actually projected over, whether requested or chosen by the server
 	CrossingAgeDays float64                `protobuf:"fixed64,3,opt,name=crossing_age_days,json=crossingAgeDays,proto3" json:"crossing_age_days,omitempty"` // the age at which the curve falls below deletion_threshold; -1 when it does not within the projected span
-	Points          []*DecayPoint          `protobuf:"bytes,4,rep,name=points,proto3" json:"points,omitempty"`
+	Points          []*DecayPoint          `protobuf:"bytes,4,rep,name=points,proto3" json:"points,omitempty"`                                              // the samples, youngest first
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -6397,14 +6436,14 @@ func (x *DecayCurve) GetPoints() []*DecayPoint {
 // a way to read one.
 type MemoryValuation struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
-	Id                    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	EventId               string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                                             // empty for a memory with no event (or one whose event no longer exists)
-	Significance          int32                  `protobuf:"varint,3,opt,name=significance,proto3" json:"significance,omitempty"`                                                 // the memory's own stored significance, as ranked
-	EffectiveSignificance float64                `protobuf:"fixed64,4,opt,name=effective_significance,json=effectiveSignificance,proto3" json:"effective_significance,omitempty"` // what the decay actually acts on: the memory's own significance plus its event's, the damped link contributions below, and the weighted recall count
-	Value                 float64                `protobuf:"fixed64,5,opt,name=value,proto3" json:"value,omitempty"`                                                              // the computed decayed value (see docs/consolidation.md)
-	Threshold             float64                `protobuf:"fixed64,6,opt,name=threshold,proto3" json:"threshold,omitempty"`                                                      // the capacity-pressure-scaled deletion threshold value is compared against
-	AgeDays               float64                `protobuf:"fixed64,7,opt,name=age_days,json=ageDays,proto3" json:"age_days,omitempty"`                                           // days since the memory's decay clock last reset - its creation, or its most recent recall
-	RecallCount           int32                  `protobuf:"varint,8,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`
+	Id                    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                                         // the memory's id
+	EventId               string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`                                                // empty for a memory with no event (or one whose event no longer exists)
+	Significance          int32                  `protobuf:"varint,3,opt,name=significance,proto3" json:"significance,omitempty"`                                                    // the memory's own stored significance, as ranked
+	EffectiveSignificance float64                `protobuf:"fixed64,4,opt,name=effective_significance,json=effectiveSignificance,proto3" json:"effective_significance,omitempty"`    // what the decay actually acts on: the memory's own significance plus its event's, the damped link contributions below, and the weighted recall count
+	Value                 float64                `protobuf:"fixed64,5,opt,name=value,proto3" json:"value,omitempty"`                                                                 // the computed decayed value (see docs/consolidation.md)
+	Threshold             float64                `protobuf:"fixed64,6,opt,name=threshold,proto3" json:"threshold,omitempty"`                                                         // the capacity-pressure-scaled deletion threshold value is compared against
+	AgeDays               float64                `protobuf:"fixed64,7,opt,name=age_days,json=ageDays,proto3" json:"age_days,omitempty"`                                              // days since the memory's decay clock last reset - its creation, or its most recent recall
+	RecallCount           int32                  `protobuf:"varint,8,opt,name=recall_count,json=recallCount,proto3" json:"recall_count,omitempty"`                                   // how many times it has been recalled
 	TimeRecalled          int64                  `protobuf:"varint,9,opt,name=time_recalled,json=timeRecalled,proto3" json:"time_recalled,omitempty"`                                // UnixNano of the most recent recall; 0 if never recalled
 	WouldConsolidate      bool                   `protobuf:"varint,10,opt,name=would_consolidate,json=wouldConsolidate,proto3" json:"would_consolidate,omitempty"`                   // a cycle running now would forget this memory
 	Retained              bool                   `protobuf:"varint,11,opt,name=retained,proto3" json:"retained,omitempty"`                                                           // held by consolidation.minimumRetentionInDays, so neither consolidation nor capacity eviction may take it
@@ -6645,13 +6684,13 @@ type ExplainConsolidationResponse struct {
 	CapacityMemories  int32                  `protobuf:"varint,6,opt,name=capacity_memories,json=capacityMemories,proto3" json:"capacity_memories,omitempty"`     // consolidation.capacityMemories; 0 when no row capacity is configured
 	// The configured decay policy, so a client can label what it is showing without a second source
 	// of truth for it.
-	Method                 int32              `protobuf:"varint,7,opt,name=method,proto3" json:"method,omitempty"` // consolidation.method (1-6; see docs/consolidation.md)
-	Aggressiveness         float64            `protobuf:"fixed64,8,opt,name=aggressiveness,proto3" json:"aggressiveness,omitempty"`
-	UnitsOfAgeInDays       float64            `protobuf:"fixed64,9,opt,name=units_of_age_in_days,json=unitsOfAgeInDays,proto3" json:"units_of_age_in_days,omitempty"` // days per unit of age fed to the decay algorithm
-	MinimumAgeInDays       int32              `protobuf:"varint,10,opt,name=minimum_age_in_days,json=minimumAgeInDays,proto3" json:"minimum_age_in_days,omitempty"`
-	MinimumRetentionInDays int32              `protobuf:"varint,11,opt,name=minimum_retention_in_days,json=minimumRetentionInDays,proto3" json:"minimum_retention_in_days,omitempty"`
-	Valuations             []*MemoryValuation `protobuf:"bytes,12,rep,name=valuations,proto3" json:"valuations,omitempty"`
-	Curve                  *DecayCurve        `protobuf:"bytes,13,opt,name=curve,proto3" json:"curve,omitempty"` // absent when none was requested
+	Method                 int32              `protobuf:"varint,7,opt,name=method,proto3" json:"method,omitempty"`                                                                    // consolidation.method (1-6; see docs/consolidation.md)
+	Aggressiveness         float64            `protobuf:"fixed64,8,opt,name=aggressiveness,proto3" json:"aggressiveness,omitempty"`                                                   // consolidation.aggressiveness, the a in the decay formulas
+	UnitsOfAgeInDays       float64            `protobuf:"fixed64,9,opt,name=units_of_age_in_days,json=unitsOfAgeInDays,proto3" json:"units_of_age_in_days,omitempty"`                 // days per unit of age fed to the decay algorithm
+	MinimumAgeInDays       int32              `protobuf:"varint,10,opt,name=minimum_age_in_days,json=minimumAgeInDays,proto3" json:"minimum_age_in_days,omitempty"`                   // consolidation.minimumAgeInDays: a younger item is not judged by value
+	MinimumRetentionInDays int32              `protobuf:"varint,11,opt,name=minimum_retention_in_days,json=minimumRetentionInDays,proto3" json:"minimum_retention_in_days,omitempty"` // consolidation.minimumRetentionInDays: a younger item is never forgotten; 0 when unset
+	Valuations             []*MemoryValuation `protobuf:"bytes,12,rep,name=valuations,proto3" json:"valuations,omitempty"`                                                            // one per requested id the store holds and the caller may read, in request order; the rest are omitted
+	Curve                  *DecayCurve        `protobuf:"bytes,13,opt,name=curve,proto3" json:"curve,omitempty"`                                                                      // absent when none was requested
 	// The third pressure axis (see Memory.external_bytes). Reported beside the other two because
 	// capacity_pressure above is the greater of all three utilisations, so a client showing the
 	// pressure without this cannot explain a reading the store's own size does not account for.
@@ -6805,20 +6844,20 @@ func (x *ExplainConsolidationResponse) GetCapacityExternalBytes() int64 {
 // feed, so a deployment exporting no telemetry still gets them.
 type CycleReport struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
-	StartedAt  int64                  `protobuf:"varint,1,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"` // UnixNano the cycle began
-	DurationMs int64                  `protobuf:"varint,2,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	StartedAt  int64                  `protobuf:"varint,1,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`    // UnixNano the cycle began
+	DurationMs int64                  `protobuf:"varint,2,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"` // how long the cycle ran, in milliseconds
 	// The two decay paths, reported separately because they answer different questions: memories
 	// consolidated fell below the value threshold, memories evicted were above it but had to go
 	// anyway to bring the store back under its capacity target. A store evicting steadily while
 	// consolidating nothing is configured wrongly, and only the split shows that.
 	MemoriesConsolidated    int32  `protobuf:"varint,3,opt,name=memories_consolidated,json=memoriesConsolidated,proto3" json:"memories_consolidated,omitempty"`
-	EventsConsolidated      int32  `protobuf:"varint,4,opt,name=events_consolidated,json=eventsConsolidated,proto3" json:"events_consolidated,omitempty"`
-	MemoriesEvicted         int32  `protobuf:"varint,5,opt,name=memories_evicted,json=memoriesEvicted,proto3" json:"memories_evicted,omitempty"`
-	EventsEvicted           int32  `protobuf:"varint,6,opt,name=events_evicted,json=eventsEvicted,proto3" json:"events_evicted,omitempty"`
+	EventsConsolidated      int32  `protobuf:"varint,4,opt,name=events_consolidated,json=eventsConsolidated,proto3" json:"events_consolidated,omitempty"`                // events the consolidation passes deleted
+	MemoriesEvicted         int32  `protobuf:"varint,5,opt,name=memories_evicted,json=memoriesEvicted,proto3" json:"memories_evicted,omitempty"`                         // memories capacity eviction deleted
+	EventsEvicted           int32  `protobuf:"varint,6,opt,name=events_evicted,json=eventsEvicted,proto3" json:"events_evicted,omitempty"`                               // events eviction left empty, deleted with their last memory
 	BytesFreed              int64  `protobuf:"varint,7,opt,name=bytes_freed,json=bytesFreed,proto3" json:"bytes_freed,omitempty"`                                        // estimated, from the eviction pass
 	SummarisationCandidates int32  `protobuf:"varint,8,opt,name=summarisation_candidates,json=summarisationCandidates,proto3" json:"summarisation_candidates,omitempty"` // events the scan cached for GetSummarisationCandidates
-	Success                 bool   `protobuf:"varint,9,opt,name=success,proto3" json:"success,omitempty"`
-	Failure                 string `protobuf:"bytes,10,opt,name=failure,proto3" json:"failure,omitempty"` // the reason when success is false; empty otherwise
+	Success                 bool   `protobuf:"varint,9,opt,name=success,proto3" json:"success,omitempty"`                                                                // whether the cycle completed; see failure
+	Failure                 string `protobuf:"bytes,10,opt,name=failure,proto3" json:"failure,omitempty"`                                                                // the reason when success is false; empty otherwise
 	// trigger names what STARTED this cycle: "timer" (the scheduled cycle), "manual" (the Sleep
 	// RPC) or "wal" (the write-ahead log grew past consolidation.walTriggerBytes). A caller that
 	// joined a cycle already in flight does not change it - this describes the cycle that ran, not
@@ -6997,7 +7036,7 @@ func (x *CycleReport) GetEventsExpired() int32 {
 // under that instance's configuration.
 type GetConsolidationStatusResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
-	ConsolidationEnabled bool                   `protobuf:"varint,1,opt,name=consolidation_enabled,json=consolidationEnabled,proto3" json:"consolidation_enabled,omitempty"`
+	ConsolidationEnabled bool                   `protobuf:"varint,1,opt,name=consolidation_enabled,json=consolidationEnabled,proto3" json:"consolidation_enabled,omitempty"` // whether this instance runs the sleep cycle; false on a replica
 	// period_seconds is sleep.periodSeconds. Zero or negative means no timed cycle at all - a
 	// supported mode, for an instance driven only by the Sleep RPC or the WAL trigger - and
 	// next_sleep_at is then 0 rather than a countdown to something that will never fire.
@@ -7009,7 +7048,7 @@ type GetConsolidationStatusResponse struct {
 	// and a client showing a countdown should say "or sooner" rather than imply the schedule is
 	// the only thing that can fire.
 	WalTriggerEnabled bool `protobuf:"varint,4,opt,name=wal_trigger_enabled,json=walTriggerEnabled,proto3" json:"wal_trigger_enabled,omitempty"`
-	SleepInProgress   bool `protobuf:"varint,5,opt,name=sleep_in_progress,json=sleepInProgress,proto3" json:"sleep_in_progress,omitempty"`
+	SleepInProgress   bool `protobuf:"varint,5,opt,name=sleep_in_progress,json=sleepInProgress,proto3" json:"sleep_in_progress,omitempty"` // a cycle is running now
 	// snapshot_ttl_seconds is how long ExplainConsolidation caches the inputs it reports
 	// (capacity pressure, used bytes, memory count). A polling client should pace its calls to that
 	// RPC by this rather than by a guess: the snapshot costs a full scan on the server drivers and
@@ -7151,9 +7190,9 @@ func (x *GetConsolidationStatusResponse) GetFootprint() *StorageFootprint {
 // trimming.
 type AncillaryTable struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
-	Enabled bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Rows    int64                  `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
-	Bytes   int64                  `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	Enabled bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"` // whether the feature is recording into this table now
+	Rows    int64                  `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`       // rows the table holds
+	Bytes   int64                  `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`     // the rows' structural size, the unit the caps are enforced in
 	// limit_bytes is the byte cap configured for this table, or 0 where none is - so bytes has the
 	// bound it is approaching beside it rather than being a figure with nothing to read it against.
 	// Reaching the cap discards rows: for the two queues that is undelivered work (a notification
@@ -7320,9 +7359,9 @@ type AncillaryStorage struct {
 	// rows would occupy if it were compacted. It is therefore not always the sum of the three
 	// `bytes` fields, and is usually larger.
 	TotalBytes    int64           `protobuf:"varint,2,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
-	ForgottenLog  *AncillaryTable `protobuf:"bytes,3,opt,name=forgotten_log,json=forgottenLog,proto3" json:"forgotten_log,omitempty"`
-	SearchOutbox  *AncillaryTable `protobuf:"bytes,4,opt,name=search_outbox,json=searchOutbox,proto3" json:"search_outbox,omitempty"`
-	CallbackQueue *AncillaryTable `protobuf:"bytes,5,opt,name=callback_queue,json=callbackQueue,proto3" json:"callback_queue,omitempty"`
+	ForgottenLog  *AncillaryTable `protobuf:"bytes,3,opt,name=forgotten_log,json=forgottenLog,proto3" json:"forgotten_log,omitempty"`    // the forgotten log (consolidation.tombstones.*)
+	SearchOutbox  *AncillaryTable `protobuf:"bytes,4,opt,name=search_outbox,json=searchOutbox,proto3" json:"search_outbox,omitempty"`    // the OpenSearch delete outbox (opensearch.outbox.*)
+	CallbackQueue *AncillaryTable `protobuf:"bytes,5,opt,name=callback_queue,json=callbackQueue,proto3" json:"callback_queue,omitempty"` // the outbound callback queue (callbacks.*)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7408,14 +7447,14 @@ func (x *AncillaryStorage) GetCallbackQueue() *AncillaryTable {
 // judged moves over days.
 type IndexFootprint struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Table string                 `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"`
-	Index string                 `protobuf:"bytes,2,opt,name=index,proto3" json:"index,omitempty"`
+	Table string                 `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"` // the table the index belongs to
+	Index string                 `protobuf:"bytes,2,opt,name=index,proto3" json:"index,omitempty"` // the index's name
 	// bytes is what the engine says this index occupies, space it has not reclaimed included. A
 	// B-tree page emptied by a delete is marked reusable and never repacked, and a store keyed on a
 	// UUID that deletes millions of rows over its life never refills one - so this figure grows with
 	// what the store has forgotten rather than with what it holds.
 	Bytes         int64 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
-	Entries       int64 `protobuf:"varint,4,opt,name=entries,proto3" json:"entries,omitempty"`
+	Entries       int64 `protobuf:"varint,4,opt,name=entries,proto3" json:"entries,omitempty"` // the catalogue's estimate of the index's entries; see above
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7486,11 +7525,11 @@ func (x *IndexFootprint) GetEntries() int64 {
 // measured against the heap was 78 MB and fine, and the indexes were 687 MB.
 type TableFootprint struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Table string                 `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"`
+	Table string                 `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"` // the table's name
 	// bytes is everything the engine holds for this table - rows, out-of-line storage and indexes
 	// together. index_bytes is the part of it the indexes account for; the difference is the rows.
 	Bytes      int64 `protobuf:"varint,2,opt,name=bytes,proto3" json:"bytes,omitempty"`
-	IndexBytes int64 `protobuf:"varint,3,opt,name=index_bytes,json=indexBytes,proto3" json:"index_bytes,omitempty"`
+	IndexBytes int64 `protobuf:"varint,3,opt,name=index_bytes,json=indexBytes,proto3" json:"index_bytes,omitempty"` // the part of bytes that is indexes
 	// indexes is largest first, and capped - an index name is a metric attribute on the gauge that
 	// carries the same figures, and while the indexes this store creates are a fixed set, an
 	// operator may add their own. Truncation drops the smallest, which is what a reader would skip.
@@ -7580,20 +7619,20 @@ func (x *TableFootprint) GetIndexes() []*IndexFootprint {
 // target. PostgreSQL answers per index and MySQL per table (see TableFootprint.indexes).
 type StorageFootprint struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
-	Measured   bool                   `protobuf:"varint,1,opt,name=measured,proto3" json:"measured,omitempty"`
+	Measured   bool                   `protobuf:"varint,1,opt,name=measured,proto3" json:"measured,omitempty"`                       // false where the driver cannot answer; see above
 	MeasuredAt int64                  `protobuf:"varint,2,opt,name=measured_at,json=measuredAt,proto3" json:"measured_at,omitempty"` // UnixNano the cycle took this measurement
 	// bytes is the sum over the counted tables, and index_bytes the part of it that is indexes.
 	// Read bytes against used_bytes: the ratio is the finding, and on the deployment above it was
 	// 5.8. The tables the target deliberately EXCLUDES are not in here - they have their own
 	// reading, which reports their disk the same way. See AncillaryStorage.
 	Bytes      int64 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
-	IndexBytes int64 `protobuf:"varint,4,opt,name=index_bytes,json=indexBytes,proto3" json:"index_bytes,omitempty"`
+	IndexBytes int64 `protobuf:"varint,4,opt,name=index_bytes,json=indexBytes,proto3" json:"index_bytes,omitempty"` // the part of bytes that is indexes
 	// estimated_bytes is what the store's own accounting believes those same tables hold - the
 	// figure used_bytes publishes and eviction acts on - carried here so the comparison travels as
 	// one measurement rather than as two readings a client has to pair up itself. 0 where this
 	// cycle could not take it.
 	EstimatedBytes int64             `protobuf:"varint,5,opt,name=estimated_bytes,json=estimatedBytes,proto3" json:"estimated_bytes,omitempty"`
-	Tables         []*TableFootprint `protobuf:"bytes,6,rep,name=tables,proto3" json:"tables,omitempty"`
+	Tables         []*TableFootprint `protobuf:"bytes,6,rep,name=tables,proto3" json:"tables,omitempty"` // one per counted table
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -7671,14 +7710,14 @@ func (x *StorageFootprint) GetTables() []*TableFootprint {
 }
 
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the
-// caller's effective authorization tier ("reader", "writer", or "admin"); auth_enabled is false
+// caller's effective authorisation tier ("reader", "writer", or "admin"); auth_enabled is false
 // when the service runs without authentication, in which case role is "admin" (unrestricted) and
 // client_id is empty.
 type WhoAmIResponse struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
-	ClientId    string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	Role        string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
-	AuthEnabled bool                   `protobuf:"varint,3,opt,name=auth_enabled,json=authEnabled,proto3" json:"auth_enabled,omitempty"`
+	ClientId    string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`           // the token's client_id; empty without authentication
+	Role        string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`                                   // the effective tier: "reader", "writer" or "admin"
+	AuthEnabled bool                   `protobuf:"varint,3,opt,name=auth_enabled,json=authEnabled,proto3" json:"auth_enabled,omitempty"` // whether the service authenticates callers
 	// search_modes lists the SearchMemories modes this deployment can serve, so a client can adapt
 	// rather than discover an unavailable mode by having a search rejected. It depends on the
 	// storage driver and on whether OpenSearch and an embedding model are configured - never on the
@@ -7721,7 +7760,7 @@ type WhoAmIResponse struct {
 	// down" and "nothing has been forgotten" render identically until a client is told which it is
 	// looking at, and only the first is worth hiding the control for.
 	TombstonesEnabled bool `protobuf:"varint,9,opt,name=tombstones_enabled,json=tombstonesEnabled,proto3" json:"tombstones_enabled,omitempty"`
-	// topology_tier is the minimum authorization tier GetTopology requires on this deployment
+	// topology_tier is the minimum authorisation tier GetTopology requires on this deployment
 	// (topology.minimumTier), as a tier name. It is reported rather than resolved to a bool because
 	// it belongs with its neighbours above, which are all properties of the DEPLOYMENT and never of
 	// the caller; a client compares it against the role it was told in this same response, which is
@@ -7873,8 +7912,8 @@ func (x *WhoAmIResponse) GetCallbacksEnabled() bool {
 // ever reaches this message - see GetTopology.
 type TopologyAttribute struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`     // the setting or property
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"` // its value, already redacted
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7926,12 +7965,12 @@ func (x *TopologyAttribute) GetValue() string {
 // TopologyNode is one component of the deployment.
 type TopologyNode struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
-	Id     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // stable within a response: "self", "store", "declared:<name>", ...
-	Kind   TopologyNodeKind       `protobuf:"varint,2,opt,name=kind,proto3,enum=hippocampus.v1.TopologyNodeKind" json:"kind,omitempty"`
-	Name   string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`     // what to label it; for a declared component, the name the operator gave
-	Detail string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"` // the redacted endpoint, host, or file path; empty where there is none
-	Source TopologyNodeSource     `protobuf:"varint,5,opt,name=source,proto3,enum=hippocampus.v1.TopologyNodeSource" json:"source,omitempty"`
-	Status TopologyStatus         `protobuf:"varint,6,opt,name=status,proto3,enum=hippocampus.v1.TopologyStatus" json:"status,omitempty"`
+	Id     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                 // stable within a response: "self", "store", "declared:<name>", ...
+	Kind   TopologyNodeKind       `protobuf:"varint,2,opt,name=kind,proto3,enum=hippocampus.v1.TopologyNodeKind" json:"kind,omitempty"`       // what the component is
+	Name   string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`                                             // what to label it; for a declared component, the name the operator gave
+	Detail string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`                                         // the redacted endpoint, host, or file path; empty where there is none
+	Source TopologyNodeSource     `protobuf:"varint,5,opt,name=source,proto3,enum=hippocampus.v1.TopologyNodeSource" json:"source,omitempty"` // how this instance knows of it
+	Status TopologyStatus         `protobuf:"varint,6,opt,name=status,proto3,enum=hippocampus.v1.TopologyStatus" json:"status,omitempty"`     // its health as the last probe found it
 	// status_detail explains a status that is not OK, in a form meant to be shown to an operator
 	// ("connection refused", "index red", "readiness reports store unreachable"). Empty when OK.
 	StatusDetail string `protobuf:"bytes,7,opt,name=status_detail,json=statusDetail,proto3" json:"status_detail,omitempty"`
@@ -7940,8 +7979,8 @@ type TopologyNode struct {
 	// something the RPC does: a caller is always reading a snapshot, and how old it is matters when
 	// something has just broken.
 	CheckedAt     int64                `protobuf:"varint,8,opt,name=checked_at,json=checkedAt,proto3" json:"checked_at,omitempty"`
-	Version       string               `protobuf:"bytes,9,opt,name=version,proto3" json:"version,omitempty"` // where the component reports one; empty otherwise
-	Attributes    []*TopologyAttribute `protobuf:"bytes,10,rep,name=attributes,proto3" json:"attributes,omitempty"`
+	Version       string               `protobuf:"bytes,9,opt,name=version,proto3" json:"version,omitempty"`        // where the component reports one; empty otherwise
+	Attributes    []*TopologyAttribute `protobuf:"bytes,10,rep,name=attributes,proto3" json:"attributes,omitempty"` // kind-specific settings and properties
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8051,10 +8090,10 @@ func (x *TopologyNode) GetAttributes() []*TopologyAttribute {
 // what a firewall rule, a credential, and an outage all follow.
 type TopologyEdge struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FromId        string                 `protobuf:"bytes,1,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
-	ToId          string                 `protobuf:"bytes,2,opt,name=to_id,json=toId,proto3" json:"to_id,omitempty"`
-	Label         string                 `protobuf:"bytes,3,opt,name=label,proto3" json:"label,omitempty"`        // what crosses it: "reads/writes", "indexes", "verifies", ...
-	Optional      bool                   `protobuf:"varint,4,opt,name=optional,proto3" json:"optional,omitempty"` // the edge exists only because an optional feature is enabled
+	FromId        string                 `protobuf:"bytes,1,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"` // the node that initiates the connection
+	ToId          string                 `protobuf:"bytes,2,opt,name=to_id,json=toId,proto3" json:"to_id,omitempty"`       // the node it reaches
+	Label         string                 `protobuf:"bytes,3,opt,name=label,proto3" json:"label,omitempty"`                 // what crosses it: "reads/writes", "indexes", "verifies", ...
+	Optional      bool                   `protobuf:"varint,4,opt,name=optional,proto3" json:"optional,omitempty"`          // the edge exists only because an optional feature is enabled
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8122,8 +8161,8 @@ func (x *TopologyEdge) GetOptional() bool {
 // and a flat shape means a new component type is a new TopologyNodeKind rather than a new field.
 type GetTopologyResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Nodes []*TopologyNode        `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	Edges []*TopologyEdge        `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
+	Nodes []*TopologyNode        `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"` // every component, this instance first
+	Edges []*TopologyEdge        `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"` // the connections between nodes
 	// probe_interval_seconds is how often the background prober refreshes the statuses above. A
 	// polling client should pace itself by this rather than by a guess, for the same reason
 	// GetConsolidationStatus reports snapshot_ttl_seconds: polling faster returns the same snapshot
@@ -8210,6 +8249,7 @@ func (x *GetTopologyResponse) GetWarnings() []string {
 	return nil
 }
 
+// EmptyRequest is the request of an RPC that takes no arguments.
 type EmptyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields

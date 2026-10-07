@@ -170,7 +170,7 @@ service Hippocampus {
 		};
 	}
 
-	// WhoAmI reports the authenticated caller's identity and effective authorization tier
+	// WhoAmI reports the authenticated caller's identity and effective authorisation tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
 	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
@@ -476,7 +476,8 @@ service Hippocampus {
 	}
 
 	// Transfer and archive (embedded -> centralised)
-	// Export snapshots the whole store into an archive object in S3 and records a manifest of
+	// Export snapshots the whole store into an archive object in the configured object store (an S3
+	// bucket, or a directory under archive.directory) and records a manifest of
 	// exactly what was captured; with clear set, the captured records are deleted once the upload
 	// has succeeded.
 	rpc Export(ExportRequest) returns (ExportResponse) {
@@ -486,7 +487,8 @@ service Hippocampus {
 		};
 	}
 
-	// Import streams an archive object from S3 into the store, upserting every record by id with
+	// Import streams an archive object from the configured object store into the store, upserting
+	// every record by id with
 	// its full state preserved. Idempotent; aborts on the first error.
 	rpc Import(ImportRequest) returns (ImportResponse) {
 		option (google.api.http) = {
@@ -728,28 +730,33 @@ message StoreEventResponse {
 	bool                                   rejected                  = 3; // true when the event was dropped for significance below event.minimumSignificance
 }
 
+// EndEventRequest sets an event's end time, marking it complete.
 message EndEventRequest {
 	string                                 id                        = 1; // the event to end
 	int64                                  time_end                  = 2; // UnixNano; 0 (the default) uses the current server time
 }
 
+// UpdateEventSignificanceRequest re-ranks an event, by an absolute value or a placement.
 message UpdateEventSignificanceRequest {
 	string                                 id                        = 1; // the event to update
 	int32                                  significance              = 2; // the new absolute significance; must be >= 1 to take effect. IMPORTANT: 0 with no placement is a no-op - it leaves the event's existing significance unchanged; there is no way to reset an event to unranked via this RPC
 	SignificancePlacement                  placement                 = 3; // write-only: rank relative to existing values (see SignificancePlacement); takes precedence over significance when set
 }
 
+// MergeEventsRequest re-points every memory of merge_from onto merge_to.
 message MergeEventsRequest {
 	string                                 merge_to                  = 1; // the surviving event; must already exist
 	string                                 merge_from                = 2; // the event whose memories are moved to merge_to; need not exist - an absent one simply matches no memories
 }
 
+// DeleteEventRequest deletes one event, and either detaches or deletes its memories.
 message DeleteEventRequest {
-	string                                 id                        = 1;
+	string                                 id                        = 1; // the event to delete
 	bool                                   memories                  = 2; // true also deletes the event's memories; false only detaches them
 	bool                                   if_empty                  = 3; // true deletes the event only while it holds none of the caller's memories, and otherwise fails FAILED_PRECONDITION leaving everything in place - what a caller that has deleted the memories it judged uses so a memory that arrived since is never deleted unjudged; excludes memories
 }
 
+// GetEventByIdRequest reads one event by id, optionally with its memories, count and links.
 message GetEventByIdRequest {
 	string                                 id                        = 1; // the event to fetch
 	bool                                   memories                  = 2; // true also loads the event's memories into the response
@@ -757,10 +764,13 @@ message GetEventByIdRequest {
 	bool                                   links                     = 4; // true also loads the event's outbound links into the response (see Event.links); GetEventLinks reads both directions
 }
 
+// GetEventResponse carries the event GetEventById read.
 message GetEventResponse {
-	Event                                  event                     = 1;
+	Event                                  event                     = 1; // the event read
 }
 
+// GetEventsRequest lists the events matching every filter set, a page at a time. An unset filter
+// applies no restriction.
 message GetEventsRequest {
 	int64                                  time_start_min            = 1;  // UnixNano inclusive lower bound on time_start; 0 (the default) means no lower bound
 	int64                                  time_start_max            = 2;  // UnixNano inclusive upper bound on time_start; 0 (the default) means no upper bound
@@ -784,11 +794,14 @@ message GetEventsRequest {
 	string                                 description_contains      = 20; // optional: restrict to events whose description contains this substring, case-insensitively - name_contains's counterpart, and unindexed on the same terms. Empty (the default) applies no restriction
 }
 
+// GetEventsResponse is one page of a GetEvents listing.
 message GetEventsResponse {
-	repeated Event                         events                    = 1;
+	repeated Event                         events                    = 1; // this page
 	int32                                  total_count               = 2; // events matching the filter, ignoring limit/offset — for pagination
 }
 
+// GetMemoriesRequest lists the memories matching every filter set, a page at a time. Reading never
+// reinforces - RecallMemories does. An unset filter applies no restriction.
 message GetMemoriesRequest {
 	int64                                  timestamp_min             = 1; // UnixNano inclusive lower bound on time_stamp; 0 (the default) means no lower bound
 	int64                                  timestamp_max             = 2; // UnixNano inclusive upper bound on time_stamp; 0 (the default) means no upper bound
@@ -815,8 +828,9 @@ message GetMemoriesRequest {
 	repeated string                        ids                       = 23; // optional: restrict to these memory ids, at most 200 - the way to read memories by id WITHOUT reinforcing them, which RecallMemories always does. An id the store does not hold, or one outside the caller's group scope, is simply absent from the page rather than an error, so the answer never says which. Composes with every other field; with linked_to it is the intersection
 }
 
+// GetMemoriesResponse is one page of a GetMemories listing.
 message GetMemoriesResponse {
-	repeated Memory                        memories                  = 1;
+	repeated Memory                        memories                  = 1; // this page
 	int32                                  total_count               = 2; // memories matching the filter, ignoring limit/offset — for pagination
 }
 
@@ -851,18 +865,20 @@ message StoreMemoryResult {
 // StoreMemoriesResponse reports one result per requested memory, positionally: results[i]
 // describes the request's memories[i], and len(results) always equals len(memories).
 message StoreMemoriesResponse {
-	repeated StoreMemoryResult             results                   = 1;
+	repeated StoreMemoryResult             results                   = 1; // one per requested memory, in request order
 	int32                                  stored                    = 2; // memories written
 	int32                                  rejected                  = 3; // memories dropped for significance below memory.minimumSignificance
 	int32                                  failed                    = 4; // memories that could not be written; each carries its code and error in results
 }
 
+// DeleteMemoriesRequest deletes memories by id.
 message DeleteMemoriesRequest {
-	repeated string                        ids                       = 1;
+	repeated string                        ids                       = 1; // the memories to delete; an id the store does not hold is ignored, and the response is then ok false
 }
 
+// RecallMemoriesRequest names the memories to recall and reinforce.
 message RecallMemoriesRequest {
-	repeated string                        ids                       = 1;
+	repeated string                        ids                       = 1; // the memories to recall; an id the store does not hold is absent from the response
 	bool                                   include_linked            = 2; // also return the memories linked to those recalled, one hop, in either direction. The linked memories are returned as an associative recall, not counted as directly recalled: their recall_count is untouched (see consolidation.linkRecallPropagation for what a recall does to a neighbour's decay clock)
 }
 
@@ -887,7 +903,7 @@ enum SearchMode {
 // effective significance - rather than merely fetched, and only the memories actually returned are
 // reinforced.
 message SearchMemoriesRequest {
-	string                                 query                     = 1;
+	string                                 query                     = 1; // the text to match; embedded as well in SEMANTIC and HYBRID modes
 	int32                                  limit                     = 2; // maximum results; a value <= 0 selects the default (10), and a value over 200 is clamped to 200, as GetMemories clamps its page
 	string                                 event_id                  = 3; // optional: restrict matches to a single event
 	bool                                   reinforce                 = 4; // route matches through recall, reinforcing them
@@ -917,26 +933,32 @@ message LinkMemoriesRequest {
 	repeated Link                          links                     = 2; // the targets and their significances; each target must exist and must not be id itself
 }
 
+// UnlinkMemoriesRequest removes links between a memory and others.
 message UnlinkMemoriesRequest {
 	string                                 id                        = 1; // the memory the links start from; must exist
 	repeated string                        ids                       = 2; // targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target
 }
 
+// GetMemoryLinksRequest reads a memory's links.
 message GetMemoryLinksRequest {
 	string                                 id                        = 1; // the memory whose links to return; must exist
 	LinkDirection                          direction                 = 2; // which directions to return; unset means BOTH
 }
 
+// LinkEventsRequest links an event to others, each link carrying its own significance. Linking a
+// pair again re-weights the link rather than duplicating it.
 message LinkEventsRequest {
 	string                                 id                        = 1; // the event the links start from; must exist
 	repeated Link                          links                     = 2; // the targets and their significances; each target must exist and must not be id itself
 }
 
+// UnlinkEventsRequest removes links between an event and others.
 message UnlinkEventsRequest {
 	string                                 id                        = 1; // the event the links start from; must exist
 	repeated string                        ids                       = 2; // targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target
 }
 
+// GetEventLinksRequest reads an event's links.
 message GetEventLinksRequest {
 	string                                 id                        = 1; // the event whose links to return; must exist
 	LinkDirection                          direction                 = 2; // which directions to return; unset means BOTH
@@ -953,8 +975,9 @@ message LinkEdge {
 	int64                                  created                   = 4; // UnixNano the link was first created
 }
 
+// GetLinksResponse carries a memory's or an event's links.
 message GetLinksResponse {
-	repeated LinkEdge                      links                     = 1;
+	repeated LinkEdge                      links                     = 1; // the edges, in the requested directions
 	int64                                  link_significance         = 2; // the queried item's total link significance, both directions - the figure the decay maths damps and weights
 }
 
@@ -962,26 +985,29 @@ message GetLinksResponse {
 // event and replace them with a single caller-supplied summary memory. The service has no
 // visibility into memory content, so it cannot generate the summary itself.
 message ReplaceMemoriesWithSummaryRequest {
-	string                                 event_id                  = 1;
-	Memory                                 summary                   = 2;
+	string                                 event_id                  = 1; // the event whose memories are replaced
+	Memory                                 summary                   = 2; // the summary memory to store in their place; validated before anything is deleted
 }
 
+// ReplaceMemoriesWithSummaryResponse names the summary memory and counts what it replaced.
 message ReplaceMemoriesWithSummaryResponse {
-	string                                 id                        = 1;
-	int32                                  memories_replaced         = 2;
+	string                                 id                        = 1; // the new summary memory's id
+	int32                                  memories_replaced         = 2; // how many memories the summary replaced
 }
 
 // SummarisationCandidate identifies an event whose memories have accumulated enough, and gone
 // quiet for long enough, to be worth condensing into a single summary memory via
 // ReplaceMemoriesWithSummary.
 message SummarisationCandidate {
-	string                                 event_id                  = 1;
-	string                                 event_name                = 2;
-	int32                                  memory_count              = 3;
+	string                                 event_id                  = 1; // the event to summarise
+	string                                 event_name                = 2; // its name
+	int32                                  memory_count              = 3; // memories it holds
 }
 
+// GetSummarisationCandidatesResponse carries the events the last sleep cycle's scan found worth
+// summarising.
 message GetSummarisationCandidatesResponse {
-	repeated SummarisationCandidate         candidates               = 1;
+	repeated SummarisationCandidate         candidates               = 1; // at most consolidation.summarisationMaxCandidates events, as the last cycle found them
 
 	// scan_enabled reports whether this instance runs the candidate scan at all: it needs
 	// consolidation.summarisationMinMemories > 0 AND consolidation.enabled, since the scan is part of
@@ -997,11 +1023,12 @@ message GetSummarisationCandidatesResponse {
 // ReplaceMemoriesWithSummary but with the service authoring the summary. Binary memories are
 // excluded from the LLM prompt (their bodies are opaque, not text).
 message SummariseMemoriesRequest {
-	string                                 event_id                  = 1;
+	string                                 event_id                  = 1; // the event whose memories are summarised and replaced
 	int32                                  significance              = 2; // optional: significance for the resulting summary memory; 0 (and no placement) defaults to the highest significance among the replaced memories
 	SignificancePlacement                  placement                 = 3; // optional: rank the summary relative to existing values (see SignificancePlacement); takes precedence over significance when set
 }
 
+// SummariseMemoriesResponse names the summary memory the LLM wrote and counts what it replaced.
 message SummariseMemoriesResponse {
 	string                                 id                        = 1; // the new summary memory's id
 	int32                                  memories_replaced         = 2; // how many memories the summary replaced
@@ -1011,17 +1038,19 @@ message SummariseMemoriesResponse {
 // ArchiveHeader is the first record of an export archive: a gzip-compressed stream of
 // length-delimited ArchiveRecord messages.
 message ArchiveHeader {
-	int32                                  version                   = 1;
+	int32                                  version                   = 1; // the archive layout version; a reader refuses one it does not know
 	int64                                  exported_at               = 2; // UnixNano
-	int32                                  event_count               = 3;
-	int32                                  memory_count              = 4;
+	int32                                  event_count               = 3; // the store's event count as the export began: informational, since the store moves during the walk and a selective export still counts the whole store. ExportResponse carries the exact figure
+	int32                                  memory_count              = 4; // the store's memory count as the export began, on event_count's terms
 }
 
+// ArchiveRecord is one length-delimited record of an export archive: the header first, then every
+// event, then every memory.
 message ArchiveRecord {
 	oneof record {
-		ArchiveHeader                          header                   = 1;
-		Event                                  event                    = 2;
-		Memory                                 memory                   = 3;
+		ArchiveHeader                          header                   = 1; // the first record, and only the first
+		Event                                  event                    = 2; // one event, with its full state
+		Memory                                 memory                   = 3; // one memory, with its full state
 	}
 }
 
@@ -1030,18 +1059,16 @@ message ArchiveRecord {
 // write. It is the ingest half of Transfer and is re-sendable: re-importing the same rows is
 // idempotent.
 message ImportBatchRequest {
-	repeated Event                         events                    = 1;
-	repeated Memory                        memories                  = 2;
+	repeated Event                         events                    = 1; // upserted first, so a memory may name an event in the same batch
+	repeated Memory                        memories                  = 2; // upserted by id; their links are applied once every row in the batch exists
 }
 
+// ImportBatchResponse reports how many rows ImportBatch upserted.
 message ImportBatchResponse {
-	int32                                  events_imported           = 1;
-	int32                                  memories_imported         = 2;
+	int32                                  events_imported           = 1; // events upserted
+	int32                                  memories_imported         = 2; // memories upserted
 }
 
-// Export snapshots every event and memory into an archive object in S3 and records a manifest of
-// exactly what was captured; with clear set, the captured records are deleted after a successful
-// upload (writes and recalls landing mid-run survive, exactly as Clear does).
 // MemorySelection narrows an Export or a Transfer to the memories it matches. Every field means
 // exactly what the same field means on GetMemoriesRequest, and the service builds both predicates
 // with one function, so a GetMemories listing with the same fields is the dry run for the archive.
@@ -1049,46 +1076,54 @@ message ImportBatchResponse {
 // with the selected memories are the ones they belong to, plus - when group is set - every event
 // carrying that group, so an archive of one group holds that group's empty events too.
 message MemorySelection {
-	int64                                  timestamp_min             = 1;
-	int64                                  timestamp_max             = 2;
-	int32                                  significance_min          = 3;
-	int32                                  significance_max          = 4;
-	string                                 group                     = 5;
-	SignificanceExtremum                   significance_extremum     = 6;
-	repeated string                        metadata                  = 7;
-	Bool                                   recalled                  = 8;
-	int32                                  recall_count_min          = 9;
-	int32                                  recall_count_max          = 10;
-	int64                                  time_recalled_min         = 11;
-	int64                                  time_recalled_max         = 12;
-	Bool                                   is_summary                = 13;
-	Bool                                   is_binary                 = 14;
-	string                                 event_id                  = 15;
-	Bool                                   has_event                 = 16;
+	int64                                  timestamp_min             = 1; // exactly as GetMemoriesRequest.timestamp_min
+	int64                                  timestamp_max             = 2; // exactly as GetMemoriesRequest.timestamp_max
+	int32                                  significance_min          = 3; // exactly as GetMemoriesRequest.significance_min
+	int32                                  significance_max          = 4; // exactly as GetMemoriesRequest.significance_max
+	string                                 group                     = 5; // exactly as GetMemoriesRequest.group
+	SignificanceExtremum                   significance_extremum     = 6; // exactly as GetMemoriesRequest.significance_extremum
+	repeated string                        metadata                  = 7; // exactly as GetMemoriesRequest.metadata
+	Bool                                   recalled                  = 8; // exactly as GetMemoriesRequest.recalled
+	int32                                  recall_count_min          = 9; // exactly as GetMemoriesRequest.recall_count_min
+	int32                                  recall_count_max          = 10; // exactly as GetMemoriesRequest.recall_count_max
+	int64                                  time_recalled_min         = 11; // exactly as GetMemoriesRequest.time_recalled_min
+	int64                                  time_recalled_max         = 12; // exactly as GetMemoriesRequest.time_recalled_max
+	Bool                                   is_summary                = 13; // exactly as GetMemoriesRequest.is_summary
+	Bool                                   is_binary                 = 14; // exactly as GetMemoriesRequest.is_binary
+	string                                 event_id                  = 15; // exactly as GetMemoriesRequest.event_id
+	Bool                                   has_event                 = 16; // exactly as GetMemoriesRequest.has_event
 }
 
+// ExportRequest asks for every event and memory - or the selection given - to be written to an
+// archive object in the configured object store (an S3 bucket, or a file under archive.directory),
+// and records a manifest of exactly what was captured. With clear set, the captured records are
+// deleted after a successful upload (writes and recalls landing mid-run survive, exactly as Clear
+// does).
 message ExportRequest {
 	bool                                   clear                     = 1; // delete exactly what this export captured once it is written (see Clear)
 	MemorySelection                        memories                  = 2; // optional: export only these memories and their events, rather than the whole store
 }
 
+// ExportResponse names the archive an Export wrote and, with clear set, what it then deleted.
 message ExportResponse {
-	string                                 manifest_id               = 1;
-	string                                 object_key                = 2;
-	int32                                  events_exported           = 3;
-	int32                                  memories_exported         = 4;
-	int32                                  memories_cleared          = 5;
-	int32                                  events_cleared            = 6;
+	string                                 manifest_id               = 1; // identifies what was captured; pass it to Clear to delete those records later
+	string                                 object_key                = 2; // where the archive was written: a key in the bucket, or a path under archive.directory. Pass it to Import to read it back
+	int32                                  events_exported           = 3; // events written to the archive
+	int32                                  memories_exported         = 4; // memories written to the archive
+	int32                                  memories_cleared          = 5; // memories deleted afterwards; 0 unless clear was set
+	int32                                  events_cleared            = 6; // events deleted afterwards; 0 unless clear was set
 	string                                 instance_id               = 7; // the instance holding the manifest: manifests live in that process's memory, so a deferred Clear must reach it
 }
 
+// ImportRequest names the archive Import reads.
 message ImportRequest {
-	string                                 object_key                = 1;
+	string                                 object_key                = 1; // the archive to read, as ExportResponse.object_key named it; under archive.directory an absolute path or a . or .. segment is refused
 }
 
+// ImportResponse reports how many rows Import upserted.
 message ImportResponse {
-	int32                                  events_imported           = 1;
-	int32                                  memories_imported         = 2;
+	int32                                  events_imported           = 1; // events upserted
+	int32                                  memories_imported         = 2; // memories upserted
 }
 
 // Transfer streams every event and memory directly to a centralised instance's ImportBatch RPC
@@ -1099,12 +1134,13 @@ message TransferRequest {
 	MemorySelection                        memories                  = 2; // optional: transfer only these memories and their events, rather than the whole store
 }
 
+// TransferResponse reports what a Transfer sent and, with clear set, what it then deleted.
 message TransferResponse {
-	string                                 manifest_id               = 1;
-	int32                                  events_transferred        = 2;
-	int32                                  memories_transferred      = 3;
-	int32                                  memories_cleared          = 4;
-	int32                                  events_cleared            = 5;
+	string                                 manifest_id               = 1; // identifies what was captured; pass it to Clear to delete those records later
+	int32                                  events_transferred        = 2; // events the target accepted
+	int32                                  memories_transferred      = 3; // memories the target accepted
+	int32                                  memories_cleared          = 4; // memories deleted afterwards; 0 unless clear was set
+	int32                                  events_cleared            = 5; // events deleted afterwards; 0 unless clear was set
 	string                                 instance_id               = 6; // the instance holding the manifest; see ExportResponse.instance_id
 }
 
@@ -1113,12 +1149,14 @@ message TransferResponse {
 // events only once they have no memories left. Manifests are held in memory - a restart discards
 // them.
 message ClearRequest {
-	string                                 manifest_id               = 1;
+	string                                 manifest_id               = 1; // the manifest an Export or Transfer returned; held in memory by the instance that made it (see ExportResponse.instance_id)
 }
 
+// ClearResponse reports what Clear deleted. A record created or recalled since the snapshot
+// survives and is not counted.
 message ClearResponse {
-	int32                                  memories_cleared          = 1;
-	int32                                  events_cleared            = 2;
+	int32                                  memories_cleared          = 1; // memories deleted
+	int32                                  events_cleared            = 2; // events deleted, each once it had no memories left
 }
 
 // DeleteMemoriesByFilterRequest selects the memories to delete. Every field below means exactly
@@ -1161,7 +1199,7 @@ message DeleteMemoriesByFilterRequest {
 // deleted, not what the filter matched: a concurrent write can add a matching memory while the
 // call runs, and it will be deleted too if the call has not finished.
 message DeleteMemoriesByFilterResponse {
-	int64                                  memories_deleted          = 1;
+	int64                                  memories_deleted          = 1; // memories this call deleted
 	int64                                  events_deleted            = 2; // events removed because the deletion left them empty; always 0 unless delete_empty_events was set
 	bool                                   complete                  = 3; // true when the filter matched nothing more; false when max_deletions stopped the call with matches still standing, so the same request can be sent again
 }
@@ -1193,14 +1231,15 @@ message DeleteEventsByFilterRequest {
 // DeleteEventsByFilterResponse reports what actually went, on the same terms as
 // DeleteMemoriesByFilterResponse.
 message DeleteEventsByFilterResponse {
-	int64                                  events_deleted            = 1;
+	int64                                  events_deleted            = 1; // events this call deleted
 	int64                                  memories_deleted          = 2; // memories deleted with their event; always 0 unless delete_memories was set
 	int64                                  memories_orphaned         = 3; // memories that outlived their event with event_id cleared; always 0 when delete_memories was set
 	bool                                   complete                  = 4; // true when the filter matched nothing more; false when max_deletions stopped the call
 }
 
+// GeneralResponse is the reply of an RPC that reports only whether it did what was asked.
 message GeneralResponse {
-	bool                                   ok                        = 1;
+	bool                                   ok                        = 1; // true when the RPC did everything asked; each RPC says what false means
 }
 
 // ForgetRule names why a memory appears in a consolidation preview - which of the two independent
@@ -1228,17 +1267,17 @@ message PreviewConsolidationRequest {
 // one whose value fell below the threshold. Bodies are never included - a preview reports what
 // would be lost, it is not a way to read the store.
 message ForgetCandidate {
-	string                                 id                        = 1;
+	string                                 id                        = 1; // the memory's id
 	string                                 event_id                  = 2;  // empty for a memory with no event
-	string                                 group                     = 3;
+	string                                 group                     = 3; // the memory's group label
 	int32                                  significance              = 4;  // the memory's stored significance, as ranked
 	double                                 value                     = 5;  // the computed decayed value that decided it (see docs/consolidation.md)
 	double                                 threshold                 = 6;  // the capacity-pressure-scaled deletion threshold value was compared against
 	int64                                  body_bytes                = 7;  // stored size of the body, after compression - the same measure capacity accounting uses
-	ForgetRule                             rule                      = 8;
+	ForgetRule                             rule                      = 8; // which path would take it
 	int64                                  time_stamp                = 9;  // UnixNano
 	int64                                  time_recalled             = 10; // UnixNano of the most recent recall; 0 if never recalled
-	int32                                  recall_count              = 11;
+	int32                                  recall_count              = 11; // how many times it has been recalled
 	int64                                  external_bytes            = 12; // Memory.external_bytes: the payload elsewhere that forgetting this memory releases; 0 for a memory pointing at nothing
 }
 
@@ -1263,7 +1302,7 @@ message PreviewConsolidationResponse {
 	// eviction runs. They are counted, never listed - on a healthy store almost everything is
 	// retained, so listing them would return the store.
 	int32                                  memories_retained         = 5;
-	int64                                  retained_bytes            = 6;
+	int64                                  retained_bytes            = 6; // the stored size of the memories_retained
 
 	// The decision inputs as they stood for this preview, so the numbers above can be read against
 	// the configuration that produced them.
@@ -1272,7 +1311,7 @@ message PreviewConsolidationResponse {
 	int64                                  used_bytes                = 9;  // the store's current used bytes
 	int64                                  capacity_bytes            = 10; // consolidation.capacityBytes; 0 when no byte capacity is configured, in which case eviction never runs
 
-	repeated ForgetCandidate               candidates                = 11;
+	repeated ForgetCandidate               candidates                = 11; // the memories that would go, at most the request's limit
 	bool                                   truncated                 = 12; // true when more memories would be forgotten than limit returned
 
 	// The external axis (see Memory.external_bytes), reported on the same basis as the three fields
@@ -1298,7 +1337,7 @@ message ForgottenMemory {
 	int64                                  seq                       = 1;  // the log's own monotonic key; pass the lowest seen back as after_seq to page
 	string                                 id                        = 2;  // the forgotten memory's id
 	string                                 event_id                  = 3;  // empty for a memory with no event
-	string                                 group                     = 4;
+	string                                 group                     = 4; // the group label it carried
 	int32                                  significance              = 5;  // the memory's significance, as ranked when it went
 	double                                 value                     = 6;  // its computed decayed value at that moment (see docs/consolidation.md)
 	double                                 threshold                 = 7;  // the capacity-pressure-scaled deletion threshold then in force
@@ -1306,7 +1345,7 @@ message ForgottenMemory {
 	ForgetRule                             rule                      = 9;  // which path took it
 	int64                                  time_stamp                = 10; // UnixNano the memory was created
 	int64                                  time_recalled             = 11; // UnixNano of its last recall; 0 if never recalled
-	int32                                  recall_count              = 12;
+	int32                                  recall_count              = 12; // how many times it had been recalled
 	int64                                  forgotten_at              = 13; // UnixNano the cycle deleted it
 }
 
@@ -1314,8 +1353,8 @@ message ForgottenMemory {
 // empty request returns the most recent page of the whole log. Records come back newest first.
 message GetForgottenMemoriesRequest {
 	string                                 memory_id                 = 1; // a specific memory - "did this exist, and when did it go"
-	string                                 event_id                  = 2;
-	string                                 group                     = 3;
+	string                                 event_id                  = 2; // restrict to memories that belonged to this event
+	string                                 group                     = 3; // restrict to memories that carried this group label
 	ForgetRule                             rule                      = 4; // UNSPECIFIED returns both rules
 	int64                                  since                     = 5; // UnixNano, inclusive lower bound on forgotten_at
 	int64                                  until                     = 6; // UnixNano, exclusive upper bound on forgotten_at
@@ -1330,9 +1369,9 @@ message GetForgottenMemoriesRequest {
 // enabled reports whether the service is currently recording. It matters because an empty page is
 // ambiguous without it: nothing has been forgotten, or nothing is being written down.
 message GetForgottenMemoriesResponse {
-	repeated ForgottenMemory               memories                  = 1;
-	int64                                  total                     = 2;
-	bool                                   enabled                   = 3;
+	repeated ForgottenMemory               memories                  = 1; // this page, newest first
+	int64                                  total                     = 2; // records the whole log holds within the caller's scope, whatever the filter
+	bool                                   enabled                   = 3; // whether the log is recording; see above
 	int64                                  next_seq                  = 4; // pass as after_seq for the next page; 0 when the page is the last
 }
 
@@ -1344,8 +1383,9 @@ message DeleteForgottenMemoriesRequest {
 	bool                                   all                       = 2; // delete every record; ignored when before_time is set
 }
 
+// DeleteForgottenMemoriesResponse reports how many records were removed from the forgotten log.
 message DeleteForgottenMemoriesResponse {
-	int64                                  deleted                   = 1;
+	int64                                  deleted                   = 1; // records removed
 }
 
 // CallbackKind is what a queued delivery is about.
@@ -1384,14 +1424,14 @@ enum DeleteCause {
 // queue with zero attempts is simply one the dispatcher has not reached yet.
 message QueuedCallback {
 	int64                                  seq                       = 1; // surrogate key; also the pagination cursor
-	CallbackKind                           kind                      = 2;
-	DeleteCause                            cause                     = 3;
+	CallbackKind                           kind                      = 2; // what the delivery reports
+	DeleteCause                            cause                     = 3; // what deleted the items, for a forgotten delivery
 	int64                                  cycle_id                  = 4; // groups every delivery one sleep cycle produced; 0 outside a cycle
 	int32                                  chunk                     = 5; // 1-based, for a sleep-cycle delivery split across several
-	int32                                  chunks                    = 6;
+	int32                                  chunks                    = 6; // how many deliveries the notification was split into
 	int32                                  item_count                = 7; // how many memories or events this delivery describes
 	int64                                  queued_at                 = 8; // UnixNano; when the deletion happened, not when it was last attempted
-	int32                                  attempts                  = 9;
+	int32                                  attempts                  = 9; // delivery attempts so far
 	int64                                  next_attempt_at           = 10; // UnixNano; when the dispatcher may next try
 }
 
@@ -1410,9 +1450,9 @@ message GetCallbackQueueRequest {
 // reason the forgotten log's does: an empty queue is ambiguous without it - everything has been
 // delivered, or nothing is being queued.
 message GetCallbackQueueResponse {
-	repeated QueuedCallback                deliveries                = 1;
+	repeated QueuedCallback                deliveries                = 1; // this page, oldest first
 	int64                                  depth                     = 2; // every delivery waiting, not just this page
-	bool                                   enabled                   = 3;
+	bool                                   enabled                   = 3; // whether deliveries are being queued; see above
 	int64                                  oldest_queued_at          = 4; // UnixNano; 0 when the queue is empty
 	int64                                  next_seq                  = 5; // pass as after_seq for the next page; 0 when the page is the last
 }
@@ -1425,8 +1465,9 @@ message DeleteCallbackQueueRequest {
 	bool                                   all                       = 2; // discard every delivery; ignored when before_time is set
 }
 
+// DeleteCallbackQueueResponse reports how many queued deliveries were discarded.
 message DeleteCallbackQueueResponse {
-	int64                                  deleted                   = 1;
+	int64                                  deleted                   = 1; // deliveries discarded
 }
 
 // DecayCurveRequest asks for the curve the configured decay algorithm produces for one significance
@@ -1442,8 +1483,8 @@ message DecayCurveRequest {
 // DecayPoint is one sample of a decay curve: the value the configured algorithm gives an item of the
 // requested significance once its decay clock reads age_days.
 message DecayPoint {
-	double                                 age_days                  = 1;
-	double                                 value                     = 2;
+	double                                 age_days                  = 1; // days on the decay clock
+	double                                 value                     = 2; // the decayed value at that age
 }
 
 // DecayCurve is the projected decay of one significance value under the current configuration,
@@ -1453,7 +1494,7 @@ message DecayCurve {
 	double                                 significance              = 1; // the combined significance projected, echoed back
 	double                                 max_age_days              = 2; // the span actually projected over, whether requested or chosen by the server
 	double                                 crossing_age_days         = 3; // the age at which the curve falls below deletion_threshold; -1 when it does not within the projected span
-	repeated DecayPoint                    points                    = 4;
+	repeated DecayPoint                    points                    = 4; // the samples, youngest first
 }
 
 // MemoryValuation is where one memory stands against the consolidation rules right now: the value
@@ -1461,14 +1502,14 @@ message DecayCurve {
 // override the comparison either way. Bodies are never included - this explains a memory, it is not
 // a way to read one.
 message MemoryValuation {
-	string                                 id                        = 1;
+	string                                 id                        = 1; // the memory's id
 	string                                 event_id                  = 2;  // empty for a memory with no event (or one whose event no longer exists)
 	int32                                  significance              = 3;  // the memory's own stored significance, as ranked
 	double                                 effective_significance    = 4;  // what the decay actually acts on: the memory's own significance plus its event's, the damped link contributions below, and the weighted recall count
 	double                                 value                     = 5;  // the computed decayed value (see docs/consolidation.md)
 	double                                 threshold                 = 6;  // the capacity-pressure-scaled deletion threshold value is compared against
 	double                                 age_days                  = 7;  // days since the memory's decay clock last reset - its creation, or its most recent recall
-	int32                                  recall_count              = 8;
+	int32                                  recall_count              = 8; // how many times it has been recalled
 	int64                                  time_recalled             = 9;  // UnixNano of the most recent recall; 0 if never recalled
 	bool                                   would_consolidate         = 10; // a cycle running now would forget this memory
 	bool                                   retained                  = 11; // held by consolidation.minimumRetentionInDays, so neither consolidation nor capacity eviction may take it
@@ -1505,12 +1546,12 @@ message ExplainConsolidationResponse {
 	// The configured decay policy, so a client can label what it is showing without a second source
 	// of truth for it.
 	int32                                  method                    = 7;  // consolidation.method (1-6; see docs/consolidation.md)
-	double                                 aggressiveness            = 8;
+	double                                 aggressiveness            = 8; // consolidation.aggressiveness, the a in the decay formulas
 	double                                 units_of_age_in_days      = 9;  // days per unit of age fed to the decay algorithm
-	int32                                  minimum_age_in_days       = 10;
-	int32                                  minimum_retention_in_days = 11;
+	int32                                  minimum_age_in_days       = 10; // consolidation.minimumAgeInDays: a younger item is not judged by value
+	int32                                  minimum_retention_in_days = 11; // consolidation.minimumRetentionInDays: a younger item is never forgotten; 0 when unset
 
-	repeated MemoryValuation               valuations                = 12;
+	repeated MemoryValuation               valuations                = 12; // one per requested id the store holds and the caller may read, in request order; the rest are omitted
 	DecayCurve                             curve                     = 13; // absent when none was requested
 
 	// The third pressure axis (see Memory.external_bytes). Reported beside the other two because
@@ -1529,21 +1570,21 @@ message ExplainConsolidationResponse {
 // feed, so a deployment exporting no telemetry still gets them.
 message CycleReport {
 	int64                                  started_at                = 1;  // UnixNano the cycle began
-	int64                                  duration_ms               = 2;
+	int64                                  duration_ms               = 2; // how long the cycle ran, in milliseconds
 
 	// The two decay paths, reported separately because they answer different questions: memories
 	// consolidated fell below the value threshold, memories evicted were above it but had to go
 	// anyway to bring the store back under its capacity target. A store evicting steadily while
 	// consolidating nothing is configured wrongly, and only the split shows that.
 	int32                                  memories_consolidated     = 3;
-	int32                                  events_consolidated       = 4;
-	int32                                  memories_evicted          = 5;
-	int32                                  events_evicted            = 6;
+	int32                                  events_consolidated       = 4; // events the consolidation passes deleted
+	int32                                  memories_evicted          = 5; // memories capacity eviction deleted
+	int32                                  events_evicted            = 6; // events eviction left empty, deleted with their last memory
 	int64                                  bytes_freed               = 7;  // estimated, from the eviction pass
 
 	int32                                  summarisation_candidates  = 8;  // events the scan cached for GetSummarisationCandidates
 
-	bool                                   success                   = 9;
+	bool                                   success                   = 9; // whether the cycle completed; see failure
 	string                                 failure                   = 10; // the reason when success is false; empty otherwise
 
 	// trigger names what STARTED this cycle: "timer" (the scheduled cycle), "manual" (the Sleep
@@ -1582,7 +1623,7 @@ message CycleReport {
 // its own: its store is consolidated by whichever instance holds the single-consolidator lock,
 // under that instance's configuration.
 message GetConsolidationStatusResponse {
-	bool                                   consolidation_enabled     = 1;
+	bool                                   consolidation_enabled     = 1; // whether this instance runs the sleep cycle; false on a replica
 
 	// period_seconds is sleep.periodSeconds. Zero or negative means no timed cycle at all - a
 	// supported mode, for an instance driven only by the Sleep RPC or the WAL trigger - and
@@ -1597,7 +1638,7 @@ message GetConsolidationStatusResponse {
 	// the only thing that can fire.
 	bool                                   wal_trigger_enabled       = 4;
 
-	bool                                   sleep_in_progress         = 5;
+	bool                                   sleep_in_progress         = 5; // a cycle is running now
 
 	// snapshot_ttl_seconds is how long ExplainConsolidation caches the inputs it reports
 	// (capacity pressure, used bytes, memory count). A polling client should pace its calls to that
@@ -1647,9 +1688,9 @@ message GetConsolidationStatusResponse {
 // setting says, and enabled false beside a row count is a table nothing is adding to and nothing is
 // trimming.
 message AncillaryTable {
-	bool                                   enabled                   = 1;
-	int64                                  rows                      = 2;
-	int64                                  bytes                     = 3;
+	bool                                   enabled                   = 1; // whether the feature is recording into this table now
+	int64                                  rows                      = 2; // rows the table holds
+	int64                                  bytes                     = 3; // the rows' structural size, the unit the caps are enforced in
 
 	// limit_bytes is the byte cap configured for this table, or 0 where none is - so bytes has the
 	// bound it is approaching beside it rather than being a figure with nothing to read it against.
@@ -1727,9 +1768,9 @@ message AncillaryStorage {
 	// rows would occupy if it were compacted. It is therefore not always the sum of the three
 	// `bytes` fields, and is usually larger.
 	int64                                  total_bytes               = 2;
-	AncillaryTable                         forgotten_log             = 3;
-	AncillaryTable                         search_outbox             = 4;
-	AncillaryTable                         callback_queue            = 5;
+	AncillaryTable                         forgotten_log             = 3; // the forgotten log (consolidation.tombstones.*)
+	AncillaryTable                         search_outbox             = 4; // the OpenSearch delete outbox (opensearch.outbox.*)
+	AncillaryTable                         callback_queue            = 5; // the outbound callback queue (callbacks.*)
 }
 
 // IndexFootprint is what one index over a counted table really occupies, and how many entries it
@@ -1747,15 +1788,15 @@ message AncillaryStorage {
 // so it lags a heavy burst. That is acceptable because nothing acts on this and the quantity being
 // judged moves over days.
 message IndexFootprint {
-	string                                 table                     = 1;
-	string                                 index                     = 2;
+	string                                 table                     = 1; // the table the index belongs to
+	string                                 index                     = 2; // the index's name
 
 	// bytes is what the engine says this index occupies, space it has not reclaimed included. A
 	// B-tree page emptied by a delete is marked reusable and never repacked, and a store keyed on a
 	// UUID that deletes millions of rows over its life never refills one - so this figure grows with
 	// what the store has forgotten rather than with what it holds.
 	int64                                  bytes                     = 3;
-	int64                                  entries                   = 4;
+	int64                                  entries                   = 4; // the catalogue's estimate of the index's entries; see above
 }
 
 // TableFootprint is one counted table's real occupancy, and the share of it the indexes account for.
@@ -1765,12 +1806,12 @@ message IndexFootprint {
 // exactly as designed and paying for it in space nothing reclaims. On the deployment this was
 // measured against the heap was 78 MB and fine, and the indexes were 687 MB.
 message TableFootprint {
-	string                                 table                     = 1;
+	string                                 table                     = 1; // the table's name
 
 	// bytes is everything the engine holds for this table - rows, out-of-line storage and indexes
 	// together. index_bytes is the part of it the indexes account for; the difference is the rows.
 	int64                                  bytes                     = 2;
-	int64                                  index_bytes               = 3;
+	int64                                  index_bytes               = 3; // the part of bytes that is indexes
 
 	// indexes is largest first, and capped - an index name is a metric attribute on the gauge that
 	// carries the same figures, and while the indexes this store creates are a fixed set, an
@@ -1800,7 +1841,7 @@ message TableFootprint {
 // occupying no disk. That is SQLite, whose page accounting already counts every index inside the
 // target. PostgreSQL answers per index and MySQL per table (see TableFootprint.indexes).
 message StorageFootprint {
-	bool                                   measured                  = 1;
+	bool                                   measured                  = 1; // false where the driver cannot answer; see above
 	int64                                  measured_at               = 2; // UnixNano the cycle took this measurement
 
 	// bytes is the sum over the counted tables, and index_bytes the part of it that is indexes.
@@ -1808,7 +1849,7 @@ message StorageFootprint {
 	// 5.8. The tables the target deliberately EXCLUDES are not in here - they have their own
 	// reading, which reports their disk the same way. See AncillaryStorage.
 	int64                                  bytes                     = 3;
-	int64                                  index_bytes               = 4;
+	int64                                  index_bytes               = 4; // the part of bytes that is indexes
 
 	// estimated_bytes is what the store's own accounting believes those same tables hold - the
 	// figure used_bytes publishes and eviction acts on - carried here so the comparison travels as
@@ -1816,17 +1857,17 @@ message StorageFootprint {
 	// cycle could not take it.
 	int64                                  estimated_bytes           = 5;
 
-	repeated TableFootprint                tables                    = 6;
+	repeated TableFootprint                tables                    = 6; // one per counted table
 }
 
 // WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the
-// caller's effective authorization tier ("reader", "writer", or "admin"); auth_enabled is false
+// caller's effective authorisation tier ("reader", "writer", or "admin"); auth_enabled is false
 // when the service runs without authentication, in which case role is "admin" (unrestricted) and
 // client_id is empty.
 message WhoAmIResponse {
-	string                                 client_id                 = 1;
-	string                                 role                      = 2;
-	bool                                   auth_enabled              = 3;
+	string                                 client_id                 = 1; // the token's client_id; empty without authentication
+	string                                 role                      = 2; // the effective tier: "reader", "writer" or "admin"
+	bool                                   auth_enabled              = 3; // whether the service authenticates callers
 
 	// search_modes lists the SearchMemories modes this deployment can serve, so a client can adapt
 	// rather than discover an unavailable mode by having a search rejected. It depends on the
@@ -1876,7 +1917,7 @@ message WhoAmIResponse {
 	// looking at, and only the first is worth hiding the control for.
 	bool                                   tombstones_enabled        = 9;
 
-	// topology_tier is the minimum authorization tier GetTopology requires on this deployment
+	// topology_tier is the minimum authorisation tier GetTopology requires on this deployment
 	// (topology.minimumTier), as a tier name. It is reported rather than resolved to a bool because
 	// it belongs with its neighbours above, which are all properties of the DEPLOYMENT and never of
 	// the caller; a client compares it against the role it was told in this same response, which is
@@ -1921,7 +1962,7 @@ enum TopologyNodeKind {
 	TOPOLOGY_NODE_KIND_SEARCH_INDEX                                  = 3; // the secondary content-search index
 	TOPOLOGY_NODE_KIND_SUMMARISER                                    = 4; // the embedded LLM behind SummariseMemories
 	TOPOLOGY_NODE_KIND_EMBEDDER                                      = 5; // the embedding model behind semantic search
-	TOPOLOGY_NODE_KIND_OBJECT_STORE                                  = 6; // the S3 bucket behind Export/Import
+	TOPOLOGY_NODE_KIND_OBJECT_STORE                                  = 6; // where Export writes and Import reads: an S3 bucket or archive.directory
 	TOPOLOGY_NODE_KIND_TRANSFER_TARGET                               = 7; // the instance Transfer sends to
 	TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER                             = 8; // the IdP whose JWKS verifies tokens
 	TOPOLOGY_NODE_KIND_COLLECTOR                                     = 9; // the OTLP endpoint metrics and traces are exported to
@@ -1972,18 +2013,18 @@ enum TopologyStatus {
 // builder that produces them. Values are already redacted: no credential, secret, or DSN password
 // ever reaches this message - see GetTopology.
 message TopologyAttribute {
-	string                                 key                       = 1;
-	string                                 value                     = 2;
+	string                                 key                       = 1; // the setting or property
+	string                                 value                     = 2; // its value, already redacted
 }
 
 // TopologyNode is one component of the deployment.
 message TopologyNode {
 	string                                 id                        = 1;  // stable within a response: "self", "store", "declared:<name>", ...
-	TopologyNodeKind                       kind                      = 2;
+	TopologyNodeKind                       kind                      = 2; // what the component is
 	string                                 name                      = 3;  // what to label it; for a declared component, the name the operator gave
 	string                                 detail                    = 4;  // the redacted endpoint, host, or file path; empty where there is none
-	TopologyNodeSource                     source                    = 5;
-	TopologyStatus                         status                    = 6;
+	TopologyNodeSource                     source                    = 5; // how this instance knows of it
+	TopologyStatus                         status                    = 6; // its health as the last probe found it
 
 	// status_detail explains a status that is not OK, in a form meant to be shown to an operator
 	// ("connection refused", "index red", "readiness reports store unreachable"). Empty when OK.
@@ -1996,15 +2037,15 @@ message TopologyNode {
 	int64                                  checked_at                = 8;
 
 	string                                 version                   = 9;  // where the component reports one; empty otherwise
-	repeated TopologyAttribute             attributes                = 10;
+	repeated TopologyAttribute             attributes                = 10; // kind-specific settings and properties
 }
 
 // TopologyEdge is a relationship between two nodes, directed from the component that initiates the
 // connection to the one it reaches - which is the direction that matters operationally, since it is
 // what a firewall rule, a credential, and an outage all follow.
 message TopologyEdge {
-	string                                 from_id                   = 1;
-	string                                 to_id                     = 2;
+	string                                 from_id                   = 1; // the node that initiates the connection
+	string                                 to_id                     = 2; // the node it reaches
 	string                                 label                     = 3;  // what crosses it: "reads/writes", "indexes", "verifies", ...
 	bool                                   optional                  = 4;  // the edge exists only because an optional feature is enabled
 }
@@ -2013,8 +2054,8 @@ message TopologyEdge {
 // edges between them, rather than a tree. The graph is not a tree - two instances share one store -
 // and a flat shape means a new component type is a new TopologyNodeKind rather than a new field.
 message GetTopologyResponse {
-	repeated TopologyNode                  nodes                     = 1;
-	repeated TopologyEdge                  edges                     = 2;
+	repeated TopologyNode                  nodes                     = 1; // every component, this instance first
+	repeated TopologyEdge                  edges                     = 2; // the connections between nodes
 
 	// probe_interval_seconds is how often the background prober refreshes the statuses above. A
 	// polling client should pace itself by this rather than by a guess, for the same reason
@@ -2037,4 +2078,5 @@ message GetTopologyResponse {
 	repeated string                        warnings                  = 5;
 }
 
+// EmptyRequest is the request of an RPC that takes no arguments.
 message EmptyRequest {}

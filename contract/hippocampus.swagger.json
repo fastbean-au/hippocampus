@@ -487,6 +487,7 @@
         "parameters": [
           {
             "name": "body",
+            "description": "MergeEventsRequest re-points every memory of merge_from onto merge_to.",
             "in": "body",
             "required": true,
             "schema": {
@@ -520,6 +521,7 @@
         "parameters": [
           {
             "name": "eventId",
+            "description": "the event whose memories are summarised and replaced",
             "in": "path",
             "required": true,
             "type": "string"
@@ -559,12 +561,14 @@
         "parameters": [
           {
             "name": "eventId",
+            "description": "the event whose memories are replaced",
             "in": "path",
             "required": true,
             "type": "string"
           },
           {
             "name": "summary",
+            "description": "the summary memory to store in their place; validated before anything is deleted",
             "in": "body",
             "required": true,
             "schema": {
@@ -649,6 +653,7 @@
         "parameters": [
           {
             "name": "id",
+            "description": "the event to delete",
             "in": "path",
             "required": true,
             "type": "string"
@@ -918,7 +923,7 @@
     },
     "/v1/export": {
       "post": {
-        "summary": "Transfer and archive (embedded -\u003e centralised)\nExport snapshots the whole store into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted once the upload\nhas succeeded.",
+        "summary": "Transfer and archive (embedded -\u003e centralised)\nExport snapshots the whole store into an archive object in the configured object store (an S3\nbucket, or a directory under archive.directory) and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted once the upload\nhas succeeded.",
         "operationId": "Hippocampus_Export",
         "responses": {
           "200": {
@@ -937,6 +942,7 @@
         "parameters": [
           {
             "name": "body",
+            "description": "ExportRequest asks for every event and memory - or the selection given - to be written to an\narchive object in the configured object store (an S3 bucket, or a file under archive.directory),\nand records a manifest of exactly what was captured. With clear set, the captured records are\ndeleted after a successful upload (writes and recalls landing mid-run survive, exactly as Clear\ndoes).",
             "in": "body",
             "required": true,
             "schema": {
@@ -951,7 +957,7 @@
     },
     "/v1/import": {
       "post": {
-        "summary": "Import streams an archive object from S3 into the store, upserting every record by id with\nits full state preserved. Idempotent; aborts on the first error.",
+        "summary": "Import streams an archive object from the configured object store into the store, upserting\nevery record by id with\nits full state preserved. Idempotent; aborts on the first error.",
         "operationId": "Hippocampus_Import",
         "responses": {
           "200": {
@@ -970,6 +976,7 @@
         "parameters": [
           {
             "name": "body",
+            "description": "ImportRequest names the archive Import reads.",
             "in": "body",
             "required": true,
             "schema": {
@@ -1344,6 +1351,7 @@
         "parameters": [
           {
             "name": "body",
+            "description": "DeleteMemoriesRequest deletes memories by id.",
             "in": "body",
             "required": true,
             "schema": {
@@ -1420,12 +1428,14 @@
           },
           {
             "name": "eventId",
+            "description": "restrict to memories that belonged to this event",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
             "name": "group",
+            "description": "restrict to memories that carried this group label",
             "in": "query",
             "required": false,
             "type": "string"
@@ -1538,6 +1548,7 @@
         "parameters": [
           {
             "name": "body",
+            "description": "RecallMemoriesRequest names the memories to recall and reinforce.",
             "in": "body",
             "required": true,
             "schema": {
@@ -1969,7 +1980,7 @@
     },
     "/v1/whoami": {
       "get": {
-        "summary": "WhoAmI reports the authenticated caller's identity and effective authorization tier\n(reader/writer/admin), so a client - the web console - can tailor what it offers instead of\nguessing at the token's roles. Requires only the reader tier. When the service runs without\nauthentication it reports auth_enabled false and an unrestricted (admin) tier.",
+        "summary": "WhoAmI reports the authenticated caller's identity and effective authorisation tier\n(reader/writer/admin), so a client - the web console - can tailor what it offers instead of\nguessing at the token's roles. Requires only the reader tier. When the service runs without\nauthentication it reports auth_enabled false and an unrestricted (admin) tier.",
         "operationId": "Hippocampus_WhoAmI",
         "responses": {
           "200": {
@@ -2000,7 +2011,8 @@
           "format": "int64",
           "title": "UnixNano; 0 (the default) uses the current server time"
         }
-      }
+      },
+      "description": "EndEventRequest sets an event's end time, marking it complete."
     },
     "HippocampusLinkEventsBody": {
       "type": "object",
@@ -2013,7 +2025,8 @@
           },
           "title": "the targets and their significances; each target must exist and must not be id itself"
         }
-      }
+      },
+      "description": "LinkEventsRequest links an event to others, each link carrying its own significance. Linking a\npair again re-weights the link rather than duplicating it."
     },
     "HippocampusLinkMemoriesBody": {
       "type": "object",
@@ -2054,7 +2067,8 @@
           },
           "title": "targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target"
         }
-      }
+      },
+      "description": "UnlinkEventsRequest removes links between an event and others."
     },
     "HippocampusUnlinkMemoriesBody": {
       "type": "object",
@@ -2066,7 +2080,8 @@
           },
           "title": "targets to unlink; unknown ids are silently ignored. Removes links in either direction between id and each target"
         }
-      }
+      },
+      "description": "UnlinkMemoriesRequest removes links between a memory and others."
     },
     "HippocampusUpdateEventBody": {
       "type": "object",
@@ -2162,7 +2177,8 @@
           "$ref": "#/definitions/v1SignificancePlacement",
           "title": "write-only: rank relative to existing values (see SignificancePlacement); takes precedence over significance when set"
         }
-      }
+      },
+      "description": "UpdateEventSignificanceRequest re-ranks an event, by an absolute value or a placement."
     },
     "HippocampusUpdateMemoryBody": {
       "type": "object",
@@ -2300,13 +2316,16 @@
           "description": "total_bytes sums each table's disk_bytes where there is one and its bytes where there is not,\nbecause the question it answers - what disk does this deployment need beyond\nconsolidation.capacityBytes - is asked of what the engine is holding rather than of what the\nrows would occupy if it were compacted. It is therefore not always the sum of the three\n`bytes` fields, and is usually larger."
         },
         "forgottenLog": {
-          "$ref": "#/definitions/v1AncillaryTable"
+          "$ref": "#/definitions/v1AncillaryTable",
+          "title": "the forgotten log (consolidation.tombstones.*)"
         },
         "searchOutbox": {
-          "$ref": "#/definitions/v1AncillaryTable"
+          "$ref": "#/definitions/v1AncillaryTable",
+          "title": "the OpenSearch delete outbox (opensearch.outbox.*)"
         },
         "callbackQueue": {
-          "$ref": "#/definitions/v1AncillaryTable"
+          "$ref": "#/definitions/v1AncillaryTable",
+          "title": "the outbound callback queue (callbacks.*)"
         }
       },
       "description": "AncillaryStorage is the storage this store spends that its byte capacity target cannot see.\n\nThe three tables are excluded from used_bytes deliberately: the record of what was deleted must\nnever evict live memories, the search outbox is the sharp version of that (it grows precisely\nwhen deletions are backing up), and the callback queue is sharper again - it grows when a\nreceiver is down, and with callbacks.includeBodies it carries memory bodies. On the embedded\ndeployment all three share the store's own file, so the growth is real disk that capacity\npressure will never reflect: the disk a deployment needs is consolidation.capacityBytes plus\nthis.\n\nThe callback queue is the one to watch. Its rows have no fixed size, so callbacks.maxRows bounds\nits bytes only loosely, while the other two are fixed-width rows whose row caps are byte caps.\ncallbacks.maxBytes is what bounds it in the same unit the figure is reported in."
@@ -2315,15 +2334,18 @@
       "type": "object",
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "whether the feature is recording into this table now"
         },
         "rows": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "rows the table holds"
         },
         "bytes": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "the rows' structural size, the unit the caps are enforced in"
         },
         "limitBytes": {
           "type": "string",
@@ -2385,7 +2407,8 @@
       "type": "object",
       "properties": {
         "manifestId": {
-          "type": "string"
+          "type": "string",
+          "title": "the manifest an Export or Transfer returned; held in memory by the instance that made it (see ExportResponse.instance_id)"
         }
       },
       "description": "Clear deletes exactly the records captured by the Export/Transfer run that produced the\nmanifest: memories are deleted only if neither created nor recalled since the snapshot, and\nevents only once they have no memories left. Manifests are held in memory - a restart discards\nthem."
@@ -2395,13 +2418,16 @@
       "properties": {
         "memoriesCleared": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories deleted"
         },
         "eventsCleared": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events deleted, each once it had no memories left"
         }
-      }
+      },
+      "description": "ClearResponse reports what Clear deleted. A record created or recalled since the snapshot\nsurvives and is not counted."
     },
     "v1CycleReport": {
       "type": "object",
@@ -2413,7 +2439,8 @@
         },
         "durationMs": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "how long the cycle ran, in milliseconds"
         },
         "memoriesConsolidated": {
           "type": "integer",
@@ -2422,15 +2449,18 @@
         },
         "eventsConsolidated": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events the consolidation passes deleted"
         },
         "memoriesEvicted": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories capacity eviction deleted"
         },
         "eventsEvicted": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events eviction left empty, deleted with their last memory"
         },
         "bytesFreed": {
           "type": "string",
@@ -2443,7 +2473,8 @@
           "title": "events the scan cached for GetSummarisationCandidates"
         },
         "success": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "whether the cycle completed; see failure"
         },
         "failure": {
           "type": "string",
@@ -2502,7 +2533,8 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1DecayPoint"
-          }
+          },
+          "title": "the samples, youngest first"
         }
       },
       "description": "DecayCurve is the projected decay of one significance value under the current configuration,\nsampled evenly from just after age zero to max_age_days. It is computed by the same code that\ndecides consolidation, so a plot of it cannot drift from what the service will actually do."
@@ -2533,11 +2565,13 @@
       "properties": {
         "ageDays": {
           "type": "number",
-          "format": "double"
+          "format": "double",
+          "title": "days on the decay clock"
         },
         "value": {
           "type": "number",
-          "format": "double"
+          "format": "double",
+          "title": "the decayed value at that age"
         }
       },
       "description": "DecayPoint is one sample of a decay curve: the value the configured algorithm gives an item of the\nrequested significance once its decay clock reads age_days."
@@ -2562,9 +2596,11 @@
       "properties": {
         "deleted": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "deliveries discarded"
         }
-      }
+      },
+      "description": "DeleteCallbackQueueResponse reports how many queued deliveries were discarded."
     },
     "v1DeleteCause": {
       "type": "string",
@@ -2659,7 +2695,8 @@
       "properties": {
         "eventsDeleted": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "events this call deleted"
         },
         "memoriesDeleted": {
           "type": "string",
@@ -2698,9 +2735,11 @@
       "properties": {
         "deleted": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "records removed"
         }
-      }
+      },
+      "description": "DeleteForgottenMemoriesResponse reports how many records were removed from the forgotten log."
     },
     "v1DeleteMemoriesByFilterRequest": {
       "type": "object",
@@ -2797,7 +2836,8 @@
       "properties": {
         "memoriesDeleted": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "memories this call deleted"
         },
         "eventsDeleted": {
           "type": "string",
@@ -2818,9 +2858,11 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "title": "the memories to delete; an id the store does not hold is ignored, and the response is then ok false"
         }
-      }
+      },
+      "description": "DeleteMemoriesRequest deletes memories by id."
     },
     "v1Event": {
       "type": "object",
@@ -2965,7 +3007,8 @@
         },
         "aggressiveness": {
           "type": "number",
-          "format": "double"
+          "format": "double",
+          "title": "consolidation.aggressiveness, the a in the decay formulas"
         },
         "unitsOfAgeInDays": {
           "type": "number",
@@ -2974,18 +3017,21 @@
         },
         "minimumAgeInDays": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "consolidation.minimumAgeInDays: a younger item is not judged by value"
         },
         "minimumRetentionInDays": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "consolidation.minimumRetentionInDays: a younger item is never forgotten; 0 when unset"
         },
         "valuations": {
           "type": "array",
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1MemoryValuation"
-          }
+          },
+          "title": "one per requested id the store holds and the caller may read, in request order; the rest are omitted"
         },
         "curve": {
           "$ref": "#/definitions/v1DecayCurve",
@@ -3015,51 +3061,61 @@
           "$ref": "#/definitions/v1MemorySelection",
           "title": "optional: export only these memories and their events, rather than the whole store"
         }
-      }
+      },
+      "description": "ExportRequest asks for every event and memory - or the selection given - to be written to an\narchive object in the configured object store (an S3 bucket, or a file under archive.directory),\nand records a manifest of exactly what was captured. With clear set, the captured records are\ndeleted after a successful upload (writes and recalls landing mid-run survive, exactly as Clear\ndoes)."
     },
     "v1ExportResponse": {
       "type": "object",
       "properties": {
         "manifestId": {
-          "type": "string"
+          "type": "string",
+          "title": "identifies what was captured; pass it to Clear to delete those records later"
         },
         "objectKey": {
-          "type": "string"
+          "type": "string",
+          "title": "where the archive was written: a key in the bucket, or a path under archive.directory. Pass it to Import to read it back"
         },
         "eventsExported": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events written to the archive"
         },
         "memoriesExported": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories written to the archive"
         },
         "memoriesCleared": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories deleted afterwards; 0 unless clear was set"
         },
         "eventsCleared": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events deleted afterwards; 0 unless clear was set"
         },
         "instanceId": {
           "type": "string",
           "title": "the instance holding the manifest: manifests live in that process's memory, so a deferred Clear must reach it"
         }
-      }
+      },
+      "description": "ExportResponse names the archive an Export wrote and, with clear set, what it then deleted."
     },
     "v1ForgetCandidate": {
       "type": "object",
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "title": "the memory's id"
         },
         "eventId": {
           "type": "string",
           "title": "empty for a memory with no event"
         },
         "group": {
-          "type": "string"
+          "type": "string",
+          "title": "the memory's group label"
         },
         "significance": {
           "type": "integer",
@@ -3082,7 +3138,8 @@
           "title": "stored size of the body, after compression - the same measure capacity accounting uses"
         },
         "rule": {
-          "$ref": "#/definitions/v1ForgetRule"
+          "$ref": "#/definitions/v1ForgetRule",
+          "title": "which path would take it"
         },
         "timeStamp": {
           "type": "string",
@@ -3096,7 +3153,8 @@
         },
         "recallCount": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "how many times it has been recalled"
         },
         "externalBytes": {
           "type": "string",
@@ -3134,7 +3192,8 @@
           "title": "empty for a memory with no event"
         },
         "group": {
-          "type": "string"
+          "type": "string",
+          "title": "the group label it carried"
         },
         "significance": {
           "type": "integer",
@@ -3172,7 +3231,8 @@
         },
         "recallCount": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "how many times it had been recalled"
         },
         "forgottenAt": {
           "type": "string",
@@ -3186,9 +3246,11 @@
       "type": "object",
       "properties": {
         "ok": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "true when the RPC did everything asked; each RPC says what false means"
         }
-      }
+      },
+      "description": "GeneralResponse is the reply of an RPC that reports only whether it did what was asked."
     },
     "v1GetCallbackQueueResponse": {
       "type": "object",
@@ -3198,7 +3260,8 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1QueuedCallback"
-          }
+          },
+          "title": "this page, oldest first"
         },
         "depth": {
           "type": "string",
@@ -3206,7 +3269,8 @@
           "title": "every delivery waiting, not just this page"
         },
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "whether deliveries are being queued; see above"
         },
         "oldestQueuedAt": {
           "type": "string",
@@ -3225,7 +3289,8 @@
       "type": "object",
       "properties": {
         "consolidationEnabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "whether this instance runs the sleep cycle; false on a replica"
         },
         "periodSeconds": {
           "type": "string",
@@ -3242,7 +3307,8 @@
           "description": "wal_trigger_enabled reports consolidation.walTriggerBytes \u003e 0, i.e. that a cycle may run\nout of schedule when the write-ahead log grows. next_sleep_at deliberately does NOT predict\nthat: the WAL trigger does not reset the timer, so the timed cycle is still due when it says,\nand a client showing a countdown should say \"or sooner\" rather than imply the schedule is\nthe only thing that can fire."
         },
         "sleepInProgress": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "a cycle is running now"
         },
         "snapshotTtlSeconds": {
           "type": "string",
@@ -3268,9 +3334,11 @@
       "type": "object",
       "properties": {
         "event": {
-          "$ref": "#/definitions/v1Event"
+          "$ref": "#/definitions/v1Event",
+          "title": "the event read"
         }
-      }
+      },
+      "description": "GetEventResponse carries the event GetEventById read."
     },
     "v1GetEventsResponse": {
       "type": "object",
@@ -3280,14 +3348,16 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1Event"
-          }
+          },
+          "title": "this page"
         },
         "totalCount": {
           "type": "integer",
           "format": "int32",
           "title": "events matching the filter, ignoring limit/offset — for pagination"
         }
-      }
+      },
+      "description": "GetEventsResponse is one page of a GetEvents listing."
     },
     "v1GetForgottenMemoriesResponse": {
       "type": "object",
@@ -3297,14 +3367,17 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1ForgottenMemory"
-          }
+          },
+          "title": "this page, newest first"
         },
         "total": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "records the whole log holds within the caller's scope, whatever the filter"
         },
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "whether the log is recording; see above"
         },
         "nextSeq": {
           "type": "string",
@@ -3322,14 +3395,16 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1LinkEdge"
-          }
+          },
+          "title": "the edges, in the requested directions"
         },
         "linkSignificance": {
           "type": "string",
           "format": "int64",
           "title": "the queried item's total link significance, both directions - the figure the decay maths damps and weights"
         }
-      }
+      },
+      "description": "GetLinksResponse carries a memory's or an event's links."
     },
     "v1GetMemoriesResponse": {
       "type": "object",
@@ -3339,14 +3414,16 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1Memory"
-          }
+          },
+          "title": "this page"
         },
         "totalCount": {
           "type": "integer",
           "format": "int32",
           "title": "memories matching the filter, ignoring limit/offset — for pagination"
         }
-      }
+      },
+      "description": "GetMemoriesResponse is one page of a GetMemories listing."
     },
     "v1GetSignificanceLevelsResponse": {
       "type": "object",
@@ -3375,13 +3452,15 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1SummarisationCandidate"
-          }
+          },
+          "title": "at most consolidation.summarisationMaxCandidates events, as the last cycle found them"
         },
         "scanEnabled": {
           "type": "boolean",
           "description": "scan_enabled reports whether this instance runs the candidate scan at all: it needs\nconsolidation.summarisationMinMemories \u003e 0 AND consolidation.enabled, since the scan is part of\nthe sleep cycle and a replica runs none. It exists because an empty candidates list is\nambiguous in the way that matters, exactly as WhoAmI.groups is - \"nothing is due yet\" and \"this\ninstance will never offer you anything\" are opposite answers, and only one of them is worth\nwaiting on. A client presenting an empty list must branch on this rather than on the list."
         }
-      }
+      },
+      "description": "GetSummarisationCandidatesResponse carries the events the last sleep cycle's scan found worth\nsummarising."
     },
     "v1GetTopologyResponse": {
       "type": "object",
@@ -3391,14 +3470,16 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1TopologyNode"
-          }
+          },
+          "title": "every component, this instance first"
         },
         "edges": {
           "type": "array",
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1TopologyEdge"
-          }
+          },
+          "title": "the connections between nodes"
         },
         "probeIntervalSeconds": {
           "type": "string",
@@ -3428,14 +3509,16 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1Event"
-          }
+          },
+          "title": "upserted first, so a memory may name an event in the same batch"
         },
         "memories": {
           "type": "array",
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1Memory"
-          }
+          },
+          "title": "upserted by id; their links are applied once every row in the batch exists"
         }
       },
       "description": "ImportBatchRequest carries full-state rows (original timestamps, recall state, significance,\ngroup, event links) to be upserted by id into the store as-is - a data migration, not a fresh\nwrite. It is the ingest half of Transfer and is re-sendable: re-importing the same rows is\nidempotent."
@@ -3445,43 +3528,53 @@
       "properties": {
         "eventsImported": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events upserted"
         },
         "memoriesImported": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories upserted"
         }
-      }
+      },
+      "description": "ImportBatchResponse reports how many rows ImportBatch upserted."
     },
     "v1ImportRequest": {
       "type": "object",
       "properties": {
         "objectKey": {
-          "type": "string"
+          "type": "string",
+          "title": "the archive to read, as ExportResponse.object_key named it; under archive.directory an absolute path or a . or .. segment is refused"
         }
-      }
+      },
+      "description": "ImportRequest names the archive Import reads."
     },
     "v1ImportResponse": {
       "type": "object",
       "properties": {
         "eventsImported": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events upserted"
         },
         "memoriesImported": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories upserted"
         }
-      }
+      },
+      "description": "ImportResponse reports how many rows Import upserted."
     },
     "v1IndexFootprint": {
       "type": "object",
       "properties": {
         "table": {
-          "type": "string"
+          "type": "string",
+          "title": "the table the index belongs to"
         },
         "index": {
-          "type": "string"
+          "type": "string",
+          "title": "the index's name"
         },
         "bytes": {
           "type": "string",
@@ -3490,7 +3583,8 @@
         },
         "entries": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "the catalogue's estimate of the index's entries; see above"
         }
       },
       "description": "IndexFootprint is what one index over a counted table really occupies, and how many entries it\nholds.\n\nThe pair is the reading rather than two readings. A byte count alone says an index is large, which\non a large store is what one expects; bytes divided by entries says what a single entry is\ncosting, and that number has a known right answer - the widest key in this store is a 37-character\nid and seven numeric columns, so an entry costing a kilobyte is air whatever the store's size.\nThe same measurement found a store of 1,011 memories carrying a 3.5 MB listing index at 3,581\nbytes an entry, 2.7 times its own heap: bloat tracks churn, not row count, and a store small\nenough that nobody would think to look at it is proportionally the worst affected.\n\nentries is the catalogue's own estimate, refreshed by ANALYZE rather than maintained per write,\nso it lags a heavy burst. That is acceptable because nothing acts on this and the quantity being\njudged moves over days."
@@ -3637,71 +3731,88 @@
       "properties": {
         "timestampMin": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "exactly as GetMemoriesRequest.timestamp_min"
         },
         "timestampMax": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "exactly as GetMemoriesRequest.timestamp_max"
         },
         "significanceMin": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "exactly as GetMemoriesRequest.significance_min"
         },
         "significanceMax": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "exactly as GetMemoriesRequest.significance_max"
         },
         "group": {
-          "type": "string"
+          "type": "string",
+          "title": "exactly as GetMemoriesRequest.group"
         },
         "significanceExtremum": {
-          "$ref": "#/definitions/v1SignificanceExtremum"
+          "$ref": "#/definitions/v1SignificanceExtremum",
+          "title": "exactly as GetMemoriesRequest.significance_extremum"
         },
         "metadata": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "title": "exactly as GetMemoriesRequest.metadata"
         },
         "recalled": {
-          "$ref": "#/definitions/v1Bool"
+          "$ref": "#/definitions/v1Bool",
+          "title": "exactly as GetMemoriesRequest.recalled"
         },
         "recallCountMin": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "exactly as GetMemoriesRequest.recall_count_min"
         },
         "recallCountMax": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "exactly as GetMemoriesRequest.recall_count_max"
         },
         "timeRecalledMin": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "exactly as GetMemoriesRequest.time_recalled_min"
         },
         "timeRecalledMax": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "exactly as GetMemoriesRequest.time_recalled_max"
         },
         "isSummary": {
-          "$ref": "#/definitions/v1Bool"
+          "$ref": "#/definitions/v1Bool",
+          "title": "exactly as GetMemoriesRequest.is_summary"
         },
         "isBinary": {
-          "$ref": "#/definitions/v1Bool"
+          "$ref": "#/definitions/v1Bool",
+          "title": "exactly as GetMemoriesRequest.is_binary"
         },
         "eventId": {
-          "type": "string"
+          "type": "string",
+          "title": "exactly as GetMemoriesRequest.event_id"
         },
         "hasEvent": {
-          "$ref": "#/definitions/v1Bool"
+          "$ref": "#/definitions/v1Bool",
+          "title": "exactly as GetMemoriesRequest.has_event"
         }
       },
-      "description": "Export snapshots every event and memory into an archive object in S3 and records a manifest of\nexactly what was captured; with clear set, the captured records are deleted after a successful\nupload (writes and recalls landing mid-run survive, exactly as Clear does).\nMemorySelection narrows an Export or a Transfer to the memories it matches. Every field means\nexactly what the same field means on GetMemoriesRequest, and the service builds both predicates\nwith one function, so a GetMemories listing with the same fields is the dry run for the archive.\nAbsent, or present with no field set, the whole store is selected, as before. The events that go\nwith the selected memories are the ones they belong to, plus - when group is set - every event\ncarrying that group, so an archive of one group holds that group's empty events too."
+      "description": "MemorySelection narrows an Export or a Transfer to the memories it matches. Every field means\nexactly what the same field means on GetMemoriesRequest, and the service builds both predicates\nwith one function, so a GetMemories listing with the same fields is the dry run for the archive.\nAbsent, or present with no field set, the whole store is selected, as before. The events that go\nwith the selected memories are the ones they belong to, plus - when group is set - every event\ncarrying that group, so an archive of one group holds that group's empty events too."
     },
     "v1MemoryValuation": {
       "type": "object",
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "title": "the memory's id"
         },
         "eventId": {
           "type": "string",
@@ -3734,7 +3845,8 @@
         },
         "recallCount": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "how many times it has been recalled"
         },
         "timeRecalled": {
           "type": "string",
@@ -3797,7 +3909,8 @@
           "type": "string",
           "title": "the event whose memories are moved to merge_to; need not exist - an absent one simply matches no memories"
         }
-      }
+      },
+      "description": "MergeEventsRequest re-points every memory of merge_from onto merge_to."
     },
     "v1PreviewConsolidationResponse": {
       "type": "object",
@@ -3829,7 +3942,8 @@
         },
         "retainedBytes": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "the stored size of the memories_retained"
         },
         "capacityPressure": {
           "type": "number",
@@ -3856,7 +3970,8 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1ForgetCandidate"
-          }
+          },
+          "title": "the memories that would go, at most the request's limit"
         },
         "truncated": {
           "type": "boolean",
@@ -3899,10 +4014,12 @@
           "title": "surrogate key; also the pagination cursor"
         },
         "kind": {
-          "$ref": "#/definitions/v1CallbackKind"
+          "$ref": "#/definitions/v1CallbackKind",
+          "title": "what the delivery reports"
         },
         "cause": {
-          "$ref": "#/definitions/v1DeleteCause"
+          "$ref": "#/definitions/v1DeleteCause",
+          "title": "what deleted the items, for a forgotten delivery"
         },
         "cycleId": {
           "type": "string",
@@ -3916,7 +4033,8 @@
         },
         "chunks": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "how many deliveries the notification was split into"
         },
         "itemCount": {
           "type": "integer",
@@ -3930,7 +4048,8 @@
         },
         "attempts": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "delivery attempts so far"
         },
         "nextAttemptAt": {
           "type": "string",
@@ -3947,31 +4066,37 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "title": "the memories to recall; an id the store does not hold is absent from the response"
         },
         "includeLinked": {
           "type": "boolean",
           "title": "also return the memories linked to those recalled, one hop, in either direction. The linked memories are returned as an associative recall, not counted as directly recalled: their recall_count is untouched (see consolidation.linkRecallPropagation for what a recall does to a neighbour's decay clock)"
         }
-      }
+      },
+      "description": "RecallMemoriesRequest names the memories to recall and reinforce."
     },
     "v1ReplaceMemoriesWithSummaryResponse": {
       "type": "object",
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "title": "the new summary memory's id"
         },
         "memoriesReplaced": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "how many memories the summary replaced"
         }
-      }
+      },
+      "description": "ReplaceMemoriesWithSummaryResponse names the summary memory and counts what it replaced."
     },
     "v1SearchMemoriesRequest": {
       "type": "object",
       "properties": {
         "query": {
-          "type": "string"
+          "type": "string",
+          "title": "the text to match; embedded as well in SEMANTIC and HYBRID modes"
         },
         "limit": {
           "type": "integer",
@@ -4086,7 +4211,8 @@
       "type": "object",
       "properties": {
         "measured": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "false where the driver cannot answer; see above"
         },
         "measuredAt": {
           "type": "string",
@@ -4100,7 +4226,8 @@
         },
         "indexBytes": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "the part of bytes that is indexes"
         },
         "estimatedBytes": {
           "type": "string",
@@ -4112,7 +4239,8 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1TableFootprint"
-          }
+          },
+          "title": "one per counted table"
         }
       },
       "description": "StorageFootprint is what the tables INSIDE the byte capacity target really occupy on disk.\n\nused_bytes is a live-row estimate on the server drivers, deliberately: no file-size measure on\neither server shrinks after a delete, so eviction driven by one would chase a figure that cannot\ndrop, evicting every cycle without the reading ever moving. That decision is right and this does\nnot touch it. What was missing was any comparison between the estimate and the disk - and a live\ninstance reporting 153 MB against a 160 MB capacity target was holding an 892 MB database, of\nwhich 533 MB was one index at 5% leaf density.\n\nA store that forgets is a store whose indexes bloat. It is the direct cost of the thing this\nservice exists to do, it is unbounded, and the remedy (REINDEX CONCURRENTLY) is a maintenance\ndecision rather than something a memory store should do to itself on a timer. This reports the\nfigure that says when; docs/operations.md carries the runbook.\n\nmeasured is false where the driver has nothing to answer, which separates it from a store\noccupying no disk. That is SQLite, whose page accounting already counts every index inside the\ntarget. PostgreSQL answers per index and MySQL per table (see TableFootprint.indexes)."
@@ -4158,7 +4286,8 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1StoreMemoryResult"
-          }
+          },
+          "title": "one per requested memory, in request order"
         },
         "stored": {
           "type": "integer",
@@ -4219,14 +4348,17 @@
       "type": "object",
       "properties": {
         "eventId": {
-          "type": "string"
+          "type": "string",
+          "title": "the event to summarise"
         },
         "eventName": {
-          "type": "string"
+          "type": "string",
+          "title": "its name"
         },
         "memoryCount": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories it holds"
         }
       },
       "description": "SummarisationCandidate identifies an event whose memories have accumulated enough, and gone\nquiet for long enough, to be worth condensing into a single summary memory via\nReplaceMemoriesWithSummary."
@@ -4247,13 +4379,15 @@
           "type": "string",
           "title": "the LLM-generated summary text stored in the new memory"
         }
-      }
+      },
+      "description": "SummariseMemoriesResponse names the summary memory the LLM wrote and counts what it replaced."
     },
     "v1TableFootprint": {
       "type": "object",
       "properties": {
         "table": {
-          "type": "string"
+          "type": "string",
+          "title": "the table's name"
         },
         "bytes": {
           "type": "string",
@@ -4262,7 +4396,8 @@
         },
         "indexBytes": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "title": "the part of bytes that is indexes"
         },
         "indexes": {
           "type": "array",
@@ -4279,10 +4414,12 @@
       "type": "object",
       "properties": {
         "key": {
-          "type": "string"
+          "type": "string",
+          "title": "the setting or property"
         },
         "value": {
-          "type": "string"
+          "type": "string",
+          "title": "its value, already redacted"
         }
       },
       "description": "TopologyAttribute is one piece of a node's configuration, as a key/value pair.\n\nA bag rather than a typed message per kind, because the alternative grows a proto field for every\ncomponent type and a rendering branch to match; the keys a kind carries are documented with the\nbuilder that produces them. Values are already redacted: no credential, secret, or DSN password\never reaches this message - see GetTopology."
@@ -4291,10 +4428,12 @@
       "type": "object",
       "properties": {
         "fromId": {
-          "type": "string"
+          "type": "string",
+          "title": "the node that initiates the connection"
         },
         "toId": {
-          "type": "string"
+          "type": "string",
+          "title": "the node it reaches"
         },
         "label": {
           "type": "string",
@@ -4315,7 +4454,8 @@
           "description": "stable within a response: \"self\", \"store\", \"declared:\u003cname\u003e\", ..."
         },
         "kind": {
-          "$ref": "#/definitions/v1TopologyNodeKind"
+          "$ref": "#/definitions/v1TopologyNodeKind",
+          "title": "what the component is"
         },
         "name": {
           "type": "string",
@@ -4326,10 +4466,12 @@
           "title": "the redacted endpoint, host, or file path; empty where there is none"
         },
         "source": {
-          "$ref": "#/definitions/v1TopologyNodeSource"
+          "$ref": "#/definitions/v1TopologyNodeSource",
+          "title": "how this instance knows of it"
         },
         "status": {
-          "$ref": "#/definitions/v1TopologyStatus"
+          "$ref": "#/definitions/v1TopologyStatus",
+          "title": "its health as the last probe found it"
         },
         "statusDetail": {
           "type": "string",
@@ -4349,7 +4491,8 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1TopologyAttribute"
-          }
+          },
+          "title": "kind-specific settings and properties"
         }
       },
       "description": "TopologyNode is one component of the deployment."
@@ -4374,7 +4517,7 @@
         "TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER"
       ],
       "default": "TOPOLOGY_NODE_KIND_UNSPECIFIED",
-      "description": "TopologyNodeKind names what a component in the deployment graph IS. It is deliberately coarse:\nthe console draws one shape per kind and an operator reads one word, so a kind exists only where\nit changes how a node is drawn or what its attributes mean.\n\nThe set describes the deployment's component types, not what a given build happens to emit. An\ninstance can only report what it knows (see TopologyNodeSource), so the kinds that dial IN -\nbridges, the ingestor, MCP servers, clients - appear only where an operator has declared them or\nwhere they have been observed calling.\n\n - TOPOLOGY_NODE_KIND_UNSPECIFIED: not set\n - TOPOLOGY_NODE_KIND_INSTANCE: a Hippocampus instance: this one, or a peer sharing its store\n - TOPOLOGY_NODE_KIND_STORE: the primary store (SQLite file, PostgreSQL, MySQL)\n - TOPOLOGY_NODE_KIND_SEARCH_INDEX: the secondary content-search index\n - TOPOLOGY_NODE_KIND_SUMMARISER: the embedded LLM behind SummariseMemories\n - TOPOLOGY_NODE_KIND_EMBEDDER: the embedding model behind semantic search\n - TOPOLOGY_NODE_KIND_OBJECT_STORE: the S3 bucket behind Export/Import\n - TOPOLOGY_NODE_KIND_TRANSFER_TARGET: the instance Transfer sends to\n - TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER: the IdP whose JWKS verifies tokens\n - TOPOLOGY_NODE_KIND_COLLECTOR: the OTLP endpoint metrics and traces are exported to\n - TOPOLOGY_NODE_KIND_BRIDGE: an event-sourcing broker bridge\n - TOPOLOGY_NODE_KIND_INGESTOR: the edge-to-central ingestor\n - TOPOLOGY_NODE_KIND_MCP_BRIDGE: an MCP server bridging an LLM host to this service\n - TOPOLOGY_NODE_KIND_CLIENT: any other client of this service\n - TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER: the endpoint outbound callbacks are delivered to"
+      "description": "TopologyNodeKind names what a component in the deployment graph IS. It is deliberately coarse:\nthe console draws one shape per kind and an operator reads one word, so a kind exists only where\nit changes how a node is drawn or what its attributes mean.\n\nThe set describes the deployment's component types, not what a given build happens to emit. An\ninstance can only report what it knows (see TopologyNodeSource), so the kinds that dial IN -\nbridges, the ingestor, MCP servers, clients - appear only where an operator has declared them or\nwhere they have been observed calling.\n\n - TOPOLOGY_NODE_KIND_UNSPECIFIED: not set\n - TOPOLOGY_NODE_KIND_INSTANCE: a Hippocampus instance: this one, or a peer sharing its store\n - TOPOLOGY_NODE_KIND_STORE: the primary store (SQLite file, PostgreSQL, MySQL)\n - TOPOLOGY_NODE_KIND_SEARCH_INDEX: the secondary content-search index\n - TOPOLOGY_NODE_KIND_SUMMARISER: the embedded LLM behind SummariseMemories\n - TOPOLOGY_NODE_KIND_EMBEDDER: the embedding model behind semantic search\n - TOPOLOGY_NODE_KIND_OBJECT_STORE: where Export writes and Import reads: an S3 bucket or archive.directory\n - TOPOLOGY_NODE_KIND_TRANSFER_TARGET: the instance Transfer sends to\n - TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER: the IdP whose JWKS verifies tokens\n - TOPOLOGY_NODE_KIND_COLLECTOR: the OTLP endpoint metrics and traces are exported to\n - TOPOLOGY_NODE_KIND_BRIDGE: an event-sourcing broker bridge\n - TOPOLOGY_NODE_KIND_INGESTOR: the edge-to-central ingestor\n - TOPOLOGY_NODE_KIND_MCP_BRIDGE: an MCP server bridging an LLM host to this service\n - TOPOLOGY_NODE_KIND_CLIENT: any other client of this service\n - TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER: the endpoint outbound callbacks are delivered to"
     },
     "v1TopologyNodeSource": {
       "type": "string",
@@ -4419,41 +4562,50 @@
       "type": "object",
       "properties": {
         "manifestId": {
-          "type": "string"
+          "type": "string",
+          "title": "identifies what was captured; pass it to Clear to delete those records later"
         },
         "eventsTransferred": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events the target accepted"
         },
         "memoriesTransferred": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories the target accepted"
         },
         "memoriesCleared": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "memories deleted afterwards; 0 unless clear was set"
         },
         "eventsCleared": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "title": "events deleted afterwards; 0 unless clear was set"
         },
         "instanceId": {
           "type": "string",
           "title": "the instance holding the manifest; see ExportResponse.instance_id"
         }
-      }
+      },
+      "description": "TransferResponse reports what a Transfer sent and, with clear set, what it then deleted."
     },
     "v1WhoAmIResponse": {
       "type": "object",
       "properties": {
         "clientId": {
-          "type": "string"
+          "type": "string",
+          "title": "the token's client_id; empty without authentication"
         },
         "role": {
-          "type": "string"
+          "type": "string",
+          "title": "the effective tier: \"reader\", \"writer\" or \"admin\""
         },
         "authEnabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "title": "whether the service authenticates callers"
         },
         "searchModes": {
           "type": "array",
@@ -4487,7 +4639,7 @@
         },
         "topologyTier": {
           "type": "string",
-          "description": "topology_tier is the minimum authorization tier GetTopology requires on this deployment\n(topology.minimumTier), as a tier name. It is reported rather than resolved to a bool because\nit belongs with its neighbours above, which are all properties of the DEPLOYMENT and never of\nthe caller; a client compares it against the role it was told in this same response, which is\nwhere it already decides what to offer.\n\nEmpty means the RPC is unavailable here (topology.enabled false), which is not the same as\nbeing refused it - so a client can leave the view out entirely rather than offer a control\ncertain to fail."
+          "description": "topology_tier is the minimum authorisation tier GetTopology requires on this deployment\n(topology.minimumTier), as a tier name. It is reported rather than resolved to a bool because\nit belongs with its neighbours above, which are all properties of the DEPLOYMENT and never of\nthe caller; a client compares it against the role it was told in this same response, which is\nwhere it already decides what to offer.\n\nEmpty means the RPC is unavailable here (topology.enabled false), which is not the same as\nbeing refused it - so a client can leave the view out entirely rather than offer a control\ncertain to fail."
         },
         "version": {
           "type": "string",
@@ -4498,7 +4650,7 @@
           "description": "callbacks_enabled reports whether outbound callbacks are configured here\n(callbacks.url, and this instance running the dispatcher). It is a deployment property like\nits neighbours above, and it is here for tombstones_enabled's argument exactly: an empty\nqueue and a disabled feature render identically, so a client shown GetCallbackQueue's empty\npage cannot tell \"nothing is waiting to be delivered\" from \"nothing will ever be delivered\"."
         }
       },
-      "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorization tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."
+      "description": "WhoAmIResponse reports the caller's identity to a client so it can tailor its UI. role is the\ncaller's effective authorisation tier (\"reader\", \"writer\", or \"admin\"); auth_enabled is false\nwhen the service runs without authentication, in which case role is \"admin\" (unrestricted) and\nclient_id is empty."
     }
   },
   "securityDefinitions": {

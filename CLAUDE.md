@@ -1089,7 +1089,10 @@ IF NOT EXISTS`). Postgres/MySQL integration tests in `postgres_test.go`/`mysql_t
 ./contract` (directive in `generate.go`) turns those into `hippocampus.pb.gw.go` (the gateway)
   and `hippocampus.swagger.json` (the OpenAPI description, embedded via `swagger.go`).
   `contract/google/api/{annotations,http}.proto`
-  are vendored copies of the googleapis definitions the annotations depend on.
+  are vendored copies of the googleapis definitions the annotations depend on. Every message and
+  field carries a comment - they reach every generated client and the OpenAPI document - and
+  `contract/comments_test.go` refuses a new one without, through an allow-list that may only shrink
+  (empty since TODO-3 item 174) and a line scan held to the compiled descriptor.
 - `search/` — the secondary content-search index (`search.Index` interface with three
   implementations: no-op, `SQL`, and `opensearch-go/v4`). **Two backends, selected in main.go:**
   OpenSearch when `opensearch.enabled`, otherwise `search.NewSQL` over the primary store — so

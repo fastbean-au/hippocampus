@@ -156,7 +156,7 @@ type HippocampusClient interface {
 	// deliveries is therefore always an explicit request - this one - and it is a real discard: a
 	// deleted delivery is a notification nobody will ever receive.
 	DeleteCallbackQueue(ctx context.Context, in *DeleteCallbackQueueRequest, opts ...grpc.CallOption) (*DeleteCallbackQueueResponse, error)
-	// WhoAmI reports the authenticated caller's identity and effective authorization tier
+	// WhoAmI reports the authenticated caller's identity and effective authorisation tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
 	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
@@ -303,11 +303,13 @@ type HippocampusClient interface {
 	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
 	SummariseMemories(ctx context.Context, in *SummariseMemoriesRequest, opts ...grpc.CallOption) (*SummariseMemoriesResponse, error)
 	// Transfer and archive (embedded -> centralised)
-	// Export snapshots the whole store into an archive object in S3 and records a manifest of
+	// Export snapshots the whole store into an archive object in the configured object store (an S3
+	// bucket, or a directory under archive.directory) and records a manifest of
 	// exactly what was captured; with clear set, the captured records are deleted once the upload
 	// has succeeded.
 	Export(ctx context.Context, in *ExportRequest, opts ...grpc.CallOption) (*ExportResponse, error)
-	// Import streams an archive object from S3 into the store, upserting every record by id with
+	// Import streams an archive object from the configured object store into the store, upserting
+	// every record by id with
 	// its full state preserved. Idempotent; aborts on the first error.
 	Import(ctx context.Context, in *ImportRequest, opts ...grpc.CallOption) (*ImportResponse, error)
 	// ImportBatch upserts full-state rows by id directly - the ingest half of Transfer. Nothing is
@@ -877,7 +879,7 @@ type HippocampusServer interface {
 	// deliveries is therefore always an explicit request - this one - and it is a real discard: a
 	// deleted delivery is a notification nobody will ever receive.
 	DeleteCallbackQueue(context.Context, *DeleteCallbackQueueRequest) (*DeleteCallbackQueueResponse, error)
-	// WhoAmI reports the authenticated caller's identity and effective authorization tier
+	// WhoAmI reports the authenticated caller's identity and effective authorisation tier
 	// (reader/writer/admin), so a client - the web console - can tailor what it offers instead of
 	// guessing at the token's roles. Requires only the reader tier. When the service runs without
 	// authentication it reports auth_enabled false and an unrestricted (admin) tier.
@@ -1024,11 +1026,13 @@ type HippocampusServer interface {
 	// with FAILED_PRECONDITION when no summariser is configured. See SummariseMemoriesRequest.
 	SummariseMemories(context.Context, *SummariseMemoriesRequest) (*SummariseMemoriesResponse, error)
 	// Transfer and archive (embedded -> centralised)
-	// Export snapshots the whole store into an archive object in S3 and records a manifest of
+	// Export snapshots the whole store into an archive object in the configured object store (an S3
+	// bucket, or a directory under archive.directory) and records a manifest of
 	// exactly what was captured; with clear set, the captured records are deleted once the upload
 	// has succeeded.
 	Export(context.Context, *ExportRequest) (*ExportResponse, error)
-	// Import streams an archive object from S3 into the store, upserting every record by id with
+	// Import streams an archive object from the configured object store into the store, upserting
+	// every record by id with
 	// its full state preserved. Idempotent; aborts on the first error.
 	Import(context.Context, *ImportRequest) (*ImportResponse, error)
 	// ImportBatch upserts full-state rows by id directly - the ingest half of Transfer. Nothing is

@@ -393,9 +393,10 @@ func (s *Server) exportArchive(ctx context.Context, key string, scheduled bool, 
 	return result, nil
 }
 
-// Export snapshots the whole store into an archive object in S3 and caches a manifest of exactly
-// what it captured; with clear set the captured records are deleted once the upload has
-// succeeded. The archive streams through an io.Pipe, so it is never buffered whole in memory.
+// Export snapshots the whole store into an archive object in the configured object store (an S3
+// bucket or archive.directory) and caches a manifest of exactly what it captured; with clear set
+// the captured records are deleted once the upload has succeeded. The archive streams through an
+// io.Pipe, so it is never buffered whole in memory.
 func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contract.ExportResponse, error) {
 	log.Debug("Export()")
 
@@ -449,8 +450,8 @@ func (s *Server) Export(ctx context.Context, in *contract.ExportRequest) (*contr
 	return &res, nil
 }
 
-// Import streams an archive object from S3 into the store, upserting every record by id with its
-// full state preserved — a data migration, not fresh writes. Re-importing the same archive is
+// Import streams an archive object from the configured object store into the store, upserting every
+// record by id with its full state preserved — a data migration, not fresh writes. Re-importing the same archive is
 // idempotent. Aborts on the first error; a failed run is simply rerun.
 func (s *Server) Import(ctx context.Context, in *contract.ImportRequest) (*contract.ImportResponse, error) {
 	log.Debug("Import()")
