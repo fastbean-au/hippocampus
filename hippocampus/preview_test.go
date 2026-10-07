@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -511,6 +512,11 @@ func TestPreviewConcurrentCallsShareOneScan(t *testing.T) {
 
 	const callers = 8
 
+	var joined atomic.Int32
+
+	sharedCallJoined = func(string) { joined.Add(1) }
+	t.Cleanup(func() { sharedCallJoined = nil })
+
 	var wg sync.WaitGroup
 	results := make([]*contract.PreviewConsolidationResponse, callers)
 	errs := make([]error, callers)
@@ -525,8 +531,11 @@ func TestPreviewConcurrentCallsShareOneScan(t *testing.T) {
 		}()
 	}
 
-	// Let the callers pile up behind the in-flight scan, then release it.
-	time.Sleep(50 * time.Millisecond)
+	// Release the scan only once every caller has joined it: one released earlier could finish
+	// before a late caller arrived, which would then start a second scan of its own.
+	waitFor(t, 5*time.Second, "every preview caller to join the in-flight scan", func() bool {
+		return joined.Load() == callers
+	})
 	close(counting.release)
 
 	wg.Wait()

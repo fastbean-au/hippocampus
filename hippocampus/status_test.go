@@ -241,8 +241,8 @@ func TestNextSleepIsZeroWhenTimedSleepDisabled(t *testing.T) {
 	s.autoSleep(reset, 0)
 	t.Cleanup(s.Stop)
 
-	time.Sleep(50 * time.Millisecond)
-
+	// No wait: autoSleep records the next fire synchronously, before its goroutine starts, and only
+	// when there is a period - so with none the answer is already settled when it returns.
 	if got := s.nextSleep.Load(); got != 0 {
 		t.Errorf("nextSleep = %d with timed sleep disabled, want 0", got)
 	}

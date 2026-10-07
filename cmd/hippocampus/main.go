@@ -1085,17 +1085,7 @@ func run(ctx context.Context, version versionInfo) error {
 	// auth.issuer). The boolean auth.enabled predates auth.method and remains as a deprecated
 	// alias for "hmac", consulted only when auth.method is unset, so existing configs keep
 	// working unchanged.
-	authMethod := viper.GetString("auth.method")
-
-	if authMethod == "" {
-		authMethod = "none"
-
-		if viper.GetBool("auth.enabled") {
-			log.Warn("auth.enabled is deprecated - set auth.method to 'hmac' instead")
-
-			authMethod = "hmac"
-		}
-	}
+	authMethod := resolveAuthMethod()
 
 	tlsEnabled := viper.GetBool("tls.enabled")
 
@@ -1302,7 +1292,7 @@ func run(ctx context.Context, version versionInfo) error {
 		Embedder:   embedder,
 		Notifier:   notifier,
 		Version:    version.Version,
-	})
+	}, serverConfig(authMethod))
 
 	// Panic recovery runs first (outermost) so it catches a panic from any handler or later
 	// interceptor and returns codes.Internal rather than letting it crash the process. RPC metrics

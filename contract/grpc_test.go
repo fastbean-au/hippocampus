@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -35,17 +34,13 @@ import (
 func newGRPCTestServer(t *testing.T) (contract.HippocampusClient, string) {
 	t.Helper()
 
-	viper.Reset()
-	viper.Set("consolidation.enabled", true)
-	viper.Set("sleep.periodSeconds", 0)
-
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("failed to create in-memory DB: %s", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(hippocampus.Dependencies{DB: database})
+	hipo := hippocampus.New(hippocampus.Dependencies{DB: database}, hippocampus.Config{Consolidation: hippocampus.ConsolidationConfig{Enabled: true}})
 	t.Cleanup(hipo.Stop)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -320,9 +315,6 @@ func TestRegisterHippocampusHandlerFromEndpoint(t *testing.T) {
 // (invoking the HippocampusServer method directly), so this test is what reaches the other one -
 // building the grpc.UnaryServerInfo/handler closure and invoking the interceptor.
 func TestGRPCEndToEndWithInterceptor(t *testing.T) {
-	viper.Reset()
-	viper.Set("consolidation.enabled", true)
-	viper.Set("sleep.periodSeconds", 0)
 
 	database, err := db.New("")
 	if err != nil {
@@ -330,7 +322,7 @@ func TestGRPCEndToEndWithInterceptor(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(hippocampus.Dependencies{DB: database})
+	hipo := hippocampus.New(hippocampus.Dependencies{DB: database}, hippocampus.Config{Consolidation: hippocampus.ConsolidationConfig{Enabled: true}})
 	t.Cleanup(hipo.Stop)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
-
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
 )
@@ -32,21 +30,12 @@ func (l lockableStore) TryAcquireInstanceLock() (bool, error) {
 func standbyServer(t *testing.T) (*Server, *atomic.Bool) {
 	t.Helper()
 
-	viper.Set("consolidation.method", 1)
-	viper.Set("consolidation.aggressiveness", 1.0)
-	viper.Set("consolidation.unitsOfAgeInDays", 1.0)
-	viper.Set("consolidation.deletionThreshold", 1.0)
-	viper.Set("consolidation.enabled", false)
-	viper.Set("consolidation.standby", true)
-	viper.Set("consolidation.standbyPollSeconds", 1)
-	viper.Set("sleep.periodSeconds", 3600)
-	viper.Set("topology.enabled", true)
-
-	t.Cleanup(func() {
-		for _, key := range []string{"consolidation.enabled", "consolidation.standby", "consolidation.standbyPollSeconds", "sleep.periodSeconds", "topology.enabled"} {
-			viper.Set(key, nil)
-		}
-	})
+	cfg := testConfig()
+	cfg.Consolidation.Enabled = false
+	cfg.Consolidation.Standby = true
+	cfg.Consolidation.StandbyPoll = time.Second
+	cfg.SleepPeriod = time.Hour
+	cfg.Topology.Enabled = true
 
 	database, err := db.New("")
 	if err != nil {
@@ -57,7 +46,7 @@ func standbyServer(t *testing.T) (*Server, *atomic.Bool) {
 
 	free := &atomic.Bool{}
 
-	s := New(Dependencies{DB: lockableStore{Store: database, free: free, asked: &atomic.Int32{}}})
+	s := New(Dependencies{DB: lockableStore{Store: database, free: free, asked: &atomic.Int32{}}}, cfg)
 	t.Cleanup(s.Stop)
 
 	return s, free

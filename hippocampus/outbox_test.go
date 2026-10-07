@@ -420,9 +420,15 @@ func TestStaleSweepAbandonsOnAnEnumerationFailure(t *testing.T) {
 // than fail.
 func TestStaleSweepIgnoresABackendThatCannotEnumerate(t *testing.T) {
 	s, _ := outboxServer(t, &recordingIndex{})
+	hook := captureLogs(t)
 
-	// Nothing to assert but that it returns: the point is that it neither panics nor blocks.
 	s.staleSweep(context.Background())
+
+	// A sweep that got past the gate logs its outcome, at debug when nothing was stale; the gate
+	// means it never starts, so there is no outcome to log.
+	if n := loggedContaining(hook, "search reconcile:"); n != 0 {
+		t.Errorf("a backend that cannot enumerate must not be swept, but the sweep logged %d outcome(s)", n)
+	}
 }
 
 // TestStaleSweepConvergesUnderTimestampCollisions is the guard the two enumeration bugs found during

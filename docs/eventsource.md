@@ -843,20 +843,23 @@ go test ./...        # unit tests (transform, store, and each adapter's message/
 go test -race ./...
 ```
 
-The unit tests cover the pure logic without a live broker. Two adapters additionally have
+The unit tests cover the pure logic without a live broker. The adapters additionally have
 integration tests that exercise the real connect path; they skip unless the matching environment
 variable points at a broker:
 
 - NATS runs an embedded in-process server, so it always runs — no external broker needed.
 - MQTT: set `HIPPOCAMPUS_TEST_MQTT_BROKER` (e.g. `tcp://localhost:1883`).
 - RabbitMQ: set `HIPPOCAMPUS_TEST_RABBITMQ_URL` (e.g. `amqp://guest:guest@localhost:5672/`).
+- Kafka: set `HIPPOCAMPUS_TEST_KAFKA_BROKERS` (e.g. `localhost:9092`). Besides storing, it checks
+  the group's committed offset and that a restarted bridge resumes from it, which is what the
+  adapter's at-least-once delivery rests on.
 - Bluesky: set `HIPPOCAMPUS_TEST_JETSTREAM` (e.g.
   `wss://jetstream2.us-east.bsky.network/subscribe`). Unlike the other two this needs **no
   container** — Jetstream is public and unauthenticated — so it costs one variable and no service
   definition. It stores nothing; what it covers is the real dial and the real wire, which the fakes
   cannot.
 
-CI starts mosquitto and RabbitMQ and runs the full suite with those variables set, so the adapters'
+CI starts mosquitto, RabbitMQ and Kafka and runs the full suite with those variables set, so the adapters'
 real-connect paths are exercised on every push. The Jetstream variable is set only on pushes to the
 default branch, so a fork's pull request never reaches out to Bluesky's infrastructure and a
 third-party outage cannot turn a PR red.

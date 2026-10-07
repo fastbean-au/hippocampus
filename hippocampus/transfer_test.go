@@ -464,7 +464,12 @@ func TestExportWithClearConcurrent_NoPanic(t *testing.T) {
 
 	const runs = manifestCacheLimit * 3
 
-	var wg sync.WaitGroup
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		cleared int32
+		ok      int
+	)
 
 	for i := 0; i < runs; i++ {
 		wg.Add(1)
@@ -472,13 +477,36 @@ func TestExportWithClearConcurrent_NoPanic(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			// The first run clears the fixture; the rest capture empty/partial manifests. Either
+			// The first runs clear the fixture; the rest capture empty/partial manifests. Either
 			// way none may panic, which is the property under test.
-			_, _ = s.Export(context.Background(), &contract.ExportRequest{Clear: true})
+			res, err := s.Export(context.Background(), &contract.ExportRequest{Clear: true})
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			ok++
+			cleared += res.GetMemoriesCleared()
 		}()
 	}
 
 	wg.Wait()
+
+	// Not panicking is necessary but not sufficient: the exports must also have done their work.
+	// Every memory in the fixture is cleared exactly once across the runs, and the store ends empty.
+	if ok == 0 {
+		t.Fatal("no concurrent export succeeded")
+	}
+
+	if cleared != 3 {
+		t.Errorf("expected the fixture's 3 memories to be cleared exactly once in total, got %d", cleared)
+	}
+
+	if with, without := s.db.CountMemories(context.Background()); with+without != 0 {
+		t.Errorf("expected the store to end empty, %d memories remain", with+without)
+	}
 }
 
 // TestClearFailureCachesManifestForRetry is a regression test: when the standalone

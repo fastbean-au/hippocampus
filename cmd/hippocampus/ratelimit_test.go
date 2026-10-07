@@ -16,6 +16,7 @@ import (
 	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -676,11 +677,30 @@ func TestRegisterRateLimitGaugeIsSafe(t *testing.T) {
 	previous := otel.GetMeterProvider()
 	defer otel.SetMeterProvider(previous)
 
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
 	otel.SetMeterProvider(noop.NewMeterProvider())
 	registerRateLimitGauge(limiter)
 
-	otel.SetMeterProvider(erroringMeterProvider{})
-	registerRateLimitGauge(limiter)
+	if n := len(hook.AllEntries()); n != 0 {
+		t.Errorf("registering against a working provider must log nothing, logged %d entries", n)
+	}
+
+	// Each way the wiring can fail is reported and survived: the process carries on without the
+	// gauge rather than refusing to start over a metric.
+	for name, provider := range map[string]metric.MeterProvider{
+		"refusing the gauge":    erroringMeterProvider{},
+		"refusing the callback": callbackRefusingMeterProvider{},
+	} {
+		hook.Reset()
+		otel.SetMeterProvider(provider)
+		registerRateLimitGauge(limiter)
+
+		if entry := hook.LastEntry(); entry == nil || !strings.Contains(entry.Message, "rate limit clients") {
+			t.Errorf("a provider %s must be reported, got %v", name, entry)
+		}
+	}
 }
 
 // A rate-limited request is the caller sending too much, not the service failing. Classifying it as

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
 	"github.com/fastbean-au/hippocampus/auth"
@@ -44,7 +43,7 @@ func passthroughHandler(_ context.Context, _ interface{}) (interface{}, error) {
 func TestObservedCallerRecordedFromVerifiedClaims(t *testing.T) {
 	s := newTopologyServer(t)
 
-	viper.Set("auth.method", "hmac")
+	s.topology.authMethod = "hmac"
 
 	if _, err := s.InterceptorObserveCaller(
 		observedContext("nats-bridge", []string{"writer"}, nil),
@@ -157,7 +156,7 @@ func TestObservedCallerSelfAttributeExplainsAnEmptyColumn(t *testing.T) {
 		"authentication on":  {method: "hmac", want: "0 (none has called since this instance started)"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			viper.Set("auth.method", tc.method)
+			s.topology.authMethod = tc.method
 
 			res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
 			if err != nil {
@@ -182,7 +181,7 @@ func TestObservedCallerMergesIntoADeclaredComponent(t *testing.T) {
 		HealthURL: "http://nats-bridge:8090",
 	})
 
-	viper.Set("auth.method", "hmac")
+	s.topology.authMethod = "hmac"
 
 	ctx := observedContext("nats-bridge", []string{"writer"}, nil)
 
@@ -223,7 +222,7 @@ func TestObservedCallerMergesIntoADeclaredComponent(t *testing.T) {
 func TestObservedCallersAreBounded(t *testing.T) {
 	s := newTopologyServer(t)
 
-	viper.Set("auth.method", "hmac")
+	s.topology.authMethod = "hmac"
 
 	now := time.Now()
 

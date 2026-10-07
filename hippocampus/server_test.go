@@ -12,7 +12,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -284,12 +283,13 @@ func TestAutoSleep_TimedCycleFiresWithWALTriggerEnabled(t *testing.T) {
 	s.autoSleep(s.sleepReset, 40*time.Millisecond)
 	t.Cleanup(s.Stop)
 
-	// Several periods elapse; with the bug the 5 ms WAL poll keeps restarting the 40 ms timer.
-	time.Sleep(300 * time.Millisecond)
+	// With the bug the 5 ms WAL poll keeps restarting the 40 ms timer, so no cycle ever runs; without
+	// it one runs within a period. The generous timeout only matters when the bug is back.
+	waitFor(t, 5*time.Second, "a timed sleep cycle with walTriggerBytes enabled (the WAL poll starving the period timer)", func() bool {
+		calls, _ := rec.snapshot()
 
-	if calls, _ := rec.snapshot(); calls == 0 {
-		t.Fatal("no timed sleep cycle ran with walTriggerBytes enabled: the WAL poll starved the period timer")
-	}
+		return calls > 0
+	})
 }
 
 // TestStop_HaltsSleepBeforeClose is a regression test: Stop must halt the autoSleep
@@ -320,13 +320,14 @@ func TestStop_HaltsSleepBeforeClose(t *testing.T) {
 
 	s.autoSleep(s.sleepReset, 5*time.Millisecond)
 
-	// Let several cycles run so the loop is demonstrably active before we stop it.
-	time.Sleep(60 * time.Millisecond)
+	// Wait for the loop to be demonstrably active before stopping it.
+	waitFor(t, 5*time.Second, "autoSleep to run a cycle before Stop", func() bool {
+		calls, _ := rec.snapshot()
+
+		return calls > 0
+	})
 
 	callsBefore, _ := rec.snapshot()
-	if callsBefore == 0 {
-		t.Fatal("autoSleep ran no cycles; the test cannot prove Stop halts it")
-	}
 
 	s.Stop()
 	stopReturned := time.Now()
@@ -451,17 +452,9 @@ func TestSleep_RejectedWhenConsolidationDisabled(t *testing.T) {
 // set, so no cycle ever fires. The period is a single second, so a consolidating instance would run
 // a cycle well within the wait window; a replica must run none.
 func TestNew_ConsolidationDisabledRunsNoTimedSleep(t *testing.T) {
-	viper.Set("consolidation.enabled", false)
-	viper.Set("sleep.periodSeconds", 1)
-	viper.Set("consolidation.method", 1)
-	viper.Set("consolidation.aggressiveness", 1.0)
-	viper.Set("consolidation.unitsOfAgeInDays", 1.0)
-	viper.Set("consolidation.deletionThreshold", 1.0)
-
-	t.Cleanup(func() {
-		viper.Set("consolidation.enabled", true)
-		viper.Set("sleep.periodSeconds", 0)
-	})
+	cfg := testConfig()
+	cfg.Consolidation.Enabled = false
+	cfg.SleepPeriod = time.Second
 
 	database, err := db.New("")
 	if err != nil {
@@ -472,14 +465,19 @@ func TestNew_ConsolidationDisabledRunsNoTimedSleep(t *testing.T) {
 
 	rec := &recordingStore{Store: database}
 
-	s := New(Dependencies{DB: rec})
+	s := New(Dependencies{DB: rec}, cfg)
 	t.Cleanup(s.Stop)
 
 	if s.consolidationEnabled {
 		t.Fatal("consolidationEnabled should be false when consolidation.enabled is false")
 	}
 
-	time.Sleep(1300 * time.Millisecond)
+	// Structural rather than timed: a disabled instance never arms the timer, so no cycle can fire.
+	// Waiting a period for nothing to happen would prove the same thing more slowly and only on a
+	// machine fast enough to have run one.
+	if next := s.nextSleep.Load(); next != 0 {
+		t.Errorf("a disabled instance armed its timed cycle (next sleep at %d); it must arm none", next)
+	}
 
 	if calls, _ := rec.snapshot(); calls != 0 {
 		t.Errorf("a disabled instance ran %d timed sleep cycle(s); it must run none", calls)
@@ -657,18 +655,9 @@ func TestAutoSleep_ManualResetWithTimedSleepDisabled(t *testing.T) {
 // sweep goroutine (stopReconcile/reconcileStopped non-nil), and Stop must drain it promptly rather
 // than hanging.
 func TestNew_StartsAndStopsReconcile(t *testing.T) {
-	viper.Set("consolidation.enabled", true)
-	viper.Set("opensearch.reconcileIntervalSeconds", 3600)
-	viper.Set("sleep.periodSeconds", 0)
-	viper.Set("consolidation.method", 1)
-	viper.Set("consolidation.aggressiveness", 1.0)
-	viper.Set("consolidation.unitsOfAgeInDays", 1.0)
-	viper.Set("consolidation.deletionThreshold", 1.0)
-
-	t.Cleanup(func() {
-		viper.Set("opensearch.reconcileIntervalSeconds", 0)
-		viper.Set("sleep.periodSeconds", 0)
-	})
+	cfg := testConfig()
+	cfg.Consolidation.Enabled = true
+	cfg.Reconcile.Interval = time.Hour
 
 	database, err := db.New("")
 	if err != nil {
@@ -678,7 +667,7 @@ func TestNew_StartsAndStopsReconcile(t *testing.T) {
 
 	idx := &fakeIndex{enabled: true}
 
-	s := New(Dependencies{DB: database, Search: idx})
+	s := New(Dependencies{DB: database, Search: idx}, cfg)
 
 	if s.stopReconcile == nil || s.reconcileStopped == nil {
 		t.Fatal("expected startReconcile to launch the reconciliation sweep goroutine")
@@ -710,17 +699,8 @@ func TestNew_TransferTokenWithoutTLSWarns(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(restoreOutput) })
 
-	viper.Set("transfer.token", "secret-token")
-	viper.Set("sleep.periodSeconds", 0)
-	viper.Set("consolidation.method", 1)
-	viper.Set("consolidation.aggressiveness", 1.0)
-	viper.Set("consolidation.unitsOfAgeInDays", 1.0)
-	viper.Set("consolidation.deletionThreshold", 1.0)
-
-	t.Cleanup(func() {
-		viper.Set("transfer.token", "")
-		viper.Set("sleep.periodSeconds", 0)
-	})
+	cfg := testConfig()
+	cfg.Transfer.Token = "secret-token"
 
 	database, err := db.New("")
 	if err != nil {
@@ -728,7 +708,7 @@ func TestNew_TransferTokenWithoutTLSWarns(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	s := New(Dependencies{DB: database})
+	s := New(Dependencies{DB: database}, cfg)
 	t.Cleanup(s.Stop)
 
 	if !strings.Contains(buf.String(), "transfer.token is configured without transfer.tls") {

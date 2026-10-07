@@ -7,7 +7,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -45,11 +44,6 @@ const scheduledExportKeyTime = "20060102T150405Z"
 // minutes rather than at the next interval.
 const scheduledExportRetry = 15 * time.Minute
 
-type scheduledExportConfig struct {
-	interval time.Duration
-	keep     int
-}
-
 // prefix is where scheduled archives live.
 func (s *Server) scheduledExportPrefix() string {
 	return s.transfer.keyPrefix + scheduledExportSegment
@@ -58,12 +52,7 @@ func (s *Server) scheduledExportPrefix() string {
 // startScheduledExport launches the scheduled export when it is configured and this instance is
 // the one that should run it.
 func (s *Server) startScheduledExport() {
-	s.scheduledExport = scheduledExportConfig{
-		interval: time.Duration(viper.GetInt("archive.scheduledExport.intervalHours")) * time.Hour,
-		keep:     viper.GetInt("archive.scheduledExport.keep"),
-	}
-
-	if s.scheduledExport.interval <= 0 {
+	if s.scheduledExport.Interval <= 0 {
 		return
 	}
 
@@ -79,7 +68,7 @@ func (s *Server) startScheduledExport() {
 		return
 	}
 
-	tel.scheduledExportInterval.Record(context.Background(), int64(s.scheduledExport.interval.Seconds()))
+	tel.scheduledExportInterval.Record(context.Background(), int64(s.scheduledExport.Interval.Seconds()))
 
 	s.stopScheduledExport = make(chan struct{})
 	s.scheduledExportStopped = make(chan struct{})
@@ -93,8 +82,8 @@ func (s *Server) scheduledExportLoop() {
 	wait := s.firstScheduledExportWait(context.Background(), time.Now())
 
 	log.WithFields(log.Fields{
-		"interval": s.scheduledExport.interval,
-		"keep":     s.scheduledExport.keep,
+		"interval": s.scheduledExport.Interval,
+		"keep":     s.scheduledExport.Keep,
 		"first_in": wait.Round(time.Second),
 	}).
 		Info("scheduled export enabled")
@@ -116,12 +105,12 @@ func (s *Server) scheduledExportLoop() {
 		if err := s.runScheduledExport(context.Background(), time.Now()); err != nil {
 			log.WithError(err).Error("scheduled export failed; retrying soon")
 
-			wait = min(scheduledExportRetry, s.scheduledExport.interval)
+			wait = min(scheduledExportRetry, s.scheduledExport.Interval)
 
 			continue
 		}
 
-		wait = s.scheduledExport.interval
+		wait = s.scheduledExport.Interval
 	}
 }
 
@@ -131,14 +120,14 @@ func (s *Server) scheduledExportLoop() {
 func (s *Server) firstScheduledExportWait(ctx context.Context, now time.Time) time.Duration {
 	pruner, ok := s.objects.(archive.Pruner)
 	if !ok {
-		return s.scheduledExport.interval
+		return s.scheduledExport.Interval
 	}
 
 	keys, err := pruner.List(ctx, s.scheduledExportPrefix())
 	if err != nil {
 		log.WithError(err).Warn("scheduled export: could not list existing archives; scheduling one interval from now")
 
-		return s.scheduledExport.interval
+		return s.scheduledExport.Interval
 	}
 
 	var newest time.Time
@@ -150,10 +139,10 @@ func (s *Server) firstScheduledExportWait(ctx context.Context, now time.Time) ti
 	}
 
 	if newest.IsZero() {
-		return s.scheduledExport.interval
+		return s.scheduledExport.Interval
 	}
 
-	if due := newest.Add(s.scheduledExport.interval).Sub(now); due > 0 {
+	if due := newest.Add(s.scheduledExport.Interval).Sub(now); due > 0 {
 		return due
 	}
 
@@ -220,7 +209,7 @@ func (s *Server) runScheduledExport(ctx context.Context, now time.Time) error {
 // pruneScheduledExports deletes the oldest scheduled archives beyond keep. A non-positive keep keeps
 // everything, which is a choice an operator with their own lifecycle rules on the bucket may make.
 func (s *Server) pruneScheduledExports(ctx context.Context) error {
-	if s.scheduledExport.keep <= 0 {
+	if s.scheduledExport.Keep <= 0 {
 		return nil
 	}
 
@@ -243,7 +232,7 @@ func (s *Server) pruneScheduledExports(ctx context.Context) error {
 		}
 	}
 
-	for i := 0; i < len(ours)-s.scheduledExport.keep; i++ {
+	for i := 0; i < len(ours)-s.scheduledExport.Keep; i++ {
 		if err := pruner.Delete(ctx, ours[i]); err != nil {
 			return err
 		}

@@ -66,6 +66,28 @@ func (erroringMeter) Float64Histogram(name string, _ ...metric.Float64HistogramO
 	return noop.Float64Histogram{}, fmt.Errorf("injected instrument creation failure for %q", name)
 }
 
+func (erroringMeter) Int64ObservableGauge(name string, _ ...metric.Int64ObservableGaugeOption) (metric.Int64ObservableGauge, error) {
+	return noop.Int64ObservableGauge{}, fmt.Errorf("injected instrument creation failure for %q", name)
+}
+
+// callbackRefusingMeterProvider hands out a meter that creates instruments but refuses to register
+// a callback for them - the second of the two ways an observable gauge can fail to be wired.
+type callbackRefusingMeterProvider struct {
+	noop.MeterProvider
+}
+
+func (callbackRefusingMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return callbackRefusingMeter{}
+}
+
+type callbackRefusingMeter struct {
+	noop.Meter
+}
+
+func (callbackRefusingMeter) RegisterCallback(metric.Callback, ...metric.Observable) (metric.Registration, error) {
+	return nil, fmt.Errorf("injected callback registration failure")
+}
+
 // erroringMeterProvider embeds noop.MeterProvider so it satisfies metric.MeterProvider, overriding
 // only Meter to hand back erroringMeter.
 type erroringMeterProvider struct {

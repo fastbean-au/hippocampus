@@ -18,8 +18,8 @@ go test ./...
 ```
 
 `hooks/pre-commit` runs `go mod tidy`, `gofmt`, `go vet`, `golangci-lint` and the root module's
-tests with coverage. Any failure stops the commit. Install `golangci-lint` with `go install` if it is
-missing.
+tests with coverage. Any failure stops the commit. If `golangci-lint` is missing, install the
+version CI uses: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`.
 
 ### The modules
 
@@ -93,9 +93,11 @@ always the fix. Loosening the check is almost never the fix.
 
 ## Adding a configuration key
 
-1. Read it with viper, either in `cmd/hippocampus/main.go` or, for a key the server owns, in
-   `hippocampus.New` and the setup it calls. Request handlers never read viper. Give it a default
-   in `setStartupDefaults` or with `viper.SetDefault`. Do not use a constant for a default.
+1. Read it with viper in `cmd/hippocampus`. A key the service package acts on gets a field in
+   `hippocampus.Config` and is read in `serverconfig.go` (`TestServerConfigFillsEveryField` fails if
+   the field is never assigned); the `hippocampus` package itself never reads configuration. Give
+   the key a default in `setStartupDefaults` or with `viper.SetDefault`. Do not use a constant for a
+   default.
 2. If some values must stop the service starting, refuse them in `configProblems`, which also backs
    `--check-config`.
 3. Offer it in the configuration wizard (`cmd/config-wizard/wizard/app.js`). Record its service

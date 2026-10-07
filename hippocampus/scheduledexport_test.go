@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
-
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -55,7 +53,7 @@ func scheduledExportServer(t *testing.T) (*Server, *fakeObjectStore) {
 	s := newTestServer(t)
 	s.objects = objects
 	s.consolidationEnabled = true
-	s.scheduledExport = scheduledExportConfig{interval: 24 * time.Hour, keep: 2}
+	s.scheduledExport = ScheduledExportConfig{Interval: 24 * time.Hour, Keep: 2}
 
 	if _, err := s.db.CreateMemory(context.Background(), types.Memory{Id: "m1", Body: "kept", TimeStamp: time.Now().UnixNano(), Significance: 5}); err != nil {
 		t.Fatalf("CreateMemory: %s", err)
@@ -146,7 +144,7 @@ func TestFirstScheduledExportWait(t *testing.T) {
 // TestScheduledExportLoopExportsAndStops: the loop takes an export on its own and Stop ends it.
 func TestScheduledExportLoopExportsAndStops(t *testing.T) {
 	s, objects := scheduledExportServer(t)
-	s.scheduledExport.interval = 20 * time.Millisecond
+	s.scheduledExport.Interval = 20 * time.Millisecond
 
 	s.stopScheduledExport = make(chan struct{})
 	s.scheduledExportStopped = make(chan struct{})
@@ -202,11 +200,9 @@ func TestStartScheduledExportRunsOnlyWhereItShould(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			viper.Set("archive.scheduledExport.intervalHours", c.interval)
-			t.Cleanup(func() { viper.Set("archive.scheduledExport.intervalHours", nil) })
-
 			s := newTestServer(t)
 			s.consolidationEnabled = c.consolidating
+			s.scheduledExport.Interval = time.Duration(c.interval) * time.Hour
 
 			if c.objects {
 				s.objects = newFakeObjectStore()
@@ -228,7 +224,7 @@ func TestScheduledExportSurvivesAStoreThatCannotList(t *testing.T) {
 	s, objects := scheduledExportServer(t)
 	s.objects = brokenPruner{objects}
 
-	if got := s.firstScheduledExportWait(context.Background(), time.Now()); got != s.scheduledExport.interval {
+	if got := s.firstScheduledExportWait(context.Background(), time.Now()); got != s.scheduledExport.Interval {
 		t.Errorf("first wait with a store that cannot list = %v, want the interval", got)
 	}
 
@@ -255,7 +251,7 @@ func TestScheduledExportRetriesAFailure(t *testing.T) {
 		t.Fatal("an export whose upload failed reported success")
 	}
 
-	s.scheduledExport.interval = 10 * time.Millisecond
+	s.scheduledExport.Interval = 10 * time.Millisecond
 	s.stopScheduledExport = make(chan struct{})
 	s.scheduledExportStopped = make(chan struct{})
 
@@ -270,7 +266,7 @@ func TestScheduledExportRetriesAFailure(t *testing.T) {
 // lifecycle rules of its own.
 func TestPruneKeepsEverythingWhenKeepIsZero(t *testing.T) {
 	s, objects := scheduledExportServer(t)
-	s.scheduledExport.keep = 0
+	s.scheduledExport.Keep = 0
 
 	for _, key := range []string{"scheduled/20260101T000000Z.archive.gz", "scheduled/20260102T000000Z.archive.gz"} {
 		_ = objects.Put(context.Background(), key, bytes.NewReader([]byte("x")))

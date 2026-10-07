@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/spf13/viper"
 )
 
@@ -41,6 +42,28 @@ func captureStdout(t *testing.T, fn func()) string {
 
 	_ = w.Close()
 	os.Stdout = orig
+
+	out, _ := io.ReadAll(r)
+
+	return string(out)
+}
+
+// captureStderr is captureStdout for os.Stderr, where pflag writes --help's usage.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	orig := os.Stderr
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %s", err)
+	}
+
+	os.Stderr = w
+	fn()
+
+	_ = w.Close()
+	os.Stderr = orig
 
 	out, _ := io.ReadAll(r)
 
@@ -81,10 +104,17 @@ func TestExecute_Help(t *testing.T) {
 	viper.Reset()
 	defer viper.Reset()
 
-	// --help writes usage to the flag set's output (stdout); capture it so it does not leak.
-	_ = captureStdout(t, func() {
+	// --help writes usage to the flag set's output, which pflag points at stderr; capture it so it
+	// does not leak into the test log.
+	usage := captureStderr(t, func() {
 		execute([]string{"--help"})
 	})
+
+	for _, flag := range []string{"--config_file", "--check-config", "--mint-token"} {
+		if !strings.Contains(usage, flag) {
+			t.Errorf("--help printed no usage for %s:\n%s", flag, usage)
+		}
+	}
 }
 
 // TestExecute_BadFlag fails fast (log.Panicf) on an unparseable flag instead of starting with
@@ -226,7 +256,22 @@ func TestExecute_BackfillWithoutOpenSearchRebuildsTheStoreIndex(t *testing.T) {
 
 	path := writeConfigFile(t, `{"storage": {"directory": "`+filepath.ToSlash(t.TempDir())+`"}}`)
 
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
 	execute([]string{"--backfill-search", "--config_file", path})
+
+	rebuilt := false
+
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "content search index rebuilt") {
+			rebuilt = true
+		}
+	}
+
+	if !rebuilt {
+		t.Error("--backfill-search without OpenSearch did not report rebuilding the store's own index")
+	}
 }
 
 // TestExecute_BackfillWithoutAnyIndexFailsFast: on a driver that has no built-in content search,

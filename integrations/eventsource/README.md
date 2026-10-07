@@ -150,16 +150,17 @@ go test -race ./...
 
 The unit tests cover the pure logic — message normalisation, the default transformer, the store
 loop, and each adapter's ack/commit routing (driven by fakes) — without needing a live broker, and
-the NATS adapter additionally runs against an **embedded in-process NATS server**. The MQTT and
-RabbitMQ adapters' real-connect paths are covered by integration tests that skip unless the matching
-environment variable points at a broker:
+the NATS adapter additionally runs against an **embedded in-process NATS server**. The MQTT,
+RabbitMQ and Kafka adapters' real-connect paths are covered by integration tests that skip unless the
+matching environment variable points at a broker:
 
 ```sh
 HIPPOCAMPUS_TEST_MQTT_BROKER=tcp://localhost:1883 \
 HIPPOCAMPUS_TEST_RABBITMQ_URL=amqp://guest:guest@localhost:5672/ \
+HIPPOCAMPUS_TEST_KAFKA_BROKERS=localhost:9092 \
 go test ./...
 ```
 
-CI (`.github/workflows/ci.yaml`, the `eventsource-bridges` job) starts mosquitto and RabbitMQ and
+CI (`.github/workflows/ci.yaml`, the `eventsource-bridges` job) starts mosquitto, RabbitMQ and Kafka and
 runs the whole suite with those variables set, so every package stays ≥95% covered on every push.
 The release workflow cross-compiles all four `cmd` binaries onto the GitHub release.

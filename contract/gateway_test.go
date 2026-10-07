@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"github.com/spf13/viper"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
@@ -32,17 +31,13 @@ import (
 func newGatewayTestServer(t *testing.T) (*httptest.Server, *hippocampus.Server) {
 	t.Helper()
 
-	viper.Reset()
-	viper.Set("consolidation.enabled", true)
-	viper.Set("sleep.periodSeconds", 0)
-
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("failed to create in-memory DB: %s", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(hippocampus.Dependencies{DB: database})
+	hipo := hippocampus.New(hippocampus.Dependencies{DB: database}, hippocampus.Config{Consolidation: hippocampus.ConsolidationConfig{Enabled: true}})
 	t.Cleanup(hipo.Stop)
 
 	gwMux := runtime.NewServeMux()
@@ -522,9 +517,6 @@ func TestGatewayGetEventByIdNotFound(t *testing.T) {
 // enabled: false), the one Sleep outcome TestGatewayEndToEnd's consolidation.enabled: true server
 // cannot reach.
 func TestGatewaySleepRejectedOnReplica(t *testing.T) {
-	viper.Reset()
-	viper.Set("consolidation.enabled", false)
-	viper.Set("sleep.periodSeconds", 0)
 
 	database, err := db.New("")
 	if err != nil {
@@ -532,7 +524,7 @@ func TestGatewaySleepRejectedOnReplica(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	hipo := hippocampus.New(hippocampus.Dependencies{DB: database})
+	hipo := hippocampus.New(hippocampus.Dependencies{DB: database}, hippocampus.Config{Consolidation: hippocampus.ConsolidationConfig{Enabled: false}})
 	t.Cleanup(hipo.Stop)
 
 	gwMux := runtime.NewServeMux()

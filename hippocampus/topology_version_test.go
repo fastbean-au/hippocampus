@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/fastbean-au/hippocampus/contract"
@@ -247,7 +246,7 @@ func TestDeclaredComponentVersionReachesTheNode(t *testing.T) {
 func TestObservedCallerReportsItsVersion(t *testing.T) {
 	s := newTopologyServer(t)
 
-	viper.Set("auth.method", "hmac")
+	s.topology.authMethod = "hmac"
 
 	call := func(ctx context.Context) {
 		if _, err := s.InterceptorObserveCaller(ctx, nil, observedRPCInfo(), passthroughHandler); err != nil {
@@ -300,7 +299,7 @@ func TestObservedCallerReportsItsVersion(t *testing.T) {
 func TestDeclaredComponentTakesItsCallerVersion(t *testing.T) {
 	s := declaredServer(t, TopologyComponent{Name: "claude-mcp", Kind: "mcp", HealthURL: "http://127.0.0.1:1"})
 
-	viper.Set("auth.method", "hmac")
+	s.topology.authMethod = "hmac"
 
 	ctx := metadata.NewIncomingContext(
 		observedContext("claude-mcp", []string{"writer"}, nil),

@@ -113,10 +113,19 @@ func TestEndEvent(t *testing.T) {
 	g := newTestGenerator(Config{}, client)
 
 	id, _ := g.storeEvent(context.Background(), &contract.Event{Name: "n"})
-	g.endEvent(context.Background(), id, time.Now().UnixNano())
+	end := time.Now().UnixNano()
+	g.endEvent(context.Background(), id, end)
+
+	if got := client.events[id].GetTimeEnd(); got != end {
+		t.Errorf("endEvent sent time_end %d, want %d", got, end)
+	}
 
 	client.errOn["EndEvent"] = 1
-	g.endEvent(context.Background(), id, time.Now().UnixNano()) // just exercise the error log path
+	g.endEvent(context.Background(), id, time.Now().UnixNano()) // a failure is logged, not fatal
+
+	if got := client.calls["EndEvent"]; got != 2 {
+		t.Errorf("expected two EndEvent calls, got %d", got)
+	}
 }
 
 func TestQueryEvents(t *testing.T) {
@@ -223,6 +232,10 @@ func TestUpdateEventSignificance(t *testing.T) {
 
 	g.updateEventSignificance(context.Background(), rng) // no ids registered
 
+	if got := client.calls["UpdateEventSignificance"]; got != 0 {
+		t.Errorf("with no events registered there is nothing to update, but %d calls were made", got)
+	}
+
 	id, _ := g.storeEvent(context.Background(), &contract.Event{Name: "n"})
 	g.reg.addEventID(id)
 
@@ -230,6 +243,10 @@ func TestUpdateEventSignificance(t *testing.T) {
 
 	client.errOn["UpdateEventSignificance"] = 1
 	g.updateEventSignificance(context.Background(), rng)
+
+	if got := client.calls["UpdateEventSignificance"]; got != 2 {
+		t.Errorf("expected two UpdateEventSignificance calls, got %d", got)
+	}
 }
 
 func TestEndRandomEvent(t *testing.T) {
@@ -239,9 +256,17 @@ func TestEndRandomEvent(t *testing.T) {
 
 	g.endRandomEvent(context.Background(), rng) // no ids registered
 
+	if got := client.calls["EndEvent"]; got != 0 {
+		t.Errorf("with no events registered there is nothing to end, but %d calls were made", got)
+	}
+
 	id, _ := g.storeEvent(context.Background(), &contract.Event{Name: "n"})
 	g.reg.addEventID(id)
 	g.endRandomEvent(context.Background(), rng)
+
+	if client.events[id].GetTimeEnd() == 0 {
+		t.Error("endRandomEvent did not end the one registered event")
+	}
 }
 
 func TestMergeEvents(t *testing.T) {
@@ -251,6 +276,10 @@ func TestMergeEvents(t *testing.T) {
 
 	g.mergeEvents(context.Background(), rng) // fewer than 2 ids registered
 
+	if got := client.calls["MergeEvents"]; got != 0 {
+		t.Errorf("a merge needs two events, but %d calls were made with none registered", got)
+	}
+
 	a, _ := g.storeEvent(context.Background(), &contract.Event{Name: "a"})
 	b, _ := g.storeEvent(context.Background(), &contract.Event{Name: "b"})
 	g.reg.addEventID(a)
@@ -258,6 +287,10 @@ func TestMergeEvents(t *testing.T) {
 
 	for i := 0; i < 20; i++ {
 		g.mergeEvents(context.Background(), rng)
+	}
+
+	if client.calls["MergeEvents"] == 0 {
+		t.Error("twenty attempts with two events registered made no MergeEvents call")
 	}
 }
 
@@ -287,12 +320,24 @@ func TestDeleteMemories(t *testing.T) {
 
 	g.deleteMemories(context.Background(), rng) // no ids registered
 
+	if got := client.calls["DeleteMemories"]; got != 0 {
+		t.Errorf("with no memories registered there is nothing to delete, but %d calls were made", got)
+	}
+
 	g.storeMemory(context.Background(), rng, &contract.Memory{})
 	g.deleteMemories(context.Background(), rng)
+
+	if len(client.memories) != 0 {
+		t.Errorf("deleteMemories left %d memories in the store", len(client.memories))
+	}
 
 	g.storeMemory(context.Background(), rng, &contract.Memory{})
 	client.errOn["DeleteMemories"] = 1
 	g.deleteMemories(context.Background(), rng)
+
+	if got := client.calls["DeleteMemories"]; got != 2 {
+		t.Errorf("expected two DeleteMemories calls, got %d", got)
+	}
 }
 
 func TestDeleteEvent(t *testing.T) {
@@ -302,14 +347,26 @@ func TestDeleteEvent(t *testing.T) {
 
 	g.deleteEvent(context.Background(), rng) // no ids registered
 
+	if got := client.calls["DeleteEvent"]; got != 0 {
+		t.Errorf("with no events registered there is nothing to delete, but %d calls were made", got)
+	}
+
 	id, _ := g.storeEvent(context.Background(), &contract.Event{Name: "n"})
 	g.reg.addEventID(id)
 	g.deleteEvent(context.Background(), rng)
+
+	if _, ok := client.events[id]; ok {
+		t.Error("deleteEvent left the one registered event in the store")
+	}
 
 	id2, _ := g.storeEvent(context.Background(), &contract.Event{Name: "n"})
 	g.reg.addEventID(id2)
 	client.errOn["DeleteEvent"] = 1
 	g.deleteEvent(context.Background(), rng)
+
+	if got := client.calls["DeleteEvent"]; got != 2 {
+		t.Errorf("expected two DeleteEvent calls, got %d", got)
+	}
 }
 
 func TestRequestSleep(t *testing.T) {
@@ -319,7 +376,11 @@ func TestRequestSleep(t *testing.T) {
 	g.requestSleep(context.Background())
 
 	client.errOn["Sleep"] = 1
-	g.requestSleep(context.Background())
+	g.requestSleep(context.Background()) // a refused cycle is logged, not fatal
+
+	if got := client.calls["Sleep"]; got != 2 {
+		t.Errorf("expected two Sleep calls, got %d", got)
+	}
 }
 
 func TestPaceIdle(t *testing.T) {
@@ -491,6 +552,10 @@ func TestSlowEventStoreEventFails(t *testing.T) {
 
 	rng := rand.New(rand.NewSource(1))
 	g.slowEvent(context.Background(), rng)
+
+	if got := client.calls["StoreMemory"]; got != 0 {
+		t.Errorf("a slow event whose StoreEvent failed must store no memories, but made %d calls", got)
+	}
 }
 
 func TestSlowEventCtxCancelledBeforeLoop(t *testing.T) {
@@ -730,6 +795,12 @@ func TestQueryIterationAllBranches(t *testing.T) {
 	for seed := int64(0); seed < 100; seed++ {
 		g.queryIteration(context.Background(), rand.New(rand.NewSource(seed)))
 	}
+
+	for _, method := range []string{"GetEvents", "GetMemories", "GetEventById", "RecallMemories"} {
+		if client.calls[method] == 0 {
+			t.Errorf("no queryIteration branch called %s", method)
+		}
+	}
 }
 
 func TestQueryWorkerStopsOnCancel(t *testing.T) {
@@ -759,15 +830,28 @@ func TestMutatorIterationAllBranches(t *testing.T) {
 	client := newFakeHippoClient()
 	g := newTestGenerator(Config{}, client)
 
-	a, _ := g.storeEvent(context.Background(), &contract.Event{Name: "a"})
-	b, _ := g.storeEvent(context.Background(), &contract.Event{Name: "b"})
-	g.reg.addEventID(a)
-	g.reg.addEventID(b)
-	g.storeMemory(context.Background(), rand.New(rand.NewSource(1)), &contract.Memory{})
+	// Replenished before every iteration: the deleting and merging branches consume the events and
+	// memories the others need, so without it a branch can be reached and do nothing - which is how
+	// this test once claimed every branch ran while merge and recall made no call at all.
+	replenish := func() {
+		for range 2 {
+			id, _ := g.storeEvent(context.Background(), &contract.Event{Name: "e"})
+			g.reg.addEventID(id)
+		}
+
+		g.storeMemory(context.Background(), rand.New(rand.NewSource(1)), &contract.Memory{})
+	}
 
 	// Sweep many seeds so every rng.Intn(10) branch in mutatorIteration executes at least once.
 	for seed := int64(0); seed < 200; seed++ {
+		replenish()
 		g.mutatorIteration(context.Background(), rand.New(rand.NewSource(seed)))
+	}
+
+	for _, method := range []string{"UpdateEventSignificance", "EndEvent", "MergeEvents", "DeleteMemories", "DeleteEvent", "RecallMemories", "Sleep"} {
+		if client.calls[method] == 0 {
+			t.Errorf("no mutatorIteration branch called %s", method)
+		}
 	}
 }
 

@@ -6,9 +6,10 @@
 // silently, with no console error. That is the exact failure mode TODO items 72 and 73 are lists
 // of, each one found by clicking it.
 //
-// This reads the two files as text rather than importing them: app.js is the DOM half of the
-// console and cannot be loaded under node. Comparing the sets is enough, and it is what makes the
-// invariant cheap enough to hold.
+// This reads the two files as text rather than importing them. app.js can be loaded under node
+// against the fake DOM in dom.js (see dom.test.js), but a set comparison over the source is what
+// covers EVERY control - a loaded page only shows the ones a test happens to render - and it is what
+// makes the invariant cheap enough to hold.
 
 import test from "node:test";
 import assert from "node:assert/strict";

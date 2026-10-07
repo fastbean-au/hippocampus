@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
-
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/types"
@@ -103,8 +101,8 @@ func (m *missingFaultStore) MissingMemoryIds(ctx context.Context, ids []string) 
 	return m.Store.MissingMemoryIds(ctx, ids)
 }
 
-// outboxDrainServer builds the Server startOutboxDrain is called on, with the viper keys that
-// function reads set to whatever the case wants.
+// outboxDrainServer builds the Server startOutboxDrain is called on; a case wanting configured caps
+// sets outboxBounds on it, as New does from Config.Outbox.
 func outboxDrainServer(t *testing.T, store db.Store, consolidating bool) *Server {
 	t.Helper()
 
@@ -118,9 +116,6 @@ func outboxDrainServer(t *testing.T, store db.Store, consolidating bool) *Server
 // return: a queue nothing bounds is the one failure mode this whole file exists to avoid, so the
 // defaults must land even on the arms that never start a drain.
 func TestStartOutboxDrainDefaultsTheCaps(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
 	s := outboxDrainServer(t, nil, false)
 
 	s.startOutboxDrain(nil)
@@ -133,10 +128,8 @@ func TestStartOutboxDrainDefaultsTheCaps(t *testing.T) {
 		t.Errorf("expected the default age cap, got %s", s.outboxBounds.MaxAge)
 	}
 
-	viper.Set("opensearch.outbox.maxRows", 42)
-	viper.Set("opensearch.outbox.maxAgeHours", 3)
-
 	s = outboxDrainServer(t, nil, false)
+	s.outboxBounds = db.QueueBounds{MaxRows: 42, MaxAge: 3 * time.Hour}
 	s.startOutboxDrain(nil)
 
 	if s.outboxBounds.MaxRows != 42 {
@@ -152,9 +145,6 @@ func TestStartOutboxDrainDefaultsTheCaps(t *testing.T) {
 // the recording OFF. Each is a deployment where a queued row would never be read, and the point of
 // enabling the recording and the drain in one function is that this cannot drift apart.
 func TestStartOutboxDrainRecordsNothingWithoutABackendThatNeedsIt(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
 	cases := []struct {
 		name  string
 		index search.Index
@@ -221,9 +211,6 @@ func TestStartOutboxDrainRecordsNothingWithoutABackendThatNeedsIt(t *testing.T) 
 // its deletes are as losable as anyone's and must be queued, but the queue is single and only the
 // consolidating instance may claim from it.
 func TestStartOutboxDrainOnAReplicaRecordsWithoutDraining(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
 	database := mustOutboxStore(t)
 	s := outboxDrainServer(t, database, false)
 
@@ -249,9 +236,6 @@ func TestStartOutboxDrainOnAReplicaRecordsWithoutDraining(t *testing.T) {
 // rather than by calling drainOutboxOnce: the loop is what turns a queued row into a deleted
 // document without anybody asking, and its delay selection and shutdown are only reachable here.
 func TestStartOutboxDrainOnTheConsolidatorDrains(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
 	restoreIdle, restoreBusy := outboxIdleDelay, outboxBusyDelay
 	outboxIdleDelay, outboxBusyDelay = time.Millisecond, time.Millisecond
 
@@ -417,8 +401,13 @@ func TestStaleSweepAbandonsWhenTheStoreCannotBeAsked(t *testing.T) {
 // synchronously has nothing this sweep can do.
 func TestStaleSweepIgnoresABackendThatCannotDelete(t *testing.T) {
 	s, _ := outboxServer(t, &enumerateOnlyIndex{})
+	hook := captureLogs(t)
 
 	s.staleSweep(context.Background())
+
+	if n := loggedContaining(hook, "search reconcile:"); n != 0 {
+		t.Errorf("a backend that cannot delete must not be swept, but the sweep logged %d outcome(s)", n)
+	}
 }
 
 // enumerateOnlyIndex implements the enumeration half and not the delete half.

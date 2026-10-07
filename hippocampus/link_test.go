@@ -905,18 +905,40 @@ func TestCheckLinkTargets_NoLinksIsNoOp(t *testing.T) {
 func TestStoreLinks_BestEffort(t *testing.T) {
 	s := newTestServer(t)
 	seedLinkMemories(t, s, "m1", "m2")
+	store := s.db
 	s.db = writeLinksErrStore{Store: s.db}
+	hook := captureLogs(t)
 
-	// No panic, no propagation: the function returns nothing to propagate with.
+	// No propagation - the function returns nothing to propagate with - but the failure must be
+	// logged, and nothing may have been written.
 	s.storeLinks(context.Background(), s.memoryLinks(), "m1", []types.Link{{Id: "m2", Significance: 1}})
+
+	if loggedContaining(hook, "failed to store links for memory 'm1'") != 1 {
+		t.Error("a failed link write must be logged")
+	}
+
+	edges, _, err := store.GetMemoryLinks(context.Background(), "m1", types.LinkDirectionBoth)
+	if err != nil {
+		t.Fatalf("GetMemoryLinks: %s", err)
+	}
+
+	if len(edges) != 0 {
+		t.Errorf("a failed link write must leave no link, got %v", edges)
+	}
 }
 
 // TestStoreLinks_NoLinksIsNoOp covers the early return.
 func TestStoreLinks_NoLinksIsNoOp(t *testing.T) {
 	s := newTestServer(t)
 	s.db = writeLinksErrStore{Store: s.db}
+	hook := captureLogs(t)
 
 	s.storeLinks(context.Background(), s.memoryLinks(), "m1", nil)
+
+	// The store fails every link write, so a call would have logged; none means none was made.
+	if n := loggedContaining(hook, "failed to store links"); n != 0 {
+		t.Errorf("an empty link set must make no store call, but %d failures were logged", n)
+	}
 }
 
 // TestStoreEvent_WithLinks covers the event create path's use of checkLinkTargets and storeLinks.
@@ -1009,8 +1031,13 @@ func TestAttachMemoryLinks_BestEffort(t *testing.T) {
 func TestAttachMemoryLinks_EmptyIsNoOp(t *testing.T) {
 	s := newTestServer(t)
 	s.db = linksForErrStore{Store: s.db}
+	hook := captureLogs(t)
 
 	s.attachMemoryLinks(context.Background(), nil)
+
+	if n := loggedContaining(hook, "failed to read links"); n != 0 {
+		t.Errorf("an empty page must make no link read, but %d failures were logged", n)
+	}
 }
 
 // TestAttachEventLinks is TestAttachMemoryLinks for the event half, which the archive walk uses so
@@ -1053,8 +1080,13 @@ func TestAttachEventLinks_BestEffort(t *testing.T) {
 func TestAttachEventLinks_EmptyIsNoOp(t *testing.T) {
 	s := newTestServer(t)
 	s.db = linksForErrStore{Store: s.db}
+	hook := captureLogs(t)
 
 	s.attachEventLinks(context.Background(), nil)
+
+	if n := loggedContaining(hook, "failed to read links"); n != 0 {
+		t.Errorf("an empty page must make no link read, but %d failures were logged", n)
+	}
 }
 
 // TestReinforceLinked_Disabled pins the default: with linkRecallPropagation at 0 spreading
@@ -1064,7 +1096,13 @@ func TestReinforceLinked_Disabled(t *testing.T) {
 	s.db = linkedIdsErrStore{Store: s.db}
 
 	// A store call would fail; the early return means none is made.
+	hook := captureLogs(t)
+
 	s.reinforceLinked(context.Background(), []string{"m1"})
+
+	if n := loggedContaining(hook, "linked memories"); n != 0 {
+		t.Errorf("no store call may be made, but %d failures were logged", n)
+	}
 }
 
 // TestReinforceLinked_NoIds covers the other half of the early return.
@@ -1073,7 +1111,13 @@ func TestReinforceLinked_NoIds(t *testing.T) {
 	s.consolidation.linkRecallPropagation = 0.5
 	s.db = linkedIdsErrStore{Store: s.db}
 
+	hook := captureLogs(t)
+
 	s.reinforceLinked(context.Background(), nil)
+
+	if n := loggedContaining(hook, "linked memories"); n != 0 {
+		t.Errorf("no store call may be made, but %d failures were logged", n)
+	}
 }
 
 // TestReinforceLinked_AdvancesNeighbourDecayClocks covers the happy path: a recalled memory's
@@ -1123,8 +1167,22 @@ func TestReinforceLinked_NoNeighbours(t *testing.T) {
 	s := newTestServer(t)
 	s.consolidation.linkRecallPropagation = 0.5
 	seedLinkMemories(t, s, "m1")
+	hook := captureLogs(t)
 
 	s.reinforceLinked(context.Background(), []string{"m1"})
+
+	if n := loggedContaining(hook, "linked memories"); n != 0 {
+		t.Errorf("a lookup finding no neighbours must not fail, but %d failures were logged", n)
+	}
+
+	got, err := s.db.GetMemories(context.Background(), db.MemoryFilter{Ids: []string{"m1"}})
+	if err != nil {
+		t.Fatalf("GetMemories: %s", err)
+	}
+
+	if got == nil || len(*got) != 1 || (*got)[0].TimeRecalled != 0 {
+		t.Errorf("reinforcing the neighbours of an unlinked memory must touch nothing, got %+v", got)
+	}
 }
 
 // TestReinforceLinked_StoreFailuresAreSwallowed pins the best-effort contract on both store calls:

@@ -417,7 +417,7 @@ func TestStartupDefaultsActuallyForget(t *testing.T) {
 		t.Fatalf("failed to store the test memory: %s", err)
 	}
 
-	server := hippocampus.New(hippocampus.Dependencies{DB: database})
+	server := hippocampus.New(hippocampus.Dependencies{DB: database}, serverConfig(resolveAuthMethod()))
 
 	if _, err := server.Sleep(context.Background(), &contract.EmptyRequest{}); err != nil {
 		t.Fatalf("Sleep: %s", err)

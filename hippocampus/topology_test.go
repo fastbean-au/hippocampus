@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -150,22 +149,6 @@ func TestTopologyStatusFor(t *testing.T) {
 func newTopologyServer(t *testing.T) *Server {
 	t.Helper()
 
-	viper.Set("topology.enabled", true)
-	viper.Set("storage.driver", "sqlite")
-	viper.Set("storage.directory", "/var/lib/hippocampus")
-	viper.Set("port", 50051)
-	viper.Set("gateway.port", 8080)
-
-	t.Cleanup(func() {
-		for _, key := range []string{
-			"topology.enabled", "storage.driver", "storage.directory", "port", "gateway.port",
-			"topology.minimumTier", "opensearch.addresses", "opensearch.index", "auth.method",
-			"observability.metrics.enabled", "observability.otlp.endpoint", "storage.postgres.dsn",
-		} {
-			viper.Set(key, nil)
-		}
-	})
-
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -174,10 +157,38 @@ func newTopologyServer(t *testing.T) *Server {
 	t.Cleanup(func() { _ = database.Close() })
 
 	s := &Server{db: database, consolidationEnabled: true}
-	s.topology = topologyFromViper("v1.2.3")
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	rebuildTopology(s, topologyTestConfig())
 
 	return s
+}
+
+// topologyTestConfig is the default embedded deployment newTopologyServer describes; a test wanting
+// another shape changes a copy and passes it to rebuildTopology.
+func topologyTestConfig() Config {
+	return Config{
+		Port:     50051,
+		Topology: TopologyConfig{Enabled: true},
+		Deployment: Deployment{
+			StorageDriver:    "sqlite",
+			StorageDirectory: "/var/lib/hippocampus",
+			GatewayPort:      8080,
+		},
+	}
+}
+
+// rebuildTopology rebuilds the server's topology state and fixed node specs from cfg, keeping any
+// components the test has already declared - what New does once at startup.
+func rebuildTopology(s *Server, cfg Config) {
+	components := s.topology.components
+
+	s.topology = topologyFromConfig(cfg, "v1.2.3")
+
+	if cfg.Topology.Components == nil {
+		s.topology.components = components
+	}
+
+	s.topology.nodes, s.topology.edges = s.buildTopologySpecs(cfg.Deployment)
+	s.gatewayEnabled = cfg.Deployment.GatewayPort > 0
 }
 
 // nodesById indexes a response for the assertions below.
@@ -316,14 +327,15 @@ func TestGetTopologyDescribesAFullyConfiguredDeployment(t *testing.T) {
 	s.objects = unpingableObjectStore{}
 	s.transfer.targetAddress = "central.internal:50051"
 
-	viper.Set("opensearch.addresses", []string{"https://admin:hunter2@opensearch.internal:9200"})
-	viper.Set("opensearch.index", "hippocampus-memories")
-	viper.Set("auth.method", "idp")
-	viper.Set("auth.issuer", "https://idp.example.com/realms/hippo")
-	viper.Set("observability.metrics.enabled", true)
-	viper.Set("observability.otlp.endpoint", "otel-lgtm:4317")
+	cfg := topologyTestConfig()
+	cfg.Deployment.OpenSearchAddresses = []string{"https://admin:hunter2@opensearch.internal:9200"}
+	cfg.Deployment.OpenSearchIndex = "hippocampus-memories"
+	cfg.Deployment.AuthMethod = "idp"
+	cfg.Deployment.AuthIssuer = "https://idp.example.com/realms/hippo"
+	cfg.Deployment.MetricsEnabled = true
+	cfg.Deployment.OTLPEndpoint = "otel-lgtm:4317"
 
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	rebuildTopology(s, cfg)
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
 	if err != nil {
@@ -389,7 +401,7 @@ func TestSearchNodeReportsTheStoreBackedIndex(t *testing.T) {
 	}
 
 	s.search = index
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	rebuildTopology(s, topologyTestConfig())
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
 	if err != nil {
@@ -419,7 +431,7 @@ func TestSearchNodeReportsTheStoreBackedIndex(t *testing.T) {
 func TestReplicaOmitsTheConsolidationSettings(t *testing.T) {
 	s := newTopologyServer(t)
 	s.consolidationEnabled = false
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	rebuildTopology(s, topologyTestConfig())
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
 	if err != nil {
@@ -493,10 +505,11 @@ func TestTopologyEdgesTerminateOnNodes(t *testing.T) {
 func TestGetTopologyRedactsTheStoreDSN(t *testing.T) {
 	s := newTopologyServer(t)
 
-	viper.Set("storage.driver", "postgres")
-	viper.Set("storage.postgres.dsn", "postgres://hippo:sup3rs3cret@db.internal:5432/hippocampus")
+	cfg := topologyTestConfig()
+	cfg.Deployment.StorageDriver = "postgres"
+	cfg.Deployment.StorageDSN = "postgres://hippo:sup3rs3cret@db.internal:5432/hippocampus"
 
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	rebuildTopology(s, cfg)
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
 	if err != nil {
@@ -700,32 +713,18 @@ func TestTopologyValueRenderers(t *testing.T) {
 	}
 }
 
-// TestAuthMethodDescription pins the resolution of the deprecated boolean. The view must agree with
-// what is actually enforced, and auth.enabled true with no auth.method is hmac - a view reporting
-// "none" there would say the instance is open when it is not.
-func TestAuthMethodDescription(t *testing.T) {
-	t.Cleanup(func() {
-		viper.Set("auth.method", nil)
-		viper.Set("auth.enabled", nil)
-	})
+// TestTopologyReportsTheResolvedAuthMethod pins that the view reports the scheme it was given, and
+// reads an unset one as none. The deprecated auth.enabled is resolved before the server is built
+// (resolveAuthMethod in package main, tested there), so the view cannot disagree with what is
+// enforced.
+func TestTopologyReportsTheResolvedAuthMethod(t *testing.T) {
+	for method, want := range map[string]string{"": "none", "hmac": "hmac", "idp": "idp"} {
+		cfg := topologyTestConfig()
+		cfg.Deployment.AuthMethod = method
 
-	viper.Set("auth.method", "")
-	viper.Set("auth.enabled", false)
-
-	if got := authMethodDescription(); got != "none" {
-		t.Errorf("authMethodDescription = %q, want none", got)
-	}
-
-	viper.Set("auth.enabled", true)
-
-	if got := authMethodDescription(); got != "hmac" {
-		t.Errorf("the deprecated auth.enabled resolves to %q, want hmac", got)
-	}
-
-	viper.Set("auth.method", "idp")
-
-	if got := authMethodDescription(); got != "idp" {
-		t.Errorf("authMethodDescription = %q, want idp", got)
+		if got := topologyFromConfig(cfg, "v").authMethod; got != want {
+			t.Errorf("auth method %q is reported as %q, want %q", method, got, want)
+		}
 	}
 }
 
@@ -733,17 +732,11 @@ func TestAuthMethodDescription(t *testing.T) {
 // config file looks like "not configured" and in a listener means every interface, and the second
 // is the one an operator needs to be shown.
 func TestBindAddressRendersEveryInterface(t *testing.T) {
-	t.Cleanup(func() { viper.Set("bindAddress", nil) })
-
-	viper.Set("bindAddress", "")
-
-	if got := bindAddressOrAll("bindAddress"); got != "0.0.0.0" {
+	if got := bindAddressOrAll(""); got != "0.0.0.0" {
 		t.Errorf("an unset bind address renders as %q, want 0.0.0.0", got)
 	}
 
-	viper.Set("bindAddress", "127.0.0.1")
-
-	if got := bindAddressOrAll("bindAddress"); got != "127.0.0.1" {
+	if got := bindAddressOrAll("127.0.0.1"); got != "127.0.0.1" {
 		t.Errorf("bindAddressOrAll = %q", got)
 	}
 }
@@ -751,11 +744,7 @@ func TestBindAddressRendersEveryInterface(t *testing.T) {
 // TestGatewayDisabledIsReportedAsSuch covers the zero port, which is a supported mode rather than a
 // mistake - and one that takes the console, the OpenAPI document and the HTTP probes with it.
 func TestGatewayDisabledIsReportedAsSuch(t *testing.T) {
-	t.Cleanup(func() { viper.Set("gateway.port", nil) })
-
-	viper.Set("gateway.port", 0)
-
-	if got := gatewayDescription(); got != "disabled" {
+	if got := gatewayDescription(Deployment{}); got != "disabled" {
 		t.Errorf("gatewayDescription with no port = %q, want disabled", got)
 	}
 }
@@ -779,7 +768,7 @@ func declaredServer(t *testing.T, components ...TopologyComponent) *Server {
 
 	s := newTopologyServer(t)
 	s.topology.components = components
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	rebuildTopology(s, topologyTestConfig())
 
 	return s
 }
@@ -1119,22 +1108,6 @@ func TestDeclaredProbeUnknownName(t *testing.T) {
 	}
 }
 
-// TestTopologyFromViperSurvivesAMalformedComponentList covers the reload path. validateConfig
-// rejects a malformed list at startup, so reaching here means the configuration changed under a
-// running process - and losing the declared half of a diagnostic view is not a reason to refuse to
-// build the server that serves the store.
-func TestTopologyFromViperSurvivesAMalformedComponentList(t *testing.T) {
-	t.Cleanup(func() { viper.Set("topology.components", nil) })
-
-	viper.Set("topology.components", "not a list at all")
-
-	topology := topologyFromViper("v1.2.3")
-
-	if len(topology.components) != 0 {
-		t.Errorf("a malformed list produced %d components", len(topology.components))
-	}
-}
-
 // TestCollectorNodeReportsATracesOnlyDeployment covers the one combination the two tests above
 // cannot: tracing on with metrics off. Both of them enable metrics, so the collector node appeared
 // for that reason alone and the traces half of the condition was never read - which is how it went
@@ -1142,16 +1115,7 @@ func TestTopologyFromViperSurvivesAMalformedComponentList(t *testing.T) {
 // symptom was a node shown as DISABLED while spans were being exported to it, carrying an
 // `enable_with` hint naming a key an operator could set to no effect.
 func TestCollectorNodeReportsATracesOnlyDeployment(t *testing.T) {
-	t.Cleanup(func() {
-		viper.Set("observability.tracing.enabled", false)
-		viper.Set("observability.otlp.endpoint", "")
-	})
-
-	viper.Set("observability.tracing.enabled", true)
-	viper.Set("observability.metrics.enabled", false)
-	viper.Set("observability.otlp.endpoint", "otel-lgtm:4317")
-
-	spec := collectorNodeSpec()
+	spec := collectorNodeSpec(Deployment{TracingEnabled: true, OTLPEndpoint: "otel-lgtm:4317"})
 
 	if spec.staticStatus == contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED {
 		t.Error("the collector is DISABLED with tracing enabled")
@@ -1178,15 +1142,10 @@ func TestCollectorNodeReportsATracesOnlyDeployment(t *testing.T) {
 // different configuration key, and getting the pairing wrong shows an operator an empty detail on
 // exactly one driver - the sort of thing nothing else notices, since the node is still there.
 func TestStoreNodeNamesTheServerDialects(t *testing.T) {
-	t.Cleanup(func() {
-		viper.Set("storage.driver", nil)
-		viper.Set("storage.mysql.dsn", nil)
+	spec := (&Server{}).storeNodeSpec(Deployment{
+		StorageDriver: "mysql",
+		StorageDSN:    "hippo:sup3rs3cret@tcp(db.internal:3306)/hippocampus",
 	})
-
-	viper.Set("storage.driver", "mysql")
-	viper.Set("storage.mysql.dsn", "hippo:sup3rs3cret@tcp(db.internal:3306)/hippocampus")
-
-	spec := (&Server{}).storeNodeSpec()
 
 	if spec.name != "MySQL" {
 		t.Errorf("name = %q, want MySQL", spec.name)
@@ -1235,7 +1194,7 @@ func TestObjectStoreNodeNamesTheFilesystemBackend(t *testing.T) {
 	s := &Server{objects: store}
 	s.transfer.keyPrefix = "backups/"
 
-	spec := s.objectStoreNodeSpec()
+	spec := s.objectStoreNodeSpec(Deployment{})
 
 	if spec.name != "local archive" {
 		t.Errorf("name = %q, want local archive", spec.name)
@@ -1265,16 +1224,11 @@ func TestObjectStoreNodeNamesTheFilesystemBackend(t *testing.T) {
 func TestIdpNodeFallsBackToTheJWKSUrl(t *testing.T) {
 	s := newTopologyServer(t)
 
-	t.Cleanup(func() {
-		viper.Set("auth.issuer", nil)
-		viper.Set("auth.jwksUrl", nil)
-	})
+	cfg := topologyTestConfig()
+	cfg.Deployment.AuthMethod = "idp"
+	cfg.Deployment.AuthJWKSURL = "https://idp.internal/.well-known/jwks.json"
 
-	viper.Set("auth.method", "idp")
-	viper.Set("auth.issuer", "")
-	viper.Set("auth.jwksUrl", "https://idp.internal/.well-known/jwks.json")
-
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	rebuildTopology(s, cfg)
 
 	res, err := s.GetTopology(context.Background(), &contract.EmptyRequest{})
 	if err != nil {
@@ -1297,22 +1251,15 @@ func TestIdpNodeFallsBackToTheJWKSUrl(t *testing.T) {
 // proves who it is without naming either secret, and a renderer that named one would put a signing
 // key on a reader-visible page.
 func TestCallbackNodeDescribesAConfiguredReceiver(t *testing.T) {
-	t.Cleanup(func() {
-		for _, key := range []string{
-			"callbacks.enabled", "callbacks.url", "callbacks.allDeletions",
-			"callbacks.includeBodies", "callbacks.token", "callbacks.signingSecret",
-		} {
-			viper.Set(key, nil)
-		}
+	// The token and signing secret never reach the server - Deployment carries only whether each is
+	// set - so the one place a secret could still arrive is the URL's userinfo, which must be redacted.
+	spec := callbackNodeSpec(Deployment{
+		CallbacksEnabled:      true,
+		CallbacksURL:          "https://hook:sup3rs3cret@hooks.internal/forgotten",
+		CallbacksAllDeletions: true,
+		CallbacksTokenSet:     true,
+		CallbacksSigned:       true,
 	})
-
-	viper.Set("callbacks.enabled", true)
-	viper.Set("callbacks.url", "https://hooks.internal/forgotten")
-	viper.Set("callbacks.allDeletions", true)
-	viper.Set("callbacks.token", "sup3rs3cret")
-	viper.Set("callbacks.signingSecret", "al5os3cret")
-
-	spec := callbackNodeSpec()
 
 	if spec.staticStatus == contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED {
 		t.Fatal("a configured receiver must not read as disabled")
@@ -1332,20 +1279,19 @@ func TestCallbackNodeDescribesAConfiguredReceiver(t *testing.T) {
 	}
 
 	for key, value := range attributes {
-		if strings.Contains(value, "sup3rs3cret") || strings.Contains(value, "al5os3cret") {
+		if strings.Contains(value, "sup3rs3cret") {
 			t.Errorf("the %s attribute carries a secret: %q", key, value)
 		}
+	}
+
+	if strings.Contains(spec.detail, "sup3rs3cret") || !strings.Contains(spec.detail, "hooks.internal") {
+		t.Errorf("the detail must name the receiver without its credentials: %q", spec.detail)
 	}
 }
 
 // TestCallbackAuthDescription covers the remaining three arms of the renderer on its own, the node
 // test above having covered the two-secret one.
 func TestCallbackAuthDescription(t *testing.T) {
-	t.Cleanup(func() {
-		viper.Set("callbacks.token", nil)
-		viper.Set("callbacks.signingSecret", nil)
-	})
-
 	cases := []struct {
 		token  string
 		signed string
@@ -1357,18 +1303,14 @@ func TestCallbackAuthDescription(t *testing.T) {
 	}
 
 	for _, v := range cases {
-		viper.Set("callbacks.token", v.token)
-		viper.Set("callbacks.signingSecret", v.signed)
+		d := Deployment{CallbacksTokenSet: v.token != "", CallbacksSigned: v.signed != ""}
 
-		if got := callbackAuthDescription(); got != v.want {
+		if got := callbackAuthDescription(d); got != v.want {
 			t.Errorf("callbackAuthDescription(token=%q, signed=%q) = %q, want %q", v.token, v.signed, got, v.want)
 		}
 	}
 
-	viper.Set("callbacks.allDeletions", false)
-	t.Cleanup(func() { viper.Set("callbacks.allDeletions", nil) })
-
-	if got := callbackScopeDescription(); got != "consolidation and eviction only" {
+	if got := callbackScopeDescription(Deployment{}); got != "consolidation and eviction only" {
 		t.Errorf("callbackScopeDescription = %q", got)
 	}
 }

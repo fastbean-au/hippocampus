@@ -9,7 +9,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -81,6 +80,13 @@ type Topology struct {
 	startedAt time.Time
 
 	version string
+
+	// authMethod is the authentication scheme in force (none, hmac or idp), and selfAttributes the
+	// self node's settings that cannot change while the process runs. Both are resolved once, from
+	// the Deployment New was given, because the self node is rebuilt per request on a standby and
+	// the observed half asks whether callers are identified at all.
+	authMethod     string
+	selfAttributes []topologyAttribute
 
 	nodes []topologyNodeSpec
 	edges []topologyEdgeSpec
@@ -332,29 +338,35 @@ func (s *Server) topologyResponse() *contract.GetTopologyResponse {
 	return out
 }
 
-// topologyFromViper reads the topology.* block. The probe interval and timeout fall back to
-// defaults rather than disabling themselves at zero, since a zero timeout would make every probe
-// fail instantly and a zero interval would spin.
-func topologyFromViper(version string) Topology {
+// topologyFromConfig builds the topology state from the topology.* block and the deployment
+// description. The probe interval and timeout fall back to defaults rather than disabling themselves
+// at zero, since a zero timeout would make every probe fail instantly and a zero interval would spin.
+func topologyFromConfig(cfg Config, version string) Topology {
 	t := Topology{
-		enabled:             viper.GetBool("topology.enabled"),
-		minimumTier:         viper.GetString("topology.minimumTier"),
-		probeInterval:       time.Duration(viper.GetInt("topology.probeIntervalSeconds")) * time.Second,
-		probeTimeout:        time.Duration(viper.GetInt("topology.probeTimeoutSeconds")) * time.Second,
-		probeTransferTarget: viper.GetBool("topology.probeTransferTarget"),
+		enabled:             cfg.Topology.Enabled,
+		minimumTier:         cfg.Topology.MinimumTier,
+		probeInterval:       cfg.Topology.ProbeInterval,
+		probeTimeout:        cfg.Topology.ProbeTimeout,
+		probeTransferTarget: cfg.Topology.ProbeTransferTarget,
+		components:          cfg.Topology.Components,
 		version:             version,
 		hostname:            hostnameOrUnknown(),
 		startedAt:           time.Now(),
+		authMethod:          cfg.Deployment.AuthMethod,
+	}
+
+	if t.authMethod == "" {
+		t.authMethod = "none"
 	}
 
 	// Unlike the two probe settings above, a zero here does NOT fall back to a default: it turns the
 	// instance registry off, which is a supported choice (a deployment that does not want its
 	// instances writing to the store on a timer) and the only shape available on SQLite anyway.
-	t.heartbeatInterval = time.Duration(viper.GetInt("topology.heartbeatSeconds")) * time.Second
+	t.heartbeatInterval = cfg.Topology.Heartbeat
 
 	// hostname:port, and resolved once - see instanceId. The port is the gRPC listener's, since that
 	// is the address a peer is reached on and the one that makes the pair unique on a host.
-	t.instanceId = net.JoinHostPort(t.hostname, strconv.Itoa(viper.GetInt("port")))
+	t.instanceId = net.JoinHostPort(t.hostname, strconv.Itoa(cfg.Port))
 
 	if t.probeInterval <= 0 {
 		t.probeInterval = defaultTopologyProbeInterval
@@ -364,13 +376,14 @@ func topologyFromViper(version string) Topology {
 		t.probeTimeout = defaultTopologyProbeTimeout
 	}
 
-	if err := viper.UnmarshalKey("topology.components", &t.components); err != nil {
-		// Not fatal, and deliberately so: a malformed list is already rejected at startup by
-		// validateConfig, so reaching here means something changed under a running process. Losing
-		// the declared half of a diagnostic view is not a reason to take the store down with it.
-		log.Errorf("failed to read topology.components: %s", err.Error())
+	d := cfg.Deployment
 
-		t.components = nil
+	t.selfAttributes = []topologyAttribute{
+		{key: "grpc_address", value: net.JoinHostPort(bindAddressOrAll(d.BindAddress), strconv.Itoa(cfg.Port))},
+		{key: "gateway", value: gatewayDescription(d)},
+		{key: "tls", value: enabledDescription(d.TLSEnabled)},
+		{key: "auth_method", value: t.authMethod},
+		{key: "rate_limiting", value: enabledDescription(d.RateLimitEnabled)},
 	}
 
 	return t
@@ -381,26 +394,26 @@ func topologyFromViper(version string) Topology {
 // It reads the live dependencies rather than only the configuration wherever the two can disagree -
 // which search backend is actually in use is the clearest case, since "opensearch.enabled: false"
 // on SQLite yields a working store-backed index and on Postgres yields none at all, and no config
-// key says which happened. What it takes from viper is the settings an operator would otherwise
-// have to read the config file to see.
+// key says which happened. What it takes from the Deployment is the settings an operator would
+// otherwise have to read the config file to see.
 //
 // Disabled optional components are included, with status DISABLED and an attribute naming the key
 // that turns them on. That is deliberate: "why is semantic search returning nothing" is answered by
 // a greyed Embedder node reading "disabled (ollama.embedding.enabled)", and by nothing else the
 // service says. A client is expected to let them be hidden, not to be handed a picture with the
 // answer left out.
-func (s *Server) buildTopologySpecs() ([]topologyNodeSpec, []topologyEdgeSpec) {
+func (s *Server) buildTopologySpecs(d Deployment) ([]topologyNodeSpec, []topologyEdgeSpec) {
 	nodes := []topologyNodeSpec{
 		s.selfNodeSpec(),
-		s.storeNodeSpec(),
-		s.searchNodeSpec(),
-		s.summariserNodeSpec(),
-		s.embedderNodeSpec(),
-		s.objectStoreNodeSpec(),
+		s.storeNodeSpec(d),
+		s.searchNodeSpec(d),
+		s.summariserNodeSpec(d),
+		s.embedderNodeSpec(d),
+		s.objectStoreNodeSpec(d),
 		s.transferNodeSpec(),
-		identityProviderNodeSpec(),
-		collectorNodeSpec(),
-		callbackNodeSpec(),
+		identityProviderNodeSpec(d),
+		collectorNodeSpec(d),
+		callbackNodeSpec(d),
 	}
 
 	for _, component := range s.topology.components {
@@ -470,7 +483,7 @@ func declaredNodeSpec(component TopologyComponent) topologyNodeSpec {
 
 // selfNodeSpec describes this instance. Its attributes are the settings an operator asks about
 // first - what it is, what it decides, and what it will refuse - not the whole configuration: this
-// is a view, and viper.AllSettings() is a credential leak.
+// is a view, and a dump of the configuration would be a credential leak.
 func (s *Server) selfNodeSpec() topologyNodeSpec {
 	hostname := s.topology.hostname
 
@@ -482,12 +495,9 @@ func (s *Server) selfNodeSpec() topologyNodeSpec {
 	attributes := []topologyAttribute{
 		{key: "role", value: role},
 		{key: "hostname", value: hostname},
-		{key: "grpc_address", value: net.JoinHostPort(bindAddressOrAll("bindAddress"), strconv.Itoa(viper.GetInt("port")))},
-		{key: "gateway", value: gatewayDescription()},
-		{key: "tls", value: enabledDescription(viper.GetBool("tls.enabled"))},
-		{key: "auth_method", value: authMethodDescription()},
-		{key: "rate_limiting", value: enabledDescription(viper.GetBool("rateLimit.enabled"))},
 	}
+
+	attributes = append(attributes, s.topology.selfAttributes...)
 
 	// The consolidation settings are the ones that decide what this store forgets, so they belong
 	// on the instance that runs the cycle. A replica runs none, and reporting numbers it does not
@@ -519,8 +529,8 @@ func (s *Server) selfNodeSpec() topologyNodeSpec {
 
 // storeNodeSpec describes the primary store. It is the one node that is never optional and never
 // disabled: without it there is no instance to ask.
-func (s *Server) storeNodeSpec() topologyNodeSpec {
-	driver := viper.GetString("storage.driver")
+func (s *Server) storeNodeSpec(d Deployment) topologyNodeSpec {
+	driver := d.StorageDriver
 
 	spec := topologyNodeSpec{
 		id:     topologyNodeStore,
@@ -533,15 +543,15 @@ func (s *Server) storeNodeSpec() topologyNodeSpec {
 
 	case "postgres":
 		spec.name = "PostgreSQL"
-		spec.detail = redactEndpoint(viper.GetString("storage.postgres.dsn"))
+		spec.detail = redactEndpoint(d.StorageDSN)
 
 	case "mysql":
 		spec.name = "MySQL"
-		spec.detail = redactEndpoint(viper.GetString("storage.mysql.dsn"))
+		spec.detail = redactEndpoint(d.StorageDSN)
 
 	default:
 		spec.name = "SQLite"
-		spec.detail = viper.GetString("storage.directory")
+		spec.detail = d.StorageDirectory
 
 		if spec.detail == "" {
 			spec.detail = "in-memory"
@@ -551,7 +561,7 @@ func (s *Server) storeNodeSpec() topologyNodeSpec {
 
 	spec.attributes = []topologyAttribute{
 		{key: "driver", value: driver},
-		{key: "compression", value: enabledDescription(viper.GetBool("storage.compression.enabled"))},
+		{key: "compression", value: enabledDescription(d.Compression)},
 	}
 
 	// The single-consolidator lock is what makes a shared store safe. This says whether THIS
@@ -570,7 +580,7 @@ func (s *Server) storeNodeSpec() topologyNodeSpec {
 // searchNodeSpec describes the content-search index. It reports the backend actually in use, which
 // no configuration key states on its own: opensearch.enabled false leaves a working store-backed
 // FTS5 index on SQLite and nothing at all on the server drivers.
-func (s *Server) searchNodeSpec() topologyNodeSpec {
+func (s *Server) searchNodeSpec(d Deployment) topologyNodeSpec {
 	spec := topologyNodeSpec{
 		id:     topologyNodeSearch,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_SEARCH_INDEX,
@@ -583,11 +593,11 @@ func (s *Server) searchNodeSpec() topologyNodeSpec {
 
 	case *search.OpenSearch:
 		spec.name = "OpenSearch"
-		spec.detail = redactEndpoints(viper.GetStringSlice("opensearch.addresses"))
+		spec.detail = redactEndpoints(d.OpenSearchAddresses)
 		spec.probe = true
 		spec.attributes = []topologyAttribute{
 			{key: "backend", value: "opensearch"},
-			{key: "index", value: viper.GetString("opensearch.index")},
+			{key: "index", value: d.OpenSearchIndex},
 			{key: "semantic_search", value: enabledDescription(backend.SupportsVectors())},
 			{key: "reconcile_interval", value: periodDescription(s.reconcileInterval)},
 		}
@@ -617,8 +627,8 @@ func (s *Server) searchNodeSpec() topologyNodeSpec {
 	return spec
 }
 
-func (s *Server) summariserNodeSpec() topologyNodeSpec {
-	provider := viper.GetString("llm.provider")
+func (s *Server) summariserNodeSpec(d Deployment) topologyNodeSpec {
+	provider := d.LLMProvider
 
 	spec := topologyNodeSpec{
 		id:     topologyNodeSummariser,
@@ -635,18 +645,18 @@ func (s *Server) summariserNodeSpec() topologyNodeSpec {
 	}
 
 	spec.probe = true
-	spec.detail = redactEndpoint(viper.GetString("llm.address"))
+	spec.detail = redactEndpoint(d.LLMAddress)
 	spec.attributes = []topologyAttribute{
 		{key: "provider", value: provider},
-		{key: "model", value: viper.GetString("llm.model")},
+		{key: "model", value: d.LLMModel},
 		{key: "auto_summarise", value: enabledDescription(s.consolidation.autoSummarise)},
 	}
 
 	return spec
 }
 
-func (s *Server) embedderNodeSpec() topologyNodeSpec {
-	provider := viper.GetString("llm.embedding.provider")
+func (s *Server) embedderNodeSpec(d Deployment) topologyNodeSpec {
+	provider := d.EmbeddingProvider
 
 	spec := topologyNodeSpec{
 		id:     topologyNodeEmbedder,
@@ -665,11 +675,11 @@ func (s *Server) embedderNodeSpec() topologyNodeSpec {
 	}
 
 	spec.probe = true
-	spec.detail = redactEndpoint(viper.GetString("llm.embedding.address"))
+	spec.detail = redactEndpoint(d.EmbeddingAddress)
 	spec.attributes = []topologyAttribute{
 		{key: "provider", value: provider},
 		{key: "model", value: embedder.Model()},
-		{key: "dimensions", value: countDescription(int64(viper.GetInt("llm.embedding.dimensions")))},
+		{key: "dimensions", value: countDescription(int64(d.EmbeddingDimensions))},
 	}
 
 	return spec
@@ -703,7 +713,7 @@ type localObjectStore interface {
 	Directory() string
 }
 
-func (s *Server) objectStoreNodeSpec() topologyNodeSpec {
+func (s *Server) objectStoreNodeSpec(d Deployment) topologyNodeSpec {
 	spec := topologyNodeSpec{
 		id:     topologyNodeObjects,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_OBJECT_STORE,
@@ -735,17 +745,17 @@ func (s *Server) objectStoreNodeSpec() topologyNodeSpec {
 		return spec
 	}
 
-	endpoint := redactEndpoint(viper.GetString("s3.endpoint"))
+	endpoint := redactEndpoint(d.S3Endpoint)
 	if endpoint == "" {
 		endpoint = "aws"
 	}
 
 	spec.name = "S3 archive"
-	spec.detail = endpoint + "/" + viper.GetString("s3.bucket")
+	spec.detail = endpoint + "/" + d.S3Bucket
 	spec.attributes = []topologyAttribute{
 		{key: "backend", value: "s3"},
-		{key: "bucket", value: viper.GetString("s3.bucket")},
-		{key: "region", value: viper.GetString("s3.region")},
+		{key: "bucket", value: d.S3Bucket},
+		{key: "region", value: d.S3Region},
 		{key: "key_prefix", value: s.transfer.keyPrefix},
 	}
 
@@ -790,7 +800,7 @@ func (s *Server) transferNodeSpec() topologyNodeSpec {
 // verifier already re-fetches the key set on its own schedule, and a console poll must not turn
 // into load on somebody else's identity provider - the one dependency here that is shared with
 // every other system in the organisation.
-func identityProviderNodeSpec() topologyNodeSpec {
+func identityProviderNodeSpec(d Deployment) topologyNodeSpec {
 	spec := topologyNodeSpec{
 		id:     topologyNodeIdP,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_IDENTITY_PROVIDER,
@@ -798,15 +808,15 @@ func identityProviderNodeSpec() topologyNodeSpec {
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
 	}
 
-	if viper.GetString("auth.method") != "idp" {
+	if d.AuthMethod != "idp" {
 		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
 		spec.attributes = []topologyAttribute{{key: "enable_with", value: `auth.method: "idp"`}}
 
 		return spec
 	}
 
-	issuer := viper.GetString("auth.issuer")
-	jwks := viper.GetString("auth.jwksUrl")
+	issuer := d.AuthIssuer
+	jwks := d.AuthJWKSURL
 
 	spec.detail = redactEndpoint(issuer)
 	if spec.detail == "" {
@@ -825,7 +835,7 @@ func identityProviderNodeSpec() topologyNodeSpec {
 // collectorNodeSpec describes the OTLP endpoint. Also never probed, for a different reason: OTLP
 // export is fire-and-forget over a connection this process does not otherwise inspect, so a probe
 // would mean opening a second one to learn something no exporter acts on.
-func collectorNodeSpec() topologyNodeSpec {
+func collectorNodeSpec(d Deployment) topologyNodeSpec {
 	spec := topologyNodeSpec{
 		id:     topologyNodeCollector,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_COLLECTOR,
@@ -833,8 +843,8 @@ func collectorNodeSpec() topologyNodeSpec {
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
 	}
 
-	traces := viper.GetBool("observability.tracing.enabled")
-	metrics := viper.GetBool("observability.metrics.enabled")
+	traces := d.TracingEnabled
+	metrics := d.MetricsEnabled
 
 	if !traces && !metrics {
 		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
@@ -845,7 +855,7 @@ func collectorNodeSpec() topologyNodeSpec {
 		return spec
 	}
 
-	spec.detail = redactEndpoint(viper.GetString("observability.otlp.endpoint"))
+	spec.detail = redactEndpoint(d.OTLPEndpoint)
 	spec.attributes = []topologyAttribute{
 		{key: "traces", value: enabledDescription(traces)},
 		{key: "metrics", value: enabledDescription(metrics)},
@@ -862,7 +872,7 @@ func collectorNodeSpec() topologyNodeSpec {
 // third party's service, and a probe would tell an operator nothing the delivery metrics do not -
 // hippocampus.callbacks.queue_depth and the delivered counter already say whether the receiver is
 // accepting real traffic, which is a better answer than whether it answers a synthetic one.
-func callbackNodeSpec() topologyNodeSpec {
+func callbackNodeSpec(d Deployment) topologyNodeSpec {
 	spec := topologyNodeSpec{
 		id:     topologyNodeCallbacks,
 		kind:   contract.TopologyNodeKind_TOPOLOGY_NODE_KIND_CALLBACK_RECEIVER,
@@ -870,7 +880,7 @@ func callbackNodeSpec() topologyNodeSpec {
 		source: contract.TopologyNodeSource_TOPOLOGY_NODE_SOURCE_CONFIGURED,
 	}
 
-	if !viper.GetBool("callbacks.enabled") {
+	if !d.CallbacksEnabled {
 		spec.staticStatus = contract.TopologyStatus_TOPOLOGY_STATUS_DISABLED
 		spec.attributes = []topologyAttribute{
 			{key: "enable_with", value: "callbacks.enabled"},
@@ -881,11 +891,11 @@ func callbackNodeSpec() topologyNodeSpec {
 
 	// Redacted at construction, like every other endpoint here: a callback URL can carry credentials
 	// in its userinfo, and the Server must never hold one for this purpose.
-	spec.detail = redactEndpoint(viper.GetString("callbacks.url"))
+	spec.detail = redactEndpoint(d.CallbacksURL)
 	spec.attributes = []topologyAttribute{
-		{key: "scope", value: callbackScopeDescription()},
-		{key: "bodies", value: enabledDescription(viper.GetBool("callbacks.includeBodies"))},
-		{key: "authentication", value: callbackAuthDescription()},
+		{key: "scope", value: callbackScopeDescription(d)},
+		{key: "bodies", value: enabledDescription(d.CallbacksIncludeBodies)},
+		{key: "authentication", value: callbackAuthDescription(d)},
 		{key: "probing", value: "off (a third party's endpoint, and the delivery metrics answer better)"},
 	}
 
@@ -893,8 +903,8 @@ func callbackNodeSpec() topologyNodeSpec {
 }
 
 // callbackScopeDescription renders which deletions the receiver is told about.
-func callbackScopeDescription() string {
-	if viper.GetBool("callbacks.allDeletions") {
+func callbackScopeDescription(d Deployment) string {
+	if d.CallbacksAllDeletions {
 		return "every deletion"
 	}
 
@@ -902,9 +912,9 @@ func callbackScopeDescription() string {
 }
 
 // callbackAuthDescription names how deliveries authenticate themselves, without naming the secrets.
-func callbackAuthDescription() string {
-	token := viper.GetString("callbacks.token") != ""
-	signed := viper.GetString("callbacks.signingSecret") != ""
+func callbackAuthDescription(d Deployment) string {
+	token := d.CallbacksTokenSet
+	signed := d.CallbacksSigned
 
 	switch {
 
@@ -958,36 +968,18 @@ func periodDescription(period time.Duration) string {
 	return period.String()
 }
 
-func gatewayDescription() string {
-	port := viper.GetInt("gateway.port")
-	if port <= 0 {
+func gatewayDescription(d Deployment) string {
+	if d.GatewayPort <= 0 {
 		return "disabled"
 	}
 
-	return net.JoinHostPort(bindAddressOrAll("gateway.bindAddress"), strconv.Itoa(port))
-}
-
-// authMethodDescription reports the scheme in force, resolving the deprecated boolean the same way
-// main.go does so the view never disagrees with what is actually enforced.
-func authMethodDescription() string {
-	method := viper.GetString("auth.method")
-
-	if method == "" {
-		if viper.GetBool("auth.enabled") {
-			return "hmac"
-		}
-
-		return "none"
-	}
-
-	return method
+	return net.JoinHostPort(bindAddressOrAll(d.GatewayBindAddress), strconv.Itoa(d.GatewayPort))
 }
 
 // bindAddressOrAll renders an unset bind address as what it actually means. An empty string in a
 // config file reads as "not configured"; in a listener it means every interface, which is the more
 // consequential of the two readings and the one worth showing.
-func bindAddressOrAll(key string) string {
-	address := viper.GetString(key)
+func bindAddressOrAll(address string) string {
 	if address == "" {
 		return "0.0.0.0"
 	}

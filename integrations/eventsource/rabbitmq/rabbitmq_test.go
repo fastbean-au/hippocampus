@@ -8,6 +8,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 
@@ -328,7 +329,14 @@ func TestHandle_AckErrorLogged(t *testing.T) {
 	store := bridge.NewStore(okStorer{}, bridge.NewDefaultTransformer(bridge.TransformConfig{}), 0, "test")
 	b := New(Config{}, store)
 
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
 	b.handle(context.Background(), amqp.Delivery{RoutingKey: "s", Body: []byte("x")})
+
+	if entry := hook.LastEntry(); entry == nil || entry.Message != "acking RabbitMQ delivery failed" {
+		t.Errorf("a failed ack must be logged, got %v", entry)
+	}
 }
 
 func TestDefaultDial_ErrorOnBadURL(t *testing.T) {
@@ -347,7 +355,14 @@ func TestHandle_NackErrorLogged(t *testing.T) {
 	store := bridge.NewStore(okStorer{}, failing, 0, "test")
 	b := New(Config{RequeueOnError: true}, store)
 
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
 	b.handle(context.Background(), amqp.Delivery{RoutingKey: "s", Body: []byte("x")})
+
+	if entry := hook.LastEntry(); entry == nil || entry.Message != "nacking RabbitMQ delivery failed" {
+		t.Errorf("a failed nack must be logged, got %v", entry)
+	}
 }
 
 // StoreMemories delegates to StoreMemory so a fake answers a batch write exactly as it answers the

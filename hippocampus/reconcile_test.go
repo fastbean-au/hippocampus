@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
-
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
 	"github.com/fastbean-au/hippocampus/types"
@@ -151,8 +149,10 @@ func TestReconcileOnce_IndexesNonBinaryMemories(t *testing.T) {
 // TestReconcileOnce_StopsPromptlyOnShutdown verifies a sweep in progress abandons its remaining
 // work as soon as the server is shutting down, rather than paging the whole store first.
 func TestReconcileOnce_StopsPromptlyOnShutdown(t *testing.T) {
+	// An hour between pages: the sweep indexes its first page and then waits, so the test can stop
+	// it at a known point instead of guessing how far 60ms gets.
 	restore := reconcilePageDelay
-	reconcilePageDelay = 50 * time.Millisecond
+	reconcilePageDelay = time.Hour
 	t.Cleanup(func() { reconcilePageDelay = restore })
 
 	database, err := db.New("")
@@ -188,8 +188,8 @@ func TestReconcileOnce_StopsPromptlyOnShutdown(t *testing.T) {
 		close(done)
 	}()
 
-	// Let a couple of pages through, then signal shutdown.
-	time.Sleep(60 * time.Millisecond)
+	// Let the first page through, then signal shutdown while the sweep waits for the next.
+	waitFor(t, 5*time.Second, "the sweep's first page", func() bool { return len(idx.indexedIds()) > 0 })
 	close(s.stopReconcile)
 
 	select {
@@ -200,8 +200,8 @@ func TestReconcileOnce_StopsPromptlyOnShutdown(t *testing.T) {
 		t.Fatal("reconcileOnce did not stop promptly on shutdown")
 	}
 
-	if got := len(idx.indexedIds()); got >= 20 {
-		t.Errorf("expected the sweep to stop early, but it indexed all %d memories", got)
+	if got := len(idx.indexedIds()); got != 1 {
+		t.Errorf("expected the sweep to stop after its first page, but it indexed %d memories", got)
 	}
 }
 
@@ -582,12 +582,7 @@ func TestStartReconcile_SkipsTheStoreBackedIndex(t *testing.T) {
 		t.Fatal("the store-backed index reports itself disabled; this test would pass for the wrong reason")
 	}
 
-	viper.Set("consolidation.enabled", true)
-	viper.Set("opensearch.reconcileIntervalSeconds", 3600)
-
-	t.Cleanup(func() { viper.Set("opensearch.reconcileIntervalSeconds", 0) })
-
-	s := &Server{db: database, search: idx, consolidationEnabled: true}
+	s := &Server{db: database, search: idx, consolidationEnabled: true, reconcileInterval: time.Hour}
 
 	s.startReconcile(idx)
 

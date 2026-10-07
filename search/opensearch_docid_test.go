@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
 
 // blueskyMemoryId is a real-shaped Bluesky memory id: the post's at:// URI, which the eventsource
@@ -72,15 +74,23 @@ func (p *pathCapturingTransport) recordedPaths() []string {
 }
 
 // TestWarnOnPathPrefixedAddresses covers the address shapes that do and do not defeat the document
-// id escaping. It asserts nothing beyond not panicking - the point is the warning, which only a log
-// hook could observe - but it pins which addresses reach it.
+// id escaping: exactly the one with a real path prefix is warned about.
 func TestWarnOnPathPrefixedAddresses(t *testing.T) {
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
 	warnOnPathPrefixedAddresses([]string{
 		"http://opensearch.invalid:9200",       // no path at all
 		"http://opensearch.invalid:9200/",      // a bare root, not a prefix
 		"http://opensearch.invalid:9200/proxy", // a prefix: warned about
 		"://not a url",                         // unparseable: skipped, the client already rejected it
 	})
+
+	entries := hook.AllEntries()
+
+	if len(entries) != 1 || !strings.Contains(entries[0].Message, "/proxy") {
+		t.Errorf("expected one warning, naming the /proxy address, got %v", entries)
+	}
 }
 
 // TestOpenSearch_DocumentIdIsPathEscaped covers the document id reaching the cluster intact when it

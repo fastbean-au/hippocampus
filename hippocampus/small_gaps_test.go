@@ -4,8 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
-
 	"github.com/fastbean-au/hippocampus/db"
 )
 
@@ -16,9 +14,6 @@ import (
 // when it matters most. --check-config refuses one at startup, and this is the second line of
 // defence for a Server built by anything that skipped that.
 func TestCallbackAtRiskMarginIsClampedToZero(t *testing.T) {
-	viper.Set("callbacks.atRiskMargin", -0.5)
-	t.Cleanup(func() { viper.Set("callbacks.atRiskMargin", nil) })
-
 	database, err := db.New("")
 	if err != nil {
 		t.Fatalf("db.New: %s", err)
@@ -26,7 +21,7 @@ func TestCallbackAtRiskMarginIsClampedToZero(t *testing.T) {
 
 	t.Cleanup(func() { _ = database.Close() })
 
-	s := &Server{db: database, consolidationEnabled: true}
+	s := &Server{db: database, consolidationEnabled: true, callbacksConfig: CallbacksConfig{AtRiskMargin: -0.5}}
 
 	// A nil notifier returns before the dispatcher starts, which is all this needs: the bounds are
 	// resolved above that return, exactly as the outbox's caps are.

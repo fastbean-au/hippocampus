@@ -9,7 +9,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -150,25 +149,22 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 
 	s.notifier = notifier
 
-	s.callbackBounds = db.QueueBounds{
-		MaxAge:   time.Duration(viper.GetInt("callbacks.maxAgeHours")) * time.Hour,
-		MaxRows:  int64(viper.GetInt("callbacks.maxRows")),
-		MaxBytes: viper.GetInt64("callbacks.maxBytes"),
-	}
+	cfg := s.callbacksConfig
 
-	s.callbackBatchSize = viper.GetInt("callbacks.batchSize")
-	s.callbackBaseBack = time.Duration(viper.GetInt("callbacks.retryBaseBackoffSeconds")) * time.Second
-	s.callbackMaxBack = time.Duration(viper.GetInt("callbacks.retryMaxBackoffSeconds")) * time.Second
-	s.callbackChunkIds = viper.GetInt("callbacks.maxIdsPerDelivery")
-	s.callbackSleepEvents = viper.GetBool("callbacks.events.sleepCompleted")
-	s.callbackAtRiskEvents = viper.GetBool("callbacks.events.memoriesAtRisk")
-	s.callbackAtRiskLimit = viper.GetInt("callbacks.atRiskLimit")
-	s.callbackAtRiskMargin = viper.GetFloat64("callbacks.atRiskMargin")
+	s.callbackBounds = cfg.Bounds
+	s.callbackBatchSize = cfg.BatchSize
+	s.callbackBaseBack = cfg.RetryBaseBackoff
+	s.callbackMaxBack = cfg.RetryMaxBackoff
+	s.callbackChunkIds = cfg.MaxIdsPerDelivery
+	s.callbackSleepEvents = cfg.SleepCompleted
+	s.callbackAtRiskEvents = cfg.MemoriesAtRisk
+	s.callbackAtRiskLimit = cfg.AtRiskLimit
+	s.callbackAtRiskMargin = cfg.AtRiskMargin
 
-	// An unknown spelling has already failed startup (validateCallbackConfig), so this cannot
-	// silently choose a policy - which for a key whose values differ in what they are willing to lose
-	// is the one failure mode worth ruling out.
-	s.callbackBacklogPolicy, _ = ParseBacklogPolicy(viper.GetString("callbacks.backlogPolicy"))
+	// Parsed by the caller: an unknown spelling has already failed startup (validateCallbackConfig),
+	// so this cannot silently choose a policy - which for a key whose values differ in what they are
+	// willing to lose is the one failure mode worth ruling out.
+	s.callbackBacklogPolicy = cfg.BacklogPolicy
 
 	if s.callbackBounds.MaxRows <= 0 {
 		s.callbackBounds.MaxRows = defaultCallbackMaxRows
@@ -232,13 +228,13 @@ func (s *Server) startCallbackDispatch(notifier notify.Notifier) {
 
 	store.SetCallbackPolicy(db.CallbackPolicy{
 		Enabled:         true,
-		AllDeletions:    viper.GetBool("callbacks.allDeletions"),
-		IncludeBodies:   viper.GetBool("callbacks.includeBodies"),
-		MaxBodyBytes:    viper.GetInt("callbacks.maxBodyBytes"),
+		AllDeletions:    cfg.AllDeletions,
+		IncludeBodies:   cfg.IncludeBodies,
+		MaxBodyBytes:    cfg.MaxBodyBytes,
 		RetainDeletions: s.callbackBacklogPolicy.retains(),
-		MemoryEvents:    viper.GetBool("callbacks.events.memoryForgotten"),
-		EventEvents:     viper.GetBool("callbacks.events.eventForgotten"),
-		WriteEvents:     viper.GetBool("callbacks.events.memoryWrites"),
+		MemoryEvents:    cfg.MemoryForgotten,
+		EventEvents:     cfg.EventForgotten,
+		WriteEvents:     cfg.MemoryWrites,
 	})
 
 	s.callbacksEnabled = true

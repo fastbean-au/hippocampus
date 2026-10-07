@@ -9,7 +9,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 
 	"github.com/fastbean-au/hippocampus/contract"
 	"github.com/fastbean-au/hippocampus/db"
@@ -242,7 +241,7 @@ func (s *Server) instanceRecord(now time.Time) db.Instance {
 		Search:           s.searchIdx().Enabled(),
 		Summariser:       s.summariser().Enabled(),
 		Embedder:         s.embedder().Enabled(),
-		Gateway:          viper.GetInt("gateway.port") > 0,
+		Gateway:          s.gatewayEnabled,
 	}
 }
 

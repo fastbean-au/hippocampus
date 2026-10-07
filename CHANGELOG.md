@@ -186,6 +186,13 @@ itself which service version it was built against.
 
 ### Changed
 
+- **`hippocampus.New` takes a `Config`.** The service package reads no configuration of its own;
+  `cmd/hippocampus/serverconfig.go` builds it from viper. Anything constructing a server directly
+  passes one. See [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-configuration-key).
+- **CI lints.** A `lint` job runs golangci-lint, staticcheck included, as `hooks/pre-commit` does.
+  Kafka joins MQTT and RabbitMQ as a broker the bridge tests run against, and the console's DOM
+  layer now has tests of its own.
+
 - **The design record moved to [`docs/design/`](docs/design/README.md).** `CLAUDE.md` is now a
   short guide: commands, a package map, and the invariants with the tests that enforce them. The
   checklists for adding an RPC or a config key live once, in [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -249,6 +256,9 @@ itself which service version it was built against.
   it) and nothing showed until the weekly status report found its pin three releases behind.
 
 ### Fixed
+
+- **The pre-commit hook's install hint named golangci-lint v1.** It now names the v2 release the
+  hook and CI run.
 
 - **Getting started's authentication steps work.** They set no signing secret and minted a token
   without `--role`, which `--mint-token` refuses. See [Enabling

@@ -14,5 +14,6 @@
 // Group scoping is enforced here rather than in the auth package: scope.go declares, for every RPC,
 // how a caller's group scope reaches the store, and a test refuses an RPC that declares nothing.
 //
-// The server reads its configuration from viper once, in New. Storage is reached through db.Store.
+// The server reads no configuration of its own: New takes a Config, which main.go builds. Storage is
+// reached through db.Store.
 package hippocampus

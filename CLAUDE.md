@@ -30,7 +30,8 @@ transports can require a signed JWT bearer token (`auth.method`: `none`/`hmac`/`
 - Run: `go run ./cmd/hippocampus -c config.json`. Without a config file it starts on built-in
   defaults; `--gateway-port 8080` turns on the JSON gateway and the console at `/ui`.
 - Pre-commit: `hooks/pre-commit` (git runs it through `core.hooksPath hooks`). It runs tidy, gofmt,
-  vet, golangci-lint and the root module's tests with coverage. It does **not** test the integration
+  vet, golangci-lint (the same version CI's `lint` job installs) and the root module's tests with
+  coverage. It does **not** test the integration
   modules - run `go test ./...` in each one you changed. Prepend `$(go env GOPATH)/bin` to `PATH` if
   `golangci-lint`, `buf` or the protoc plugins are "not found".
 - Integration modules, each tested from its own directory: `integrations/cli` (`hippo`),
@@ -64,7 +65,7 @@ The long form of every command, with its design notes, is [docs/design/tooling.m
 
 | Path | What it is | Design record |
 | :--- | :--------- | :------------ |
-| `cmd/hippocampus/` | the service binary: bootstrap, interceptors, gateway, RED metrics, the embedded console, the offline modes. All config is read here (or in `hippocampus.New`) | [service](docs/design/service.md) |
+| `cmd/hippocampus/` | the service binary: bootstrap, interceptors, gateway, RED metrics, the embedded console, the offline modes. All config is read here; `serverconfig.go` builds the `hippocampus.Config` the service takes | [service](docs/design/service.md) |
 | `cmd/config-wizard/` | the browser-based configuration and deployment wizard | [config-wizard](docs/design/config-wizard.md) |
 | `hippocampus/` | the gRPC service: the sleep cycle, the transparency RPCs, callbacks, topology, scope, transfer | [consolidation](docs/design/consolidation.md), [topology](docs/design/topology.md), [scope-and-deletion](docs/design/scope-and-deletion.md) |
 | `db/` | the storage layer: one `DB` over SQLite, PostgreSQL and MySQL; the schema ledger; the link graph | [storage](docs/design/storage.md) |
@@ -119,6 +120,9 @@ Each of these has failed before or would fail silently. The test named beside it
   `TestScopesCoverEveryRPC`, `TestEveryRPCIsCoveredByIsolationTest`.
 - **An out-of-scope id the caller named reports `NotFound`**, never `PermissionDenied`, and an
   unnamed one is dropped silently. `TestGroupScopeIsolation*`.
+- **The `hippocampus` package reads no configuration**: `New` takes a `Config` that
+  `cmd/hippocampus/serverconfig.go` builds. `TestHippocampusReadsNoConfiguration`, and
+  `TestServerConfigFillsEveryField` for an assignment forgotten there.
 - **Every config key is read, defaulted, offered and documented.** `TestEveryConfigKeyIsDocumented`
   (a row in the generated index, `TestConfigIndex`), `TestEveryDocumentedConfigKeyIsRead`,
   `TestWizardOffersEveryConfigKey`, `defaults_test.go` in the wizard.

@@ -36,6 +36,11 @@ import (
 // thing that exercises its backfill on these dialects - a store upgraded into the index and left
 // empty answers every search with nothing, which reads exactly like a store holding no match.
 
+// The admin variables are optional. CI sets only MySQL's, because its MySQL user is scoped to one
+// database; it leaves the Postgres one unset deliberately, since the fallback below is the base DSN
+// and CI's Postgres user is the container's superuser, so the Postgres fixtures run there without
+// it (checked under TODO-3 item 177). A credential that cannot create the scratch database fails the
+// test rather than skipping it, so an unset admin variable can never quietly turn these off.
 const (
 	postgresTestAdminDSNEnv = "HIPPOCAMPUS_TEST_POSTGRES_ADMIN_DSN"
 	mysqlTestAdminDSNEnv    = "HIPPOCAMPUS_TEST_MYSQL_ADMIN_DSN"

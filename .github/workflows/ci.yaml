@@ -9,7 +9,7 @@ on:
 # Least privilege for the whole workflow, set here rather than per job because every job in it only
 # ever reads the repository: nothing pushes a commit, publishes an image, or comments on a PR. The
 # default GITHUB_TOKEN is otherwise write-capable on a push to the default branch, so a compromised
-# third-party action or dependency in any of these thirteen jobs would inherit that. Coveralls and the
+# third-party action or dependency in any of these jobs would inherit that. Coveralls and the
 # Homebrew tap authenticate with their own secrets, not this token, so neither needs more.
 permissions:
   contents: read
@@ -170,6 +170,28 @@ jobs:
 
       - name: Test under the race detector
         run: go test -race -timeout 20m ./...
+
+  # golangci-lint over the root module, with its default linters - staticcheck among them - exactly
+  # as hooks/pre-commit runs it. Until TODO-3 item 177 this ran only on a developer's machine, so a
+  # commit made without the hook reached main unlinted. It is built with `go install` rather than
+  # taken as a prebuilt release: setup-go installs the toolchain go.mod names, and a linter built
+  # with an older Go refuses to load a module declaring a newer one, which is how staticcheck once
+  # came to be thought incompatible with go 1.27. The version is the one the hook is used with.
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+
+      - name: Lint
+        run: golangci-lint run
 
   # Every published client - the generated Go package, and anything anyone generates from
   # contract/hippocampus.proto - breaks silently on an accidental field renumbering or a removed
@@ -523,10 +545,10 @@ jobs:
   # The event-sourcing broker bridges under integrations/eventsource are a SEPARATE Go module (their
   # broker-client dependency trees are kept out of the root module), so the test job's
   # `go build/test ./...` never descends into them. Build, vet, and test the module on its own. The
-  # NATS adapter's coverage uses an embedded in-process server (no container), but the MQTT and
-  # RabbitMQ adapters' real-connect paths need a live broker, so mosquitto and rabbitmq are started
-  # here and the matching HIPPOCAMPUS_TEST_* env vars point the (otherwise-skipped) integration tests
-  # at them - keeping the suite's coverage of those adapters honest, the same way the postgres/mysql/
+  # NATS adapter's coverage uses an embedded in-process server (no container), but the MQTT, RabbitMQ
+  # and Kafka adapters' real-connect paths need a live broker, so mosquitto, rabbitmq and kafka are
+  # started here and the matching HIPPOCAMPUS_TEST_* env vars point the (otherwise-skipped)
+  # integration tests at them - keeping the suite's coverage of those adapters honest, the same way the postgres/mysql/
   # opensearch service containers do for the root module. The module has a `replace => ../..` back to
   # the repo root, so the full checkout is required.
   eventsource-bridges:
@@ -542,7 +564,7 @@ jobs:
       # Started as docker-run steps rather than `services:` because mosquitto needs a mounted config
       # to listen on all interfaces and allow anonymous connections (a default-config mosquitto binds
       # localhost-only), and services start before the checkout that provides that config.
-      - name: Start MQTT and RabbitMQ brokers
+      - name: Start MQTT, RabbitMQ and Kafka brokers
         run: |
           docker run -d --name mosquitto -p 1883:1883 \
             -v "$PWD/integrations/eventsource/testdata/mosquitto.conf:/mosquitto/config/mosquitto.conf" \
@@ -577,6 +599,24 @@ jobs:
             sleep 3
           done
 
+          # A single-node KRaft broker. The image's default configuration advertises localhost:9092,
+          # which is exactly where the integration test dials, so it needs no settings of its own.
+          docker run -d --name kafka -p 9092:9092 apache/kafka:3.9.0
+
+          for i in $(seq 1 40); do
+            if docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then
+              echo "kafka ready"
+              break
+            fi
+            if [ "$i" -eq 40 ]; then
+              echo "kafka did not become ready in time; recent logs:" >&2
+              docker logs --tail 50 kafka >&2 || true
+              exit 1
+            fi
+            sleep 3
+          done
+
           # mosquitto has no diagnostics CLI, so gate on the host-mapped port accepting a TCP
           # connection - which is exactly what the integration test needs to reach it.
           for i in $(seq 1 20); do
@@ -602,6 +642,7 @@ jobs:
         env:
           HIPPOCAMPUS_TEST_MQTT_BROKER: tcp://localhost:1883
           HIPPOCAMPUS_TEST_RABBITMQ_URL: amqp://hippo:hippo@localhost:5672/
+          HIPPOCAMPUS_TEST_KAFKA_BROKERS: localhost:9092
           HIPPOCAMPUS_TEST_JETSTREAM: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'wss://jetstream2.us-east.bsky.network/subscribe' || '' }}
         run: |
           go build ./...

@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
-
 	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/notify"
 )
@@ -285,33 +283,18 @@ func TestCallbackDispatchLoopRunsAndStops(t *testing.T) {
 // The two are one decision expressed at both ends: a store queues deliveries exactly when something
 // is going to send them, so every path that declines to dispatch must also decline to record.
 func TestStartCallbackDispatchGating(t *testing.T) {
-	setViper := func(t *testing.T) {
-		t.Helper()
-
-		for key, value := range map[string]any{
-			"callbacks.maxRows":                 10,
-			"callbacks.maxAgeHours":             1,
-			"callbacks.batchSize":               5,
-			"callbacks.retryBaseBackoffSeconds": 1,
-			"callbacks.retryMaxBackoffSeconds":  2,
-			"callbacks.maxIdsPerDelivery":       7,
-			"callbacks.events.sleepCompleted":   true,
-			"callbacks.allDeletions":            true,
-			"callbacks.includeBodies":           true,
-			"callbacks.maxBodyBytes":            128,
-			"callbacks.events.memoryForgotten":  true,
-			"callbacks.events.eventForgotten":   true,
-		} {
-			viper.Set(key, value)
-		}
-
-		t.Cleanup(func() {
-			for _, key := range viper.AllKeys() {
-				if len(key) > 10 && key[:10] == "callbacks." {
-					viper.Set(key, nil)
-				}
-			}
-		})
+	configured := CallbacksConfig{
+		Bounds:            db.QueueBounds{MaxRows: 10, MaxAge: time.Hour},
+		BatchSize:         5,
+		RetryBaseBackoff:  time.Second,
+		RetryMaxBackoff:   2 * time.Second,
+		MaxIdsPerDelivery: 7,
+		SleepCompleted:    true,
+		AllDeletions:      true,
+		IncludeBodies:     true,
+		MaxBodyBytes:      128,
+		MemoryForgotten:   true,
+		EventForgotten:    true,
 	}
 
 	newServer := func(t *testing.T) (*Server, *db.DB) {
@@ -324,12 +307,10 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 
 		t.Cleanup(func() { _ = database.Close() })
 
-		return &Server{db: database, consolidationEnabled: true}, database
+		return &Server{db: database, consolidationEnabled: true, callbacksConfig: configured}, database
 	}
 
 	t.Run("a nil notifier records nothing", func(t *testing.T) {
-		setViper(t)
-
 		s, database := newServer(t)
 		s.startCallbackDispatch(nil)
 
@@ -345,8 +326,6 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 	})
 
 	t.Run("a disabled notifier records nothing", func(t *testing.T) {
-		setViper(t)
-
 		s, _ := newServer(t)
 		s.startCallbackDispatch(&recordingNotifier{disabled: true})
 
@@ -356,8 +335,6 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 	})
 
 	t.Run("a replica records nothing and dispatches nothing", func(t *testing.T) {
-		setViper(t)
-
 		s, database := newServer(t)
 		s.consolidationEnabled = false
 
@@ -375,8 +352,6 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 	})
 
 	t.Run("a store that cannot be told records nothing", func(t *testing.T) {
-		setViper(t)
-
 		database, err := db.New("")
 		if err != nil {
 			t.Fatalf("db.New: %s", err)
@@ -387,7 +362,7 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 		// A Store that does not expose SetCallbackPolicy - the seam is on the concrete type, not on
 		// the interface, so a future backend without it must decline rather than panic.
 		s := &Store{Store: database}
-		server := &Server{db: s, consolidationEnabled: true}
+		server := &Server{db: s, consolidationEnabled: true, callbacksConfig: configured}
 
 		server.startCallbackDispatch(&recordingNotifier{})
 
@@ -397,8 +372,6 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 	})
 
 	t.Run("the consolidator records and dispatches", func(t *testing.T) {
-		setViper(t)
-
 		s, database := newServer(t)
 		s.startCallbackDispatch(&recordingNotifier{})
 
@@ -413,7 +386,7 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 			t.Fatal("the consolidator did not start the dispatcher")
 		}
 
-		// The viper values reached the server rather than the package defaults.
+		// The configured values reached the server rather than the package defaults.
 		if s.callbackBounds.MaxRows != 10 || s.callbackBatchSize != 5 || s.callbackChunkIds != 7 {
 			t.Errorf("configuration did not reach the server: rows=%d batch=%d chunk=%d",
 				s.callbackBounds.MaxRows, s.callbackBatchSize, s.callbackChunkIds)
@@ -432,17 +405,13 @@ func TestStartCallbackDispatchGating(t *testing.T) {
 	})
 
 	t.Run("unset bounds fall back to the package defaults", func(t *testing.T) {
-		setViper(t)
-
-		for _, key := range []string{
-			"callbacks.maxRows", "callbacks.maxAgeHours", "callbacks.batchSize",
-			"callbacks.retryBaseBackoffSeconds", "callbacks.retryMaxBackoffSeconds",
-			"callbacks.maxIdsPerDelivery",
-		} {
-			viper.Set(key, 0)
-		}
-
 		s, _ := newServer(t)
+
+		s.callbacksConfig.Bounds = db.QueueBounds{}
+		s.callbacksConfig.BatchSize = 0
+		s.callbacksConfig.RetryBaseBackoff = 0
+		s.callbacksConfig.RetryMaxBackoff = 0
+		s.callbacksConfig.MaxIdsPerDelivery = 0
 		s.startCallbackDispatch(&recordingNotifier{})
 
 		t.Cleanup(func() {

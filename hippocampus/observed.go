@@ -393,7 +393,7 @@ func (s *Server) buildObservedSnapshot(now time.Time) observedSnapshot {
 	}
 
 	snapshot.attributes[topologyNodeSelf] = []topologyAttribute{
-		{key: "observed_callers", value: observedCallersDescription(len(records), evicted)},
+		{key: "observed_callers", value: observedCallersDescription(s.topology.authMethod, len(records), evicted)},
 	}
 
 	for _, record := range records {
@@ -464,8 +464,8 @@ func observedNodeSpec(record observedRecord, now time.Time) topologyNodeSpec {
 // Saying why the inbound column is empty matters more here than anywhere else in the view: an
 // operator looking at a deployment with six bridges writing to it, and no boxes for any of them,
 // should be told that callers are not identified rather than left to conclude the diagram is broken.
-func observedCallersDescription(count int, evicted bool) string {
-	if authMethodDescription() == "none" {
+func observedCallersDescription(authMethod string, count int, evicted bool) string {
+	if authMethod == "none" {
 		return "not identified (authentication is disabled: auth.method)"
 	}
 

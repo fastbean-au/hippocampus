@@ -13,6 +13,12 @@ import (
 // every reason to finish it.
 const sharedWorkTimeout = 5 * time.Minute
 
+// sharedCallJoined, when set, is called once a caller has registered with the group - as the leader
+// or as a waiter on work already in flight. It is a test seam and nil in the service: a test that
+// needs every caller to have joined before it releases the shared work waits on it, instead of
+// sleeping and hoping (TODO-3 item 177).
+var sharedCallJoined func(key string)
+
 // sharedCall runs fn once for every caller sharing key, as Group.Do does, but on a context detached
 // from whichever caller arrived first (TODO-3 item 164). On the leader's context, one closed console
 // tab cancelled the scan that every other viewer had joined, and they all failed with an error that
@@ -31,6 +37,10 @@ func sharedCall(
 
 		return fn(work)
 	})
+
+	if sharedCallJoined != nil {
+		sharedCallJoined(key)
+	}
 
 	select {
 

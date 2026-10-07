@@ -5,9 +5,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 
-	"github.com/fastbean-au/hippocampus/db"
 	"github.com/fastbean-au/hippocampus/search"
 )
 
@@ -71,12 +69,6 @@ var (
 // deletions exactly when something is going to drain them - and keeping it in one function is what
 // stops a deployment writing a row per forgotten memory into a table nothing reads.
 func (s *Server) startOutboxDrain(searchIndex search.Index) {
-	s.outboxBounds = db.QueueBounds{
-		MaxAge:   time.Duration(viper.GetInt("opensearch.outbox.maxAgeHours")) * time.Hour,
-		MaxRows:  int64(viper.GetInt("opensearch.outbox.maxRows")),
-		MaxBytes: viper.GetInt64("opensearch.outbox.maxBytes"),
-	}
-
 	if s.outboxBounds.MaxRows <= 0 {
 		s.outboxBounds.MaxRows = defaultOutboxMaxRows
 	}

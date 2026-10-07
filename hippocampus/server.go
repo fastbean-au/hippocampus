@@ -11,7 +11,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/singleflight"
@@ -206,8 +205,8 @@ type Consolidation struct {
 	tombstones bool
 }
 
-// Server implements contract.HippocampusServer over a db.Store. Construct it with New, which reads
-// the configuration from viper and starts the background workers - the sleep cycle, and the other
+// Server implements contract.HippocampusServer over a db.Store. Construct it with New, which takes
+// its configuration as a Config and starts the background workers - the sleep cycle, and the other
 // consolidator work where configured - and shut those down with Stop.
 type Server struct {
 	contract.UnimplementedHippocampusServer
@@ -383,7 +382,7 @@ type Server struct {
 
 	// scheduledExport configures the scheduled archive export (scheduledexport.go), and the two
 	// channels coordinate its shutdown as the reconcile sweep's do; nil when it is not running.
-	scheduledExport        scheduledExportConfig
+	scheduledExport        ScheduledExportConfig
 	stopScheduledExport    chan struct{}
 	scheduledExportStopped chan struct{}
 
@@ -406,16 +405,23 @@ type Server struct {
 	// recorded alongside the deletions that caused them, its sink, and the caps that bound the queue
 	// when the receiver cannot keep up. Held and shut down exactly as the outbox drain is, and nil
 	// when nothing is dispatching - no sink is configured, or this is a replica.
-	notifier          notify.Notifier
-	callbacksEnabled  bool
-	callbackBounds    db.QueueBounds
+	notifier         notify.Notifier
+	callbacksEnabled bool
+	callbackBounds   db.QueueBounds
+
+	// callbacksConfig is the callbacks.* configuration, kept so a standby that takes over can start
+	// the dispatcher with it (see promote).
+	callbacksConfig CallbacksConfig
+
+	// gatewayEnabled reports whether the JSON gateway is listening, for the peer registry row.
+	gatewayEnabled    bool
 	callbackBatchSize int
 	callbackBaseBack  time.Duration
 	callbackMaxBack   time.Duration
 	callbackChunkIds  int
 
 	// callbackSleepEvents is callbacks.events.sleepCompleted, resolved at startup rather than read
-	// per cycle: the sleep cycle is not a place to be consulting viper, and the other two toggles
+	// per cycle: the sleep cycle is not a place to be consulting configuration, and the other two toggles
 	// live on the store's CallbackPolicy for the same reason.
 	callbackSleepEvents bool
 
@@ -506,22 +512,6 @@ type Transfer struct {
 	tlsInsecureSkipVerify bool
 }
 
-// transferTLSEnabled reports whether the Transfer client should dial over TLS. It accepts both the
-// legacy scalar form (transfer.tls: true) and the block form introduced with the trust options
-// (transfer.tls.enabled: true), so existing configs keep working while the block gains caCertFile,
-// certFile/keyFile, and insecureSkipVerify.
-func transferTLSEnabled() bool {
-	switch v := viper.Get("transfer.tls").(type) {
-
-	case bool:
-		return v
-
-	default:
-		return viper.GetBool("transfer.tls.enabled")
-
-	}
-}
-
 // mayReinforce reports whether the caller behind ctx may reinforce recalled memories (reset the
 // decay clock, raise the recall count). Writer and admin tiers always may; a reader may only when
 // auth.readerRecallReinforces is set. When no tier is on the context - authorisation is not in
@@ -578,10 +568,11 @@ type Dependencies struct {
 	Version string
 }
 
-// New builds a Server from its dependencies and the configuration in viper, and starts its
-// background workers (see Stop). The configuration is validated before New is called, by
-// configProblems in package main.
-func New(deps Dependencies) *Server {
+// New builds a Server from its dependencies and its configuration, and starts its background workers
+// (see Stop). The configuration is validated before New is called, by configProblems in package
+// main. cfg is not retained: New copies what the server needs, and Deployment is used only to
+// describe the deployment in the topology view.
+func New(deps Dependencies, cfg Config) *Server {
 	log.Trace("func() hippocampus.New()")
 
 	reset := make(chan bool, 1)
@@ -594,63 +585,68 @@ func New(deps Dependencies) *Server {
 		objects:   deps.Objects,
 		manifests: make(map[string]*transferManifest),
 		transfer: Transfer{
-			targetAddress:         viper.GetString("transfer.targetAddress"),
-			token:                 viper.GetString("transfer.token"),
-			tls:                   transferTLSEnabled(),
-			batchSize:             viper.GetInt("transfer.batchSize"),
-			maxBatchBytes:         viper.GetInt("transfer.maxBatchBytes"),
-			maxManifestRows:       viper.GetInt("transfer.maxManifestRows"),
-			keyPrefix:             viper.GetString("s3.keyPrefix"),
-			tlsCACertFile:         viper.GetString("transfer.tls.caCertFile"),
-			tlsCertFile:           viper.GetString("transfer.tls.certFile"),
-			tlsKeyFile:            viper.GetString("transfer.tls.keyFile"),
-			tlsInsecureSkipVerify: viper.GetBool("transfer.tls.insecureSkipVerify"),
+			targetAddress:         cfg.Transfer.TargetAddress,
+			token:                 cfg.Transfer.Token,
+			tls:                   cfg.Transfer.TLS,
+			batchSize:             cfg.Transfer.BatchSize,
+			maxBatchBytes:         cfg.Transfer.MaxBatchBytes,
+			maxManifestRows:       cfg.Transfer.MaxManifestRows,
+			keyPrefix:             cfg.Transfer.KeyPrefix,
+			tlsCACertFile:         cfg.Transfer.TLSCACertFile,
+			tlsCertFile:           cfg.Transfer.TLSCertFile,
+			tlsKeyFile:            cfg.Transfer.TLSKeyFile,
+			tlsInsecureSkipVerify: cfg.Transfer.TLSInsecureSkipVerify,
 		},
 		sleepReset:                reset,
-		listingCounts:             newCountCache(time.Duration(viper.GetInt("listing.countCacheSeconds")) * time.Second),
-		minimumEventSignificance:  viper.GetInt32("event.minimumSignificance"),
-		minimumMemorySignificance: viper.GetInt32("memory.minimumSignificance"),
-		maxMemoryBodyLength:       viper.GetInt("memory.limit.sizeBytes"),
-		readerRecallReinforces:    viper.GetBool("auth.readerRecallReinforces"),
+		listingCounts:             newCountCache(cfg.Listing.CountCacheTTL),
+		minimumEventSignificance:  cfg.Write.MinimumEventSignificance,
+		minimumMemorySignificance: cfg.Write.MinimumMemorySignificance,
+		maxMemoryBodyLength:       cfg.Write.MaxMemoryBytes,
+		readerRecallReinforces:    cfg.ReaderRecallReinforces,
 		ranking: rankingWeights{
-			significance: viper.GetFloat64("search.significanceWeight"),
-			recall:       viper.GetFloat64("search.recallWeight"),
+			significance: cfg.Search.SignificanceWeight,
+			recall:       cfg.Search.RecallWeight,
 		},
 		consolidation: Consolidation{
-			defaultEventSignificanceValue:      viper.GetInt32("consolidation.defaultEventSignificanceValue"),
-			defaultEventSignificancePercentile: viper.GetFloat64("consolidation.defaultEventSignificancePercentile"),
-			minimumAgeInDays:                   viper.GetInt("consolidation.minimumAgeInDays"),
-			minimumRetentionInDays:             viper.GetInt("consolidation.minimumRetentionInDays"),
-			maximumRetentionInDays:             viper.GetInt("consolidation.maximumRetentionInDays"),
-			aggressiveness:                     viper.GetFloat64("consolidation.aggressiveness"),
-			deletionThreshold:                  viper.GetFloat64("consolidation.deletionThreshold"),
-			method:                             viper.GetInt("consolidation.method"),
-			unitsOfAgeInDays:                   viper.GetFloat64("consolidation.unitsOfAgeInDays"),
-			linkSignificanceWeight:             viper.GetFloat64("consolidation.linkSignificanceWeight"),
-			linkRecallPropagation:              viper.GetFloat64("consolidation.linkRecallPropagation"),
-			recallSignificanceWeight:           viper.GetFloat64("consolidation.recallSignificanceWeight"),
-			capacityMemories:                   viper.GetInt("consolidation.capacityMemories"),
-			capacityPressureExponent:           viper.GetFloat64("consolidation.capacityPressureExponent"),
+			defaultEventSignificanceValue:      cfg.Consolidation.DefaultEventSignificanceValue,
+			defaultEventSignificancePercentile: cfg.Consolidation.DefaultEventSignificancePercentile,
+			minimumAgeInDays:                   cfg.Consolidation.MinimumAgeInDays,
+			minimumRetentionInDays:             cfg.Consolidation.MinimumRetentionInDays,
+			maximumRetentionInDays:             cfg.Consolidation.MaximumRetentionInDays,
+			aggressiveness:                     cfg.Consolidation.Aggressiveness,
+			deletionThreshold:                  cfg.Consolidation.DeletionThreshold,
+			method:                             cfg.Consolidation.Method,
+			unitsOfAgeInDays:                   cfg.Consolidation.UnitsOfAgeInDays,
+			linkSignificanceWeight:             cfg.Consolidation.LinkSignificanceWeight,
+			linkRecallPropagation:              cfg.Consolidation.LinkRecallPropagation,
+			recallSignificanceWeight:           cfg.Consolidation.RecallSignificanceWeight,
+			capacityMemories:                   cfg.Consolidation.CapacityMemories,
+			capacityPressureExponent:           cfg.Consolidation.CapacityPressureExponent,
 			capacityPressure:                   1.0,
-			capacityBytes:                      viper.GetInt64("consolidation.capacityBytes"),
-			capacityBytesFloor:                 viper.GetInt64("consolidation.capacityBytesFloor"),
-			capacityExternalBytes:              viper.GetInt64("consolidation.capacityExternalBytes"),
-			capacityExternalBytesFloor:         viper.GetInt64("consolidation.capacityExternalBytesFloor"),
-			walTriggerBytes:                    viper.GetInt64("consolidation.walTriggerBytes"),
-			summarisationMinMemories:           viper.GetInt("consolidation.summarisationMinMemories"),
-			summarisationMinAgeInDays:          viper.GetInt("consolidation.summarisationMinAgeInDays"),
-			summarisationMaxCandidates:         viper.GetInt("consolidation.summarisationMaxCandidates"),
-			autoSummarise:                      viper.GetBool("llm.autoSummarise"),
-			tombstones:                         viper.GetBool("consolidation.tombstones.enabled"),
-			significanceLevelRetention: time.Duration(
-				viper.GetInt("consolidation.significanceLevels.unusedRetentionInDays"),
-			) * 24 * time.Hour,
+			capacityBytes:                      cfg.Consolidation.CapacityBytes,
+			capacityBytesFloor:                 cfg.Consolidation.CapacityBytesFloor,
+			capacityExternalBytes:              cfg.Consolidation.CapacityExternalBytes,
+			capacityExternalBytesFloor:         cfg.Consolidation.CapacityExternalBytesFloor,
+			walTriggerBytes:                    cfg.Consolidation.WALTriggerBytes,
+			summarisationMinMemories:           cfg.Consolidation.SummarisationMinMemories,
+			summarisationMinAgeInDays:          cfg.Consolidation.SummarisationMinAgeInDays,
+			summarisationMaxCandidates:         cfg.Consolidation.SummarisationMaxCandidates,
+			autoSummarise:                      cfg.Consolidation.AutoSummarise,
+			tombstones:                         cfg.Consolidation.Tombstones,
+			significanceLevelRetention:         cfg.Consolidation.SignificanceLevelRetention,
 		},
+		reconcileInterval:  cfg.Reconcile.Interval,
+		reconcileBatchSize: cfg.Reconcile.BatchSize,
+		staleSweepEnabled:  cfg.Reconcile.StaleSweep,
+		outboxBounds:       cfg.Outbox,
+		callbacksConfig:    cfg.Callbacks,
+		scheduledExport:    cfg.ScheduledExport,
+		gatewayEnabled:     cfg.Deployment.GatewayPort > 0,
 	}
 
-	s.consolidationEnabled = viper.GetBool("consolidation.enabled")
-	s.standby = viper.GetBool("consolidation.standby")
-	s.standbyPoll = time.Duration(viper.GetInt("consolidation.standbyPollSeconds")) * time.Second
+	s.consolidationEnabled = cfg.Consolidation.Enabled
+	s.standby = cfg.Consolidation.Standby
+	s.standbyPoll = cfg.Consolidation.StandbyPoll
 
 	// Mirror the server-side auth-without-TLS warning for the Transfer client: a token configured
 	// without transfer.tls is sent as a plaintext bearer credential to the target, where anyone on
@@ -663,7 +659,7 @@ func New(deps Dependencies) *Server {
 	s.stopSleep = make(chan struct{})
 	s.sleepStopped = make(chan struct{})
 
-	period := time.Duration(viper.GetInt("sleep.periodSeconds")) * time.Second
+	period := cfg.SleepPeriod
 
 	// Kept on the server so GetConsolidationStatus can report the schedule this instance is on.
 	// Recorded before the replica branch below zeroes it, since what a replica reports is
@@ -696,8 +692,8 @@ func New(deps Dependencies) *Server {
 	// particular is only decided by the dependency that was handed in, and the reconcile interval is
 	// resolved a few lines above this.
 	s.version = deps.Version
-	s.topology = topologyFromViper(s.version)
-	s.topology.nodes, s.topology.edges = s.buildTopologySpecs()
+	s.topology = topologyFromConfig(cfg, s.version)
+	s.topology.nodes, s.topology.edges = s.buildTopologySpecs(cfg.Deployment)
 
 	s.startTopologyProber()
 
@@ -843,10 +839,6 @@ func (s *Server) logForgettingMode() {
 // needs both halves of the OpenSearch-only capability pair (a presence probe forward, an id
 // enumeration back), and the probe is the one the forward pass cannot do without.
 func (s *Server) startReconcile(searchIndex search.Index) {
-	s.reconcileInterval = time.Duration(viper.GetInt("opensearch.reconcileIntervalSeconds")) * time.Second
-	s.reconcileBatchSize = viper.GetInt("opensearch.reconcileBatchSize")
-	s.staleSweepEnabled = viper.GetBool("opensearch.staleSweep")
-
 	if s.reconcileBatchSize <= 0 {
 		s.reconcileBatchSize = defaultReconcileBatchSize
 	}

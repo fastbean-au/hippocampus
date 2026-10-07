@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // TestHandlerServesTheWizard proves the embedded bundle is actually reachable: the page itself, the
@@ -321,7 +323,22 @@ func freePort(t *testing.T) string {
 }
 
 func TestInitLoggingFallsBackToInfo(t *testing.T) {
+	level := log.GetLevel()
+	t.Cleanup(func() {
+		log.SetLevel(level)
+		log.SetOutput(os.Stderr)
+	})
+
 	// An unrecognised level must not fail startup; it falls back to info like the service does.
 	initLogging("not-a-level")
+
+	if got := log.GetLevel(); got != log.InfoLevel {
+		t.Errorf("an unrecognised level must fall back to info, got %s", got)
+	}
+
 	initLogging("debug")
+
+	if got := log.GetLevel(); got != log.DebugLevel {
+		t.Errorf("a recognised level must be applied, got %s", got)
+	}
 }

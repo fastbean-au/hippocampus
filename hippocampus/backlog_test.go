@@ -2,6 +2,7 @@ package hippocampus
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -309,5 +310,35 @@ func TestParseBacklogPolicy(t *testing.T) {
 		if _, ok := ParseBacklogPolicy(name); !ok {
 			t.Errorf("BacklogPolicyNames lists %q, which ParseBacklogPolicy refuses", name)
 		}
+	}
+}
+
+// backlogErrStore fails the one read the stall check makes.
+type backlogErrStore struct {
+	db.Store
+}
+
+func (backlogErrStore) CallbackBacklog(context.Context) (db.CallbackBacklog, error) {
+	return db.CallbackBacklog{}, errors.New("backlog unreadable")
+}
+
+// TestAnUnreadableBacklogIsNotAStall covers the stall check's error branch (TODO-3 item 177): when
+// the backlog cannot be measured the cycle runs. Holding it off would stop the store forgetting for
+// a reason unrelated to the receiver - the store's own storage failing - so the failure is logged
+// and forgetting carries on.
+func TestAnUnreadableBacklogIsNotAStall(t *testing.T) {
+	s, database := stallServer(t, BacklogStall, db.QueueBounds{MaxRows: 1})
+
+	backlogUp(t, database, 5, time.Now().UnixNano())
+
+	s.db = backlogErrStore{Store: database}
+	hook := captureLogs(t)
+
+	if stalled, reason := s.forgettingStalled(context.Background()); stalled {
+		t.Errorf("an unreadable backlog must not stall the cycle, got a stall: %q", reason)
+	}
+
+	if loggedContaining(hook, "failed to measure the retained backlog") != 1 {
+		t.Error("the failed measurement must be logged")
 	}
 }

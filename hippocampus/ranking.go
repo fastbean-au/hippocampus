@@ -39,7 +39,7 @@ import (
 // the primary-store fetch is a single keyed read either way).
 const rankingOverFetch = 4
 
-// rankingWeights carries the ranking configuration, read from the search.* viper keys in New(). The
+// rankingWeights carries the ranking configuration, set from Config.Search in New(). The
 // zero value disables re-ranking entirely, which is what makes a Server constructed directly in a
 // test behave exactly as the backend ordered.
 type rankingWeights struct {

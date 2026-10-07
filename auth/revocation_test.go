@@ -3,10 +3,12 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
 
 // writeRevocationFile writes body to a fresh file in the test's temp dir and returns its path.
@@ -181,6 +183,9 @@ func TestNewRevocationList_PathIsDirectory(t *testing.T) {
 func TestRevocationList_PollLogsOnReloadError(t *testing.T) {
 	path := writeRevocationFile(t, `{"jtis":["staygone"]}`)
 
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
 	list, err := NewRevocationList(path, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRevocationList: %s", err)
@@ -191,8 +196,18 @@ func TestRevocationList_PollLogsOnReloadError(t *testing.T) {
 		t.Fatalf("remove revocation file: %s", err)
 	}
 
-	// Give the poller a few ticks to hit the missing file and log the failure.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the poller to actually hit the missing file. A fixed sleep here passed whether or not
+	// the poller ever ran, since the assertion below holds just as well for a list nobody reloads
+	// (TODO-3 item 177); the log line is the poller's own evidence that it tried and failed.
+	deadline := time.Now().Add(5 * time.Second)
+
+	for !pollerLoggedReloadFailure(hook) {
+		if time.Now().After(deadline) {
+			t.Fatal("the poller never logged a reload failure after the file was removed")
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	if !list.IsRevoked(claimsWith("staygone", "c", time.Now())) {
 		t.Error("expected the last good revocation to remain enforced after the poller's reload fails")
@@ -414,3 +429,14 @@ var errInvalidForTest = &stubError{"invalid"}
 type stubError struct{ msg string }
 
 func (e *stubError) Error() string { return e.msg }
+
+// pollerLoggedReloadFailure reports whether the revocation poller has logged a failed reload.
+func pollerLoggedReloadFailure(hook *logtest.Hook) bool {
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "revocation reload failed") {
+			return true
+		}
+	}
+
+	return false
+}
