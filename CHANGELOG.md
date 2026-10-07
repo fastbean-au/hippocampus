@@ -186,6 +186,10 @@ itself which service version it was built against.
 
 ### Changed
 
+- **The design record moved to [`docs/design/`](docs/design/README.md).** `CLAUDE.md` is now a
+  short guide: commands, a package map, and the invariants with the tests that enforce them. The
+  checklists for adding an RPC or a config key live once, in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 - **Every message and field in the contract is documented.** 161 messages and fields had no
   comment, mostly on the export, import and clear surface, and comments are what reach every
   generated client and the OpenAPI document. A test now requires a comment on each new message and

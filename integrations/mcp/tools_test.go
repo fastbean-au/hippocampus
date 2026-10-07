@@ -663,7 +663,7 @@ func TestServer_EndToEnd(t *testing.T) {
 
 	// The comparison is EXACT in both directions. Only checking that the expected tools are present
 	// is what let three link tools and end_event be registered without the tool table in
-	// docs/mcp.md or the surface described in CLAUDE.md gaining them - and on this bridge the
+	// docs/mcp.md or the surface described in docs/design/integrations.md gaining them - and on this bridge the
 	// registered set is a security statement (no Purge, no Export, no event deletion), so a tool
 	// arriving unremarked is exactly what wants noticing.
 	want := map[string]bool{

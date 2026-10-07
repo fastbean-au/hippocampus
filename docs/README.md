@@ -81,6 +81,10 @@ one's — see the pages above, which say what they are and where they went:
 
 ## The project itself
 
+- [`CONTRIBUTING.md`](../CONTRIBUTING.md) — setting up, the test suites, and the checklists for
+  adding an RPC or a config key.
+- [Design record](design/README.md) — why each subsystem is built the way it is, and the incidents
+  behind its guards.
 - [`CHANGELOG.md`](../CHANGELOG.md) — the curated record, and the **Compatibility** section saying
   what a version number covers.
 - [`RELEASE.md`](../RELEASE.md) — how a release is cut, and what a deliberate break requires.

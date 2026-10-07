@@ -24,10 +24,10 @@ const (
 	prometheusAlertsPath = "../../deploy/observability/prometheus-alerts.yaml"
 	grafanaAlertsPath    = "../../deploy/compose/observability/alerting-rules.yaml"
 
-	// claudeMdPath is checked because CLAUDE.md states how many rules ship, in prose, twice - and
-	// prose is the one copy of a fact that nothing evaluates. See
-	// TestClaudeMdRuleCountIsCurrent.
-	claudeMdPath = "../../CLAUDE.md"
+	// designServicePath is checked because the service's design record (moved out of CLAUDE.md by
+	// TODO-3 item 176) states how many rules ship, in prose, twice - and prose is the one copy of a
+	// fact that nothing evaluates. See TestDesignRecordRuleCountIsCurrent.
+	designServicePath = "../../docs/design/service.md"
 
 	// grafanaDatasourceUID is the uid otel-lgtm gives its Prometheus, and the one the provisioned
 	// dashboard queries. A rule naming anything else provisions cleanly and then fails on every
@@ -275,8 +275,9 @@ func TestAlertRulesMatchAcrossFiles(t *testing.T) {
 	}
 }
 
-// TestClaudeMdRuleCountIsCurrent holds the rule count CLAUDE.md states, in words, to the number of
-// rules that actually ship.
+// TestDesignRecordRuleCountIsCurrent holds the rule count the service's design record states, in
+// words, to the number of rules that actually ship. The paragraph lived in CLAUDE.md until TODO-3
+// item 176 moved it to docs/design/service.md.
 //
 // The paragraph it guards makes exactly this argument about the two YAML files - "two copies of a
 // PromQL expression that nothing in the repo executes is exactly what drifts" - and then states the
@@ -285,28 +286,29 @@ func TestAlertRulesMatchAcrossFiles(t *testing.T) {
 //
 // Both figures are checked: the total, and the size of the hippocampus-clients group, since that one
 // reads as "N of the M" and a change to either number invalidates the sentence.
-func TestClaudeMdRuleCountIsCurrent(t *testing.T) {
-	source, err := os.ReadFile(claudeMdPath)
+func TestDesignRecordRuleCountIsCurrent(t *testing.T) {
+	source, err := os.ReadFile(designServicePath)
 	if err != nil {
-		t.Fatalf("failed to read CLAUDE.md: %s", err.Error())
+		t.Fatalf("failed to read the design record: %s", err.Error())
 	}
 
-	claudeMd := string(source)
+	record := string(source)
 
 	total, clients := ruleCounts(t)
 	totalWord := numberWord(t, total)
 	clientsWord := numberWord(t, clients)
 
 	// Both sentences are quoted with enough of their surroundings that only the real one can match.
-	// A bare word would not do: "six" appears eight times in CLAUDE.md and all but one are about
-	// something else entirely, so the clients-group check would pass however far it had drifted -
-	// a guard that cannot fail being the failure mode this whole file exists to avoid.
+	// A bare word would not do: "six" appeared eight times in CLAUDE.md, the paragraph's old home,
+	// and all but one were about something else entirely, so the clients-group check would pass
+	// however far it had drifted - a guard that cannot fail being the failure mode this whole file
+	// exists to avoid.
 	for _, want := range []string{
 		"the same " + totalWord + " rules as Grafana-managed rules",
 		capitalise(clientsWord) + " of the " + totalWord + " are a second group",
 	} {
-		if !strings.Contains(claudeMd, want) {
-			t.Errorf("CLAUDE.md's alert-rules paragraph does not say %q, but %d rules ship, %d of them in the %s group",
+		if !strings.Contains(record, want) {
+			t.Errorf("docs/design/service.md's alert-rules paragraph does not say %q, but %d rules ship, %d of them in the %s group",
 				want,
 				total,
 				clients,
@@ -375,7 +377,7 @@ func ruleCounts(t *testing.T) (int, int) {
 // rather than about the service itself.
 const clientsGroupName = "hippocampus-clients"
 
-// numberWords spells out the counts CLAUDE.md writes as words. Deliberately a small fixed table
+// numberWords spells out the counts the design record writes as words. Deliberately a small fixed table
 // rather than a general speller - the range that matters is "how many alert rules are there", and a
 // count outside it fails loudly above rather than silently matching nothing.
 var numberWords = map[int]string{
@@ -686,7 +688,7 @@ const grafanaMaxUIDLength = 40
 
 const alertsReadmePath = "../../deploy/observability/README.md"
 
-// operationsPath is checked for the same reason claudeMdPath is: docs/operations.md also states how
+// operationsPath is checked for the same reason designServicePath is: docs/operations.md also states how
 // many rules ship, in prose, which makes it a FOURTH copy of a number nothing executes. It had
 // drifted by eleven - it said eighteen while twenty-nine shipped - which is the same failure the
 // README guard was written for, one page over.
@@ -850,7 +852,7 @@ func TestReadmeMentionsOnlyShippedAlerts(t *testing.T) {
 }
 
 // TestReadmeRuleCountsAreCurrent holds the counts the README states in prose, the same way
-// TestClaudeMdRuleCountIsCurrent holds CLAUDE.md's. There are three of them here: the total, each
+// TestDesignRecordRuleCountIsCurrent holds the design record's. There are three of them here: the total, each
 // group's share, and the total again where the Grafana copy is introduced.
 // TestOperationsRuleCountIsCurrent holds the rule count docs/operations.md states, in words, to the
 // number of rules that actually ship.

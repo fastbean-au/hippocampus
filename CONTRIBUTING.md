@@ -59,6 +59,12 @@ HIPPOCAMPUS_TEST_DIALECT=mysql go test ./db ./hippocampus
 
 MySQL must be 8.0.20 or later.
 
+## Design record
+
+[docs/design/](docs/design/README.md) explains why each subsystem is built the way it is. Read the
+page for a subsystem before changing it: most of its guards exist because of an incident it
+describes.
+
 ## Drift guards
 
 Much of the test suite checks that two copies of something still agree: the contract and the API
@@ -88,8 +94,8 @@ always the fix. Loosening the check is almost never the fix.
 ## Adding a configuration key
 
 1. Read it with viper, either in `cmd/hippocampus/main.go` or, for a key the server owns, in
-   `hippocampus.New` and the setup it calls. Request handlers never read viper. Give it a default in `setStartupDefaults` or with
-   `viper.SetDefault`. Do not use a constant for a default.
+   `hippocampus.New` and the setup it calls. Request handlers never read viper. Give it a default
+   in `setStartupDefaults` or with `viper.SetDefault`. Do not use a constant for a default.
 2. If some values must stop the service starting, refuse them in `configProblems`, which also backs
    `--check-config`.
 3. Offer it in the configuration wizard (`cmd/config-wizard/wizard/app.js`). Record its service

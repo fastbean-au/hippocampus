@@ -369,7 +369,18 @@ var mintCommand = regexp.MustCompile(`--mint-token[^\n` + "`" + `]*--client-id`)
 func TestDocumentedMintCommandsCarryARole(t *testing.T) {
 	sources := documentationFiles(t)
 
-	for _, extra := range []string{"CLAUDE.md", "deploy/k8s/README.md", "deploy/compose/README.md"} {
+	design, err := filepath.Glob(filepath.Join("..", "..", "docs", "design", "*.md"))
+	if err != nil {
+		t.Fatalf("listing the design record: %s", err.Error())
+	}
+
+	extras := []string{"CLAUDE.md", "CONTRIBUTING.md", "deploy/k8s/README.md", "deploy/compose/README.md"}
+
+	for _, path := range design {
+		extras = append(extras, strings.TrimPrefix(filepath.ToSlash(path), "../../"))
+	}
+
+	for _, extra := range extras {
 		source, err := os.ReadFile(filepath.Join("..", "..", extra))
 		if err != nil {
 			if os.IsNotExist(err) {
