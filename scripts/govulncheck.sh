@@ -36,15 +36,8 @@ modules=(
 )
 
 # Reviewed exceptions: one line per advisory id, "<id> <why it does not apply here>". A list rather
-# than an associative array because macOS still ships bash 3.2.
-#
-# GO-2026-6443: the panic is in internal/xds/server.RouteAndProcess, on servers configured with xDS
-# routing; the advisory also lists the transport symbols every gRPC server reaches, which is all
-# govulncheck sees here. No module in this repository links an xDS package. Remove when grpc v1.85.0
-# is tagged and taken - v1.83.2 carries the fix too, but grpc-gateway v2.31.0 requires v1.84.0
-# (TODO-3 item 135).
+# than an associative array because macOS still ships bash 3.2. Empty today.
 exceptions='
-GO-2026-6443 xDS routing only; no module links xDS
 '
 
 # exception prints the reason an advisory is excepted, or nothing.

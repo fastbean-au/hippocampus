@@ -137,9 +137,9 @@ itself which service version it was built against.
   by a new `govulncheck` CI job, runs govulncheck over the root module and the five under
   `integrations/` (which a root `./...` never reaches) and fails on any symbol-level finding not on a
   short list of reviewed exceptions. An exception has to say why it does not apply, and one that is
-  no longer reported fails the run, so the list cannot outlive the dependency it was for. The one
-  entry today is GO-2026-6443 in grpc-go v1.84.0: its panic is in xDS server routing, which nothing
-  here links, and it comes out when v1.85.0 is tagged.
+  no longer reported fails the run, so the list cannot outlive the dependency it was for. The list
+  is empty: GO-2026-6443 was excepted until the advisory was revised on 2026-10-06 to count grpc-go
+  v1.84.0 as fixed.
 
 - **Read memories by id without reinforcing them.** `GetMemoriesRequest` gains `ids` (up to 200).
   `RecallMemories` was the only by-id read that returned a body, and recalling resets the decay
