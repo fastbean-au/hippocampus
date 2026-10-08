@@ -22,4 +22,4 @@ configMapGenerator:
 # Pin the image tag here (or with `kustomize edit set image`) instead of tracking :latest.
 images:
   - name: ghcr.io/fastbean-au/hippocampus
-    newTag: "0.51.1"
+    newTag: "0.52.0"

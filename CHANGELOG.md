@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-08
+
 ### Added
 
 - **[Troubleshooting](docs/troubleshooting.md), a [port map](docs/operations.md#ports),
@@ -4088,7 +4090,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.51.1...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/fastbean-au/hippocampus/compare/v0.51.1...v0.52.0
 [0.51.1]: https://github.com/fastbean-au/hippocampus/compare/v0.51.0...v0.51.1
 [0.51.0]: https://github.com/fastbean-au/hippocampus/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/fastbean-au/hippocampus/compare/v0.49.0...v0.50.0
