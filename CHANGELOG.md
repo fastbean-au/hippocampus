@@ -257,6 +257,12 @@ itself which service version it was built against.
 
 ### Fixed
 
+- **A forwarded address is parsed before it is trusted.** With `rateLimit.trustForwardedFor` on, the
+  rightmost `X-Forwarded-For` entry was used verbatim as the rate-limit bucket key and logged as
+  the throttled principal, so a malformed entry could forge a log field. It must now be an IP
+  address, and a port on it is dropped; anything else falls back to the connection's address. See
+  [Rate limiting](docs/configuration.md#rate-limiting).
+
 - **The pre-commit hook's install hint named golangci-lint v1.** It now names the v2 release the
   hook and CI run.
 

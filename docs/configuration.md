@@ -754,7 +754,10 @@ believing it on a directly reachable listener lets any caller mint itself an unl
 buckets. Turn it on only when every request arrives through a proxy that writes the header, whether
 it overwrites it or appends to it. The rightmost entry is the one that proxy wrote; anything to its
 left came from the client. Behind a chain of proxies, the rightmost entry is the previous proxy, so
-the chain is limited as one caller unless the outermost proxy overwrites the header.
+the chain is limited as one caller unless the outermost proxy overwrites the header. The entry must
+be an IP address, with or without a port (the port is dropped); anything else is ignored and the
+connection's own address is used, so a malformed or forged entry can neither mint a bucket nor reach
+the log.
 
 `rateLimit.maxClients` (0 → 10000) and `rateLimit.clientIdleSeconds` (0 → 300) bound the per-client
 bucket table in size and age, so it cannot itself become the memory-exhaustion surface the feature

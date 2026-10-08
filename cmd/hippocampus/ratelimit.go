@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -330,11 +331,31 @@ func httpPrincipalKey(r *http.Request, trustForwardedFor bool) string {
 		if forwarded := r.Header.Values("X-Forwarded-For"); len(forwarded) > 0 {
 			entries := strings.Split(forwarded[len(forwarded)-1], ",")
 
-			if client := strings.TrimSpace(entries[len(entries)-1]); client != "" {
+			if client, ok := forwardedAddress(entries[len(entries)-1]); ok {
 				return "ip:" + client
 			}
 		}
 	}
 
 	return "ip:" + hostOnly(r.RemoteAddr)
+}
+
+// forwardedAddress turns one X-Forwarded-For entry into the address it names, in canonical form,
+// or reports that it names none. The entry is header text and is used as a bucket key and as the
+// principal in the rate-limit log line, so it is parsed rather than trusted: anything that is not
+// an IP address - a hostname, a malformed entry, an attempt to forge a log field - falls back to the
+// connection's own address. A port is dropped, since some proxies append one, and keeping it would
+// give every connection a bucket of its own.
+func forwardedAddress(entry string) (string, bool) {
+	entry = strings.TrimSpace(entry)
+
+	if addrPort, err := netip.ParseAddrPort(entry); err == nil {
+		return addrPort.Addr().String(), true
+	}
+
+	if addr, err := netip.ParseAddr(entry); err == nil {
+		return addr.String(), true
+	}
+
+	return "", false
 }

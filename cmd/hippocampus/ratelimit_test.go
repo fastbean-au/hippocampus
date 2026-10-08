@@ -381,6 +381,34 @@ func TestRateLimitGatewayMiddlewareKeysOnTheRequest(t *testing.T) {
 	}
 }
 
+// TestHTTPPrincipalKeyAcceptsOnlyAnAddressFromForwardedFor pins what a forwarded entry may become
+// (code-scanning alert 13). The entry is header text, and it was used verbatim: as the bucket key
+// and as the principal in the rate-limit log line. So it must parse as an IP address, or the
+// connection's own address is used instead. A port is dropped, as hostOnly drops one from the
+// connection's address, or a proxy that appends ports would give every connection its own bucket.
+func TestHTTPPrincipalKeyAcceptsOnlyAnAddressFromForwardedFor(t *testing.T) {
+	for _, tc := range []struct {
+		forwarded string
+		want      string
+	}{
+		{"198.51.100.7", "ip:198.51.100.7"},
+		{"198.51.100.7:4711", "ip:198.51.100.7"},
+		{"2001:db8::7", "ip:2001:db8::7"},
+		{"[2001:db8::7]:4711", "ip:2001:db8::7"},
+		{"not-an-address", "ip:10.0.0.1"},
+		{"198.51.100.7\n\ttime=forged", "ip:10.0.0.1"},
+		{"<script>", "ip:10.0.0.1"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/v1/memories", nil)
+		request.RemoteAddr = "10.0.0.1:9999"
+		request.Header["X-Forwarded-For"] = []string{"203.0.113.1, " + tc.forwarded}
+
+		if got := httpPrincipalKey(request, true); got != tc.want {
+			t.Errorf("forwarded entry %q gave key %q, want %q", tc.forwarded, got, tc.want)
+		}
+	}
+}
+
 // X-Forwarded-For is caller-supplied. Believing it by default would let any caller pick its own
 // bucket, and therefore an unlimited number of them - so the trust is opt-in, and only then does a
 // forwarded address separate two callers arriving on one connection.
