@@ -82,6 +82,16 @@ for module in "${modules[@]}"; do
 		fi
 
 		echo "    ${id}: REACHABLE - https://pkg.go.dev/vuln/${id}"
+
+		# What it is and what moves it: the advisory's summary, then each vulnerable module version
+		# the call graph reaches and the version that fixes it. A bare id says none of that, and the
+		# fix - a toolchain patch release or a dependency bump - is what the reader needs.
+		jq -r --arg id "${id}" 'select(.osv.id == $id) | "        \(.osv.summary)"' \
+			<<<"${report}" | head -n 1
+		jq -r --arg id "${id}" '
+			select(.finding.osv == $id) | select(.finding.trace[0].function) | .finding
+			| "        \(.trace[0].module)@\(.trace[0].version), fixed in \(.fixed_version // "no release yet")"
+		' <<<"${report}" | sort -u
 		failed=1
 	done
 

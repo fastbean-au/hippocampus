@@ -19,7 +19,7 @@ go test ./...
 
 `hooks/pre-commit` runs `go mod tidy`, `gofmt`, `go vet`, `golangci-lint` and the root module's
 tests with coverage. Any failure stops the commit. If `golangci-lint` is missing, install the
-version CI uses: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`.
+version CI uses: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0`.
 
 ### The modules
 

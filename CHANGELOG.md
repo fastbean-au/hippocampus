@@ -76,6 +76,13 @@ itself which service version it was built against.
   before) were reported at error as `sql: transaction has already been committed or rolled back`;
   they now name the cancellation and log at debug.
 
+### Security
+
+- **Built with Go 1.27.2 and `golang.org/x/net` v0.60.0** across all six modules, for the
+  `net/http`, HTTP/2, `crypto/tls`, `net/textproto` and `html/template` advisories GO-2026-6599 to
+  GO-2026-6617. `scripts/govulncheck.sh` now prints each finding's summary and fixing version.
+  golangci-lint moves to v2.14.0, the first release that reads Go 1.27.2's export data.
+
 ## [0.52.0] - 2026-10-08
 
 ### Added
