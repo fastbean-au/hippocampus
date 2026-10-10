@@ -63,7 +63,9 @@ const hippocampusServicePrefix = "/hippocampus.v1.Hippocampus/"
 //   - an existing gRPC status -> unchanged (handlers set InvalidArgument/NotFound/... deliberately)
 //   - context canceled        -> Canceled
 //   - context deadline        -> DeadlineExceeded
-//   - db.IsDuplicateKey       -> AlreadyExists (generic message; the constraint detail is logged)
+//   - db.IsDuplicateKey       -> AlreadyExists (generic message; the constraint detail is logged
+//     at debug, since a producer re-sending what it already stored is the caller's outcome rather
+//     than a server fault - TODO-3 item 180; the create handlers count it instead)
 //   - db.IsWriteConflict      -> Aborted (retryable: a MySQL deadlock/lock-wait that outlived the
 //     driver's retries, which clients should re-issue rather than read as a lost write)
 //   - anything else           -> Internal (generic message; detail logged server-side only)
@@ -87,7 +89,7 @@ func mapError(err error) error {
 		return status.Error(codes.DeadlineExceeded, "request deadline exceeded")
 
 	case db.IsDuplicateKey(err):
-		log.Warnf("duplicate-key write rejected: %s", err.Error())
+		log.Debugf("duplicate-key write rejected: %s", err.Error())
 
 		return status.Error(codes.AlreadyExists, "a record with that id already exists")
 

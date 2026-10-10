@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -970,6 +971,67 @@ func TestStoreLinks_BestEffort(t *testing.T) {
 
 	if len(edges) != 0 {
 		t.Errorf("a failed link write must leave no link, got %v", edges)
+	}
+}
+
+// cancellingLinkStore cancels the caller's context as the link write begins, standing in for a
+// client that gives up between its memory being written and that memory's links.
+type cancellingLinkStore struct {
+	db.Store
+	cancel context.CancelFunc
+}
+
+func (c cancellingLinkStore) LinkMemories(ctx context.Context, id string, links []types.Link) error {
+	c.cancel()
+
+	return c.Store.LinkMemories(ctx, id, links)
+}
+
+// TestStoreLinks_ACancelledCallerIsNotAStoreFault (TODO-3 item 178): a client that cancels after
+// its memory is written loses that memory's links, by design, but that is the caller's outcome and
+// not a fault of the store's. On the demo it surfaced at error, as a commit failing with "sql:
+// transaction has already been committed or rolled back", which hid the cancellation that caused it.
+//
+// Not parallel: it hooks the global logger.
+func TestStoreLinks_ACancelledCallerIsNotAStoreFault(t *testing.T) {
+	s := newTestServer(t)
+	seedLinkMemories(t, s, "m1")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	store := s.db
+	s.db = cancellingLinkStore{Store: s.db, cancel: cancel}
+	hook := captureLogs(t)
+
+	_, _ = s.StoreMemory(ctx, &contract.Memory{
+		Id:           "m2",
+		Significance: 5,
+		Body:         "body",
+		Links:        []*contract.Link{{Id: "m1", Significance: 1}},
+	})
+
+	for _, entry := range hook.AllEntries() {
+		if entry.Level <= log.ErrorLevel {
+			t.Errorf("a cancelled caller was logged at %s: %q", entry.Level, entry.Message)
+		}
+	}
+
+	if loggedContaining(hook, "failed to store links for memory 'm2'") != 1 {
+		t.Error("the lost links must still be logged, below error")
+	}
+
+	if loggedContaining(hook, context.Canceled.Error()) == 0 {
+		t.Error("the log must name the cancellation, not the rolled-back transaction it left behind")
+	}
+
+	memories, err := store.GetMemoriesByIds(context.Background(), []string{"m2"})
+	if err != nil {
+		t.Fatalf("GetMemoriesByIds: %s", err)
+	}
+
+	if len(*memories) != 1 {
+		t.Errorf("the memory was written before the cancellation and must stand, got %d", len(*memories))
 	}
 }
 

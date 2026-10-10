@@ -87,6 +87,10 @@ func (s *Server) StoreEvent(ctx context.Context, in *contract.Event) (*contract.
 
 	id, err := s.db.CreateEvent(ctx, event)
 	if err != nil {
+		if db.IsDuplicateKey(err) {
+			tel.eventsRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "duplicate")))
+		}
+
 		return &res, mapError(err)
 	}
 	res.Id = id

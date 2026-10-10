@@ -63,6 +63,19 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Changed
+
+- **A duplicate create is counted, not warned.** Re-storing an id the store already holds still
+  returns `AlreadyExists`, but logs at debug and counts as `reason="duplicate"` on
+  `hippocampus.memories.rejected` / `.events.rejected`. A feed bridge re-sending what it holds no
+  longer floods the log. See [the instrument table](docs/operations.md).
+
+### Fixed
+
+- **A caller cancelling mid-create no longer logs a masked error.** The lost links (best-effort, as
+  before) were reported at error as `sql: transaction has already been committed or rolled back`;
+  they now name the cancellation and log at debug.
+
 ## [0.52.0] - 2026-10-08
 
 ### Added

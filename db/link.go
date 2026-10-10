@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -155,7 +156,14 @@ func (d *DB) recalculateLinkSignificance(tx *sql.Tx, graph linkGraph, ids []stri
 			WHERE id IN (` + placeholders(len(chunk)) + `)`
 
 		if _, err := tx.Exec(d.rebind(update), args...); err != nil {
-			log.Errorf("failed to recalculate %s link significance: %s", graph.kind, err.Error())
+			// A transaction already done here was rolled back by its context ending, mid-way
+			// through the caller's own transaction. The caller holds that context and reports it,
+			// so this is not the place to call it a fault (TODO-3 item 178).
+			if errors.Is(err, sql.ErrTxDone) {
+				log.Debugf("failed to recalculate %s link significance: %s", graph.kind, err.Error())
+			} else {
+				log.Errorf("failed to recalculate %s link significance: %s", graph.kind, err.Error())
+			}
 
 			return err
 		}
@@ -352,7 +360,7 @@ func (d *DB) createLinks(ctx context.Context, graph linkGraph, id string, links 
 func (d *DB) createLinksOnce(ctx context.Context, graph linkGraph, id string, links []types.Link) error {
 	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
-		log.Errorf("failed to create %s links - beginning transaction: %s", graph.kind, err.Error())
+		logTxFailure(ctx, "failed to create %s links - beginning transaction: %s", graph.kind, err.Error())
 
 		return err
 	}
@@ -364,7 +372,8 @@ func (d *DB) createLinksOnce(ctx context.Context, graph linkGraph, id string, li
 
 	for _, l := range links {
 		if _, err := tx.Exec(d.rebind(d.linkUpsert(graph.links)), id, l.Id, l.Significance, now); err != nil {
-			log.Errorf("failed to create %s link: %s", graph.kind, err.Error())
+			err = callerTxError(ctx, err)
+			logTxFailure(ctx, "failed to create %s link: %s", graph.kind, err.Error())
 			_ = tx.Rollback()
 
 			return err
@@ -376,11 +385,12 @@ func (d *DB) createLinksOnce(ctx context.Context, graph linkGraph, id string, li
 	if err := d.recalculateLinkSignificance(tx, graph, touched); err != nil {
 		_ = tx.Rollback()
 
-		return err
+		return callerTxError(ctx, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Errorf("failed to create %s links - committing: %s", graph.kind, err.Error())
+		err = callerTxError(ctx, err)
+		logTxFailure(ctx, "failed to create %s links - committing: %s", graph.kind, err.Error())
 
 		return err
 	}
@@ -398,7 +408,7 @@ func (d *DB) deleteLinks(ctx context.Context, graph linkGraph, id string, target
 
 	tx, cancel, err := d.beginTx(ctx)
 	if err != nil {
-		log.Errorf("failed to delete %s links - beginning transaction: %s", graph.kind, err.Error())
+		logTxFailure(ctx, "failed to delete %s links - beginning transaction: %s", graph.kind, err.Error())
 
 		return err
 	}
@@ -425,7 +435,8 @@ func (d *DB) deleteLinks(ctx context.Context, graph linkGraph, id string, target
 		where := `(from_id = ? AND to_id IN (` + list + `)) OR (to_id = ? AND from_id IN (` + list + `))`
 
 		if _, err := tx.Exec(d.rebind(`DELETE FROM `+graph.links+` WHERE `+where), args...); err != nil {
-			log.Errorf("failed to delete %s links: %s", graph.kind, err.Error())
+			err = callerTxError(ctx, err)
+			logTxFailure(ctx, "failed to delete %s links: %s", graph.kind, err.Error())
 			_ = tx.Rollback()
 
 			return err
@@ -435,11 +446,12 @@ func (d *DB) deleteLinks(ctx context.Context, graph linkGraph, id string, target
 	if err := d.recalculateLinkSignificance(tx, graph, append([]string{id}, targets...)); err != nil {
 		_ = tx.Rollback()
 
-		return err
+		return callerTxError(ctx, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Errorf("failed to delete %s links - committing: %s", graph.kind, err.Error())
+		err = callerTxError(ctx, err)
+		logTxFailure(ctx, "failed to delete %s links - committing: %s", graph.kind, err.Error())
 
 		return err
 	}

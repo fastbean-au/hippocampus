@@ -387,6 +387,34 @@ func (d *DB) beginTx(ctx context.Context) (*sql.Tx, context.CancelFunc, error) {
 	return tx, cancel, nil
 }
 
+// callerTxError returns the error a transaction step should report. A cancelled context makes
+// database/sql roll the transaction back from under it, so the step that follows fails with
+// sql.ErrTxDone - which names the symptom and hides the cause (TODO-3 item 178). That comes back as
+// the context's own error; anything else, including a failure that merely coincided with the caller
+// leaving, is returned unchanged.
+func callerTxError(ctx context.Context, err error) error {
+	if errors.Is(err, sql.ErrTxDone) && ctx.Err() != nil {
+
+		return ctx.Err()
+	}
+
+	return err
+}
+
+// logTxFailure logs a failed transaction step at error, or at debug when the caller's context has
+// ended: a client walking away is its own outcome, already reported to it, not a fault of the
+// store's (TODO-3 item 178). A query timeout (queryTimeout) ends only the derived context, so it
+// still logs at error.
+func logTxFailure(ctx context.Context, format string, args ...any) {
+	if ctx.Err() != nil {
+		log.Debugf(format, args...)
+
+		return
+	}
+
+	log.Errorf(format, args...)
+}
+
 func (d *DB) query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	return d.sql.QueryContext(ctx, d.rebind(query), args...)
 }

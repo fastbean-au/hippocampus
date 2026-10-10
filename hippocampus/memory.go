@@ -208,6 +208,10 @@ func (s *Server) storeMemory(ctx context.Context, in *contract.Memory) (*contrac
 		}
 	}
 
+	if db.IsDuplicateKey(err) {
+		tel.memoriesRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "duplicate")))
+	}
+
 	return &res, mapError(err)
 }
 

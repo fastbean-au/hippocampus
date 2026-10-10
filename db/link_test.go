@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math"
 	"strings"
@@ -978,4 +979,31 @@ func TestPurgeLinks_Error(t *testing.T) {
 	}
 
 	_ = tx.Rollback()
+}
+
+// TestCallerTxErrorNamesTheCancellation (TODO-3 item 178): database/sql rolls a transaction back
+// from under a cancelled context, so the commit that follows fails with sql.ErrTxDone. Reported as
+// is, that names the symptom and hides the cause; it must come back as the context's own error,
+// while a transaction that ended for any other reason keeps its error untouched.
+func TestCallerTxErrorNamesTheCancellation(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := callerTxError(cancelled, sql.ErrTxDone); !errors.Is(err, context.Canceled) {
+		t.Errorf("a transaction its caller cancelled reported %v, want context.Canceled", err)
+	}
+
+	if err := callerTxError(context.Background(), sql.ErrTxDone); !errors.Is(err, sql.ErrTxDone) {
+		t.Errorf("a transaction done with its caller still live reported %v, want sql.ErrTxDone kept", err)
+	}
+
+	other := errors.New("disk full")
+
+	if err := callerTxError(cancelled, other); !errors.Is(err, other) {
+		t.Errorf("an unrelated failure reported %v, want it kept even though the caller had gone", err)
+	}
+
+	if err := callerTxError(cancelled, nil); err != nil {
+		t.Errorf("success reported %v, want nil", err)
+	}
 }

@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"testing"
 
+	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -187,5 +192,91 @@ func TestStoreMemories_LinksAndEvents(t *testing.T) {
 
 	if len(links.GetLinks()) != 1 || links.GetLinks()[0].GetId() != "target" {
 		t.Errorf("expected the batch to write the declared link, got %+v", links.GetLinks())
+	}
+}
+
+// TestDuplicateWritesAreCountedNotWarned (TODO-3 item 180): a producer re-sending records the store
+// already holds is the expected shape of a feed - the Bluesky bridge does it on every read - so
+// each duplicate is the caller's outcome, not a server fault. It used to be logged at warning once
+// per record, ~7,500 an hour on the demo's bluesky store, burying everything else. It must still be
+// reported to the caller as AlreadyExists, and counted, but not warned.
+//
+// Not parallel: it hooks the global logger and replaces a package variable (tel).
+func TestDuplicateWritesAreCountedNotWarned(t *testing.T) {
+	restoreProvider := otel.GetMeterProvider()
+	restoreTel := tel
+
+	t.Cleanup(func() {
+		otel.SetMeterProvider(restoreProvider)
+		tel = restoreTel
+	})
+
+	reader := sdkmetric.NewManualReader()
+	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+	tel = newTelemetry()
+
+	s := newTestServer(t)
+	ctx := context.Background()
+
+	if _, err := s.StoreMemory(ctx, &contract.Memory{Id: "held", Significance: 5, Body: "original"}); err != nil {
+		t.Fatalf("StoreMemory: %s", err)
+	}
+
+	if _, err := s.StoreEvent(ctx, &contract.Event{Id: "held-event", Name: "trip", TimeStart: 100, Significance: 5}); err != nil {
+		t.Fatalf("StoreEvent: %s", err)
+	}
+
+	hook := captureLogs(t)
+
+	res, err := s.StoreMemories(ctx, &contract.StoreMemoriesRequest{Memories: []*contract.Memory{
+		{Id: "held", Significance: 5, Body: "again"},
+	}})
+	if err != nil {
+		t.Fatalf("StoreMemories: %s", err)
+	}
+
+	if got := codes.Code(res.GetResults()[0].GetCode()); got != codes.AlreadyExists {
+		t.Errorf("re-storing a held id reported %s, want AlreadyExists", got)
+	}
+
+	if _, err := s.StoreEvent(ctx, &contract.Event{Id: "held-event", Name: "trip", TimeStart: 100, Significance: 5}); status.Code(err) != codes.AlreadyExists {
+		t.Errorf("re-storing a held event reported %v, want AlreadyExists", err)
+	}
+
+	for _, entry := range hook.AllEntries() {
+		if entry.Level <= log.WarnLevel {
+			t.Errorf("a duplicate write was logged at %s: %q", entry.Level, entry.Message)
+		}
+	}
+
+	var collected metricdata.ResourceMetrics
+	if err := reader.Collect(ctx, &collected); err != nil {
+		t.Fatalf("Collect: %s", err)
+	}
+
+	duplicates := map[string]int64{}
+	reason := attribute.String("reason", "duplicate")
+
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				continue
+			}
+
+			for _, point := range sum.DataPoints {
+				if point.Attributes.HasValue(reason.Key) {
+					if v, _ := point.Attributes.Value(reason.Key); v == reason.Value {
+						duplicates[m.Name] += point.Value
+					}
+				}
+			}
+		}
+	}
+
+	for _, name := range []string{"hippocampus.memories.rejected", "hippocampus.events.rejected"} {
+		if duplicates[name] != 1 {
+			t.Errorf("%s{reason=duplicate} = %d, want the one duplicate counted", name, duplicates[name])
+		}
 	}
 }

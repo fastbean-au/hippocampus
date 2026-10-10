@@ -379,6 +379,9 @@ func (s *Server) filterEdgesToScope(
 // whole call over a link would lose a write the caller has no way to know succeeded. A failure is
 // logged and the item stands without the link, which the caller can add through LinkMemories.
 //
+// A caller that cancels between the item's write and its links' loses the links the same way, but
+// that is its own outcome rather than a fault, so it is logged at debug (TODO-3 item 178).
+//
 // Validation and the existence check still run first, so a bad link set is rejected before the item
 // is created - see the callers in StoreMemory/StoreEvent.
 func (s *Server) storeLinks(ctx context.Context, kind linkKind, id string, links []types.Link) {
@@ -386,8 +389,18 @@ func (s *Server) storeLinks(ctx context.Context, kind linkKind, id string, links
 		return
 	}
 
-	if err := kind.link(ctx, id, links); err != nil {
+	err := kind.link(ctx, id, links)
+
+	switch {
+
+	case err == nil:
+
+	case ctx.Err() != nil:
+		log.Debugf("failed to store links for %s '%s': %s", kind.name, id, err.Error())
+
+	default:
 		log.Errorf("failed to store links for %s '%s': %s", kind.name, id, err.Error())
+
 	}
 }
 
