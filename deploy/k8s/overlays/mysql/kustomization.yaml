@@ -27,4 +27,4 @@ configMapGenerator:
 
 images:
   - name: ghcr.io/fastbean-au/hippocampus
-    newTag: "0.52.0"
+    newTag: "0.52.1"
