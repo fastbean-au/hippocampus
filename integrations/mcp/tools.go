@@ -86,8 +86,16 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 		Version: serverVersion,
 	}, nil)
 
+	// Hints cover all supported arguments and service configurations. Recall and search can
+	// reinforce, even when a reader token or the default search arguments produce a plain read.
+	// Memory updates/deletes can repeat durable callback/outbox writes; end_event defaults to now.
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "store_memory",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(false),
+			IdempotentHint:  false,
+		},
 		Description: "Store a new memory (a piece of text worth remembering) in Hippocampus. " +
 			"Less-significant memories are forgotten over time, so set significance to reflect how " +
 			"important the memory is. Returns the stored memory's id, or rejected=true if the " +
@@ -96,6 +104,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "update_memory",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  false,
+		},
 		Description: "Revise an existing memory by id: only the fields you set are changed (body, " +
 			"significance, group, event_id, metadata) and omitted fields keep their stored values. " +
 			"Significance 0 leaves the existing significance unchanged (it cannot reset a memory to " +
@@ -108,6 +121,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "delete_memories",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  false,
+		},
 		Description: "Delete memories by id (unknown ids are silently ignored). This is a by-id " +
 			"scalpel, not a bulk wipe: it can only remove memories you explicitly name. Use it to " +
 			"forget something on demand rather than waiting for it to decay out of the store.",
@@ -115,6 +133,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "recall_memories",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(false),
+			IdempotentHint:  false,
+		},
 		Description: "Fetch memories by id and reinforce them: recalling resets each memory's decay " +
 			"clock and raises its effective significance, so it is remembered longer. Use this when " +
 			"you are genuinely retrieving a memory, not merely browsing.",
@@ -122,6 +145,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "search_memories",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(false),
+			IdempotentHint:  false,
+		},
 		Description: "Search memories by their content (requires the service's content-search index " +
 			"to be enabled). By default this does not reinforce the matches; set reinforce=true to " +
 			"recall them as well. Results are ordered by relevance.",
@@ -129,6 +157,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_memories",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "List memories filtered by group, significance range, and metadata labels, with " +
 			"paging. Ordered by timestamp (most recent first) unless order_by says otherwise. Set " +
 			"recalled=false to find the memories that have never been recalled - the closest thing " +
@@ -138,6 +171,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "link_memories",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  true,
+		},
 		Description: "Associate one memory with others, each link carrying a significance. Links are " +
 			"how memories remind the store of one another: a linked memory decays more slowly, and " +
 			"both ends of a link gain from it. Both memories must already exist. Linking the same " +
@@ -146,6 +184,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "unlink_memories",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  true,
+		},
 		Description: "Remove the links between one memory and the memories you name, in either " +
 			"direction. Unknown targets are silently ignored. Use this when an association no longer " +
 			"holds - the memories themselves are untouched.",
@@ -153,6 +196,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_memory_links",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "List what a memory is linked to, and its total link significance. By default " +
 			"both directions are returned; narrow with direction=outbound (links this memory declared) " +
 			"or inbound (links others declared to it). A read-only browse that reinforces nothing.",
@@ -160,6 +208,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "create_event",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(false),
+			IdempotentHint:  false,
+		},
 		Description: "Create an event: a named time span that memories can be grouped under. " +
 			"Associate memories with the returned event id (via store_memory's event_id) to keep " +
 			"related memories together and let them reinforce one another during consolidation.",
@@ -167,6 +220,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "end_event",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  false,
+		},
 		Description: "Close an event by setting its end time, defaulting to now. An event that is " +
 			"never ended stores an end time of 0, which sorts it as the oldest-ended rather than " +
 			"the most recent, and leaves it looking open forever. Ending one does not delete or " +
@@ -175,6 +233,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "update_event",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  true,
+		},
 		Description: "Revise an existing event by id: only the fields you set are changed (name, " +
 			"description, significance, group, metadata, start/end times) and omitted fields keep " +
 			"their stored values. Metadata REPLACES the stored labels wholesale rather than merging, " +
@@ -186,6 +249,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_event",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "Fetch a single event by id, with its memory count and optionally its links. " +
 			"Use this when a memory names an event_id and you need what that event actually is - its " +
 			"name, description and span. It does NOT return the event's memories: ask list_memories " +
@@ -194,6 +262,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_events",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "List events filtered by group, significance range, name substring, open/ended " +
 			"state and link neighbourhood, with paging. Ordered by timestamp (most recently started " +
 			"first) unless order_by says otherwise. Set ended=false to find the events still running.",
@@ -201,6 +274,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "link_events",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  true,
+		},
 		Description: "Associate one event with others, each link carrying a significance. Event links " +
 			"work exactly as memory links do and feed the same decay maths: an event's links raise " +
 			"the effective significance of every memory under it, so linking two events slows both " +
@@ -209,12 +287,22 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "unlink_events",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: new(true),
+			IdempotentHint:  true,
+		},
 		Description: "Remove the links between one event and the events you name, in either " +
 			"direction. Unknown targets are silently ignored. The events themselves are untouched.",
 	}, b.unlinkEvents)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_event_links",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "List what an event is linked to, and its total link significance. By default " +
 			"both directions are returned; narrow with direction=outbound or inbound. A read-only " +
 			"browse that reinforces nothing.",
@@ -222,6 +310,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_summarisation_candidates",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "List events whose memories have accumulated and gone quiet long enough to be " +
 			"worth condensing into a single summary. Identified by the most recent consolidation " +
 			"cycle; empty unless the service is configured to scan for them.",
@@ -229,6 +322,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "significance_levels",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "List the significance values currently in use in this store, ascending. Read " +
 			"this before choosing a significance for a new memory or event: it shows the scale this " +
 			"store actually uses, so a new item can be ranked against what is already there instead " +
@@ -237,6 +335,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "explain_consolidation",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "Ask where specific memories stand against the forgetting rules: each one's " +
 			"computed value, the threshold it is measured against, how many days since its decay " +
 			"clock last reset, whether a cycle running now would forget it, and how many days it has " +
@@ -247,6 +350,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "consolidation_status",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "Report whether this instance forgets anything at all, when the next cycle is " +
 			"due, and what the last one removed. Names no individual memory. Use it to tell 'nothing " +
 			"has been forgotten' apart from 'nothing is doing the forgetting' - a replica reports " +
@@ -255,6 +363,11 @@ func newServer(b *bridge, serverVersion string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "whoami",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: new(false),
+			IdempotentHint:  true,
+		},
 		Description: "Report what this connection can do: the caller's role (reader/writer/admin) " +
 			"and group scope, and what the deployment can serve - which search_memories modes work " +
 			"here, whether the service summarises, whether it consolidates, and its version. Call " +
