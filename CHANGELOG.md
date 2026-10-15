@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.52.3] - 2026-10-16
+
 ### Fixed
 
 - **The deployment view no longer shows a MySQL DSN's credentials when its address holds a `://`.**
@@ -4134,7 +4136,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.2...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.3...HEAD
+[0.52.3]: https://github.com/fastbean-au/hippocampus/compare/v0.52.2...v0.52.3
 [0.52.2]: https://github.com/fastbean-au/hippocampus/compare/v0.52.1...v0.52.2
 [0.52.1]: https://github.com/fastbean-au/hippocampus/compare/v0.52.0...v0.52.1
 [0.52.0]: https://github.com/fastbean-au/hippocampus/compare/v0.51.1...v0.52.0
