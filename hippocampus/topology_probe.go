@@ -645,7 +645,7 @@ func redactEndpoint(raw string) string {
 		return ""
 	}
 
-	if strings.Contains(address, "://") {
+	if schemeEnd(address) >= 0 {
 		return redactURL(address)
 	}
 
@@ -654,6 +654,29 @@ func redactEndpoint(raw string) string {
 	}
 
 	return redactBareAddress(address)
+}
+
+// schemeEnd returns the index of the "://" that ends an address's scheme, or -1 when it has none. A
+// "://" is a scheme's only when everything before it is a valid scheme (RFC 3986: a letter, then
+// letters, digits, "+", "-" or "."), or empty, which carries nothing to leak. Taking the first "://" anywhere sent a MySQL DSN with one in its
+// address down the URL branch, and the bare-address form then kept its userinfo as the "scheme"
+// (found by FuzzRedactEndpoint, TODO-3 item 167).
+func schemeEnd(address string) int {
+	end := strings.Index(address, "://")
+	if end < 0 {
+		return -1
+	}
+
+	for i, c := range address[:end] {
+		letter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		other := (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
+
+		if !letter && (i == 0 || !other) {
+			return -1
+		}
+	}
+
+	return end
 }
 
 // webScheme reports whether a scheme is http or https, whose path redaction drops.
@@ -694,7 +717,7 @@ func redactURL(address string) string {
 	// left as the host. Either way url.Parse reports no userinfo while the address plainly has an
 	// "@", or the rebuilt address still carries one, and the blunt form is the only safe answer
 	// (found by FuzzRedactEndpoint, TODO-3 item 167).
-	afterScheme := address[strings.Index(address, "://")+3:]
+	afterScheme := address[schemeEnd(address)+3:]
 
 	if (parsed.User == nil && strings.Contains(afterScheme, "@")) || strings.Contains(out, "@") {
 		return redactBareAddress(address)
@@ -791,7 +814,7 @@ func redactBareAddress(address string) string {
 	prefix, rest := "", address
 
 	// The scheme comes off first so it survives the cut below; the cut is what removes credentials.
-	if scheme := strings.Index(rest, "://"); scheme >= 0 {
+	if scheme := schemeEnd(rest); scheme >= 0 {
 		prefix, rest = rest[:scheme+3], rest[scheme+3:]
 	}
 

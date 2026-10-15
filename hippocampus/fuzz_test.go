@@ -157,3 +157,22 @@ func TestRedactEndpointURLPasswordWithSeparators(t *testing.T) {
 		}
 	}
 }
+
+// TestRedactEndpointSchemeSeparatorInsideTheAddress is what FuzzRedactEndpoint found next: a "://"
+// that is not a scheme's - inside a MySQL DSN's address, say - was taken for one, and everything
+// before it, the userinfo included, was kept as the "scheme" (TODO-3 item 167).
+func TestRedactEndpointSchemeSeparatorInsideTheAddress(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"svc:hunter2-tail@tcp(://)/hippo?parseTime=true",
+		"svc:hunter2-tail@tcp(db.internal:3306)/hippo?next=http://x",
+		"0:000000@tcp(://)/0?parseTime=true",
+	} {
+		got := redactEndpoint(raw)
+
+		if strings.Contains(got, "tail") || strings.Contains(got, "svc") || strings.Contains(got, "000000") {
+			t.Errorf("redactEndpoint(%q) = %q, which carries the credentials", raw, got)
+		}
+	}
+}

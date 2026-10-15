@@ -63,6 +63,13 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The deployment view no longer shows a MySQL DSN's credentials when its address holds a `://`.**
+  Redaction took the first `://` anywhere for a scheme separator and kept everything before it,
+  `user:password` included, as the "scheme". Only a valid URL scheme now counts as one. Found by
+  the nightly `FuzzRedactEndpoint` run. See [tooling](docs/design/tooling.md).
+
 ## [0.52.2] - 2026-10-14
 
 ### Added
