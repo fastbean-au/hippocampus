@@ -1,6 +1,6 @@
 module github.com/fastbean-au/hippocampus/integrations/eventsource
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1

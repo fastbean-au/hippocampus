@@ -63,6 +63,11 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Security
+
+- **Built with Go 1.27.3** across all six modules, for the `crypto/x509` advisory GO-2026-6809
+  (compromised intermediate certificates were not distrusted).
+
 ## [0.52.3] - 2026-10-16
 
 ### Fixed
