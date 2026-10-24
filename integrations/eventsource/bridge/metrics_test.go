@@ -9,6 +9,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/fastbean-au/hippocampus/contract"
 )
@@ -234,5 +236,122 @@ func TestBrokerAttributeIsAlwaysSet(t *testing.T) {
 		"broker": "unknown",
 	}); got != 1 {
 		t.Errorf("expected the unknown-broker fallback, got %d", got)
+	}
+}
+
+// TestReopenedMemoryIsNotCountedAsFailed: a memory refused because the store consolidated its event
+// between the caller caching that event and writing to it, then stored once the event is reopened,
+// was durably handled. Counting the refusal as a failed message made HippocampusBridgeWriteFailing
+// fire critical on the Bluesky demo (~16% of messages, 2026-10-23) while every post was stored.
+// The paths that really do fail must still count exactly once.
+func TestReopenedMemoryIsNotCountedAsFailed(t *testing.T) {
+	gone := status.Error(codes.FailedPrecondition, "event 'at://root' does not exist")
+
+	cases := []struct {
+		name        string
+		eventId     string
+		reopenErr   error
+		staysGone   bool
+		wantOutcome string
+		wantReopens int
+		wantErr     bool
+	}{
+		{
+			name:        "reopened and stored",
+			eventId:     "at://root",
+			wantOutcome: OutcomeStored,
+			wantReopens: 1,
+		},
+		{
+			name:        "the reopen fails",
+			eventId:     "at://root",
+			reopenErr:   errors.New("unavailable"),
+			wantOutcome: OutcomeFailed,
+			wantReopens: 1,
+			wantErr:     true,
+		},
+		{
+			name:        "still refused after the reopen",
+			eventId:     "at://root",
+			staysGone:   true,
+			wantOutcome: OutcomeFailed,
+			wantReopens: 1,
+			wantErr:     true,
+		},
+		{
+			name:        "refused without naming an event",
+			wantOutcome: OutcomeFailed,
+			wantErr:     true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			open := false
+			fake := &fakeStorer{errFor: func(*contract.Memory) error {
+				if open && !c.staysGone {
+					return nil
+				}
+
+				return gone
+			}}
+
+			tr := TransformerFunc(func(Message) ([]*contract.Memory, error) {
+				return []*contract.Memory{{Body: "a", Significance: 1, EventId: c.eventId}}, nil
+			})
+
+			s := NewStore(fake, tr, 0, "bluesky")
+
+			var reopened []string
+
+			reopen := func(ctx context.Context, eventId string) error {
+				reopened = append(reopened, eventId)
+				open = c.reopenErr == nil
+
+				return c.reopenErr
+			}
+
+			collected := collectMetrics(t, func() {
+				err := s.HandleReopening(context.Background(), Message{Subject: "s"}, reopen)
+
+				if c.wantErr && err == nil {
+					t.Error("expected HandleReopening to report a failure")
+				}
+
+				if !c.wantErr && err != nil {
+					t.Errorf("HandleReopening: %s", err)
+				}
+			})
+
+			if len(reopened) != c.wantReopens {
+				t.Errorf("reopen called %d times, want %d", len(reopened), c.wantReopens)
+			}
+
+			for _, v := range reopened {
+				if v != c.eventId {
+					t.Errorf("reopen asked for event %q, want %q", v, c.eventId)
+				}
+			}
+
+			for _, outcome := range []string{OutcomeStored, OutcomeFailed} {
+				want := int64(0)
+				if outcome == c.wantOutcome {
+					want = 1
+				}
+
+				got, found := counterValue(t, collected, "hippocampus.bridge.messages", map[string]string{
+					"broker":  "bluesky",
+					"outcome": outcome,
+				})
+
+				if !found {
+					t.Fatal("hippocampus.bridge.messages was not recorded")
+				}
+
+				if got != want {
+					t.Errorf("outcome %q counted %d times, want %d", outcome, got, want)
+				}
+			}
+		})
 	}
 }

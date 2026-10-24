@@ -823,7 +823,7 @@ func TestStorePostThreadMode(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		// The first Handle fails, the root is recreated, and the retry is attempted. The fake keeps
+		// The write is refused, the root is recreated, and the memory retried. The fake keeps
 		// failing, so the error surfaces - what matters is that the root was re-ensured in between.
 		_ = b.storePost(ctx, msg, root)
 
@@ -835,6 +835,29 @@ func TestStorePostThreadMode(t *testing.T) {
 
 		if b.roots.Contains(root) != true {
 			t.Error("the recreated root should be back in the cache")
+		}
+	})
+
+	t.Run("a root consolidated under a cache hit still stores the reply", func(t *testing.T) {
+		// strictEvents refuses a memory naming an event the fake does not hold, as the service
+		// does, and the cached root was never created there - the store consolidated it.
+		client := &fakeClient{strictEvents: true}
+		b := testBridge(t, Config{Events: EventsThread, RootCacheSize: 16}, client)
+
+		b.roots.Add(root)
+
+		extra := fmt.Sprintf(`,"reply":{"root":{"uri":%q}}`, root)
+		msg := toMessage(mustDecode(t, postJSON(10, "a", "a reply", extra)))
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		if err := b.storePost(ctx, msg, root); err != nil {
+			t.Fatalf("storePost: %s", err)
+		}
+
+		if mems := client.storedMemories(); len(mems) != 1 || mems[0].GetEventId() != root {
+			t.Errorf("stored %v, want the reply filed under the recreated root", mems)
 		}
 	})
 }

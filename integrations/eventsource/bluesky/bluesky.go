@@ -1062,25 +1062,22 @@ func (b *Bridge) storePost(ctx context.Context, msg bridge.Message, root string)
 		b.roots.Add(root)
 	}
 
-	err := b.store.Handle(ctx, msg)
-
 	// The one case ensure-first does not cover: a root we cached can be consolidated by the store's
-	// own sleep cycle between our seeing it and our writing to it. Handle wraps the status with %w,
-	// which status.FromError unwraps, so the code survives the wrap.
-	if status.Code(err) == codes.FailedPrecondition {
+	// own sleep cycle between our seeing it and our writing to it. The Store reopens it and retries
+	// the memory once, inside the message, so a race it recovers from is not counted as a failure.
+	// The memory's event is always this root (transform sets it), so reopen ignores the id it is
+	// handed.
+	return b.store.HandleReopening(ctx, msg, func(ctx context.Context, _ string) error {
 		b.roots.Remove(root)
 
-		if ensureErr := b.store.EnsureEvent(ctx, b.rootEvent(root, msg)); ensureErr != nil {
-			return ensureErr
+		if err := b.store.EnsureEvent(ctx, b.rootEvent(root, msg)); err != nil {
+			return err
 		}
 
 		b.roots.Add(root)
 
-		// One retry, never two: a second FailedPrecondition means something other than a race.
-		return b.store.Handle(ctx, msg)
-	}
-
-	return err
+		return nil
+	})
 }
 
 // reinforce buffers one engagement, when recall is enabled and there is something to reinforce.

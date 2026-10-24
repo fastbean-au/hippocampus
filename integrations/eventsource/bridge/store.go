@@ -103,6 +103,25 @@ func (s *Store) Transformer() Transformer {
 func (s *Store) Handle(ctx context.Context, msg Message) error {
 	log.Trace("Store.Handle()")
 
+	return s.handle(ctx, msg, nil)
+}
+
+// HandleReopening is Handle for a caller that can recreate an event the store has consolidated: a
+// memory refused with FailedPrecondition for naming an event the store no longer holds is retried
+// once, after reopen has recreated that event.
+//
+// The retry has to happen in here rather than around a second Handle. The message's outcome is
+// recorded once its memories are settled, and a caller that retried the whole message counted the
+// refusal it then recovered from as a failed message. On the Bluesky demo that was ~16% of
+// messages, every one of them stored, and HippocampusBridgeWriteFailing firing critical on it.
+func (s *Store) HandleReopening(ctx context.Context, msg Message, reopen func(ctx context.Context, eventId string) error) error {
+	log.Trace("Store.HandleReopening()")
+
+	return s.handle(ctx, msg, reopen)
+}
+
+// handle is Handle and HandleReopening; a nil reopen never retries.
+func (s *Store) handle(ctx context.Context, msg Message, reopen func(ctx context.Context, eventId string) error) error {
 	start := time.Now()
 
 	mems, err := s.transformer.Transform(msg)
@@ -132,6 +151,20 @@ func (s *Store) Handle(ctx context.Context, msg Message) error {
 		}
 
 		stored, err := s.store(ctx, v)
+
+		// The store consolidated the event this memory names after the caller last saw it. One
+		// reopen and one retry; a second refusal means something other than that race, and fails
+		// the message like any other error.
+		if err != nil && reopen != nil && status.Code(err) == codes.FailedPrecondition && v.GetEventId() != "" {
+			if reopenErr := reopen(ctx, v.GetEventId()); reopenErr != nil {
+				s.record(ctx, OutcomeFailed, start)
+
+				return fmt.Errorf("reopening event %q for memory %d of %d from subject %q: %w", v.GetEventId(), i+1, len(mems), msg.Subject, reopenErr)
+			}
+
+			stored, err = s.store(ctx, v)
+		}
+
 		if err != nil {
 			// A memory the store already holds is DURABLY HANDLED, which is what every adapter here
 			// needs it to mean: they all ack after the write, so a redelivery re-presents a message

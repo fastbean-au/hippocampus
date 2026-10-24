@@ -63,6 +63,13 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Bluesky bridge no longer counts a reply to a consolidated thread root as a failed
+  message.** The root was reopened and the reply stored, but the first refusal had already been
+  counted as `failed`, enough to fire `HippocampusBridgeWriteFailing` (critical) on a healthy
+  bridge. See [the Bluesky bridge](docs/eventsource.md#bluesky-the-firehose-bridge).
+
 ## [0.52.4] - 2026-10-23
 
 ### Security

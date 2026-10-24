@@ -499,7 +499,10 @@ A memory whose
 event cannot be opened is skipped on its own rather than failing the write of the whole page: a feed
 poll returns the same page every read, so a page-level abort is not a transient error but a permanent
 stall, with the posts after the offending one never written on any tick. Those skips are counted as
-`hippocampus.bridge.memories{outcome="orphaned"}`.
+`hippocampus.bridge.memories{outcome="orphaned"}`. A root the bridge has cached can also be
+consolidated between its seeing the root and writing a reply to it. The reply's memory is then
+retried once, after the root's event is reopened, within the same message, so a reply that lands
+counts as `stored` rather than `failed`.
 
 Note that threads are **sparse on the open firehose**: sampling the whole network means you rarely
 see both a root and its replies, so most events end up holding one memory. `--dids` is where
