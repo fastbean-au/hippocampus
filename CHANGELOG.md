@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.52.5] - 2026-10-25
+
 ### Fixed
 
 - **The Bluesky bridge no longer counts a reply to a consolidated thread root as a failed
@@ -4150,7 +4152,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.4...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.5...HEAD
+[0.52.5]: https://github.com/fastbean-au/hippocampus/compare/v0.52.4...v0.52.5
 [0.52.4]: https://github.com/fastbean-au/hippocampus/compare/v0.52.3...v0.52.4
 [0.52.3]: https://github.com/fastbean-au/hippocampus/compare/v0.52.2...v0.52.3
 [0.52.2]: https://github.com/fastbean-au/hippocampus/compare/v0.52.1...v0.52.2
