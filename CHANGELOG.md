@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.52.6] - 2026-10-26
+
 ### Fixed
 
 - **Storing a memory whose id already exists no longer logs an error in PostgreSQL.** The insert
@@ -4159,7 +4161,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.5...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.6...HEAD
+[0.52.6]: https://github.com/fastbean-au/hippocampus/compare/v0.52.5...v0.52.6
 [0.52.5]: https://github.com/fastbean-au/hippocampus/compare/v0.52.4...v0.52.5
 [0.52.4]: https://github.com/fastbean-au/hippocampus/compare/v0.52.3...v0.52.4
 [0.52.3]: https://github.com/fastbean-au/hippocampus/compare/v0.52.2...v0.52.3
