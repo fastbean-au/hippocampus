@@ -63,6 +63,13 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Storing a memory whose id already exists no longer logs an error in PostgreSQL.** The insert
+  now skips the duplicate instead of failing, and the client still gets `AlreadyExists`. Overlapping
+  producers had been filling the database log with one `ERROR` per duplicate. See
+  [how storage errors reach a client](docs/performance.md#mysql-innodb-deadlocks-fixed).
+
 ## [0.52.5] - 2026-10-25
 
 ### Fixed

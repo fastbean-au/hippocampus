@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -245,8 +246,11 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 		return "", err
 	}
 
-	_, err = d.execMemoryWrite(ctx, CallbackKindMemoryStored, memory.Id,
-		`INSERT INTO memories (`+memoryStoredColumns+`) VALUES `+memoryValuePlaceholders,
+	// The insert skips an id already held rather than failing on it, and the skip is reported as
+	// ErrDuplicateKey: a failed statement is an ERROR in a server dialect's own log, which a producer
+	// re-sending what it already stored turned into a steady stream. See ErrDuplicateKey.
+	res, err := d.execMemoryWrite(ctx, CallbackKindMemoryStored, memory.Id,
+		d.upsert(upsertSpec{table: "memories", columns: memoryStoredColumns, key: []string{"id"}}),
 		memory.Id,
 		memory.TimeStamp,
 		levelIDArg(memory.SignificanceLevelID),
@@ -264,6 +268,15 @@ func (d *DB) CreateMemory(ctx context.Context, memory types.Memory) (string, err
 	)
 	if err != nil {
 		return memory.Id, err
+	}
+
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return memory.Id, err
+	}
+
+	if inserted == 0 {
+		return memory.Id, fmt.Errorf("creating memory %q: %w", memory.Id, ErrDuplicateKey)
 	}
 
 	// The index is fed the plain body, not the (possibly compressed) bytes just written. A failure

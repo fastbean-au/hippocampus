@@ -194,18 +194,20 @@ func TestIsDuplicateKey(t *testing.T) {
 
 	// Exercise the real SQLite driver error path: a second insert of the same primary key must be
 	// classified as a duplicate, so the code check in IsDuplicateKey stays honest against the driver's
-	// actual extended result code.
+	// actual extended result code. A plain INSERT, because CreateMemory now skips a duplicate rather
+	// than failing on it (TestADuplicateCreateIsNotAFailedStatement).
 	t.Run("real sqlite duplicate insert", func(t *testing.T) {
 		d := newTestDB(t)
 		defer func() { _ = d.Close() }()
 
 		ctx := context.Background()
+		insert := `INSERT INTO events (id, name, description, time_start) VALUES (?, ?, ?, ?)`
 
-		if _, err := d.CreateMemory(ctx, types.Memory{Id: "dup", TimeStamp: 100, Significance: 1, Body: "x"}); err != nil {
-			t.Fatalf("first CreateMemory: %s", err)
+		if _, err := d.exec(ctx, insert, "dup", "first", "", 100); err != nil {
+			t.Fatalf("first insert: %s", err)
 		}
 
-		_, err := d.CreateMemory(ctx, types.Memory{Id: "dup", TimeStamp: 100, Significance: 1, Body: "y"})
+		_, err := d.exec(ctx, insert, "dup", "second", "", 100)
 		if err == nil {
 			t.Fatal("expected a duplicate primary-key insert to fail")
 		}
@@ -214,6 +216,41 @@ func TestIsDuplicateKey(t *testing.T) {
 			t.Errorf("expected a real SQLite duplicate insert to be classified as a duplicate key, got %v", err)
 		}
 	})
+}
+
+// TestADuplicateCreateIsNotAFailedStatement: a create naming an id the store already holds is
+// skipped by the insert itself rather than failing it. A failed statement is an ERROR in the
+// server's own log, with the statement attached, and on the Bluesky demo two bridges overlapping on
+// the same posts made that ~7,400 lines an hour of PostgreSQL log for a duplicate the service
+// answers with AlreadyExists anyway. The id still reports as a duplicate, and the stored row is the
+// first write's, untouched.
+func TestADuplicateCreateIsNotAFailedStatement(t *testing.T) {
+	d := newTestDB(t)
+	defer func() { _ = d.Close() }()
+
+	ctx := context.Background()
+
+	if _, err := d.CreateMemory(ctx, types.Memory{Id: "dup", TimeStamp: 100, Significance: 1, Body: "first"}); err != nil {
+		t.Fatalf("first CreateMemory: %s", err)
+	}
+
+	_, err := d.CreateMemory(ctx, types.Memory{Id: "dup", TimeStamp: 200, Significance: 1, Body: "second"})
+	if !errors.Is(err, ErrDuplicateKey) {
+		t.Fatalf("a duplicate create returned %v, want ErrDuplicateKey from a skipped insert, not a failed statement", err)
+	}
+
+	if !IsDuplicateKey(err) {
+		t.Errorf("IsDuplicateKey(%v) = false; the RPC layer would not map it to AlreadyExists", err)
+	}
+
+	stored, err := d.GetMemoriesByIds(ctx, []string{"dup"})
+	if err != nil || len(*stored) != 1 {
+		t.Fatalf("GetMemoriesByIds(dup) = %v, %v", stored, err)
+	}
+
+	if stored := (*stored)[0]; stored.Body != "first" || stored.TimeStamp != 100 {
+		t.Errorf("the duplicate create changed the stored memory: body %q, timestamp %d", stored.Body, stored.TimeStamp)
+	}
 }
 
 // withTxRetry is withWriteRetry's transaction-level counterpart, and its retry loop only runs on the

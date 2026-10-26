@@ -1543,6 +1543,24 @@ func (d *DB) execMemoryWrite(ctx context.Context, kind CallbackKind, id string, 
 		return nil, err
 	}
 
+	// A create that skipped an id already held wrote nothing, and reading the row back would report
+	// the memory that was already there as stored. An update is left to the read-back: MySQL counts
+	// an UPDATE that changed no value as no row affected, though it matched one.
+	if kind == CallbackKindMemoryStored {
+		affected, err := res.RowsAffected()
+		if err != nil {
+			_ = tx.Rollback()
+
+			return nil, err
+		}
+
+		if affected == 0 {
+			_ = tx.Rollback()
+
+			return res, nil
+		}
+	}
+
 	captured, err := d.captureMemoryRows(tx, []string{id}, nil, d.callbacks.IncludeBodies)
 	if err != nil {
 		_ = tx.Rollback()

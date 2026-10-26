@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+
 	"github.com/fastbean-au/hippocampus/types"
 )
 
@@ -909,5 +911,44 @@ func TestMySQL_StandbyTakesTheLockWhenItIsReleased(t *testing.T) {
 
 	if _, err := NewMySQL(os.Getenv(mysqlTestDSNEnv), true); err == nil {
 		t.Error("the promoted standby's lock did not exclude a new consolidator")
+	}
+}
+
+// TestMySQLWriteDSNCountsRowsChanged: CreateMemory reads a skipped duplicate as 0 rows affected,
+// which holds only with clientFoundRows off. An operator's DSN asking for it is overridden, and
+// everything else in the DSN survives. No server needed.
+func TestMySQLWriteDSNCountsRowsChanged(t *testing.T) {
+	cases := []struct {
+		name string
+		dsn  string
+	}{
+		{name: "asked for", dsn: "hippocampus:secret@tcp(db:3306)/store?clientFoundRows=true&parseTime=true"},
+		{name: "left out", dsn: "hippocampus:secret@tcp(db:3306)/store?parseTime=true"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mysqlWriteDSN(tc.dsn)
+			if err != nil {
+				t.Fatalf("mysqlWriteDSN(%q): %s", tc.dsn, err)
+			}
+
+			config, err := mysql.ParseDSN(got)
+			if err != nil {
+				t.Fatalf("the rewritten DSN %q does not parse: %s", got, err)
+			}
+
+			if config.ClientFoundRows {
+				t.Errorf("the rewritten DSN %q still counts rows matched", got)
+			}
+
+			if config.User != "hippocampus" || config.Passwd != "secret" || config.Addr != "db:3306" || config.DBName != "store" || !config.ParseTime {
+				t.Errorf("the rewritten DSN %q lost part of the operator's", got)
+			}
+		})
+	}
+
+	if _, err := mysqlWriteDSN("not a dsn"); err == nil {
+		t.Error("an unparseable DSN was accepted")
 	}
 }

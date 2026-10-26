@@ -269,6 +269,12 @@ standard remedy is to retry. The MySQL write path now does both:
   maps a duplicate-key violation (`db.IsDuplicateKey`) to `codes.AlreadyExists` and masks any other
   storage error as `codes.Internal` with the detail logged server-side, so raw driver text never
   reaches a client.
+- **A duplicate create is not a failed statement.** `CreateMemory` inserts with `ON CONFLICT DO
+  NOTHING` (`ON DUPLICATE KEY UPDATE id = id` on MySQL) and reports a skipped row as
+  `db.ErrDuplicateKey`, which `db.IsDuplicateKey` matches, so the client still sees
+  `AlreadyExists`. A failed insert is an `ERROR` in PostgreSQL's own log with the statement
+  attached, and producers that re-send what they already stored make that constant: on the demo,
+  two Bluesky bridges overlapping on the same posts logged about 7,400 an hour.
 
 Multi-statement transactions (recall reinforcement, summary replacement) are not covered — retrying
 them needs the whole transaction body re-run, not just one statement, and they were not observed

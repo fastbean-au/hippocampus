@@ -21,6 +21,13 @@ import (
 // the write is not silently lost.
 var ErrWriteConflict = errors.New("write conflict")
 
+// ErrDuplicateKey is returned by a create whose insert skipped an id the store already holds, so
+// the duplicate is reported without the statement having failed. A failed statement is an ERROR in
+// the database server's own log, statement attached, and a producer that re-sends records it cannot
+// tell were stored (two broker bridges overlapping on one upstream, a redelivery) makes that a
+// steady stream. IsDuplicateKey matches it alongside the drivers' own constraint errors.
+var ErrDuplicateKey = errors.New("duplicate key")
+
 // MySQL server error numbers for the two transient, retry-safe serialisation conflicts: a detected
 // deadlock (InnoDB rolls the losing transaction back whole) and a lock-wait timeout. Both leave no
 // partial effect on an autocommit statement, so re-running it is safe. Under concurrency these
@@ -82,6 +89,10 @@ func IsWriteConflict(err error) bool {
 func IsDuplicateKey(err error) bool {
 	if err == nil {
 		return false
+	}
+
+	if errors.Is(err, ErrDuplicateKey) {
+		return true
 	}
 
 	var myErr *mysql.MySQLError

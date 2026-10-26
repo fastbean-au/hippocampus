@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -21,6 +21,13 @@ import (
 func NewMySQL(dsn string, consolidate bool, opts ...Option) (*DB, error) {
 	log.Trace("func() NewMySQL")
 
+	dsn, err := mysqlWriteDSN(dsn)
+	if err != nil {
+		log.Errorf("failed to parse mysql dsn: %s", err.Error())
+
+		return nil, err
+	}
+
 	sqlDB, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Errorf("failed to open mysql database: %s", err.Error())
@@ -29,6 +36,25 @@ func NewMySQL(dsn string, consolidate bool, opts ...Option) (*DB, error) {
 	}
 
 	return setupMySQL(sqlDB, consolidate, opts...)
+}
+
+// mysqlWriteDSN turns clientFoundRows off, whatever the operator's DSN asked for. The writes read
+// RowsAffected as rows CHANGED, the driver's default, and CreateMemory depends on it outright: its
+// insert skips a duplicate id as an update that changes nothing, which is 0 rows affected only with
+// clientFoundRows off. With it on the skip counts as 1, and a duplicate is reported as stored.
+func mysqlWriteDSN(dsn string) (string, error) {
+	config, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parsing mysql dsn: %w", err)
+	}
+
+	if config.ClientFoundRows {
+		log.Warn("ignoring clientFoundRows=true in the mysql dsn: the store counts rows changed, not rows matched")
+
+		config.ClientFoundRows = false
+	}
+
+	return config.FormatDSN(), nil
 }
 
 // setupMySQL prepares an already-opened MySQL handle: it caps the pooled connection lifetime, takes

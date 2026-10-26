@@ -1587,7 +1587,8 @@ any superuser reserve — see [Operations](operations.md#connection-pool-sizing-
 MySQL support requires MySQL 8.0.20 or later (the upserts use the `ON DUPLICATE KEY UPDATE` row
 alias). One MySQL-specific bound: ids are `VARCHAR(255)` there (MySQL cannot index an unbounded
 `TEXT` column), so client-supplied event and memory ids longer than 255 characters are rejected
-by that driver; generated UUID ids are unaffected.
+by that driver; generated UUID ids are unaffected. A `clientFoundRows=true` in the DSN is
+overridden, with a warning, because the store counts rows changed rather than rows matched.
 
 Exactly one instance may run consolidation against a given store. With SQLite that is one instance
 full stop — the embedded database cannot be shared between processes, and a second one pointed at
