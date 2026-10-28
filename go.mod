@@ -14,7 +14,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.32.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/montanaflynn/stats v0.13.0
+	github.com/montanaflynn/stats v0.14.0
 	github.com/opensearch-project/opensearch-go/v4 v4.8.1
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/otlptranslator v1.0.0
