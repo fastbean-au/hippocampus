@@ -63,6 +63,13 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Changed
+
+- **Package update** (Dependabot #98–#108): gRPC 1.85.0, grpc-gateway 2.33.0, pgx 5.12.0,
+  modernc.org/sqlite 1.61.1, the AWS SDK (S3 1.114.6, transfermanager 0.5.2), go.yaml.in/yaml
+  3.0.6, nats-server 2.15.2 (eventsource bridge) and the swagger-ui image 5.34.1. No behaviour
+  change.
+
 ## [0.52.6] - 2026-10-26
 
 ### Fixed
