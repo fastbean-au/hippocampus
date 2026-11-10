@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.52.7] - 2026-11-11
+
 ### Changed
 
 - **Package update** (Dependabot #98–#108): gRPC 1.85.0, grpc-gateway 2.33.0, pgx 5.12.0,
@@ -4168,7 +4170,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.6...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.7...HEAD
+[0.52.7]: https://github.com/fastbean-au/hippocampus/compare/v0.52.6...v0.52.7
 [0.52.6]: https://github.com/fastbean-au/hippocampus/compare/v0.52.5...v0.52.6
 [0.52.5]: https://github.com/fastbean-au/hippocampus/compare/v0.52.4...v0.52.5
 [0.52.4]: https://github.com/fastbean-au/hippocampus/compare/v0.52.3...v0.52.4
