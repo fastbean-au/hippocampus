@@ -499,6 +499,14 @@ func setStartupDefaults() {
 	viper.SetDefault("storage.queryTimeoutSeconds", 60)
 	viper.SetDefault("storage.compression.enabled", true)
 	viper.SetDefault("storage.compression.minBytes", 512)
+
+	// Off, because before it the service rebuilt nothing. The two bounds match
+	// HippocampusIndexBloated's, so with rebuilds on that alert fires only for an index the
+	// rebuilds are not reaching (TODO-3 item 183).
+	viper.SetDefault("storage.indexRebuild.enabled", false)
+	viper.SetDefault("storage.indexRebuild.minBytes", 16777216)
+	viper.SetDefault("storage.indexRebuild.maxBytesPerEntry", 512)
+
 	viper.SetDefault("shutdown.timeoutSeconds", 10)
 
 	// The Prometheus scrape endpoint. Off by default (a listener nobody asked for is a listener
@@ -2535,6 +2543,19 @@ func configProblems() []error {
 
 		if viper.GetBool("consolidation.enabled") {
 			problems = append(problems, fmt.Errorf("consolidation.standby is set with consolidation.enabled true: a standby starts as a replica (consolidation.enabled false) and takes over when the lock is free"))
+		}
+	}
+
+	// An empty index is a page or two whatever it holds, so under a floor near zero every empty index
+	// divides out to thousands of bytes an entry and is rebuilt on every cycle, to no effect. A
+	// mebibyte is far above any empty index and far below any index worth rebuilding.
+	if viper.GetBool("storage.indexRebuild.enabled") {
+		if minBytes := viper.GetInt64("storage.indexRebuild.minBytes"); minBytes < 1048576 {
+			problems = append(problems, fmt.Errorf("storage.indexRebuild.minBytes must be at least 1048576 (1 MiB), got %d: below that an empty index reads as bloated and is rebuilt every cycle", minBytes))
+		}
+
+		if perEntry := viper.GetInt64("storage.indexRebuild.maxBytesPerEntry"); perEntry <= 0 {
+			problems = append(problems, fmt.Errorf("storage.indexRebuild.maxBytesPerEntry must be greater than 0, got %d", perEntry))
 		}
 	}
 
