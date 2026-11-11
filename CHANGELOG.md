@@ -63,6 +63,11 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Security
+
+- **Built with Go 1.27.4** across all six modules, for the `net/http` advisory GO-2026-6859
+  (an HTTP/1 server could crash on a `MaxBytesReader` header race).
+
 ## [0.53.0] - 2026-11-11
 
 ### Added
