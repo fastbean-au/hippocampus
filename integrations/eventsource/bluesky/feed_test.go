@@ -869,6 +869,81 @@ func TestPollFeedOpensTheThreadOfAReplyAndStoresThePageAfterIt(t *testing.T) {
 	}
 }
 
+// TestPollFeedReopensAThreadTheStoreForgot is TODO-3 item 185. The roots cache says a thread is
+// open, so ensureFeedEvents skips it - but the store's sleep cycle has since consolidated it. The
+// feed path counted the reply as orphaned and moved on, and because the cache still named the root,
+// every later poll did the same: the post was never stored. The demo counted 54,864 orphaned
+// memories a day against 24,733 stored.
+func TestPollFeedReopensAThreadTheStoreForgot(t *testing.T) {
+	const root = "at://did:plc:news/app.bsky.feed.post/root"
+
+	av := newFakeAppView(t, [][]feedItem{{replyPost("b", "the thread continues", root)}})
+
+	client := &fakeClient{strictEvents: true}
+
+	b := testBridge(t, Config{
+		Events:        EventsThread,
+		Feed:          "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView:   av.server.URL,
+		Group:         "news",
+		RootCacheSize: 16,
+	}, client)
+
+	// Opened earlier, then consolidated: the cache remembers it and the store does not.
+	b.roots.Add(root)
+
+	if err := b.pollFeed(context.Background()); err != nil {
+		t.Fatalf("pollFeed: %s", err)
+	}
+
+	stored, events, _, _ := client.snapshot()
+
+	if len(events) != 1 || events[0].GetId() != root {
+		t.Fatalf("events = %v, want the forgotten thread reopened", events)
+	}
+
+	if events[0].GetGroup() != "news" {
+		t.Errorf("reopened thread group = %q, want the bridge's configured group", events[0].GetGroup())
+	}
+
+	if len(stored) != 1 || stored[0].GetEventId() != root {
+		t.Fatalf("stored = %v, want the reply stored in its reopened thread", stored)
+	}
+}
+
+// TestPollFeedReopensATopLevelPostsOwnThread: a top-level post opens its own thread, and when that
+// thread is forgotten it is reopened from the post itself, named from its text as before.
+func TestPollFeedReopensATopLevelPostsOwnThread(t *testing.T) {
+	const uri = "at://did:plc:news/app.bsky.feed.post/a"
+
+	av := newFakeAppView(t, [][]feedItem{{post("a", "first headline", 0, 0)}})
+
+	client := &fakeClient{strictEvents: true}
+
+	b := testBridge(t, Config{
+		Events:        EventsThread,
+		Feed:          "at://did:plc:x/app.bsky.feed.generator/news",
+		FeedAppView:   av.server.URL,
+		RootCacheSize: 16,
+	}, client)
+
+	b.roots.Add(uri)
+
+	if err := b.pollFeed(context.Background()); err != nil {
+		t.Fatalf("pollFeed: %s", err)
+	}
+
+	stored, events, _, _ := client.snapshot()
+
+	if len(events) != 1 || events[0].GetName() != "first headline" {
+		t.Fatalf("events = %v, want the post's own thread reopened under its own name", events)
+	}
+
+	if len(stored) != 1 || stored[0].GetEventId() != uri {
+		t.Fatalf("stored = %v, want the post stored in its own thread", stored)
+	}
+}
+
 // hasEvent reports whether an event with that id was stored.
 func hasEvent(events []*contract.Event, id string) bool {
 	for _, v := range events {

@@ -69,6 +69,10 @@ itself which service version it was built against.
   Jetstream three times per `--read-timeout-seconds` window and an answered ping holds the connection
   open, so only a black-holed connection is reconnected. See
   [docs/eventsource.md](docs/eventsource.md#a-quiet---dids-stream-is-kept-not-reconnected).
+- **The Bluesky bridge's feed poll no longer loses posts in a thread the store has forgotten.** It
+  reopens the thread once and retries those posts, as the firehose path already did. Before this, a
+  post in such a thread was skipped as `orphaned` on every poll and never stored. See
+  [docs/eventsource.md](docs/eventsource.md#threads).
 
 ## [0.52.7] - 2026-11-11
 

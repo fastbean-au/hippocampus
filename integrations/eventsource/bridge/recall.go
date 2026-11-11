@@ -196,7 +196,7 @@ func (s *Store) HandleEvent(ctx context.Context, msg Message, ev *contract.Event
 				}
 			}
 
-			return s.storeEach(ctx, mems)
+			return s.storeEach(ctx, mems, nil)
 		}
 
 		s.recordEvent(ctx, OutcomeFailed)
@@ -234,7 +234,25 @@ func (s *Store) HandleEvent(ctx context.Context, msg Message, ev *contract.Event
 // leaves the existing memory ALONE, so reinforcement it has accumulated since is not overwritten.
 // ImportMemories would clobber exactly that, which is why polling must not use it.
 func (s *Store) StoreMemories(ctx context.Context, mems []*contract.Memory) error {
-	return s.storeBatch(ctx, mems)
+	return s.storeBatch(ctx, mems, nil)
+}
+
+// StoreMemoriesReopening is StoreMemories for a caller that can recreate an event the store has
+// consolidated, as HandleReopening is Handle's. A memory refused for naming an event the store no
+// longer holds is retried once, after reopen has recreated that event; a second refusal, or a
+// reopen that fails, skips the memory exactly as StoreMemories would.
+//
+// The reopen is per EVENT, not per memory: the refused memories of a chunk are gathered, each
+// distinct event they name is reopened once, and only those memories are re-sent, in one call.
+//
+// A polled source needs this more than a streamed one, not less. A caller caching which events it
+// has opened (the Bluesky bridge's roots) cannot tell from that cache that the store has since
+// forgotten one, so without a reopen here a post in a forgotten thread is refused on every poll
+// and never stored - TODO-3 item 185, where the demo counted twice as many orphans as stores.
+func (s *Store) StoreMemoriesReopening(ctx context.Context, mems []*contract.Memory, reopen func(ctx context.Context, eventId string) error) error {
+	log.Trace("Store.StoreMemoriesReopening()")
+
+	return s.storeBatch(ctx, mems, reopen)
 }
 
 // storeChunkSize bounds one StoreMemories call, for the reason importChunkSize gives: a large page
@@ -252,20 +270,22 @@ const storeChunkSize = 100
 //
 // One thing does change, and it is worth knowing: callTimeout bounds one CALL, so a chunk of a
 // hundred memories now shares the budget that a single memory used to have to itself.
-func (s *Store) storeBatch(ctx context.Context, mems []*contract.Memory) error {
+//
+// A nil reopen never retries.
+func (s *Store) storeBatch(ctx context.Context, mems []*contract.Memory, reopen func(ctx context.Context, eventId string) error) error {
 	log.Trace("Store.storeBatch()")
 
 	// A service predating StoreMemories answers Unimplemented. The fallback latches: an instance
 	// does not grow an RPC while it is running, and re-probing per chunk would spend a failed call
 	// on every poll for the life of the process.
 	if s.batchUnsupported.Load() {
-		return s.storeEach(ctx, mems)
+		return s.storeEach(ctx, mems, reopen)
 	}
 
 	for start := 0; start < len(mems); start += storeChunkSize {
 		end := min(start+storeChunkSize, len(mems))
 
-		if err := s.storeChunk(ctx, mems[start:end], start, len(mems)); err != nil {
+		if err := s.storeChunk(ctx, mems[start:end], storeSpan{offset: start, total: len(mems)}, reopen); err != nil {
 			return err
 		}
 	}
@@ -273,10 +293,17 @@ func (s *Store) storeBatch(ctx context.Context, mems []*contract.Memory) error {
 	return nil
 }
 
-// storeChunk issues one StoreMemories call and reads its results. offset is the chunk's position in
-// the caller's slice and total its length, so a failure names the memory the way storeEach's error
-// did rather than naming it within a chunk the caller never sees.
-func (s *Store) storeChunk(ctx context.Context, mems []*contract.Memory, offset int, total int) error {
+// storeSpan places a chunk in the caller's slice: offset is the chunk's position and total the
+// slice's length, so a failure names the memory the way storeEach's error did rather than naming it
+// within a chunk the caller never sees.
+type storeSpan struct {
+	offset int
+	total  int
+}
+
+// storeChunk issues one StoreMemories call and reads its results, then retries the memories it
+// refused for a missing event once their events are reopened (when reopen is not nil).
+func (s *Store) storeChunk(ctx context.Context, mems []*contract.Memory, span storeSpan, reopen func(ctx context.Context, eventId string) error) error {
 	// nil entries are dropped rather than sent: they carry no position the caller could act on, and
 	// the service would answer each with an InvalidArgument that would then fail the page. storeEach
 	// skipped them, so this keeps that.
@@ -289,7 +316,7 @@ func (s *Store) storeChunk(ctx context.Context, mems []*contract.Memory, offset 
 		}
 
 		sent = append(sent, v)
-		positions = append(positions, offset+i)
+		positions = append(positions, span.offset+i)
 	}
 
 	if len(sent) == 0 {
@@ -306,10 +333,10 @@ func (s *Store) storeChunk(ctx context.Context, mems []*contract.Memory, offset 
 
 			log.Info("the service does not serve StoreMemories; storing one memory per call from here on")
 
-			return s.storeEach(ctx, mems)
+			return s.storeEach(ctx, mems, reopen)
 		}
 
-		return fmt.Errorf("storing memories %d-%d of %d: %w", offset+1, offset+len(mems), total, err)
+		return fmt.Errorf("storing memories %d-%d of %d: %w", span.offset+1, span.offset+len(mems), span.total, err)
 	}
 
 	// The results are positional, so a response answering for a different number of memories cannot
@@ -318,13 +345,81 @@ func (s *Store) storeChunk(ctx context.Context, mems []*contract.Memory, offset 
 		return fmt.Errorf("storing memories: the store answered %d results for %d memories", len(resp.GetResults()), len(sent))
 	}
 
+	reopened := map[string]bool{}
+
+	var retries []*contract.Memory
+
 	for i, result := range resp.GetResults() {
+		if reopen != nil && isOrphan(sent[i], codes.Code(result.GetCode())) && s.reopenOnce(ctx, sent[i].GetEventId(), reopen, reopened) {
+			retries = append(retries, sent[i])
+
+			continue
+		}
+
 		if err := s.applyResult(ctx, sent[i], result); err != nil {
-			return fmt.Errorf("storing memory %d of %d: %w", positions[i]+1, total, err)
+			return fmt.Errorf("storing memory %d of %d: %w", positions[i]+1, span.total, err)
+		}
+	}
+
+	if len(retries) == 0 {
+		return nil
+	}
+
+	return s.storeRetries(ctx, retries)
+}
+
+// storeRetries re-sends, in one call, the memories of a chunk whose events have just been reopened.
+// Their results are read as any other's, so a second refusal is skipped as an orphan rather than
+// reopened again.
+func (s *Store) storeRetries(ctx context.Context, mems []*contract.Memory) error {
+	callCtx, cancel := s.callContext(ctx)
+	defer cancel()
+
+	resp, err := s.client.StoreMemories(callCtx, &contract.StoreMemoriesRequest{Memories: mems})
+	if err != nil {
+		return fmt.Errorf("storing %d memories after reopening their events: %w", len(mems), err)
+	}
+
+	if len(resp.GetResults()) != len(mems) {
+		return fmt.Errorf("storing memories: the store answered %d results for %d memories", len(resp.GetResults()), len(mems))
+	}
+
+	for i, result := range resp.GetResults() {
+		if err := s.applyResult(ctx, mems[i], result); err != nil {
+			return fmt.Errorf("storing memory %q after reopening its event: %w", mems[i].GetId(), err)
 		}
 	}
 
 	return nil
+}
+
+// isOrphan reports whether code is the service refusing mem for naming an event it does not hold.
+func isOrphan(mem *contract.Memory, code codes.Code) bool {
+	return code == codes.FailedPrecondition && mem.GetEventId() != ""
+}
+
+// reopenOnce reopens eventId unless this write has already tried, and reports whether the caller
+// should retry its memory. reopened records the attempts of one write, so the memories of a chunk
+// naming the same event cost one reopen between them. A failed reopen is logged here, and its
+// memories are then skipped as orphans.
+func (s *Store) reopenOnce(ctx context.Context, eventId string, reopen func(ctx context.Context, eventId string) error, reopened map[string]bool) bool {
+	if done, seen := reopened[eventId]; seen {
+		return done
+	}
+
+	if err := reopen(ctx, eventId); err != nil {
+		reopened[eventId] = false
+
+		log.WithError(err).
+			WithField("event_id", eventId).
+			Debug("reopening a forgotten event failed; its memories are skipped")
+
+		return false
+	}
+
+	reopened[eventId] = true
+
+	return true
 }
 
 // applyResult reads one memory's outcome from a batch write, recording exactly what the single-write
@@ -371,7 +466,7 @@ func (s *Store) applyResult(ctx context.Context, mem *contract.Memory, result *c
 	case code == codes.AlreadyExists:
 		return nil
 
-	case code == codes.FailedPrecondition && mem.GetEventId() != "":
+	case isOrphan(mem, code):
 		s.recordOrphaned(ctx)
 
 		log.WithFields(log.Fields{
@@ -442,8 +537,9 @@ func (s *Store) importChunk(ctx context.Context, mems []*contract.Memory) (int, 
 }
 
 // storeEach writes memories one at a time. It is the fallback for a service that does not serve
-// StoreMemories, and the path HandleEvent takes when an event it did not open already exists. A memory the store already holds is AlreadyExists, which is a success here for the
-// same reason it is on the event: the id is the upstream record's, so a replayed frame writing the
+// StoreMemories, and the path HandleEvent takes when an event it did not open already exists. A
+// memory the store already holds is AlreadyExists, which is a success here for the same reason it
+// is on the event: the id is the upstream record's, so a replayed frame writing the
 // same memory twice is exactly what at-least-once delivery is expected to do.
 //
 // A memory naming an event the store does not have is skipped rather than failing the batch, and
@@ -457,13 +553,28 @@ func (s *Store) importChunk(ctx context.Context, mems []*contract.Memory) (int, 
 //
 // Narrowed to memories that actually name an event, so a FailedPrecondition arising from anything
 // else still fails the batch and is still reported.
-func (s *Store) storeEach(ctx context.Context, mems []*contract.Memory) error {
+//
+// With a reopen, a memory refused that way is first retried once after its event is reopened, as
+// storeChunk does; a nil reopen never retries.
+func (s *Store) storeEach(ctx context.Context, mems []*contract.Memory, reopen func(ctx context.Context, eventId string) error) error {
+	reopened := map[string]bool{}
+
 	for i, v := range mems {
 		if v == nil {
 			continue
 		}
 
 		_, err := s.store(ctx, v)
+
+		// Unlike a chunk's, these memories are retried one at a time, so a refusal naming an event
+		// this write has ALREADY reopened is the reopen not taking. It is not retried again, and
+		// falls through to the skip below.
+		if err != nil && reopen != nil && isOrphan(v, status.Code(err)) {
+			if _, seen := reopened[v.GetEventId()]; !seen && s.reopenOnce(ctx, v.GetEventId(), reopen, reopened) {
+				_, err = s.store(ctx, v)
+			}
+		}
+
 		if err == nil {
 			continue
 		}
@@ -472,7 +583,7 @@ func (s *Store) storeEach(ctx context.Context, mems []*contract.Memory) error {
 			continue
 		}
 
-		if status.Code(err) == codes.FailedPrecondition && v.GetEventId() != "" {
+		if isOrphan(v, status.Code(err)) {
 			s.recordOrphaned(ctx)
 
 			log.WithFields(log.Fields{

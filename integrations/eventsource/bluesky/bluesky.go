@@ -543,7 +543,23 @@ func (b *Bridge) pollFeed(ctx context.Context) error {
 
 	// StoreMemories, never ImportMemories: a feed hands back the same posts every read, and an
 	// upsert would roll each one's accumulated reinforcement back to nothing.
-	if err := b.store.StoreMemories(ctx, memoriesOf(mems)); err != nil {
+	//
+	// Reopening, because ensureFeedEvents trusts the roots cache, and the cache cannot know that the
+	// store's sleep cycle has since consolidated a thread it names. Without the reopen, a post in such
+	// a thread was refused on every poll for as long as its root stayed cached, and never stored
+	// (TODO-3 item 185).
+	threads := b.feedThreads(mems)
+
+	reopen := func(ctx context.Context, eventId string) error {
+		event, ok := threads[eventId]
+		if !ok {
+			return fmt.Errorf("no feed post on this page opens or replies in thread %q", eventId)
+		}
+
+		return b.reopenThread(ctx, event)
+	}
+
+	if err := b.store.StoreMemoriesReopening(ctx, memoriesOf(mems), reopen); err != nil {
 		return err
 	}
 
@@ -601,6 +617,50 @@ func (b *Bridge) ensureFeedEvents(ctx context.Context, mems []feedMemory) {
 
 		b.roots.Add(root)
 	}
+}
+
+// feedThreads builds the event each thread named on a feed page would be reopened as, keyed by its
+// id: a post's own thread is named from the post, as ensureFeedEvents opens it, and any other is
+// the root of a reply. The first post naming a thread decides it, which for a reply only sets the
+// event's start time.
+func (b *Bridge) feedThreads(mems []feedMemory) map[string]*contract.Event {
+	out := map[string]*contract.Event{}
+
+	for _, v := range mems {
+		root := v.Memory.GetEventId()
+		if root == "" {
+			continue
+		}
+
+		if _, ok := out[root]; ok {
+			continue
+		}
+
+		if root == v.Memory.GetId() {
+			out[root] = b.threadEvent(v.Message)
+
+			continue
+		}
+
+		out[root] = b.rootEvent(root, v.Message)
+	}
+
+	return out
+}
+
+// reopenThread recreates a thread event the store has consolidated, keeping the roots cache honest
+// about it either way: the root is dropped first, so a failed reopen leaves the next write to open
+// it afresh rather than trusting a thread that is gone.
+func (b *Bridge) reopenThread(ctx context.Context, event *contract.Event) error {
+	b.roots.Remove(event.GetId())
+
+	if err := b.store.EnsureEvent(ctx, event); err != nil {
+		return err
+	}
+
+	b.roots.Add(event.GetId())
+
+	return nil
 }
 
 // feedEventFor reports the thread event a feed memory belongs in, and whether that thread is the
@@ -1070,15 +1130,7 @@ func (b *Bridge) storePost(ctx context.Context, msg bridge.Message, root string)
 	// The memory's event is always this root (transform sets it), so reopen ignores the id it is
 	// handed.
 	return b.store.HandleReopening(ctx, msg, func(ctx context.Context, _ string) error {
-		b.roots.Remove(root)
-
-		if err := b.store.EnsureEvent(ctx, b.rootEvent(root, msg)); err != nil {
-			return err
-		}
-
-		b.roots.Add(root)
-
-		return nil
+		return b.reopenThread(ctx, b.rootEvent(root, msg))
 	})
 }
 

@@ -502,7 +502,10 @@ stall, with the posts after the offending one never written on any tick. Those s
 `hippocampus.bridge.memories{outcome="orphaned"}`. A root the bridge has cached can also be
 consolidated between its seeing the root and writing a reply to it. The reply's memory is then
 retried once, after the root's event is reopened, within the same message, so a reply that lands
-counts as `stored` rather than `failed`.
+counts as `stored` rather than `failed`. The feed does the same per page: each distinct thread its
+refused posts name is reopened once and only those posts are re-sent, so a post in a thread the
+store has forgotten is stored rather than skipped on every poll for as long as its root stays
+cached. Only a post still refused after that, or whose thread cannot be reopened, is `orphaned`.
 
 Note that threads are **sparse on the open firehose**: sampling the whole network means you rarely
 see both a root and its replies, so most events end up holding one memory. `--dids` is where
