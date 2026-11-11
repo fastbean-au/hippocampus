@@ -630,10 +630,22 @@ copy has quietly turned a public post into a permanent private archive.
 | `--langs`                       | _(all)_                                           | keep only posts **declaring** one of these languages (see below)         |
 | `--min-text-bytes`              | `1`                                               | drop posts shorter than this                                             |
 | `--root-cache-size`             | `8192`                                            | cache of known thread roots (an optimisation only)                       |
-| `--read-timeout-seconds`        | `30`                                              | reconnect when no frame arrives within this window                       |
+| `--read-timeout-seconds`        | `30`                                              | reconnect when neither a frame nor a keepalive pong arrives within this window (see below) |
 | `--reconnect-backoff-seconds`   | `1`                                               | first reconnect backoff                                                  |
 | `--reconnect-max-backoff-seconds` | `30`                                            | ceiling on the exponential reconnect backoff                             |
 | `--max-retries`                 | `3`                                               | store attempts on one frame before the connection is dropped and replayed from the last cursor |
+
+#### A quiet `--dids` stream is kept, not reconnected
+
+The whole firehose is never idle, but a subscription narrowed by `--dids` can carry no frame for
+hours. Silence alone therefore cannot mean a dead connection: the bridge sends a websocket ping three
+times per `--read-timeout-seconds` window, and a pong (or a ping from Jetstream, which sends its own
+every 30 seconds) holds the connection open just as a frame does. Only a connection that stops
+answering — black-holed rather than quiet — is reconnected.
+
+Jetstream reports no cursor while nothing matches the filter, so a bridge that has handled no frame
+since it started still reconnects at the live tip, not from a cursor. With the keepalive that
+reconnect is rare; it was every 30 seconds before it.
 
 #### A post's language is self-declared, and is often wrong
 

@@ -210,8 +210,10 @@ type Config struct {
 	ReconnectBackoff    time.Duration
 	ReconnectMaxBackoff time.Duration
 
-	// ReadTimeout bounds the wait for the next frame. The firehose is never idle, so silence means a
-	// black-holed connection rather than a quiet topic, and reconnecting is the right answer.
+	// ReadTimeout is how long the connection may go without a frame or an answered keepalive ping
+	// before it is taken for black-holed and reconnected. A subscription narrowed by DIDs can carry
+	// no frame for hours, so traffic alone cannot prove a connection is live; the bridge pings three
+	// times per window and a pong counts.
 	ReadTimeout time.Duration
 }
 

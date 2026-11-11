@@ -63,6 +63,13 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Bluesky bridge no longer reconnects a quiet `--dids` stream every 30 seconds.** It pings
+  Jetstream three times per `--read-timeout-seconds` window and an answered ping holds the connection
+  open, so only a black-holed connection is reconnected. See
+  [docs/eventsource.md](docs/eventsource.md#a-quiet---dids-stream-is-kept-not-reconnected).
+
 ## [0.52.7] - 2026-11-11
 
 ### Changed
