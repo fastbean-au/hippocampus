@@ -160,8 +160,102 @@ func TestStreamNextReturnsWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
-// TestStreamNextTimesOutOnSilence: the firehose is never idle, so a connection with nothing on it is
-// black-holed rather than quiet, and the read deadline is what turns that into a reconnect.
+// answeringServer starts a websocket server that sends nothing but reads - which is what makes
+// gorilla answer the client's pings - for answerFor, then stops reading while holding the connection
+// open for another two seconds. It returns the ws:// URL.
+func answeringServer(t *testing.T, answerFor time.Duration) string {
+	t.Helper()
+
+	upgrader := websocket.Upgrader{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+
+		defer func() { _ = conn.Close() }()
+
+		_ = conn.SetReadDeadline(time.Now().Add(answerFor))
+
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				break
+			}
+		}
+
+		time.Sleep(2 * time.Second)
+	}))
+
+	t.Cleanup(srv.Close)
+
+	return "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+// TestStreamNextSurvivesAQuietLiveConnection: a subscription narrowed by --dids can carry no frame
+// for hours. A server that sends nothing but answers the keepalive pings is live, and must not be
+// reconnected however many read timeouts pass.
+func TestStreamNextSurvivesAQuietLiveConnection(t *testing.T) {
+	url := answeringServer(t, time.Minute)
+
+	s, err := defaultDial(context.Background(), Config{URL: url, ReadTimeout: 300 * time.Millisecond}, 0)
+	if err != nil {
+		t.Fatalf("defaultDial: %s", err)
+	}
+
+	defer func() { _ = s.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, nextErr := s.Next(ctx)
+		done <- nextErr
+	}()
+
+	select {
+
+	case err := <-done:
+		t.Fatalf("Next returned %v on a quiet connection that answers pings", err)
+
+	case <-time.After(1500 * time.Millisecond):
+	}
+}
+
+// TestStreamNextTimesOutWhenPingsStopBeingAnswered: the dead-connection check survives the
+// keepalive. A server that answers pings for a while and then stops - black-holed, not closed - is
+// what the read deadline turns into a reconnect.
+func TestStreamNextTimesOutWhenPingsStopBeingAnswered(t *testing.T) {
+	url := answeringServer(t, 500*time.Millisecond)
+
+	s, err := defaultDial(context.Background(), Config{URL: url, ReadTimeout: 300 * time.Millisecond}, 0)
+	if err != nil {
+		t.Fatalf("defaultDial: %s", err)
+	}
+
+	defer func() { _ = s.Close() }()
+
+	start := time.Now()
+
+	if _, err := s.Next(context.Background()); err == nil {
+		t.Fatal("expected the read deadline to fire once pings stopped being answered")
+	}
+
+	elapsed := time.Since(start)
+
+	if elapsed < 500*time.Millisecond {
+		t.Errorf("Next gave up after %s, while the server was still answering pings", elapsed)
+	}
+
+	if elapsed > 1500*time.Millisecond {
+		t.Errorf("Next blocked for %s, want the read timeout to have fired", elapsed)
+	}
+}
+
+// TestStreamNextTimesOutOnSilence: a connection that never answers a ping is black-holed rather than
+// quiet, and the read deadline is what turns that into a reconnect.
 func TestStreamNextTimesOutOnSilence(t *testing.T) {
 	url := jetstreamServer(t, nil, nil)
 
