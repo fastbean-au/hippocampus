@@ -73,6 +73,10 @@ itself which service version it was built against.
   reopens the thread once and retries those posts, as the firehose path already did. Before this, a
   post in such a thread was skipped as `orphaned` on every poll and never stored. See
   [docs/eventsource.md](docs/eventsource.md#threads).
+- **`HippocampusAncillaryStorageHigh` now says how to tell bloat from rows.** On PostgreSQL the
+  figure can be mostly emptied index pages, which a cap cannot return and `VACUUM FULL` can. Compare
+  a table's `bytes` with its `disk_bytes` before setting a `maxBytes`. See
+  [docs/operations.md](docs/operations.md#sizing-the-three-in-bytes).
 
 ## [0.52.7] - 2026-11-11
 

@@ -645,7 +645,13 @@ wrong for a queue that started growing this morning. It includes the table's `DA
 where InnoDB keeps the space a prune emptied (see [index bloat on the server
 drivers](#index-bloat-on-the-server-drivers)). On PostgreSQL under steady churn `disk_bytes`
 is routinely around twice `bytes`, and that gap is the reading: it is disk no other figure this
-service publishes can see. The metric and the response's `total_bytes` carry the larger of the two,
+service publishes can see. It can be far more than twice. Both of the search outbox's keys only
+ever increase, so inserts land on the right edge of each index and deletes empty the left, and
+nothing reuses those pages. The demo's outbox held ten live rows in **833 MB** for weeks. A cap
+cannot help there, since it trims rows and returns no pages. `VACUUM FULL` on that one table does:
+it takes an exclusive lock, which on a table of a few rows lasts milliseconds (91 ms for that
+outbox, down to 48 kB). So when `HippocampusAncillaryStorageHigh` fires, compare the two columns
+before you set a `maxBytes`. The metric and the response's `total_bytes` carry the larger of the two,
 because sizing a disk is a question about what the engine is holding.
 
 `bytes` is the **same** figure the capacity target subtracts and the same one `maxBytes` is enforced
