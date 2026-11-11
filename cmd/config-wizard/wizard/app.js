@@ -536,6 +536,42 @@ const STEPS = [
           },
         ],
       },
+      {
+        title: "Index rebuilds",
+        fields: [
+          {
+            key: "storage.indexRebuild.enabled",
+            label: "Rebuild bloated indexes",
+            type: "bool",
+            def: false,
+            svc: false,
+            when: (s) => value(s, "storage.driver") === "postgres",
+            help: "A store that forgets leaves its PostgreSQL indexes mostly empty pages that nothing returns — several times the live data, for good. With this on, the consolidator rebuilds an index online (REINDEX INDEX CONCURRENTLY) once its bytes per entry pass the bound below. Reads and writes carry on during a rebuild. The database role must own the tables.",
+          },
+          {
+            key: "storage.indexRebuild.minBytes",
+            label: "Smallest index to rebuild (bytes)",
+            type: "int",
+            def: 16777216,
+            svc: 16777216,
+            when: (s) =>
+              value(s, "storage.driver") === "postgres" &&
+              value(s, "storage.indexRebuild.enabled"),
+            help: "Indexes below this are left alone: a nearly empty index costs a few pages whatever it holds, so its bytes per entry are high without being bloat. At least 1048576.",
+          },
+          {
+            key: "storage.indexRebuild.maxBytesPerEntry",
+            label: "Rebuild past (bytes per entry)",
+            type: "int",
+            def: 512,
+            svc: 512,
+            when: (s) =>
+              value(s, "storage.driver") === "postgres" &&
+              value(s, "storage.indexRebuild.enabled"),
+            help: "Packed, no index this store creates costs much over a hundred bytes an entry. The default matches the HippocampusIndexBloated alert, so the alert then fires only for an index the rebuilds are not reaching.",
+          },
+        ],
+      },
     ],
   },
   {

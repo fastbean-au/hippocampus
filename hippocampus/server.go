@@ -403,6 +403,12 @@ type Server struct {
 	stopOutbox    chan struct{}
 	outboxStopped chan struct{}
 
+	// storage.indexRebuild.*, and when each index whose rebuild failed last failed, keyed
+	// "table.index". Touched only inside a sleep cycle, which sleepGroup runs one at a time, so the
+	// map needs no lock. See index_rebuild.go.
+	indexRebuild         IndexRebuildConfig
+	indexRebuildFailures map[string]time.Time
+
 	// The outbound callback queue's dispatcher (callbacks.go): the worker that posts the deliveries
 	// recorded alongside the deletions that caused them, its sink, and the caps that bound the queue
 	// when the receiver cannot keep up. Held and shut down exactly as the outbox drain is, and nil
@@ -637,13 +643,15 @@ func New(deps Dependencies, cfg Config) *Server {
 			tombstones:                         cfg.Consolidation.Tombstones,
 			significanceLevelRetention:         cfg.Consolidation.SignificanceLevelRetention,
 		},
-		reconcileInterval:  cfg.Reconcile.Interval,
-		reconcileBatchSize: cfg.Reconcile.BatchSize,
-		staleSweepEnabled:  cfg.Reconcile.StaleSweep,
-		outboxBounds:       cfg.Outbox,
-		callbacksConfig:    cfg.Callbacks,
-		scheduledExport:    cfg.ScheduledExport,
-		gatewayEnabled:     cfg.Deployment.GatewayPort > 0,
+		reconcileInterval:    cfg.Reconcile.Interval,
+		reconcileBatchSize:   cfg.Reconcile.BatchSize,
+		staleSweepEnabled:    cfg.Reconcile.StaleSweep,
+		outboxBounds:         cfg.Outbox,
+		indexRebuild:         cfg.IndexRebuild,
+		indexRebuildFailures: make(map[string]time.Time),
+		callbacksConfig:      cfg.Callbacks,
+		scheduledExport:      cfg.ScheduledExport,
+		gatewayEnabled:       cfg.Deployment.GatewayPort > 0,
 	}
 
 	s.consolidationEnabled = cfg.Consolidation.Enabled

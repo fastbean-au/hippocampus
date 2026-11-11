@@ -285,6 +285,19 @@ type dialect struct {
 	catalogueSession      string
 	catalogueSessionReset string
 
+	// rebuildIndex rebuilds one index online, given its quoted name as the format's one verb; see
+	// index_rebuild.go for why a store needs it. abandonedRebuilds lists, for one table bound as its
+	// parameter, the invalid copies an interrupted rebuild left, and dropIndexOnline drops one of
+	// them by quoted name.
+	//
+	// Empty where there is no online rebuild to run, which is the embedded dialect (a freed page is
+	// returned by incremental_vacuum) and MySQL (InnoDB keeps its B-trees dense and reuses the
+	// tablespace's free space; OPTIMIZE TABLE returns that, but it rebuilds the whole table and is
+	// left to the operator). RebuildBloatedIndexes is then a no-op.
+	rebuildIndex      string
+	abandonedRebuilds string
+	dropIndexOnline   string
+
 	// idCollationMigration is set where an id column's collation is a property that can be wrong on
 	// a database created by an older version and has to be corrected in place. Only the dialect
 	// whose default collation is case-insensitive has one - the others compare byte-for-byte with no
@@ -353,6 +366,9 @@ var dialects = map[driver]*dialect{
 		relationIndexBytes:    "",
 		catalogueSession:      "",
 		catalogueSessionReset: "",
+		rebuildIndex:          "",
+		abandonedRebuilds:     "",
+		dropIndexOnline:       "",
 		instanceRegistry:      false,
 		countsChangedRows:     false,
 		idCollationMigration:  false,
@@ -416,9 +432,18 @@ var dialects = map[driver]*dialect{
 		relationIndexBytes:    "",
 		catalogueSession:      "",
 		catalogueSessionReset: "",
-		instanceRegistry:      true,
-		countsChangedRows:     false,
-		idCollationMigration:  false,
+		// CONCURRENTLY is the point: the plain form takes a lock that blocks every write to the
+		// table for the length of the build. An interrupted one leaves an invalid index whose name
+		// ends _ccnew (_ccnew1, _ccnew2 on a repeat), which is what abandonedRebuilds looks for.
+		rebuildIndex: `REINDEX INDEX CONCURRENTLY %s`,
+		abandonedRebuilds: `SELECT i.relname
+			FROM pg_index x
+			JOIN pg_class i ON i.oid = x.indexrelid
+			WHERE x.indrelid = to_regclass(?) AND NOT x.indisvalid AND i.relname ~ '_ccnew[0-9]*$'`,
+		dropIndexOnline:      `DROP INDEX CONCURRENTLY IF EXISTS %s`,
+		instanceRegistry:     true,
+		countsChangedRows:    false,
+		idCollationMigration: false,
 		// server_version rather than version(): the latter carries the compiler and the platform
 		// the server was built on, which is a paragraph where a label is wanted.
 		versionQuery: `SELECT 'PostgreSQL ' || current_setting('server_version')`,
@@ -512,6 +537,9 @@ var dialects = map[driver]*dialect{
 		// measurement. The variable needs no privilege to set.
 		catalogueSession:      `SET SESSION information_schema_stats_expiry = 0`,
 		catalogueSessionReset: `SET SESSION information_schema_stats_expiry = DEFAULT`,
+		rebuildIndex:          "",
+		abandonedRebuilds:     "",
+		dropIndexOnline:       "",
 		instanceRegistry:      true,
 		countsChangedRows:     true,
 		idCollationMigration:  true,

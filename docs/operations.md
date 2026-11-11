@@ -645,7 +645,13 @@ wrong for a queue that started growing this morning. It includes the table's `DA
 where InnoDB keeps the space a prune emptied (see [index bloat on the server
 drivers](#index-bloat-on-the-server-drivers)). On PostgreSQL under steady churn `disk_bytes`
 is routinely around twice `bytes`, and that gap is the reading: it is disk no other figure this
-service publishes can see. The metric and the response's `total_bytes` carry the larger of the two,
+service publishes can see. It can be far more than twice. Both of the search outbox's keys only
+ever increase, so inserts land on the right edge of each index and deletes empty the left, and
+nothing reuses those pages. The demo's outbox held ten live rows in **833 MB** for weeks. A cap
+cannot help there, since it trims rows and returns no pages. `VACUUM FULL` on that one table does:
+it takes an exclusive lock, which on a table of a few rows lasts milliseconds (91 ms for that
+outbox, down to 48 kB). So when `HippocampusAncillaryStorageHigh` fires, compare the two columns
+before you set a `maxBytes`. The metric and the response's `total_bytes` carry the larger of the two,
 because sizing a disk is a question about what the engine is holding.
 
 `bytes` is the **same** figure the capacity target subtracts and the same one `maxBytes` is enforced
@@ -741,7 +747,7 @@ memories in a 1,320 kB heap was carrying a 3.5 MB listing index: 3,581 bytes for
 times its own heap. A store small enough that nobody would think to look at it is proportionally the
 worst affected.
 
-#### What the service reports, and what it deliberately does not do
+#### What the service reports
 
 `used_bytes` is a live-row estimate on the server drivers and **that decision stands** — a file-size
 measure never shrinks after a delete on PostgreSQL, so eviction driven by one would chase a figure
@@ -793,11 +799,44 @@ has its own tablespace, which is the default and how this store creates them. On
 `innodb_file_per_table` off it reports the shared tablespace's free space against every table and
 over-reads.
 
-**The service will not reindex itself.** `REINDEX INDEX CONCURRENTLY` is online, but it is still a
-maintenance decision — it needs disk headroom for a second copy of the index, it can fail and leave
-an invalid index behind, and a memory store that starts rebuilding indexes on a timer is a store
-that surprises its operator at the moment it is already under pressure. `Preserve()` is a no-op on
-both server drivers and stays one.
+#### Why VACUUM does not return it
+
+There are two mechanisms, both reproduced against a local PostgreSQL 17 under churn (TODO-3 item
+183), and no storage parameter holds back either of them:
+
+- **Sparse pages.** Eviction forgets by value, so its deletes land across the whole key range and
+  leave a survivor or two on many leaf pages. VACUUM deletes only an empty B-tree page and nothing
+  merges sparse ones. Meanwhile every new memory lands on the right-hand edge of the
+  timestamp-ordered indexes, so a thinned page is never refilled.
+- **The high-water mark.** A page that is emptied is deleted and recycled, but an index file never
+  shrinks, so an index stays at the largest it has ever been. On a store that churns faster than
+  autovacuum's one-minute naptime, that peak is set by the dead entries one naptime accumulates. For
+  the queues this is the whole story. The search outbox's keys only increase, so a drained page is
+  always empty, and the demo's outbox held ten rows in 833 MB of index beside a 24 kB heap.
+
+`memories` has both. A steady-state run of 50,000 rows took the listing index from 6 MB to
+**127 MB**: 79% of its pages were deleted and reusable, and the rest were at 48% density. The demo's
+533 MB consolidation index had 20,183 deleted pages beside leaves at 5% density. The same run with
+`autovacuum_vacuum_scale_factor` 0.005, no cost delay and `fillfactor` 70 reached **133 MB**.
+Autovacuum was already running on every naptime, which is a server-wide setting, and `fillfactor`
+sets how full a page starts, not whether it is refilled.
+
+#### Letting the service rebuild them
+
+[`storage.indexRebuild.enabled`](configuration.md#index-rebuilds) has the consolidator do this
+itself, and is off by default. Each sleep cycle it reads every index's size and entry count from the
+catalogue and runs `REINDEX INDEX CONCURRENTLY` on any index past both bounds: 16 MiB and 512 bytes
+an entry by default, the same as `HippocampusIndexBloated`. It covers the tables inside the capacity
+target and the three queues, drops the invalid copy an interrupted rebuild leaves, and leaves an
+index alone for an hour after its rebuild fails. It never runs on a timer: an index is rebuilt
+because its own reading says it is mostly air. `hippocampus.index_rebuilds` (by `table` and
+`outcome`) and `hippocampus.index_rebuild_reclaimed_bytes` say what it did. With it on,
+`HippocampusIndexBloated` means an index the rebuilds are not reaching. The usual cause is a role
+that does not own the table, which the Warn line names.
+
+It is off by default for two reasons. A configuration key's default keeps the behaviour that came
+before it, and a store that rebuilds its own indexes is a change an operator should choose. With it
+off, run the job below instead.
 
 #### The maintenance job
 
@@ -826,8 +865,13 @@ psql "$DSN" -c 'REINDEX TABLE CONCURRENTLY memories_fts'
 Two cautions. A `REINDEX ... CONCURRENTLY` that is interrupted leaves an **invalid** index behind
 (`SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid`) — drop it and run again; the
 original is still in place and still being used, so nothing is broken meanwhile. And it needs room
-for a second copy of the largest index while it runs, which on a bloated one is the _bloated_ size,
-not the packed one.
+for a second copy of the index while it runs. The copy is built fresh from the table, so it is the
+_packed_ size rather than the bloated one, plus the WAL the build writes.
+
+The search outbox, the forgotten log and the callback queue bloat too (see above), and are not in
+that list. Rebuild their indexes the same way, `REINDEX TABLE CONCURRENTLY search_outbox`. A
+drained queue holds a few rows, so a `VACUUM FULL search_outbox` is also safe: its exclusive lock
+lasts milliseconds (91 ms on the demo, for 833 MB).
 
 #### A major-version upgrade is a reindex too
 
@@ -1675,6 +1719,8 @@ what makes the whole set safe to keep at full resolution.
 | `hippocampus.disk_bytes`                     | gauge         |                                       | What the engine says the counted tables _really_ occupy — read against `used_bytes` (PostgreSQL, MySQL)                |
 | `hippocampus.index_bytes`                    | gauge         | `table`, `index`                      | Bytes one index really occupies (PostgreSQL only)                                                                      |
 | `hippocampus.index_entries`                  | gauge         | `table`, `index`                      | Entries that index holds — divide `index_bytes` by it (PostgreSQL only)                                                |
+| `hippocampus.index_rebuilds`                 | counter       | `table`, `outcome`                    | Online rebuilds of a bloated index, `rebuilt` or `failed` (under `storage.indexRebuild.enabled`, PostgreSQL only)      |
+| `hippocampus.index_rebuild_reclaimed_bytes`  | counter       | `table`                               | Bytes those rebuilds returned: each index's size before its rebuild less its size after                                |
 | `hippocampus.purges`                         | counter       | `success`                             | `Purge` calls                                                                                                          |
 | `hippocampus.tombstones`                     | gauge         |                                       | Records held by the [forgotten log](#what-was-forgotten--the-forgotten-log)                                            |
 | `hippocampus.tombstones.deleted`             | counter       | `manual`                              | Forgotten-log records removed, by request or by the caps                                                               |
