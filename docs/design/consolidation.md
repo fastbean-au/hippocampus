@@ -147,10 +147,9 @@ from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   which 533 MB was the covering index alone at 5% leaf density. A **store that forgets is a store
   whose indexes bloat**: `VACUUM` marks a B-tree page a delete emptied as reusable and never
   repacks it, and a store keyed on a UUID never refills one. Six things carry it (TODO-2 item 124).
-  (1) It is **reported and never acted on** — `REINDEX CONCURRENTLY` is online but is still a
-  maintenance decision, and there is no seam for it anyway, `Preserve()` being a correct no-op on
-  both server dialects. `docs/operations.md` carries the runbook and the **daily** cadence the
-  regrowth rate justifies. (2) Everything is a **catalogue lookup** (`pg_total_relation_size`,
+  (1) It is a **report**. For a long time nothing acted on it: `REINDEX CONCURRENTLY` is online but
+  is a maintenance decision, so `docs/operations.md` carried a **daily** job instead. TODO-3 item
+  183 changed that, behind an opt-in (see the index-rebuild entry below). (2) Everything is a **catalogue lookup** (`pg_total_relation_size`,
   `pg_relation_size`, `pg_class.reltuples`), two statements per table, reading no rows.
   `pgstatindex`'s `avg_leaf_density` is the authoritative figure and is deliberately **not** taken:
   it reads every page of the index, which is item 25.9's cost on the very index this is about, and
@@ -175,6 +174,27 @@ from viper once in `New()`. `sleep.go` holds the core consolidation logic:
   operator's own indexes cannot grow the series count), served as `GetConsolidationStatus.footprint`,
   alerted on by `HippocampusStoreDiskFarAboveEstimate`/`HippocampusIndexBloated`, and logged when
   the ratio crosses — naming the index costing the most per entry, which is not always the largest.
+- `rebuildBloatedIndexes` (`hippocampus/index_rebuild.go` + `db/index_rebuild.go`,
+  `storage.indexRebuild.*`, off by default) acts on that reading (TODO-3 item 183). Two mechanisms
+  bloat a PostgreSQL index, both reproduced under churn before anything was built. Eviction leaves
+  **sparse** pages: VACUUM deletes only empty B-tree pages, nothing merges sparse ones, and new rows
+  land only on the right-hand edge. And an emptied page is recycled, but an index file never shrinks
+  below its **high-water mark**, which is the whole story for the queues. `memories` has both: a
+  steady-state run took its listing index from 6 MB to 127 MB, 79% of its pages deleted and the
+  rest at 48% density. No storage parameter holds back either one. The same run with a scale factor
+  of 0.005, no cost delay and `fillfactor` 70 reached 133 MB, because autovacuum was already running
+  on every (server-wide) naptime. The rejected alternative was tuning those parameters, which was the item's
+  first preference. Four things carry it. (1) It is **opt-in**: a new key keeps the old behaviour,
+  and the old behaviour was a recorded decision not to rebuild. (2) It is driven by the **same
+  reading** the alert reads, bytes against entries from the catalogue, with the alert's bounds as
+  defaults. An emptied queue counts as one entry, so it is rebuilt when it is worst rather than
+  exempt. The floor is refused under 1 MiB at startup, because below it every empty index reads as
+  bloated. (3) It covers the **three queues** as well as the counted tables. The worst index the
+  demo carried was the outbox's, and the footprint reading leaves the queues out on purpose. (4) A
+  rebuild cut short leaves an invalid `_ccnew` copy that every write still maintains, so each pass
+  **drops** those first, and an index whose rebuild failed is left for `indexRebuildRetry` (an hour)
+  rather than warning every cycle. It runs after `preserve()` and before both measurements, so what
+  is published describes the indexes it left.
 - The **forgotten log** (`db/tombstone.go` + `hippocampus/forgotten.go`,
   `consolidation.tombstones.*`, off by default) is the third leg of the transparency trio and the
   only one that can speak about a memory that no longer exists: one row per memory the two decay

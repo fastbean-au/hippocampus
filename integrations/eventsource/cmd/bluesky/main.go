@@ -109,7 +109,8 @@ func registerFlags(fs *pflag.FlagSet, args []string) error {
 	fs.Int("min-text-bytes", 1, "drop a post whose text is shorter than this")
 	fs.Int("root-cache-size", 8192,
 		"bounded cache of thread roots known to exist (an optimisation; correctness does not depend on it)")
-	fs.Int("read-timeout-seconds", 30, "reconnect if no frame arrives within this window")
+	fs.Int("read-timeout-seconds", 30,
+		"reconnect if neither a frame nor a keepalive pong arrives within this window (a quiet --dids stream that answers pings is kept)")
 	fs.Int("error-backoff-seconds", 1, "seconds to wait before retrying a frame whose store failed")
 	fs.Int("max-retries", 3, "frame store attempts before the connection is dropped and replayed from the last cursor")
 	fs.Int("reconnect-backoff-seconds", 1, "initial reconnect backoff")

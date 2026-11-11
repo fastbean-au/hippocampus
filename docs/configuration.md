@@ -210,6 +210,9 @@ the service's own key reads, so a key cannot be added without a row; regenerate 
 | `storage.compression.minBytes` | `512` | Minimum body size (bytes) | [Storage](#storage) |
 | `storage.directory` | `"./data"` | Data directory | [Storage](#storage) |
 | `storage.driver` | `"sqlite"` | Driver | [Storage](#storage) |
+| `storage.indexRebuild.enabled` | `false` | Rebuild bloated indexes | [Storage](#storage) |
+| `storage.indexRebuild.maxBytesPerEntry` | `512` | Rebuild past (bytes per entry) | [Storage](#storage) |
+| `storage.indexRebuild.minBytes` | `16777216` | Smallest index to rebuild (bytes) | [Storage](#storage) |
 | `storage.mysql.dsn` | — | MySQL DSN | [Storage](#storage) |
 | `storage.pool.maxIdleConns` | — | Max idle connections | [Storage](#storage) |
 | `storage.pool.maxOpenConns` | `25` | Max open connections | [Storage](#storage) |
@@ -1491,6 +1494,11 @@ and `mysql` in the MySQL database named by `storage.mysql.dsn` (go-sql-driver fo
         "enabled": true,
         "minBytes": 512
     },
+    "indexRebuild": {
+        "enabled": false,
+        "minBytes": 16777216,
+        "maxBytesPerEntry": 512
+    },
     "pool": {
         "maxOpenConns": 25,
         "maxIdleConns": 0
@@ -1573,6 +1581,41 @@ body as submitted, not against its stored size.
 Compression is confined to the storage layer. Everything above it — the RPCs, the OpenSearch index,
 the summariser, and the export/archive format — sees plain bodies, so an archive is portable between
 instances whatever either one's setting is; an import takes the receiving instance's policy.
+
+#### Index rebuilds
+
+`storage.indexRebuild.enabled` (**default false**) has the consolidator rebuild a PostgreSQL index
+online once most of it is empty pages. A store that forgets leaves its indexes several times larger
+than its live data, permanently, and nothing in PostgreSQL returns that space. [Index bloat on the
+server drivers](operations.md#index-bloat-on-the-server-drivers) explains why and gives the
+measurements. Each sleep cycle, after the forgetting is done, the consolidator reads every index's
+size and entry count from the catalogue. It then runs `REINDEX INDEX CONCURRENTLY` on each index
+that is over both bounds:
+
+- `storage.indexRebuild.minBytes` (default 16777216, 16 MiB) exempts small indexes. A nearly empty
+  index costs a few pages whatever it holds, so its bytes per entry are high without it being bloat.
+  The service refuses to start with a value under 1048576 (1 MiB), since that would rebuild every
+  empty index on every cycle.
+- `storage.indexRebuild.maxBytesPerEntry` (default 512) is the cost per entry past which an index
+  is rebuilt. Packed, no index this store creates costs much over a hundred bytes an entry.
+
+The defaults match the `HippocampusIndexBloated` alert. With rebuilds on, that alert fires only for
+an index the rebuilds are not reaching.
+
+The pass covers the tables inside the capacity target and the three queues outside it (the
+forgotten log, the search outbox and the callback queue). It skips the content index, a GIN index
+whose size per entry depends on the text it holds. Reads and writes carry on during a rebuild, which
+takes seconds on the indexes this is about: 533 MB to 13 MB in under one, measured. Each rebuild
+runs under `storage.queryTimeoutSeconds`. One that is cut short leaves an invalid copy (named
+`…_ccnew`) behind, which the next pass drops before it measures.
+
+The database role must own the tables, which it does when the service created them. A rebuild that
+fails is logged at Warn and that index is left alone for an hour. `hippocampus.index_rebuilds`
+counts rebuilds by table and outcome, and `hippocampus.index_rebuild_reclaimed_bytes` counts the
+bytes they returned.
+
+The setting does nothing on SQLite, where `Preserve` already hands freed pages back, or on MySQL,
+where InnoDB keeps its indexes dense and reuses the space it frees.
 
 #### Server drivers
 

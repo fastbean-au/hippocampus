@@ -33,6 +33,7 @@ type Config struct {
 	Search          SearchConfig
 	Reconcile       ReconcileConfig
 	Outbox          db.QueueBounds
+	IndexRebuild    IndexRebuildConfig
 	Callbacks       CallbacksConfig
 	ScheduledExport ScheduledExportConfig
 	Topology        TopologyConfig

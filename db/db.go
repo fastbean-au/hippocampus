@@ -862,6 +862,11 @@ type Store interface {
 	// magnitude of index nothing repacks. Reported, never regulated on - see db/footprint.go.
 	StorageFootprint(ctx context.Context) (StorageFootprint, error)
 
+	// RebuildBloatedIndexes is what acts on that reading, when a deployment asks it to: an online
+	// rebuild of each index the policy says is mostly air. A no-op where the dialect has no online
+	// rebuild - see db/index_rebuild.go.
+	RebuildBloatedIndexes(ctx context.Context, policy IndexRebuildPolicy) ([]IndexRebuild, error)
+
 	// ExternalBytes is the third capacity axis: the total size of the payloads the store's memories
 	// point at elsewhere. Separate from UsedBytes, never a part of it - see the method's comment.
 	ExternalBytes(ctx context.Context) (int64, error)
@@ -1258,10 +1263,15 @@ func (d *DB) WALBytes() (int64, error) {
 
 // Preserve is called at the end of each sleep cycle. For SQLite, WAL mode makes every write
 // durable as it happens, so this only compacts: the WAL is checkpointed and truncated, and pages
-// freed by consolidation are returned to the filesystem. For the server drivers it is a no-op —
-// Postgres's autovacuum and InnoDB's background purge already reclaim dead rows continuously,
-// and imitating SQLite's app-driven compaction (VACUUM FULL, OPTIMIZE TABLE) would take an
-// exclusive table lock for no benefit.
+// freed by consolidation are returned to the filesystem. For the server drivers it is a no-op.
+// Autovacuum and InnoDB's purge reclaim dead ROWS continuously, and imitating SQLite's compaction
+// with VACUUM FULL or OPTIMIZE TABLE would lock each table exclusively for the length of a rewrite.
+//
+// That does not mean the server drivers return everything a delete freed. On PostgreSQL the
+// indexes do not shrink: eviction leaves B-tree pages sparse but never empty, so VACUUM never
+// deletes them, and a queue's emptied pages are recycled but the file keeps its high-water mark. A
+// store under churn carries several times its live index for good (TODO-3 item 183). That is
+// returned by RebuildBloatedIndexes, which rebuilds online, rather than here.
 func (d *DB) Preserve(ctx context.Context) error {
 	log.Trace("func() db.Preserve")
 

@@ -78,6 +78,11 @@ type telemetry struct {
 	indexBytes   metric.Int64Gauge
 	indexEntries metric.Int64Gauge
 
+	// The rebuilds that return that space, under storage.indexRebuild.enabled. See
+	// hippocampus/index_rebuild.go.
+	indexRebuilds              metric.Int64Counter
+	indexRebuildReclaimedBytes metric.Int64Counter
+
 	searchOutboxDepth     metric.Int64Gauge
 	searchOutboxApplied   metric.Int64Counter
 	searchOutboxAbandoned metric.Int64Counter
@@ -170,9 +175,11 @@ func newTelemetry() *telemetry {
 		// whose indexes bloat, because a B-tree page emptied by a delete is marked reusable and
 		// never repacked, and index_bytes divided by index_entries is what says which index to
 		// reindex. Published only where the driver can answer from its catalogue.
-		diskBytes:    newInt64Gauge(meter, "hippocampus.disk_bytes", "What the storage engine says the tables inside the byte capacity target really occupy, space it has not reclaimed included, measured each sleep cycle. Read against used_bytes, which is the estimate eviction acts on."),
-		indexBytes:   newInt64Gauge(meter, "hippocampus.index_bytes", "Bytes one index over a counted table really occupies, by table and index. Grows with what the store has forgotten rather than with what it holds, since nothing repacks a B-tree page a delete emptied."),
-		indexEntries: newInt64Gauge(meter, "hippocampus.index_entries", "Entries one index over a counted table holds, from the catalogue's own estimate. Divide index_bytes by this: the widest key in this store is an id and seven numbers, so an entry costing a kilobyte is air."),
+		diskBytes:                  newInt64Gauge(meter, "hippocampus.disk_bytes", "What the storage engine says the tables inside the byte capacity target really occupy, space it has not reclaimed included, measured each sleep cycle. Read against used_bytes, which is the estimate eviction acts on."),
+		indexBytes:                 newInt64Gauge(meter, "hippocampus.index_bytes", "Bytes one index over a counted table really occupies, by table and index. Grows with what the store has forgotten rather than with what it holds, since nothing repacks a B-tree page a delete emptied."),
+		indexRebuilds:              newInt64Counter(meter, "hippocampus.index_rebuilds", "Online rebuilds of an index found mostly empty pages, by table and outcome (rebuilt or failed). Only under storage.indexRebuild.enabled, on PostgreSQL."),
+		indexRebuildReclaimedBytes: newInt64Counter(meter, "hippocampus.index_rebuild_reclaimed_bytes", "Bytes the index rebuilds returned to the disk, by table: each index's size before its rebuild less its size after."),
+		indexEntries:               newInt64Gauge(meter, "hippocampus.index_entries", "Entries one index over a counted table holds, from the catalogue's own estimate. Divide index_bytes by this: the widest key in this store is an id and seven numbers, so an entry costing a kilobyte is air."),
 
 		// The search index's delete queue. Depth is the one to alert on: it is the backpressure the
 		// outbox exists to make visible, since the failure it replaced - an index operation dropped

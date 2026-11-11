@@ -101,6 +101,11 @@ func (s *Server) sleep(trigger string) error {
 
 	e3 := s.preserve(ctx)
 
+	// After preserve() and before the two measurements below, so they describe the indexes this
+	// left rather than the ones it found. Off unless storage.indexRebuild.enabled, and it never fails
+	// the cycle. See index_rebuild.go.
+	s.rebuildBloatedIndexes(ctx)
+
 	// After the trims above, so the figure describes what the store is left holding rather than what
 	// it held at the top of the cycle. Reporting only - it decides nothing, and never fails a cycle.
 	s.recordAncillaryStorage(ctx)
