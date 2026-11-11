@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.53.1] - 2026-11-11
+
 ### Security
 
 - **Built with Go 1.27.4** across all six modules, for the `net/http` advisory GO-2026-6859
@@ -4200,7 +4202,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.53.0...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.53.1...HEAD
+[0.53.1]: https://github.com/fastbean-au/hippocampus/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/fastbean-au/hippocampus/compare/v0.52.7...v0.53.0
 [0.52.7]: https://github.com/fastbean-au/hippocampus/compare/v0.52.6...v0.52.7
 [0.52.6]: https://github.com/fastbean-au/hippocampus/compare/v0.52.5...v0.52.6
