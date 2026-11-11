@@ -63,6 +63,31 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **The consolidator can rebuild bloated PostgreSQL indexes itself** (`storage.indexRebuild.*`, off
+  by default). A store that forgets leaves its indexes several times its live data, and no storage
+  parameter prevents it. With this on, any index past 16 MiB and 512 bytes an entry is rebuilt online
+  with `REINDEX INDEX CONCURRENTLY`. The pass covers the three queues too, and the database role must
+  own the tables. See [docs/configuration.md](docs/configuration.md#index-rebuilds).
+
+### Fixed
+
+- **The Bluesky bridge no longer reconnects a quiet `--dids` stream every 30 seconds.** It pings
+  Jetstream three times per `--read-timeout-seconds` window and an answered ping holds the connection
+  open, so only a black-holed connection is reconnected. See
+  [docs/eventsource.md](docs/eventsource.md#a-quiet---dids-stream-is-kept-not-reconnected).
+- **The Bluesky bridge's feed poll no longer loses posts in a thread the store has forgotten.** It
+  reopens the thread once and retries those posts, as the firehose path already did. Before this, a
+  post in such a thread was skipped as `orphaned` on every poll and never stored. See
+  [docs/eventsource.md](docs/eventsource.md#threads).
+- **`HippocampusAncillaryStorageHigh` now says how to tell bloat from rows.** On PostgreSQL the
+  figure can be mostly emptied index pages, which a cap cannot return and `VACUUM FULL` can. Compare
+  a table's `bytes` with its `disk_bytes` before setting a `maxBytes`. See
+  [docs/operations.md](docs/operations.md#sizing-the-three-in-bytes).
+
+## [0.52.7] - 2026-11-11
+
 ### Changed
 
 - **Package update** (Dependabot #98–#108): gRPC 1.85.0, grpc-gateway 2.33.0, pgx 5.12.0,
@@ -4168,7 +4193,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.6...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.52.7...HEAD
+[0.52.7]: https://github.com/fastbean-au/hippocampus/compare/v0.52.6...v0.52.7
 [0.52.6]: https://github.com/fastbean-au/hippocampus/compare/v0.52.5...v0.52.6
 [0.52.5]: https://github.com/fastbean-au/hippocampus/compare/v0.52.4...v0.52.5
 [0.52.4]: https://github.com/fastbean-au/hippocampus/compare/v0.52.3...v0.52.4

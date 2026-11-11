@@ -19,12 +19,11 @@ import (
 // publishes it: one measurement per sleep cycle, a gauge per index, and the reading cached for
 // GetConsolidationStatus to serve.
 //
-// It reports and it decides nothing. There is no seam for it to act through and that is deliberate -
-// Preserve() is already a no-op on both server dialects, correctly, because autovacuum and InnoDB's
-// purge own reclamation there. What neither of them does is REPACK an index, and the remedy that
-// would (REINDEX CONCURRENTLY) is a maintenance decision even though it runs online. A memory store
-// that reindexes itself on a timer is a store that surprises its operator at the moment it is
-// already under pressure.
+// It reports and it decides nothing. Preserve() is a no-op on both server dialects, because
+// autovacuum and InnoDB's purge own reclamation there. What neither of them does is REPACK an index.
+// The remedy that does, REINDEX CONCURRENTLY, is in index_rebuild.go, behind
+// storage.indexRebuild.enabled and off by default, and it runs before this so that what is
+// published describes the indexes it left.
 //
 // Three things carry the shape, beyond the storage layer's.
 //

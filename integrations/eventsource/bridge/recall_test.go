@@ -721,6 +721,151 @@ func TestStoreMemoriesFallsBackWhenUnsupported(t *testing.T) {
 	}
 }
 
+// missingEvents scripts a store that has forgotten some events: a memory naming one is refused with
+// FailedPrecondition, as the service refuses it, until reopen has recreated that event.
+type missingEvents struct {
+	missing  map[string]bool
+	reopened []string
+	err      error
+
+	// sticky leaves an event missing after a successful reopen, so the retry is refused too.
+	sticky bool
+}
+
+func (m *missingEvents) refuse(in *contract.Memory) error {
+	if !m.missing[in.GetEventId()] {
+		return nil
+	}
+
+	return status.Errorf(codes.FailedPrecondition, "event '%s' does not exist", in.GetEventId())
+}
+
+// reopen recreates the event unless err or sticky is set, and records every attempt either way.
+func (m *missingEvents) reopen(_ context.Context, eventId string) error {
+	m.reopened = append(m.reopened, eventId)
+
+	if m.err != nil {
+		return m.err
+	}
+
+	if !m.sticky {
+		delete(m.missing, eventId)
+	}
+
+	return nil
+}
+
+// TestStoreMemoriesReopeningStoresAnOrphanAfterOneReopen is TODO-3 item 185: the feed path skipped
+// a memory whose thread the store had forgotten, and since the bridge's roots cache still named the
+// thread, nothing ever reopened it - so the post was refused on every poll and never stored. The
+// Jetstream path had always reopened and retried. Two memories naming the same forgotten event cost
+// ONE reopen, and only the refused memories are re-sent.
+func TestStoreMemoriesReopeningStoresAnOrphanAfterOneReopen(t *testing.T) {
+	events := &missingEvents{missing: map[string]bool{"at://root": true}}
+	fake := &fakeStorer{errFor: events.refuse}
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	err := s.StoreMemoriesReopening(context.Background(), []*contract.Memory{
+		{Id: "at://a", Body: "one"},
+		{Id: "at://b", Body: "reply", EventId: "at://root"},
+		{Id: "at://c", Body: "another reply", EventId: "at://root"},
+	}, events.reopen)
+	if err != nil {
+		t.Fatalf("StoreMemoriesReopening: %s", err)
+	}
+
+	if len(events.reopened) != 1 || events.reopened[0] != "at://root" {
+		t.Errorf("reopened %v, want the forgotten event reopened once", events.reopened)
+	}
+
+	if len(fake.batches) != 2 || fake.batches[1] != 2 {
+		t.Errorf("batches = %v, want the page then a retry of only its two refused memories", fake.batches)
+	}
+
+	if len(fake.calls) != 5 || fake.calls[3].GetId() != "at://b" || fake.calls[4].GetId() != "at://c" {
+		t.Errorf("StoreMemory saw %d memories, want both replies retried after the reopen", len(fake.calls))
+	}
+}
+
+// TestStoreMemoriesReopeningSkipsASecondRefusal: one reopen, one retry. A memory still refused after
+// that is skipped as before, so a page cannot stall on it.
+func TestStoreMemoriesReopeningSkipsASecondRefusal(t *testing.T) {
+	cases := []struct {
+		name    string
+		events  *missingEvents
+		batches int
+	}{
+		{
+			// The reopen reports success but the event is still not there, so the retry is refused.
+			name:    "refused again",
+			events:  &missingEvents{missing: map[string]bool{"at://root": true}, sticky: true},
+			batches: 2,
+		},
+		{
+			// The reopen fails; there is nothing to retry, and the page still completes.
+			name:    "reopen failed",
+			events:  &missingEvents{missing: map[string]bool{"at://root": true}, err: errors.New("unavailable")},
+			batches: 1,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &fakeStorer{errFor: c.events.refuse}
+			s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+			err := s.StoreMemoriesReopening(context.Background(), []*contract.Memory{
+				{Id: "at://a", Body: "one"},
+				{Id: "at://b", Body: "reply", EventId: "at://root"},
+				{Id: "at://c", Body: "three"},
+			}, c.events.reopen)
+			if err != nil {
+				t.Fatalf("a memory refused after its reopen should be skipped, got %s", err)
+			}
+
+			if len(c.events.reopened) != 1 {
+				t.Errorf("reopened %v, want exactly one attempt", c.events.reopened)
+			}
+
+			if len(fake.batches) != c.batches {
+				t.Errorf("batches = %v, want %d", fake.batches, c.batches)
+			}
+
+			if fake.calls[2].GetId() != "at://c" {
+				t.Errorf("third memory attempted was %q, want the page to have continued", fake.calls[2].GetId())
+			}
+		})
+	}
+}
+
+// TestStoreMemoriesReopeningRetriesOnTheSingleWritePath: a service predating StoreMemories takes
+// the one-call-per-memory fallback, and that path must reopen too, once per event.
+func TestStoreMemoriesReopeningRetriesOnTheSingleWritePath(t *testing.T) {
+	events := &missingEvents{missing: map[string]bool{"at://root": true}}
+	fake := &fakeStorer{
+		errFor:   events.refuse,
+		batchErr: status.Error(codes.Unimplemented, "unknown method StoreMemories"),
+	}
+	s := NewStore(fake, TransformerFunc(oneMemory), 0, "bluesky")
+
+	err := s.StoreMemoriesReopening(context.Background(), []*contract.Memory{
+		{Id: "at://b", Body: "reply", EventId: "at://root"},
+		{Id: "at://c", Body: "another reply", EventId: "at://root"},
+	}, events.reopen)
+	if err != nil {
+		t.Fatalf("StoreMemoriesReopening: %s", err)
+	}
+
+	if len(events.reopened) != 1 {
+		t.Errorf("reopened %v, want the event reopened once", events.reopened)
+	}
+
+	// b refused, b retried, c stored first time.
+	if len(fake.calls) != 3 {
+		t.Errorf("StoreMemory called %d times, want one refusal and one retry", len(fake.calls))
+	}
+}
+
 // shortResultStorer answers a batch write with fewer results than it was sent, which is the one
 // response that cannot be read positionally at all.
 type shortResultStorer struct {

@@ -28,10 +28,13 @@ import (
 //
 // Three decisions carry the shape.
 //
-// (1) It is REPORTED AND NEVER ACTED ON. REINDEX CONCURRENTLY is online but it is still a
-// maintenance decision, and a memory store that reindexes itself on a timer is a store that
-// surprises its operator. docs/operations.md carries the runbook and the cadence the measurement
-// justifies; this publishes the figure that says when.
+// (1) It is a REPORT, and nothing here acts on it. REINDEX CONCURRENTLY is online, but a memory
+// store that reindexes itself surprises its operator, so for a long time nothing did and
+// docs/operations.md carried a daily job instead. index_rebuild.go now acts on this same reading -
+// when a deployment sets storage.indexRebuild.enabled, and only for an index the reading says is
+// mostly air - after TODO-3 item 183 found that no storage parameter holds the bloat back. The
+// reading stays the same for both: one measurement, which the alert, the console and the rebuild
+// pass all read.
 //
 // (2) It is MEASURED, not estimated. Every number here is a catalogue reading - what the engine
 // says the relation and each of its indexes occupy, and how many entries each index holds. The one

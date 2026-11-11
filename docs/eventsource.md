@@ -502,7 +502,10 @@ stall, with the posts after the offending one never written on any tick. Those s
 `hippocampus.bridge.memories{outcome="orphaned"}`. A root the bridge has cached can also be
 consolidated between its seeing the root and writing a reply to it. The reply's memory is then
 retried once, after the root's event is reopened, within the same message, so a reply that lands
-counts as `stored` rather than `failed`.
+counts as `stored` rather than `failed`. The feed does the same per page: each distinct thread its
+refused posts name is reopened once and only those posts are re-sent, so a post in a thread the
+store has forgotten is stored rather than skipped on every poll for as long as its root stays
+cached. Only a post still refused after that, or whose thread cannot be reopened, is `orphaned`.
 
 Note that threads are **sparse on the open firehose**: sampling the whole network means you rarely
 see both a root and its replies, so most events end up holding one memory. `--dids` is where
@@ -630,10 +633,22 @@ copy has quietly turned a public post into a permanent private archive.
 | `--langs`                       | _(all)_                                           | keep only posts **declaring** one of these languages (see below)         |
 | `--min-text-bytes`              | `1`                                               | drop posts shorter than this                                             |
 | `--root-cache-size`             | `8192`                                            | cache of known thread roots (an optimisation only)                       |
-| `--read-timeout-seconds`        | `30`                                              | reconnect when no frame arrives within this window                       |
+| `--read-timeout-seconds`        | `30`                                              | reconnect when neither a frame nor a keepalive pong arrives within this window (see below) |
 | `--reconnect-backoff-seconds`   | `1`                                               | first reconnect backoff                                                  |
 | `--reconnect-max-backoff-seconds` | `30`                                            | ceiling on the exponential reconnect backoff                             |
 | `--max-retries`                 | `3`                                               | store attempts on one frame before the connection is dropped and replayed from the last cursor |
+
+#### A quiet `--dids` stream is kept, not reconnected
+
+The whole firehose is never idle, but a subscription narrowed by `--dids` can carry no frame for
+hours. Silence alone therefore cannot mean a dead connection: the bridge sends a websocket ping three
+times per `--read-timeout-seconds` window, and a pong (or a ping from Jetstream, which sends its own
+every 30 seconds) holds the connection open just as a frame does. Only a connection that stops
+answering — black-holed rather than quiet — is reconnected.
+
+Jetstream reports no cursor while nothing matches the filter, so a bridge that has handled no frame
+since it started still reconnects at the live tip, not from a cursor. With the keepalive that
+reconnect is rare; it was every 30 seconds before it.
 
 #### A post's language is self-declared, and is often wrong
 
