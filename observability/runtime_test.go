@@ -112,6 +112,10 @@ const (
 
 	goroutineSampleAttempts = 50
 	goroutineSampleBackoff  = 20 * time.Millisecond
+
+	// How many consecutive reads of an unchanged count waitForGoroutinesToSettle takes as settled:
+	// 100ms at goroutineSampleBackoff.
+	goroutineSettleReads = 5
 )
 
 // goroutineSample collects the goroutines gauge and reads runtime.NumGoroutine beside it, so the
@@ -168,6 +172,33 @@ func quiescedGoroutineSample(t *testing.T, when string) (int64, int) {
 	return 0, 0
 }
 
+// waitForGoroutinesToSettle waits until runtime.NumGoroutine has held one value for
+// goroutineSettleReads consecutive reads. Agreement between the gauge and its control is not
+// enough before the test starts its own goroutines: the two can agree while the previous tests'
+// goroutines are still exiting, and every one that exits after the "before" sample is subtracted
+// from the growth the test then measures. CI has seen 25 started and the count move from 10 to 31.
+//
+// It gives up quietly rather than failing: a process that never settles still runs the test, and
+// the assertions report what they saw.
+func waitForGoroutinesToSettle() {
+	last := runtime.NumGoroutine()
+	steady := 0
+
+	for i := 0; i < goroutineSampleAttempts && steady < goroutineSettleReads; i++ {
+		time.Sleep(goroutineSampleBackoff)
+
+		count := runtime.NumGoroutine()
+		if count != last {
+			last = count
+			steady = 0
+
+			continue
+		}
+
+		steady++
+	}
+}
+
 // TestRuntimeGoroutineGaugeTracksGrowth verifies the goroutine gauge actually moves, which is the
 // entire reason it exists. Registering an observable gauge that returns a constant would satisfy
 // the test above and be useless for finding a leak.
@@ -178,9 +209,12 @@ func quiescedGoroutineSample(t *testing.T, when string) (int64, int) {
 // exit on their own schedule while it runs, so the gauge's delta is legitimately a goroutine or
 // two under the number started: CI has seen 25 started and the gauge move by 24. The control sees
 // exactly the same churn, which is what makes it the honest comparison, and a gauge reporting a
-// constant fails it just as loudly.
+// constant fails it just as loudly. The churn can still outrun the premise check's tolerance, so
+// the test first waits for the count to settle.
 func TestRuntimeGoroutineGaugeTracksGrowth(t *testing.T) {
 	const extra = 25
+
+	waitForGoroutinesToSettle()
 
 	before, controlBefore := quiescedGoroutineSample(t, "before")
 
