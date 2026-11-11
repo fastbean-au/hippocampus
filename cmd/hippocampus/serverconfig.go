@@ -125,6 +125,12 @@ func serverConfig(authMethod string) hippocampus.Config {
 			MaxBytes: viper.GetInt64("opensearch.outbox.maxBytes"),
 		},
 
+		IndexRebuild: hippocampus.IndexRebuildConfig{
+			Enabled:          viper.GetBool("storage.indexRebuild.enabled"),
+			MinBytes:         viper.GetInt64("storage.indexRebuild.minBytes"),
+			MaxBytesPerEntry: viper.GetInt64("storage.indexRebuild.maxBytesPerEntry"),
+		},
+
 		Callbacks: hippocampus.CallbacksConfig{
 			Bounds: db.QueueBounds{
 				MaxAge:   hours("callbacks.maxAgeHours"),

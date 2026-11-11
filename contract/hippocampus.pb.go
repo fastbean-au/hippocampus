@@ -7070,8 +7070,9 @@ type GetConsolidationStatusResponse struct {
 	// occupy on disk. used_bytes is a live-row estimate on the server drivers and must stay one -
 	// eviction driven by a file-size measure would chase a figure that never drops after a delete -
 	// so nothing compared the estimate against the disk, and on a high-churn store the two diverge
-	// by most of an order of magnitude. Reported and never acted on; absent on the drivers that
-	// cannot answer cheaply, and until a cycle in THIS process has measured it.
+	// by most of an order of magnitude. Eviction never acts on it; storage.indexRebuild.enabled
+	// rebuilds the indexes it shows bloated. Absent on the drivers that cannot answer cheaply, and
+	// until a cycle in THIS process has measured it.
 	Footprint     *StorageFootprint `protobuf:"bytes,9,opt,name=footprint,proto3" json:"footprint,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -7610,9 +7611,9 @@ func (x *TableFootprint) GetIndexes() []*IndexFootprint {
 // which 533 MB was one index at 5% leaf density.
 //
 // A store that forgets is a store whose indexes bloat. It is the direct cost of the thing this
-// service exists to do, it is unbounded, and the remedy (REINDEX CONCURRENTLY) is a maintenance
-// decision rather than something a memory store should do to itself on a timer. This reports the
-// figure that says when; docs/operations.md carries the runbook.
+// service exists to do, and nothing in PostgreSQL returns it. The remedy is REINDEX CONCURRENTLY,
+// which the consolidator runs itself under storage.indexRebuild.enabled and an operator schedules
+// otherwise. This reports the figure that says when; docs/operations.md carries the runbook.
 //
 // measured is false where the driver has nothing to answer, which separates it from a store
 // occupying no disk. That is SQLite, whose page accounting already counts every index inside the

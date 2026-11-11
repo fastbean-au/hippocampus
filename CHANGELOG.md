@@ -63,6 +63,14 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Added
+
+- **The consolidator can rebuild bloated PostgreSQL indexes itself** (`storage.indexRebuild.*`, off
+  by default). A store that forgets leaves its indexes several times its live data, and no storage
+  parameter prevents it. With this on, any index past 16 MiB and 512 bytes an entry is rebuilt online
+  with `REINDEX INDEX CONCURRENTLY`. The pass covers the three queues too, and the database role must
+  own the tables. See [docs/configuration.md](docs/configuration.md#index-rebuilds).
+
 ### Fixed
 
 - **The Bluesky bridge no longer reconnects a quiet `--dids` stream every 30 seconds.** It pings
