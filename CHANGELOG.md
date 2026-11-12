@@ -63,6 +63,13 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A cleanly stopped consolidator now frees the instance lock at once** (PostgreSQL, MySQL). It
+  unlocks before closing its session rather than leaving the server to drop the lock when the
+  session's teardown finishes, so a standby polling right then, or a restarting instance, no longer
+  finds it held. See [horizontal scaling](docs/operations.md#horizontal-scaling-with-replicas).
+
 ## [0.53.2] - 2026-11-13
 
 ### Security

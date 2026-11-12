@@ -250,6 +250,49 @@ func TestAcquireInstanceLockPostgresQueryError(t *testing.T) {
 	expectationsMet(t, mock)
 }
 
+// --- Close releases the instance lock explicitly ---
+
+// TestClose_ReleasesTheInstanceLockBeforeClosingItsSession holds Close to unlocking the instance
+// lock on its pinned session rather than relying on the session ending. Both servers release a
+// session's locks only once its backend has torn down, which is asynchronous to the client's close,
+// so a standby or a restarting instance asking straight afterwards could still find it held -
+// TestPostgres_StandbyTakesTheLockWhenItIsReleased failed in CI on exactly that.
+func TestClose_ReleasesTheInstanceLockBeforeClosingItsSession(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		driver driver
+		unlock string
+	}{
+		"postgres": {driver: driverPostgres, unlock: `SELECT pg_advisory_unlock\(\$1\)`},
+		"mysql":    {driver: driverMySQL, unlock: `SELECT RELEASE_LOCK\(CONCAT\('hippocampus:', DATABASE\(\)\)\)`},
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Parallel()
+
+			d, mock := newMockDB(t, v.driver)
+
+			conn, err := d.sql.Conn(context.Background())
+			if err != nil {
+				t.Fatalf("Conn: %v", err)
+			}
+
+			d.lockConn = conn
+
+			mock.ExpectExec(v.unlock).WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectClose()
+
+			if err := d.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			expectationsMet(t, mock)
+		})
+	}
+}
+
 // --- acquireMySQLInstanceLock (GET_LOCK) ---
 
 func TestAcquireMySQLInstanceLock(t *testing.T) {

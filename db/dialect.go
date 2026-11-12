@@ -891,6 +891,31 @@ func (d *DB) reacquireInstanceLock() error {
 	return nil
 }
 
+// releaseInstanceLock gives up the instance lock on its pinned session, ahead of Close closing that
+// session. Closing it would release the lock anyway, but only once the server has torn the session
+// down, which is asynchronous to the client's close: a standby or a restarting instance asking
+// straight afterwards could still find it held. An explicit unlock returns once the lock is free.
+func (d *DB) releaseInstanceLock() error {
+	ctx, cancel := context.WithTimeout(context.Background(), instanceLockCheckTimeout)
+	defer cancel()
+
+	switch d.driver {
+
+	case driverPostgres:
+		_, err := d.lockConn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, advisoryLockKey)
+
+		return err
+
+	case driverMySQL:
+		_, err := d.lockConn.ExecContext(ctx, `SELECT RELEASE_LOCK(CONCAT('hippocampus:', DATABASE()))`)
+
+		return err
+
+	}
+
+	return nil
+}
+
 // coreSchemaStatements is the CREATE TABLE for events and memories - the two tables holding
 // everything the service stores - rendered for the active dialect.
 //

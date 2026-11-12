@@ -1321,7 +1321,7 @@ func (d *DB) ServerVersion(ctx context.Context) (string, error) {
 }
 
 // Close checkpoints and closes the database. For the server drivers it also releases the
-// instance lock by closing the session that holds it.
+// instance lock, unlocking it explicitly before closing the session that holds it.
 func (d *DB) Close() error {
 	log.Trace("func() db.Close")
 
@@ -1338,6 +1338,12 @@ func (d *DB) Close() error {
 	}
 
 	if d.lockConn != nil {
+		// Logged and carried on from: closing the session releases the lock regardless, just not
+		// as promptly.
+		if err := d.releaseInstanceLock(); err != nil {
+			log.Errorf("failed to release the instance lock: %s", err.Error())
+		}
+
 		if err := d.lockConn.Close(); err != nil {
 			log.Errorf("failed to close instance lock connection: %s", err.Error())
 		}
