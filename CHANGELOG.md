@@ -63,6 +63,17 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Security
+
+- **golang.org/x/net 0.62.0** across all six modules, for GO-2026-6860 and GO-2026-6866. Neither
+  is reachable from our code, but both are flagged on every module that requires 0.61.0 and so on
+  every satellite that requires this one.
+
+### Changed
+
+- **Package update** (Dependabot #99–#102, #107): the AWS SDK (1.47.8, config 1.33.16, S3
+  1.114.9, transfermanager 0.5.5) and modernc.org/sqlite 1.62.0. No behaviour change.
+
 ## [0.53.1] - 2026-11-11
 
 ### Security
