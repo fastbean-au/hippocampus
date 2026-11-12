@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.53.3] - 2026-11-13
+
 ### Fixed
 
 - **A cleanly stopped consolidator now frees the instance lock at once** (PostgreSQL, MySQL). It
@@ -4222,7 +4224,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.53.2...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.53.3...HEAD
+[0.53.3]: https://github.com/fastbean-au/hippocampus/compare/v0.53.2...v0.53.3
 [0.53.2]: https://github.com/fastbean-au/hippocampus/compare/v0.53.1...v0.53.2
 [0.53.1]: https://github.com/fastbean-au/hippocampus/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/fastbean-au/hippocampus/compare/v0.52.7...v0.53.0
