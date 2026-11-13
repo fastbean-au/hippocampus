@@ -63,6 +63,12 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+### Changed
+
+- **Package update** (Dependabot #109–#115): the AWS SDK (config 1.33.17, transfermanager 0.5.6),
+  pflag 1.1.0, golang.org/x/oauth2 0.38.0, x/sync 0.25.0, x/sys 0.50.0, and the MySQL compose image
+  26.10. No behaviour change.
+
 ## [0.53.3] - 2026-11-13
 
 ### Fixed
