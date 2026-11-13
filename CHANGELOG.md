@@ -63,6 +63,8 @@ itself which service version it was built against.
 
 ## [Unreleased]
 
+## [0.53.4] - 2026-11-13
+
 ### Changed
 
 - **Package update** (Dependabot #109–#115): the AWS SDK (config 1.33.17, transfermanager 0.5.6),
@@ -4230,7 +4232,8 @@ This release added the delivery and production-readiness layer around it:
 [obsidian-repo]: https://github.com/fastbean-au/hippocampus-obsidian
 [llamaindex-repo]: https://github.com/fastbean-au/hippocampus-llamaindex
 [otel-repo]: https://github.com/fastbean-au/hippocampus-otel-collector
-[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.53.3...HEAD
+[Unreleased]: https://github.com/fastbean-au/hippocampus/compare/v0.53.4...HEAD
+[0.53.4]: https://github.com/fastbean-au/hippocampus/compare/v0.53.3...v0.53.4
 [0.53.3]: https://github.com/fastbean-au/hippocampus/compare/v0.53.2...v0.53.3
 [0.53.2]: https://github.com/fastbean-au/hippocampus/compare/v0.53.1...v0.53.2
 [0.53.1]: https://github.com/fastbean-au/hippocampus/compare/v0.53.0...v0.53.1
